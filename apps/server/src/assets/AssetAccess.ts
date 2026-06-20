@@ -1,5 +1,11 @@
 import type { AssetResource } from "@t3tools/contracts";
 import { AssetAccessError } from "@t3tools/contracts";
+import {
+  isWorkspaceImagePreviewPath,
+  isWorkspacePreviewEntryPath,
+  WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
+  WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
+} from "@t3tools/shared/filePreview";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -24,22 +30,14 @@ export const FALLBACK_PROJECT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/
 
 const SIGNING_SECRET_NAME = "asset-access-signing-key";
 const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
-const PREVIEWABLE_EXTENSIONS = new Set([".htm", ".html", ".pdf"]);
 const PREVIEW_ASSET_EXTENSIONS = new Set([
-  ...PREVIEWABLE_EXTENSIONS,
-  ".avif",
+  ...WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
+  ...WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
   ".css",
-  ".gif",
-  ".ico",
-  ".jpeg",
-  ".jpg",
   ".js",
   ".mjs",
   ".otf",
-  ".png",
-  ".svg",
   ".ttf",
-  ".webp",
   ".woff",
   ".woff2",
 ]);
@@ -50,6 +48,13 @@ const AssetClaimsSchema = Schema.Union([
     kind: Schema.Literal("workspace-file"),
     workspaceRoot: Schema.String,
     baseRelativePath: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("workspace-file-exact"),
+    workspaceRoot: Schema.String,
+    relativePath: Schema.String,
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -144,8 +149,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       const resolved = yield* workspacePaths
         .resolveRelativePathWithinRoot({ workspaceRoot, relativePath })
         .pipe(Effect.mapError((cause) => failAccess(cause.message, cause)));
-      if (!PREVIEWABLE_EXTENSIONS.has(path.extname(resolved.relativePath).toLowerCase())) {
-        return yield* failAccess("Only HTML and PDF files can open in the browser.");
+      if (!isWorkspacePreviewEntryPath(resolved.relativePath)) {
+        return yield* failAccess("Only browser documents and images can be previewed.");
       }
       const canonicalFile = yield* resolveCanonicalWorkspaceFile({
         workspaceRoot,
@@ -154,15 +159,24 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       if (!canonicalFile) {
         return yield* failAccess("Workspace asset was not found.");
       }
-      claims = {
-        version: 1,
-        kind: "workspace-file",
-        workspaceRoot: yield* fileSystem
-          .realPath(workspaceRoot)
-          .pipe(Effect.mapError((cause) => failAccess("Failed to resolve workspace.", cause))),
-        baseRelativePath: path.dirname(resolved.relativePath),
-        expiresAt,
-      };
+      const canonicalWorkspaceRoot = yield* fileSystem
+        .realPath(workspaceRoot)
+        .pipe(Effect.mapError((cause) => failAccess("Failed to resolve workspace.", cause)));
+      claims = isWorkspaceImagePreviewPath(resolved.relativePath)
+        ? {
+            version: 1,
+            kind: "workspace-file-exact",
+            workspaceRoot: canonicalWorkspaceRoot,
+            relativePath: resolved.relativePath,
+            expiresAt,
+          }
+        : {
+            version: 1,
+            kind: "workspace-file",
+            workspaceRoot: canonicalWorkspaceRoot,
+            baseRelativePath: path.dirname(resolved.relativePath),
+            expiresAt,
+          };
       fileName = path.basename(resolved.relativePath);
       break;
     }
@@ -268,6 +282,16 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   const decodedPath = decodeRelativePath(relativePath);
   if (decodedPath === null) return null;
   const path = yield* Path.Path;
+  if (claims.kind === "workspace-file-exact") {
+    if (decodedPath !== path.basename(claims.relativePath)) return null;
+    const exactWorkspaceFile = yield* resolveCanonicalWorkspaceFile({
+      workspaceRoot: claims.workspaceRoot,
+      relativePath: claims.relativePath,
+    });
+    return exactWorkspaceFile
+      ? ({ kind: "file", path: exactWorkspaceFile } satisfies ResolvedAsset)
+      : null;
+  }
   const segments = decodedPath.split(/[\\/]/);
   if (
     decodedPath.length === 0 ||

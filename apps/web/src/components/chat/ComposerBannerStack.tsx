@@ -40,14 +40,12 @@ interface ComposerBannerStackProps {
 }
 
 export function ComposerBannerStack({ className, items }: ComposerBannerStackProps) {
-  const [exitingItemId, setExitingItemId] = useState<string | null>(null);
+  const [requestedExitingItemId, setExitingItemId] = useState<string | null>(null);
   const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (exitingItemId && !items.some((item) => item.id === exitingItemId)) {
-      setExitingItemId(null);
-    }
-  }, [exitingItemId, items]);
+  const exitingItemId =
+    requestedExitingItemId !== null && items.some((item) => item.id === requestedExitingItemId)
+      ? requestedExitingItemId
+      : null;
 
   useEffect(() => {
     return () => {

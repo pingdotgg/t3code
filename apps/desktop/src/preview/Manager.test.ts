@@ -59,7 +59,7 @@ const environmentLayer = Layer.succeed(
   DesktopEnvironment.DesktopEnvironment,
   DesktopEnvironment.DesktopEnvironment.of({
     browserArtifactsDir: "/tmp/t3/dev/browser-artifacts",
-  } as DesktopEnvironment.DesktopEnvironmentShape),
+  } as DesktopEnvironment.DesktopEnvironment["Service"]),
 );
 
 const fileSystemLayer = FileSystem.layerNoop({
@@ -82,7 +82,7 @@ const layer = PreviewManager.layer.pipe(
 
 const withManager = <A>(
   use: (
-    manager: PreviewManager.PreviewManagerShape,
+    manager: PreviewManager.PreviewManager["Service"],
   ) => Effect.Effect<A, PreviewManager.PreviewManagerError, Scope.Scope>,
 ) =>
   Effect.gen(function* () {
@@ -124,6 +124,58 @@ describe("PreviewManager", () => {
           loading: false,
         });
         expect(fromId).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("queues navigation until the webview registers", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const loadURL = vi.fn(async () => undefined);
+        const listeners = new Map<string, (...args: never[]) => void>();
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "about:blank",
+          getTitle: () => "",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          loadURL,
+          on: vi.fn((event: string, listener: (...args: never[]) => void) => {
+            listeners.set(event, listener);
+          }),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.navigate("tab_pending", "localhost:3200");
+
+        expect(yield* manager.automationStatus("tab_pending")).toEqual({
+          available: false,
+          visible: true,
+          tabId: "tab_pending",
+          url: "http://localhost:3200/",
+          title: "",
+          loading: true,
+        });
+
+        yield* manager.registerWebview("tab_pending", 42);
+        yield* Effect.yieldNow;
+
+        expect(loadURL).toHaveBeenCalledOnce();
+        expect(loadURL).toHaveBeenCalledWith("http://localhost:3200/");
       }),
     ),
   );

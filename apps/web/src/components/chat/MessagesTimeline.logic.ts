@@ -26,7 +26,8 @@ export interface TimelineDurationMessage {
   id: string;
   role: "user" | "assistant" | "system";
   createdAt: string;
-  completedAt?: string | undefined;
+  updatedAt: string;
+  streaming: boolean;
 }
 
 export type TimelineLatestTurn = Pick<
@@ -85,8 +86,8 @@ export function computeMessageDurationStart(
       lastBoundary = message.createdAt;
     }
     result.set(message.id, lastBoundary ?? message.createdAt);
-    if (message.role === "assistant" && message.completedAt) {
-      lastBoundary = message.completedAt;
+    if (message.role === "assistant" && !message.streaming) {
+      lastBoundary = message.updatedAt;
     }
   }
 
@@ -256,9 +257,7 @@ function deriveTurnFolds(input: {
     // A turn cut short by a steer leaves trailing work entries behind its
     // terminal message — take whichever ended last.
     const lastEntryEnd =
-      lastEntry.kind === "message"
-        ? (lastEntry.message.completedAt ?? lastEntry.createdAt)
-        : lastEntry.createdAt;
+      lastEntry.kind === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
     const elapsedMs =
       input.latestTurn?.turnId === turnId &&
       input.latestTurn.startedAt &&
@@ -266,7 +265,7 @@ function deriveTurnFolds(input: {
         ? computeElapsedMs(input.latestTurn.startedAt, input.latestTurn.completedAt)
         : computeElapsedMs(
             group.startBoundary ?? firstEntry.createdAt,
-            maxIsoTimestamp(group.terminalEntry?.message.completedAt ?? null, lastEntryEnd) ??
+            maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
               lastEntryEnd,
           );
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;

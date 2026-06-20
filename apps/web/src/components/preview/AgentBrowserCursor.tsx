@@ -1,5 +1,6 @@
 "use client";
 
+import type { DesktopPreviewPointerEvent } from "@t3tools/contracts";
 import { MousePointer2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -16,16 +17,31 @@ export function AgentBrowserCursor(props: {
 }) {
   const { tabId, zoomFactor, controller } = props;
   const event = useBrowserPointerStore((state) => state.byTabId[tabId] ?? null);
-  const [active, setActive] = useState(false);
-
-  useEffect(() => {
-    if (!event) return;
-    setActive(true);
-    const timeout = window.setTimeout(() => setActive(false), CURSOR_ACTIVE_MS);
-    return () => window.clearTimeout(timeout);
-  }, [event]);
 
   if (!event) return null;
+
+  return (
+    <AgentBrowserCursorEvent
+      key={event.sequence}
+      event={event}
+      zoomFactor={zoomFactor}
+      controller={controller}
+    />
+  );
+}
+
+function AgentBrowserCursorEvent(props: {
+  readonly event: DesktopPreviewPointerEvent;
+  readonly zoomFactor: number;
+  readonly controller: BrowserController;
+}) {
+  const { event, zoomFactor, controller } = props;
+  const [active, setActive] = useState(true);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setActive(false), CURSOR_ACTIVE_MS);
+    return () => window.clearTimeout(timeout);
+  }, []);
 
   return (
     <div

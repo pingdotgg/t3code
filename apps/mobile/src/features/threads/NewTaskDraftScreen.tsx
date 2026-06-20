@@ -1,11 +1,15 @@
 import { Stack, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { InteractionManager, View, useColorScheme } from "react-native";
+import { Alert, InteractionManager, View, useColorScheme } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
-import { EnvironmentId, type ModelSelection } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
@@ -19,27 +23,17 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
+import {
+  applyProviderOptionMenuEvent,
+  buildProviderOptionMenuActions,
+  providerOptionsConfigurationLabel,
+  resolveProviderOptionDescriptors,
+} from "../../lib/providerOptions";
 import { buildThreadRoutePath } from "../../lib/routes";
-import { useRemoteCatalog } from "../../state/use-remote-catalog";
-import { CLAUDE_AGENT_EFFORT_OPTIONS } from "./claudeEffortOptions";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
+import { useProjects } from "../../state/entities";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
-import { useProjectActions } from "./use-project-actions";
-
-function withModelSelectionOption(
-  selection: ModelSelection,
-  id: string,
-  value: string | boolean | undefined,
-): ModelSelection {
-  const options = (selection.options ?? []).filter((option) => option.id !== id);
-  return {
-    ...selection,
-    options: value === undefined ? options : [...options, { id, value }],
-  };
-}
-
-function formatTitleCase(value: string): string {
-  return value.length === 0 ? value : `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
-}
+import { useCreateProjectThread } from "./use-project-actions";
 
 function formatWorkspaceLabel(input: {
   readonly workspaceMode: string;
@@ -59,8 +53,8 @@ export function NewTaskDraftScreen(props: {
     readonly projectId?: string;
   };
 }) {
-  const { projects } = useRemoteCatalog();
-  const { onCreateThreadWithOptions } = useProjectActions();
+  const projects = useProjects();
+  const createProjectThread = useCreateProjectThread();
   const flow = useNewTaskFlow();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -169,39 +163,18 @@ export function NewTaskDraftScreen(props: {
       })),
     [flow.providerGroups, flow.selectedModel],
   );
+  const providerOptionDescriptors = useMemo(
+    () =>
+      resolveProviderOptionDescriptors({
+        capabilities: flow.selectedModelOption?.capabilities,
+        selections: flow.selectedModel?.options,
+      }),
+    [flow.selectedModel?.options, flow.selectedModelOption?.capabilities],
+  );
 
   const optionsMenuActions = useMemo(
     () => [
-      {
-        id: "options-effort",
-        title: "Effort",
-        subtitle: `${flow.effort.charAt(0).toUpperCase()}${flow.effort.slice(1)}`,
-        subactions: CLAUDE_AGENT_EFFORT_OPTIONS.map((level) => ({
-          id: `options:effort:${level}`,
-          title: `${level}${level === "high" ? " (default)" : ""}`,
-          state: flow.effort === level ? ("on" as const) : undefined,
-        })),
-      },
-      {
-        id: "options-fast-mode",
-        title: "Fast Mode",
-        subtitle: flow.fastMode ? "On" : "Off",
-        subactions: ([false, true] as const).map((value) => ({
-          id: `options:fast-mode:${value ? "on" : "off"}`,
-          title: value ? "On" : "Off",
-          state: flow.fastMode === value ? ("on" as const) : undefined,
-        })),
-      },
-      {
-        id: "options-context-window",
-        title: "Context Window",
-        subtitle: flow.contextWindow,
-        subactions: (["200k", "1M"] as const).map((value) => ({
-          id: `options:context-window:${value}`,
-          title: `${value}${value === "1M" ? " (default)" : ""}`,
-          state: flow.contextWindow === value ? ("on" as const) : undefined,
-        })),
-      },
+      ...buildProviderOptionMenuActions(providerOptionDescriptors),
       {
         id: "options-runtime",
         title: "Runtime",
@@ -241,7 +214,7 @@ export function NewTaskDraftScreen(props: {
         }),
       },
     ],
-    [flow.contextWindow, flow.effort, flow.fastMode, flow.interactionMode, flow.runtimeMode],
+    [flow.interactionMode, flow.runtimeMode, providerOptionDescriptors],
   );
 
   const workspaceMenuActions = useMemo(() => {
@@ -302,14 +275,10 @@ export function NewTaskDraftScreen(props: {
     flow.availableBranches.find((branch) => branch.current)?.name ??
     flow.availableBranches.find((branch) => branch.isDefault)?.name ??
     null;
-  const configurationLabel = useMemo(() => {
-    const parts = [
-      formatTitleCase(flow.effort),
-      flow.fastMode ? "Fast" : null,
-      flow.contextWindow !== "1M" ? flow.contextWindow : null,
-    ].filter((part): part is string => Boolean(part));
-    return parts.length > 0 ? parts.join(" · ") : "Configuration";
-  }, [flow.contextWindow, flow.effort, flow.fastMode]);
+  const configurationLabel = useMemo(
+    () => providerOptionsConfigurationLabel(providerOptionDescriptors),
+    [providerOptionDescriptors],
+  );
   const workspaceLabel = useMemo(
     () =>
       formatWorkspaceLabel({
@@ -338,16 +307,9 @@ export function NewTaskDraftScreen(props: {
   }
 
   function handleOptionsMenuAction(event: string) {
-    if (event.startsWith("options:effort:")) {
-      flow.setEffort(event.slice("options:effort:".length) as typeof flow.effort);
-      return;
-    }
-    if (event.startsWith("options:fast-mode:")) {
-      flow.setFastMode(event.endsWith(":on"));
-      return;
-    }
-    if (event.startsWith("options:context-window:")) {
-      flow.setContextWindow(event.slice("options:context-window:".length));
+    const providerOptions = applyProviderOptionMenuEvent(providerOptionDescriptors, event);
+    if (providerOptions) {
+      flow.setSelectedModelOptions(providerOptions);
       return;
     }
     if (event.startsWith("options:runtime:")) {
@@ -415,42 +377,33 @@ export function NewTaskDraftScreen(props: {
     }
 
     flow.setSubmitting(true);
-    try {
-      const modelWithOptions: ModelSelection =
-        flow.selectedModelOption?.providerDriver === "claudeAgent"
-          ? withModelSelectionOption(
-              withModelSelectionOption(
-                withModelSelectionOption(flow.selectedModel, "effort", flow.effort),
-                "fastMode",
-                flow.fastMode || undefined,
-              ),
-              "contextWindow",
-              flow.contextWindow,
-            )
-          : flow.selectedModelOption?.providerDriver === "codex"
-            ? withModelSelectionOption(flow.selectedModel, "fastMode", flow.fastMode || undefined)
-            : flow.selectedModel;
+    const result = await createProjectThread({
+      project: flow.selectedProject,
+      modelSelection: flow.selectedModel,
+      envMode: flow.workspaceMode,
+      branch: flow.selectedBranchName,
+      worktreePath: flow.workspaceMode === "worktree" ? null : flow.selectedWorktreePath,
+      runtimeMode: flow.runtimeMode,
+      interactionMode: flow.interactionMode,
+      initialMessageText: flow.prompt.trim(),
+      initialAttachments: flow.attachments,
+    });
+    flow.setSubmitting(false);
 
-      const createdThread = await onCreateThreadWithOptions({
-        project: flow.selectedProject,
-        modelSelection: modelWithOptions,
-        envMode: flow.workspaceMode,
-        branch: flow.selectedBranchName,
-        worktreePath: flow.workspaceMode === "worktree" ? null : flow.selectedWorktreePath,
-        runtimeMode: flow.runtimeMode,
-        interactionMode: flow.interactionMode,
-        initialMessageText: flow.prompt.trim(),
-        initialAttachments: flow.attachments,
-      });
-
-      if (createdThread) {
-        flow.setPrompt("");
-        flow.clearAttachments();
-        router.replace(buildThreadRoutePath(createdThread));
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        Alert.alert(
+          "Could not start task",
+          error instanceof Error ? error.message : "The task could not be started.",
+        );
       }
-    } finally {
-      flow.setSubmitting(false);
+      return;
     }
+
+    flow.setPrompt("");
+    flow.clearAttachments();
+    router.replace(buildThreadRoutePath(result.value));
   }
 
   if (!selectedProject) {
@@ -478,7 +431,7 @@ export function NewTaskDraftScreen(props: {
             onPasteImages={(uris) => void handleNativePasteImages(uris)}
             placeholder={`Describe a coding task in ${selectedProject.title}`}
             style={{ flex: 1, minHeight: 0 }}
-            textStyle={{ fontSize: 18, lineHeight: 28 }}
+            textStyle={MOBILE_TYPOGRAPHY.composer}
           />
         </View>
 

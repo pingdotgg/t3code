@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "./atomicWrite.ts";
-import { type ServerConfigShape } from "./config.ts";
+import type * as ServerConfig from "./config.ts";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 
 export const PersistedServerRuntimeState = Schema.Struct({
@@ -23,7 +23,7 @@ const decodePersistedServerRuntimeState = Schema.decodeUnknownEffect(
 );
 
 const runtimeOriginForConfig = (
-  config: Pick<ServerConfigShape, "host">,
+  config: Pick<ServerConfig.ServerConfig["Service"], "host">,
   port: number,
 ): PersistedServerRuntimeState["origin"] => {
   const hostname =
@@ -32,7 +32,7 @@ const runtimeOriginForConfig = (
 };
 
 export const makePersistedServerRuntimeState = (input: {
-  readonly config: Pick<ServerConfigShape, "host">;
+  readonly config: Pick<ServerConfig.ServerConfig["Service"], "host">;
   readonly port: number;
 }): Effect.Effect<PersistedServerRuntimeState> =>
   Effect.map(DateTime.now, (now) => ({

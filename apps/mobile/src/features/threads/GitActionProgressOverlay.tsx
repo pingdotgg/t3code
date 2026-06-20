@@ -73,12 +73,12 @@ function OverlayContent(props: { readonly progress: GitActionProgress }) {
 
       <View className="flex-1 gap-0.5">
         {progress.label ? (
-          <Text className="text-[13px] font-t3-bold text-foreground" numberOfLines={1}>
+          <Text className="text-sm font-t3-bold text-foreground" numberOfLines={1}>
             {progress.label}
           </Text>
         ) : null}
         {progress.description ? (
-          <Text className="text-[11px] text-foreground-muted" numberOfLines={1}>
+          <Text className="text-2xs text-foreground-muted" numberOfLines={1}>
             {progress.description}
           </Text>
         ) : null}

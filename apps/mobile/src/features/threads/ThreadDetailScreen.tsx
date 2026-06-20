@@ -1,8 +1,9 @@
+import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type {
   ApprovalRequestId,
   EnvironmentId,
   ModelSelection,
-  OrchestrationThread,
+  OrchestrationThreadShell,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   RuntimeMode,
@@ -23,7 +24,7 @@ import { AppText as Text } from "../../components/AppText";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
-import type { MobileLayoutVariant } from "../../lib/mobileLayout";
+import type { LayoutVariant } from "../../lib/layout";
 import { resolveThreadFeedBottomInset } from "../../lib/threadFeedLayout";
 import type {
   PendingApproval,
@@ -39,13 +40,14 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
+import type { ThreadContentPresentation } from "./threadContentPresentation";
 
 export interface ThreadDetailScreenProps {
-  readonly selectedThread: OrchestrationThread;
+  readonly selectedThread: OrchestrationThreadShell;
+  readonly contentPresentation: ThreadContentPresentation;
   readonly screenTone: StatusTone;
   readonly connectionError: string | null;
-  readonly httpBaseUrl: string | null;
-  readonly bearerToken: string | null;
+  readonly environmentLabel: string | null;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
   readonly activeWorkStartedAt: string | null;
   readonly activePendingApproval: PendingApproval | null;
@@ -56,30 +58,30 @@ export interface ThreadDetailScreenProps {
   readonly respondingUserInputId: ApprovalRequestId | null;
   readonly draftMessage: string;
   readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
-  readonly connectionStateLabel: "ready" | "connecting" | "reconnecting" | "disconnected" | "idle";
+  readonly connectionStateLabel: EnvironmentConnectionPhase;
   readonly activeThreadBusy: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
+  readonly threadCwd: string | null;
   readonly selectedThreadQueueCount: number;
   readonly serverConfig: T3ServerConfig | null;
-  readonly layoutVariant?: MobileLayoutVariant;
+  readonly layoutVariant?: LayoutVariant;
   readonly onOpenDrawer: () => void;
   readonly onOpenConnectionEditor: () => void;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onPickDraftImages: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
-  readonly onStopThread: () => Promise<void>;
-  readonly onSendMessage: () => void;
-  readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => Promise<void>;
-  readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => Promise<void>;
-  readonly onUpdateThreadInteractionMode: (
-    interactionMode: ProviderInteractionMode,
-  ) => Promise<void>;
+  readonly onStopThread: () => void;
+  readonly onSendMessage: () => Promise<void>;
+  readonly onReconnectEnvironment: () => void;
+  readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
+  readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
+  readonly onUpdateThreadInteractionMode: (interactionMode: ProviderInteractionMode) => void;
   readonly onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
-  ) => Promise<void>;
+  ) => Promise<unknown>;
   readonly onSelectUserInputOption: (
     requestId: ApprovalRequestId,
     questionId: string,
@@ -90,7 +92,7 @@ export interface ThreadDetailScreenProps {
     questionId: string,
     customAnswer: string,
   ) => void;
-  readonly onSubmitUserInput: () => Promise<void>;
+  readonly onSubmitUserInput: () => Promise<unknown>;
   readonly showContent?: boolean;
 }
 
@@ -306,10 +308,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           >
             <ThreadFeed
               key={props.selectedThread.id}
+              environmentId={props.environmentId}
               threadId={props.selectedThread.id}
+              workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}
-              httpBaseUrl={props.httpBaseUrl}
-              bearerToken={props.bearerToken}
+              contentPresentation={props.contentPresentation}
               agentLabel={agentLabel}
               latestTurn={props.selectedThread.latestTurn}
               contentTopInset={headerHeight}
@@ -363,6 +366,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 draftAttachments={props.draftAttachments}
                 placeholder="Ask the repo agent, or run a command…"
                 connectionState={props.connectionStateLabel}
+                connectionError={props.connectionError}
+                environmentLabel={props.environmentLabel}
                 selectedThread={props.selectedThread}
                 serverConfig={props.serverConfig}
                 queueCount={props.selectedThreadQueueCount}
@@ -376,6 +381,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 onRemoveDraftImage={props.onRemoveDraftImage}
                 onStopThread={props.onStopThread}
                 onSendMessage={props.onSendMessage}
+                onReconnectEnvironment={props.onReconnectEnvironment}
                 onUpdateModelSelection={props.onUpdateThreadModelSelection}
                 onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                 onUpdateInteractionMode={props.onUpdateThreadInteractionMode}

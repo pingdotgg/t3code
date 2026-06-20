@@ -104,9 +104,9 @@ function decodeBootstrap(raw: string) {
 function makeManagerLayer(input: {
   readonly spawnerLayer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
   readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
-  readonly backendOutputLog?: Partial<DesktopObservability.DesktopBackendOutputLogShape>;
-  readonly desktopState?: DesktopState.DesktopStateShape;
-  readonly desktopWindow?: Partial<DesktopWindow.DesktopWindowShape>;
+  readonly backendOutputLog?: Partial<DesktopObservability.DesktopBackendOutputLog["Service"]>;
+  readonly desktopState?: DesktopState.DesktopState["Service"];
+  readonly desktopWindow?: Partial<DesktopWindow.DesktopWindow["Service"]>;
   readonly config?: DesktopBackendManager.DesktopBackendStartConfig;
 }) {
   return DesktopBackendManager.layer.pipe(
@@ -127,7 +127,7 @@ function makeManagerLayer(input: {
           writeSessionBoundary: () => Effect.void,
           writeOutputChunk: () => Effect.void,
           ...input.backendOutputLog,
-        } satisfies DesktopObservability.DesktopBackendOutputLogShape),
+        } satisfies DesktopObservability.DesktopBackendOutputLog["Service"]),
         Layer.succeed(DesktopWindow.DesktopWindow, {
           createMain: Effect.die("unexpected createMain"),
           ensureMain: Effect.die("unexpected ensureMain"),
@@ -138,7 +138,7 @@ function makeManagerLayer(input: {
           dispatchMenuAction: () => Effect.void,
           syncAppearance: Effect.void,
           ...input.desktopWindow,
-        } satisfies DesktopWindow.DesktopWindowShape),
+        } satisfies DesktopWindow.DesktopWindow["Service"]),
       ),
     ),
   );

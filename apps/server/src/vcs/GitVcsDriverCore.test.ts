@@ -100,6 +100,41 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.deepStrictEqual(paths, ["complete.txt", "final.txt"]);
       }),
     );
+
+    it.effect("honors whitespace filtering for worktree and branch previews", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/whitespace"]);
+        yield* writeTextFile(cwd, "README.md", "#  test\n");
+        yield* git(cwd, ["add", "README.md"]);
+        yield* git(cwd, ["commit", "-m", "change whitespace"]);
+        yield* writeTextFile(cwd, "README.md", "#   test\n");
+
+        const included = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          ignoreWhitespace: false,
+        });
+        const ignored = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          ignoreWhitespace: true,
+        });
+
+        assert.isNotEmpty(included.sources.find((source) => source.kind === "working-tree")?.diff);
+        assert.isNotEmpty(included.sources.find((source) => source.kind === "branch-range")?.diff);
+        assert.strictEqual(
+          ignored.sources.find((source) => source.kind === "working-tree")?.diff,
+          "",
+        );
+        assert.strictEqual(
+          ignored.sources.find((source) => source.kind === "branch-range")?.diff,
+          "",
+        );
+      }),
+    );
   });
 
   describe("repository status", () => {
@@ -183,6 +218,35 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("can read cached remote divergence without fetching upstream", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+
+        yield* git(updater, ["clone", remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        yield* writeTextFile(updater, "remote.txt", "remote\n");
+        yield* git(updater, ["add", "remote.txt"]);
+        yield* git(updater, ["commit", "-m", "remote commit"]);
+        yield* git(updater, ["push", "origin", initialBranch]);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const cachedStatus = yield* driver.statusDetailsRemote(cwd, {
+          refreshUpstream: false,
+        });
+        const refreshedStatus = yield* driver.statusDetailsRemote(cwd);
+
+        assert.equal(cachedStatus.behindCount, 0);
+        assert.equal(refreshedStatus.behindCount, 1);
+      }),
+    );
+
     it.effect("uses origin HEAD for default-branch detection with a non-origin upstream", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -216,7 +280,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("disables SSH askpass for background upstream status fetches", () =>
+    it.effect("makes background upstream status fetches non-interactive", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const tempDir = yield* makeTmpDir("git-vcs-driver-ssh-env-");
@@ -225,15 +289,26 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const pathService = yield* Path.Path;
         const sshLogPath = pathService.join(tempDir, "ssh-env.txt");
         const sshWrapperPath = pathService.join(tempDir, "ssh-wrapper.sh");
-        const previousGitSsh = process.env.GIT_SSH;
-        const previousAskpassRequire = process.env.SSH_ASKPASS_REQUIRE;
-        const previousAskpassLog = process.env.T3_TEST_SSH_ASKPASS_LOG;
+        const envKeys = [
+          "GCM_INTERACTIVE",
+          "GIT_ASKPASS",
+          "GIT_SSH",
+          "GIT_TERMINAL_PROMPT",
+          "SSH_ASKPASS",
+          "SSH_ASKPASS_REQUIRE",
+          "T3_TEST_SSH_ASKPASS_LOG",
+        ] as const;
+        const previousEnv = new Map(envKeys.map((key) => [key, process.env[key]]));
 
         yield* fileSystem.writeFileString(
           sshWrapperPath,
           [
             "#!/bin/sh",
-            'printf "%s\\n" "${SSH_ASKPASS_REQUIRE:-}" > "$T3_TEST_SSH_ASKPASS_LOG"',
+            'printf "GCM_INTERACTIVE=%s\\n" "${GCM_INTERACTIVE:-}" > "$T3_TEST_SSH_ASKPASS_LOG"',
+            'printf "GIT_ASKPASS=%s\\n" "${GIT_ASKPASS:-}" >> "$T3_TEST_SSH_ASKPASS_LOG"',
+            'printf "GIT_TERMINAL_PROMPT=%s\\n" "${GIT_TERMINAL_PROMPT:-}" >> "$T3_TEST_SSH_ASKPASS_LOG"',
+            'printf "SSH_ASKPASS=%s\\n" "${SSH_ASKPASS:-}" >> "$T3_TEST_SSH_ASKPASS_LOG"',
+            'printf "SSH_ASKPASS_REQUIRE=%s\\n" "${SSH_ASKPASS_REQUIRE:-}" >> "$T3_TEST_SSH_ASKPASS_LOG"',
             "exit 1",
             "",
           ].join("\n"),
@@ -245,29 +320,32 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
 
         yield* Effect.gen(function* () {
           process.env.GIT_SSH = sshWrapperPath;
+          process.env.GCM_INTERACTIVE = "always";
+          process.env.GIT_ASKPASS = "git-askpass";
+          process.env.GIT_TERMINAL_PROMPT = "1";
+          process.env.SSH_ASKPASS = "ssh-askpass";
           process.env.SSH_ASKPASS_REQUIRE = "force";
           process.env.T3_TEST_SSH_ASKPASS_LOG = sshLogPath;
 
           yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
 
-          assert.equal((yield* fileSystem.readFileString(sshLogPath)).trim(), "never");
+          assert.deepEqual((yield* fileSystem.readFileString(sshLogPath)).trim().split(/\r?\n/), [
+            "GCM_INTERACTIVE=never",
+            "GIT_ASKPASS=",
+            "GIT_TERMINAL_PROMPT=0",
+            "SSH_ASKPASS=",
+            "SSH_ASKPASS_REQUIRE=never",
+          ]);
         }).pipe(
           Effect.ensuring(
             Effect.sync(() => {
-              if (previousGitSsh === undefined) {
-                delete process.env.GIT_SSH;
-              } else {
-                process.env.GIT_SSH = previousGitSsh;
-              }
-              if (previousAskpassRequire === undefined) {
-                delete process.env.SSH_ASKPASS_REQUIRE;
-              } else {
-                process.env.SSH_ASKPASS_REQUIRE = previousAskpassRequire;
-              }
-              if (previousAskpassLog === undefined) {
-                delete process.env.T3_TEST_SSH_ASKPASS_LOG;
-              } else {
-                process.env.T3_TEST_SSH_ASKPASS_LOG = previousAskpassLog;
+              for (const key of envKeys) {
+                const previous = previousEnv.get(key);
+                if (previous === undefined) {
+                  delete process.env[key];
+                } else {
+                  process.env[key] = previous;
+                }
               }
             }),
           ),
@@ -299,6 +377,44 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("refName operations", () => {
+    it.effect("optionally includes remote refs that match local branches", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const deduplicated = yield* driver.listRefs({ cwd });
+        assert.equal(
+          deduplicated.refs.some((ref) => ref.name === `origin/${initialBranch}`),
+          false,
+        );
+
+        const complete = yield* driver.listRefs({ cwd, includeMatchingRemoteRefs: true });
+        assert.equal(
+          complete.refs.some((ref) => ref.name === initialBranch),
+          true,
+        );
+        assert.equal(
+          complete.refs.some((ref) => ref.name === `origin/${initialBranch}`),
+          true,
+        );
+
+        const remoteOnly = yield* driver.listRefs({
+          cwd,
+          includeMatchingRemoteRefs: true,
+          refKind: "remote",
+          limit: 1,
+        });
+        assert.equal(remoteOnly.refs.length, 1);
+        assert.equal(remoteOnly.refs[0]?.name, `origin/${initialBranch}`);
+        assert.equal(remoteOnly.refs[0]?.isRemote, true);
+      }),
+    );
+
     it.effect("creates, checks out, renames, and lists refs", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -399,6 +515,69 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("remote operations", () => {
+    it.effect("creates a worktree from the latest fetched remote commit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        const peer = yield* makeTmpDir("git-peer-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(remote, ["symbolic-ref", "HEAD", `refs/heads/${initialBranch}`]);
+        const beforeFetch = yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]);
+
+        yield* git(peer, ["clone", remote, "."]);
+        yield* git(peer, ["config", "user.email", "test@test.com"]);
+        yield* git(peer, ["config", "user.name", "Test"]);
+        yield* writeTextFile(peer, "remote-change.txt", "remote\n");
+        yield* git(peer, ["add", "remote-change.txt"]);
+        yield* git(peer, ["commit", "-m", "remote change"]);
+        yield* git(peer, ["push", "origin", initialBranch]);
+        const remoteHead = yield* git(peer, ["rev-parse", "HEAD"]);
+        assert.notEqual(beforeFetch, remoteHead);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.fetchRemote({ cwd, remoteName: "origin" });
+
+        const resolvedBase = yield* driver.resolveRemoteTrackingCommit({
+          cwd,
+          refName: initialBranch,
+          fallbackRemoteName: "origin",
+        });
+        const explicitlyResolvedBase = yield* driver.resolveRemoteTrackingCommit({
+          cwd,
+          refName: `origin/${initialBranch}`,
+          fallbackRemoteName: "origin",
+        });
+
+        assert.deepEqual(resolvedBase, {
+          commitSha: remoteHead,
+          remoteRefName: `origin/${initialBranch}`,
+        });
+        assert.deepEqual(explicitlyResolvedBase, resolvedBase);
+        assert.equal(yield* git(cwd, ["rev-parse", initialBranch]), beforeFetch);
+
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-fetched-worktrees-"),
+          "fetched-origin",
+        );
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: resolvedBase.commitSha,
+          newRefName: "t3code/fetched-origin",
+        });
+
+        assert.equal(yield* git(worktreePath, ["rev-parse", "HEAD"]), remoteHead);
+        assert.equal(
+          yield* driver.readConfigValue(worktreePath, "branch.t3code/fetched-origin.remote"),
+          null,
+        );
+      }),
+    );
+
     it.effect("pushes with upstream setup and skips when already up to date", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

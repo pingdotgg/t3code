@@ -9,12 +9,12 @@ import {
   type GitActionRequestInput,
   requiresDefaultBranchConfirmation,
   resolveQuickAction,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/state/vcs";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import Stack from "expo-router/stack";
 import { useCallback, useMemo } from "react";
 import { Alert, Linking } from "react-native";
-import { buildThreadReviewRoutePath } from "../../lib/routes";
+import { buildThreadFilesNavigation, buildThreadReviewRoutePath } from "../../lib/routes";
 import {
   basename,
   getTerminalStatusLabel,
@@ -69,6 +69,7 @@ export function ThreadGitControls(props: {
   readonly gitStatus: VcsStatusResult | null;
   readonly gitOperationLabel: string | null;
   readonly canOpenTerminal: boolean;
+  readonly canOpenFiles: boolean;
   readonly projectScripts: ReadonlyArray<ProjectScript>;
   readonly terminalSessions: ReadonlyArray<TerminalMenuSession>;
   readonly onOpenTerminal: (terminalId?: string | null) => void;
@@ -258,6 +259,14 @@ export function ThreadGitControls(props: {
           subtitle="Turn diffs and worktree changes"
         >
           <Stack.Toolbar.Label>Review changes</Stack.Toolbar.Label>
+        </Stack.Toolbar.MenuAction>
+        <Stack.Toolbar.MenuAction
+          icon="folder"
+          disabled={!props.canOpenFiles}
+          onPress={() => router.push(buildThreadFilesNavigation({ environmentId, threadId }))}
+          subtitle="Browse this workspace"
+        >
+          <Stack.Toolbar.Label>Files</Stack.Toolbar.Label>
         </Stack.Toolbar.MenuAction>
         <Stack.Toolbar.MenuAction
           icon="ellipsis.circle"

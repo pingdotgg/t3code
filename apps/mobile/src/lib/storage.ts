@@ -1,9 +1,7 @@
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as SecureStore from "expo-secure-store";
-import { EnvironmentId, OrchestrationShellSnapshot } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 
 import {
   isRelayManagedConnection,
@@ -14,28 +12,11 @@ import {
 const CONNECTIONS_KEY = "t3code.connections";
 const PREFERENCES_KEY = "t3code.preferences";
 const AGENT_AWARENESS_DEVICE_ID_KEY = "t3code.agent-awareness.device-id";
-const SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION = 1;
-const SHELL_SNAPSHOT_CACHE_DIRECTORY = "shell-snapshots";
 
-export interface CachedShellSnapshot {
-  readonly schemaVersion: typeof SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION;
-  readonly environmentId: EnvironmentId;
-  readonly snapshotReceivedAt: string;
-  readonly snapshot: OrchestrationShellSnapshot;
-}
-
-export interface MobilePreferences {
+export interface Preferences {
   readonly liveActivitiesEnabled?: boolean;
   readonly terminalFontSize?: number;
 }
-
-const CachedShellSnapshotSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION),
-  environmentId: EnvironmentId,
-  snapshotReceivedAt: Schema.String,
-  snapshot: OrchestrationShellSnapshot,
-});
-const decodeCachedShellSnapshot = Schema.decodeUnknownOption(CachedShellSnapshotSchema);
 
 async function readStorageItem(key: string): Promise<string | null> {
   return await SecureStore.getItemAsync(key);
@@ -55,77 +36,6 @@ async function readJsonStorageItem<T>(key: string): Promise<T | null> {
     return JSON.parse(raw) as T;
   } catch {
     return null;
-  }
-}
-
-function cachedShellSnapshotFileName(environmentId: EnvironmentId): string {
-  return `${encodeURIComponent(environmentId)}.json`;
-}
-
-async function getShellSnapshotCacheDirectory() {
-  const { Directory, Paths } = await import("expo-file-system");
-  const directory = new Directory(Paths.document, SHELL_SNAPSHOT_CACHE_DIRECTORY);
-  directory.create({ idempotent: true, intermediates: true });
-  return directory;
-}
-
-export async function loadCachedShellSnapshot(
-  environmentId: EnvironmentId,
-): Promise<CachedShellSnapshot | null> {
-  try {
-    const { File } = await import("expo-file-system");
-    const directory = await getShellSnapshotCacheDirectory();
-    const file = new File(directory, cachedShellSnapshotFileName(environmentId));
-    if (!file.exists) {
-      return null;
-    }
-
-    const parsed = JSON.parse(await file.text()) as unknown;
-    const decoded = decodeCachedShellSnapshot(parsed);
-    if (Option.isNone(decoded) || decoded.value.environmentId !== environmentId) {
-      return null;
-    }
-
-    return decoded.value;
-  } catch {
-    return null;
-  }
-}
-
-export async function saveCachedShellSnapshot(
-  environmentId: EnvironmentId,
-  snapshot: OrchestrationShellSnapshot,
-): Promise<void> {
-  try {
-    const { File } = await import("expo-file-system");
-    const directory = await getShellSnapshotCacheDirectory();
-    const file = new File(directory, cachedShellSnapshotFileName(environmentId));
-    const document: CachedShellSnapshot = {
-      schemaVersion: SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION,
-      environmentId,
-      snapshotReceivedAt: new Date().toISOString(),
-      snapshot,
-    };
-
-    if (!file.exists) {
-      file.create({ intermediates: true, overwrite: true });
-    }
-    file.write(JSON.stringify(document));
-  } catch {
-    // Cache persistence is best-effort and should never block live data.
-  }
-}
-
-export async function clearCachedShellSnapshot(environmentId: EnvironmentId): Promise<void> {
-  try {
-    const { File } = await import("expo-file-system");
-    const directory = await getShellSnapshotCacheDirectory();
-    const file = new File(directory, cachedShellSnapshotFileName(environmentId));
-    if (file.exists) {
-      file.delete();
-    }
-  } catch {
-    // Ignore cache cleanup failures.
   }
 }
 
@@ -169,8 +79,8 @@ export async function clearSavedConnection(environmentId: EnvironmentId): Promis
   await writeStorageItem(CONNECTIONS_KEY, JSON.stringify({ connections: next }));
 }
 
-export async function loadPreferences(): Promise<MobilePreferences> {
-  const parsed = await readJsonStorageItem<MobilePreferences>(PREFERENCES_KEY);
+export async function loadPreferences(): Promise<Preferences> {
+  const parsed = await readJsonStorageItem<Preferences>(PREFERENCES_KEY);
   if (!parsed || typeof parsed !== "object") {
     return {};
   }
@@ -190,11 +100,9 @@ export async function loadPreferences(): Promise<MobilePreferences> {
   return preferences;
 }
 
-export async function savePreferencesPatch(
-  patch: Partial<MobilePreferences>,
-): Promise<MobilePreferences> {
+export async function savePreferencesPatch(patch: Partial<Preferences>): Promise<Preferences> {
   const current = await loadPreferences();
-  const next: MobilePreferences = {
+  const next: Preferences = {
     ...current,
     ...patch,
   };
