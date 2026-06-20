@@ -13,12 +13,14 @@ import { useKeyBindings } from "../hooks/useKeyBindings.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore } from "../store.ts";
 import { usePalette } from "../theme.ts";
+import { currentModelIndex, type ModelOption } from "../models.ts";
 import { revertableCheckpoints } from "../timeline.ts";
 import { buildUserInputAnswers, derivePendingUserInputs } from "../userInput.ts";
 import { buildRows, selectionEquals } from "./Sidebar.logic.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import { type DiffStatus, DiffViewer } from "./DiffViewer.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
+import { ModelPicker, type ModelPickerStatus } from "./ModelPicker.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { RevertMenu, ThreadActionsMenu } from "./ThreadActionsMenu.tsx";
 import { UserInputForm } from "./UserInputForm.tsx";
@@ -70,6 +72,11 @@ export function ChatView({
   const [diffStatus, setDiffStatus] = React.useState<DiffStatus>("loading");
   const [diffText, setDiffText] = React.useState("");
   const diffScrollRef = React.useRef<ScrollBoxRenderable | null>(null);
+  // Model picker (^K → m): fetched lazily on open.
+  const [modelOpen, setModelOpen] = React.useState(false);
+  const [modelIndex, setModelIndex] = React.useState(0);
+  const [modelStatus, setModelStatus] = React.useState<ModelPickerStatus>("loading");
+  const [modelOptions, setModelOptions] = React.useState<ModelOption[]>([]);
   // Pending user-input form state.
   const [userInputDeferred, setUserInputDeferred] = React.useState(false);
   const [uiQuestionIndex, setUiQuestionIndex] = React.useState(0);
@@ -137,6 +144,27 @@ export function ChatView({
       cancelled = true;
     };
   }, [client, diffOpen, detail?.id, diffTurnCount]);
+
+  // Fetch the model list when the picker opens, seeding the cursor on the current model.
+  React.useEffect(() => {
+    if (!modelOpen) return;
+    let cancelled = false;
+    setModelStatus("loading");
+    void client
+      .listModels()
+      .then((options) => {
+        if (cancelled) return;
+        setModelOptions(options);
+        setModelStatus(options.length > 0 ? "ready" : "empty");
+        setModelIndex(currentModelIndex(options, detail?.modelSelection ?? null));
+      })
+      .catch(() => {
+        if (!cancelled) setModelStatus("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, modelOpen, detail?.modelSelection]);
 
   const pendingUserInput = React.useMemo(
     () => (detail ? (derivePendingUserInputs(detail.activities)[0] ?? null) : null),
@@ -291,7 +319,9 @@ export function ChatView({
       ? "terminal"
       : diffOpen
         ? "diff"
-        : overlay === "actions"
+        : modelOpen
+          ? "model"
+          : overlay === "actions"
         ? "actions"
         : overlay === "confirmDelete"
           ? "confirmDelete"
@@ -504,6 +534,26 @@ export function ChatView({
     onDiffScrollUp: () => diffScrollRef.current?.scrollBy({ x: 0, y: -SCROLL_STEP }),
     onDiffScrollDown: () => diffScrollRef.current?.scrollBy({ x: 0, y: SCROLL_STEP }),
     onDiffClose: () => setDiffOpen(false),
+    onActionModel: () => {
+      if (!detail) return;
+      setOverlay("none");
+      setModelOptions([]);
+      setModelIndex(0);
+      setModelOpen(true);
+    },
+    onModelPrev: () =>
+      setModelIndex((index) => (index <= 0 ? Math.max(modelOptions.length - 1, 0) : index - 1)),
+    onModelNext: () => setModelIndex((index) => (index + 1) % Math.max(modelOptions.length, 1)),
+    onModelConfirm: () => {
+      const option = modelOptions[Math.min(modelIndex, modelOptions.length - 1)];
+      setModelOpen(false);
+      if (!detail || !option) return;
+      void client
+        .setModel(detail.id, option.instanceId, option.model)
+        .catch((error) => store.setStatus(`model change failed: ${String(error)}`));
+      store.setStatus(`Model → ${option.label}`);
+    },
+    onModelClose: () => setModelOpen(false),
     onCloseOverlay: () => setOverlay("none"),
     onConfirmDelete: () => {
       if (!detail) {
@@ -629,7 +679,16 @@ export function ChatView({
         />
       ) : null}
 
-      {overlay === "revert" && detail ? (
+      {modelOpen && detail ? (
+        <ModelPicker
+          options={modelOptions}
+          selected={Math.min(modelIndex, Math.max(modelOptions.length - 1, 0))}
+          status={modelStatus}
+          currentInstanceId={detail.modelSelection?.instanceId ?? null}
+          currentModel={detail.modelSelection?.model ?? null}
+          width={chatWidth}
+        />
+      ) : overlay === "revert" && detail ? (
         <RevertMenu checkpoints={checkpoints} selected={Math.min(revertIndex, checkpoints.length - 1)} />
       ) : (overlay === "actions" || overlay === "confirmDelete") && detail ? (
         <ThreadActionsMenu
@@ -656,7 +715,7 @@ export function ChatView({
           projectName={projects[activeProjectIndex]?.title ?? "(none)"}
           interactionMode={focus === "new" ? newInteractionMode : (detail?.interactionMode ?? "default")}
           newRuntimeMode={newRuntimeMode}
-          inputFocused={!terminalFocused && !diffOpen}
+          inputFocused={!terminalFocused && !diffOpen && !modelOpen}
           composerEpoch={composerEpoch}
           onReplyInput={setReply}
           onReplySubmit={sendReply}

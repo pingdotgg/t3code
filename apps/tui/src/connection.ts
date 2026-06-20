@@ -12,6 +12,7 @@ import {
   OrchestrationProposedPlanId,
   type ProjectId,
   type ProviderApprovalDecision,
+  ProviderInstanceId,
   type ProviderInteractionMode,
   type RuntimeMode,
   type TerminalAttachStreamEvent,
@@ -43,6 +44,8 @@ import {
 } from "@t3tools/client-runtime/operations";
 import { request, rpcSessionFactoryLayer, RpcSessionFactory, subscribe } from "@t3tools/client-runtime/rpc";
 import type { RpcSession } from "@t3tools/client-runtime/rpc";
+
+import { flattenModelOptions, type ModelOption } from "./models.ts";
 import { EnvironmentCacheStore } from "@t3tools/client-runtime/platform";
 import {
   type EnvironmentShellState,
@@ -319,6 +322,9 @@ export interface TuiClient {
   readonly revertCheckpoint: (threadId: ThreadId, turnCount: number) => Promise<void>;
   /** Fetch the unified diff for the turn that produced the given checkpoint. */
   readonly getTurnDiff: (threadId: ThreadId, toTurnCount: number) => Promise<string>;
+  /** The selectable models reported by the server's configured providers. */
+  readonly listModels: () => Promise<ModelOption[]>;
+  readonly setModel: (threadId: ThreadId, instanceId: string, model: string) => Promise<void>;
   readonly terminalWrite: (
     threadId: ThreadId,
     terminalId: string,
@@ -637,6 +643,24 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
           fromTurnCount: NonNegativeInt.make(Math.max(0, toTurnCount - 1)),
           toTurnCount: NonNegativeInt.make(toTurnCount),
         }).pipe(Effect.map((result) => result.diff)),
+      ),
+
+    listModels: () =>
+      runtime.runPromise(
+        request(WS_METHODS.serverGetConfig, {}).pipe(
+          Effect.map((config) => flattenModelOptions(config.providers)),
+        ),
+      ),
+
+    setModel: (threadId, instanceId, model) =>
+      runtime.runPromise(
+        updateThreadMetadata({
+          threadId,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make(instanceId),
+            model: TrimmedNonEmptyString.make(model),
+          },
+        }).pipe(Effect.asVoid),
       ),
 
     terminalWrite: (threadId, terminalId, data) =>

@@ -19,6 +19,7 @@ export type KeyBindingMode =
   | "confirmDelete"
   | "revert"
   | "diff"
+  | "model"
   | "userInput"
   | "new"
   | "rename"
@@ -42,7 +43,13 @@ export interface KeyBindingActions {
   readonly onActionStop: () => void;
   readonly onActionRevert: () => void;
   readonly onActionDiff: () => void;
+  readonly onActionModel: () => void;
   readonly onCloseOverlay: () => void;
+  // Model picker
+  readonly onModelPrev: () => void;
+  readonly onModelNext: () => void;
+  readonly onModelConfirm: () => void;
+  readonly onModelClose: () => void;
   // Turn diff viewer
   readonly onDiffPrev: () => void;
   readonly onDiffNext: () => void;
@@ -113,7 +120,15 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       if (key.name === "s") return actions.onActionStop();
       if (key.name === "v") return actions.onActionRevert();
       if (key.name === "g") return actions.onActionDiff();
+      if (key.name === "m") return actions.onActionModel();
       if (key.name === "escape") return actions.onCloseOverlay();
+      return;
+    }
+    if (actions.mode === "model") {
+      if (key.name === "up") return actions.onModelPrev();
+      if (key.name === "down") return actions.onModelNext();
+      if (key.name === "return" || key.name === "enter") return actions.onModelConfirm();
+      if (key.name === "escape") return actions.onModelClose();
       return;
     }
     if (actions.mode === "diff") {

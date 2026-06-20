@@ -12,18 +12,13 @@ import { describe, it } from "bun:test";
 // proposed-plan card, implement-plan (^Y, same thread via sourceProposedPlan),
 // context-window meter, cycle pending approvals (↑/↓), checkpoint revert (^K → v),
 // plan/build badge on the prompt, pending user-input form,
-// new-thread runtime-mode + plan/build options, turn diff viewer (^K → g).
+// new-thread runtime-mode + plan/build options, turn diff viewer (^K → g),
+// model/provider picker (^K → m, via server config + updateThreadMetadata).
 
 describe.skip("Backlog — Low/Med: new-thread branch / worktree fields", () => {
   it("Given the new-thread dialog, when a branch/worktree is entered, then createThread receives them", () => {
     // Runtime mode + plan/build are shipped (^O / ^B in the dialog). Branch and
     // worktree are free-text paths that need a multi-field, focus-switching form.
-  });
-});
-
-describe.skip("Backlog — Med/High: model / provider picker", () => {
-  it("Given a thread, when the model is changed, then the new model selection is applied", () => {
-    // Needs a provider/model registry — not present in the subscribed shell.
   });
 });
 
