@@ -44,6 +44,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as ServerConfig from "./config.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
+import { causeErrorTag } from "@t3tools/shared/observability";
 import {
   DEFAULT_KEYBINDINGS,
   DEFAULT_RESOLVED_KEYBINDINGS,
@@ -186,23 +187,53 @@ export interface KeybindingsChangeEvent {
   readonly issues: readonly ServerConfigIssue[];
 }
 
-function trimIssueMessage(message: string): string {
-  const trimmed = message.trim();
-  return trimmed.length > 0 ? trimmed : "Invalid keybindings configuration.";
-}
+const MALFORMED_KEYBINDINGS_CONFIG_MESSAGE =
+  "Expected the keybindings configuration to be a JSON array.";
+const INVALID_KEYBINDING_ENTRY_MESSAGE =
+  "Expected a keybinding entry with key, command, and optional when fields.";
+const INVALID_KEYBINDING_RULE_MESSAGE =
+  "The keybinding entry contains an invalid shortcut or when expression.";
 
-function malformedConfigIssue(detail: string): ServerConfigIssue {
+function keybindingsCauseLogAttributes(cause: Cause.Cause<unknown>) {
   return {
-    kind: "keybindings.malformed-config",
-    message: trimIssueMessage(detail),
+    errorTag: causeErrorTag(cause),
+    causeReasonCount: cause.reasons.length,
+    causeFailureCount: cause.reasons.filter(Cause.isFailReason).length,
+    causeDefectCount: cause.reasons.filter(Cause.isDieReason).length,
+    causeInterruptionCount: cause.reasons.filter(Cause.isInterruptReason).length,
   };
 }
 
-function invalidEntryIssue(index: number, detail: string): ServerConfigIssue {
+function keybindingsValidationInputLogAttributes(value: unknown) {
+  if (typeof value === "string") {
+    return { validationInputKind: "string", validationInputSize: value.length };
+  }
+  if (Array.isArray(value)) {
+    return { validationInputKind: "array", validationInputSize: value.length };
+  }
+  if (typeof value === "object" && value !== null) {
+    return {
+      validationInputKind: "object",
+      validationInputSize: Object.keys(value).length,
+      validationHasKeyField: Object.hasOwn(value, "key"),
+      validationHasCommandField: Object.hasOwn(value, "command"),
+      validationHasWhenField: Object.hasOwn(value, "when"),
+    };
+  }
+  return { validationInputKind: value === null ? "null" : typeof value };
+}
+
+function keybindingsValidationLogAttributes(input: {
+  readonly stage: "document" | "entry-schema" | "resolved-rule";
+  readonly value: unknown;
+  readonly cause: Cause.Cause<unknown>;
+  readonly index?: number;
+}) {
   return {
-    kind: "keybindings.invalid-entry",
-    index,
-    message: trimIssueMessage(detail),
+    validationStage: input.stage,
+    ...(input.index === undefined ? {} : { entryIndex: input.index }),
+    ...keybindingsValidationInputLogAttributes(input.value),
+    ...keybindingsCauseLogAttributes(input.cause),
   };
 }
 
@@ -306,7 +337,7 @@ const make = Effect.gen(function* () {
       (cause) =>
         new KeybindingsConfigError({
           configPath: keybindingsConfigPath,
-          detail: "failed to access keybindings config",
+          operation: "access",
           cause,
         }),
     ),
@@ -317,7 +348,7 @@ const make = Effect.gen(function* () {
       (cause) =>
         new KeybindingsConfigError({
           configPath: keybindingsConfigPath,
-          detail: "failed to read keybindings config",
+          operation: "read",
           cause,
         }),
     ),
@@ -337,20 +368,24 @@ const make = Effect.gen(function* () {
         (cause) =>
           new KeybindingsConfigError({
             configPath: keybindingsConfigPath,
-            detail: "expected JSON array",
+            operation: "decode",
             cause,
           }),
       ),
     );
 
-    return yield* Effect.forEach(rawConfig, (entry) =>
+    return yield* Effect.forEach(rawConfig, (entry, index) =>
       Effect.gen(function* () {
         const decodedRule = decodeKeybindingRuleExit(entry);
         if (decodedRule._tag === "Failure") {
           yield* Effect.logWarning("ignoring invalid keybinding entry", {
             path: keybindingsConfigPath,
-            entry,
-            error: Cause.pretty(decodedRule.cause),
+            ...keybindingsValidationLogAttributes({
+              stage: "entry-schema",
+              value: entry,
+              cause: decodedRule.cause,
+              index,
+            }),
           });
           return null;
         }
@@ -358,8 +393,12 @@ const make = Effect.gen(function* () {
         if (resolved._tag === "Failure") {
           yield* Effect.logWarning("ignoring invalid keybinding entry", {
             path: keybindingsConfigPath,
-            entry,
-            error: Cause.pretty(resolved.cause),
+            ...keybindingsValidationLogAttributes({
+              stage: "resolved-rule",
+              value: entry,
+              cause: resolved.cause,
+              index,
+            }),
           });
           return null;
         }
@@ -382,10 +421,22 @@ const make = Effect.gen(function* () {
     const rawConfig = yield* readRawConfig;
     const decodedEntries = decodeRawKeybindingsEntriesExit(rawConfig);
     if (decodedEntries._tag === "Failure") {
-      const detail = `expected JSON array (${Cause.pretty(decodedEntries.cause)})`;
+      yield* Effect.logWarning("ignoring malformed keybindings config", {
+        path: keybindingsConfigPath,
+        ...keybindingsValidationLogAttributes({
+          stage: "document",
+          value: rawConfig,
+          cause: decodedEntries.cause,
+        }),
+      });
       return {
         keybindings: [],
-        issues: [malformedConfigIssue(detail)],
+        issues: [
+          {
+            kind: "keybindings.malformed-config",
+            message: MALFORMED_KEYBINDINGS_CONFIG_MESSAGE,
+          },
+        ],
       };
     }
 
@@ -394,26 +445,38 @@ const make = Effect.gen(function* () {
     for (const [index, entry] of decodedEntries.value.entries()) {
       const decodedRule = decodeKeybindingRuleExit(entry);
       if (decodedRule._tag === "Failure") {
-        const detail = Cause.pretty(decodedRule.cause);
-        issues.push(invalidEntryIssue(index, detail));
+        issues.push({
+          kind: "keybindings.invalid-entry",
+          index,
+          message: INVALID_KEYBINDING_ENTRY_MESSAGE,
+        });
         yield* Effect.logWarning("ignoring invalid keybinding entry", {
           path: keybindingsConfigPath,
-          index,
-          entry,
-          error: detail,
+          ...keybindingsValidationLogAttributes({
+            stage: "entry-schema",
+            value: entry,
+            cause: decodedRule.cause,
+            index,
+          }),
         });
         continue;
       }
 
       const resolvedRule = decodeResolvedKeybindingFromConfigExit(decodedRule.value);
       if (resolvedRule._tag === "Failure") {
-        const detail = Cause.pretty(resolvedRule.cause);
-        issues.push(invalidEntryIssue(index, detail));
+        issues.push({
+          kind: "keybindings.invalid-entry",
+          index,
+          message: INVALID_KEYBINDING_RULE_MESSAGE,
+        });
         yield* Effect.logWarning("ignoring invalid keybinding entry", {
           path: keybindingsConfigPath,
-          index,
-          entry,
-          error: detail,
+          ...keybindingsValidationLogAttributes({
+            stage: "resolved-rule",
+            value: entry,
+            cause: resolvedRule.cause,
+            index,
+          }),
         });
         continue;
       }
@@ -425,6 +488,14 @@ const make = Effect.gen(function* () {
 
   const writeConfigAtomically = (rules: readonly KeybindingRule[]) => {
     return encodeKeybindingsConfigPrettyJson(rules).pipe(
+      Effect.mapError(
+        (cause) =>
+          new KeybindingsConfigError({
+            configPath: keybindingsConfigPath,
+            operation: "encode",
+            cause,
+          }),
+      ),
       Effect.map((encoded) => `${encoded}\n`),
       Effect.flatMap((encoded) =>
         writeFileStringAtomically({
@@ -433,15 +504,15 @@ const make = Effect.gen(function* () {
         }).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
+          Effect.mapError(
+            (cause) =>
+              new KeybindingsConfigError({
+                configPath: keybindingsConfigPath,
+                operation: "write",
+                cause,
+              }),
+          ),
         ),
-      ),
-      Effect.mapError(
-        (cause) =>
-          new KeybindingsConfigError({
-            configPath: keybindingsConfigPath,
-            detail: "failed to write keybindings config",
-            cause,
-          }),
       ),
     );
   };
@@ -487,7 +558,13 @@ const make = Effect.gen(function* () {
           "skipping startup keybindings default sync because config has issues",
           {
             path: keybindingsConfigPath,
-            issues: runtimeConfig.issues,
+            issueCount: runtimeConfig.issues.length,
+            malformedConfigIssueCount: runtimeConfig.issues.filter(
+              (issue) => issue.kind === "keybindings.malformed-config",
+            ).length,
+            invalidEntryIssueCount: runtimeConfig.issues.filter(
+              (issue) => issue.kind === "keybindings.invalid-entry",
+            ).length,
           },
         );
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
@@ -499,8 +576,7 @@ const make = Effect.gen(function* () {
       const shortcutConflictWarnings: Array<{
         defaultCommand: KeybindingRule["command"];
         conflictingCommand: KeybindingRule["command"];
-        key: string;
-        when: string | null;
+        hasWhenContext: boolean;
       }> = [];
       for (const defaultRule of DEFAULT_KEYBINDINGS) {
         if (existingCommands.has(defaultRule.command)) {
@@ -513,8 +589,7 @@ const make = Effect.gen(function* () {
           shortcutConflictWarnings.push({
             defaultCommand: defaultRule.command,
             conflictingCommand: conflictingEntry.command,
-            key: defaultRule.key,
-            when: defaultRule.when ?? null,
+            hasWhenContext: defaultRule.when !== undefined,
           });
           continue;
         }
@@ -525,8 +600,7 @@ const make = Effect.gen(function* () {
           path: keybindingsConfigPath,
           defaultCommand: conflict.defaultCommand,
           conflictingCommand: conflict.conflictingCommand,
-          key: conflict.key,
-          when: conflict.when,
+          hasWhenContext: conflict.hasWhenContext,
           reason: "shortcut context already used by existing rule",
         });
       }
@@ -574,13 +648,22 @@ const make = Effect.gen(function* () {
         (cause) =>
           new KeybindingsConfigError({
             configPath: keybindingsConfigPath,
-            detail: "failed to prepare keybindings config directory",
+            operation: "prepare-directory",
             cause,
           }),
       ),
     );
 
-    const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
+    const revalidateAndEmitSafely = revalidateAndEmit.pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.void
+          : Effect.logWarning("keybindings config revalidation failed", {
+              path: keybindingsConfigPath,
+              ...keybindingsCauseLogAttributes(cause),
+            }),
+      ),
+    );
 
     // Debounce watch events so the file is fully written before we read it.
     // Editors emit multiple events per save (truncate, write, rename) and
@@ -597,7 +680,14 @@ const make = Effect.gen(function* () {
     );
 
     yield* Stream.runForEach(debouncedKeybindingsEvents, () => revalidateAndEmitSafely).pipe(
-      Effect.ignoreCause({ log: true }),
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.void
+          : Effect.logWarning("keybindings config watcher failed", {
+              path: keybindingsConfigPath,
+              ...keybindingsCauseLogAttributes(cause),
+            }),
+      ),
       Effect.forkIn(watcherScope),
       Effect.asVoid,
     );

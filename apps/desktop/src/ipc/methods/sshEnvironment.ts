@@ -2,7 +2,7 @@ import {
   bootstrapRemoteBearerSession,
   fetchRemoteSessionState,
   issueRemoteWebSocketTicket,
-  RemoteEnvironmentAuthUndeclaredStatusError,
+  isRemoteEnvironmentAuthUndeclaredStatusError,
   type RemoteEnvironmentAuthError,
 } from "@t3tools/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
@@ -52,10 +52,7 @@ const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidErro
 const isEnvironmentScopeRequiredError = Schema.is(EnvironmentScopeRequiredError);
 
 function readSshHttpStatus(cause: DesktopSshEnvironmentRequestCause): number | null {
-  if (
-    cause instanceof RemoteEnvironmentAuthUndeclaredStatusError ||
-    cause instanceof SshHttpBridgeError
-  ) {
+  if (isRemoteEnvironmentAuthUndeclaredStatusError(cause) || cause instanceof SshHttpBridgeError) {
     return cause.status ?? null;
   }
   if (isEnvironmentRequestInvalidError(cause)) {

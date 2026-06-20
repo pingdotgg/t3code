@@ -157,14 +157,21 @@ export const ResolvedKeybindingsConfig = Schema.Array(ResolvedKeybindingRule).ch
 export type ResolvedKeybindingsConfig = typeof ResolvedKeybindingsConfig.Type;
 
 export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsConfigError>()(
-  "KeybindingsConfigParseError",
+  "KeybindingsConfigError",
   {
     configPath: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
+    operation: Schema.Literals([
+      "access",
+      "read",
+      "decode",
+      "encode",
+      "write",
+      "prepare-directory",
+    ]),
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Unable to parse keybindings config at ${this.configPath}: ${this.detail}`;
+    return `Keybindings config operation '${this.operation}' failed at ${this.configPath}.`;
   }
 }

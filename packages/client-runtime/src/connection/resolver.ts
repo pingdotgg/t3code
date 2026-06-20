@@ -16,12 +16,7 @@ import {
   SshConnectionProfile,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
-import {
-  credentialMissingError,
-  environmentMismatchError,
-  mapManagedRelayError,
-  profileMissingError,
-} from "./errors.ts";
+import { mapManagedRelayError } from "./errors.ts";
 import type {
   BearerConnectionTarget,
   ConnectionTarget,
@@ -95,7 +90,14 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
   ) {
     const target = entry.target;
     const profile = yield* Option.match(entry.profile, {
-      onNone: () => Effect.fail(profileMissingError(target.connectionId)),
+      onNone: () =>
+        Effect.fail(
+          new ConnectionBlockedError({
+            reason: "configuration",
+            detail: `Connection profile ${target.connectionId} is unavailable.`,
+            connectionId: target.connectionId,
+          }),
+        ),
       onSome: Effect.succeed,
     });
     if (!isBearerProfile(profile)) {
@@ -105,21 +107,34 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
       });
     }
     if (profile.environmentId !== target.environmentId) {
-      return yield* environmentMismatchError({
-        expected: target.environmentId,
-        actual: profile.environmentId,
+      return yield* new ConnectionBlockedError({
+        reason: "configuration",
+        detail: `Connected environment ${profile.environmentId} does not match ${target.environmentId}.`,
+        expectedEnvironmentId: target.environmentId,
+        actualEnvironmentId: profile.environmentId,
       });
     }
     const credential = yield* credentials.get(target.connectionId).pipe(
       Effect.flatMap(
         Option.match({
-          onNone: () => Effect.fail(credentialMissingError(target.connectionId)),
+          onNone: () =>
+            Effect.fail(
+              new ConnectionBlockedError({
+                reason: "authentication",
+                detail: `Connection credential ${target.connectionId} is unavailable.`,
+                connectionId: target.connectionId,
+              }),
+            ),
           onSome: Effect.succeed,
         }),
       ),
     );
     if (!isBearerCredential(credential)) {
-      return yield* credentialMissingError(target.connectionId);
+      return yield* new ConnectionBlockedError({
+        reason: "authentication",
+        detail: `Connection credential ${target.connectionId} is unavailable.`,
+        connectionId: target.connectionId,
+      });
     }
     const authorized = yield* remote.authorizeBearer({
       expectedEnvironmentId: target.environmentId,
@@ -164,9 +179,11 @@ const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(f
             })
             .pipe(Effect.mapError(mapManagedRelayError));
           if (connected.environmentId !== target.environmentId) {
-            return yield* environmentMismatchError({
-              expected: target.environmentId,
-              actual: connected.environmentId,
+            return yield* new ConnectionBlockedError({
+              reason: "configuration",
+              detail: `Connected environment ${connected.environmentId} does not match ${target.environmentId}.`,
+              expectedEnvironmentId: target.environmentId,
+              actualEnvironmentId: connected.environmentId,
             });
           }
           return connected;
@@ -196,7 +213,14 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
   ) {
     const target = entry.target;
     const profile = yield* Option.match(entry.profile, {
-      onNone: () => Effect.fail(profileMissingError(target.connectionId)),
+      onNone: () =>
+        Effect.fail(
+          new ConnectionBlockedError({
+            reason: "configuration",
+            detail: `Connection profile ${target.connectionId} is unavailable.`,
+            connectionId: target.connectionId,
+          }),
+        ),
       onSome: Effect.succeed,
     });
     if (!isSshProfile(profile)) {
@@ -206,9 +230,11 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
       });
     }
     if (profile.environmentId !== target.environmentId) {
-      return yield* environmentMismatchError({
-        expected: target.environmentId,
-        actual: profile.environmentId,
+      return yield* new ConnectionBlockedError({
+        reason: "configuration",
+        detail: `Connected environment ${profile.environmentId} does not match ${target.environmentId}.`,
+        expectedEnvironmentId: target.environmentId,
+        actualEnvironmentId: profile.environmentId,
       });
     }
     const prepared = yield* ssh.prepare({
