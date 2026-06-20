@@ -1,16 +1,17 @@
 # more Code
 
-more Code is a minimal web GUI for coding agents (currently Codex, Claude, Cursor, and OpenCode, more coming soon).
+more Code is a minimal web GUI for coding agents (currently Codex, Claude, Cursor, Grok Build, and OpenCode, more coming soon).
 
 ## Installation
 
 > [!WARNING]
-> more Code currently supports Codex, Claude, Cursor, and OpenCode.
+> more Code currently supports Codex, Claude, Cursor, Grok Build, and OpenCode.
 > Install and authenticate at least one provider before use:
 >
 > - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
 > - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
 > - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `cursor-agent login`
+> - Grok Build: install [Grok CLI](https://x.ai/cli) and run `grok login`
 > - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
 
 ### Run without installing
