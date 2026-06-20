@@ -4,9 +4,9 @@ import * as Option from "effect/Option";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
-import * as BitbucketPullRequests from "./bitbucketPullRequests.ts";
+import type { NormalizedBitbucketPullRequestRecord } from "./bitbucketPullRequests.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
-import type * as SourceControlProviderDiscovery from "./SourceControlProviderDiscovery.ts";
+import type { SourceControlApiDiscoverySpec } from "./SourceControlProviderDiscovery.ts";
 
 function providerError(
   operation: string,
@@ -20,9 +20,7 @@ function providerError(
   });
 }
 
-function toChangeRequest(
-  summary: BitbucketPullRequests.NormalizedBitbucketPullRequestRecord,
-): ChangeRequest {
+function toChangeRequest(summary: NormalizedBitbucketPullRequestRecord): ChangeRequest {
   return {
     provider: "bitbucket",
     number: summary.number,
@@ -44,7 +42,7 @@ function toChangeRequest(
   };
 }
 
-export const make = Effect.fn("makeBitbucketSourceControlProvider")(function* () {
+export const make = Effect.gen(function* () {
   const bitbucket = yield* BitbucketApi.BitbucketApi;
 
   return SourceControlProvider.SourceControlProvider.of({
@@ -112,9 +110,9 @@ export const make = Effect.fn("makeBitbucketSourceControlProvider")(function* ()
   });
 });
 
-export const layer = Layer.effect(SourceControlProvider.SourceControlProvider, make());
+export const layer = Layer.effect(SourceControlProvider.SourceControlProvider, make);
 
-export const makeDiscovery = Effect.fn("makeBitbucketSourceControlProviderDiscovery")(function* () {
+export const makeDiscovery = Effect.gen(function* () {
   const bitbucket = yield* BitbucketApi.BitbucketApi;
 
   return {
@@ -124,5 +122,5 @@ export const makeDiscovery = Effect.fn("makeBitbucketSourceControlProviderDiscov
     installHint:
       "Set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN on the server (use a Bitbucket API token with pull request and repository scopes).",
     probeAuth: bitbucket.probeAuth,
-  } satisfies SourceControlProviderDiscovery.SourceControlApiDiscoverySpec;
+  } satisfies SourceControlApiDiscoverySpec;
 });

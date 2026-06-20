@@ -376,7 +376,7 @@ function createTextGeneration(
 }
 
 function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
-  service: GitHubCli.GitHubCliShape;
+  service: GitHubCli.GitHubCli["Service"];
   ghCalls: string[];
 } {
   const prListQueue = [...(scenario.prListSequence ?? [])];
@@ -388,7 +388,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   );
   const ghCalls: string[] = [];
 
-  const execute: GitHubCli.GitHubCliShape["execute"] = (input) => {
+  const execute: GitHubCli.GitHubCli["Service"]["execute"] = (input) => {
     const args = [...input.args];
     ghCalls.push(args.join(" "));
 
@@ -609,7 +609,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
 }
 
 function runStackedAction(
-  manager: GitManager.GitManagerShape,
+  manager: GitManager.GitManager["Service"],
   input: {
     cwd: string;
     action: "commit" | "push" | "create_pr" | "commit_push" | "commit_push_pr";
@@ -618,7 +618,7 @@ function runStackedAction(
     featureBranch?: boolean;
     filePaths?: readonly string[];
   },
-  options?: Parameters<GitManager.GitManagerShape["runStackedAction"]>[1],
+  options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
 ) {
   return manager.runStackedAction(
     {
@@ -630,14 +630,14 @@ function runStackedAction(
 }
 
 function resolvePullRequest(
-  manager: GitManager.GitManagerShape,
+  manager: GitManager.GitManager["Service"],
   input: { cwd: string; reference: string },
 ) {
   return manager.resolvePullRequest(input);
 }
 
 function preparePullRequestThread(
-  manager: GitManager.GitManagerShape,
+  manager: GitManager.GitManager["Service"],
   input: GitPreparePullRequestThreadInput,
 ) {
   return manager.preparePullRequestThread(input);
@@ -646,11 +646,11 @@ function preparePullRequestThread(
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
-  setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunnerShape;
+  setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
-  const serverConfigLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+  const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-git-manager-test-",
   });
 
@@ -663,7 +663,7 @@ function makeManager(input?: {
   );
   const sourceControlRegistryLayer = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
-    GitHubSourceControlProvider.make().pipe(
+    GitHubSourceControlProvider.make.pipe(
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           get: () => Effect.succeed(provider),
@@ -688,7 +688,7 @@ function makeManager(input?: {
     serverSettingsLayer,
   ).pipe(Layer.provideMerge(sourceControlRegistryLayer), Layer.provideMerge(NodeServices.layer));
 
-  return GitManager.makeGitManager().pipe(
+  return GitManager.make.pipe(
     Effect.provide(managerLayer),
     Effect.map((manager) => ({ manager, ghCalls })),
   );
@@ -697,9 +697,7 @@ function makeManager(input?: {
 const asThreadId = (threadId: string) => threadId as ThreadId;
 
 const GitManagerTestLayer = GitVcsDriver.layer.pipe(
-  Layer.provide(
-    ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-git-manager-test-" }),
-  ),
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-git-manager-test-" })),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provideMerge(NodeServices.layer),
 );

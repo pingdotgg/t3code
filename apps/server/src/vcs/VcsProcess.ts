@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Match from "effect/Match";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -10,8 +11,7 @@ import {
   VcsProcessSpawnError,
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
-import { ProcessRunner, layer as ProcessRunnerLive } from "../processRunner.ts";
-import * as Match from "effect/Match";
+import * as ProcessRunner from "../processRunner.ts";
 
 export interface VcsProcessInput {
   readonly operation: string;
@@ -35,13 +35,12 @@ export interface VcsProcessOutput {
   readonly stderrTruncated: boolean;
 }
 
-export interface VcsProcessShape {
-  readonly run: (input: VcsProcessInput) => Effect.Effect<VcsProcessOutput, VcsError>;
-}
-
-export class VcsProcess extends Context.Service<VcsProcess, VcsProcessShape>()(
-  "t3/vcs/VcsProcess",
-) {}
+export class VcsProcess extends Context.Service<
+  VcsProcess,
+  {
+    readonly run: (input: VcsProcessInput) => Effect.Effect<VcsProcessOutput, VcsError>;
+  }
+>()("t3/vcs/VcsProcess") {}
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
@@ -51,8 +50,8 @@ function commandLabel(command: string, args: ReadonlyArray<string>): string {
   return [command, ...args].join(" ");
 }
 
-export const make = Effect.fn("makeVcsProcess")(function* () {
-  const processRunner = yield* ProcessRunner;
+export const make = Effect.gen(function* () {
+  const processRunner = yield* ProcessRunner.ProcessRunner;
 
   const run = Effect.fn("VcsProcess.run")(function* (input: VcsProcessInput) {
     const label = commandLabel(input.command, input.args);
@@ -119,4 +118,4 @@ export const make = Effect.fn("makeVcsProcess")(function* () {
   return VcsProcess.of({ run });
 });
 
-export const layer = Layer.effect(VcsProcess, make()).pipe(Layer.provide(ProcessRunnerLive));
+export const layer = Layer.effect(VcsProcess, make).pipe(Layer.provide(ProcessRunner.layer));

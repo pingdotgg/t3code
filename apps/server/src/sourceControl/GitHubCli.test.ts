@@ -15,7 +15,7 @@ const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
   stderrTruncated: false,
 });
 
-const mockRun = vi.fn<VcsProcess.VcsProcessShape["run"]>();
+const mockRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
 
 const layer = GitHubCli.layer.pipe(
   Layer.provide(

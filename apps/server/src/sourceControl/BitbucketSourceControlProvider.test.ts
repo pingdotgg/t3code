@@ -6,8 +6,8 @@ import * as Option from "effect/Option";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as BitbucketSourceControlProvider from "./BitbucketSourceControlProvider.ts";
 
-function makeProvider(bitbucket: Partial<BitbucketApi.BitbucketApiShape>) {
-  return BitbucketSourceControlProvider.make().pipe(
+function makeProvider(bitbucket: Partial<BitbucketApi.BitbucketApi["Service"]>) {
+  return BitbucketSourceControlProvider.make.pipe(
     Effect.provide(Layer.mock(BitbucketApi.BitbucketApi)(bitbucket)),
   );
 }
@@ -53,7 +53,8 @@ it.effect("maps Bitbucket PR summaries into provider-neutral change requests", (
 
 it.effect("lists Bitbucket PRs through provider-neutral input names", () =>
   Effect.gen(function* () {
-    let listInput: Parameters<BitbucketApi.BitbucketApiShape["listPullRequests"]>[0] | null = null;
+    let listInput: Parameters<BitbucketApi.BitbucketApi["Service"]["listPullRequests"]>[0] | null =
+      null;
     const provider = yield* makeProvider({
       listPullRequests: (input) => {
         listInput = input;
@@ -79,8 +80,9 @@ it.effect("lists Bitbucket PRs through provider-neutral input names", () =>
 
 it.effect("creates Bitbucket PRs through provider-neutral input names", () =>
   Effect.gen(function* () {
-    let createInput: Parameters<BitbucketApi.BitbucketApiShape["createPullRequest"]>[0] | null =
-      null;
+    let createInput:
+      | Parameters<BitbucketApi.BitbucketApi["Service"]["createPullRequest"]>[0]
+      | null = null;
     const provider = yield* makeProvider({
       createPullRequest: (input) => {
         createInput = input;

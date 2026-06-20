@@ -21,7 +21,7 @@ const normalizeGitArgs = (args: ReadonlyArray<string>): ReadonlyArray<string> =>
 
 describe("VcsDriverRegistry", () => {
   it.effect("routes directly by VCS driver kind for non-repository workflows", () => {
-    const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make()).pipe(
+    const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
       Layer.provide(NodeServices.layer),
       Layer.provide(
         Layer.mock(VcsProjectConfig.VcsProjectConfig)({
@@ -45,7 +45,7 @@ describe("VcsDriverRegistry", () => {
 
   it.effect("caches repository detection for repeated resolves in the same cwd and kind", () => {
     const calls: VcsProcess.VcsProcessInput[] = [];
-    const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make()).pipe(
+    const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
       Layer.provide(NodeServices.layer),
       Layer.provide(
         Layer.mock(VcsProjectConfig.VcsProjectConfig)({

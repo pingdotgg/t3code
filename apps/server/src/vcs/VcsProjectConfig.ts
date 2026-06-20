@@ -27,15 +27,14 @@ export interface VcsProjectConfigResolveInput {
   readonly requestedKind?: VcsDriverKindType | "auto";
 }
 
-export interface VcsProjectConfigShape {
-  readonly resolveKind: (
-    input: VcsProjectConfigResolveInput,
-  ) => Effect.Effect<VcsDriverKindType | "auto">;
-}
-
-export class VcsProjectConfig extends Context.Service<VcsProjectConfig, VcsProjectConfigShape>()(
-  "t3/vcs/VcsProjectConfig",
-) {}
+export class VcsProjectConfig extends Context.Service<
+  VcsProjectConfig,
+  {
+    readonly resolveKind: (
+      input: VcsProjectConfigResolveInput,
+    ) => Effect.Effect<VcsDriverKindType | "auto">;
+  }
+>()("t3/vcs/VcsProjectConfig") {}
 
 function configuredKind(config: ProjectVcsConfigFile): VcsDriverKindType | "auto" {
   return config.vcs?.kind ?? config.vcsKind ?? "auto";
@@ -44,7 +43,7 @@ function configuredKind(config: ProjectVcsConfigFile): VcsDriverKindType | "auto
 const parseConfig = (raw: string): Option.Option<ProjectVcsConfigFile> =>
   decodeProjectVcsConfigJson(raw);
 
-export const make = Effect.fn("makeVcsProjectConfig")(function* () {
+export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -91,7 +90,7 @@ export const make = Effect.fn("makeVcsProjectConfig")(function* () {
     return configuredKind(parsed.value);
   });
 
-  const resolveKind: VcsProjectConfigShape["resolveKind"] = Effect.fn(
+  const resolveKind: VcsProjectConfig["Service"]["resolveKind"] = Effect.fn(
     "VcsProjectConfig.resolveKind",
   )(function* (input) {
     if (input.requestedKind !== undefined && input.requestedKind !== "auto") {
@@ -110,4 +109,4 @@ export const make = Effect.fn("makeVcsProjectConfig")(function* () {
   });
 });
 
-export const layer = Layer.effect(VcsProjectConfig, make());
+export const layer = Layer.effect(VcsProjectConfig, make);

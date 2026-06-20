@@ -7,7 +7,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError, type SourceControlProviderError } from "@t3tools/contracts";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
@@ -20,8 +20,8 @@ const CLONE_URLS = {
 };
 
 function makeProvider(
-  overrides: Partial<SourceControlProvider.SourceControlProviderShape> = {},
-): SourceControlProvider.SourceControlProviderShape {
+  overrides: Partial<SourceControlProvider.SourceControlProvider["Service"]> = {},
+): SourceControlProvider.SourceControlProvider["Service"] {
   const unsupported = (operation: string) =>
     Effect.die(`unexpected provider operation ${operation}`) as Effect.Effect<
       never,
@@ -52,8 +52,8 @@ function processOutput(): GitVcsDriver.ExecuteGitResult {
 }
 
 function makeLayer(input: {
-  readonly provider?: SourceControlProvider.SourceControlProviderShape;
-  readonly git?: Partial<GitVcsDriver.GitVcsDriverShape>;
+  readonly provider?: SourceControlProvider.SourceControlProvider["Service"];
+  readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
 }) {
   return SourceControlRepositoryService.layer.pipe(
     Layer.provide(

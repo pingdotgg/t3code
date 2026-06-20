@@ -17,7 +17,7 @@ const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
   stderrTruncated: false,
 });
 
-const mockRun = vi.fn<VcsProcess.VcsProcessShape["run"]>();
+const mockRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
 
 const supportLayer = Layer.mergeAll(
   Layer.mock(VcsProcess.VcsProcess)({
