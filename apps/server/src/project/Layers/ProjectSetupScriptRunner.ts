@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { TerminalManager } from "../../terminal/Services/Manager.ts";
+import * as TerminalManager from "../../terminal/Manager.ts";
 import {
   type ProjectSetupScriptRunnerShape,
   ProjectSetupScriptRunner,
@@ -14,7 +14,7 @@ import {
 
 const makeProjectSetupScriptRunner = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-  const terminalManager = yield* TerminalManager;
+  const terminalManager = yield* TerminalManager.TerminalManager;
 
   const runForThread: ProjectSetupScriptRunnerShape["runForThread"] = (input) =>
     Effect.gen(function* () {

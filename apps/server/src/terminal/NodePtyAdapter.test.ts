@@ -5,8 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
-import { PtyAdapter } from "../Services/PTY.ts";
-import { layer } from "./NodePTY.ts";
+import * as NodePtyAdapter from "./NodePtyAdapter.ts";
+import * as PtyAdapter from "./PtyAdapter.ts";
 
 const spawn = vi.fn(() => ({
   pid: 42,
@@ -19,7 +19,7 @@ const spawn = vi.fn(() => ({
 
 vi.mock("node-pty", () => ({ spawn }));
 
-const testLayer = layer.pipe(
+const testLayer = NodePtyAdapter.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       NodeServices.layer,
@@ -31,7 +31,7 @@ const testLayer = layer.pipe(
 
 it.effect("spawns through the public adapter with the provided host references", () =>
   Effect.gen(function* () {
-    const adapter = yield* PtyAdapter;
+    const adapter = yield* PtyAdapter.PtyAdapter;
     const process = yield* adapter.spawn({
       shell: "powershell.exe",
       args: ["-NoLogo"],

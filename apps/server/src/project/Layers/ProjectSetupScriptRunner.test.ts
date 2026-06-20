@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { TerminalManager } from "../../terminal/Services/Manager.ts";
+import * as TerminalManager from "../../terminal/Manager.ts";
 import { ProjectSetupScriptRunner } from "../Services/ProjectSetupScriptRunner.ts";
 import { ProjectSetupScriptRunnerLive } from "./ProjectSetupScriptRunner.ts";
 
@@ -52,7 +52,7 @@ describe("ProjectSetupScriptRunner", () => {
           ProjectSetupScriptRunnerLive.pipe(
             Layer.provideMerge(makeProjectionSnapshotQueryLayer(project)),
             Layer.provideMerge(
-              Layer.succeed(TerminalManager, {
+              Layer.succeed(TerminalManager.TerminalManager, {
                 open,
                 attachStream: () => Effect.die(new Error("unused")),
                 write,
@@ -114,7 +114,7 @@ describe("ProjectSetupScriptRunner", () => {
           ProjectSetupScriptRunnerLive.pipe(
             Layer.provideMerge(makeProjectionSnapshotQueryLayer(project)),
             Layer.provideMerge(
-              Layer.succeed(TerminalManager, {
+              Layer.succeed(TerminalManager.TerminalManager, {
                 open,
                 attachStream: () => Effect.die(new Error("unused")),
                 write,

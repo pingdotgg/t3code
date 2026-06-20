@@ -3,12 +3,12 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { PtyAdapter } from "../Services/PTY.ts";
-import type { PtyAdapterShape, PtyExitEvent, PtyProcess } from "../Services/PTY.ts";
 
-class BunPtyProcess implements PtyProcess {
+import * as PtyAdapter from "./PtyAdapter.ts";
+
+class BunPtyProcess implements PtyAdapter.PtyProcess {
   private readonly dataListeners = new Set<(data: string) => void>();
-  private readonly exitListeners = new Set<(event: PtyExitEvent) => void>();
+  private readonly exitListeners = new Set<(event: PtyAdapter.PtyExitEvent) => void>();
   private readonly decoder = new TextDecoder();
   private readonly process: Bun.Subprocess;
   private didExit = false;
@@ -60,7 +60,7 @@ class BunPtyProcess implements PtyProcess {
     };
   }
 
-  onExit(callback: (event: PtyExitEvent) => void): () => void {
+  onExit(callback: (event: PtyAdapter.PtyExitEvent) => void): () => void {
     this.exitListeners.add(callback);
     return () => {
       this.exitListeners.delete(callback);
@@ -76,7 +76,7 @@ class BunPtyProcess implements PtyProcess {
     }
   }
 
-  private emitExit(event: PtyExitEvent): void {
+  private emitExit(event: PtyAdapter.PtyExitEvent): void {
     if (this.didExit) return;
     this.didExit = true;
 
@@ -93,18 +93,17 @@ class BunPtyProcess implements PtyProcess {
   }
 }
 
-export const layer = Layer.effect(
-  PtyAdapter,
-  Effect.gen(function* () {
-    const platform = yield* HostProcessPlatform;
-    if (platform === "win32") {
-      return yield* Effect.die(
-        "Bun PTY terminal support is unavailable on Windows. Please use Node.js (e.g. by running `npx t3`) instead.",
-      );
-    }
-    return {
-      spawn: (input) =>
-        Effect.sync(() => {
+export const make = Effect.fn("BunPtyAdapter.make")(function* () {
+  const platform = yield* HostProcessPlatform;
+  if (platform === "win32") {
+    return yield* Effect.die(
+      "Bun PTY terminal support is unavailable on Windows. Please use Node.js (e.g. by running `npx t3`) instead.",
+    );
+  }
+  return PtyAdapter.PtyAdapter.of({
+    spawn: (input) =>
+      Effect.try({
+        try: () => {
           let processHandle: BunPtyProcess | null = null;
           const command = [input.shell, ...(input.args ?? [])];
           const subprocess = Bun.spawn(command, {
@@ -120,7 +119,15 @@ export const layer = Layer.effect(
           });
           processHandle = new BunPtyProcess(subprocess);
           return processHandle;
-        }),
-    } satisfies PtyAdapterShape;
-  }),
-);
+        },
+        catch: (cause) =>
+          new PtyAdapter.PtySpawnError({
+            adapter: "bun",
+            shell: input.shell,
+            cause,
+          }),
+      }),
+  });
+});
+
+export const layer = Layer.effect(PtyAdapter.PtyAdapter, make());

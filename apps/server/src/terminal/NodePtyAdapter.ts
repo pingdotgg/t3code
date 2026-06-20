@@ -5,13 +5,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { PtyAdapter } from "../Services/PTY.ts";
-import {
-  PtySpawnError,
-  type PtyAdapterShape,
-  type PtyExitEvent,
-  type PtyProcess,
-} from "../Services/PTY.ts";
+
+import * as PtyAdapter from "./PtyAdapter.ts";
 
 let didEnsureSpawnHelperExecutable = false;
 
@@ -56,7 +51,7 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
   yield* fs.chmod(helperPath, 0o755).pipe(Effect.orElseSucceed(() => undefined));
 });
 
-class NodePtyProcess implements PtyProcess {
+class NodePtyProcess implements PtyAdapter.PtyProcess {
   private readonly process: import("node-pty").IPty;
 
   constructor(process: import("node-pty").IPty) {
@@ -86,7 +81,7 @@ class NodePtyProcess implements PtyProcess {
     };
   }
 
-  onExit(callback: (event: PtyExitEvent) => void): () => void {
+  onExit(callback: (event: PtyAdapter.PtyExitEvent) => void): () => void {
     const disposable = this.process.onExit((event) => {
       callback({
         exitCode: event.exitCode,
@@ -99,47 +94,46 @@ class NodePtyProcess implements PtyProcess {
   }
 }
 
-export const layer = Layer.effect(
-  PtyAdapter,
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const platform = yield* HostProcessPlatform;
-    const architecture = yield* HostProcessArchitecture;
+export const make = Effect.fn("NodePtyAdapter.make")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const platform = yield* HostProcessPlatform;
+  const architecture = yield* HostProcessArchitecture;
 
-    const nodePty = yield* Effect.promise(() => import("node-pty"));
+  const nodePty = yield* Effect.promise(() => import("node-pty"));
 
-    const ensureNodePtySpawnHelperExecutableCached = yield* Effect.cached(
-      ensureNodePtySpawnHelperExecutable().pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-        Effect.provideService(HostProcessPlatform, platform),
-        Effect.provideService(HostProcessArchitecture, architecture),
-        Effect.orElseSucceed(() => undefined),
-      ),
-    );
+  const ensureNodePtySpawnHelperExecutableCached = yield* Effect.cached(
+    ensureNodePtySpawnHelperExecutable().pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(HostProcessPlatform, platform),
+      Effect.provideService(HostProcessArchitecture, architecture),
+      Effect.orElseSucceed(() => undefined),
+    ),
+  );
 
-    return {
-      spawn: Effect.fn(function* (input) {
-        yield* ensureNodePtySpawnHelperExecutableCached;
-        const ptyProcess = yield* Effect.try({
-          try: () =>
-            nodePty.spawn(input.shell, input.args ?? [], {
-              cwd: input.cwd,
-              cols: input.cols,
-              rows: input.rows,
-              env: input.env,
-              name: platform === "win32" ? "xterm-color" : "xterm-256color",
-            }),
-          catch: (cause) =>
-            new PtySpawnError({
-              adapter: "node-pty",
-              message: cause instanceof Error ? cause.message : "Failed to spawn PTY process",
-              cause,
-            }),
-        });
-        return new NodePtyProcess(ptyProcess);
-      }),
-    } satisfies PtyAdapterShape;
-  }),
-);
+  return PtyAdapter.PtyAdapter.of({
+    spawn: Effect.fn("NodePtyAdapter.spawn")(function* (input) {
+      yield* ensureNodePtySpawnHelperExecutableCached;
+      const ptyProcess = yield* Effect.try({
+        try: () =>
+          nodePty.spawn(input.shell, input.args ?? [], {
+            cwd: input.cwd,
+            cols: input.cols,
+            rows: input.rows,
+            env: input.env,
+            name: platform === "win32" ? "xterm-color" : "xterm-256color",
+          }),
+        catch: (cause) =>
+          new PtyAdapter.PtySpawnError({
+            adapter: "node-pty",
+            shell: input.shell,
+            cause,
+          }),
+      });
+      return new NodePtyProcess(ptyProcess);
+    }),
+  });
+});
+
+export const layer = Layer.effect(PtyAdapter.PtyAdapter, make());

@@ -23,31 +23,24 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
-import { TestClock } from "effect/testing";
+import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
-import * as ProcessRunner from "../../processRunner.ts";
-import type { TerminalManagerShape } from "../Services/Manager.ts";
-import {
-  type PtyAdapterShape,
-  type PtyExitEvent,
-  type PtyProcess,
-  type PtySpawnInput,
-  PtySpawnError,
-} from "../Services/PTY.ts";
-import { makeTerminalManagerWithOptions } from "./Manager.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as TerminalManager from "./Manager.ts";
+import * as PtyAdapter from "./PtyAdapter.ts";
 
 class WaitForConditionError extends Data.TaggedError("WaitForConditionError")<{
   readonly message: string;
 }> {}
 
-class FakePtyProcess implements PtyProcess {
+class FakePtyProcess implements PtyAdapter.PtyProcess {
   readonly writes: string[] = [];
   readonly resizeCalls: Array<{ cols: number; rows: number }> = [];
   readonly killSignals: Array<string | undefined> = [];
   readonly pid: number;
   private readonly dataListeners = new Set<(data: string) => void>();
-  private readonly exitListeners = new Set<(event: PtyExitEvent) => void>();
+  private readonly exitListeners = new Set<(event: PtyAdapter.PtyExitEvent) => void>();
   killed = false;
 
   constructor(pid: number) {
@@ -74,7 +67,7 @@ class FakePtyProcess implements PtyProcess {
     };
   }
 
-  onExit(callback: (event: PtyExitEvent) => void): () => void {
+  onExit(callback: (event: PtyAdapter.PtyExitEvent) => void): () => void {
     this.exitListeners.add(callback);
     return () => {
       this.exitListeners.delete(callback);
@@ -87,15 +80,15 @@ class FakePtyProcess implements PtyProcess {
     }
   }
 
-  emitExit(event: PtyExitEvent): void {
+  emitExit(event: PtyAdapter.PtyExitEvent): void {
     for (const listener of this.exitListeners) {
       listener(event);
     }
   }
 }
 
-class FakePtyAdapter implements PtyAdapterShape {
-  readonly spawnInputs: PtySpawnInput[] = [];
+class FakePtyAdapter {
+  readonly spawnInputs: PtyAdapter.PtySpawnInput[] = [];
   readonly processes: FakePtyProcess[] = [];
   readonly spawnFailures: Error[] = [];
   private readonly mode: "sync" | "async";
@@ -105,14 +98,16 @@ class FakePtyAdapter implements PtyAdapterShape {
     this.mode = mode;
   }
 
-  spawn(input: PtySpawnInput): Effect.Effect<PtyProcess, PtySpawnError> {
+  spawn(
+    input: PtyAdapter.PtySpawnInput,
+  ): Effect.Effect<PtyAdapter.PtyProcess, PtyAdapter.PtySpawnError> {
     this.spawnInputs.push(input);
     const failure = this.spawnFailures.shift();
     if (failure) {
       return Effect.fail(
-        new PtySpawnError({
+        new PtyAdapter.PtySpawnError({
           adapter: "fake",
-          message: "Failed to spawn PTY process",
+          shell: input.shell,
           cause: failure,
         }),
       );
@@ -123,9 +118,9 @@ class FakePtyAdapter implements PtyAdapterShape {
       return Effect.tryPromise({
         try: async () => process,
         catch: (cause) =>
-          new PtySpawnError({
+          new PtyAdapter.PtySpawnError({
             adapter: "fake",
-            message: "Failed to spawn PTY process",
+            shell: input.shell,
             cause,
           }),
       });
@@ -216,7 +211,7 @@ interface ManagerFixture {
   readonly baseDir: string;
   readonly logsDir: string;
   readonly ptyAdapter: FakePtyAdapter;
-  readonly manager: TerminalManagerShape;
+  readonly manager: TerminalManager.TerminalManager["Service"];
   readonly getEvents: Effect.Effect<ReadonlyArray<TerminalEvent>>;
 }
 
@@ -235,7 +230,7 @@ const createManager = (
       const logsDir = join(baseDir, "userdata", "logs", "terminals");
       const ptyAdapter = options.ptyAdapter ?? new FakePtyAdapter();
 
-      const manager = yield* makeTerminalManagerWithOptions({
+      const manager = yield* TerminalManager.makeWithOptions({
         logsDir,
         historyLineLimit,
         ptyAdapter,

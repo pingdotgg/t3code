@@ -6,18 +6,30 @@
  *
  * @module PtyAdapter
  */
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as Context from "effect/Context";
 
 /**
- * PtyError - Error type for PTY adapter operations.
+ * PtySpawnError - Error type for PTY spawn failures.
  */
 export class PtySpawnError extends Schema.TaggedErrorClass<PtySpawnError>()("PtySpawnError", {
   adapter: Schema.String,
-  message: Schema.String,
+  shell: Schema.optional(Schema.String),
+  attemptedShells: Schema.optional(Schema.Array(Schema.String)),
   cause: Schema.optional(Schema.Defect()),
-}) {}
+}) {
+  override get message(): string {
+    const shell = this.shell === undefined ? "" : ` '${this.shell}'`;
+    const attemptedShells =
+      this.attemptedShells === undefined || this.attemptedShells.length === 0
+        ? ""
+        : ` Tried shells: ${this.attemptedShells.join(", ")}.`;
+    const causeMessage =
+      this.cause instanceof Error && this.cause.message.length > 0 ? ` ${this.cause.message}` : "";
+    return `Failed to spawn PTY process${shell} with ${this.adapter}.${attemptedShells}${causeMessage}`;
+  }
+}
 
 export interface PtyExitEvent {
   exitCode: number;
@@ -43,18 +55,14 @@ export interface PtySpawnInput {
 }
 
 /**
- * PtyAdapterShape - Service API for spawning and controlling PTY processes.
- */
-export interface PtyAdapterShape {
-  /**
-   * Spawn a PTY process for a terminal session.
-   */
-  spawn(input: PtySpawnInput): Effect.Effect<PtyProcess, PtySpawnError>;
-}
-
-/**
  * PtyAdapter - Service tag for PTY process integration.
  */
-export class PtyAdapter extends Context.Service<PtyAdapter, PtyAdapterShape>()(
-  "t3/terminal/Services/PTY/PtyAdapter",
-) {}
+export class PtyAdapter extends Context.Service<
+  PtyAdapter,
+  {
+    /**
+     * Spawn a PTY process for a terminal session.
+     */
+    readonly spawn: (input: PtySpawnInput) => Effect.Effect<PtyProcess, PtySpawnError>;
+  }
+>()("t3/terminal/PtyAdapter") {}
