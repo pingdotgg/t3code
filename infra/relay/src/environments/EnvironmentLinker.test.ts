@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
@@ -45,6 +46,7 @@ const config = RelayConfiguration.RelayConfiguration.of({
   managedEndpointBaseDomain: undefined,
   managedEndpointNamespace: undefined,
 });
+const isEnvironmentLinkProofInvalid = Schema.is(EnvironmentLinker.EnvironmentLinkProofInvalid);
 
 function signTestJwt(payload: object, typ: string, privateKey: string): string {
   const header = Buffer.from(JSON.stringify({ alg: "EdDSA", typ })).toString("base64url");
@@ -182,6 +184,18 @@ describe("EnvironmentLinker", () => {
       const linker = yield* EnvironmentLinker.EnvironmentLinker;
       const result = yield* Effect.result(linker.link({ userId: "user_123", request: tampered }));
       expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(isEnvironmentLinkProofInvalid(result.failure)).toBe(true);
+        if (isEnvironmentLinkProofInvalid(result.failure)) {
+          expect(result.failure).toMatchObject({
+            userId: "user_123",
+            environmentId: "env-link-test",
+            reason: "invalid_signature_or_scope",
+            stage: "verify_proof",
+            cause: { _tag: "RelayJwtError" },
+          });
+        }
+      }
       expect(persisted).toBe(false);
     }).pipe(
       Effect.provide(
@@ -201,6 +215,17 @@ describe("EnvironmentLinker", () => {
       const linker = yield* EnvironmentLinker.EnvironmentLinker;
       const result = yield* Effect.result(linker.link({ userId: "user_123", request }));
       expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(isEnvironmentLinkProofInvalid(result.failure)).toBe(true);
+        if (isEnvironmentLinkProofInvalid(result.failure)) {
+          expect(result.failure).toMatchObject({
+            userId: "user_123",
+            environmentId: "env-link-test",
+            reason: "replayed_nonce",
+            stage: "consume_proof_nonce",
+          });
+        }
+      }
     }).pipe(Effect.provide(testLayer({ consume: () => Effect.succeed(false) }))),
   );
 });
