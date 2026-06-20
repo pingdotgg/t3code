@@ -48,6 +48,8 @@ const decodeExtRequest = Schema.decodeEffect(Schema.fromJsonString(ExtRequest));
 const decodeRequestPermissionResponse = Schema.decodeEffect(
   Schema.fromJsonString(RequestPermissionResponse),
 );
+const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
+const encoder = new TextEncoder();
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/acp-mock-peer.ts"),
 );
@@ -169,6 +171,38 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
             '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session-1"},"id":"","headers":[]}\n',
         },
       ]);
+    }),
+  );
+
+  it.effect("logs decode failures without copying the cause or wire payload", () =>
+    Effect.gen(function* () {
+      const secret = "acp-wire-secret-sentinel";
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const events: Array<AcpProtocol.AcpProtocolLogEvent> = [];
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        logIncoming: true,
+        logger: (event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      yield* Queue.offer(input, encoder.encode(`{"secret":"${secret}"\n`));
+      yield* Deferred.await(termination);
+
+      const event = events.find(({ stage }) => stage === "decode_failed");
+      assert.deepEqual(event, {
+        direction: "incoming",
+        stage: "decode_failed",
+        payload: {
+          operation: "decode-wire-message",
+        },
+      });
+      assert.notInclude(encodeUnknownJsonString(event), secret);
     }),
   );
 

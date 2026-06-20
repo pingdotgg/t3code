@@ -403,8 +403,11 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
             payload: {
               operation: error.operation,
               ...(error.method === undefined ? {} : { method: error.method }),
-              detail: error.detail,
-              cause: error.cause,
+              ...(error.issueCount === undefined ? {} : { issueCount: error.issueCount }),
+              ...(error.issueKinds === undefined ? {} : { issueKinds: error.issueKinds }),
+              ...(error.maximumPathDepth === undefined
+                ? {}
+                : { maximumPathDepth: error.maximumPathDepth }),
             },
           }),
         ),
