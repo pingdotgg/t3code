@@ -16,6 +16,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribe } from "../rpc/client.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
@@ -42,11 +43,7 @@ function shellStatusForSnapshot(
   return Option.isSome(snapshot) ? "cached" : "empty";
 }
 
-function formatShellError(error: unknown): string {
-  return error instanceof Error && error.message.trim().length > 0
-    ? error.message
-    : "Could not synchronize environment data.";
-}
+const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
 
 export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")(function* () {
   const supervisor = yield* EnvironmentSupervisor;
@@ -57,7 +54,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       Effect.logWarning("Could not load cached environment shell.").pipe(
         Effect.annotateLogs({
           environmentId,
-          error: error.message,
+          ...safeErrorLogAttributes(error),
         }),
         Effect.as(Option.none<OrchestrationShellSnapshot>()),
       ),
@@ -78,7 +75,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         Effect.logWarning("Could not persist environment shell cache.").pipe(
           Effect.annotateLogs({
             environmentId,
-            error: error.message,
+            ...safeErrorLogAttributes(error),
           }),
         ),
       ),
@@ -110,11 +107,19 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         },
   );
   const setStreamError = (error: unknown) =>
-    SubscriptionRef.update(state, (current) => ({
-      ...current,
-      status: shellStatusForSnapshot(current.snapshot),
-      error: Option.some(formatShellError(error)),
-    }));
+    Effect.logWarning("Could not synchronize the environment shell.").pipe(
+      Effect.annotateLogs({
+        environmentId,
+        ...safeErrorLogAttributes(error),
+      }),
+      Effect.andThen(
+        SubscriptionRef.update(state, (current) => ({
+          ...current,
+          status: shellStatusForSnapshot(current.snapshot),
+          error: Option.some(SHELL_SYNCHRONIZATION_ERROR_MESSAGE),
+        })),
+      ),
+    );
 
   const applyItem = Effect.fn("EnvironmentShellState.applyItem")(function* (
     item: OrchestrationShellStreamItem,

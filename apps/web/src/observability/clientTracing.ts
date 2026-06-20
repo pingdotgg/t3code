@@ -7,6 +7,7 @@ import { HttpClient } from "effect/unstable/http";
 import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 
 import { settleAsyncResult, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 import { isElectron } from "../env";
@@ -95,9 +96,14 @@ async function applyClientTracingConfig(config: ClientTracingConfig): Promise<vo
     await disposeTracerRuntime(runtime, scope);
 
     if (generation === configurationGeneration) {
+      const error = squashAtomCommandFailure(delegateResult);
+      const tracesUrl = new URL(otlpTracesUrl);
       console.warn("Failed to configure client tracing exporter", {
-        error: formatError(squashAtomCommandFailure(delegateResult)),
-        otlpTracesUrl,
+        scheme: tracesUrl.protocol.replace(/:$/, ""),
+        host: tracesUrl.hostname,
+        port: tracesUrl.port || undefined,
+        exportIntervalMs,
+        ...safeErrorLogAttributes(error),
       });
     }
     return;
@@ -123,14 +129,6 @@ async function disposeTracerRuntime(
 
   await settleAsyncResult(() => runtime.runPromiseExit(Scope.close(scope, Exit.void)));
   runtime.dispose();
-}
-
-function formatError(error: unknown): string {
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
-  }
-
-  return String(error);
 }
 
 export async function __resetClientTracingForTests() {

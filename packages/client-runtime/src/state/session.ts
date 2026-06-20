@@ -8,6 +8,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
 export function initialConfigOption<E>(
@@ -16,9 +17,10 @@ export function initialConfigOption<E>(
   return initialConfig.pipe(
     Effect.map(Option.some),
     Effect.catch((error) =>
-      Effect.logWarning("Could not load the initial environment configuration.", {
-        error,
-      }).pipe(Effect.as(Option.none<ServerConfig>())),
+      Effect.logWarning("Could not load the initial environment configuration.").pipe(
+        Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
+        Effect.as(Option.none<ServerConfig>()),
+      ),
     ),
   );
 }

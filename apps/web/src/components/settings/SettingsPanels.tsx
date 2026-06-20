@@ -12,6 +12,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -1038,7 +1039,11 @@ export function ProviderSettingsPanel() {
       refreshingRef.current = false;
       setIsRefreshingProviders(false);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        console.warn("Failed to refresh providers", squashAtomCommandFailure(result));
+        console.warn("Failed to refresh providers", {
+          operation: "refresh-providers",
+          environmentId: primaryEnvironment.environmentId,
+          ...safeErrorLogAttributes(squashAtomCommandFailure(result)),
+        });
       }
     })();
   }, [primaryEnvironment, refreshServerProviders]);

@@ -4,6 +4,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import type { ScopedThreadRef, TurnId } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
@@ -452,7 +453,16 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
           void (async () => {
             const result = await openInPreferredEditor(targetPath);
             if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              console.warn("Failed to open diff file in editor.", squashAtomCommandFailure(result));
+              console.warn("Failed to open diff file in editor.", {
+                operation: "open-diff-file",
+                ...(routeThreadRef
+                  ? {
+                      environmentId: routeThreadRef.environmentId,
+                      threadId: routeThreadRef.threadId,
+                    }
+                  : {}),
+                ...safeErrorLogAttributes(squashAtomCommandFailure(result)),
+              });
             }
           })();
         },

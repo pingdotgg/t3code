@@ -26,6 +26,7 @@ import {
   type SupervisorConnectionState,
 } from "./model.ts";
 import * as RpcSession from "../rpc/session.ts";
+import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
@@ -503,11 +504,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         !establishment.exit.cause.reasons.some(Cause.isFailReason);
       const outcome = failureFromExit(target, establishment.exit, false, false);
       if (isUnexpectedDefect) {
+        const defect = establishment.exit.cause.reasons.find(Cause.isDieReason)?.defect;
         yield* Effect.logError("Connection attempt failed with an unexpected defect.").pipe(
           Effect.annotateLogs({
             "environment.id": target.environmentId,
             "environment.label": target.label,
-            cause: Cause.pretty(establishment.exit.cause),
+            "cause.reason_count": establishment.exit.cause.reasons.length,
+            ...safeErrorLogAttributes(defect),
           }),
         );
       }
