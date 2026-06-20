@@ -18,8 +18,7 @@ import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 
 import { ServerConfig } from "../config.ts";
-import { AuthPairingLinkRepositoryLive } from "../persistence/Layers/AuthPairingLinks.ts";
-import { AuthPairingLinkRepository } from "../persistence/Services/AuthPairingLinks.ts";
+import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
 
 export interface BootstrapGrant {
   readonly method: ServerAuthBootstrapMethod;
@@ -126,7 +125,7 @@ const internalBootstrapCredentialError = (message: string, cause: unknown) =>
 export const make = Effect.fn("makePairingGrantStore")(function* () {
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig;
-  const pairingLinks = yield* AuthPairingLinkRepository;
+  const pairingLinks = yield* AuthPairingLinks.AuthPairingLinkRepository;
   const seededGrantsRef = yield* Ref.make(new Map<string, StoredBootstrapGrant>());
   const changesPubSub = yield* PubSub.unbounded<BootstrapCredentialChange>();
   const generatePairingToken = Effect.gen(function* () {
@@ -417,5 +416,5 @@ export const make = Effect.fn("makePairingGrantStore")(function* () {
 });
 
 export const layer = Layer.effect(PairingGrantStore, make()).pipe(
-  Layer.provideMerge(AuthPairingLinkRepositoryLive),
+  Layer.provideMerge(AuthPairingLinks.layer),
 );

@@ -29,11 +29,6 @@ export const TypeId: TypeId = "~local/sqlite-node/SqliteClient";
 
 export type TypeId = "~local/sqlite-node/SqliteClient";
 
-/**
- * SqliteClient - Effect service tag for the sqlite SQL client.
- */
-export const SqliteClient = Context.Service<Client.SqlClient>("t3/persistence/NodeSqliteClient");
-
 export interface SqliteClientConfig {
   readonly filename: string;
   readonly readonly?: boolean | undefined;
@@ -251,25 +246,12 @@ const makeMemory = (
 export const layerConfig = (
   config: Config.Wrap<SqliteClientConfig>,
 ): Layer.Layer<Client.SqlClient, Config.ConfigError> =>
-  Layer.effectContext(
-    Config.unwrap(config).pipe(
-      Effect.flatMap(make),
-      Effect.map((client) =>
-        Context.make(SqliteClient, client).pipe(Context.add(Client.SqlClient, client)),
-      ),
-    ),
-  ).pipe(Layer.provide(Reactivity.layer));
+  Layer.effect(Client.SqlClient, Config.unwrap(config).pipe(Effect.flatMap(make))).pipe(
+    Layer.provide(Reactivity.layer),
+  );
 
 export const layer = (config: SqliteClientConfig): Layer.Layer<Client.SqlClient> =>
-  Layer.effectContext(
-    Effect.map(make(config), (client) =>
-      Context.make(SqliteClient, client).pipe(Context.add(Client.SqlClient, client)),
-    ),
-  ).pipe(Layer.provide(Reactivity.layer));
+  Layer.effect(Client.SqlClient, make(config)).pipe(Layer.provide(Reactivity.layer));
 
 export const layerMemory = (config: SqliteMemoryClientConfig = {}): Layer.Layer<Client.SqlClient> =>
-  Layer.effectContext(
-    Effect.map(makeMemory(config), (client) =>
-      Context.make(SqliteClient, client).pipe(Context.add(Client.SqlClient, client)),
-    ),
-  ).pipe(Layer.provide(Reactivity.layer));
+  Layer.effect(Client.SqlClient, makeMemory(config)).pipe(Layer.provide(Reactivity.layer));

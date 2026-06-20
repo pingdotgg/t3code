@@ -22,8 +22,7 @@ import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 
 import { ServerConfig } from "../config.ts";
-import { AuthSessionRepositoryLive } from "../persistence/Layers/AuthSessions.ts";
-import { AuthSessionRepository } from "../persistence/Services/AuthSessions.ts";
+import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
   base64UrlDecodeUtf8,
@@ -195,7 +194,7 @@ export const make = Effect.fn("makeSessionStore")(function* () {
   const crypto = yield* Crypto.Crypto;
   const serverConfig = yield* ServerConfig;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
-  const authSessions = yield* AuthSessionRepository;
+  const authSessions = yield* AuthSessions.AuthSessionRepository;
   const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
   const connectedSessionsRef = yield* Ref.make(new Map<string, number>());
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
@@ -640,5 +639,5 @@ export const make = Effect.fn("makeSessionStore")(function* () {
 });
 
 export const layer = Layer.effect(SessionStore, make()).pipe(
-  Layer.provideMerge(AuthSessionRepositoryLive),
+  Layer.provideMerge(AuthSessions.layer),
 );

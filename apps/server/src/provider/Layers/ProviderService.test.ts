@@ -53,8 +53,7 @@ import { makeProviderServiceLive } from "./ProviderService.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
-import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
+import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
 import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
@@ -282,7 +281,7 @@ function makeProviderServiceLayer() {
   });
 
   const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
-  const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+  const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
     Layer.provide(SqlitePersistenceMemory),
   );
   const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
@@ -327,7 +326,7 @@ it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
       [CODEX_DRIVER]: codex.adapter,
     });
     const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
-    const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+    const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
       Layer.provide(SqlitePersistenceMemory),
     );
     const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
@@ -379,7 +378,7 @@ it.effect("ProviderServiceLive rejects new sessions for disabled providers", () 
           : registryBase.getInstanceInfo(instanceId),
     };
     const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
-    const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+    const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
       Layer.provide(SqlitePersistenceMemory),
     );
     const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
@@ -453,7 +452,7 @@ it.effect(
           },
         },
       });
-      const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
         Layer.provide(SqlitePersistenceMemory),
       );
       const directoryLayer = ProviderSessionDirectoryLive.pipe(
@@ -517,7 +516,7 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
       ),
     };
     const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
-    const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+    const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
       Layer.provide(SqlitePersistenceMemory),
     );
     const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
@@ -557,7 +556,7 @@ it.effect("ProviderServiceLive writes canonical events to the emitting thread se
     const registry = makeAdapterRegistryMock({
       [ProviderDriverKind.make("codex")]: codex.adapter,
     });
-    const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+    const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
       Layer.provide(SqlitePersistenceMemory),
     );
     const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
@@ -612,7 +611,7 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
     });
 
     const persistenceLayer = makeSqlitePersistenceLive(dbPath);
-    const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+    const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
       Layer.provide(persistenceLayer),
     );
     const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
@@ -643,7 +642,7 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
     assert.equal(persistedProvider, "codex");
 
     const runtime = yield* Effect.gen(function* () {
-      const repository = yield* ProviderSessionRuntimeRepository;
+      const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
       return yield* repository.getByThreadId({
         threadId: asThreadId("thread-stale"),
       });
@@ -671,7 +670,7 @@ it.effect(
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-restart-"));
       const dbPath = path.join(tempDir, "orchestration.sqlite");
       const persistenceLayer = makeSqlitePersistenceLive(dbPath);
-      const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
         Layer.provide(persistenceLayer),
       );
 
@@ -717,7 +716,7 @@ it.effect(
       }).pipe(Effect.provide(firstProviderLayer));
 
       const persistedAfterStopAll = yield* Effect.gen(function* () {
-        const repository = yield* ProviderSessionRuntimeRepository;
+        const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
         return yield* repository.getByThreadId({
           threadId: startedSession.threadId,
         });
@@ -909,7 +908,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
   it.effect("preserves the persisted binding when stopping a session", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
-      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
 
       const initial = yield* provider.startSession(asThreadId("thread-reap-preserve"), {
         provider: ProviderDriverKind.make("codex"),
@@ -1179,7 +1178,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
   it.effect("persists runtime status transitions in provider_session_runtime", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
-      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
 
       const threadId = asThreadId("thread-runtime-status");
       const session = yield* provider.startSession(threadId, {
@@ -1226,7 +1225,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-start-"));
       const dbPath = path.join(tempDir, "orchestration.sqlite");
       const persistenceLayer = makeSqlitePersistenceLive(dbPath);
-      const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
         Layer.provide(persistenceLayer),
       );
 
@@ -1316,7 +1315,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-cwd-"));
         const dbPath = path.join(tempDir, "orchestration.sqlite");
         const persistenceLayer = makeSqlitePersistenceLive(dbPath);
-        const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+        const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
           Layer.provide(persistenceLayer),
         );
 
@@ -1761,7 +1760,7 @@ validation.layer("ProviderServiceLive validation", (it) => {
   it.effect("accepts startSession when adapter has not emitted provider thread id yet", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
-      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
 
       validation.codex.startSession.mockImplementationOnce((input: ProviderSessionStartInput) =>
         Effect.sync(() => {
