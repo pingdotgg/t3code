@@ -1,5 +1,15 @@
-import type { PreviewAutomationRequest, PreviewAutomationResponse } from "@t3tools/contracts";
+import type {
+  PreviewAutomationOwner,
+  PreviewAutomationRequest,
+  PreviewAutomationResponse,
+} from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
+
+import {
+  PreviewAutomationOperationError,
+  type PreviewAutomationOperationContext,
+  serializePreviewAutomationOwnerError,
+} from "./previewAutomationErrors";
 
 type AutomationRequestResult<E> = AsyncResult.AsyncResult<PreviewAutomationRequest, E>;
 type AutomationRequestHandler = (request: PreviewAutomationRequest) => Promise<unknown>;
@@ -19,54 +29,16 @@ export function createLatestPreviewAutomationRequestHandler(initial: AutomationR
 
 export function serializePreviewAutomationError(
   error: unknown,
+  context: PreviewAutomationOperationContext,
 ): NonNullable<PreviewAutomationResponse["error"]> {
-  if (error instanceof Error) {
-    const explicitDetail =
-      "detail" in error && (error as { detail?: unknown }).detail !== undefined
-        ? (error as { detail?: unknown }).detail
-        : undefined;
-    const structuralDetail =
-      "_tag" in error &&
-      typeof (error as { _tag?: unknown })._tag === "string" &&
-      (error as { _tag: string })._tag.startsWith("PreviewAutomation")
-        ? Object.fromEntries(
-            Object.entries(error).filter(
-              ([key]) =>
-                key !== "_tag" &&
-                key !== "cause" &&
-                key !== "name" &&
-                key !== "message" &&
-                key !== "stack" &&
-                key !== "detail" &&
-                key !== "responseTag",
-            ),
-          )
-        : undefined;
-    const detail = explicitDetail ?? structuralDetail;
-    const responseTag =
-      "responseTag" in error &&
-      typeof (error as { responseTag?: unknown }).responseTag === "string" &&
-      (error as { responseTag: string }).responseTag.startsWith("PreviewAutomation")
-        ? (error as { responseTag: string }).responseTag
-        : undefined;
-    return {
-      _tag:
-        responseTag ??
-        (error.name.startsWith("PreviewAutomation")
-          ? error.name
-          : "PreviewAutomationExecutionError"),
-      message: error.message,
-      ...(detail === undefined ? {} : { detail }),
-    };
-  }
-  return {
-    _tag: "PreviewAutomationExecutionError",
-    message: String(error),
-  };
+  return serializePreviewAutomationOwnerError(
+    PreviewAutomationOperationError.fromCause({ ...context, cause: error }),
+  );
 }
 
 export function createPreviewAutomationRequestConsumerAtom<E>(options: {
   readonly requestsAtom: Atom.Atom<AutomationRequestResult<E>>;
+  readonly environmentId: PreviewAutomationOwner["environmentId"];
   readonly handleRequest: (request: PreviewAutomationRequest) => Promise<unknown>;
   readonly respond: (response: PreviewAutomationResponse) => Promise<unknown>;
   readonly label: string;
@@ -89,7 +61,13 @@ export function createPreviewAutomationRequestConsumerAtom<E>(options: {
           options.respond({
             requestId: request.requestId,
             ok: false,
-            error: serializePreviewAutomationError(error),
+            error: serializePreviewAutomationError(error, {
+              requestId: request.requestId,
+              operation: request.operation,
+              environmentId: options.environmentId,
+              threadId: request.threadId,
+              tabId: request.tabId ?? null,
+            }),
           }),
       );
     };
