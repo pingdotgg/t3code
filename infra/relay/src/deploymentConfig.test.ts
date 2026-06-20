@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Schema from "effect/Schema";
 
 import {
   managedEndpointDigestInput,
@@ -12,6 +13,8 @@ import {
   relayResourceNameForStage,
   relayStageSlug,
 } from "./deploymentConfig.ts";
+
+const isRelayPublicDomainLabelTooLongError = Schema.is(RelayPublicDomainLabelTooLongError);
 
 describe("relayStageSlug", () => {
   it("matches Alchemy physical-name sanitization for default developer stages", () => {
@@ -40,8 +43,7 @@ describe("relayPublicDomainForStage", () => {
       error = cause;
     }
 
-    expect(error).toBeInstanceOf(RelayPublicDomainLabelTooLongError);
-    if (!(error instanceof RelayPublicDomainLabelTooLongError)) {
+    if (!isRelayPublicDomainLabelTooLongError(error)) {
       throw error;
     }
     expect(error).toMatchObject({
