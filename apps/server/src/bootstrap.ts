@@ -4,7 +4,6 @@ import * as Net from "node:net";
 import * as readline from "node:readline";
 import type { Readable } from "node:stream";
 
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -13,10 +12,64 @@ import * as Schema from "effect/Schema";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
-class BootstrapError extends Data.TaggedError("BootstrapError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class BootstrapFdStatError extends Schema.TaggedErrorClass<BootstrapFdStatError>()(
+  "BootstrapFdStatError",
+  {
+    fd: Schema.Number,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to stat bootstrap file descriptor ${this.fd}.`;
+  }
+}
+
+export class BootstrapInputStreamOpenError extends Schema.TaggedErrorClass<BootstrapInputStreamOpenError>()(
+  "BootstrapInputStreamOpenError",
+  {
+    fd: Schema.Number,
+    platform: Schema.String,
+    fdPath: Schema.optional(Schema.String),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    const path = this.fdPath === undefined ? "" : ` via '${this.fdPath}'`;
+    return `Failed to open bootstrap input stream for file descriptor ${this.fd}${path} on '${this.platform}'.`;
+  }
+}
+
+export class BootstrapEnvelopeReadError extends Schema.TaggedErrorClass<BootstrapEnvelopeReadError>()(
+  "BootstrapEnvelopeReadError",
+  {
+    fd: Schema.Number,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to read bootstrap envelope from file descriptor ${this.fd}.`;
+  }
+}
+
+export class BootstrapEnvelopeDecodeError extends Schema.TaggedErrorClass<BootstrapEnvelopeDecodeError>()(
+  "BootstrapEnvelopeDecodeError",
+  {
+    fd: Schema.Number,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to decode bootstrap envelope from file descriptor ${this.fd}.`;
+  }
+}
+
+export const BootstrapError = Schema.Union([
+  BootstrapFdStatError,
+  BootstrapInputStreamOpenError,
+  BootstrapEnvelopeReadError,
+  BootstrapEnvelopeDecodeError,
+]);
+export type BootstrapError = typeof BootstrapError.Type;
 
 export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function* <A, I>(
   schema: Schema.Codec<A, I>,
@@ -32,7 +85,10 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
 
   const timeoutMs = options?.timeoutMs ?? 1000;
 
-  return yield* Effect.callback<Option.Option<A>, BootstrapError>((resume) => {
+  return yield* Effect.callback<
+    Option.Option<A>,
+    BootstrapEnvelopeReadError | BootstrapEnvelopeDecodeError
+  >((resume) => {
     const input = readline.createInterface({
       input: stream,
       crlfDelay: Infinity,
@@ -53,8 +109,8 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
       }
       resume(
         Effect.fail(
-          new BootstrapError({
-            message: "Failed to read bootstrap envelope.",
+          new BootstrapEnvelopeReadError({
+            fd,
             cause: error,
           }),
         ),
@@ -68,8 +124,8 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
       } else {
         resume(
           Effect.fail(
-            new BootstrapError({
-              message: "Failed to decode bootstrap envelope.",
+            new BootstrapEnvelopeDecodeError({
+              fd,
               cause: parsed.failure,
             }),
           ),
@@ -98,24 +154,24 @@ const isFdReady = (fd: number) =>
   Effect.try({
     try: () => NFS.fstatSync(fd),
     catch: (error) =>
-      new BootstrapError({
-        message: "Failed to stat bootstrap fd.",
+      new BootstrapFdStatError({
+        fd,
         cause: error,
       }),
   }).pipe(
     Effect.as(true),
-    Effect.catchIf(
-      (error) => isUnavailableBootstrapFdError(error.cause),
-      () => Effect.succeed(false),
-    ),
+    Effect.catchTags({
+      BootstrapFdStatError: (error) =>
+        isUnavailableBootstrapFdError(error.cause) ? Effect.succeed(false) : Effect.fail(error),
+    }),
   );
 
 const makeBootstrapInputStream = (fd: number) =>
   Effect.gen(function* () {
     const platform = yield* HostProcessPlatform;
-    return yield* Effect.try<Readable, BootstrapError>({
+    const fdPath = resolveFdPath(fd, platform);
+    return yield* Effect.try<Readable, BootstrapInputStreamOpenError>({
       try: () => {
-        const fdPath = resolveFdPath(fd, platform);
         if (fdPath === undefined) {
           return makeDirectBootstrapStream(fd);
         }
@@ -139,8 +195,10 @@ const makeBootstrapInputStream = (fd: number) =>
         }
       },
       catch: (error) =>
-        new BootstrapError({
-          message: "Failed to duplicate bootstrap fd.",
+        new BootstrapInputStreamOpenError({
+          fd,
+          platform,
+          ...(fdPath === undefined ? {} : { fdPath }),
           cause: error,
         }),
     });
