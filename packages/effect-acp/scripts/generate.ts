@@ -112,19 +112,27 @@ export class AcpGeneratorFormatExitError extends Schema.TaggedErrorClass<AcpGene
 
 export class AcpGeneratorSchemaValueDeclarationMissingError extends Schema.TaggedErrorClass<AcpGeneratorSchemaValueDeclarationMissingError>()(
   "AcpGeneratorSchemaValueDeclarationMissingError",
-  { typeDeclaration: Schema.String },
+  {
+    lineIndex: Schema.Number,
+    typeDeclarationLength: Schema.Number,
+    nextLinePresent: Schema.Boolean,
+    nextLineLength: Schema.optional(Schema.Number),
+  },
 ) {
   override get message(): string {
-    return `Generated ACP schema type declaration has no following value declaration: ${this.typeDeclaration}`;
+    return `Generated ACP schema type declaration at line ${this.lineIndex + 1} has no following value declaration.`;
   }
 }
 
 export class AcpGeneratorSchemaNameParseError extends Schema.TaggedErrorClass<AcpGeneratorSchemaNameParseError>()(
   "AcpGeneratorSchemaNameParseError",
-  { typeDeclaration: Schema.String },
+  {
+    lineIndex: Schema.Number,
+    typeDeclarationLength: Schema.Number,
+  },
 ) {
   override get message(): string {
-    return `Could not extract an ACP schema name from generated declaration: ${this.typeDeclaration}`;
+    return `Could not extract an ACP schema name from generated declaration at line ${this.lineIndex + 1}.`;
   }
 }
 
@@ -313,9 +321,7 @@ const writeGeneratedFiles = Effect.fn("writeGeneratedFiles")(function* (
   yield* fs.writeFileString(metaOutputPath, metaOutput);
 });
 
-function collectSchemaEntries(
-  chunk: string,
-): ReadonlyArray<{ readonly name: string; readonly code: string }> {
+export const collectSchemaEntries = Effect.fn("collectSchemaEntries")(function* (chunk: string) {
   const lines = chunk
     .split("\n")
     .map((line) => line.trim())
@@ -330,14 +336,20 @@ function collectSchemaEntries(
 
     const constLine = lines[index + 1];
     if (!constLine?.startsWith("export const ")) {
-      throw new AcpGeneratorSchemaValueDeclarationMissingError({
-        typeDeclaration: typeLine,
+      return yield* new AcpGeneratorSchemaValueDeclarationMissingError({
+        lineIndex: index,
+        typeDeclarationLength: typeLine.length,
+        nextLinePresent: constLine !== undefined,
+        ...(constLine === undefined ? {} : { nextLineLength: constLine.length }),
       });
     }
 
     const match = /^export type ([A-Za-z0-9_]+)/.exec(typeLine);
     if (!match?.[1]) {
-      throw new AcpGeneratorSchemaNameParseError({ typeDeclaration: typeLine });
+      return yield* new AcpGeneratorSchemaNameParseError({
+        lineIndex: index,
+        typeDeclarationLength: typeLine.length,
+      });
     }
 
     entries.push({
@@ -348,7 +360,7 @@ function collectSchemaEntries(
   }
 
   return entries;
-}
+});
 
 function normalizeNullableTypes(value: Schema.Json): Schema.Json {
   if (Array.isArray(value)) {
@@ -431,7 +443,8 @@ const generateSchemas = Effect.fn("generateSchemas")(function* (skipDownload: bo
 
   const output = generator.generate("openapi-3.1", normalizedDefinitions as never, false).trim();
   if (output.length > 0) {
-    for (const entry of collectSchemaEntries(output)) {
+    const schemaEntries = yield* collectSchemaEntries(output);
+    for (const entry of schemaEntries) {
       if (!generatedEntries.has(entry.name)) {
         generatedEntries.set(entry.name, entry.code);
       }

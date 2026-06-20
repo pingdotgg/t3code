@@ -13,6 +13,10 @@ const isDownloadError = Schema.is(Generator.AcpGeneratorDownloadError);
 const isDownloadFileError = Schema.is(Generator.AcpGeneratorDownloadFileError);
 const isDocumentDecodeError = Schema.is(Generator.AcpGeneratorDocumentDecodeError);
 const isFormatExitError = Schema.is(Generator.AcpGeneratorFormatExitError);
+const isSchemaNameParseError = Schema.is(Generator.AcpGeneratorSchemaNameParseError);
+const isSchemaValueDeclarationMissingError = Schema.is(
+  Generator.AcpGeneratorSchemaValueDeclarationMissingError,
+);
 
 const httpClient = (response: Response) =>
   HttpClient.make((request) => Effect.succeed(HttpClientResponse.fromWeb(request, response)));
@@ -61,7 +65,10 @@ describe("ACP schema generator errors", () => {
       expect(error.cause).toBeDefined();
       expect(error.message).toContain(outputPath);
       const { cause: _, ...directDiagnostics } = error;
-      expect(JSON.stringify(directDiagnostics)).not.toMatch(
+      expect(directDiagnostics).not.toHaveProperty("url");
+      expect(directDiagnostics.urlProtocol).toBe("https:");
+      expect(directDiagnostics.urlHostname).toBe("example.test");
+      expect(error.message).not.toMatch(
         /generator-user|generator-password|private|token|generator-secret|fragment/,
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -140,4 +147,29 @@ describe("ACP schema generator errors", () => {
       expect(spawned?.args).toEqual(["oxfmt", generatedDir]);
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
   });
+
+  it.effect("returns malformed generated schema declarations as typed failures", () =>
+    Effect.gen(function* () {
+      const missingValueError = yield* Generator.collectSchemaEntries(
+        "export type Session = string;",
+      ).pipe(Effect.flip);
+      assert(isSchemaValueDeclarationMissingError(missingValueError));
+      expect(missingValueError).toMatchObject({
+        lineIndex: 0,
+        typeDeclarationLength: 29,
+        nextLinePresent: false,
+      });
+      expect(missingValueError).not.toHaveProperty("typeDeclaration");
+
+      const nameParseError = yield* Generator.collectSchemaEntries(
+        "export type @ = string;\nexport const invalid = Schema.String;",
+      ).pipe(Effect.flip);
+      assert(isSchemaNameParseError(nameParseError));
+      expect(nameParseError).toMatchObject({
+        lineIndex: 0,
+        typeDeclarationLength: 23,
+      });
+      expect(nameParseError).not.toHaveProperty("typeDeclaration");
+    }),
+  );
 });
