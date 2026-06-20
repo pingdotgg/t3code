@@ -364,6 +364,16 @@ export const ServerProcessResourceHistorySummary = Schema.Struct({
 });
 export type ServerProcessResourceHistorySummary = typeof ServerProcessResourceHistorySummary.Type;
 
+export const ServerProcessResourceHistoryFailureTag = Schema.Literals([
+  "ProcessDiagnosticsQueryTimeoutError",
+  "ProcessDiagnosticsQueryFailedError",
+  "ProcessDiagnosticsServerProcessSignalError",
+  "ProcessDiagnosticsNotDescendantError",
+  "ProcessDiagnosticsSignalFailedError",
+]);
+export type ServerProcessResourceHistoryFailureTag =
+  typeof ServerProcessResourceHistoryFailureTag.Type;
+
 export const ServerProcessResourceHistoryResult = Schema.Struct({
   readAt: Schema.DateTimeUtc,
   windowMs: NonNegativeInt,
@@ -375,6 +385,7 @@ export const ServerProcessResourceHistoryResult = Schema.Struct({
   topProcesses: Schema.Array(ServerProcessResourceHistorySummary),
   error: Schema.Option(
     Schema.Struct({
+      failureTag: ServerProcessResourceHistoryFailureTag,
       message: TrimmedNonEmptyString,
     }),
   ),
