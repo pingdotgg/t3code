@@ -9,17 +9,15 @@ import type * as Electron from "electron";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
-import * as DesktopShutdownModule from "./DesktopShutdown.ts";
+import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 
-export { DesktopShutdown, layer as layerShutdown } from "./DesktopShutdown.ts";
-
 export type DesktopLifecycleRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
-  | DesktopShutdownModule.DesktopShutdown
+  | DesktopShutdown.DesktopShutdown
   | DesktopState.DesktopState
   | DesktopWindow.DesktopWindow
   | ElectronApp.ElectronApp
@@ -63,8 +61,8 @@ function addScopedListener<Args extends ReadonlyArray<unknown>>(
 }
 
 const requestDesktopShutdownAndWait = Effect.fn("desktop.lifecycle.requestShutdownAndWait")(
-  function* (): Effect.fn.Return<void, never, DesktopShutdownModule.DesktopShutdown> {
-    const shutdown = yield* DesktopShutdownModule.DesktopShutdown;
+  function* (): Effect.fn.Return<void, never, DesktopShutdown.DesktopShutdown> {
+    const shutdown = yield* DesktopShutdown.DesktopShutdown;
     yield* shutdown.request;
     yield* shutdown.awaitComplete;
   },
