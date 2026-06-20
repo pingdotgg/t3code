@@ -126,12 +126,6 @@ function resolveScope(scope: SourceControlActionScope) {
   };
 }
 
-function unavailableResult(message: string) {
-  return AsyncResult.failure<never, VcsActionUnavailableError>(
-    Cause.fail(new VcsActionUnavailableError({ message })),
-  );
-}
-
 export function useSourceControlActionRunning(
   scope: SourceControlActionScope,
   kinds: ReadonlyArray<SourceControlActionKind>,
@@ -149,7 +143,15 @@ export function useVcsInitAction(scope: SourceControlActionScope) {
   const action = useCallback(async () => {
     const target = resolveScope(scope);
     if (target === null) {
-      return unavailableResult("Git init is unavailable.");
+      return AsyncResult.failure<never, VcsActionUnavailableError>(
+        Cause.fail(
+          new VcsActionUnavailableError({
+            operation: "init",
+            environmentId: scope.environmentId,
+            cwd: scope.cwd,
+          }),
+        ),
+      );
     }
     return init({
       environmentId: target.environmentId,
@@ -172,7 +174,15 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
   const action = useCallback(async () => {
     const target = resolveScope(scope);
     if (target === null) {
-      return unavailableResult("Git pull is unavailable.");
+      return AsyncResult.failure<never, VcsActionUnavailableError>(
+        Cause.fail(
+          new VcsActionUnavailableError({
+            operation: "pull",
+            environmentId: scope.environmentId,
+            cwd: scope.cwd,
+          }),
+        ),
+      );
     }
     return pull({
       environmentId: target.environmentId,
@@ -211,7 +221,15 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
       onProgress?: (event: GitActionProgressEvent) => void;
     }) => {
       if (resolveScope(scope) === null) {
-        return unavailableResult("Git action is unavailable.");
+        return AsyncResult.failure<never, VcsActionUnavailableError>(
+          Cause.fail(
+            new VcsActionUnavailableError({
+              operation: "run_change_request",
+              environmentId: scope.environmentId,
+              cwd: scope.cwd,
+            }),
+          ),
+        );
       }
       return runStackedAction({
         actionId: input.actionId,
@@ -257,7 +275,15 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
     }) => {
       const target = resolveScope(scope);
       if (target === null) {
-        return unavailableResult("Repository publishing is unavailable.");
+        return AsyncResult.failure<never, VcsActionUnavailableError>(
+          Cause.fail(
+            new VcsActionUnavailableError({
+              operation: "publish_repository",
+              environmentId: scope.environmentId,
+              cwd: scope.cwd,
+            }),
+          ),
+        );
       }
       return publishRepository({
         environmentId: target.environmentId,
@@ -286,7 +312,15 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
     async (input: { reference: string; mode: "local" | "worktree"; threadId?: ThreadId }) => {
       const target = resolveScope(scope);
       if (target === null) {
-        return unavailableResult("Pull request thread preparation is unavailable.");
+        return AsyncResult.failure<never, VcsActionUnavailableError>(
+          Cause.fail(
+            new VcsActionUnavailableError({
+              operation: "prepare_pull_request_thread",
+              environmentId: scope.environmentId,
+              cwd: scope.cwd,
+            }),
+          ),
+        );
       }
       return preparePullRequestThread({
         environmentId: target.environmentId,
