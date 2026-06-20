@@ -11,20 +11,23 @@ const isAcpRequestError = Schema.is(AcpError.AcpRequestError);
 const formatSchemaIssue = SchemaIssue.makeFormatterDefault();
 
 export const callRpc = <A>(
+  method: string,
   effect: Effect.Effect<A, RpcClientError.RpcClientError | AcpSchema.Error>,
 ): Effect.Effect<A, AcpError.AcpError> =>
   effect.pipe(
-    Effect.catchTag("RpcClientError", (error) =>
-      Effect.fail(
-        new AcpError.AcpTransportError({
-          detail: error.message,
-          cause: error,
-        }),
-      ),
-    ),
     Effect.catchIf(isError, (error) =>
       Effect.fail(AcpError.AcpRequestError.fromProtocolError(error)),
     ),
+    Effect.catchTags({
+      RpcClientError: (cause) =>
+        Effect.fail(
+          new AcpError.AcpTransportError({
+            operation: "call-rpc",
+            method,
+            cause,
+          }),
+        ),
+    }),
   );
 
 export const runHandler = Effect.fnUntraced(function* <A, B>(

@@ -42,12 +42,28 @@ export class AcpProtocolParseError extends Schema.TaggedErrorClass<AcpProtocolPa
 export class AcpTransportError extends Schema.TaggedErrorClass<AcpTransportError>()(
   "AcpTransportError",
   {
-    detail: Schema.String,
+    operation: Schema.optional(
+      Schema.Literals(["call-rpc", "read-input-stream", "read-process-exit-status"]),
+    ),
+    method: Schema.optional(Schema.String),
+    detail: Schema.optional(Schema.String),
     cause: Schema.Defect(),
   },
 ) {
   override get message() {
-    return this.detail;
+    const method = this.method ? ` for method ${this.method}` : "";
+    return this.operation
+      ? `ACP transport operation ${this.operation} failed${method}.`
+      : "ACP transport operation failed.";
+  }
+}
+
+export class AcpInputStreamEndedError extends Schema.TaggedErrorClass<AcpInputStreamEndedError>()(
+  "AcpInputStreamEndedError",
+  {},
+) {
+  override get message() {
+    return "ACP input stream ended.";
   }
 }
 
@@ -138,6 +154,7 @@ export const AcpError = Schema.Union([
   AcpProcessExitedError,
   AcpProtocolParseError,
   AcpTransportError,
+  AcpInputStreamEndedError,
 ]);
 
 export type AcpError = typeof AcpError.Type;

@@ -389,6 +389,25 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("classifies an input stream ending without inventing a cause", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      yield* Queue.end(input);
+
+      const error = yield* Deferred.await(termination);
+      assert.instanceOf(error, AcpError.AcpInputStreamEndedError);
+      assert.equal(error.message, "ACP input stream ended.");
+      assert.equal("cause" in error, false);
+    }),
+  );
+
   it.effect("does not emit a second process-exit error after a decode failure", () =>
     Effect.gen(function* () {
       const handle = yield* makeHandle({

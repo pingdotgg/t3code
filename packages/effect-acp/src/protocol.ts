@@ -413,7 +413,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         const normalized: AcpError.AcpError = isAcpError(error)
           ? error
           : new AcpError.AcpTransportError({
-              detail: error instanceof Error ? error.message : String(error),
+              operation: "read-input-stream",
               cause: error,
             });
         return handleTermination(() => Effect.succeed(normalized));
@@ -421,13 +421,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       onSuccess: () =>
         handleTermination(
           () =>
-            options.terminationError ??
-            Effect.succeed(
-              new AcpError.AcpTransportError({
-                detail: "ACP input stream ended",
-                cause: new Error("ACP input stream ended"),
-              }),
-            ),
+            options.terminationError ?? Effect.succeed(new AcpError.AcpInputStreamEndedError({})),
         ),
     }),
     Effect.forkScoped,
