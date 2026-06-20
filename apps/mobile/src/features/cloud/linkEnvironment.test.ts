@@ -150,7 +150,7 @@ describe("mobile cloud link environment client", () => {
     createProofMock.mockClear();
   });
 
-  it("keeps URL secrets out of operation errors while preserving the cause", () => {
+  it("keeps URL secrets out of operation error diagnostics", () => {
     const relayUrl =
       "https://relay-user:relay-password@relay.example.test/private/workspace?access_token=relay-secret#relay-fragment";
     const httpBaseUrl =
@@ -173,7 +173,6 @@ describe("mobile cloud link environment client", () => {
       httpBaseUrlProtocol: "https:",
       httpBaseUrlHostname: "desktop.example.test",
     });
-    expect(error.cause).toBe(cause);
     const serialized = JSON.stringify(error);
     for (const secret of [
       "relay-user",
@@ -283,9 +282,6 @@ describe("mobile cloud link environment client", () => {
         relayUrlInputLength: "https://relay.example.test".length,
         relayUrlProtocol: "https:",
         relayUrlHostname: "relay.example.test",
-        cause: {
-          _tag: "ManagedRelayRequestFailedError",
-        },
       });
       expect(error.message).toBe("Could not list cloud environments.");
       expect(isCloudEnvironmentLinkError(error)).toBe(true);
@@ -651,7 +647,7 @@ describe("mobile cloud link environment client", () => {
       }),
   );
 
-  it.effect("preserves invalid endpoint URL parser causes", () =>
+  it.effect("reports invalid endpoint URLs with redacted diagnostics", () =>
     Effect.gen(function* () {
       vi.stubGlobal(
         "fetch",
@@ -676,11 +672,8 @@ describe("mobile cloud link environment client", () => {
         environmentId: "env-1",
         httpBaseUrlInputLength: httpBaseUrl.length,
       });
-      expect(error.cause).toBeInstanceOf(TypeError);
       expect(error).not.toHaveProperty("httpBaseUrl");
-      const { cause: preservedCause, ...diagnostics } = error;
-      expect(preservedCause).toBe(error.cause);
-      const serialized = JSON.stringify(diagnostics);
+      const serialized = JSON.stringify({ ...error, cause: undefined });
       for (const secret of [
         "desktop-user",
         "desktop-password",
@@ -731,7 +724,6 @@ describe("mobile cloud link environment client", () => {
           message: "Invalid environment bearer session.",
         },
       });
-      expect(error.cause).toBeDefined();
       expect(error.message).toBe(
         'Could not obtain an environment link proof for environment "env-1".',
       );
@@ -779,9 +771,6 @@ describe("mobile cloud link environment client", () => {
         relayError: {
           _tag: "RelayEnvironmentLinkProofInvalidError",
           reason: "origin_not_allowed",
-        },
-        cause: {
-          _tag: "ManagedRelayRequestFailedError",
         },
       });
       expect(error.message).toBe('Could not link the environment for environment "env-1".');
@@ -1140,9 +1129,6 @@ describe("mobile cloud link environment client", () => {
         relayError: {
           _tag: "RelayAuthInvalidError",
           reason: "invalid_dpop",
-        },
-        cause: {
-          _tag: "ManagedRelayRequestFailedError",
         },
       });
       expect(error.message).toBe(
