@@ -4,12 +4,12 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Console from "effect/Console";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import { Command } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -18,9 +18,19 @@ interface NativeStaticTool {
   readonly installHint: string;
 }
 
-class NativeStaticCheckError extends Data.TaggedError("NativeStaticCheckError")<{
-  readonly message: string;
-}> {}
+export class NativeStaticCheckCommandError extends Schema.TaggedErrorClass<NativeStaticCheckCommandError>()(
+  "NativeStaticCheckCommandError",
+  {
+    command: Schema.String,
+    args: Schema.Array(Schema.String),
+    cwd: Schema.String,
+    exitCode: Schema.Int,
+  },
+) {
+  override get message(): string {
+    return `Native static check command '${this.command}' exited with code ${this.exitCode}.`;
+  }
+}
 
 const tools = [
   {
@@ -85,8 +95,11 @@ const runCommand = Effect.fn("runCommand")(function* (
   const exitCode = Number(yield* child.exitCode);
 
   if (exitCode !== 0) {
-    return yield* new NativeStaticCheckError({
-      message: `Command exited with non-zero exit code (${exitCode})`,
+    return yield* new NativeStaticCheckCommandError({
+      command,
+      args,
+      cwd,
+      exitCode,
     });
   }
 });
