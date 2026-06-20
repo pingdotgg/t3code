@@ -611,6 +611,22 @@ describe("ApnsDeliveries", () => {
     }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
   });
 
+  it.effect("preserves the schema cause for invalid queue payloads", () => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const error = yield* Effect.flip(deliveries.processSignedJob({ invalid: true }));
+
+      expect(error).toMatchObject({
+        _tag: "ApnsDeliveryJobQueuePayloadInvalid",
+        receivedType: "object",
+        message: "Invalid APNs delivery queue job with object payload.",
+      });
+      expect(error.cause).toMatchObject({ _tag: "SchemaError" });
+    }).pipe(Effect.provide(makeLayer({ attempts })));
+  });
+
   it.effect("processes signed jobs through APNs and records attempts", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     const payload = makeApnsDeliveryJobPayload({

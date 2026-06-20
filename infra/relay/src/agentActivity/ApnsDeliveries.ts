@@ -640,7 +640,13 @@ export const make = Effect.gen(function* () {
     "relay.apns_deliveries.process_signed_job",
   )(function* (body) {
     const signedJob = yield* decodeSignedApnsDeliveryJob(body).pipe(
-      Effect.mapError(() => new ApnsDeliveryJobQueuePayloadInvalid()),
+      Effect.mapError(
+        (cause) =>
+          new ApnsDeliveryJobQueuePayloadInvalid({
+            receivedType: Array.isArray(body) ? "array" : body === null ? "null" : typeof body,
+            cause,
+          }),
+      ),
     );
     const now = yield* DateTime.now;
     const payload = verifySignedApnsDeliveryJob({
@@ -661,7 +667,14 @@ export const make = Effect.gen(function* () {
         case "live_activity_start":
         case "live_activity_update":
           if (payload.aggregate === null) {
-            return Effect.fail(new ApnsDeliveryJobLiveActivityAggregateMissing());
+            return Effect.fail(
+              new ApnsDeliveryJobLiveActivityAggregateMissing({
+                jobId: payload.jobId,
+                kind: payload.kind,
+                userId: payload.target.userId,
+                deviceId: payload.target.deviceId,
+              }),
+            );
           }
           return sendLiveActivity({
             target: {
@@ -686,7 +699,13 @@ export const make = Effect.gen(function* () {
           });
         case "push_notification":
           if (payload.notification === null) {
-            return Effect.fail(new ApnsDeliveryJobPushNotificationMissing());
+            return Effect.fail(
+              new ApnsDeliveryJobPushNotificationMissing({
+                jobId: payload.jobId,
+                userId: payload.target.userId,
+                deviceId: payload.target.deviceId,
+              }),
+            );
           }
           return sendPushNotification({
             target: {
