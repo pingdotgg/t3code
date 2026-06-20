@@ -19,37 +19,30 @@ import {
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
 } from "@t3tools/contracts";
-import { BrowserWindow } from "electron";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as NodeURL from "node:url";
 
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
-const broadcast = (channel: string, ...args: ReadonlyArray<unknown>): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(channel, ...args);
-    }
-  }
-};
-
 export const installPreviewEventForwarding = Effect.fn(
   "desktop.ipc.preview.installEventForwarding",
 )(function* () {
+  const electronWindow = yield* ElectronWindow.ElectronWindow;
   const manager = yield* PreviewManager.PreviewManager;
-  yield* manager.subscribeStateChanges((tabId, state) => {
-    broadcast(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, tabId, state);
-  });
-  yield* manager.subscribeRecordingFrames((frame) => {
-    broadcast(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, frame);
-  });
-  yield* manager.subscribePointerEvents((event) => {
-    broadcast(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, event);
-  });
+  yield* manager.subscribeStateChanges((tabId, state) =>
+    electronWindow.sendAll(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, tabId, state),
+  );
+  yield* manager.subscribeRecordingFrames((frame) =>
+    electronWindow.sendAll(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, frame),
+  );
+  yield* manager.subscribePointerEvents((event) =>
+    electronWindow.sendAll(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, event),
+  );
 });
 
 export const createTab = DesktopIpc.makeIpcMethod({

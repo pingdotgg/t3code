@@ -281,8 +281,8 @@ const nextZoomLevel = (current: number, direction: "in" | "out"): number => {
   return ZOOM_LEVELS[Math.max(step - 1, 0)] ?? current;
 };
 
-type Listener = (tabId: string, state: PreviewTabState) => void;
-type RecordingFrameListener = (frame: DesktopPreviewRecordingFrame) => void;
+type Listener = (tabId: string, state: PreviewTabState) => Effect.Effect<void>;
+type RecordingFrameListener = (frame: DesktopPreviewRecordingFrame) => Effect.Effect<void>;
 
 type PreviewInputSignal =
   | { readonly kind: "pointer"; readonly x: number; readonly y: number; readonly button: number }
@@ -313,7 +313,7 @@ interface BrowserDiagnostics {
   readonly requests: ReadonlyMap<string, { url: string; method: string }>;
 }
 
-type PointerEventListener = (event: DesktopPreviewPointerEvent) => void;
+type PointerEventListener = (event: DesktopPreviewPointerEvent) => Effect.Effect<void>;
 
 interface ExpectedAgentInput {
   readonly signal: PreviewInputSignal;
@@ -442,11 +442,28 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     return copy;
   };
 
+  const deliverEvent = (
+    eventKind: "state-change" | "recording-frame" | "pointer-event",
+    tabId: string,
+    delivery: () => Effect.Effect<void>,
+  ) =>
+    Effect.suspend(delivery).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterrupts(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("Desktop preview event listener failed.", {
+              eventKind,
+              tabId,
+              cause,
+            }),
+      ),
+    );
+
   const emit = Effect.fn("PreviewManager.emit")(function* (tabId: string, state: PreviewTabState) {
     const listeners = yield* Ref.get(listenersRef);
     yield* Effect.forEach(
       listeners,
-      (listener) => Effect.sync(() => listener(tabId, state)).pipe(Effect.ignore),
+      (listener) => deliverEvent("state-change", tabId, () => listener(tabId, state)),
       { discard: true },
     );
   });
@@ -739,7 +756,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                   };
                   yield* Effect.forEach(
                     listeners,
-                    (listener) => Effect.sync(() => listener(frame)).pipe(Effect.ignore),
+                    (listener) =>
+                      deliverEvent("recording-frame", frame.tabId, () => listener(frame)),
                     { discard: true },
                   );
                 }
@@ -1918,7 +1936,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const listeners = yield* Ref.get(pointerEventListenersRef);
     yield* Effect.forEach(
       listeners,
-      (listener) => Effect.sync(() => listener(event)).pipe(Effect.ignore),
+      (listener) => deliverEvent("pointer-event", event.tabId, () => listener(event)),
       { discard: true },
     );
   });

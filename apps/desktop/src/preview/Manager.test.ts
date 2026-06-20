@@ -5,6 +5,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -13,6 +14,7 @@ import { TestClock } from "effect/testing";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import * as PreviewManager from "./Manager.ts";
 
@@ -126,6 +128,72 @@ describe("PreviewManager", () => {
           loading: false,
         });
         expect(fromId).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("isolates failed state listeners and continues delivery", () => {
+    const loggedErrors: Array<unknown> = [];
+    const logger = Logger.make(({ message }) => {
+      for (const value of Array.isArray(message) ? message : [message]) {
+        if (typeof value === "object" && value !== null && "cause" in value) {
+          loggedErrors.push(Cause.squash(value.cause as Cause.Cause<never>));
+        }
+      }
+    });
+    const deliveryError = new ElectronWindow.ElectronWindowOperationError({
+      operation: "send-window-message",
+      platform: "darwin",
+      windowId: 42,
+      channel: "preview:state-change",
+      cause: new Error("renderer unavailable"),
+    });
+    const delivered = vi.fn();
+
+    return withManager((manager) =>
+      Effect.gen(function* () {
+        yield* manager.subscribeStateChanges(() => Effect.die(deliveryError));
+        yield* manager.subscribeStateChanges((tabId, state) =>
+          Effect.sync(() => {
+            delivered(tabId, state);
+          }),
+        );
+
+        const state = yield* manager.createTab("tab_listener_failure");
+
+        expect(delivered).toHaveBeenCalledOnce();
+        expect(delivered).toHaveBeenCalledWith("tab_listener_failure", state);
+        expect(loggedErrors).toHaveLength(1);
+        expect(loggedErrors[0]).toBeInstanceOf(ElectronWindow.ElectronWindowOperationError);
+        expect(loggedErrors[0]).toMatchObject({
+          operation: "send-window-message",
+          windowId: 42,
+          channel: "preview:state-change",
+        });
+      }),
+    ).pipe(
+      Effect.provide(
+        Logger.layer([logger], {
+          mergeWithExisting: false,
+        }),
+      ),
+    );
+  });
+
+  effectIt.effect("does not swallow state listener interruption", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* manager.subscribeStateChanges(() => Effect.interrupt);
+            return yield* Effect.exit(manager.createTab("tab_interrupted_listener"));
+          }),
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.hasInterrupts(exit.cause)).toBe(true);
+        }
       }),
     ),
   );
@@ -411,7 +479,11 @@ describe("PreviewManager", () => {
           },
         } as never);
 
-        yield* manager.subscribePointerEvents((event) => activity.push(event.phase));
+        yield* manager.subscribePointerEvents((event) =>
+          Effect.sync(() => {
+            activity.push(event.phase);
+          }),
+        );
         yield* manager.createTab("tab_1");
         yield* manager.registerWebview("tab_1", 42);
         const click = yield* manager
