@@ -83,6 +83,13 @@ describe("createStore", () => {
     expect(store.getState().status).toBe("Reply sent.");
   });
 
+  it("Given setStatus with a kind, then the status tone is recorded", () => {
+    const f = fakeClient();
+    const store = createStore(f.client);
+    store.setStatus("send failed", "error");
+    expect(store.getState().statusKind).toBe("error");
+  });
+
   it("Given a thread is selected, when a filter hides it, then the selection re-validates onto a remaining match", () => {
     const f = fakeClient();
     const store = createStore(f.client);

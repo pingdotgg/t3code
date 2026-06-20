@@ -6,6 +6,7 @@ import {
   relativeTime,
   resolveProjectStatus,
   resolveThreadStatus,
+  statusGlyphColor,
 } from "./theme.ts";
 
 /** Minimal thread-shell fixture — only the fields the status resolvers read. */
@@ -76,5 +77,20 @@ describe("ansi", () => {
 
   it("Given an unknown name, then it falls back to the terminal default foreground", () => {
     expect(ansi("chartreuse").intent).toBe("default");
+  });
+});
+
+describe("statusGlyphColor", () => {
+  it("Given each tone, then it returns the matching glyph", () => {
+    expect(statusGlyphColor("success").glyph).toBe("✓");
+    expect(statusGlyphColor("error").glyph).toBe("✗");
+    expect(statusGlyphColor("busy").glyph).toBe("⟳");
+    expect(statusGlyphColor("info").glyph).toBe("·");
+  });
+
+  it("Given a success tone, then the colour is the indexed green slot", () => {
+    const { color } = statusGlyphColor("success");
+    expect(color.intent).toBe("indexed");
+    expect(color.slot).toBe(2);
   });
 });

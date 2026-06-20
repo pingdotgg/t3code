@@ -14,6 +14,9 @@ import {
 // the role of the web app's state atoms (apps/web/src/state/*), at a smaller
 // scale that fits a single-environment terminal client.
 
+/** Tone of a status-line message — drives its glyph + colour, like the web toasts. */
+export type StatusKind = "info" | "success" | "error" | "busy";
+
 export interface StoreState {
   readonly shell: OrchestrationShellSnapshot | null;
   readonly expanded: ReadonlySet<string>;
@@ -22,6 +25,7 @@ export interface StoreState {
   readonly selection: Selection | null;
   readonly detail: OrchestrationThread | null;
   readonly status: string;
+  readonly statusKind: StatusKind;
   /** Sidebar filter text; empty = unfiltered. */
   readonly filter: string;
 }
@@ -35,7 +39,7 @@ export interface Store {
   readonly select: (selection: Selection) => void;
   readonly toggleProject: (id: string) => void;
   readonly loadMore: (id: string) => void;
-  readonly setStatus: (status: string) => void;
+  readonly setStatus: (status: string, kind?: StatusKind) => void;
   readonly setFilter: (filter: string) => void;
 }
 
@@ -47,6 +51,7 @@ export function createStore(client: TuiClient): Store {
     selection: null,
     detail: null,
     status: "Connecting…",
+    statusKind: "busy",
     filter: "",
   };
   const listeners = new Set<() => void>();
@@ -115,6 +120,7 @@ export function createStore(client: TuiClient): Store {
           ...state,
           shell: nextShell,
           status: `${nextShell.projects.length} project(s) · ${sortedThreads.length} thread(s)`,
+          statusKind: "info",
         };
         ensureValidSelection(rowsNow());
         emit();
@@ -152,7 +158,7 @@ export function createStore(client: TuiClient): Store {
         firstRevealed ? { kind: "thread", id: firstRevealed.id } : { kind: "project", id },
       );
     },
-    setStatus: (status) => set({ status }),
+    setStatus: (status, kind = "info") => set({ status, statusKind: kind }),
     setFilter: (filter) => {
       state = { ...state, filter };
       ensureValidSelection(rowsNow());

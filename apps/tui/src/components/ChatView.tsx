@@ -12,7 +12,7 @@ import type { TuiClient } from "../connection.ts";
 import { useKeyBindings } from "../hooks/useKeyBindings.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore } from "../store.ts";
-import { usePalette } from "../theme.ts";
+import { statusGlyphColor, usePalette } from "../theme.ts";
 import { currentModelIndex, type ModelOption } from "../models.ts";
 import { revertableCheckpoints } from "../timeline.ts";
 import { buildUserInputAnswers, derivePendingUserInputs } from "../userInput.ts";
@@ -255,8 +255,8 @@ export function ChatView({
     }
     void client
       .sendReply(detail, text)
-      .catch((error) => store.setStatus(`send failed: ${String(error)}`));
-    store.setStatus("Reply sent.");
+      .catch((error) => store.setStatus(`send failed: ${String(error)}`, "error"));
+    store.setStatus("Reply sent.", "success");
     clearReply();
   };
 
@@ -281,8 +281,8 @@ export function ChatView({
           branch: newBranch,
           worktreePath: newWorktree,
         })
-        .catch((error) => store.setStatus(`create failed: ${String(error)}`));
-      store.setStatus("Creating thread…");
+        .catch((error) => store.setStatus(`create failed: ${String(error)}`, "error"));
+      store.setStatus("Creating thread…", "busy");
     }
     setDraft("");
     setNewBranch("");
@@ -416,14 +416,14 @@ export function ChatView({
       if (!detail) return;
       const next = detail.interactionMode === "plan" ? "default" : "plan";
       void client.setInteractionMode(detail.id, next).catch(() => {});
-      store.setStatus(next === "plan" ? "Plan mode." : "Build mode.");
+      store.setStatus(next === "plan" ? "Plan mode." : "Build mode.", "success");
     },
     onImplementPlan: () => {
       if (!detail || !actionablePlan) return;
       void client
         .implementPlan(detail, actionablePlan.id)
-        .catch((error) => store.setStatus(`implement failed: ${String(error)}`));
-      store.setStatus("Implementing plan…");
+        .catch((error) => store.setStatus(`implement failed: ${String(error)}`, "error"));
+      store.setStatus("Implementing plan…", "busy");
     },
     onOpenActions: () => {
       if (!detail) {
@@ -445,7 +445,7 @@ export function ChatView({
         () => {},
       );
       setOverlay("none");
-      store.setStatus(archived ? "Unarchived." : "Archived.");
+      store.setStatus(archived ? "Unarchived." : "Archived.", "success");
     },
     onActionDelete: () => {
       if (!detail) return;
@@ -455,7 +455,7 @@ export function ChatView({
       if (!detail) return;
       void client.stopSession(detail.id).catch(() => {});
       setOverlay("none");
-      store.setStatus("Session stopped.");
+      store.setStatus("Session stopped.", "success");
     },
     onActionRevert: () => {
       if (!detail) return;
@@ -476,8 +476,8 @@ export function ChatView({
       if (!detail || !checkpoint) return;
       void client
         .revertCheckpoint(detail.id, checkpoint.checkpointTurnCount)
-        .catch((error) => store.setStatus(`revert failed: ${String(error)}`));
-      store.setStatus(`Reverted to turn ${checkpoint.checkpointTurnCount}.`);
+        .catch((error) => store.setStatus(`revert failed: ${String(error)}`, "error"));
+      store.setStatus(`Reverted to turn ${checkpoint.checkpointTurnCount}.`, "success");
     },
     onUserInputPrev: () => {
       const count = uiQuestion?.options.length ?? 0;
@@ -526,8 +526,8 @@ export function ChatView({
       const answers = buildUserInputAnswers(pendingUserInput.questions, selections);
       void client
         .respondUserInput(detail.id, pendingUserInput.requestId, answers)
-        .catch((error) => store.setStatus(`answer failed: ${String(error)}`));
-      store.setStatus("Answer sent.");
+        .catch((error) => store.setStatus(`answer failed: ${String(error)}`, "error"));
+      store.setStatus("Answer sent.", "success");
       setUiSelections({});
       setUiQuestionIndex(0);
       setUiOptionIndex(0);
@@ -569,8 +569,8 @@ export function ChatView({
       if (!detail || !option) return;
       void client
         .setModel(detail.id, option.instanceId, option.model)
-        .catch((error) => store.setStatus(`model change failed: ${String(error)}`));
-      store.setStatus(`Model → ${option.label}`);
+        .catch((error) => store.setStatus(`model change failed: ${String(error)}`, "error"));
+      store.setStatus(`Model → ${option.label}`, "success");
     },
     onModelClose: () => setModelOpen(false),
     onCloseOverlay: () => setOverlay("none"),
@@ -581,13 +581,13 @@ export function ChatView({
       }
       void client.deleteThread(detail.id).catch(() => {});
       setOverlay("none");
-      store.setStatus("Deleted.");
+      store.setStatus("Deleted.", "success");
     },
     onSubmitRename: () => {
       const title = renameDraft.trim();
       if (detail && title.length > 0 && title !== detail.title) {
         void client.renameThread(detail.id, title).catch(() => {});
-        store.setStatus("Renamed.");
+        store.setStatus("Renamed.", "success");
       }
       setRenameDraft("");
       setFocus("compose");
@@ -605,26 +605,26 @@ export function ChatView({
     onInterrupt: () => {
       if (!detail) return;
       void client.interrupt(detail.id).catch(() => {});
-      store.setStatus("Interrupt sent.");
+      store.setStatus("Interrupt sent.", "success");
     },
     onApprove: () => {
       const approval = approvals[activeApprovalIndex];
       if (!detail || !approval) return;
       void client.approve(detail.id, approval.requestId, "accept").catch(() => {});
-      store.setStatus("Approved.");
+      store.setStatus("Approved.", "success");
     },
     onDecline: () => {
       const approval = approvals[activeApprovalIndex];
       if (!detail || !approval) return;
       void client.approve(detail.id, approval.requestId, "decline").catch(() => {});
-      store.setStatus("Declined.");
+      store.setStatus("Declined.", "success");
     },
     onCycleMode: () => {
       if (!detail) return;
       const current = RUNTIME_MODES.indexOf(detail.runtimeMode);
       const nextMode = RUNTIME_MODES[(current + 1) % RUNTIME_MODES.length] ?? "full-access";
       void client.setRuntimeMode(detail.id, nextMode).catch(() => {});
-      store.setStatus(`Mode → ${nextMode}`);
+      store.setStatus(`Mode → ${nextMode}`, "success");
     },
     onSend: sendReply,
     onEscape: () => {
@@ -634,7 +634,7 @@ export function ChatView({
       }
       if (detail) {
         void client.interrupt(detail.id).catch(() => {});
-        store.setStatus("Interrupt sent.");
+        store.setStatus("Interrupt sent.", "success");
       }
     },
   });
@@ -651,6 +651,8 @@ export function ChatView({
       : activeTerminal
         ? "^P switch focus · ^E close · ^↑/^↓ size · Enter send · ^N new · ^G stop · ^C quit"
         : "↑/↓ · Enter send · ^N new · ^B plan/build · ^Y implement · ^O mode · ^E term · ^G stop · ^A/^R approve · ^K actions · ^F find · ^C quit";
+
+  const statusStyle = statusGlyphColor(state.statusKind);
 
   return (
     <box flexDirection="column" width={width} height={height}>
@@ -750,7 +752,10 @@ export function ChatView({
 
       <box flexDirection="row" justifyContent="space-between" paddingLeft={1} paddingRight={1} flexShrink={0}>
         <text fg={palette.dim}>{hint}</text>
-        <text fg={palette.dim}>{` ${state.status}`}</text>
+        <text>
+          <span fg={statusStyle.color}>{` ${statusStyle.glyph} `}</span>
+          <span fg={statusStyle.color}>{state.status}</span>
+        </text>
       </box>
     </box>
   );

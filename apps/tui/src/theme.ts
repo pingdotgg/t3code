@@ -221,3 +221,19 @@ export const THEME: Palette = {
 
 /** The active palette. Static today (indexed/default intents adapt on their own). */
 export const usePalette = (): Palette => THEME;
+
+/** Glyph + colour for a status-line tone (mirrors the web toast icon set). */
+export function statusGlyphColor(
+  kind: "info" | "success" | "error" | "busy",
+): { readonly glyph: string; readonly color: RGBA } {
+  switch (kind) {
+    case "success":
+      return { glyph: "✓", color: ansi("green") };
+    case "error":
+      return { glyph: "✗", color: ansi("red") };
+    case "busy":
+      return { glyph: "⟳", color: THEME.accent };
+    default:
+      return { glyph: "·", color: THEME.dim };
+  }
+}
