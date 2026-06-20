@@ -340,7 +340,6 @@ export const connectionStorageLayer = Layer.effectContext(
                   stage: "read",
                   resource: "shell-cache",
                   environmentId,
-                  path: file.uri,
                   cause,
                 }),
             });
@@ -352,7 +351,6 @@ export const connectionStorageLayer = Layer.effectContext(
                   stage: "parse",
                   resource: "shell-cache",
                   environmentId,
-                  path: file.uri,
                   cause,
                 }),
             });
@@ -364,7 +362,6 @@ export const connectionStorageLayer = Layer.effectContext(
                     stage: "decode",
                     resource: "shell-cache",
                     environmentId,
-                    path: file.uri,
                     cause,
                   }),
               ),
@@ -386,7 +383,6 @@ export const connectionStorageLayer = Layer.effectContext(
                 stage: "read",
                 resource: "legacy-shell-cache",
                 environmentId,
-                path: legacyFile.uri,
                 cause,
               }),
           });
@@ -398,7 +394,6 @@ export const connectionStorageLayer = Layer.effectContext(
                 stage: "parse",
                 resource: "legacy-shell-cache",
                 environmentId,
-                path: legacyFile.uri,
                 cause,
               }),
           });
@@ -410,7 +405,6 @@ export const connectionStorageLayer = Layer.effectContext(
                   stage: "decode",
                   resource: "legacy-shell-cache",
                   environmentId,
-                  path: legacyFile.uri,
                   cause,
                 }),
             ),
@@ -435,7 +429,6 @@ export const connectionStorageLayer = Layer.effectContext(
                   stage: "encode",
                   resource: "shell-cache",
                   environmentId,
-                  path: file.uri,
                   cause,
                 }),
             ),
@@ -453,7 +446,6 @@ export const connectionStorageLayer = Layer.effectContext(
                 stage: "write",
                 resource: "shell-cache",
                 environmentId,
-                path: file.uri,
                 cause,
               }),
           });
@@ -473,7 +465,6 @@ export const connectionStorageLayer = Layer.effectContext(
                 resource: "thread-cache",
                 environmentId,
                 threadId,
-                path: file.uri,
                 cause,
               }),
           });
@@ -486,7 +477,6 @@ export const connectionStorageLayer = Layer.effectContext(
                 resource: "thread-cache",
                 environmentId,
                 threadId,
-                path: file.uri,
                 cause,
               }),
           });
@@ -499,7 +489,6 @@ export const connectionStorageLayer = Layer.effectContext(
                   resource: "thread-cache",
                   environmentId,
                   threadId,
-                  path: file.uri,
                   cause,
                 }),
             ),
@@ -525,7 +514,6 @@ export const connectionStorageLayer = Layer.effectContext(
                   resource: "thread-cache",
                   environmentId,
                   threadId: thread.id,
-                  path: file.uri,
                   cause,
                 }),
             ),
@@ -544,7 +532,6 @@ export const connectionStorageLayer = Layer.effectContext(
                 resource: "thread-cache",
                 environmentId,
                 threadId: thread.id,
-                path: file.uri,
                 cause,
               }),
           });
@@ -562,7 +549,6 @@ export const connectionStorageLayer = Layer.effectContext(
                   resource: "thread-cache",
                   environmentId,
                   threadId,
-                  path: file.uri,
                   cause,
                 }),
             });
@@ -580,7 +566,6 @@ export const connectionStorageLayer = Layer.effectContext(
                   stage: "remove",
                   resource: "shell-cache",
                   environmentId,
-                  path: file.uri,
                   cause,
                 }),
             });
@@ -595,7 +580,6 @@ export const connectionStorageLayer = Layer.effectContext(
                   stage: "remove",
                   resource: "legacy-shell-cache",
                   environmentId,
-                  path: legacyFile.uri,
                   cause,
                 }),
             });
@@ -613,7 +597,6 @@ export const connectionStorageLayer = Layer.effectContext(
                   stage: "remove",
                   resource: "thread-cache",
                   environmentId,
-                  path: threadDirectory.uri,
                   cause,
                 }),
             });
