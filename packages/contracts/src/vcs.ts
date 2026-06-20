@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const VcsDriverKind = Schema.Literals(["git", "jj", "unknown"]);
 export type VcsDriverKind = typeof VcsDriverKind.Type;
@@ -62,6 +62,7 @@ export interface VcsProcessErrorContext {
   readonly operation: string;
   readonly command: string;
   readonly cwd: string;
+  readonly argumentCount?: number;
 }
 
 export interface VcsProcessSpawnFailure {
@@ -86,12 +87,26 @@ export interface VcsProcessTimeoutFailure {
   readonly timeoutMs: number;
 }
 
+export const VcsProcessExitFailureKind = Schema.Literals([
+  "authentication",
+  "not-found",
+  "command-failed",
+]);
+export type VcsProcessExitFailureKind = typeof VcsProcessExitFailureKind.Type;
+
+export interface VcsProcessExitFailure {
+  readonly exitCode: number;
+  readonly stderr: string;
+  readonly stderrTruncated: boolean;
+}
+
 export class VcsProcessSpawnError extends Schema.TaggedErrorClass<VcsProcessSpawnError>()(
   "VcsProcessSpawnError",
   {
     operation: Schema.String,
     command: Schema.String,
     cwd: Schema.String,
+    argumentCount: Schema.optional(NonNegativeInt),
     cause: Schema.Defect(),
   },
 ) {
@@ -113,12 +128,42 @@ export class VcsProcessExitError extends Schema.TaggedErrorClass<VcsProcessExitE
     operation: Schema.String,
     command: Schema.String,
     cwd: Schema.String,
+    argumentCount: Schema.optional(NonNegativeInt),
     exitCode: Schema.Number,
     detail: Schema.String,
+    failureKind: Schema.optional(VcsProcessExitFailureKind),
+    stderrLength: Schema.optional(NonNegativeInt),
+    stderrTruncated: Schema.optional(Schema.Boolean),
   },
 ) {
   override get message(): string {
     return `VCS process failed in ${this.operation}: ${this.command} (${this.cwd}) exited with ${this.exitCode} - ${this.detail}`;
+  }
+
+  static fromProcessExit(
+    context: VcsProcessErrorContext,
+    error: VcsProcessExitFailure,
+    failureKind: VcsProcessExitFailureKind,
+  ) {
+    const detail =
+      failureKind === "authentication"
+        ? "Authentication failed."
+        : failureKind === "not-found"
+          ? context.command === "glab"
+            ? "Merge request not found."
+            : context.command === "gh" || context.command === "az"
+              ? "Pull request not found."
+              : "VCS resource not found."
+          : "Process exited with a non-zero status.";
+
+    return new VcsProcessExitError({
+      ...context,
+      exitCode: error.exitCode,
+      detail,
+      failureKind,
+      stderrLength: error.stderr.length,
+      stderrTruncated: error.stderrTruncated,
+    });
   }
 }
 
@@ -128,6 +173,7 @@ export class VcsProcessTimeoutError extends Schema.TaggedErrorClass<VcsProcessTi
     operation: Schema.String,
     command: Schema.String,
     cwd: Schema.String,
+    argumentCount: Schema.optional(NonNegativeInt),
     timeoutMs: Schema.Number,
   },
 ) {
@@ -149,6 +195,7 @@ export class VcsOutputDecodeError extends Schema.TaggedErrorClass<VcsOutputDecod
     operation: Schema.String,
     command: Schema.String,
     cwd: Schema.String,
+    argumentCount: Schema.optional(NonNegativeInt),
     detail: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
