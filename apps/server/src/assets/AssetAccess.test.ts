@@ -7,18 +7,18 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { ServerConfig } from "../config.ts";
-import { ProjectFaviconResolverLive } from "../project/Layers/ProjectFaviconResolver.ts";
-import { WorkspacePathsLive } from "../workspace/Layers/WorkspacePaths.ts";
+import * as ServerConfig from "../config.ts";
+import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
 
-const configLayer = ServerConfig.layerTest(process.cwd(), {
+const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-asset-access-test-",
 });
 const testLayer = Layer.mergeAll(
   configLayer,
-  WorkspacePathsLive,
-  ProjectFaviconResolverLive.pipe(Layer.provide(WorkspacePathsLive)),
+  WorkspacePaths.layer,
+  ProjectFaviconResolver.layer.pipe(Layer.provide(WorkspacePaths.layer)),
   ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -127,7 +127,7 @@ describe("AssetAccess", () => {
 
   it.effect("issues exact attachment capabilities by attachment id", () =>
     Effect.gen(function* () {
-      const config = yield* ServerConfig;
+      const config = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const attachmentId = "thread-1-00000000-0000-4000-8000-000000000001";

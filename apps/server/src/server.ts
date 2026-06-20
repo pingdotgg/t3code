@@ -53,11 +53,11 @@ import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
 import * as ServerSettings from "./serverSettings.ts";
-import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
-import { RepositoryIdentityResolverLive } from "./project/Layers/RepositoryIdentityResolver.ts";
+import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
+import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
-import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
-import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
+import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
@@ -68,9 +68,9 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
-import { ProjectSetupScriptRunnerLive } from "./project/Layers/ProjectSetupScriptRunner.ts";
+import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import { ObservabilityLive } from "./observability/Layers/Observability.ts";
-import { ServerEnvironmentLive } from "./environment/Layers/ServerEnvironment.ts";
+import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -196,7 +196,7 @@ const SourceControlProviderRegistryLayerLive = SourceControlProviderRegistry.lay
 );
 
 const GitManagerLayerLive = GitManager.layer.pipe(
-  Layer.provideMerge(ProjectSetupScriptRunnerLive),
+  Layer.provideMerge(ProjectSetupScriptRunner.layer),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(TextGeneration.layer),
@@ -249,21 +249,21 @@ const PreviewLayerLive = Layer.empty.pipe(
   Layer.provideMerge(PortScannerLayerLive),
 );
 
-const WorkspaceEntriesLayerLive = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePathsLive));
+const WorkspaceEntriesLayerLive = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
 
-const WorkspaceFileSystemLayerLive = WorkspaceFileSystemLive.pipe(
-  Layer.provide(WorkspacePathsLive),
+const WorkspaceFileSystemLayerLive = WorkspaceFileSystem.layer.pipe(
+  Layer.provide(WorkspacePaths.layer),
   Layer.provide(WorkspaceEntriesLayerLive),
 );
 
 const WorkspaceLayerLive = Layer.mergeAll(
-  WorkspacePathsLive,
+  WorkspacePaths.layer,
   WorkspaceEntriesLayerLive,
   WorkspaceFileSystemLayerLive,
 );
 
-const ProjectFaviconResolverLayerLive = ProjectFaviconResolverLive.pipe(
-  Layer.provide(WorkspacePathsLive),
+const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
+  Layer.provide(WorkspacePaths.layer),
 );
 
 const AuthLayerLive = EnvironmentAuth.layer.pipe(
@@ -321,8 +321,8 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLayerLive),
-  Layer.provideMerge(RepositoryIdentityResolverLive),
-  Layer.provideMerge(ServerEnvironmentLive),
+  Layer.provideMerge(RepositoryIdentityResolver.layer),
+  Layer.provideMerge(ServerEnvironment.layer),
   Layer.provideMerge(AuthLayerLive),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(

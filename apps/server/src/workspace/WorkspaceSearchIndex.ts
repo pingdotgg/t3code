@@ -182,64 +182,69 @@ const waitForScan = Effect.fn("WorkspaceSearchIndex.waitForScan")(function* (
   );
 });
 
-const makeWorkspaceSearchIndex = (cwd: string) =>
-  Effect.acquireRelease(createFinder(cwd), (finder) => Effect.sync(() => finder.destroy())).pipe(
-    Effect.tap((finder) => waitForScan(cwd, finder)),
-    Effect.map((finder) => {
-      const runMixedSearch = Effect.fn("WorkspaceSearchIndex.runMixedSearch")(function* (
-        query: string,
-        pageSize: number,
-      ) {
-        const result = yield* Effect.sync(() => finder.mixedSearch(query, { pageSize }));
-        if (!result.ok) {
-          return yield* new WorkspaceSearchIndexSearchFailed({ cwd, reason: result.error });
-        }
-        return result.value;
-      });
+export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (cwd: string) {
+  const finder = yield* Effect.acquireRelease(createFinder(cwd), (finder) =>
+    Effect.sync(() => finder.destroy()),
+  );
+  yield* waitForScan(cwd, finder);
 
-      const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
-        "WorkspaceSearchIndex.refresh",
-      )(function* () {
-        const result = yield* Effect.sync(() => finder.scanFiles());
-        if (!result.ok) {
-          return yield* new WorkspaceSearchIndexRefreshFailed({ cwd, reason: result.error });
-        }
-        yield* waitForScan(cwd, finder);
-      });
+  const runMixedSearch = Effect.fn("WorkspaceSearchIndex.runMixedSearch")(function* (
+    query: string,
+    pageSize: number,
+  ) {
+    const result = yield* Effect.sync(() => finder.mixedSearch(query, { pageSize }));
+    if (!result.ok) {
+      return yield* new WorkspaceSearchIndexSearchFailed({ cwd, reason: result.error });
+    }
+    return result.value;
+  });
 
-      const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
-        function* () {
-          const result = yield* runMixedSearch("", WORKSPACE_INDEX_PAGE_SIZE);
-          const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
-          const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
-            left.path.localeCompare(right.path),
-          );
-          const entries = sortedEntries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
-          return {
-            entries,
-            truncated: mapped.truncated || entries.length < sortedEntries.length,
-          };
-        },
+  const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
+    "WorkspaceSearchIndex.refresh",
+  )(function* () {
+    const result = yield* Effect.sync(() => finder.scanFiles());
+    if (!result.ok) {
+      return yield* new WorkspaceSearchIndexRefreshFailed({ cwd, reason: result.error });
+    }
+    yield* waitForScan(cwd, finder);
+  });
+
+  const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
+    function* () {
+      const result = yield* runMixedSearch("", WORKSPACE_INDEX_PAGE_SIZE);
+      const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
+      const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
+        left.path.localeCompare(right.path),
       );
-
-      const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
-        "WorkspaceSearchIndex.search",
-      )(function* (query, limit) {
-        const result = yield* runMixedSearch(query, Math.max(1, limit + 1));
-        return mapMixedSearchResult(result, limit);
-      });
-
-      return WorkspaceSearchIndex.of({ list, refresh, search });
-    }),
+      const entries = sortedEntries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
+      return {
+        entries,
+        truncated: mapped.truncated || entries.length < sortedEntries.length,
+      };
+    },
   );
 
-const workspaceSearchIndexLayer = (cwd: string) =>
-  Layer.effect(WorkspaceSearchIndex, makeWorkspaceSearchIndex(cwd));
+  const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
+    "WorkspaceSearchIndex.search",
+  )(function* (query, limit) {
+    const result = yield* runMixedSearch(query, Math.max(1, limit + 1));
+    return mapMixedSearchResult(result, limit);
+  });
+
+  return WorkspaceSearchIndex.of({ list, refresh, search });
+});
+
+/**
+ * A layer factory is required because every index is scoped to a concrete
+ * workspace root. WorkspaceSearchIndexMap owns memoization and idle cleanup;
+ * using a default cwd here would mix resources from different workspaces.
+ */
+export const layer = (cwd: string) => Layer.effect(WorkspaceSearchIndex, make(cwd));
 
 export class WorkspaceSearchIndexMap extends LayerMap.Service<WorkspaceSearchIndexMap>()(
   "t3/workspace/WorkspaceSearchIndexMap",
   {
-    lookup: workspaceSearchIndexLayer,
+    lookup: layer,
     idleTimeToLive: WORKSPACE_INDEX_IDLE_TTL,
   },
 ) {}

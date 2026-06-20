@@ -1,7 +1,7 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeCrypto from "node:crypto";
+import { generateKeyPairSync, type KeyObject, sign } from "node:crypto";
 
 import {
   AuthAccessTokenType,
@@ -89,13 +89,13 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
-import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
-import * as ProjectSetupScriptRunner from "./project/Services/ProjectSetupScriptRunner.ts";
-import * as RepositoryIdentityResolver from "./project/Services/RepositoryIdentityResolver.ts";
-import * as ServerEnvironment from "./environment/Services/ServerEnvironment.ts";
+import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
+import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
+import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
-import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
-import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
+import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
@@ -485,17 +485,17 @@ const buildAppUnderTest = (options?: {
       ...options?.layers?.gitManager,
     });
     const workspaceEntriesLayer = WorkspaceEntries.layer.pipe(
-      Layer.provide(WorkspacePathsLive),
+      Layer.provide(WorkspacePaths.layer),
       Layer.provideMerge(vcsDriverRegistryLayer),
     );
     const workspaceAndProjectServicesLayer = Layer.mergeAll(
-      WorkspacePathsLive,
+      WorkspacePaths.layer,
       workspaceEntriesLayer,
-      WorkspaceFileSystemLive.pipe(
-        Layer.provide(WorkspacePathsLive),
+      WorkspaceFileSystem.layer.pipe(
+        Layer.provide(WorkspacePaths.layer),
         Layer.provide(workspaceEntriesLayer),
       ),
-      ProjectFaviconResolverLive.pipe(Layer.provide(WorkspacePathsLive)),
+      ProjectFaviconResolver.layer.pipe(Layer.provide(WorkspacePaths.layer)),
     );
     const gitWorkflowLayer = GitWorkflowService.layer.pipe(
       Layer.provideMerge(vcsDriverRegistryLayer),
@@ -951,14 +951,14 @@ const makeDpopProof = (input: {
   readonly iat: number;
   readonly accessToken?: string;
   readonly jti?: string;
-  readonly privateKey?: NodeCrypto.KeyObject;
+  readonly privateKey?: KeyObject;
   readonly publicJwk?: DpopPublicJwk;
 }) => {
   const keyPair =
     input.privateKey && input.publicJwk
       ? { privateKey: input.privateKey, publicJwk: input.publicJwk }
       : (() => {
-          const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync("ec", {
+          const { privateKey, publicKey } = generateKeyPairSync("ec", {
             namedCurve: "P-256",
           });
           return { privateKey, publicJwk: publicKey.export({ format: "jwk" }) as DpopPublicJwk };
@@ -979,7 +979,7 @@ const makeDpopProof = (input: {
       ...(input.accessToken ? { ath: computeDpopAccessTokenHash(input.accessToken) } : {}),
     }),
   ).toString("base64url");
-  const signature = NodeCrypto.sign("sha256", Buffer.from(`${header}.${payload}`), {
+  const signature = sign("sha256", Buffer.from(`${header}.${payload}`), {
     key: keyPair.privateKey,
     dsaEncoding: "ieee-p1363",
   }).toString("base64url");
@@ -1025,7 +1025,7 @@ const makeCloudMintCredentialRequest = (input: {
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signingInput = `${header}.${encodedPayload}`;
   return {
-    proof: `${signingInput}.${NodeCrypto.sign(null, Buffer.from(signingInput), input.privateKey).toString("base64url")}`,
+    proof: `${signingInput}.${sign(null, Buffer.from(signingInput), input.privateKey).toString("base64url")}`,
   };
 };
 
@@ -1058,7 +1058,7 @@ const makeCloudEnvironmentHealthRequest = (input: {
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signingInput = `${header}.${encodedPayload}`;
   return {
-    proof: `${signingInput}.${NodeCrypto.sign(null, Buffer.from(signingInput), input.privateKey).toString("base64url")}`,
+    proof: `${signingInput}.${sign(null, Buffer.from(signingInput), input.privateKey).toString("base64url")}`,
   };
 };
 
@@ -2055,7 +2055,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      const cloudKeyPair = generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2132,7 +2132,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      const cloudKeyPair = generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2175,7 +2175,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      const cloudKeyPair = generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2269,7 +2269,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
-      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      const cloudKeyPair = generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2346,7 +2346,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      const cloudKeyPair = generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2405,7 +2405,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      const cloudKeyPair = generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2464,7 +2464,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      const cloudKeyPair = generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2524,7 +2524,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      const cloudKeyPair = generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2585,7 +2585,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       Effect.gen(function* () {
         yield* buildAppUnderTest();
 
-        const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+        const cloudKeyPair = generateKeyPairSync("ed25519", {
           privateKeyEncoding: { format: "pem", type: "pkcs8" },
           publicKeyEncoding: { format: "pem", type: "spki" },
         });
@@ -2665,7 +2665,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
-      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      const cloudKeyPair = generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2734,7 +2734,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      const cloudKeyPair = generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2801,7 +2801,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      const cloudKeyPair = generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2852,7 +2852,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      const cloudKeyPair = generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2903,7 +2903,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      const cloudKeyPair = generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2968,7 +2968,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      const cloudKeyPair = generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -3018,7 +3018,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+      const cloudKeyPair = generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -4448,10 +4448,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assertTrue(result._tag === "Failure");
       assertTrue(result.failure._tag === "ProjectSearchEntriesError");
-      assertInclude(
-        result.failure.message,
-        "Workspace root does not exist: /definitely/not/a/real/workspace/path",
-      );
+      assert.equal(result.failure.message, "Failed to search workspace entries.");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -6097,13 +6094,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       const runForThread = vi.fn(
         (
-          _: Parameters<
+          input: Parameters<
             ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"]
           >[0],
         ) =>
           Effect.fail(
-            new ProjectSetupScriptRunner.ProjectSetupScriptRunnerError({
-              message: "pty unavailable",
+            new ProjectSetupScriptRunner.ProjectSetupScriptOperationError({
+              threadId: input.threadId,
+              worktreePath: input.worktreePath,
+              operation: "openTerminal",
+              cause: new Error("pty unavailable"),
             }),
           ),
       );
@@ -6178,7 +6178,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(setupFailureActivity?.activity.kind, "setup-script.failed");
       assert.deepEqual(setupFailureActivity?.activity.payload, {
-        detail: "pty unavailable",
+        detail:
+          "Project setup script operation 'openTerminal' failed for thread 'thread-bootstrap-setup-failure' in '/tmp/bootstrap-worktree'.",
         worktreePath: "/tmp/bootstrap-worktree",
       });
       assertTrue(dispatchedCommands.every((command) => command.type !== "thread.delete"));

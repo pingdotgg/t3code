@@ -5,11 +5,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
-import { WorkspacePaths } from "../Services/WorkspacePaths.ts";
-import { WorkspacePathsLive } from "./WorkspacePaths.ts";
+import * as WorkspacePaths from "./WorkspacePaths.ts";
 
 const TestLayer = Layer.empty.pipe(
-  Layer.provideMerge(WorkspacePathsLive),
+  Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(NodeServices.layer),
 );
 
@@ -38,7 +37,7 @@ it.layer(TestLayer)("WorkspacePathsLive", (it) => {
   describe("normalizeWorkspaceRoot", () => {
     it.effect("resolves an existing directory", () =>
       Effect.gen(function* () {
-        const workspacePaths = yield* WorkspacePaths;
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
         const cwd = yield* makeTempDir();
 
         const resolved = yield* workspacePaths.normalizeWorkspaceRoot(cwd);
@@ -49,7 +48,7 @@ it.layer(TestLayer)("WorkspacePathsLive", (it) => {
 
     it.effect("rejects missing directories", () =>
       Effect.gen(function* () {
-        const workspacePaths = yield* WorkspacePaths;
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
         const cwd = yield* makeTempDir();
         const path = yield* Path.Path;
 
@@ -63,7 +62,7 @@ it.layer(TestLayer)("WorkspacePathsLive", (it) => {
 
     it.effect("creates missing directories when createIfMissing is enabled", () =>
       Effect.gen(function* () {
-        const workspacePaths = yield* WorkspacePaths;
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
         const fileSystem = yield* FileSystem.FileSystem;
         const cwd = yield* makeTempDir();
         const path = yield* Path.Path;
@@ -81,7 +80,7 @@ it.layer(TestLayer)("WorkspacePathsLive", (it) => {
 
     it.effect("rejects file paths", () =>
       Effect.gen(function* () {
-        const workspacePaths = yield* WorkspacePaths;
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
         const cwd = yield* makeTempDir();
         const path = yield* Path.Path;
         const filePath = path.join(cwd, "README.md");
@@ -97,7 +96,7 @@ it.layer(TestLayer)("WorkspacePathsLive", (it) => {
   describe("resolveRelativePathWithinRoot", () => {
     it.effect("resolves relative paths inside the workspace root", () =>
       Effect.gen(function* () {
-        const workspacePaths = yield* WorkspacePaths;
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
         const cwd = yield* makeTempDir();
         const path = yield* Path.Path;
 
@@ -115,7 +114,7 @@ it.layer(TestLayer)("WorkspacePathsLive", (it) => {
 
     it.effect("rejects paths that escape the workspace root", () =>
       Effect.gen(function* () {
-        const workspacePaths = yield* WorkspacePaths;
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
         const cwd = yield* makeTempDir();
 
         const error = yield* workspacePaths

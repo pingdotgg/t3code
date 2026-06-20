@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import { FetchHttpClient } from "effect/unstable/http";
-import { type ManagedRelayClient } from "@t3tools/client-runtime/relay";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
 import type { EnvironmentId } from "@t3tools/contracts";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
@@ -158,7 +158,7 @@ const runBackgroundOperations = Effect.fn("TestRemoteRegistration.runBackgroundO
       }
       idlePasses = 0;
       const exit = yield* Effect.exit(
-        pending.operation as Effect.Effect<unknown, unknown, ManagedRelayClient>,
+        pending.operation as Effect.Effect<unknown, unknown, ManagedRelay.ManagedRelayClient>,
       );
       yield* Effect.sync(() => {
         pending.resolve(exit);

@@ -1,7 +1,4 @@
-import {
-  type ManagedRelayAccessTokenCacheEntry,
-  type ManagedRelayAccessTokenStore,
-} from "@t3tools/client-runtime/relay";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -60,7 +57,7 @@ const loadManagedRelayAccessTokens = Effect.tryPromise({
 }).pipe(
   Effect.flatMap((encoded) =>
     encoded === null
-      ? Effect.succeed<ReadonlyArray<ManagedRelayAccessTokenCacheEntry>>([])
+      ? Effect.succeed<ReadonlyArray<ManagedRelay.ManagedRelayAccessTokenCacheEntry>>([])
       : decodeManagedRelayAccessTokenCache(encoded).pipe(
           Effect.map((cache) => cache.entries),
           Effect.mapError(storeError("Persisted relay access tokens are invalid.")),
@@ -68,7 +65,9 @@ const loadManagedRelayAccessTokens = Effect.tryPromise({
   ),
 );
 
-const saveManagedRelayAccessTokens = (entries: ReadonlyArray<ManagedRelayAccessTokenCacheEntry>) =>
+const saveManagedRelayAccessTokens = (
+  entries: ReadonlyArray<ManagedRelay.ManagedRelayAccessTokenCacheEntry>,
+) =>
   encodeManagedRelayAccessTokenCache({
     version: MANAGED_RELAY_TOKEN_CACHE_VERSION,
     entries,
@@ -87,7 +86,7 @@ const clearManagedRelayAccessTokens = Effect.tryPromise({
   catch: storeError("Could not clear persisted relay access tokens."),
 });
 
-export const managedRelayAccessTokenStore: ManagedRelayAccessTokenStore = {
+export const managedRelayAccessTokenStore: ManagedRelay.ManagedRelayAccessTokenStore = {
   load: loadManagedRelayAccessTokens.pipe(
     Effect.tapError(logStoreFailure("load")),
     Effect.orElseSucceed(() => []),

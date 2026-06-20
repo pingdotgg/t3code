@@ -118,7 +118,6 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     createProof: (proofInput) =>
       Ref.update(proofInputs, (current) => [...current, proofInput]).pipe(
         Effect.as(`proof:${proofInput.url}`),
-        Effect.mapError((cause) => new ManagedRelay.ManagedRelayDpopSignerError({ cause })),
       ),
   });
   const layer = RemoteEnvironmentAuthorization.layer.pipe(

@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { HostProcessHostname, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { vi } from "vite-plus/test";
 
-import * as ProcessRunner from "../../processRunner.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
-import { ChildProcessSpawner } from "effect/unstable/process";
 
 const runMock = vi.fn<ProcessRunner.ProcessRunner["Service"]["run"]>();
 

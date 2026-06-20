@@ -31,14 +31,13 @@ import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEng
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationLayerLive } from "../orchestration/runtimeLayer.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "../persistence/Layers/Sqlite.ts";
-import { RepositoryIdentityResolverLive } from "../project/Layers/RepositoryIdentityResolver.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import {
   clearPersistedServerRuntimeState,
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
-import { WorkspacePathsLive } from "../workspace/Layers/WorkspacePaths.ts";
-import * as WorkspacePaths from "../workspace/Services/WorkspacePaths.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 type ProjectMutationTarget = {
@@ -68,9 +67,9 @@ const projectCommandUuid = Crypto.Crypto.pipe(
 );
 
 const ProjectCliRuntimeLive = Layer.mergeAll(
-  WorkspacePathsLive,
+  WorkspacePaths.layer,
   OrchestrationLayerLive.pipe(
-    Layer.provideMerge(RepositoryIdentityResolverLive),
+    Layer.provideMerge(RepositoryIdentityResolver.layer),
     Layer.provideMerge(SqlitePersistenceLayerLive),
   ),
 );
@@ -301,7 +300,7 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
     }).pipe(Effect.provide(offlineRuntimeLayer));
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(EnvironmentAuth.runtimeLayer, WorkspacePathsLive).pipe(
+      Layer.mergeAll(EnvironmentAuth.runtimeLayer, WorkspacePaths.layer).pipe(
         Layer.provideMerge(FetchHttpClient.layer),
         Layer.provide(ServerConfig.layer(config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),

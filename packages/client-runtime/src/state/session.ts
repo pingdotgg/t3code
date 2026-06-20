@@ -26,7 +26,7 @@ export function initialConfigOption<E>(
 export function createEnvironmentSessionAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
-  const configAtom = Atom.family((environmentId: EnvironmentId) =>
+  const initialConfigAtom = Atom.family((environmentId: EnvironmentId) =>
     runtime.atom(
       followStreamInEnvironment(
         environmentId,
@@ -49,10 +49,15 @@ export function createEnvironmentSessionAtoms<R, E>(
     ),
   );
 
-  const configValueAtom = Atom.family((environmentId: EnvironmentId) =>
+  // This is only the bootstrap config captured when a transport session is
+  // established. Consumers that need current provider/settings state must use
+  // createServerEnvironmentAtoms(...).configValueAtom instead.
+  const initialConfigValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get): ServerConfig | null =>
       Option.getOrNull(
-        Option.getOrElse(AsyncResult.value(get(configAtom(environmentId))), () => Option.none()),
+        Option.getOrElse(AsyncResult.value(get(initialConfigAtom(environmentId))), () =>
+          Option.none(),
+        ),
       ),
     ).pipe(Atom.withLabel(`environment-config-value:${environmentId}`)),
   );
@@ -80,8 +85,8 @@ export function createEnvironmentSessionAtoms<R, E>(
   );
 
   return {
-    configAtom,
-    configValueAtom,
+    initialConfigAtom,
+    initialConfigValueAtom,
     preparedConnectionAtom,
     preparedConnectionValueAtom,
   };

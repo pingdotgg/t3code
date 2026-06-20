@@ -15,7 +15,14 @@ function configuredRelayUrl(): string {
 
 const httpClientLayer = remoteHttpClientLayer(fetch);
 
-export const runtimeLayer = Layer.merge(
+type RuntimeLayerSource =
+  | ReturnType<typeof managedRelayClientLayer>
+  | typeof Socket.layerWebSocketConstructorGlobal
+  | typeof cryptoLayer
+  | typeof httpClientLayer
+  | typeof tracingLayer;
+
+const runtimeLayer = Layer.merge(
   managedRelayClientLayer(configuredRelayUrl()),
   Socket.layerWebSocketConstructorGlobal,
 ).pipe(
@@ -24,6 +31,12 @@ export const runtimeLayer = Layer.merge(
   Layer.provideMerge(tracingLayer.pipe(Layer.provide(httpClientLayer))),
 );
 
-export const runtime = ManagedRuntime.make(runtimeLayer);
+export const runtime: ManagedRuntime.ManagedRuntime<
+  Layer.Success<RuntimeLayerSource>,
+  Layer.Error<RuntimeLayerSource>
+> = ManagedRuntime.make(runtimeLayer);
 
-export const runtimeContextLayer = Layer.effectContext(runtime.contextEffect);
+export const runtimeContextLayer: Layer.Layer<
+  Layer.Success<RuntimeLayerSource>,
+  Layer.Error<RuntimeLayerSource>
+> = Layer.effectContext(runtime.contextEffect);

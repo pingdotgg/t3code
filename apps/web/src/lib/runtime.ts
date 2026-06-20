@@ -24,6 +24,13 @@ const relayTracingLayer = makeRelayClientTracingLayer(resolveRelayTracingConfig(
   client: typeof window !== "undefined" && window.desktopBridge ? "desktop" : "web",
 }).pipe(Layer.provide(httpClientLayer));
 
+type RuntimeLayerSource =
+  | typeof httpClientLayer
+  | typeof browserCryptoLayer
+  | typeof Socket.layerWebSocketConstructorGlobal
+  | typeof relayTracingLayer
+  | ReturnType<typeof managedRelayClientLayer>;
+
 export const remoteHttpRuntime = ManagedRuntime.make(httpClientLayer);
 
 const primaryHttpRuntime = ManagedRuntime.make(
@@ -47,7 +54,7 @@ export function __setPrimaryHttpRunnerForTests(runner?: PrimaryHttpEffectRunner)
   primaryHttpRunner = runner ?? livePrimaryHttpRunner;
 }
 
-export const runtimeLayer = Layer.mergeAll(
+const runtimeLayer = Layer.mergeAll(
   httpClientLayer,
   browserCryptoLayer,
   Socket.layerWebSocketConstructorGlobal,
@@ -57,6 +64,12 @@ export const runtimeLayer = Layer.mergeAll(
   ),
 );
 
-export const runtime = ManagedRuntime.make(runtimeLayer);
+export const runtime: ManagedRuntime.ManagedRuntime<
+  Layer.Success<RuntimeLayerSource>,
+  Layer.Error<RuntimeLayerSource>
+> = ManagedRuntime.make(runtimeLayer);
 
-export const runtimeContextLayer = Layer.effectContext(runtime.contextEffect);
+export const runtimeContextLayer: Layer.Layer<
+  Layer.Success<RuntimeLayerSource>,
+  Layer.Error<RuntimeLayerSource>
+> = Layer.effectContext(runtime.contextEffect);

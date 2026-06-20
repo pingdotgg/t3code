@@ -50,11 +50,7 @@ export function makeComponentLogger(component: string): DesktopComponentLogger {
   };
 }
 
-const readPersistedOtlpTracesUrl: Effect.Effect<
-  Option.Option<string>,
-  never,
-  FileSystem.FileSystem | DesktopEnvironment.DesktopEnvironment
-> = Effect.gen(function* () {
+const readPersistedOtlpTracesUrl = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const raw = yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(Effect.option);

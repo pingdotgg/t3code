@@ -1,4 +1,4 @@
-import * as NodeCrypto from "node:crypto";
+import { createPublicKey } from "node:crypto";
 import {
   AuthRelayReadScope,
   AuthRelayWriteScope,
@@ -55,7 +55,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { requireEnvironmentScope } from "../auth/http.ts";
-import * as ServerEnvironment from "../environment/Services/ServerEnvironment.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
@@ -152,7 +152,7 @@ function validateCloudMintPublicKey(
   publicKey: string,
 ): Effect.Effect<void, EnvironmentHttpBadRequestError> {
   return Effect.try({
-    try: () => NodeCrypto.createPublicKey(publicKey.replace(/\\n/g, "\n")),
+    try: () => createPublicKey(publicKey.replace(/\\n/g, "\n")),
     catch: () =>
       new EnvironmentHttpBadRequestError({
         message: "Cloud mint public key must be a valid Ed25519 public key.",

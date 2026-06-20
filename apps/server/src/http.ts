@@ -39,7 +39,7 @@ import {
   failEnvironmentAuthInvalid,
   failEnvironmentInternal,
 } from "./auth/http.ts";
-import * as ServerEnvironment from "./environment/Services/ServerEnvironment.ts";
+import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";

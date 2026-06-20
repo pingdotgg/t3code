@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import { HttpClient } from "effect/unstable/http";
-import { ManagedRelayClient } from "@t3tools/client-runtime/relay";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { savePreferencesPatch } from "../../lib/storage";
@@ -11,7 +11,7 @@ export function setLiveActivityUpdatesEnabled(input: {
   readonly enabled: boolean;
   readonly clerkToken: string | null;
   readonly connections: ReadonlyArray<SavedRemoteConnection>;
-}): Effect.Effect<void, unknown, HttpClient.HttpClient | ManagedRelayClient> {
+}): Effect.Effect<void, unknown, HttpClient.HttpClient | ManagedRelay.ManagedRelayClient> {
   return Effect.gen(function* () {
     yield* Effect.tryPromise({
       try: () => savePreferencesPatch({ liveActivitiesEnabled: input.enabled }),

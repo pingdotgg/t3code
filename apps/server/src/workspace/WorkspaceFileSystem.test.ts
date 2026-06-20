@@ -5,26 +5,25 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
-import { ServerConfig } from "../../config.ts";
-import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
-import * as VcsProcess from "../../vcs/VcsProcess.ts";
-import * as WorkspaceEntries from "../WorkspaceEntries.ts";
-import { WorkspaceFileSystem } from "../Services/WorkspaceFileSystem.ts";
-import { WorkspaceFileSystemLive } from "./WorkspaceFileSystem.ts";
-import { WorkspacePathsLive } from "./WorkspacePaths.ts";
+import * as ServerConfig from "../config.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as WorkspaceEntries from "./WorkspaceEntries.ts";
+import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
+import * as WorkspacePaths from "./WorkspacePaths.ts";
 
-const ProjectLayer = WorkspaceFileSystemLive.pipe(
-  Layer.provide(WorkspacePathsLive),
-  Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePathsLive))),
+const ProjectLayer = WorkspaceFileSystem.layer.pipe(
+  Layer.provide(WorkspacePaths.layer),
+  Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
 );
 
 const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(ProjectLayer),
-  Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePathsLive))),
-  Layer.provideMerge(WorkspacePathsLive),
+  Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+  Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
   Layer.provide(
-    ServerConfig.layerTest(process.cwd(), {
+    ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-workspace-files-test-",
     }),
   ),
@@ -56,7 +55,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   describe("readFile", () => {
     it.effect("reads UTF-8 files relative to the workspace root", () =>
       Effect.gen(function* () {
-        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "src/index.ts", "export const answer = 42;\n");
 
@@ -76,7 +75,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     it.effect("rejects reads outside the workspace root", () =>
       Effect.gen(function* () {
-        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const cwd = yield* makeTempDir;
 
         const error = yield* workspaceFileSystem
@@ -91,7 +90,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     it.effect("rejects symlinks that resolve outside the workspace root", () =>
       Effect.gen(function* () {
-        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
@@ -106,7 +105,13 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           .readFile({ cwd, relativePath: "linked-secret.txt" })
           .pipe(Effect.flip);
 
-        expect(error.message).toContain("resolves outside the project root");
+        expect(error.message).toBe(
+          `Workspace file operation 'workspaceFileSystem.readFile' failed for 'linked-secret.txt' in '${cwd}'.`,
+        );
+        expect(error.cause).toBeInstanceOf(Error);
+        expect((error.cause as Error).message).toBe(
+          "Workspace file path resolves outside the project root.",
+        );
       }),
     );
   });
@@ -114,7 +119,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   describe("writeFile", () => {
     it.effect("writes files relative to the workspace root", () =>
       Effect.gen(function* () {
-        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const cwd = yield* makeTempDir;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -135,7 +140,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     it.effect("invalidates workspace entry search cache after writes", () =>
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "src/existing.ts", "export {};\n");
 
@@ -160,7 +165,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     it.effect("rejects writes outside the workspace root", () =>
       Effect.gen(function* () {
-        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const cwd = yield* makeTempDir;
         const path = yield* Path.Path;
         const fileSystem = yield* FileSystem.FileSystem;

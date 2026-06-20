@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
-import { ProcessRunner } from "../../processRunner.ts";
+import * as ProcessRunner from "../processRunner.ts";
 
 interface ResolveServerEnvironmentLabelInput {
   readonly cwdBaseName: string;
@@ -50,7 +50,7 @@ const runFriendlyLabelCommand = Effect.fn("runFriendlyLabelCommand")(function* (
   command: string,
   args: readonly string[],
 ) {
-  const processRunner = yield* ProcessRunner;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
   const result = yield* processRunner
     .run({
       command,

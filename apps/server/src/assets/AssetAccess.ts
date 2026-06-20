@@ -22,8 +22,8 @@ import {
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { resolveAttachmentPathById } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
-import { ProjectFaviconResolver } from "../project/Services/ProjectFaviconResolver.ts";
-import { WorkspacePaths } from "../workspace/Services/WorkspacePaths.ts";
+import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
 export const FALLBACK_PROJECT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#6b728080" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-fallback="project-favicon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg>`;
@@ -103,7 +103,7 @@ const failAccess = (message: string, cause?: unknown) =>
 const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWorkspaceFile")(
   function* (input: { readonly workspaceRoot: string; readonly relativePath: string }) {
     const fileSystem = yield* FileSystem.FileSystem;
-    const workspacePaths = yield* WorkspacePaths;
+    const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
     const resolved = yield* workspacePaths
       .resolveRelativePathWithinRoot(input)
       .pipe(Effect.orElseSucceed(() => null));
@@ -130,7 +130,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const workspacePaths = yield* WorkspacePaths;
+  const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const expiresAt = (yield* Clock.currentTimeMillis) + ASSET_TOKEN_TTL_MS;
   let claims: AssetClaims;
   let fileName: string;
@@ -202,7 +202,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       const workspaceRoot = yield* workspacePaths
         .normalizeWorkspaceRoot(input.resource.cwd)
         .pipe(Effect.mapError((cause) => failAccess(cause.message, cause)));
-      const faviconResolver = yield* ProjectFaviconResolver;
+      const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
       const faviconPath = yield* faviconResolver.resolvePath(workspaceRoot);
       const relativePath = faviconPath ? path.relative(workspaceRoot, faviconPath) : null;
       if (

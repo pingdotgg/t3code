@@ -79,15 +79,15 @@ import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
-import * as WorkspaceFileSystem from "./workspace/Services/WorkspaceFileSystem.ts";
-import * as WorkspacePaths from "./workspace/Services/WorkspacePaths.ts";
+import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
-import * as ProjectSetupScriptRunner from "./project/Services/ProjectSetupScriptRunner.ts";
-import * as RepositoryIdentityResolver from "./project/Services/RepositoryIdentityResolver.ts";
-import * as ServerEnvironment from "./environment/Services/ServerEnvironment.ts";
+import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
+import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
@@ -1190,7 +1190,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               Effect.mapError(
                 (cause) =>
                   new ProjectSearchEntriesError({
-                    message: `Failed to search workspace entries: ${cause.detail}`,
+                    message: "Failed to search workspace entries.",
                     cause,
                   }),
               ),
@@ -1204,7 +1204,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               Effect.mapError(
                 (cause) =>
                   new ProjectListEntriesError({
-                    message: `Failed to list workspace entries: ${cause.detail}`,
+                    message: "Failed to list workspace entries.",
                     cause,
                   }),
               ),
@@ -1218,7 +1218,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               Effect.mapError((cause) => {
                 const message = isWorkspacePathOutsideRootError(cause)
                   ? "Workspace file path must stay within the project root."
-                  : `Failed to read workspace file: ${cause.detail}`;
+                  : "Failed to read workspace file.";
                 return new ProjectReadFileError({ message, cause });
               }),
             ),
@@ -1251,7 +1251,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               Effect.mapError(
                 (cause) =>
                   new FilesystemBrowseError({
-                    message: cause.detail,
+                    message: "Failed to browse the filesystem.",
                     cause,
                   }),
               ),

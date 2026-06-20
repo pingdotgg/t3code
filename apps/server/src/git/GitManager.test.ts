@@ -20,7 +20,6 @@ import type {
 } from "@t3tools/contracts";
 
 import { GitCommandError, TextGenerationError } from "@t3tools/contracts";
-import * as GitManager from "./GitManager.ts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -28,8 +27,9 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as ProjectSetupScriptRunner from "../project/Services/ProjectSetupScriptRunner.ts";
+import * as GitManager from "./GitManager.ts";
 
 interface FakeGhScenario {
   prListSequence?: string[];
@@ -3215,10 +3215,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           },
         },
         setupScriptRunner: {
-          runForThread: () =>
+          runForThread: (input) =>
             Effect.fail(
-              new ProjectSetupScriptRunner.ProjectSetupScriptRunnerError({
-                message: "terminal start failed",
+              new ProjectSetupScriptRunner.ProjectSetupScriptOperationError({
+                threadId: input.threadId,
+                worktreePath: input.worktreePath,
+                operation: "openTerminal",
+                cause: new Error("terminal start failed"),
               }),
             ),
         },

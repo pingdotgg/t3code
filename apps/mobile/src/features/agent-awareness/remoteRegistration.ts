@@ -9,7 +9,7 @@ import {
   type RelayLiveActivityRegistrationRequest,
 } from "@t3tools/contracts/relay";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
-import { ManagedRelayClient } from "@t3tools/client-runtime/relay";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import {
   isAtomCommandInterrupted,
   settleAsyncResult,
@@ -175,7 +175,7 @@ const relayToken = Effect.gen(function* () {
 function registerDeviceWithRelay(
   body: RelayDeviceRegistrationRequest,
   expectedGeneration: number,
-): Effect.Effect<void, unknown, ManagedRelayClient> {
+): Effect.Effect<void, unknown, ManagedRelay.ManagedRelayClient> {
   return Effect.gen(function* () {
     if (expectedGeneration !== deviceRegistrationGeneration) {
       logRegistrationDebug("device registration cancelled before relay request", {
@@ -198,7 +198,7 @@ function registerDeviceWithRelay(
       return;
     }
 
-    const client = yield* ManagedRelayClient;
+    const client = yield* ManagedRelay.ManagedRelayClient;
     logRegistrationDebug("relay device registration request started", {
       expectedGeneration,
     });
@@ -215,7 +215,7 @@ function registerDeviceWithRelay(
 function unregisterDeviceWithRelay(input: {
   readonly deviceId: string;
   readonly tokenProvider: () => Promise<string | null>;
-}): Effect.Effect<void, unknown, ManagedRelayClient> {
+}): Effect.Effect<void, unknown, ManagedRelay.ManagedRelayClient> {
   return Effect.gen(function* () {
     if (!readRelayConfig()) return;
     const token = yield* Effect.tryPromise({
@@ -227,7 +227,7 @@ function unregisterDeviceWithRelay(input: {
       return;
     }
 
-    const client = yield* ManagedRelayClient;
+    const client = yield* ManagedRelay.ManagedRelayClient;
     yield* client.unregisterDevice({
       clerkToken: token,
       deviceId: input.deviceId,
@@ -237,7 +237,7 @@ function unregisterDeviceWithRelay(input: {
 
 function registerLiveActivityWithRelay(
   body: RelayLiveActivityRegistrationRequest,
-): Effect.Effect<boolean, unknown, ManagedRelayClient> {
+): Effect.Effect<boolean, unknown, ManagedRelay.ManagedRelayClient> {
   return Effect.gen(function* () {
     if (!readRelayConfig()) return false;
     const token = yield* relayToken;
@@ -246,7 +246,7 @@ function registerLiveActivityWithRelay(
       return false;
     }
 
-    const client = yield* ManagedRelayClient;
+    const client = yield* ManagedRelay.ManagedRelayClient;
     yield* client.registerLiveActivity({
       clerkToken: token,
       payload: body,
@@ -274,7 +274,7 @@ function logRegistrationDebug(context: string, details?: unknown): void {
 }
 
 function runRegistrationInBackground(
-  operation: Effect.Effect<unknown, unknown, ManagedRelayClient>,
+  operation: Effect.Effect<unknown, unknown, ManagedRelay.ManagedRelayClient>,
   context: string,
 ): void {
   void (async () => {
@@ -370,7 +370,7 @@ function enqueueDeviceRegistration(input: DeviceRegistrationInput, context: stri
 function registerDevice(
   input: DeviceRegistrationInput = {},
   expectedGeneration = deviceRegistrationGeneration,
-): Effect.Effect<void, unknown, ManagedRelayClient> {
+): Effect.Effect<void, unknown, ManagedRelay.ManagedRelayClient> {
   return Effect.gen(function* () {
     if (!canRegisterRemoteLiveActivities()) {
       logRegistrationDebug("device registration skipped; platform does not support it");
@@ -411,7 +411,7 @@ function registerDevice(
 
 function registerDeviceForCurrentUser(
   pushToStartToken?: string,
-): Effect.Effect<void, unknown, ManagedRelayClient> {
+): Effect.Effect<void, unknown, ManagedRelay.ManagedRelayClient> {
   return registerDevice(pushToStartToken ? { pushToStartToken } : undefined);
 }
 
@@ -485,7 +485,7 @@ export function unregisterAllAgentAwarenessConnections(): void {
 export function refreshAgentAwarenessRegistration(): Effect.Effect<
   void,
   never,
-  ManagedRelayClient
+  ManagedRelay.ManagedRelayClient
 > {
   return registerDeviceForCurrentUser().pipe(
     Effect.catch((error) =>
@@ -515,7 +515,7 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
 
 export function unregisterAgentAwarenessDeviceForCurrentUser(
   tokenProvider: () => Promise<string | null>,
-): Effect.Effect<void, never, ManagedRelayClient> {
+): Effect.Effect<void, never, ManagedRelay.ManagedRelayClient> {
   return Effect.gen(function* () {
     const deviceId = yield* Effect.tryPromise({
       try: () => loadAgentAwarenessDeviceId(),
@@ -536,7 +536,7 @@ export function unregisterAgentAwarenessDeviceForCurrentUser(
 
 export function registerLiveActivityPushToken(input: {
   readonly activity: LiveActivity<AgentActivityProps>;
-}): Effect.Effect<boolean, unknown, ManagedRelayClient> {
+}): Effect.Effect<boolean, unknown, ManagedRelay.ManagedRelayClient> {
   return Effect.gen(function* () {
     if (!canRegisterRemoteLiveActivities()) {
       return false;
@@ -588,7 +588,7 @@ export function registerLiveActivityPushToken(input: {
 
 function registerLiveActivityPushTokenValue(input: {
   readonly activityPushToken: string;
-}): Effect.Effect<boolean, unknown, ManagedRelayClient> {
+}): Effect.Effect<boolean, unknown, ManagedRelay.ManagedRelayClient> {
   return Effect.gen(function* () {
     const deviceId = yield* Effect.tryPromise({
       try: () => loadOrCreateAgentAwarenessDeviceId(),
@@ -624,7 +624,7 @@ function scheduleActiveLiveActivityRegistrationRetry(): void {
 export function refreshActiveLiveActivityRemoteRegistration(): Effect.Effect<
   void,
   never,
-  ManagedRelayClient
+  ManagedRelay.ManagedRelayClient
 > {
   return Effect.gen(function* () {
     if (!canRegisterRemoteLiveActivities() || !relayTokenProvider) {

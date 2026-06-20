@@ -26,7 +26,7 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
-import { useSettings } from "../hooks/useSettings";
+import { useClientSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,
@@ -266,7 +266,7 @@ function AuthenticatedTracingBootstrap() {
 function EventRouter() {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
-  const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const primaryEnvironment = usePrimaryEnvironment();
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,

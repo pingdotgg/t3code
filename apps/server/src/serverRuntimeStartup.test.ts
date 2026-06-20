@@ -57,7 +57,10 @@ it.effect("enqueueCommand fails queued work when readiness fails", () =>
 
       yield* commandGate.failCommandReady(
         new ServerRuntimeStartup.ServerRuntimeStartupError({
-          stage: "command-readiness",
+          mode: "web",
+          host: "127.0.0.1",
+          port: 3773,
+          cause: new Error("test startup failure"),
         }),
       );
 
