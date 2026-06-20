@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import { and, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
-import { RelayDb } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { relayLiveActivities, relayMobileDevices } from "../persistence/schema.ts";
 
 export class DeviceRegistrationPersistenceError extends Schema.TaggedErrorClass<DeviceRegistrationPersistenceError>()(
@@ -59,7 +59,7 @@ export class Devices extends Context.Service<Devices, DevicesShape>()(
 ) {}
 
 const make = Effect.gen(function* () {
-  const db = yield* RelayDb;
+  const db = yield* RelayDb.RelayDb;
 
   return Devices.of({
     register: Effect.fn("relay.devices.register")(

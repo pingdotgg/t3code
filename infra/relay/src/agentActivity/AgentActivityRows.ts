@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { and, desc, eq, isNull } from "drizzle-orm";
 
-import { RelayDb } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { relayAgentActivityRows, relayEnvironmentLinks } from "../persistence/schema.ts";
 
 export class AgentActivityRowUpsertPersistenceError extends Schema.TaggedErrorClass<AgentActivityRowUpsertPersistenceError>()(
@@ -70,7 +70,7 @@ const decodeRelayAgentActivityStateJson = Schema.decodeUnknownOption(
 );
 
 const make = Effect.gen(function* () {
-  const db = yield* RelayDb;
+  const db = yield* RelayDb.RelayDb;
 
   return AgentActivityRows.of({
     upsert: Effect.fn("relay.agent_activity_rows.upsert")(

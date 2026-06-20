@@ -8,7 +8,7 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { RelayDb, type RelayDatabase } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { relayLiveActivities } from "../persistence/schema.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 
@@ -88,7 +88,7 @@ describe("LiveActivities", () => {
             },
           };
         },
-      } as unknown as RelayDatabase;
+      } as unknown as RelayDb.RelayDb["Service"];
 
       return Effect.gen(function* () {
         const liveActivities = yield* LiveActivities.LiveActivities;
@@ -138,7 +138,9 @@ describe("LiveActivities", () => {
           }),
         );
       }).pipe(
-        Effect.provide(LiveActivities.layer.pipe(Layer.provide(Layer.succeed(RelayDb, fakeDb)))),
+        Effect.provide(
+          LiveActivities.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
+        ),
       );
     },
   );
@@ -164,7 +166,7 @@ describe("LiveActivities", () => {
           },
         };
       },
-    } as unknown as RelayDatabase;
+    } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const liveActivities = yield* LiveActivities.LiveActivities;
@@ -190,7 +192,9 @@ describe("LiveActivities", () => {
         }),
       );
     }).pipe(
-      Effect.provide(LiveActivities.layer.pipe(Layer.provide(Layer.succeed(RelayDb, fakeDb)))),
+      Effect.provide(
+        LiveActivities.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
+      ),
     );
   });
 });

@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { RelayDb, type RelayDatabase } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { relayDpopProofs } from "../persistence/schema.ts";
 import * as DpopProofs from "./DpopProofs.ts";
 
@@ -41,7 +41,7 @@ describe("DpopProofReplay", () => {
           },
         };
       },
-    } as unknown as RelayDatabase;
+    } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const replay = yield* DpopProofs.DpopProofReplay;
@@ -67,7 +67,9 @@ describe("DpopProofReplay", () => {
           expiresAt: "2026-05-25T12:00:00.000Z",
         },
       ]);
-    }).pipe(Effect.provide(DpopProofs.layer.pipe(Layer.provide(Layer.succeed(RelayDb, fakeDb)))));
+    }).pipe(
+      Effect.provide(DpopProofs.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)))),
+    );
   });
 
   it.effect("prunes expired proof rows from the maintenance path", () => {
@@ -84,12 +86,14 @@ describe("DpopProofReplay", () => {
           },
         };
       },
-    } as unknown as RelayDatabase;
+    } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const replay = yield* DpopProofs.DpopProofReplay;
       yield* replay.pruneExpired;
       expect(calls).toEqual(["delete", "delete.where"]);
-    }).pipe(Effect.provide(DpopProofs.layer.pipe(Layer.provide(Layer.succeed(RelayDb, fakeDb)))));
+    }).pipe(
+      Effect.provide(DpopProofs.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)))),
+    );
   });
 });

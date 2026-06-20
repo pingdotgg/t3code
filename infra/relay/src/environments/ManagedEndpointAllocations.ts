@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { RelayDb } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { isManagedEndpointHostname, managedEndpointForHostname } from "../deploymentConfig.ts";
 import { relayManagedEndpointAllocations } from "../persistence/schema.ts";
 
@@ -66,26 +66,29 @@ interface RecordManagedEndpointDnsInput extends ManagedEndpointAllocationKey {
   readonly dnsRecordId: string;
 }
 
-export interface ManagedEndpointAllocationsShape {
-  readonly get: (
-    input: ManagedEndpointAllocationKey,
-  ) => Effect.Effect<ManagedEndpointAllocation | null, ManagedEndpointAllocationPersistenceError>;
-  readonly reserve: (
-    input: ReserveManagedEndpointAllocationInput,
-  ) => Effect.Effect<ManagedEndpointAllocation, ManagedEndpointAllocationPersistenceError>;
-  readonly recordTunnel: (
-    input: RecordManagedEndpointTunnelInput,
-  ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
-  readonly recordDns: (
-    input: RecordManagedEndpointDnsInput,
-  ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
-  readonly markReady: (
-    input: ManagedEndpointAllocationKey,
-  ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
-  readonly remove: (
-    input: ManagedEndpointAllocationKey,
-  ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
-}
+export class ManagedEndpointAllocations extends Context.Service<
+  ManagedEndpointAllocations,
+  {
+    readonly get: (
+      input: ManagedEndpointAllocationKey,
+    ) => Effect.Effect<ManagedEndpointAllocation | null, ManagedEndpointAllocationPersistenceError>;
+    readonly reserve: (
+      input: ReserveManagedEndpointAllocationInput,
+    ) => Effect.Effect<ManagedEndpointAllocation, ManagedEndpointAllocationPersistenceError>;
+    readonly recordTunnel: (
+      input: RecordManagedEndpointTunnelInput,
+    ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
+    readonly recordDns: (
+      input: RecordManagedEndpointDnsInput,
+    ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
+    readonly markReady: (
+      input: ManagedEndpointAllocationKey,
+    ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
+    readonly remove: (
+      input: ManagedEndpointAllocationKey,
+    ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
+  }
+>()("t3code-relay/environments/ManagedEndpointAllocations") {}
 
 const allocationSelection = {
   userId: relayManagedEndpointAllocations.userId,
@@ -109,7 +112,7 @@ const persistenceError = (cause: unknown) =>
     : new ManagedEndpointAllocationPersistenceError({ cause });
 
 const make = Effect.gen(function* () {
-  const db = yield* RelayDb;
+  const db = yield* RelayDb.RelayDb;
 
   return ManagedEndpointAllocations.of({
     get: Effect.fn("relay.managed_endpoint_allocations.get")(function* (
@@ -198,9 +201,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export class ManagedEndpointAllocations extends Context.Service<
-  ManagedEndpointAllocations,
-  ManagedEndpointAllocationsShape
->()("t3code-relay/environments/ManagedEndpointAllocations") {
-  static readonly layer = Layer.effect(this, make);
-}
+export const layer = Layer.effect(ManagedEndpointAllocations, make);

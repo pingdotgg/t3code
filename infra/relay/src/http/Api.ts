@@ -66,7 +66,7 @@ import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllo
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
 import { withSpanAttributes } from "../observability.ts";
-import { RelayDb } from "../db.ts";
+import * as RelayDb from "../db.ts";
 
 const relayCorsAllowedMethods = ["GET", "POST", "DELETE", "OPTIONS"] as const;
 const relayCorsAllowedHeaders = [
@@ -347,7 +347,7 @@ export const healthApi = HttpApiBuilder.group(
   RelayApi,
   "health",
   Effect.fnUntraced(function* (handlers) {
-    const db = yield* RelayDb;
+    const db = yield* RelayDb.RelayDb;
     return handlers.handle(
       "health",
       Effect.fn("relay.api.health")(
@@ -985,7 +985,10 @@ function hasExpectedClerkAudience(audience: unknown, expectedAudience: string): 
         audience.some((entry) => typeof entry === "string" && entry === expectedAudience);
 }
 
-function verifyClerkBearerToken(config: RelayConfiguration.RelayConfigurationShape, token: string) {
+function verifyClerkBearerToken(
+  config: RelayConfiguration.RelayConfiguration["Service"],
+  token: string,
+) {
   return Effect.tryPromise({
     try: () =>
       verifyToken(token, {
@@ -1001,7 +1004,7 @@ function verifyClerkBearerToken(config: RelayConfiguration.RelayConfigurationSha
 }
 
 function verifyClerkOAuthBearerToken(
-  config: RelayConfiguration.RelayConfigurationShape,
+  config: RelayConfiguration.RelayConfiguration["Service"],
   token: string,
 ) {
   return Effect.tryPromise({
@@ -1027,7 +1030,7 @@ function verifyClerkOAuthBearerToken(
 }
 
 export function verifyRelayClientBearerToken(
-  config: RelayConfiguration.RelayConfigurationShape,
+  config: RelayConfiguration.RelayConfiguration["Service"],
   token: string,
 ) {
   return verifyClerkBearerToken(config, token).pipe(

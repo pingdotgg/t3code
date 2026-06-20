@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { Headers, HttpClient, HttpClientRequest } from "effect/unstable/http";
-import type { ApnsCredentials } from "../Config.ts";
+import * as RelayConfiguration from "../Config.ts";
 import type { ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
 
 const LIVE_ACTIVITY_NAME = "AgentActivity";
@@ -99,9 +99,9 @@ const encodeApnsJwtPayloadJson = Schema.encodeEffect(
 );
 
 const makeApnsJwt = Effect.fn("relay.apns.make_jwt")(function* (input: {
-  readonly teamId: ApnsCredentials["teamId"];
-  readonly keyId: ApnsCredentials["keyId"];
-  readonly privateKey: ApnsCredentials["privateKey"];
+  readonly teamId: RelayConfiguration.ApnsCredentials["teamId"];
+  readonly keyId: RelayConfiguration.ApnsCredentials["keyId"];
+  readonly privateKey: RelayConfiguration.ApnsCredentials["privateKey"];
   readonly issuedAtUnixSeconds: number;
 }) {
   const headerJson = yield* encodeApnsJwtHeaderJson({ alg: "ES256", kid: input.keyId }).pipe(
@@ -235,12 +235,12 @@ export interface ApnsClientShape {
   readonly makeLiveActivityRequest: typeof makeLiveActivityRequest;
   readonly makePushNotificationRequest: typeof makePushNotificationRequest;
   readonly sendLiveActivityRequest: (input: {
-    readonly credentials: ApnsCredentials;
+    readonly credentials: RelayConfiguration.ApnsCredentials;
     readonly request: ApnsLiveActivityRequest;
     readonly issuedAtUnixSeconds: number;
   }) => Effect.Effect<ApnsDeliveryResult, ApnsError>;
   readonly sendPushNotificationRequest: (input: {
-    readonly credentials: ApnsCredentials;
+    readonly credentials: RelayConfiguration.ApnsCredentials;
     readonly request: ApnsPushNotificationRequest;
     readonly issuedAtUnixSeconds: number;
   }) => Effect.Effect<ApnsDeliveryResult, ApnsError>;

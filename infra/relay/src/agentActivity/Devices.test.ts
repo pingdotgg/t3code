@@ -5,7 +5,7 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { RelayDb, type RelayDatabase } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { relayLiveActivities, relayMobileDevices } from "../persistence/schema.ts";
 import * as Devices from "./Devices.ts";
 
@@ -71,7 +71,7 @@ describe("Devices", () => {
           },
         };
       },
-    } as unknown as RelayDatabase;
+    } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const devices = yield* Devices.Devices;
@@ -110,7 +110,9 @@ describe("Devices", () => {
           pushToStartToken: "push-to-start-token",
         }),
       ]);
-    }).pipe(Effect.provide(Devices.layer.pipe(Layer.provide(Layer.succeed(RelayDb, fakeDb)))));
+    }).pipe(
+      Effect.provide(Devices.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)))),
+    );
   });
 
   it.effect("unregisters APNs state only for the current user device", () => {
@@ -130,7 +132,7 @@ describe("Devices", () => {
           },
         };
       },
-    } as unknown as RelayDatabase;
+    } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const devices = yield* Devices.Devices;
@@ -156,7 +158,9 @@ describe("Devices", () => {
           params: ["user-2", "device-1"],
         },
       ]);
-    }).pipe(Effect.provide(Devices.layer.pipe(Layer.provide(Layer.succeed(RelayDb, fakeDb)))));
+    }).pipe(
+      Effect.provide(Devices.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)))),
+    );
   });
 
   it.effect("lists safe notification state without exposing APNs tokens", () => {
@@ -184,7 +188,7 @@ describe("Devices", () => {
           };
         },
       }),
-    } as unknown as RelayDatabase;
+    } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const devices = yield* Devices.Devices;
@@ -215,6 +219,8 @@ describe("Devices", () => {
           updatedAt: "2026-06-01T00:00:00.000Z",
         },
       ]);
-    }).pipe(Effect.provide(Devices.layer.pipe(Layer.provide(Layer.succeed(RelayDb, fakeDb)))));
+    }).pipe(
+      Effect.provide(Devices.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)))),
+    );
   });
 });

@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { and, eq, isNull, ne, notExists } from "drizzle-orm";
 
-import { RelayDb } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { relayEnvironmentCredentials, relayEnvironmentLinks } from "../persistence/schema.ts";
 
 export class EnvironmentCredentialCreatePersistenceError extends Schema.TaggedErrorClass<EnvironmentCredentialCreatePersistenceError>()(
@@ -44,30 +44,28 @@ export interface EnvironmentCredentialPrincipal {
   readonly environmentPublicKey: string;
 }
 
-export interface EnvironmentCredentialsShape {
-  readonly create: (input: {
-    readonly environmentId: string;
-    readonly environmentPublicKey: string;
-  }) => Effect.Effect<string, EnvironmentCredentialCreatePersistenceError>;
-  readonly authenticate: (
-    token: string,
-  ) => Effect.Effect<
-    Option.Option<EnvironmentCredentialPrincipal>,
-    EnvironmentCredentialAuthenticatePersistenceError
-  >;
-  readonly revokeForEnvironmentPublicKey: (input: {
-    readonly environmentId: string;
-    readonly environmentPublicKey: string;
-  }) => Effect.Effect<boolean, EnvironmentCredentialRevokePersistenceError>;
-}
-
 export class EnvironmentCredentials extends Context.Service<
   EnvironmentCredentials,
-  EnvironmentCredentialsShape
+  {
+    readonly create: (input: {
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+    }) => Effect.Effect<string, EnvironmentCredentialCreatePersistenceError>;
+    readonly authenticate: (
+      token: string,
+    ) => Effect.Effect<
+      Option.Option<EnvironmentCredentialPrincipal>,
+      EnvironmentCredentialAuthenticatePersistenceError
+    >;
+    readonly revokeForEnvironmentPublicKey: (input: {
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+    }) => Effect.Effect<boolean, EnvironmentCredentialRevokePersistenceError>;
+  }
 >()("t3code-relay/environments/EnvironmentCredentials") {}
 
 const make = Effect.gen(function* () {
-  const db = yield* RelayDb;
+  const db = yield* RelayDb.RelayDb;
   const crypto = yield* Crypto.Crypto;
   const hashToken = (token: string) =>
     crypto

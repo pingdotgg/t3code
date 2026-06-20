@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { and, eq, isNull, or } from "drizzle-orm";
 
-import { RelayDb } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { relayEnvironmentLinks } from "../persistence/schema.ts";
 
 export interface RelayLinkedEnvironmentRecord extends RelayClientEnvironmentRecord {
@@ -78,45 +78,44 @@ export class EnvironmentLinkRevokePersistenceError extends Schema.TaggedErrorCla
   }
 }
 
-export interface EnvironmentLinksShape {
-  readonly upsert: (input: {
-    readonly userId: string;
-    readonly request: RelayEnvironmentLinkRequest;
-    readonly proof: RelayEnvironmentLinkProofPayload;
-    readonly endpoint: RelayManagedEndpoint;
-  }) => Effect.Effect<void, EnvironmentLinkUpsertPersistenceError>;
-  readonly listUsersForEnvironment: (input: {
-    readonly environmentId: string;
-  }) => Effect.Effect<ReadonlyArray<string>, EnvironmentLinkUserListPersistenceError>;
-  readonly listDeliveryUsersForEnvironment: (input: {
-    readonly environmentId: string;
-    readonly environmentPublicKey: string;
-  }) => Effect.Effect<
-    ReadonlyArray<AgentAwarenessDeliveryUserRecord>,
-    EnvironmentLinkUserListPersistenceError
-  >;
-  readonly listPublicKeysForEnvironment: (input: {
-    readonly environmentId: string;
-  }) => Effect.Effect<ReadonlyArray<string>, EnvironmentPublicKeyListPersistenceError>;
-  readonly listForUser: (input: {
-    readonly userId: string;
-  }) => Effect.Effect<
-    ReadonlyArray<RelayClientEnvironmentRecord>,
-    EnvironmentLinkListPersistenceError
-  >;
-  readonly getForUser: (input: {
-    readonly userId: string;
-    readonly environmentId: string;
-  }) => Effect.Effect<RelayLinkedEnvironmentRecord | null, EnvironmentLinkLookupPersistenceError>;
-  readonly revokeForUser: (input: {
-    readonly userId: string;
-    readonly environmentId: string;
-  }) => Effect.Effect<boolean, EnvironmentLinkRevokePersistenceError>;
-}
-
-export class EnvironmentLinks extends Context.Service<EnvironmentLinks, EnvironmentLinksShape>()(
-  "t3code-relay/environments/EnvironmentLinks",
-) {}
+export class EnvironmentLinks extends Context.Service<
+  EnvironmentLinks,
+  {
+    readonly upsert: (input: {
+      readonly userId: string;
+      readonly request: RelayEnvironmentLinkRequest;
+      readonly proof: RelayEnvironmentLinkProofPayload;
+      readonly endpoint: RelayManagedEndpoint;
+    }) => Effect.Effect<void, EnvironmentLinkUpsertPersistenceError>;
+    readonly listUsersForEnvironment: (input: {
+      readonly environmentId: string;
+    }) => Effect.Effect<ReadonlyArray<string>, EnvironmentLinkUserListPersistenceError>;
+    readonly listDeliveryUsersForEnvironment: (input: {
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+    }) => Effect.Effect<
+      ReadonlyArray<AgentAwarenessDeliveryUserRecord>,
+      EnvironmentLinkUserListPersistenceError
+    >;
+    readonly listPublicKeysForEnvironment: (input: {
+      readonly environmentId: string;
+    }) => Effect.Effect<ReadonlyArray<string>, EnvironmentPublicKeyListPersistenceError>;
+    readonly listForUser: (input: {
+      readonly userId: string;
+    }) => Effect.Effect<
+      ReadonlyArray<RelayClientEnvironmentRecord>,
+      EnvironmentLinkListPersistenceError
+    >;
+    readonly getForUser: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+    }) => Effect.Effect<RelayLinkedEnvironmentRecord | null, EnvironmentLinkLookupPersistenceError>;
+    readonly revokeForUser: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+    }) => Effect.Effect<boolean, EnvironmentLinkRevokePersistenceError>;
+  }
+>()("t3code-relay/environments/EnvironmentLinks") {}
 
 function agentAwarenessDeliveryUserCondition(environmentId: string) {
   return and(
@@ -140,7 +139,7 @@ function agentAwarenessDeliveryUserKeyCondition(input: {
 }
 
 const make = Effect.gen(function* () {
-  const db = yield* RelayDb;
+  const db = yield* RelayDb.RelayDb;
 
   return EnvironmentLinks.of({
     upsert: Effect.fn("relay.environment_links.upsert")(

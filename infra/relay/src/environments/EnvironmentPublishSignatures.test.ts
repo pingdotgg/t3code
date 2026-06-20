@@ -80,11 +80,11 @@ const freshRequest = Effect.gen(function* () {
   } satisfies RelayAgentActivityPublishRequest;
 });
 
-function layer(replay?: Partial<DpopProofs.DpopProofReplayShape>) {
+function layer(replay?: Partial<DpopProofs.DpopProofReplay["Service"]>) {
   return EnvironmentPublishSignatures.layer.pipe(
     Layer.provide(
       Layer.merge(
-        Layer.succeed(RelayConfiguration.RelayConfiguration, config),
+        RelayConfiguration.layer(config),
         Layer.succeed(DpopProofs.DpopProofReplay, {
           verifyAndConsume:
             replay?.verifyAndConsume ?? (() => Effect.die("unexpected DPoP proof verification")),

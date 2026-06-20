@@ -35,7 +35,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient, HttpClientError } from "effect/unstable/http";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
@@ -139,22 +141,20 @@ export type EnvironmentConnectorError =
 export const ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS = 10_000;
 const ENVIRONMENT_HEALTH_CLOCK_SKEW_MILLIS = 60 * 1_000;
 
-export interface EnvironmentConnectorShape {
-  readonly connect: (input: {
-    readonly userId: string;
-    readonly environmentId: string;
-    readonly clientProofKeyThumbprint: string;
-    readonly deviceId?: string;
-  }) => Effect.Effect<RelayEnvironmentConnectResponse, EnvironmentConnectorError>;
-  readonly status: (input: {
-    readonly userId: string;
-    readonly environmentId: string;
-  }) => Effect.Effect<RelayEnvironmentStatusResponse, EnvironmentConnectorError>;
-}
-
 export class EnvironmentConnector extends Context.Service<
   EnvironmentConnector,
-  EnvironmentConnectorShape
+  {
+    readonly connect: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+      readonly clientProofKeyThumbprint: string;
+      readonly deviceId?: string;
+    }) => Effect.Effect<RelayEnvironmentConnectResponse, EnvironmentConnectorError>;
+    readonly status: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+    }) => Effect.Effect<RelayEnvironmentStatusResponse, EnvironmentConnectorError>;
+  }
 >()("t3code-relay/environments/EnvironmentConnector") {}
 
 const decodeMintResponseProof = Schema.decodeUnknownEffect(
