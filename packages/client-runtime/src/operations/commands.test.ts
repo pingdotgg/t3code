@@ -18,11 +18,8 @@ import {
   PrimaryConnectionTarget,
   type PreparedConnection,
 } from "../connection/model.ts";
-import {
-  EnvironmentSupervisor,
-  type EnvironmentSupervisorService,
-} from "../connection/supervisor.ts";
-import type { RpcSession } from "../rpc/session.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { archiveThread, createProject, stopThreadSession } from "./commands.ts";
 
@@ -51,14 +48,14 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
         return { sequence: dispatched.length };
       }),
   } as unknown as WsRpcProtocolClient;
-  const session: RpcSession = {
+  const session: RpcSession.RpcSession = {
     client,
     initialConfig: Effect.never,
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
   };
-  return EnvironmentSupervisor.of({
+  return EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,
     state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
     session: yield* SubscriptionRef.make(Option.some(session)),
@@ -66,7 +63,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
     connect: Effect.void,
     disconnect: Effect.void,
     retryNow: Effect.void,
-  } satisfies EnvironmentSupervisorService);
+  } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
 });
 
 describe("environment commands", () => {
@@ -80,7 +77,7 @@ describe("environment commands", () => {
         title: "Project",
         workspaceRoot: "/workspace/project",
         createdAt: "2026-06-06T00:00:00.000Z",
-      }).pipe(Effect.provideService(EnvironmentSupervisor, supervisor));
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
       expect(result).toEqual({ sequence: 1 });
       expect(dispatched).toEqual([
@@ -105,7 +102,7 @@ describe("environment commands", () => {
         commandId: CommandId.make("queued-command"),
         threadId: ThreadId.make("thread-1"),
         createdAt: "2026-06-06T00:01:00.000Z",
-      }).pipe(Effect.provideService(EnvironmentSupervisor, supervisor));
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
       expect(dispatched).toEqual([
         {
@@ -126,7 +123,7 @@ describe("environment commands", () => {
       yield* archiveThread({
         commandId: CommandId.make("archive-command"),
         threadId: ThreadId.make("thread-1"),
-      }).pipe(Effect.provideService(EnvironmentSupervisor, supervisor));
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
       expect(dispatched).toEqual([
         {

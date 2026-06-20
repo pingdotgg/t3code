@@ -10,8 +10,8 @@ import {
 import {
   ConnectionBlockedError,
   ConnectionTransientError,
-  ConnectionWakeups,
   Connectivity,
+  Wakeups,
 } from "@t3tools/client-runtime/connection";
 import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import { AuthStandardClientScopes } from "@t3tools/contracts";
@@ -41,53 +41,47 @@ function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "on
   return "unknown";
 }
 
-const connectivityLayer = Layer.succeed(
-  Connectivity,
-  Connectivity.of({
-    status: Effect.tryPromise({
-      try: () => Network.getNetworkStateAsync(),
-      catch: () => undefined,
-    }).pipe(
-      Effect.match({
-        onFailure: () => "unknown" as const,
-        onSuccess: networkStatus,
-      }),
-    ),
-    changes: Stream.callback((queue) =>
+const connectivityLayer = Connectivity.layer({
+  status: Effect.tryPromise({
+    try: () => Network.getNetworkStateAsync(),
+    catch: () => undefined,
+  }).pipe(
+    Effect.match({
+      onFailure: () => "unknown" as const,
+      onSuccess: networkStatus,
+    }),
+  ),
+  changes: Stream.callback((queue) =>
+    Effect.acquireRelease(
+      Effect.sync(() =>
+        Network.addNetworkStateListener((state) => {
+          Queue.offerUnsafe(queue, networkStatus(state));
+        }),
+      ),
+      (subscription) => Effect.sync(() => subscription.remove()),
+    ).pipe(Effect.asVoid),
+  ),
+});
+
+const wakeupsLayer = Wakeups.layer({
+  changes: Stream.merge(
+    Stream.callback<"application-active">((queue) =>
       Effect.acquireRelease(
         Effect.sync(() =>
-          Network.addNetworkStateListener((state) => {
-            Queue.offerUnsafe(queue, networkStatus(state));
+          AppState.addEventListener("change", (state) => {
+            if (state === "active") {
+              Queue.offerUnsafe(queue, "application-active");
+            }
           }),
         ),
         (subscription) => Effect.sync(() => subscription.remove()),
       ).pipe(Effect.asVoid),
     ),
-  }),
-);
-
-const wakeupsLayer = Layer.succeed(
-  ConnectionWakeups,
-  ConnectionWakeups.of({
-    changes: Stream.merge(
-      Stream.callback<"application-active">((queue) =>
-        Effect.acquireRelease(
-          Effect.sync(() =>
-            AppState.addEventListener("change", (state) => {
-              if (state === "active") {
-                Queue.offerUnsafe(queue, "application-active");
-              }
-            }),
-          ),
-          (subscription) => Effect.sync(() => subscription.remove()),
-        ).pipe(Effect.asVoid),
-      ),
-      managedRelayAccountChanges(appAtomRegistry).pipe(
-        Stream.map(() => "credentials-changed" as const),
-      ),
+    managedRelayAccountChanges(appAtomRegistry).pipe(
+      Stream.map(() => "credentials-changed" as const),
     ),
-  }),
-);
+  ),
+});
 
 const capabilitiesLayer = Layer.succeedContext(
   Context.make(
@@ -98,7 +92,7 @@ const capabilitiesLayer = Layer.succeedContext(
         if (session === null) {
           return yield* new ConnectionBlockedError({
             reason: "authentication",
-            message: "Sign in to T3 Cloud to connect this environment.",
+            detail: "Sign in to T3 Cloud to connect this environment.",
           });
         }
         const token = yield* session.readClerkToken().pipe(
@@ -106,14 +100,14 @@ const capabilitiesLayer = Layer.succeedContext(
             (error) =>
               new ConnectionTransientError({
                 reason: "network",
-                message: error.message,
+                detail: error.message,
               }),
           ),
         );
         if (token === null) {
           return yield* new ConnectionBlockedError({
             reason: "authentication",
-            message: "The T3 Cloud session is unavailable.",
+            detail: "The T3 Cloud session is unavailable.",
           });
         }
         return token;
@@ -132,7 +126,7 @@ const capabilitiesLayer = Layer.succeedContext(
           catch: (cause) =>
             new ConnectionTransientError({
               reason: "remote-unavailable",
-              message: `Could not load the mobile device identity: ${String(cause)}`,
+              detail: `Could not load the mobile device identity: ${String(cause)}`,
             }),
         }).pipe(Effect.map(Option.some)),
       }),
@@ -151,14 +145,14 @@ const capabilitiesLayer = Layer.succeedContext(
           Effect.fail(
             new ConnectionBlockedError({
               reason: "unsupported",
-              message: "SSH environments are only available in the desktop app.",
+              detail: "SSH environments are only available in the desktop app.",
             }),
           ),
         prepare: () =>
           Effect.fail(
             new ConnectionBlockedError({
               reason: "unsupported",
-              message: "SSH environments are only available in the desktop app.",
+              detail: "SSH environments are only available in the desktop app.",
             }),
           ),
         disconnect: () => Effect.void,
@@ -195,7 +189,19 @@ const environmentOwnedDataCleanupLayer = Layer.succeed(
   }),
 );
 
-export const connectionPlatformLayer = Layer.mergeAll(
+type ConnectionPlatformLayerSource =
+  | typeof connectionStorageLayer
+  | typeof connectivityLayer
+  | typeof wakeupsLayer
+  | typeof capabilitiesLayer
+  | typeof platformConnectionSourceLayer
+  | typeof environmentOwnedDataCleanupLayer;
+
+export const connectionPlatformLayer: Layer.Layer<
+  Layer.Success<ConnectionPlatformLayerSource>,
+  Layer.Error<ConnectionPlatformLayerSource>,
+  Layer.Services<ConnectionPlatformLayerSource>
+> = Layer.mergeAll(
   connectionStorageLayer,
   connectivityLayer,
   wakeupsLayer,

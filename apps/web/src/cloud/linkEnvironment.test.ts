@@ -15,9 +15,7 @@ import { HttpClient } from "effect/unstable/http";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 import {
   AVAILABLE_CONNECTION_STATE,
-  type EnvironmentRegistryService,
   EnvironmentSupervisor,
-  type EnvironmentSupervisorService,
   type PreparedConnection,
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
@@ -114,13 +112,13 @@ function registryLayer(options?: {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
-      } satisfies EnvironmentSupervisorService);
+      } satisfies EnvironmentSupervisor["Service"]);
       const registry = {
         run: <A, E, R>(_environmentId: EnvironmentId, effect: Effect.Effect<A, E, R>) =>
           Effect.provideService(effect, EnvironmentSupervisor, supervisor),
         runStream: <A, E, R>(_environmentId: EnvironmentId, stream: Stream.Stream<A, E, R>) =>
           Stream.provideService(stream, EnvironmentSupervisor, supervisor),
-      } as unknown as EnvironmentRegistryService;
+      } as unknown as EnvironmentRegistry["Service"];
       return EnvironmentRegistry.of(registry);
     }),
   );

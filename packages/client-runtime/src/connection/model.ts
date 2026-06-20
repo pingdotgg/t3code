@@ -57,44 +57,49 @@ export type ConnectionTargetKind = ConnectionTarget["_tag"];
 
 export type NetworkStatus = "unknown" | "offline" | "online";
 
-export type ConnectionTransientReason =
-  | "network"
-  | "timeout"
-  | "transport"
-  | "endpoint-unavailable"
-  | "relay-unavailable"
-  | "remote-unavailable";
+export const ConnectionTransientReason = Schema.Literals([
+  "network",
+  "timeout",
+  "transport",
+  "endpoint-unavailable",
+  "relay-unavailable",
+  "remote-unavailable",
+]);
+export type ConnectionTransientReason = typeof ConnectionTransientReason.Type;
 
-export type ConnectionBlockedReason =
-  | "authentication"
-  | "configuration"
-  | "permission"
-  | "unsupported";
+export const ConnectionBlockedReason = Schema.Literals([
+  "authentication",
+  "configuration",
+  "permission",
+  "unsupported",
+]);
+export type ConnectionBlockedReason = typeof ConnectionBlockedReason.Type;
 
 export class ConnectionTransientError extends Schema.TaggedErrorClass<ConnectionTransientError>()(
   "ConnectionTransientError",
   {
-    reason: Schema.Literals([
-      "network",
-      "timeout",
-      "transport",
-      "endpoint-unavailable",
-      "relay-unavailable",
-      "remote-unavailable",
-    ]),
-    message: Schema.String,
+    reason: ConnectionTransientReason,
+    detail: Schema.String,
     traceId: Schema.optionalKey(Schema.String),
   },
-) {}
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
 
 export class ConnectionBlockedError extends Schema.TaggedErrorClass<ConnectionBlockedError>()(
   "ConnectionBlockedError",
   {
-    reason: Schema.Literals(["authentication", "configuration", "permission", "unsupported"]),
-    message: Schema.String,
+    reason: ConnectionBlockedReason,
+    detail: Schema.String,
     traceId: Schema.optionalKey(Schema.String),
   },
-) {}
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
 
 export type ConnectionAttemptError = ConnectionTransientError | ConnectionBlockedError;
 

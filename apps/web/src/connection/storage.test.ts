@@ -43,7 +43,7 @@ describe("makeCatalogStore", () => {
     Effect.gen(function* () {
       const failure = new ConnectionTransientError({
         reason: "remote-unavailable",
-        message: "permission denied",
+        detail: "permission denied",
       });
       const store = yield* makeCatalogStore({
         read: Effect.fail(failure),

@@ -18,7 +18,7 @@ import {
   PrimaryConnectionTarget,
   type PreparedConnection,
 } from "../connection/model.ts";
-import { RpcSessionFactory, rpcSessionFactoryLayer } from "./session.ts";
+import * as RpcSession from "./session.ts";
 
 type SocketEventType = "open" | "message" | "close" | "error";
 type SocketEvent = {
@@ -149,8 +149,8 @@ const makeFactory = Effect.fn("TestRpcSessionFactory.make")(function* () {
     sockets.push(socket);
     return socket as unknown as globalThis.WebSocket;
   });
-  const layer = rpcSessionFactoryLayer.pipe(Layer.provide(constructorLayer));
-  const factory = yield* RpcSessionFactory.pipe(Effect.provide(layer));
+  const layer = RpcSession.layer.pipe(Layer.provide(constructorLayer));
+  const factory = yield* RpcSession.RpcSessionFactory.pipe(Effect.provide(layer));
   return { factory, sockets };
 });
 

@@ -6,7 +6,7 @@ import {
   ConnectionProfile,
 } from "../connection/catalog.ts";
 import { type ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
-import { RemoteDpopAccessToken } from "../authorization/tokenStore.ts";
+import * as TokenStore from "../authorization/tokenStore.ts";
 
 export const StoredConnectionCredential = Schema.Struct({
   connectionId: Schema.String,
@@ -19,7 +19,7 @@ export const ConnectionCatalogDocument = Schema.Struct({
   targets: Schema.Array(PersistedConnectionTarget),
   profiles: Schema.Array(ConnectionProfile),
   credentials: Schema.Array(StoredConnectionCredential),
-  remoteDpopTokens: Schema.Array(RemoteDpopAccessToken),
+  remoteDpopTokens: Schema.Array(TokenStore.RemoteDpopAccessToken),
 });
 export type ConnectionCatalogDocument = typeof ConnectionCatalogDocument.Type;
 

@@ -14,23 +14,22 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { SshEnvironmentGateway } from "../platform/capabilities.ts";
-import { RemoteDpopAccessToken, RemoteDpopAccessTokenStore } from "../authorization/tokenStore.ts";
+import * as ClientCapabilities from "../platform/capabilities.ts";
+import * as TokenStore from "../authorization/tokenStore.ts";
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   BearerConnectionRegistration,
   type ConnectionRegistration,
-  ConnectionCredentialStore,
-  ConnectionProfileStore,
   PrimaryConnectionRegistration,
   RelayConnectionRegistration,
   SshConnectionProfile,
   type ConnectionCredential,
   type ConnectionProfile,
 } from "./catalog.ts";
-import { Connectivity } from "./connectivity.ts";
-import { ConnectionDriver } from "./driver.ts";
+import * as Connectivity from "./connectivity.ts";
+import * as ConnectionCredentialStore from "./credentialStore.ts";
+import * as ConnectionDriver from "./driver.ts";
 import {
   ConnectionTransientError,
   BearerConnectionTarget,
@@ -41,17 +40,12 @@ import {
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "./model.ts";
-import {
-  ConnectionPersistenceError,
-  ConnectionRegistrationStore,
-  ConnectionTargetStore,
-  EnvironmentCacheStore,
-  EnvironmentOwnedDataCleanup,
-} from "../platform/persistence.ts";
-import { EnvironmentRegistry, environmentRegistryLayer } from "./registry.ts";
-import type { RpcSession } from "../rpc/session.ts";
-import { EnvironmentSupervisor } from "./supervisor.ts";
-import { ConnectionWakeups } from "./wakeups.ts";
+import * as Persistence from "../platform/persistence.ts";
+import * as ConnectionProfileStore from "./profileStore.ts";
+import * as EnvironmentRegistry from "./registry.ts";
+import * as RpcSession from "../rpc/session.ts";
+import * as EnvironmentSupervisor from "./supervisor.ts";
+import * as ConnectionWakeups from "./wakeups.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -137,10 +131,10 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     readonly beforeSessionConnect?: (environmentId: EnvironmentId) => Effect.Effect<void>;
     readonly beforeRegistrationRegister?: (
       registration: ConnectionRegistration,
-    ) => Effect.Effect<void, ConnectionPersistenceError>;
+    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
     readonly beforeRegistrationRemove?: (
       target: ConnectionTarget,
-    ) => Effect.Effect<void, ConnectionPersistenceError>;
+    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
   },
 ) {
   const storedTargets = yield* Ref.make(
@@ -160,7 +154,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     new Map([
       [
         SSH_CONNECTION.environmentId,
-        new RemoteDpopAccessToken({
+        new TokenStore.RemoteDpopAccessToken({
           environmentId: SSH_CONNECTION.environmentId,
           label: SSH_CONNECTION.label,
           endpoint: {
@@ -177,10 +171,10 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   );
   const disconnectedSshTargets = yield* Ref.make<ReadonlyArray<DesktopSshEnvironmentTarget>>([]);
 
-  const targetStore = ConnectionTargetStore.of({
+  const targetStore = Persistence.ConnectionTargetStore.of({
     list: Ref.get(storedTargets).pipe(Effect.map((targets) => [...targets.values()])),
   });
-  const registrationStore = ConnectionRegistrationStore.of({
+  const registrationStore = Persistence.ConnectionRegistrationStore.of({
     register: (registration) =>
       Effect.gen(function* () {
         yield* options?.beforeRegistrationRegister?.(registration) ?? Effect.void;
@@ -239,7 +233,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         });
       }),
   });
-  const cacheStore = EnvironmentCacheStore.of({
+  const cacheStore = Persistence.EnvironmentCacheStore.of({
     loadShell: (environmentId) =>
       Ref.get(shellCache).pipe(
         Effect.map((cache) => Option.fromUndefinedOr(cache.get(environmentId))),
@@ -264,16 +258,16 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         ),
       ),
   });
-  const ownedDataCleanup = EnvironmentOwnedDataCleanup.of({
+  const ownedDataCleanup = Persistence.EnvironmentOwnedDataCleanup.of({
     clear: (environmentId) =>
       Ref.update(ownedDataClears, (environmentIds) => [...environmentIds, environmentId]),
   });
   const networkStatus = yield* SubscriptionRef.make<"unknown" | "offline" | "online">("online");
-  const connectivity = Connectivity.of({
+  const connectivity = Connectivity.Connectivity.of({
     status: SubscriptionRef.get(networkStatus),
     changes: SubscriptionRef.changes(networkStatus),
   });
-  const profileStore = ConnectionProfileStore.of({
+  const profileStore = ConnectionProfileStore.ConnectionProfileStore.of({
     get: (connectionId) =>
       Ref.update(profileReadCount, (count) => count + 1).pipe(
         Effect.andThen(Ref.get(storedProfiles)),
@@ -292,7 +286,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         return next;
       }),
   });
-  const credentialStore = ConnectionCredentialStore.of({
+  const credentialStore = ConnectionCredentialStore.ConnectionCredentialStore.of({
     get: (connectionId) =>
       Ref.get(storedCredentials).pipe(
         Effect.map((current) => Option.fromUndefinedOr(current.get(connectionId))),
@@ -310,7 +304,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         return next;
       }),
   });
-  const tokenStore = RemoteDpopAccessTokenStore.of({
+  const tokenStore = TokenStore.RemoteDpopAccessTokenStore.of({
     get: (environmentId) =>
       Ref.get(storedRemoteTokens).pipe(
         Effect.map((current) => Option.fromUndefinedOr(current.get(environmentId))),
@@ -328,12 +322,12 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         return next;
       }),
   });
-  const sshGateway = SshEnvironmentGateway.of({
+  const sshGateway = ClientCapabilities.SshEnvironmentGateway.of({
     provision: () => Effect.die(new Error("SSH provisioning is not used.")),
     prepare: () => Effect.die(new Error("SSH preparation is not used.")),
     disconnect: (target) => Ref.update(disconnectedSshTargets, (current) => [...current, target]),
   });
-  const driver = ConnectionDriver.of({
+  const driver = ConnectionDriver.ConnectionDriver.of({
     connect: (entry, reportProgress) =>
       Effect.gen(function* () {
         const target = entry.target;
@@ -350,12 +344,12 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         yield* Ref.update(sessions, (current) => [...current, { closed }]);
         const session = yield* Effect.acquireRelease(
           Effect.succeed({
-            client: {} as RpcSession["client"],
+            client: {} as RpcSession.RpcSession["client"],
             initialConfig: Effect.die(new Error("Config is not used by registry tests.")),
             ready: Effect.void,
             probe: Effect.void,
             closed: Deferred.await(closed),
-          } satisfies RpcSession),
+          } satisfies RpcSession.RpcSession),
           () => Ref.update(releasedSessions, (count) => count + 1),
         );
         yield* reportProgress({ stage: "synchronizing", prepared });
@@ -364,21 +358,24 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       }),
   });
 
-  const cacheLayer = Layer.succeed(EnvironmentCacheStore, cacheStore);
-  const layer = environmentRegistryLayer.pipe(
+  const cacheLayer = Layer.succeed(Persistence.EnvironmentCacheStore, cacheStore);
+  const layer = EnvironmentRegistry.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(ConnectionTargetStore, targetStore),
-        Layer.succeed(ConnectionRegistrationStore, registrationStore),
-        Layer.succeed(ConnectionProfileStore, profileStore),
-        Layer.succeed(ConnectionCredentialStore, credentialStore),
-        Layer.succeed(RemoteDpopAccessTokenStore, tokenStore),
-        Layer.succeed(SshEnvironmentGateway, sshGateway),
-        Layer.succeed(Connectivity, connectivity),
-        Layer.succeed(ConnectionWakeups, ConnectionWakeups.of({ changes: Stream.never })),
-        Layer.succeed(ConnectionDriver, driver),
+        Layer.succeed(Persistence.ConnectionTargetStore, targetStore),
+        Layer.succeed(Persistence.ConnectionRegistrationStore, registrationStore),
+        Layer.succeed(ConnectionProfileStore.ConnectionProfileStore, profileStore),
+        Layer.succeed(ConnectionCredentialStore.ConnectionCredentialStore, credentialStore),
+        Layer.succeed(TokenStore.RemoteDpopAccessTokenStore, tokenStore),
+        Layer.succeed(ClientCapabilities.SshEnvironmentGateway, sshGateway),
+        Layer.succeed(Connectivity.Connectivity, connectivity),
+        Layer.succeed(
+          ConnectionWakeups.ConnectionWakeups,
+          ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.never }),
+        ),
+        Layer.succeed(ConnectionDriver.ConnectionDriver, driver),
         cacheLayer,
-        Layer.succeed(EnvironmentOwnedDataCleanup, ownedDataCleanup),
+        Layer.succeed(Persistence.EnvironmentOwnedDataCleanup, ownedDataCleanup),
       ),
     ),
   );
@@ -401,7 +398,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
 });
 
 function awaitConnectionState(
-  registry: EnvironmentRegistry["Service"],
+  registry: EnvironmentRegistry.EnvironmentRegistry["Service"],
   environmentId: EnvironmentId,
   predicate: (state: SupervisorConnectionState) => boolean,
 ) {
@@ -422,7 +419,7 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([SSH_CONNECTION], [SSH_PROFILE]);
 
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         const entry = (yield* SubscriptionRef.get(registry.entries)).get(
           SSH_CONNECTION.environmentId,
         );
@@ -438,7 +435,7 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([]);
 
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         const offline = yield* Effect.forkChild(
           SubscriptionRef.changes(registry.networkStatus).pipe(
             Stream.filter((status) => status === "offline"),
@@ -471,7 +468,7 @@ describe("EnvironmentRegistry", () => {
       });
 
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         const start = yield* Effect.forkChild(registry.start);
 
         yield* Deferred.await(bothLoadsStarted).pipe(Effect.timeout("1 second"));
@@ -487,7 +484,7 @@ describe("EnvironmentRegistry", () => {
     Effect.gen(function* () {
       const harness = yield* makeHarness([TARGET]);
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         yield* registry.start;
         yield* awaitConnectionState(
           registry,
@@ -499,7 +496,7 @@ describe("EnvironmentRegistry", () => {
           .runStream(
             TARGET.environmentId,
             Stream.unwrap(
-              EnvironmentSupervisor.pipe(
+              EnvironmentSupervisor.EnvironmentSupervisor.pipe(
                 Effect.map((supervisor) =>
                   Stream.concat(
                     Stream.fromEffect(SubscriptionRef.get(supervisor.state)),
@@ -527,7 +524,7 @@ describe("EnvironmentRegistry", () => {
     Effect.gen(function* () {
       const harness = yield* makeHarness([TARGET]);
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         yield* registry.start;
         yield* awaitConnectionState(
           registry,
@@ -554,7 +551,7 @@ describe("EnvironmentRegistry", () => {
           active!.closed,
           new ConnectionTransientError({
             reason: "transport",
-            message: "Disconnected.",
+            detail: "Disconnected.",
           }),
         );
         yield* Fiber.join(retryFiber);
@@ -578,7 +575,7 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([]);
 
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         yield* registry.register(new RelayConnectionRegistration({ target: RELAY_TARGET }));
         yield* awaitConnectionState(
           registry,
@@ -603,7 +600,7 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([RELAY_TARGET]);
 
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         const firstObserved = yield* Deferred.make<void>();
         const secondObserved = yield* Deferred.make<void>();
         const labels = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -619,7 +616,7 @@ describe("EnvironmentRegistry", () => {
             .followStream(
               RELAY_TARGET.environmentId,
               Stream.unwrap(
-                EnvironmentSupervisor.pipe(
+                EnvironmentSupervisor.EnvironmentSupervisor.pipe(
                   Effect.map((supervisor) =>
                     Stream.concat(Stream.succeed(supervisor.target.label), Stream.never),
                   ),
@@ -655,7 +652,7 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([]);
 
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         yield* registry.retryNow(EnvironmentId.make("removed-environment"));
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
@@ -670,7 +667,7 @@ describe("EnvironmentRegistry", () => {
       );
 
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         yield* registry.removeRelayEnvironments();
 
         const targets = yield* Ref.get(harness.storedTargets);
@@ -695,7 +692,7 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([RELAY_TARGET], [], [], {
         beforeRegistrationRemove: () =>
           Effect.fail(
-            new ConnectionPersistenceError({
+            new Persistence.ConnectionPersistenceError({
               operation: "remove-connection",
               message: "Storage is unavailable.",
             }),
@@ -703,7 +700,7 @@ describe("EnvironmentRegistry", () => {
       });
 
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         yield* registry.start;
         yield* awaitConnectionState(
           registry,
@@ -730,7 +727,7 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([]);
 
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         yield* registry.register(
           new BearerConnectionRegistration({
             target: BEARER_TARGET,
@@ -760,7 +757,7 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([]);
 
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         yield* registry.registerPlatform(new PrimaryConnectionRegistration({ target: TARGET }));
         yield* awaitConnectionState(
           registry,
@@ -791,7 +788,7 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([shadowedTarget]);
 
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         yield* registry.registerPlatform(new PrimaryConnectionRegistration({ target: TARGET }));
 
         expect(
@@ -825,7 +822,7 @@ describe("EnvironmentRegistry", () => {
       });
 
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         const persistedRegistration = yield* registry
           .register(new RelayConnectionRegistration({ target: shadowedTarget }))
           .pipe(Effect.forkChild({ startImmediately: true }));
@@ -864,7 +861,7 @@ describe("EnvironmentRegistry", () => {
       });
 
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         yield* registry.start;
         yield* awaitConnectionState(
           registry,
@@ -894,7 +891,7 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([]);
 
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         const registration = new PrimaryConnectionRegistration({ target: TARGET });
         yield* registry.registerPlatform(registration);
         yield* awaitConnectionState(
@@ -924,7 +921,7 @@ describe("EnvironmentRegistry", () => {
       );
 
       yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry;
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
         yield* registry.start;
         yield* registry.remove(SSH_CONNECTION.environmentId);
 

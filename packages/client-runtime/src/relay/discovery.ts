@@ -16,12 +16,12 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { ManagedRelayClient } from "./managedRelay.ts";
-import { CloudSession } from "../platform/capabilities.ts";
-import { Connectivity } from "../connection/connectivity.ts";
+import * as ManagedRelay from "./managedRelay.ts";
+import * as ClientCapabilities from "../platform/capabilities.ts";
+import * as Connectivity from "../connection/connectivity.ts";
 import { mapManagedRelayError } from "../connection/errors.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "../connection/model.ts";
-import { ConnectionWakeups } from "../connection/wakeups.ts";
+import * as ConnectionWakeups from "../connection/wakeups.ts";
 
 export type RelayEnvironmentAvailability = "checking" | "online" | "offline" | "error";
 
@@ -39,14 +39,12 @@ export interface RelayEnvironmentDiscoveryState {
   readonly error: Option.Option<ConnectionAttemptError>;
 }
 
-export interface RelayEnvironmentDiscoveryService {
-  readonly state: SubscriptionRef.SubscriptionRef<RelayEnvironmentDiscoveryState>;
-  readonly refresh: Effect.Effect<void>;
-}
-
 export class RelayEnvironmentDiscovery extends Context.Service<
   RelayEnvironmentDiscovery,
-  RelayEnvironmentDiscoveryService
+  {
+    readonly state: SubscriptionRef.SubscriptionRef<RelayEnvironmentDiscoveryState>;
+    readonly refresh: Effect.Effect<void>;
+  }
 >()("@t3tools/client-runtime/relay/discovery/RelayEnvironmentDiscovery") {}
 
 export const EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE: RelayEnvironmentDiscoveryState = {
@@ -64,7 +62,7 @@ function validateStatus(
     return Effect.fail(
       new ConnectionBlockedError({
         reason: "configuration",
-        message: "Relay returned status for a different environment.",
+        detail: "Relay returned status for a different environment.",
       }),
     );
   }
@@ -76,7 +74,7 @@ function validateStatus(
     return Effect.fail(
       new ConnectionBlockedError({
         reason: "configuration",
-        message: "Relay returned status for a different environment endpoint.",
+        detail: "Relay returned status for a different environment endpoint.",
       }),
     );
   }
@@ -87,7 +85,7 @@ function validateStatus(
     return Effect.fail(
       new ConnectionBlockedError({
         reason: "configuration",
-        message: "Relay returned a descriptor for a different environment.",
+        detail: "Relay returned a descriptor for a different environment.",
       }),
     );
   }
@@ -104,11 +102,11 @@ function relayAccountId(clerkToken: string): Option.Option<string> {
   }
 }
 
-const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
-  const relay = yield* ManagedRelayClient;
-  const session = yield* CloudSession;
-  const connectivity = yield* Connectivity;
-  const wakeups = yield* ConnectionWakeups;
+export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
+  const relay = yield* ManagedRelay.ManagedRelayClient;
+  const session = yield* ClientCapabilities.CloudSession;
+  const connectivity = yield* Connectivity.Connectivity;
+  const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const state = yield* SubscriptionRef.make(EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
   const refreshLock = yield* Semaphore.make(1);
   const hasRefreshed = yield* Ref.make(false);
@@ -327,7 +325,4 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
   return RelayEnvironmentDiscovery.of({ state, refresh });
 });
 
-export const relayEnvironmentDiscoveryLayer = Layer.effect(
-  RelayEnvironmentDiscovery,
-  makeRelayEnvironmentDiscovery(),
-);
+export const layer = Layer.effect(RelayEnvironmentDiscovery, make());

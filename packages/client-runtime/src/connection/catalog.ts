@@ -1,10 +1,7 @@
 import { DesktopSshEnvironmentTargetSchema, EnvironmentId } from "@t3tools/contracts";
-import * as Context from "effect/Context";
-import type * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import type { ConnectionAttemptError } from "./model.ts";
 import {
   BearerConnectionTarget,
   PrimaryConnectionTarget,
@@ -116,28 +113,3 @@ export function connectionRegistrationCatalogEntry(
       };
   }
 }
-
-export class ConnectionProfileStore extends Context.Service<
-  ConnectionProfileStore,
-  {
-    readonly get: (
-      connectionId: string,
-    ) => Effect.Effect<Option.Option<ConnectionProfile>, ConnectionAttemptError>;
-    readonly put: (profile: ConnectionProfile) => Effect.Effect<void, ConnectionAttemptError>;
-    readonly remove: (connectionId: string) => Effect.Effect<void, ConnectionAttemptError>;
-  }
->()("@t3tools/client-runtime/connection/catalog/ConnectionProfileStore") {}
-
-export class ConnectionCredentialStore extends Context.Service<
-  ConnectionCredentialStore,
-  {
-    readonly get: (
-      connectionId: string,
-    ) => Effect.Effect<Option.Option<ConnectionCredential>, ConnectionAttemptError>;
-    readonly put: (
-      connectionId: string,
-      credential: ConnectionCredential,
-    ) => Effect.Effect<void, ConnectionAttemptError>;
-    readonly remove: (connectionId: string) => Effect.Effect<void, ConnectionAttemptError>;
-  }
->()("@t3tools/client-runtime/connection/catalog/ConnectionCredentialStore") {}
