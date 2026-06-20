@@ -1,7 +1,7 @@
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { homedir } from "node:os";
+import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -60,7 +60,7 @@ const desktopEnvironmentLayer = Layer.unwrap(
     const processArch = yield* HostProcessArchitecture;
     return DesktopEnvironment.layer({
       dirname: __dirname,
-      homeDirectory: homedir(),
+      homeDirectory: NodeOS.homedir(),
       platform,
       processArch,
       ...metadata,
