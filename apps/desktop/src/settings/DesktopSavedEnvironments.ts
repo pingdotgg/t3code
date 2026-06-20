@@ -77,7 +77,12 @@ const DesktopSavedEnvironmentsWriteOperation = Schema.Literals([
   "write-temporary-file",
   "replace-registry-file",
 ]);
-type DesktopSavedEnvironmentsWriteOperation = typeof DesktopSavedEnvironmentsWriteOperation.Type;
+
+const DesktopSavedEnvironmentSecretProtectionOperation = Schema.Literals([
+  "check-encryption-availability",
+  "encrypt-secret",
+  "decrypt-secret",
+]);
 
 export class DesktopSavedEnvironmentsWriteError extends Schema.TaggedErrorClass<DesktopSavedEnvironmentsWriteError>()(
   "DesktopSavedEnvironmentsWriteError",
@@ -91,17 +96,6 @@ export class DesktopSavedEnvironmentsWriteError extends Schema.TaggedErrorClass<
     return `Desktop saved-environment write failed during ${this.operation} at ${this.path}.`;
   }
 }
-
-const writeError = (
-  operation: DesktopSavedEnvironmentsWriteOperation,
-  path: string,
-  cause: unknown,
-): DesktopSavedEnvironmentsWriteError =>
-  new DesktopSavedEnvironmentsWriteError({
-    operation,
-    path,
-    cause,
-  });
 
 export class DesktopSavedEnvironmentsReadError extends Schema.TaggedErrorClass<DesktopSavedEnvironmentsReadError>()(
   "DesktopSavedEnvironmentsReadError",
@@ -141,6 +135,20 @@ export class DesktopSavedEnvironmentSecretDecodeError extends Schema.TaggedError
   }
 }
 
+export class DesktopSavedEnvironmentSecretProtectionError extends Schema.TaggedErrorClass<DesktopSavedEnvironmentSecretProtectionError>()(
+  "DesktopSavedEnvironmentSecretProtectionError",
+  {
+    operation: DesktopSavedEnvironmentSecretProtectionOperation,
+    environmentId: Schema.String,
+    registryPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Desktop saved-environment secret protection failed during ${this.operation} for environment ${this.environmentId} at ${this.registryPath}.`;
+  }
+}
+
 export type DesktopSavedEnvironmentsReadRegistryError =
   | DesktopSavedEnvironmentsReadError
   | DesktopSavedEnvironmentsDocumentDecodeError;
@@ -152,11 +160,11 @@ export type DesktopSavedEnvironmentsMutationError =
 export type DesktopSavedEnvironmentsGetSecretError =
   | DesktopSavedEnvironmentsReadRegistryError
   | DesktopSavedEnvironmentSecretDecodeError
-  | ElectronSafeStorage.ElectronSafeStorageError;
+  | DesktopSavedEnvironmentSecretProtectionError;
 
 export type DesktopSavedEnvironmentsSetSecretError =
   | DesktopSavedEnvironmentsMutationError
-  | ElectronSafeStorage.ElectronSafeStorageError;
+  | DesktopSavedEnvironmentSecretProtectionError;
 
 export class DesktopSavedEnvironments extends Context.Service<
   DesktopSavedEnvironments,
@@ -276,19 +284,45 @@ const writeRegistryDocument = Effect.fn("desktop.savedEnvironments.writeRegistry
     const directory = input.path.dirname(input.registryPath);
     const tempPath = `${input.registryPath}.${process.pid}.${input.suffix}.tmp`;
     const encoded = yield* encodeSavedEnvironmentRegistryDocumentJson(input.document).pipe(
-      Effect.mapError((cause) => writeError("encode-registry", input.registryPath, cause)),
+      Effect.mapError(
+        (cause) =>
+          new DesktopSavedEnvironmentsWriteError({
+            operation: "encode-registry",
+            path: input.registryPath,
+            cause,
+          }),
+      ),
     );
-    yield* input.fileSystem
-      .makeDirectory(directory, { recursive: true })
-      .pipe(Effect.mapError((cause) => writeError("create-directory", directory, cause)));
-    yield* input.fileSystem
-      .writeFileString(tempPath, `${encoded}\n`)
-      .pipe(Effect.mapError((cause) => writeError("write-temporary-file", tempPath, cause)));
-    yield* input.fileSystem
-      .rename(tempPath, input.registryPath)
-      .pipe(
-        Effect.mapError((cause) => writeError("replace-registry-file", input.registryPath, cause)),
-      );
+    yield* input.fileSystem.makeDirectory(directory, { recursive: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopSavedEnvironmentsWriteError({
+            operation: "create-directory",
+            path: directory,
+            cause,
+          }),
+      ),
+    );
+    yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopSavedEnvironmentsWriteError({
+            operation: "write-temporary-file",
+            path: tempPath,
+            cause,
+          }),
+      ),
+    );
+    yield* input.fileSystem.rename(tempPath, input.registryPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopSavedEnvironmentsWriteError({
+            operation: "replace-registry-file",
+            path: input.registryPath,
+            cause,
+          }),
+      ),
+    );
   },
 );
 
@@ -341,8 +375,13 @@ export const make = Effect.gen(function* () {
   const writeDocument = (document: SavedEnvironmentRegistryDocument) =>
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => uuid.replace(/-/g, "")),
-      Effect.mapError((cause) =>
-        writeError("create-temporary-file-name", environment.savedEnvironmentRegistryPath, cause),
+      Effect.mapError(
+        (cause) =>
+          new DesktopSavedEnvironmentsWriteError({
+            operation: "create-temporary-file-name",
+            path: environment.savedEnvironmentRegistryPath,
+            cause,
+          }),
       ),
       Effect.flatMap((suffix) =>
         writeRegistryDocument({
@@ -396,7 +435,21 @@ export const make = Effect.gen(function* () {
         document.records.find((record) => record.environmentId === environmentId)
           ?.encryptedBearerToken,
       );
-      if (Option.isNone(encoded) || !(yield* safeStorage.isEncryptionAvailable)) {
+      if (Option.isNone(encoded)) {
+        return Option.none<string>();
+      }
+      const encryptionAvailable = yield* safeStorage.isEncryptionAvailable.pipe(
+        Effect.mapError(
+          (cause) =>
+            new DesktopSavedEnvironmentSecretProtectionError({
+              operation: "check-encryption-availability",
+              environmentId,
+              registryPath: environment.savedEnvironmentRegistryPath,
+              cause,
+            }),
+        ),
+      );
+      if (!encryptionAvailable) {
         return Option.none<string>();
       }
 
@@ -405,7 +458,19 @@ export const make = Effect.gen(function* () {
         environment.savedEnvironmentRegistryPath,
         encoded.value,
       );
-      return Option.some(yield* safeStorage.decryptString(secretBytes));
+      return Option.some(
+        yield* safeStorage.decryptString(secretBytes).pipe(
+          Effect.mapError(
+            (cause) =>
+              new DesktopSavedEnvironmentSecretProtectionError({
+                operation: "decrypt-secret",
+                environmentId,
+                registryPath: environment.savedEnvironmentRegistryPath,
+                cause,
+              }),
+          ),
+        ),
+      );
     }),
     setSecret: Effect.fn("desktop.savedEnvironments.setSecret")(function* (input) {
       const { environmentId, secret } = input;
@@ -415,11 +480,34 @@ export const make = Effect.gen(function* () {
         environment.savedEnvironmentRegistryPath,
       );
 
-      if (!(yield* safeStorage.isEncryptionAvailable)) {
+      const encryptionAvailable = yield* safeStorage.isEncryptionAvailable.pipe(
+        Effect.mapError(
+          (cause) =>
+            new DesktopSavedEnvironmentSecretProtectionError({
+              operation: "check-encryption-availability",
+              environmentId,
+              registryPath: environment.savedEnvironmentRegistryPath,
+              cause,
+            }),
+        ),
+      );
+      if (!encryptionAvailable) {
         return false;
       }
 
-      const encryptedBearerToken = Encoding.encodeBase64(yield* safeStorage.encryptString(secret));
+      const encryptedBearerToken = Encoding.encodeBase64(
+        yield* safeStorage.encryptString(secret).pipe(
+          Effect.mapError(
+            (cause) =>
+              new DesktopSavedEnvironmentSecretProtectionError({
+                operation: "encrypt-secret",
+                environmentId,
+                registryPath: environment.savedEnvironmentRegistryPath,
+                cause,
+              }),
+          ),
+        ),
+      );
       let found = false;
       const nextDocument: SavedEnvironmentRegistryDocument = {
         version: document.version,
