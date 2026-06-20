@@ -57,7 +57,7 @@ export class Devices extends Context.Service<
   }
 >()("t3code-relay/agentActivity/Devices") {}
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
 
   return Devices.of({

@@ -40,15 +40,21 @@ export interface ApnsDeliveryResult {
   readonly apnsId: string | null;
 }
 
-export class ApnsSigningError extends Schema.TaggedErrorClass<ApnsSigningError>()(
-  "ApnsSigningError",
-  {
-    phase: Schema.Literals(["encoding", "signing"]),
-    cause: Schema.Defect(),
-  },
+export class ApnsJwtEncodingError extends Schema.TaggedErrorClass<ApnsJwtEncodingError>()(
+  "ApnsJwtEncodingError",
+  { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `Failed during APNs JWT ${this.phase}`;
+    return "Failed to encode APNs JWT.";
+  }
+}
+
+export class ApnsJwtSigningError extends Schema.TaggedErrorClass<ApnsJwtSigningError>()(
+  "ApnsJwtSigningError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to sign APNs JWT.";
   }
 }
 
@@ -59,7 +65,7 @@ export class ApnsHttpRequestError extends Schema.TaggedErrorClass<ApnsHttpReques
   },
 ) {
   override get message(): string {
-    return "APNs HTTP request failed";
+    return "APNs HTTP request failed.";
   }
 }
 
@@ -70,11 +76,17 @@ export class ApnsInvalidResponseError extends Schema.TaggedErrorClass<ApnsInvali
   },
 ) {
   override get message(): string {
-    return "APNs returned an invalid response";
+    return "APNs returned an invalid response.";
   }
 }
 
-export type ApnsError = ApnsSigningError | ApnsHttpRequestError | ApnsInvalidResponseError;
+export const ApnsError = Schema.Union([
+  ApnsJwtEncodingError,
+  ApnsJwtSigningError,
+  ApnsHttpRequestError,
+  ApnsInvalidResponseError,
+]);
+export type ApnsError = typeof ApnsError.Type;
 
 const decodeApnsErrorResponseJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -107,12 +119,12 @@ const makeApnsJwt = Effect.fn("relay.apns.make_jwt")(function* (input: {
   readonly issuedAtUnixSeconds: number;
 }) {
   const headerJson = yield* encodeApnsJwtHeaderJson({ alg: "ES256", kid: input.keyId }).pipe(
-    Effect.mapError((cause) => new ApnsSigningError({ cause, phase: "encoding" })),
+    Effect.mapError((cause) => new ApnsJwtEncodingError({ cause })),
   );
   const payloadJson = yield* encodeApnsJwtPayloadJson({
     iss: input.teamId,
     iat: input.issuedAtUnixSeconds,
-  }).pipe(Effect.mapError((cause) => new ApnsSigningError({ cause, phase: "encoding" })));
+  }).pipe(Effect.mapError((cause) => new ApnsJwtEncodingError({ cause })));
 
   const privateKey = Redacted.value(input.privateKey);
   const header = Encoding.encodeBase64Url(headerJson);
@@ -129,7 +141,7 @@ const makeApnsJwt = Effect.fn("relay.apns.make_jwt")(function* (input: {
         });
       return `${signingInput}.${Encoding.encodeBase64Url(signature)}`;
     },
-    catch: (cause) => new ApnsSigningError({ cause, phase: "signing" }),
+    catch: (cause) => new ApnsJwtSigningError({ cause }),
   });
 });
 
@@ -251,7 +263,7 @@ export class ApnsClient extends Context.Service<
   }
 >()("t3code-relay/agentActivity/ApnsClient") {}
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
 
   const sendLiveActivityRequest: ApnsClient["Service"]["sendLiveActivityRequest"] = Effect.fn(
