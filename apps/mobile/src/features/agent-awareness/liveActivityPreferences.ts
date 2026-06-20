@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
@@ -6,6 +7,18 @@ import type { SavedRemoteConnection } from "../../lib/connection";
 import { savePreferencesPatch } from "../../lib/storage";
 import { linkEnvironmentToCloud } from "../cloud/linkEnvironment";
 import { refreshAgentAwarenessRegistration } from "./remoteRegistration";
+
+export class LiveActivityPreferenceSaveError extends Schema.TaggedErrorClass<LiveActivityPreferenceSaveError>()(
+  "LiveActivityPreferenceSaveError",
+  {
+    enabled: Schema.Boolean,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to save the Live Activity updates setting (enabled: ${this.enabled}).`;
+  }
+}
 
 export function setLiveActivityUpdatesEnabled(input: {
   readonly enabled: boolean;
@@ -15,7 +28,7 @@ export function setLiveActivityUpdatesEnabled(input: {
   return Effect.gen(function* () {
     yield* Effect.tryPromise({
       try: () => savePreferencesPatch({ liveActivitiesEnabled: input.enabled }),
-      catch: (error) => error,
+      catch: (cause) => new LiveActivityPreferenceSaveError({ enabled: input.enabled, cause }),
     });
 
     yield* refreshAgentAwarenessRegistration();
