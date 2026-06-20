@@ -7,7 +7,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as References from "effect/References";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
@@ -18,6 +21,10 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
+
+const isElectronUpdaterCheckForUpdatesError = Schema.is(
+  ElectronUpdater.ElectronUpdaterCheckForUpdatesError,
+);
 
 interface UpdatesHarnessOptions {
   readonly checkForUpdates?: Effect.Effect<
@@ -283,6 +290,46 @@ describe("DesktopUpdates", () => {
         assert.notInclude(state.message ?? "", "secret");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("logs updater action failures with the exact structured error", () => {
+    const cause = new Error(
+      "request failed for https://user:secret@example.com/update?token=secret",
+    );
+    const updaterError = new ElectronUpdater.ElectronUpdaterCheckForUpdatesError({ cause });
+    const harness = makeHarness({ checkForUpdates: Effect.fail(updaterError) });
+    const loggedErrors: Array<unknown> = [];
+    const logger = Logger.make(({ fiber }) => {
+      const error = fiber.getRef(References.CurrentLogAnnotations).error;
+      if (error !== undefined) {
+        loggedErrors.push(error);
+      }
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        yield* updates.check("manual");
+
+        const state = yield* updates.getState;
+        const loggedError = loggedErrors.find(isElectronUpdaterCheckForUpdatesError);
+        assert.isDefined(loggedError);
+        assert.strictEqual(loggedError, updaterError);
+        assert.strictEqual(loggedError.cause, cause);
+        assert.equal(state.message, "Electron updater failed to check for updates.");
+        assert.notInclude(state.message ?? "", "secret");
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          TestClock.layer(),
+          harness.layer,
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+    );
   });
 
   it.effect("persists channel changes through the settings service", () => {

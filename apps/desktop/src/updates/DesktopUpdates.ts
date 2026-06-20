@@ -357,7 +357,7 @@ export const make = Effect.gen(function* () {
           yield* updateState((current) =>
             reduceDesktopUpdateStateOnCheckFailure(current, error.message, failedAt),
           );
-          yield* logUpdaterError("failed to check for updates", { message: error.message });
+          yield* logUpdaterError(error.message, { error });
           return true;
         }),
       }),
@@ -391,7 +391,7 @@ export const make = Effect.gen(function* () {
             yield* updateState((current) =>
               reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
             );
-            yield* logUpdaterError("failed to download update", { message: error.message });
+            yield* logUpdaterError(error.message, { error });
             return { accepted: true, completed: false };
           },
         ),
@@ -430,7 +430,7 @@ export const make = Effect.gen(function* () {
               reduceDesktopUpdateStateOnInstallFailure(current, error.message),
             );
             yield* Ref.set(desktopState.quitting, false);
-            yield* logUpdaterError("failed to install update", { message: error.message });
+            yield* logUpdaterError(error.message, { error });
             return { accepted: true, completed: false };
           },
         ),
