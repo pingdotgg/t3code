@@ -37,7 +37,6 @@ import {
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -432,15 +431,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     const tabs = yield* SynchronizedRef.get(tabsRef);
     const tab = tabs.get(tabId);
-    if (!tab) return yield* fail("requireWebContents", new PreviewTabNotFoundError(tabId));
+    if (!tab) {
+      return yield* fail("requireWebContents", new PreviewTabNotFoundError({ tabId }));
+    }
     if (tab.webContentsId == null) {
-      return yield* fail("requireWebContents", new PreviewWebviewNotInitializedError(tabId));
+      return yield* fail("requireWebContents", new PreviewWebviewNotInitializedError({ tabId }));
     }
     const wc = webContents.fromId(tab.webContentsId);
     if (!wc) {
       return yield* fail(
         "requireWebContents",
-        new PreviewWebContentsNotFoundError(tabId, tab.webContentsId),
+        new PreviewWebContentsNotFoundError({ tabId, webContentsId: tab.webContentsId }),
       );
     }
     return wc;
@@ -845,7 +846,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         });
       } else {
         const error = Option.getOrNull(Cause.findErrorOption(exit.cause));
-        const underlying = error instanceof PreviewManagerError ? error.cause : error;
+        const underlying = isPreviewManagerError(error) ? error.cause : error;
         const interrupted =
           underlying instanceof Error &&
           underlying.name === "PreviewAutomationControlInterruptedError";
@@ -1161,7 +1162,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
     if (!tab) {
-      return yield* fail("registerWebview", new PreviewTabNotFoundError(tabId));
+      return yield* fail("registerWebview", new PreviewTabNotFoundError({ tabId }));
     }
     const wc = webContents.fromId(webContentsId);
     const mainWindow = yield* Ref.get(mainWindowRef);
@@ -1172,7 +1173,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     ) {
       return yield* fail(
         "registerWebview",
-        new PreviewWebContentsNotFoundError(tabId, webContentsId),
+        new PreviewWebContentsNotFoundError({ tabId, webContentsId }),
       );
     }
     const attached = yield* Ref.get(attachedRef);
@@ -1224,7 +1225,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       ] as const;
     });
     if (Option.isNone(registration)) {
-      return yield* fail("registerWebview", new PreviewTabNotFoundError(tabId));
+      return yield* fail("registerWebview", new PreviewTabNotFoundError({ tabId }));
     }
     const { state: registered, pendingUrl } = registration.value;
     yield* emit(tabId, registered);
@@ -2200,129 +2201,131 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   };
 });
 
-export class PreviewTabNotFoundError extends Error {
-  readonly tabId: string;
-  constructor(tabId: string) {
-    super(`Preview tab not found: ${tabId}`);
-    this.name = "PreviewTabNotFoundError";
-    this.tabId = tabId;
+export class PreviewTabNotFoundError extends Schema.TaggedErrorClass<PreviewTabNotFoundError>()(
+  "PreviewTabNotFoundError",
+  { tabId: Schema.String },
+) {
+  override get message(): string {
+    return `Preview tab not found: ${this.tabId}`;
   }
 }
 
-export class PreviewWebContentsNotFoundError extends Error {
-  readonly tabId: string;
-  readonly webContentsId: number;
-  constructor(tabId: string, webContentsId: number) {
-    super(`WebContents ${webContentsId} not found for preview tab ${tabId}`);
-    this.name = "PreviewWebContentsNotFoundError";
-    this.tabId = tabId;
-    this.webContentsId = webContentsId;
+export class PreviewWebContentsNotFoundError extends Schema.TaggedErrorClass<PreviewWebContentsNotFoundError>()(
+  "PreviewWebContentsNotFoundError",
+  { tabId: Schema.String, webContentsId: Schema.Number },
+) {
+  override get message(): string {
+    return `WebContents ${this.webContentsId} not found for preview tab ${this.tabId}`;
   }
 }
 
-export class PreviewWebviewNotInitializedError extends Error {
-  readonly tabId: string;
-  constructor(tabId: string) {
-    super(`Preview tab "${tabId}" has no webview registered`);
-    this.name = "PreviewWebviewNotInitializedError";
-    this.tabId = tabId;
+export class PreviewWebviewNotInitializedError extends Schema.TaggedErrorClass<PreviewWebviewNotInitializedError>()(
+  "PreviewWebviewNotInitializedError",
+  { tabId: Schema.String },
+) {
+  override get message(): string {
+    return `Preview tab "${this.tabId}" has no webview registered`;
   }
 }
 
-export class PreviewManagerError extends Data.TaggedError("PreviewManagerError")<{
-  readonly operation: string;
-  readonly cause: unknown;
-}> {
-  override get message() {
+export class PreviewManagerError extends Schema.TaggedErrorClass<PreviewManagerError>()(
+  "PreviewManagerError",
+  {
+    operation: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
     return `Desktop preview operation failed: ${this.operation}`;
   }
 }
 
-export interface PreviewManagerShape {
-  readonly setMainWindow: (window: BrowserWindow) => Effect.Effect<void, PreviewManagerError>;
-  readonly getBrowserSession: (scope?: string) => Effect.Effect<Session, PreviewManagerError>;
-  readonly isBrowserPartition: (partition: string) => boolean;
-  readonly createTab: (tabId: string) => Effect.Effect<PreviewTabState, PreviewManagerError>;
-  readonly closeTab: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-  readonly registerWebview: (
-    tabId: string,
-    webContentsId: number,
-  ) => Effect.Effect<void, PreviewManagerError>;
-  readonly navigate: (tabId: string, url: string) => Effect.Effect<void, PreviewManagerError>;
-  readonly goBack: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-  readonly goForward: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-  readonly refresh: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-  readonly zoomIn: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-  readonly zoomOut: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-  readonly resetZoom: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-  readonly hardReload: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-  readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-  readonly clearCookies: () => Effect.Effect<void, PreviewManagerError>;
-  readonly clearCache: () => Effect.Effect<void, PreviewManagerError>;
-  readonly getBrowserPartition: (scope?: string) => Effect.Effect<string, PreviewManagerError>;
-  readonly setAnnotationTheme: (
-    theme: DesktopPreviewAnnotationTheme,
-  ) => Effect.Effect<void, PreviewManagerError>;
-  readonly pickElement: (
-    tabId: string,
-  ) => Effect.Effect<PreviewAnnotationPayload | null, PreviewManagerError>;
-  readonly cancelPickElement: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-  readonly captureScreenshot: (
-    tabId: string,
-  ) => Effect.Effect<DesktopPreviewScreenshotArtifact, PreviewManagerError>;
-  readonly revealArtifact: (path: string) => Effect.Effect<void, PreviewManagerError>;
-  readonly copyArtifactToClipboard: (path: string) => Effect.Effect<void, PreviewManagerError>;
-  readonly startRecording: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-  readonly stopRecording: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-  readonly saveRecording: (
-    tabId: string,
-    mimeType: string,
-    data: Uint8Array,
-  ) => Effect.Effect<DesktopPreviewRecordingArtifact, PreviewManagerError>;
-  readonly automationStatus: (
-    tabId: string,
-  ) => Effect.Effect<PreviewAutomationStatus, PreviewManagerError>;
-  readonly automationSnapshot: (
-    tabId: string,
-  ) => Effect.Effect<PreviewAutomationSnapshot, PreviewManagerError>;
-  readonly automationClick: (
-    tabId: string,
-    input: PreviewAutomationClickInput,
-  ) => Effect.Effect<void, PreviewManagerError>;
-  readonly automationType: (
-    tabId: string,
-    input: PreviewAutomationTypeInput,
-  ) => Effect.Effect<void, PreviewManagerError>;
-  readonly automationPress: (
-    tabId: string,
-    input: PreviewAutomationPressInput,
-  ) => Effect.Effect<void, PreviewManagerError>;
-  readonly automationScroll: (
-    tabId: string,
-    input: PreviewAutomationScrollInput,
-  ) => Effect.Effect<void, PreviewManagerError>;
-  readonly automationEvaluate: (
-    tabId: string,
-    input: PreviewAutomationEvaluateInput,
-  ) => Effect.Effect<unknown, PreviewManagerError>;
-  readonly automationWaitFor: (
-    tabId: string,
-    input: PreviewAutomationWaitForInput,
-  ) => Effect.Effect<void, PreviewManagerError>;
-  readonly subscribeStateChanges: (listener: Listener) => Effect.Effect<void, never, Scope.Scope>;
-  readonly subscribePointerEvents: (
-    listener: PointerEventListener,
-  ) => Effect.Effect<void, never, Scope.Scope>;
-  readonly subscribeRecordingFrames: (
-    listener: RecordingFrameListener,
-  ) => Effect.Effect<void, never, Scope.Scope>;
-}
+const isPreviewManagerError = Schema.is(PreviewManagerError);
 
-export class PreviewManager extends Context.Service<PreviewManager, PreviewManagerShape>()(
-  "@t3tools/desktop/preview/Manager/PreviewManager",
-) {}
+export class PreviewManager extends Context.Service<
+  PreviewManager,
+  {
+    readonly setMainWindow: (window: BrowserWindow) => Effect.Effect<void, PreviewManagerError>;
+    readonly getBrowserSession: (scope?: string) => Effect.Effect<Session, PreviewManagerError>;
+    readonly isBrowserPartition: (partition: string) => boolean;
+    readonly createTab: (tabId: string) => Effect.Effect<PreviewTabState, PreviewManagerError>;
+    readonly closeTab: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly registerWebview: (
+      tabId: string,
+      webContentsId: number,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly navigate: (tabId: string, url: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly goBack: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly goForward: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly refresh: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly zoomIn: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly zoomOut: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly resetZoom: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly hardReload: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly clearCookies: () => Effect.Effect<void, PreviewManagerError>;
+    readonly clearCache: () => Effect.Effect<void, PreviewManagerError>;
+    readonly getBrowserPartition: (scope?: string) => Effect.Effect<string, PreviewManagerError>;
+    readonly setAnnotationTheme: (
+      theme: DesktopPreviewAnnotationTheme,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly pickElement: (
+      tabId: string,
+    ) => Effect.Effect<PreviewAnnotationPayload | null, PreviewManagerError>;
+    readonly cancelPickElement: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly captureScreenshot: (
+      tabId: string,
+    ) => Effect.Effect<DesktopPreviewScreenshotArtifact, PreviewManagerError>;
+    readonly revealArtifact: (path: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly copyArtifactToClipboard: (path: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly startRecording: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly stopRecording: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly saveRecording: (
+      tabId: string,
+      mimeType: string,
+      data: Uint8Array,
+    ) => Effect.Effect<DesktopPreviewRecordingArtifact, PreviewManagerError>;
+    readonly automationStatus: (
+      tabId: string,
+    ) => Effect.Effect<PreviewAutomationStatus, PreviewManagerError>;
+    readonly automationSnapshot: (
+      tabId: string,
+    ) => Effect.Effect<PreviewAutomationSnapshot, PreviewManagerError>;
+    readonly automationClick: (
+      tabId: string,
+      input: PreviewAutomationClickInput,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly automationType: (
+      tabId: string,
+      input: PreviewAutomationTypeInput,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly automationPress: (
+      tabId: string,
+      input: PreviewAutomationPressInput,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly automationScroll: (
+      tabId: string,
+      input: PreviewAutomationScrollInput,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly automationEvaluate: (
+      tabId: string,
+      input: PreviewAutomationEvaluateInput,
+    ) => Effect.Effect<unknown, PreviewManagerError>;
+    readonly automationWaitFor: (
+      tabId: string,
+      input: PreviewAutomationWaitForInput,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly subscribeStateChanges: (listener: Listener) => Effect.Effect<void, never, Scope.Scope>;
+    readonly subscribePointerEvents: (
+      listener: PointerEventListener,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+    readonly subscribeRecordingFrames: (
+      listener: RecordingFrameListener,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+  }
+>()("@t3tools/desktop/preview/Manager/PreviewManager") {}
 
-const make = Effect.gen(function* PreviewManagerMake() {
+export const make = Effect.gen(function* PreviewManagerMake() {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const browserSession = yield* BrowserSession.BrowserSession;
   const operations = yield* makeNativeOperations(environment.browserArtifactsDir);

@@ -2,36 +2,38 @@ import type { Session } from "electron";
 import { session } from "electron";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
 
-export class BrowserSessionError extends Data.TaggedError("BrowserSessionError")<{
-  readonly operation: string;
-  readonly cause: unknown;
-}> {
-  override get message() {
+export class BrowserSessionError extends Schema.TaggedErrorClass<BrowserSessionError>()(
+  "BrowserSessionError",
+  {
+    operation: Schema.Literals(["getPartition", "getSession", "clearCookies", "clearCache"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
     return `Desktop preview browser session operation failed: ${this.operation}`;
   }
 }
 
-export interface BrowserSessionShape {
-  readonly getPartition: (scope?: string) => Effect.Effect<string, BrowserSessionError>;
-  readonly isPartition: (partition: string) => boolean;
-  readonly getSession: (scope?: string) => Effect.Effect<Session, BrowserSessionError>;
-  readonly clearCookies: () => Effect.Effect<void, BrowserSessionError>;
-  readonly clearCache: () => Effect.Effect<void, BrowserSessionError>;
-}
+export class BrowserSession extends Context.Service<
+  BrowserSession,
+  {
+    readonly getPartition: (scope?: string) => Effect.Effect<string, BrowserSessionError>;
+    readonly isPartition: (partition: string) => boolean;
+    readonly getSession: (scope?: string) => Effect.Effect<Session, BrowserSessionError>;
+    readonly clearCookies: () => Effect.Effect<void, BrowserSessionError>;
+    readonly clearCache: () => Effect.Effect<void, BrowserSessionError>;
+  }
+>()("@t3tools/desktop/preview/BrowserSession") {}
 
-export class BrowserSession extends Context.Service<BrowserSession, BrowserSessionShape>()(
-  "@t3tools/desktop/preview/BrowserSession",
-) {}
-
-const make = Effect.gen(function* BrowserSessionMake() {
+export const make = Effect.gen(function* BrowserSessionMake() {
   const crypto = yield* Crypto.Crypto;
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
 

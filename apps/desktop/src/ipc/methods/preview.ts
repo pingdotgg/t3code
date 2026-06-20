@@ -96,7 +96,7 @@ const tabMethod = (
   channel: string,
   name: string,
   invoke: (
-    manager: PreviewManager.PreviewManagerShape,
+    manager: PreviewManager.PreviewManager["Service"],
     tabId: string,
   ) => Effect.Effect<void, PreviewManager.PreviewManagerError>,
 ) =>
