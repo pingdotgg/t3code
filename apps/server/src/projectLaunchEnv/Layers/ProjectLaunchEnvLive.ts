@@ -5,10 +5,11 @@ import * as Option from "effect/Option";
 
 import { ServerConfig } from "../../config.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ProjectLaunchEnv, type ProjectLaunchEnvShape } from "../Services/ProjectLaunchEnv.ts";
+import { ProjectLaunchEnv } from "../Services/ProjectLaunchEnv.ts";
 import { mergeResolvedProjectLaunchEnv } from "../projectLaunchEnvUtils.ts";
 import {
-  ProjectLaunchEnvProjectLookupError,
+  ProjectLaunchEnvProjectNotFoundError,
+  ProjectLaunchEnvProjectStatError,
   ProjectLaunchEnvThreadLookupError,
 } from "../Services/ProjectLaunchEnvErrors.ts";
 
@@ -16,7 +17,7 @@ export const makeProjectLaunchEnv = Effect.fn("makeProjectLaunchEnv")(function* 
   const serverConfig = yield* ServerConfig;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
 
-  const resolve: ProjectLaunchEnvShape["resolve"] = (input) =>
+  const resolve: ProjectLaunchEnv["Service"]["resolve"] = (input) =>
     Effect.succeed(
       mergeResolvedProjectLaunchEnv({
         t3Home: serverConfig.baseDir,
@@ -30,7 +31,7 @@ export const makeProjectLaunchEnv = Effect.fn("makeProjectLaunchEnv")(function* 
       }),
     );
 
-  const resolveForThread: ProjectLaunchEnvShape["resolveForThread"] = Effect.fn(
+  const resolveForThread: ProjectLaunchEnv["Service"]["resolveForThread"] = Effect.fn(
     "ProjectLaunchEnv.resolveForThread",
   )(function* (input) {
     const threadOption = yield* projectionSnapshotQuery
@@ -72,9 +73,8 @@ export const makeProjectLaunchEnv = Effect.fn("makeProjectLaunchEnv")(function* 
     const projectOption = yield* projectionSnapshotQuery.getProjectShellById(projectId).pipe(
       Effect.mapError(
         (cause) =>
-          new ProjectLaunchEnvProjectLookupError({
+          new ProjectLaunchEnvProjectStatError({
             projectId: String(projectId),
-            reason: "statFailed",
             cause,
           }),
       ),
@@ -84,9 +84,8 @@ export const makeProjectLaunchEnv = Effect.fn("makeProjectLaunchEnv")(function* 
       onSome: Effect.succeed,
       onNone: () =>
         Effect.fail(
-          new ProjectLaunchEnvProjectLookupError({
+          new ProjectLaunchEnvProjectNotFoundError({
             projectId: String(projectId),
-            reason: "notFound",
           }),
         ),
     });
@@ -110,7 +109,7 @@ export const makeProjectLaunchEnv = Effect.fn("makeProjectLaunchEnv")(function* 
   return {
     resolve,
     resolveForThread,
-  } satisfies ProjectLaunchEnvShape;
+  } satisfies ProjectLaunchEnv["Service"];
 });
 
 export const ProjectLaunchEnvLive = Layer.effect(ProjectLaunchEnv, makeProjectLaunchEnv());

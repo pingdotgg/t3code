@@ -27,9 +27,9 @@ import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
-import type {
-  ProjectLaunchEnvShape,
-  ResolvedProjectLaunchEnvForThread,
+import {
+  ProjectLaunchEnv,
+  type ResolvedProjectLaunchEnvForThread,
 } from "../projectLaunchEnv/Services/ProjectLaunchEnv.ts";
 import { ProjectLaunchEnvThreadLookupError } from "../projectLaunchEnv/Services/ProjectLaunchEnvErrors.ts";
 import { mergeResolvedProjectLaunchEnv } from "../projectLaunchEnv/projectLaunchEnvUtils.ts";
@@ -212,13 +212,13 @@ interface CreateManagerOptions {
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
   ptyAdapter?: FakePtyAdapter;
-  projectLaunchEnv?: ProjectLaunchEnvShape;
+  projectLaunchEnv?: ProjectLaunchEnv["Service"];
 }
 
 const projectLaunchEnvTestStub = (fixtures: {
   readonly t3Home: string;
   readonly projectId: ProjectId;
-}): ProjectLaunchEnvShape => ({
+}): ProjectLaunchEnv["Service"] => ({
   resolve: (input) =>
     Effect.succeed(
       mergeResolvedProjectLaunchEnv({

@@ -49,10 +49,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ServerConfig from "../config.ts";
-import {
-  ProjectLaunchEnv,
-  type ProjectLaunchEnvShape,
-} from "../projectLaunchEnv/Services/ProjectLaunchEnv.ts";
+import { ProjectLaunchEnv } from "../projectLaunchEnv/Services/ProjectLaunchEnv.ts";
 import { isManagedRuntimeEnvKey } from "../projectLaunchEnv/projectLaunchEnvUtils.ts";
 import {
   increment,
@@ -1095,7 +1092,7 @@ interface TerminalManagerOptions {
     readonly threadId: string;
     readonly terminalId: string;
   }) => Effect.Effect<void>;
-  projectLaunchEnv: ProjectLaunchEnvShape;
+  projectLaunchEnv: ProjectLaunchEnv["Service"];
 }
 
 export const make = Effect.fn("TerminalManager.make")(function* () {
@@ -1137,11 +1134,18 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const applyProjectLaunchEnv = <T extends TerminalOpenInput | TerminalRestartInput>(input: T) =>
     projectLaunchEnv.resolveForThread(toProjectLaunchEnvInput(input)).pipe(
       Effect.catchTags({
-        ProjectLaunchEnvProjectLookupError: (error) =>
+        ProjectLaunchEnvProjectNotFoundError: (error) =>
           Effect.fail(
             new TerminalCwdError({
               cwd: error.projectId,
-              reason: error.reason === "notFound" ? "notFound" : "statFailed",
+              reason: "notFound",
+            }),
+          ),
+        ProjectLaunchEnvProjectStatError: (error) =>
+          Effect.fail(
+            new TerminalCwdError({
+              cwd: error.projectId,
+              reason: "statFailed",
               cause: error.cause,
             }),
           ),
@@ -1163,11 +1167,18 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const applyProjectLaunchEnvForAttach = (input: TerminalAttachInput) =>
     projectLaunchEnv.resolveForThread(toProjectLaunchEnvInput(input)).pipe(
       Effect.catchTags({
-        ProjectLaunchEnvProjectLookupError: (error) =>
+        ProjectLaunchEnvProjectNotFoundError: (error) =>
           Effect.fail(
             new TerminalCwdError({
               cwd: error.projectId,
-              reason: error.reason === "notFound" ? "notFound" : "statFailed",
+              reason: "notFound",
+            }),
+          ),
+        ProjectLaunchEnvProjectStatError: (error) =>
+          Effect.fail(
+            new TerminalCwdError({
+              cwd: error.projectId,
+              reason: "statFailed",
               cause: error.cause,
             }),
           ),
