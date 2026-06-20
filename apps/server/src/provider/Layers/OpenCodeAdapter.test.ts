@@ -20,15 +20,11 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
-import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+import * as Config from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as ProviderSessionDirectory from "../ProviderSessionDirectory.ts";
 import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
-import {
-  OpenCodeRuntime,
-  OpenCodeRuntimeError,
-  type OpenCodeRuntimeShape,
-} from "../opencodeRuntime.ts";
+import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import {
   appendOpenCodeAssistantTextDelta,
   makeOpenCodeAdapter,
@@ -79,7 +75,7 @@ const runtimeMock = {
   },
 };
 
-const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
+const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
   startOpenCodeServerProcess: ({ binaryPath }) =>
     Effect.gen(function* () {
       runtimeMock.state.startCalls.push(binaryPath);
@@ -167,10 +163,12 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           })(),
         }),
       },
-    }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+    }) as unknown as ReturnType<
+      OpenCodeRuntime.OpenCodeRuntime["Service"]["createOpenCodeSdkClient"]
+    >,
   loadOpenCodeInventory: () =>
     Effect.fail(
-      new OpenCodeRuntimeError({
+      new OpenCodeRuntime.OpenCodeRuntimeError({
         operation: "loadOpenCodeInventory",
         detail: "OpenCodeRuntimeTestDouble.loadOpenCodeInventory not used in this test",
         cause: null,
@@ -178,14 +176,17 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
     ),
 };
 
-const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory, {
-  upsert: () => Effect.void,
-  getProvider: () =>
-    Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
-  getBinding: () => Effect.succeed(Option.none()),
-  listThreadIds: () => Effect.succeed([]),
-  listBindings: () => Effect.succeed([]),
-});
+const providerSessionDirectoryTestLayer = Layer.succeed(
+  ProviderSessionDirectory.ProviderSessionDirectory,
+  {
+    upsert: () => Effect.void,
+    getProvider: () =>
+      Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
+    getBinding: () => Effect.succeed(Option.none()),
+    listThreadIds: () => Effect.succeed([]),
+    listBindings: () => Effect.succeed([]),
+  },
+);
 
 // The adapter now receives its settings as a plain argument (the old design
 // read from `ServerSettingsService` internally). The test-only
@@ -203,10 +204,10 @@ const OpenCodeAdapterTestLayer = Layer.effect(
   OpenCodeAdapter,
   makeOpenCodeAdapter(openCodeAdapterTestSettings),
 ).pipe(
-  Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
-  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+  Layer.provideMerge(Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+  Layer.provideMerge(Config.ServerConfig.layerTest(process.cwd(), process.cwd())),
   Layer.provideMerge(
-    ServerSettingsService.layerTest({
+    ServerSettings.ServerSettingsService.layerTest({
       providers: {
         opencode: {
           binaryPath: "fake-opencode",
@@ -334,9 +335,11 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           OpenCodeAdapter,
           makeOpenCodeAdapter(openCodeAdapterTestSettings),
         ).pipe(
-          Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
-          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-          Layer.provideMerge(ServerSettingsService.layerTest()),
+          Layer.provideMerge(
+            Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
+          ),
+          Layer.provideMerge(Config.ServerConfig.layerTest(process.cwd(), process.cwd())),
+          Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provideMerge(providerSessionDirectoryTestLayer),
           Layer.provideMerge(NodeServices.layer),
         );
@@ -480,9 +483,9 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       OpenCodeAdapter,
       makeOpenCodeAdapter(openCodeAdapterTestSettings, { instanceId }),
     ).pipe(
-      Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+      Layer.provideMerge(Config.ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest()),
       Layer.provideMerge(providerSessionDirectoryTestLayer),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -527,9 +530,9 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       OpenCodeAdapter,
       makeOpenCodeAdapter(openCodeAdapterTestSettings, { instanceId }),
     ).pipe(
-      Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+      Layer.provideMerge(Config.ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest()),
       Layer.provideMerge(providerSessionDirectoryTestLayer),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -569,9 +572,9 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       OpenCodeAdapter,
       makeOpenCodeAdapter(openCodeAdapterTestSettings, { instanceId }),
     ).pipe(
-      Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+      Layer.provideMerge(Config.ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest()),
       Layer.provideMerge(providerSessionDirectoryTestLayer),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -792,10 +795,12 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           nativeEventLogger,
         }),
       ).pipe(
-        Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
-        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
         Layer.provideMerge(
-          ServerSettingsService.layerTest({
+          Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
+        ),
+        Layer.provideMerge(Config.ServerConfig.layerTest(process.cwd(), process.cwd())),
+        Layer.provideMerge(
+          ServerSettings.ServerSettingsService.layerTest({
             providers: {
               opencode: {
                 binaryPath: "fake-opencode",
@@ -874,10 +879,12 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           nativeEventLogger,
         }),
       ).pipe(
-        Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
-        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
         Layer.provideMerge(
-          ServerSettingsService.layerTest({
+          Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
+        ),
+        Layer.provideMerge(Config.ServerConfig.layerTest(process.cwd(), process.cwd())),
+        Layer.provideMerge(
+          ServerSettings.ServerSettingsService.layerTest({
             providers: {
               opencode: {
                 binaryPath: "fake-opencode",

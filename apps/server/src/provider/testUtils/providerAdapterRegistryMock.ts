@@ -1,5 +1,5 @@
 /**
- * Test helpers for constructing a `ProviderAdapterRegistryShape` mock from a
+ * Test helpers for constructing a `ProviderAdapterRegistry["Service"]` mock from a
  * kind-keyed adapter map.
  *
  * Tests historically assembled a `registry` object with only `getByProvider`
@@ -26,19 +26,21 @@ import * as Stream from "effect/Stream";
 
 import { ProviderUnsupportedError, type ProviderAdapterError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
-import type { ProviderAdapterRegistryShape } from "../Services/ProviderAdapterRegistry.ts";
+import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 
 export type KindAdapterMap = Partial<
   Record<ProviderDriverKind, ProviderAdapterShape<ProviderAdapterError>>
 >;
 
 /**
- * Build a `ProviderAdapterRegistryShape` from a kind-keyed adapter map.
+ * Build a `ProviderAdapterRegistry["Service"]` from a kind-keyed adapter map.
  * Every adapter present in the map is addressable via both the legacy
  * `getByProvider(kind)` path and the new `getByInstance(id)` path (where
  * `id = defaultInstanceIdForDriver(kind)`).
  */
-export const makeAdapterRegistryMock = (adapters: KindAdapterMap): ProviderAdapterRegistryShape => {
+export const makeAdapterRegistryMock = (
+  adapters: KindAdapterMap,
+): ProviderAdapterRegistry.ProviderAdapterRegistry["Service"] => {
   const byInstanceId = new Map<ProviderInstanceId, ProviderAdapterShape<ProviderAdapterError>>();
   for (const [kind, adapter] of Object.entries(adapters)) {
     if (!adapter) continue;
@@ -46,16 +48,17 @@ export const makeAdapterRegistryMock = (adapters: KindAdapterMap): ProviderAdapt
     byInstanceId.set(defaultInstanceIdForDriver(driverKind), adapter);
   }
 
-  const getByInstance: ProviderAdapterRegistryShape["getByInstance"] = (instanceId) => {
-    const adapter = byInstanceId.get(instanceId);
-    return adapter
-      ? Effect.succeed(adapter)
-      : Effect.fail(
-          new ProviderUnsupportedError({
-            provider: ProviderDriverKind.make(instanceId),
-          }),
-        );
-  };
+  const getByInstance: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"]["getByInstance"] =
+    (instanceId) => {
+      const adapter = byInstanceId.get(instanceId);
+      return adapter
+        ? Effect.succeed(adapter)
+        : Effect.fail(
+            new ProviderUnsupportedError({
+              provider: ProviderDriverKind.make(instanceId),
+            }),
+          );
+    };
 
   return {
     getByInstance,

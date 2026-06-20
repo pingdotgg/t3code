@@ -13,14 +13,12 @@ import {
 } from "@opencode-ai/sdk/v2";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as P from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
@@ -28,7 +26,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { isWindowsCommandNotFound } from "../processRunner.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -50,14 +48,19 @@ export interface OpenCodeServerConnection {
   readonly external: boolean;
 }
 
-const OPENCODE_RUNTIME_ERROR_TAG = "OpenCodeRuntimeError";
-export class OpenCodeRuntimeError extends Data.TaggedError(OPENCODE_RUNTIME_ERROR_TAG)<{
-  readonly operation: string;
-  readonly cause?: unknown;
-  readonly detail: string;
-}> {
-  static readonly is = (u: unknown): u is OpenCodeRuntimeError =>
-    P.isTagged(u, OPENCODE_RUNTIME_ERROR_TAG);
+export class OpenCodeRuntimeError extends Schema.TaggedErrorClass<OpenCodeRuntimeError>()(
+  "OpenCodeRuntimeError",
+  {
+    operation: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  static readonly is = Schema.is(OpenCodeRuntimeError);
+
+  override get message(): string {
+    return `${this.operation}: ${this.detail}`;
+  }
 }
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
@@ -107,47 +110,50 @@ export interface ParsedOpenCodeModelSlug {
   readonly modelID: string;
 }
 
-export interface OpenCodeRuntimeShape {
-  /**
-   * Spawns a local OpenCode server process. Its lifetime is bound to the caller's
-   * `Scope.Scope` — the child is killed automatically when that scope closes.
-   * Consumers that want a long-lived server must create and hold a scope explicitly
-   * (see {@link Scope.make}) and close it when done.
-   */
-  readonly startOpenCodeServerProcess: (input: {
-    readonly binaryPath: string;
-    readonly environment?: NodeJS.ProcessEnv;
-    readonly port?: number;
-    readonly hostname?: string;
-    readonly timeoutMs?: number;
-  }) => Effect.Effect<OpenCodeServerProcess, OpenCodeRuntimeError, Scope.Scope>;
-  /**
-   * Returns a handle to either an externally-managed OpenCode server (when
-   * `serverUrl` is provided — no lifetime is attached to the caller's scope) or a
-   * freshly spawned local server whose lifetime is bound to the caller's scope.
-   */
-  readonly connectToOpenCodeServer: (input: {
-    readonly binaryPath: string;
-    readonly serverUrl?: string | null;
-    readonly environment?: NodeJS.ProcessEnv;
-    readonly port?: number;
-    readonly hostname?: string;
-    readonly timeoutMs?: number;
-  }) => Effect.Effect<OpenCodeServerConnection, OpenCodeRuntimeError, Scope.Scope>;
-  readonly runOpenCodeCommand: (input: {
-    readonly binaryPath: string;
-    readonly args: ReadonlyArray<string>;
-    readonly environment?: NodeJS.ProcessEnv;
-  }) => Effect.Effect<OpenCodeCommandResult, OpenCodeRuntimeError>;
-  readonly createOpenCodeSdkClient: (input: {
-    readonly baseUrl: string;
-    readonly directory: string;
-    readonly serverPassword?: string;
-  }) => OpencodeClient;
-  readonly loadOpenCodeInventory: (
-    client: OpencodeClient,
-  ) => Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError>;
-}
+export class OpenCodeRuntime extends Context.Service<
+  OpenCodeRuntime,
+  {
+    /**
+     * Spawns a local OpenCode server process. Its lifetime is bound to the caller's
+     * `Scope.Scope` — the child is killed automatically when that scope closes.
+     * Consumers that want a long-lived server must create and hold a scope explicitly
+     * (see {@link Scope.make}) and close it when done.
+     */
+    readonly startOpenCodeServerProcess: (input: {
+      readonly binaryPath: string;
+      readonly environment?: NodeJS.ProcessEnv;
+      readonly port?: number;
+      readonly hostname?: string;
+      readonly timeoutMs?: number;
+    }) => Effect.Effect<OpenCodeServerProcess, OpenCodeRuntimeError, Scope.Scope>;
+    /**
+     * Returns a handle to either an externally-managed OpenCode server (when
+     * `serverUrl` is provided — no lifetime is attached to the caller's scope) or a
+     * freshly spawned local server whose lifetime is bound to the caller's scope.
+     */
+    readonly connectToOpenCodeServer: (input: {
+      readonly binaryPath: string;
+      readonly serverUrl?: string | null;
+      readonly environment?: NodeJS.ProcessEnv;
+      readonly port?: number;
+      readonly hostname?: string;
+      readonly timeoutMs?: number;
+    }) => Effect.Effect<OpenCodeServerConnection, OpenCodeRuntimeError, Scope.Scope>;
+    readonly runOpenCodeCommand: (input: {
+      readonly binaryPath: string;
+      readonly args: ReadonlyArray<string>;
+      readonly environment?: NodeJS.ProcessEnv;
+    }) => Effect.Effect<OpenCodeCommandResult, OpenCodeRuntimeError>;
+    readonly createOpenCodeSdkClient: (input: {
+      readonly baseUrl: string;
+      readonly directory: string;
+      readonly serverPassword?: string;
+    }) => OpencodeClient;
+    readonly loadOpenCodeInventory: (
+      client: OpencodeClient,
+    ) => Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError>;
+  }
+>()("t3/provider/opencodeRuntime") {}
 
 function parseServerUrlFromOutput(output: string): string | null {
   for (const line of output.split("\n")) {
@@ -275,14 +281,14 @@ function ensureRuntimeError(
     : new OpenCodeRuntimeError({ operation, detail, cause });
 }
 
-const makeOpenCodeRuntime = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const netService = yield* NetService.NetService;
   const hostPlatform = yield* HostProcessPlatform;
   const resolveCommand = (command: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
     resolveSpawnCommand(command, args, env ? { env } : {});
 
-  const runOpenCodeCommand: OpenCodeRuntimeShape["runOpenCodeCommand"] = (input) =>
+  const runOpenCodeCommand: OpenCodeRuntime["Service"]["runOpenCodeCommand"] = (input) =>
     Effect.gen(function* () {
       const spawnCommand = yield* resolveCommand(input.binaryPath, input.args, input.environment);
       const child = yield* spawner.spawn(
@@ -296,7 +302,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         { concurrency: "unbounded" },
       );
       const exitCode = Number(code);
-      if (yield* isWindowsCommandNotFound(exitCode, stderr)) {
+      if (yield* ProcessRunner.isWindowsCommandNotFound(exitCode, stderr)) {
         return yield* new OpenCodeRuntimeError({
           operation: "runOpenCodeCommand",
           detail: `spawn ${input.binaryPath} ENOENT`,
@@ -318,7 +324,9 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       ),
     );
 
-  const startOpenCodeServerProcess: OpenCodeRuntimeShape["startOpenCodeServerProcess"] = (input) =>
+  const startOpenCodeServerProcess: OpenCodeRuntime["Service"]["startOpenCodeServerProcess"] = (
+    input,
+  ) =>
     Effect.gen(function* () {
       // Bind this server's lifetime to the caller's scope. When the caller's
       // scope closes, the spawned child is killed and all associated fibers
@@ -476,7 +484,9 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       } satisfies OpenCodeServerProcess;
     });
 
-  const connectToOpenCodeServer: OpenCodeRuntimeShape["connectToOpenCodeServer"] = (input) => {
+  const connectToOpenCodeServer: OpenCodeRuntime["Service"]["connectToOpenCodeServer"] = (
+    input,
+  ) => {
     const serverUrl = input.serverUrl?.trim();
     if (serverUrl) {
       // We don't own externally-configured servers — no scope interaction.
@@ -502,7 +512,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     );
   };
 
-  const createOpenCodeSdkClient: OpenCodeRuntimeShape["createOpenCodeSdkClient"] = (input) =>
+  const createOpenCodeSdkClient: OpenCodeRuntime["Service"]["createOpenCodeSdkClient"] = (input) =>
     createOpencodeClient({
       baseUrl: input.baseUrl,
       directory: input.directory,
@@ -537,24 +547,18 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       Effect.map((result) => result.data ?? []),
     );
 
-  const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
+  const loadOpenCodeInventory: OpenCodeRuntime["Service"]["loadOpenCodeInventory"] = (client) =>
     Effect.all([loadProviders(client), loadAgents(client)], { concurrency: "unbounded" }).pipe(
       Effect.map(([providerList, agents]) => ({ providerList, agents })),
     );
 
-  return {
+  return OpenCodeRuntime.of({
     startOpenCodeServerProcess,
     connectToOpenCodeServer,
     runOpenCodeCommand,
     createOpenCodeSdkClient,
     loadOpenCodeInventory,
-  } satisfies OpenCodeRuntimeShape;
+  });
 });
 
-export class OpenCodeRuntime extends Context.Service<OpenCodeRuntime, OpenCodeRuntimeShape>()(
-  "t3/provider/opencodeRuntime",
-) {}
-
-export const OpenCodeRuntimeLive = Layer.effect(OpenCodeRuntime, makeOpenCodeRuntime).pipe(
-  Layer.provide(NetService.layer),
-);
+export const layer = Layer.effect(OpenCodeRuntime, make).pipe(Layer.provide(NetService.layer));

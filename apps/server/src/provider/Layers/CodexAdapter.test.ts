@@ -34,11 +34,11 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
-import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
+import * as ServerConfig from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
-import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+import * as ProviderSessionDirectory from "../ProviderSessionDirectory.ts";
 import {
   type CodexSessionRuntimeOptions,
   type CodexSessionRuntimeSendTurnInput,
@@ -211,14 +211,17 @@ function makeScopedRuntimeFactory(options?: { readonly failConstruction?: boolea
   };
 }
 
-const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory, {
-  upsert: () => Effect.void,
-  getProvider: () =>
-    Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
-  getBinding: () => Effect.succeed(Option.none()),
-  listThreadIds: () => Effect.succeed([]),
-  listBindings: () => Effect.succeed([]),
-});
+const providerSessionDirectoryTestLayer = Layer.succeed(
+  ProviderSessionDirectory.ProviderSessionDirectory,
+  {
+    upsert: () => Effect.void,
+    getProvider: () =>
+      Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
+    getBinding: () => Effect.succeed(Option.none()),
+    listThreadIds: () => Effect.succeed([]),
+    listBindings: () => Effect.succeed([]),
+  },
+);
 
 const validationRuntimeFactory = makeRuntimeFactory();
 const validationLayer = it.layer(
@@ -232,7 +235,7 @@ const validationLayer = it.layer(
     }),
   ).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -301,7 +304,7 @@ const sessionErrorLayer = it.layer(
     }),
   ).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -373,7 +376,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       }),
     ).pipe(
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(ServerSettings.layerTest()),
       Layer.provideMerge(providerSessionDirectoryTestLayer),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -427,7 +430,7 @@ const lifecycleLayer = it.layer(
     }),
   ).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -1100,7 +1103,7 @@ const scopedLifecycleLayer = it.layer(
     }),
   ).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -1144,7 +1147,7 @@ const scopedFailureLayer = it.layer(
     }),
   ).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -1196,7 +1199,7 @@ it.effect("flushes managed native logs when the adapter layer shuts down", () =>
         }),
       ).pipe(
         Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-        Layer.provideMerge(ServerSettingsService.layerTest()),
+        Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provideMerge(providerSessionDirectoryTestLayer),
         Layer.provideMerge(NodeServices.layer),
       );

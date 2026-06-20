@@ -9,7 +9,6 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -20,7 +19,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
 import { enrichProviderSnapshotWithVersionAdvisory } from "./providerMaintenance.ts";
 import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
@@ -39,26 +38,36 @@ export interface ProviderMaintenanceCommandResult {
   readonly stderrTruncated: boolean;
 }
 
-export interface ProviderMaintenanceRunnerShape {
-  readonly updateProvider: (
-    target:
-      | ProviderDriverKind
-      | {
-          readonly provider: ProviderDriverKind;
-          readonly instanceId?: ProviderInstanceId | undefined;
-        },
-  ) => Effect.Effect<ServerProviderUpdatedPayload, ServerProviderUpdateError>;
-}
-
 export class ProviderMaintenanceRunner extends Context.Service<
   ProviderMaintenanceRunner,
-  ProviderMaintenanceRunnerShape
+  {
+    readonly updateProvider: (
+      target:
+        | ProviderDriverKind
+        | {
+            readonly provider: ProviderDriverKind;
+            readonly instanceId?: ProviderInstanceId | undefined;
+          },
+    ) => Effect.Effect<ServerProviderUpdatedPayload, ServerProviderUpdateError>;
+  }
 >()("t3/provider/providerMaintenanceRunner") {}
 
-class ProviderMaintenanceCommandError extends Data.TaggedError("ProviderMaintenanceCommandError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+class ProviderMaintenanceCommandError extends Schema.TaggedErrorClass<ProviderMaintenanceCommandError>()(
+  "ProviderMaintenanceCommandError",
+  {
+    operation: Schema.Literals(["spawn", "collect"]),
+    command: Schema.optional(Schema.String),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    const causeMessage = this.cause instanceof Error ? this.cause.message : undefined;
+    if (this.operation === "spawn") {
+      return `Failed to run update command ${this.command ?? "unknown"}${causeMessage ? `: ${causeMessage}` : "."}`;
+    }
+    return causeMessage ?? "Update command failed to run.";
+  }
+}
 
 interface VerifiedProviderRefresh {
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -81,7 +90,8 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
             Effect.mapError(
               (cause) =>
                 new ProviderMaintenanceCommandError({
-                  message: `Failed to run update command ${input.command}: ${cause.message}`,
+                  operation: "spawn",
+                  command: input.command,
                   cause,
                 }),
             ),
@@ -105,7 +115,7 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
           Effect.mapError(
             (cause) =>
               new ProviderMaintenanceCommandError({
-                message: cause instanceof Error ? cause.message : "Update command failed to run.",
+                operation: "collect",
                 cause,
               }),
           ),
@@ -191,7 +201,7 @@ function makeUpdateState(input: {
 }
 
 export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
-  const providerRegistry = yield* ProviderRegistry;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const runMaintenanceCommand = (command: string, args: ReadonlyArray<string>) =>
@@ -277,7 +287,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       }),
     );
 
-  const updateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
+  const updateProvider: ProviderMaintenanceRunner["Service"]["updateProvider"] = Effect.fn(
     "ProviderMaintenanceRunner.updateProvider",
   )(function* (target) {
     const provider = typeof target === "string" ? target : target.provider;

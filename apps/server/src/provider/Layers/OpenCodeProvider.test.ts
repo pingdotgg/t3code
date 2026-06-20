@@ -8,14 +8,10 @@ import * as Schema from "effect/Schema";
 import { beforeEach } from "vite-plus/test";
 
 import { OpenCodeSettings } from "@t3tools/contracts";
-import { ServerConfig } from "../../config.ts";
-import {
-  OpenCodeRuntime,
-  OpenCodeRuntimeError,
-  type OpenCodeRuntimeShape,
-} from "../opencodeRuntime.ts";
+import * as Config from "../../config.ts";
+import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import { checkOpenCodeProviderStatus } from "./OpenCodeProvider.ts";
-import type { OpenCodeInventory } from "../opencodeRuntime.ts";
+
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
@@ -52,7 +48,7 @@ const runtimeMock = {
   },
 };
 
-const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
+const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
   startOpenCodeServerProcess: () =>
     Effect.succeed({
       url: "http://127.0.0.1:4301",
@@ -76,7 +72,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
   runOpenCodeCommand: () =>
     runtimeMock.state.runVersionError
       ? Effect.fail(
-          new OpenCodeRuntimeError({
+          new OpenCodeRuntime.OpenCodeRuntimeError({
             operation: "runOpenCodeCommand",
             detail: runtimeMock.state.runVersionError.message,
             cause: runtimeMock.state.runVersionError,
@@ -84,25 +80,27 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         )
       : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
   createOpenCodeSdkClient: () =>
-    ({}) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+    ({}) as unknown as ReturnType<
+      OpenCodeRuntime.OpenCodeRuntime["Service"]["createOpenCodeSdkClient"]
+    >,
   loadOpenCodeInventory: () =>
     runtimeMock.state.inventoryError
       ? Effect.fail(
-          new OpenCodeRuntimeError({
+          new OpenCodeRuntime.OpenCodeRuntimeError({
             operation: "loadOpenCodeInventory",
             detail: runtimeMock.state.inventoryError.message,
             cause: runtimeMock.state.inventoryError,
           }),
         )
-      : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory),
+      : Effect.succeed(runtimeMock.state.inventory as OpenCodeRuntime.OpenCodeInventory),
 };
 
 beforeEach(() => {
   runtimeMock.reset();
 });
 
-const testLayer = Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble).pipe(
-  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+const testLayer = Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble).pipe(
+  Layer.provideMerge(Config.ServerConfig.layerTest(process.cwd(), process.cwd())),
   Layer.provideMerge(NodeServices.layer),
 );
 

@@ -1,5 +1,5 @@
 /**
- * Multi-instance validation slices for `ProviderInstanceRegistryLive`.
+ * Multi-instance validation slices for `ProviderInstanceRegistry`.
  *
  * Two axes of the driver/registry refactor are exercised here:
  *
@@ -38,16 +38,16 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
-import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
-import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
-import { CodexDriver } from "../Drivers/CodexDriver.ts";
-import { CursorDriver } from "../Drivers/CursorDriver.ts";
-import { GrokDriver } from "../Drivers/GrokDriver.ts";
-import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
-import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
-import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
+import * as Config from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { ClaudeDriver } from "./Drivers/ClaudeDriver.ts";
+import { CodexDriver } from "./Drivers/CodexDriver.ts";
+import { CursorDriver } from "./Drivers/CursorDriver.ts";
+import { GrokDriver } from "./Drivers/GrokDriver.ts";
+import { OpenCodeDriver } from "./Drivers/OpenCodeDriver.ts";
+import * as OpenCodeRuntime from "./opencodeRuntime.ts";
+import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
+import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 
 const TestHttpClientLive = Layer.succeed(
   HttpClient.HttpClient,
@@ -98,19 +98,24 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
   ...overrides,
 });
 
-describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
+describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   // `ServerConfig.layerTest` needs `FileSystem` to materialize its scratch
   // directory. `Layer.merge` just unions requirements, so we have to push
   // `NodeServices.layer` through `Layer.provideMerge` to satisfy that
   // dependency while still surfacing NodeServices to the test body (the
   // codex driver's `create` yields `ChildProcessSpawner` directly).
-  const testLayer = ServerConfig.layerTest(process.cwd(), {
+  const testLayer = Config.ServerConfig.layerTest(process.cwd(), {
     prefix: "provider-instance-registry-test",
   }).pipe(
     Layer.provideMerge(NodeServices.layer),
-    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest()),
     Layer.provideMerge(TestHttpClientLive),
-    Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    Layer.provideMerge(
+      Layer.succeed(
+        ProviderEventLoggers.ProviderEventLoggers,
+        ProviderEventLoggers.NoOpProviderEventLoggers,
+      ),
+    ),
   );
 
   it.live("boots two independent codex instances from a ProviderInstanceConfigMap", () =>
@@ -142,7 +147,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         },
       };
 
-      const { registry } = yield* makeProviderInstanceRegistry({
+      const { registry } = yield* ProviderInstanceRegistry.make({
         drivers: [CodexDriver],
         configMap,
       });
@@ -208,7 +213,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
           },
         };
 
-        const { registry } = yield* makeProviderInstanceRegistry({
+        const { registry } = yield* ProviderInstanceRegistry.make({
           drivers: [CodexDriver],
           configMap,
         });
@@ -228,27 +233,32 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
   );
 });
 
-describe("ProviderInstanceRegistryLive — all drivers slice", () => {
+describe("ProviderInstanceRegistry — all drivers slice", () => {
   // All drivers need `NodeServices` (ChildProcessSpawner + FileSystem +
   // Path). `OpenCodeDriver.create` additionally yields `OpenCodeRuntime`
-  // at construction time, so we wire `OpenCodeRuntimeLive` into the stack.
-  // `OpenCodeRuntimeLive` bundles its own `NetService.layer` via
+  // at construction time, so we wire `OpenCodeRuntime.layer` into the stack.
+  // `OpenCodeRuntime.layer` bundles its own `NetService.layer` via
   // `Layer.provide`, so the only external requirement it still exposes is
   // `ChildProcessSpawner` — resolved here by piping it through
   // `provideMerge(NodeServices.layer)`.
   //
   // The nested `provideMerge`s read bottom-up: `NodeServices.layer`
-  // provides `OpenCodeRuntimeLive`'s deps while keeping its own outputs
+  // provides `OpenCodeRuntime.layer`'s deps while keeping its own outputs
   // surfaced; that merged layer then provides `ServerConfig.layerTest`'s
   // `FileSystem` dep while keeping everything else surfaced to the test.
-  const infraLayer = OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer));
-  const testLayer = ServerConfig.layerTest(process.cwd(), {
+  const infraLayer = OpenCodeRuntime.layer.pipe(Layer.provideMerge(NodeServices.layer));
+  const testLayer = Config.ServerConfig.layerTest(process.cwd(), {
     prefix: "provider-instance-registry-all-drivers-test",
   }).pipe(
     Layer.provideMerge(infraLayer),
-    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest()),
     Layer.provideMerge(TestHttpClientLive),
-    Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    Layer.provideMerge(
+      Layer.succeed(
+        ProviderEventLoggers.ProviderEventLoggers,
+        ProviderEventLoggers.NoOpProviderEventLoggers,
+      ),
+    ),
   );
 
   it.live("boots one instance of every shipped driver from a single config map", () =>
@@ -301,7 +311,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         },
       };
 
-      const { registry } = yield* makeProviderInstanceRegistry({
+      const { registry } = yield* ProviderInstanceRegistry.make({
         drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, OpenCodeDriver],
         configMap,
       });

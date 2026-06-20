@@ -1,31 +1,36 @@
+import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import type * as Scope from "effect/Scope";
 
-import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
-import {
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProviderService from "./ProviderService.ts";
+import * as ProviderSessionDirectory from "./ProviderSessionDirectory.ts";
+
+export class ProviderSessionReaper extends Context.Service<
   ProviderSessionReaper,
-  type ProviderSessionReaperShape,
-} from "../Services/ProviderSessionReaper.ts";
-import { ProviderService } from "../Services/ProviderService.ts";
+  {
+    readonly start: () => Effect.Effect<void, never, Scope.Scope>;
+  }
+>()("t3/provider/ProviderSessionReaper") {}
 
 const DEFAULT_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000;
 const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
-export interface ProviderSessionReaperLiveOptions {
+export interface ProviderSessionReaperOptions {
   readonly inactivityThresholdMs?: number;
   readonly sweepIntervalMs?: number;
 }
 
-const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =>
+export const make = (options?: ProviderSessionReaperOptions) =>
   Effect.gen(function* () {
-    const providerService = yield* ProviderService;
-    const directory = yield* ProviderSessionDirectory;
-    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    const providerService = yield* ProviderService.ProviderService;
+    const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
 
     const inactivityThresholdMs = Math.max(
       1,
@@ -103,19 +108,15 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
       }
     });
 
-    const start: ProviderSessionReaperShape["start"] = () =>
+    const start: ProviderSessionReaper["Service"]["start"] = () =>
       Effect.gen(function* () {
         yield* Effect.forkScoped(
           sweep.pipe(
             Effect.catch((error: unknown) =>
-              Effect.logWarning("provider.session.reaper.sweep-failed", {
-                error,
-              }),
+              Effect.logWarning("provider.session.reaper.sweep-failed", { error }),
             ),
             Effect.catchDefect((defect: unknown) =>
-              Effect.logWarning("provider.session.reaper.sweep-defect", {
-                defect,
-              }),
+              Effect.logWarning("provider.session.reaper.sweep-defect", { defect }),
             ),
             Effect.repeat(Schedule.spaced(Duration.millis(sweepIntervalMs))),
           ),
@@ -127,12 +128,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
         });
       });
 
-    return {
-      start,
-    } satisfies ProviderSessionReaperShape;
+    return ProviderSessionReaper.of({ start });
   });
 
-export const makeProviderSessionReaperLive = (options?: ProviderSessionReaperLiveOptions) =>
-  Layer.effect(ProviderSessionReaper, makeProviderSessionReaper(options));
-
-export const ProviderSessionReaperLive = makeProviderSessionReaperLive();
+export const layer = Layer.effect(ProviderSessionReaper, make());

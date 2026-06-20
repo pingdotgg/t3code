@@ -17,14 +17,13 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
-import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
-import { ProviderValidationError } from "../Errors.ts";
-import { ProviderSessionReaper } from "../Services/ProviderSessionReaper.ts";
-import { ProviderService, type ProviderServiceShape } from "../Services/ProviderService.ts";
-import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
-import { makeProviderSessionReaperLive } from "./ProviderSessionReaper.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
+import { ProviderValidationError } from "./Errors.ts";
+import * as ProviderSessionReaper from "./ProviderSessionReaper.ts";
+import * as ProviderService from "./ProviderService.ts";
+import * as ProviderSessionDirectory from "./ProviderSessionDirectory.ts";
 
 const defaultModelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -117,7 +116,8 @@ function makeReadModel(
 
 describe("ProviderSessionReaper", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    ProviderSessionReaper | ProviderSessionRuntime.ProviderSessionRuntimeRepository,
+    | ProviderSessionReaper.ProviderSessionReaper
+    | ProviderSessionRuntime.ProviderSessionRuntimeRepository,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -137,19 +137,19 @@ describe("ProviderSessionReaper", () => {
     readonly readModel: ReturnType<typeof makeReadModel>;
     readonly stopSessionImplementation?: (input: {
       readonly threadId: ThreadId;
-    }) => ReturnType<ProviderServiceShape["stopSession"]>;
+    }) => ReturnType<ProviderService.ProviderService["Service"]["stopSession"]>;
   }) {
     const stoppedThreadIds = new Set<ThreadId>();
-    const stopSession = vi.fn<ProviderServiceShape["stopSession"]>(
+    const stopSession = vi.fn<ProviderService.ProviderService["Service"]["stopSession"]>(
       (request) =>
         (input.stopSessionImplementation
           ? input.stopSessionImplementation(request)
           : Effect.sync(() => {
               stoppedThreadIds.add(request.threadId);
-            })) as ReturnType<ProviderServiceShape["stopSession"]>,
+            })) as ReturnType<ProviderService.ProviderService["Service"]["stopSession"]>,
     );
 
-    const providerService: ProviderServiceShape = {
+    const providerService: ProviderService.ProviderService["Service"] = {
       startSession: () => unsupported(),
       sendTurn: () => unsupported(),
       interruptTurn: () => unsupported(),
@@ -178,18 +178,21 @@ describe("ProviderSessionReaper", () => {
     const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
       Layer.provide(SqlitePersistenceMemory),
     );
-    const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+    const providerSessionDirectoryLayer = ProviderSessionDirectory.layer.pipe(
       Layer.provide(runtimeRepositoryLayer),
     );
-    const layer = makeProviderSessionReaperLive({
-      inactivityThresholdMs: 1_000,
-      sweepIntervalMs: 60_000,
-    }).pipe(
+    const layer = Layer.effect(
+      ProviderSessionReaper.ProviderSessionReaper,
+      ProviderSessionReaper.make({
+        inactivityThresholdMs: 1_000,
+        sweepIntervalMs: 60_000,
+      }),
+    ).pipe(
       Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(runtimeRepositoryLayer),
-      Layer.provideMerge(Layer.succeed(ProviderService, providerService)),
+      Layer.provideMerge(Layer.succeed(ProviderService.ProviderService, providerService)),
       Layer.provideMerge(
-        Layer.succeed(ProjectionSnapshotQuery, {
+        Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
           getCommandReadModel: () => Effect.die("unused"),
           getSnapshot: () => Effect.die("unused"),
           getShellSnapshot: () => Effect.die("unused"),
@@ -257,7 +260,9 @@ describe("ProviderSessionReaper", () => {
       }),
     );
 
-    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    const reaper = await runtime!.runPromise(
+      Effect.service(ProviderSessionReaper.ProviderSessionReaper),
+    );
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
 
@@ -307,7 +312,9 @@ describe("ProviderSessionReaper", () => {
       }),
     );
 
-    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    const reaper = await runtime!.runPromise(
+      Effect.service(ProviderSessionReaper.ProviderSessionReaper),
+    );
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
     await Effect.runPromise(drainFibers);
@@ -356,7 +363,9 @@ describe("ProviderSessionReaper", () => {
       }),
     );
 
-    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    const reaper = await runtime!.runPromise(
+      Effect.service(ProviderSessionReaper.ProviderSessionReaper),
+    );
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
     await Effect.runPromise(drainFibers);
@@ -405,7 +414,9 @@ describe("ProviderSessionReaper", () => {
       }),
     );
 
-    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    const reaper = await runtime!.runPromise(
+      Effect.service(ProviderSessionReaper.ProviderSessionReaper),
+    );
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
     await Effect.runPromise(drainFibers);
@@ -491,7 +502,9 @@ describe("ProviderSessionReaper", () => {
       }),
     );
 
-    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    const reaper = await runtime!.runPromise(
+      Effect.service(ProviderSessionReaper.ProviderSessionReaper),
+    );
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
 
@@ -574,7 +587,9 @@ describe("ProviderSessionReaper", () => {
       }),
     );
 
-    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    const reaper = await runtime!.runPromise(
+      Effect.service(ProviderSessionReaper.ProviderSessionReaper),
+    );
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
 

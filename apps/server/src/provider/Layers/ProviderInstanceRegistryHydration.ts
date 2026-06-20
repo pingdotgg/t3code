@@ -29,7 +29,7 @@
  * ----------
  * On layer build we:
  *   1. Read the current `ServerSettings` once and use it to seed the
- *      registry's initial state via `ProviderInstanceRegistryMutableLayer`.
+ *      registry's initial state via `ProviderInstanceRegistry.mutableLayer`.
  *   2. Fork a daemon fiber (lifetime tied to the layer's scope) that
  *      subscribes to `ServerSettingsService.streamChanges` and calls
  *      `ProviderInstanceRegistryMutator.reconcile` on every emission.
@@ -51,11 +51,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { ServerSettingsService } from "../../serverSettings.ts";
+import * as ServerSettingsModule from "../../serverSettings.ts";
 import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "../builtInDrivers.ts";
-import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import { ProviderInstanceRegistryMutator } from "../Services/ProviderInstanceRegistryMutator.ts";
-import { ProviderInstanceRegistryMutableLayer } from "./ProviderInstanceRegistryLive.ts";
+import * as ProviderInstanceRegistry from "../ProviderInstanceRegistry.ts";
 
 /**
  * Synthesize a `ProviderInstanceConfigMap` from a `ServerSettings` snapshot.
@@ -116,8 +114,8 @@ export const deriveProviderInstanceConfigMap = (
  */
 const SettingsWatcherLive = Layer.effectDiscard(
   Effect.gen(function* () {
-    const mutator = yield* ProviderInstanceRegistryMutator;
-    const serverSettings = yield* ServerSettingsService;
+    const mutator = yield* ProviderInstanceRegistry.ProviderInstanceRegistryMutator;
+    const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
     yield* serverSettings.streamChanges.pipe(
       Stream.runForEach((next) =>
         mutator
@@ -138,7 +136,7 @@ const SettingsWatcherLive = Layer.effectDiscard(
  * sync with subsequent `streamChanges` emissions.
  *
  * The Layer's two halves:
- *   - `ProviderInstanceRegistryMutableLayer` produces the registry +
+ *   - `ProviderInstanceRegistry.mutableLayer` produces the registry +
  *     mutator from the initial config map. Its scope owns every
  *     per-instance child scope created during reconcile.
  *   - `SettingsWatcherLive` consumes the mutator and runs a daemon fiber
@@ -150,12 +148,12 @@ const SettingsWatcherLive = Layer.effectDiscard(
  * it, so the visibility leak is harmless in practice.
  */
 export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
-  ProviderInstanceRegistry,
+  ProviderInstanceRegistry.ProviderInstanceRegistry,
   never,
-  BuiltInDriversEnv | ServerSettingsService
+  BuiltInDriversEnv | ServerSettingsModule.ServerSettingsService
 > = Layer.unwrap(
   Effect.gen(function* () {
-    const serverSettings = yield* ServerSettingsService;
+    const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
     const initialSettings: ServerSettings | undefined = yield* serverSettings.getSettings.pipe(
       Effect.orElseSucceed(() => undefined),
     );
@@ -164,11 +162,15 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
         ? ({} as ProviderInstanceConfigMap)
         : deriveProviderInstanceConfigMap(initialSettings);
 
-    const mutableLayer = ProviderInstanceRegistryMutableLayer({
+    const mutableLayer = ProviderInstanceRegistry.mutableLayer({
       drivers: BUILT_IN_DRIVERS,
       configMap: initialConfigMap,
     });
 
     return SettingsWatcherLive.pipe(Layer.provideMerge(mutableLayer));
   }),
-) as Layer.Layer<ProviderInstanceRegistry, never, BuiltInDriversEnv | ServerSettingsService>;
+) as Layer.Layer<
+  ProviderInstanceRegistry.ProviderInstanceRegistry,
+  never,
+  BuiltInDriversEnv | ServerSettingsModule.ServerSettingsService
+>;
