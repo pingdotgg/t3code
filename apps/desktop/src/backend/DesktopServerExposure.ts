@@ -2,11 +2,12 @@ import {
   createAdvertisedEndpoint,
   type CreateAdvertisedEndpointInput,
 } from "@t3tools/shared/advertisedEndpoint";
-import type {
-  AdvertisedEndpoint,
-  AdvertisedEndpointProvider,
-  DesktopServerExposureMode,
-  DesktopServerExposureState,
+import {
+  DesktopServerExposureModeSchema,
+  type AdvertisedEndpoint,
+  type AdvertisedEndpointProvider,
+  type DesktopServerExposureMode,
+  type DesktopServerExposureState,
 } from "@t3tools/contracts";
 import { readTailscaleStatus } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
@@ -213,23 +214,45 @@ export class DesktopServerExposureNoNetworkAddressError extends Schema.TaggedErr
   }
 }
 
-export class DesktopServerExposurePersistenceError extends Schema.TaggedErrorClass<DesktopServerExposurePersistenceError>()(
-  "DesktopServerExposurePersistenceError",
+export class DesktopServerExposureModePersistenceError extends Schema.TaggedErrorClass<DesktopServerExposureModePersistenceError>()(
+  "DesktopServerExposureModePersistenceError",
   {
-    operation: Schema.Literals(["server-exposure-mode", "tailscale-serve"]),
+    mode: DesktopServerExposureModeSchema,
     cause: Schema.instanceOf(DesktopAppSettings.DesktopSettingsWriteError),
   },
 ) {
   override get message(): string {
-    return `Failed to persist desktop ${this.operation} settings.`;
+    return `Failed to persist desktop server exposure mode ${this.mode}.`;
   }
 }
 
-export type DesktopServerExposureSetModeError =
-  | DesktopServerExposureNoNetworkAddressError
-  | DesktopServerExposurePersistenceError;
+export class DesktopTailscaleServePersistenceError extends Schema.TaggedErrorClass<DesktopTailscaleServePersistenceError>()(
+  "DesktopTailscaleServePersistenceError",
+  {
+    enabled: Schema.Boolean,
+    port: Schema.NullOr(Schema.Number),
+    cause: Schema.instanceOf(DesktopAppSettings.DesktopSettingsWriteError),
+  },
+) {
+  override get message(): string {
+    return `Failed to persist desktop Tailscale Serve settings (enabled: ${this.enabled}, port: ${this.port ?? "unchanged"}).`;
+  }
+}
 
-export type DesktopServerExposureError = DesktopServerExposureSetModeError;
+export const DesktopServerExposureSetModeError = Schema.Union([
+  DesktopServerExposureNoNetworkAddressError,
+  DesktopServerExposureModePersistenceError,
+]);
+export type DesktopServerExposureSetModeError = typeof DesktopServerExposureSetModeError.Type;
+export const isDesktopServerExposureSetModeError = Schema.is(DesktopServerExposureSetModeError);
+
+export const DesktopServerExposureError = Schema.Union([
+  DesktopServerExposureNoNetworkAddressError,
+  DesktopServerExposureModePersistenceError,
+  DesktopTailscaleServePersistenceError,
+]);
+export type DesktopServerExposureError = typeof DesktopServerExposureError.Type;
+export const isDesktopServerExposureError = Schema.is(DesktopServerExposureError);
 
 export interface DesktopServerExposureBackendConfig {
   readonly port: number;
@@ -258,7 +281,7 @@ export class DesktopServerExposure extends Context.Service<
     readonly setTailscaleServeEnabled: (input: {
       readonly enabled: boolean;
       readonly port?: number;
-    }) => Effect.Effect<DesktopServerExposureChange, DesktopServerExposurePersistenceError>;
+    }) => Effect.Effect<DesktopServerExposureChange, DesktopTailscaleServePersistenceError>;
     readonly getAdvertisedEndpoints: Effect.Effect<readonly AdvertisedEndpoint[]>;
   }
 >()("@t3tools/desktop/backend/DesktopServerExposure") {}
@@ -449,8 +472,8 @@ export const make = Effect.gen(function* () {
     const change = yield* desktopSettings.setServerExposureMode(mode).pipe(
       Effect.mapError(
         (cause) =>
-          new DesktopServerExposurePersistenceError({
-            operation: "server-exposure-mode",
+          new DesktopServerExposureModePersistenceError({
+            mode,
             cause,
           }),
       ),
@@ -477,8 +500,9 @@ export const make = Effect.gen(function* () {
         .pipe(
           Effect.mapError(
             (cause) =>
-              new DesktopServerExposurePersistenceError({
-                operation: "tailscale-serve",
+              new DesktopTailscaleServePersistenceError({
+                enabled: input.enabled,
+                port: input.port ?? null,
                 cause,
               }),
           ),
