@@ -62,6 +62,9 @@ const isErrnoExceptionWithCode = (
   Predicate.hasProperty(cause, "code") &&
   Predicate.isString(cause.code);
 
+const isUsablePort = (port: number | null): port is number =>
+  port !== null && Number.isInteger(port) && port > 0 && port <= 65_535;
+
 const closeServer = (server: NodeNet.Server) => {
   try {
     server.close();
@@ -218,7 +221,7 @@ export const make = (
           Effect.fail(
             addressDetails === undefined
               ? new LoopbackPortListenError({ host, cause })
-              : addressDetails.port !== null && addressDetails.port > 0
+              : isUsablePort(addressDetails.port)
                 ? new LoopbackPortReleaseError({ host, port: addressDetails.port, cause })
                 : new LoopbackPortAddressUnavailableError({
                     host,
@@ -251,7 +254,7 @@ export const make = (
 
           probe.close((cause) => {
             const port = resolvedAddressDetails.port;
-            if (port === null || !Number.isInteger(port) || port <= 0 || port > 65_535) {
+            if (!isUsablePort(port)) {
               settle(
                 Effect.fail(
                   new LoopbackPortAddressUnavailableError({

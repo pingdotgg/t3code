@@ -102,32 +102,38 @@ it.layer(NetService.layer)("NetService", (it) => {
       });
     });
 
-    it.effect("preserves address-read context when closing an unusable reservation", () => {
-      const probe = NodeNet.createServer();
-      const cause = new Error("close failed");
-      probe.unref = (() => probe) as typeof probe.unref;
-      probe.address = (() => null) as typeof probe.address;
-      probe.listen = ((_port: number, _host: string, listeningListener: () => void) => {
-        listeningListener();
-        return probe;
-      }) as typeof probe.listen;
-      probe.close = (() => {
-        probe.emit("error", cause);
-        return probe;
-      }) as typeof probe.close;
-      const net = NetService.make({ createServer: () => probe });
+    it.effect("preserves address context when an unusable reservation errors during close", () =>
+      Effect.gen(function* () {
+        for (const invalidPort of [null, 43.5, 65_536]) {
+          const probe = NodeNet.createServer();
+          const cause = new Error("close failed");
+          probe.unref = (() => probe) as typeof probe.unref;
+          probe.address = (() => ({
+            address: "127.0.0.1",
+            family: "IPv4",
+            port: invalidPort,
+          })) as unknown as typeof probe.address;
+          probe.listen = ((_port: number, _host: string, listeningListener: () => void) => {
+            listeningListener();
+            return probe;
+          }) as typeof probe.listen;
+          probe.close = (() => {
+            probe.emit("error", cause);
+            return probe;
+          }) as typeof probe.close;
+          const net = NetService.make({ createServer: () => probe });
 
-      return Effect.gen(function* () {
-        const error = yield* net.reserveLoopbackPort().pipe(Effect.flip);
+          const error = yield* net.reserveLoopbackPort().pipe(Effect.flip);
 
-        assert(isLoopbackPortAddressUnavailableError(error));
-        assert.equal(error.host, "127.0.0.1");
-        assert.equal(error.address, null);
-        assert.equal(error.family, null);
-        assert.equal(error.port, null);
-        assert.strictEqual(error.cause, cause);
-      });
-    });
+          assert(isLoopbackPortAddressUnavailableError(error));
+          assert.equal(error.host, "127.0.0.1");
+          assert.equal(error.address, "127.0.0.1");
+          assert.equal(error.family, "IPv4");
+          assert.equal(error.port, invalidPort);
+          assert.strictEqual(error.cause, cause);
+        }
+      }),
+    );
 
     it.effect("rejects missing and non-finite ports returned by the server", () =>
       Effect.gen(function* () {
