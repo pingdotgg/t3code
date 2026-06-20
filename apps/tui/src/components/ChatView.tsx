@@ -19,7 +19,7 @@ import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore } from "../store.ts";
 import { statusGlyphColor, usePalette } from "../theme.ts";
 import { currentModelIndex } from "../models.ts";
-import { revertableCheckpoints } from "../timeline.ts";
+import { isWorking, revertableCheckpoints } from "../timeline.ts";
 import { buildUserInputAnswers, derivePendingUserInputs } from "../userInput.ts";
 import { buildRows, selectionEquals } from "./Sidebar.logic.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
@@ -137,6 +137,9 @@ export function ChatView({
   const controls = composerControls(detail);
   const sessionActive =
     !!detail && ["starting", "running", "ready"].includes(detail.session?.status ?? "");
+  // The agent is actively running a turn — show the red stop affordance (mirrors
+  // the web composer swapping its send button for a stop button while running).
+  const working = !!detail && isWorking(detail);
   const actionablePlan = React.useMemo(
     () => (detail ? latestActionableProposedPlan(detail) : null),
     [detail],
@@ -173,6 +176,13 @@ export function ChatView({
     const next = detail.interactionMode === "plan" ? "default" : "plan";
     void client.setInteractionMode(detail.id, next).catch(() => {});
     store.setStatus(next === "plan" ? "Plan mode." : "Build mode.", "success");
+  };
+
+  // Interrupt the running turn — the red stop button and Esc both call this.
+  const stopTurn = () => {
+    if (!detail) return;
+    void client.interrupt(detail.id).catch(() => {});
+    store.setStatus("Interrupt sent.", "success");
   };
 
   const openRuntimePicker = () => {
@@ -788,11 +798,7 @@ export function ChatView({
       store.setFilter("");
       setFocus("compose");
     },
-    onInterrupt: () => {
-      if (!detail) return;
-      void client.interrupt(detail.id).catch(() => {});
-      store.setStatus("Interrupt sent.", "success");
-    },
+    onInterrupt: stopTurn,
     onApprove: () => {
       const approval = approvals[activeApprovalIndex];
       if (!detail || !approval) return;
@@ -811,10 +817,7 @@ export function ChatView({
         clearReply();
         return;
       }
-      if (detail) {
-        void client.interrupt(detail.id).catch(() => {});
-        store.setStatus("Interrupt sent.", "success");
-      }
+      stopTurn();
     },
   });
 
@@ -839,7 +842,7 @@ export function ChatView({
     `^T tools ${workLogExpanded ? "▾" : "▸"}`,
     "^K actions",
     "^F find",
-    "Esc stop",
+    ...(working ? ["Esc stop"] : []),
     "^C quit",
   ].join(" · ");
   const hint =
@@ -901,10 +904,12 @@ export function ChatView({
 
       <ControlsRow
         controls={controls}
+        working={working}
         onTogglePlan={togglePlanMode}
         onOpenAccess={openRuntimePicker}
         onOpenModel={openModelPicker}
         onOpenReasoning={openReasoningPicker}
+        onStop={stopTurn}
       />
 
       {picker ? (

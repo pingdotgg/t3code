@@ -8,10 +8,12 @@ import { ControlsRow } from "./ControlsRow.tsx";
 const noop = () => {};
 
 const base = {
+  working: false,
   onTogglePlan: noop,
   onOpenAccess: noop,
   onOpenModel: noop,
   onOpenReasoning: noop,
+  onStop: noop,
 } as const;
 
 describe("ControlsRow", () => {
@@ -50,6 +52,47 @@ describe("ControlsRow", () => {
     await t.mockMouse.click(3, 0);
     await t.flush();
     expect(toggled).toBe(true);
+    t.renderer.destroy();
+  });
+
+  const controls: ComposerControls = {
+    interactionMode: "default",
+    runtimeMode: "full-access",
+    model: null,
+    reasoning: null,
+  };
+
+  it("Given the agent is not working, then no stop button is shown", async () => {
+    const t = await testRender(<ControlsRow {...base} controls={controls} working={false} />, {
+      width: 80,
+      height: 3,
+    });
+    await t.renderOnce();
+    expect(t.captureCharFrame()).not.toContain("Stop");
+    t.renderer.destroy();
+  });
+
+  it("Given the agent is working, then a red stop button appears and clicking it fires onStop", async () => {
+    let stopped = false;
+    const t = await testRender(
+      <ControlsRow
+        {...base}
+        controls={controls}
+        working={true}
+        onStop={() => (stopped = true)}
+      />,
+      { width: 80, height: 3 },
+    );
+    await t.renderOnce();
+    await t.flush();
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("■ Stop");
+    // The stop button is right-aligned; click within its label near the right edge.
+    const row = frame.split("\n").find((line) => line.includes("Stop")) ?? "";
+    const col = row.indexOf("■");
+    await t.mockMouse.click(col + 1, 0);
+    await t.flush();
+    expect(stopped).toBe(true);
     t.renderer.destroy();
   });
 });
