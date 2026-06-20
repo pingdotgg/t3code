@@ -11,114 +11,136 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 
-const secretStoreErrorContext = {
-  resource: Schema.String,
+const storedSecretErrorContext = {
+  secretName: Schema.String,
+  secretPath: Schema.String,
   cause: Schema.Defect(),
 };
 
-export class SecretStoreSecureError extends Schema.TaggedErrorClass<SecretStoreSecureError>()(
-  "SecretStoreSecureError",
+export class SecretStoreDirectoryCreateError extends Schema.TaggedErrorClass<SecretStoreDirectoryCreateError>()(
+  "SecretStoreDirectoryCreateError",
   {
-    ...secretStoreErrorContext,
+    directoryPath: Schema.String,
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Failed to secure ${this.resource}.`;
+    return `Failed to create secret store directory ${this.directoryPath}.`;
+  }
+}
+
+export class SecretStoreDirectorySecureError extends Schema.TaggedErrorClass<SecretStoreDirectorySecureError>()(
+  "SecretStoreDirectorySecureError",
+  {
+    directoryPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to secure secret store directory ${this.directoryPath}.`;
   }
 }
 
 export class SecretStoreReadError extends Schema.TaggedErrorClass<SecretStoreReadError>()(
   "SecretStoreReadError",
   {
-    ...secretStoreErrorContext,
+    ...storedSecretErrorContext,
   },
 ) {
   override get message(): string {
-    return `Failed to read ${this.resource}.`;
+    return `Failed to read secret ${this.secretName} at ${this.secretPath}.`;
   }
 }
 
-export class SecretStoreTemporaryPathError extends Schema.TaggedErrorClass<SecretStoreTemporaryPathError>()(
-  "SecretStoreTemporaryPathError",
+export class SecretStoreTemporaryPathGenerationError extends Schema.TaggedErrorClass<SecretStoreTemporaryPathGenerationError>()(
+  "SecretStoreTemporaryPathGenerationError",
   {
-    ...secretStoreErrorContext,
+    secretName: Schema.String,
+    secretPath: Schema.String,
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Failed to create temporary path for ${this.resource}.`;
+    return `Failed to generate a temporary path for secret ${this.secretName} at ${this.secretPath}.`;
   }
 }
 
 export class SecretStorePersistError extends Schema.TaggedErrorClass<SecretStorePersistError>()(
   "SecretStorePersistError",
   {
-    ...secretStoreErrorContext,
+    operation: Schema.Literals(["create", "set"]),
+    ...storedSecretErrorContext,
   },
 ) {
   override get message(): string {
-    return `Failed to persist ${this.resource}.`;
+    return `Failed to ${this.operation} secret ${this.secretName} at ${this.secretPath}.`;
   }
 }
 
 export class SecretStoreRandomGenerationError extends Schema.TaggedErrorClass<SecretStoreRandomGenerationError>()(
   "SecretStoreRandomGenerationError",
   {
-    ...secretStoreErrorContext,
+    secretName: Schema.String,
+    byteCount: Schema.Number,
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Failed to generate random bytes for ${this.resource}.`;
+    return `Failed to generate ${this.byteCount} random bytes for secret ${this.secretName}.`;
   }
 }
 
 export class SecretStoreConcurrentReadError extends Schema.TaggedErrorClass<SecretStoreConcurrentReadError>()(
   "SecretStoreConcurrentReadError",
   {
-    resource: Schema.String,
+    secretName: Schema.String,
   },
 ) {
   override get message(): string {
-    return `Failed to read ${this.resource} after concurrent creation.`;
+    return `Failed to read secret ${this.secretName} after concurrent creation.`;
   }
 }
 
 export class SecretStoreRemoveError extends Schema.TaggedErrorClass<SecretStoreRemoveError>()(
   "SecretStoreRemoveError",
   {
-    ...secretStoreErrorContext,
+    ...storedSecretErrorContext,
   },
 ) {
   override get message(): string {
-    return `Failed to remove ${this.resource}.`;
+    return `Failed to remove secret ${this.secretName} at ${this.secretPath}.`;
   }
 }
 
 export class SecretStoreDecodeError extends Schema.TaggedErrorClass<SecretStoreDecodeError>()(
   "SecretStoreDecodeError",
   {
-    ...secretStoreErrorContext,
+    secretName: Schema.String,
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Failed to decode ${this.resource}.`;
+    return `Failed to decode secret ${this.secretName}.`;
   }
 }
 
 export class SecretStoreEncodeError extends Schema.TaggedErrorClass<SecretStoreEncodeError>()(
   "SecretStoreEncodeError",
   {
-    ...secretStoreErrorContext,
+    secretName: Schema.String,
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Failed to encode ${this.resource}.`;
+    return `Failed to encode secret ${this.secretName}.`;
   }
 }
 
 export const SecretStoreError = Schema.Union([
-  SecretStoreSecureError,
+  SecretStoreDirectoryCreateError,
+  SecretStoreDirectorySecureError,
   SecretStoreReadError,
-  SecretStoreTemporaryPathError,
+  SecretStoreTemporaryPathGenerationError,
   SecretStorePersistError,
   SecretStoreRandomGenerationError,
   SecretStoreConcurrentReadError,
@@ -138,14 +160,26 @@ export const isSecretAlreadyExistsError = (error: SecretStoreError): boolean =>
 export class ServerSecretStore extends Context.Service<
   ServerSecretStore,
   {
-    readonly get: (name: string) => Effect.Effect<Option.Option<Uint8Array>, SecretStoreError>;
-    readonly set: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
-    readonly create: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
+    readonly get: (name: string) => Effect.Effect<Option.Option<Uint8Array>, SecretStoreReadError>;
+    readonly set: (
+      name: string,
+      value: Uint8Array,
+    ) => Effect.Effect<void, SecretStoreTemporaryPathGenerationError | SecretStorePersistError>;
+    readonly create: (
+      name: string,
+      value: Uint8Array,
+    ) => Effect.Effect<void, SecretStorePersistError>;
     readonly getOrCreateRandom: (
       name: string,
       bytes: number,
-    ) => Effect.Effect<Uint8Array, SecretStoreError>;
-    readonly remove: (name: string) => Effect.Effect<void, SecretStoreError>;
+    ) => Effect.Effect<
+      Uint8Array,
+      | SecretStoreReadError
+      | SecretStoreRandomGenerationError
+      | SecretStorePersistError
+      | SecretStoreConcurrentReadError
+    >;
+    readonly remove: (name: string) => Effect.Effect<void, SecretStoreRemoveError>;
   }
 >()("t3/auth/ServerSecretStore") {}
 
@@ -155,12 +189,20 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
 
-  yield* fileSystem.makeDirectory(serverConfig.secretsDir, { recursive: true });
+  yield* fileSystem.makeDirectory(serverConfig.secretsDir, { recursive: true }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new SecretStoreDirectoryCreateError({
+          directoryPath: serverConfig.secretsDir,
+          cause,
+        }),
+    ),
+  );
   yield* fileSystem.chmod(serverConfig.secretsDir, 0o700).pipe(
     Effect.mapError(
       (cause) =>
-        new SecretStoreSecureError({
-          resource: `secrets directory ${serverConfig.secretsDir}`,
+        new SecretStoreDirectorySecureError({
+          directoryPath: serverConfig.secretsDir,
           cause,
         }),
     ),
@@ -168,29 +210,33 @@ export const make = Effect.gen(function* () {
 
   const resolveSecretPath = (name: string) => path.join(serverConfig.secretsDir, `${name}.bin`);
 
-  const get: ServerSecretStore["Service"]["get"] = (name) =>
-    fileSystem.readFile(resolveSecretPath(name)).pipe(
+  const get: ServerSecretStore["Service"]["get"] = (name) => {
+    const secretPath = resolveSecretPath(name);
+    return fileSystem.readFile(secretPath).pipe(
       Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
       Effect.catch((cause) =>
         cause.reason._tag === "NotFound"
           ? Effect.succeed(Option.none())
           : Effect.fail(
               new SecretStoreReadError({
-                resource: `secret ${name}`,
+                secretName: name,
+                secretPath,
                 cause,
               }),
             ),
       ),
       Effect.withSpan("ServerSecretStore.get"),
     );
+  };
 
   const set: ServerSecretStore["Service"]["set"] = (name, value) => {
     const secretPath = resolveSecretPath(name);
     return crypto.randomUUIDv4.pipe(
       Effect.mapError(
         (cause) =>
-          new SecretStoreTemporaryPathError({
-            resource: `secret ${name}`,
+          new SecretStoreTemporaryPathGenerationError({
+            secretName: name,
+            secretPath,
             cause,
           }),
       ),
@@ -208,7 +254,9 @@ export const make = Effect.gen(function* () {
               Effect.flatMap(() =>
                 Effect.fail(
                   new SecretStorePersistError({
-                    resource: `secret ${name}`,
+                    operation: "set",
+                    secretName: name,
+                    secretPath,
                     cause,
                   }),
                 ),
@@ -237,7 +285,9 @@ export const make = Effect.gen(function* () {
       Effect.mapError(
         (cause) =>
           new SecretStorePersistError({
-            resource: `secret ${name}`,
+            operation: "create",
+            secretName: name,
+            secretPath,
             cause,
           }),
       ),
@@ -254,30 +304,32 @@ export const make = Effect.gen(function* () {
               Effect.mapError(
                 (cause) =>
                   new SecretStoreRandomGenerationError({
-                    resource: `secret ${name}`,
+                    secretName: name,
+                    byteCount: bytes,
                     cause,
                   }),
               ),
               Effect.flatMap((generated) =>
                 create(name, generated).pipe(
                   Effect.as(Uint8Array.from(generated)),
-                  Effect.catchIf(isSecretStoreError, (error) =>
-                    isSecretAlreadyExistsError(error)
-                      ? get(name).pipe(
-                          Effect.flatMap(
-                            Option.match({
-                              onSome: Effect.succeed,
-                              onNone: () =>
-                                Effect.fail(
-                                  new SecretStoreConcurrentReadError({
-                                    resource: `secret ${name}`,
-                                  }),
-                                ),
-                            }),
-                          ),
-                        )
-                      : Effect.fail(error),
-                  ),
+                  Effect.catchTags({
+                    SecretStorePersistError: (error) =>
+                      isSecretAlreadyExistsError(error)
+                        ? get(name).pipe(
+                            Effect.flatMap(
+                              Option.match({
+                                onSome: Effect.succeed,
+                                onNone: () =>
+                                  Effect.fail(
+                                    new SecretStoreConcurrentReadError({
+                                      secretName: name,
+                                    }),
+                                  ),
+                              }),
+                            ),
+                          )
+                        : Effect.fail(error),
+                  }),
                 ),
               ),
             ),
@@ -286,20 +338,23 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("ServerSecretStore.getOrCreateRandom"),
     );
 
-  const remove: ServerSecretStore["Service"]["remove"] = (name) =>
-    fileSystem.remove(resolveSecretPath(name)).pipe(
+  const remove: ServerSecretStore["Service"]["remove"] = (name) => {
+    const secretPath = resolveSecretPath(name);
+    return fileSystem.remove(secretPath).pipe(
       Effect.catch((cause) =>
         cause.reason._tag === "NotFound"
           ? Effect.void
           : Effect.fail(
               new SecretStoreRemoveError({
-                resource: `secret ${name}`,
+                secretName: name,
+                secretPath,
                 cause,
               }),
             ),
       ),
       Effect.withSpan("ServerSecretStore.remove"),
     );
+  };
 
   return ServerSecretStore.of({
     get,

@@ -9,7 +9,10 @@ import {
   EnvironmentHttpApi,
   EnvironmentHttpBadRequestError,
   EnvironmentHttpConflictError,
+  type EnvironmentHttpInternalOperation,
   EnvironmentHttpInternalServerError,
+  EnvironmentHttpRelayOperation,
+  EnvironmentHttpRelayPhase,
   EnvironmentHttpUnauthorizedError,
 } from "@t3tools/contracts";
 import {
@@ -41,6 +44,7 @@ import {
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import { getUrlDiagnostics } from "@t3tools/shared/urlDiagnostics";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -48,8 +52,13 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import * as HttpBody from "effect/unstable/http/HttpBody";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
@@ -85,26 +94,145 @@ const CLOUD_CREDENTIAL_RESPONSE_HEADERS = {
   pragma: "no-cache",
 } as const;
 
+export class CloudRelayConfigurationError extends Schema.TaggedErrorClass<CloudRelayConfigurationError>()(
+  "CloudRelayConfigurationError",
+  {
+    configKey: Schema.Literal("T3CODE_RELAY_URL"),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `${this.configKey} must be configured as a secure absolute HTTPS origin.`;
+  }
+}
+
+export class CloudRelayRequestError extends Schema.TaggedErrorClass<CloudRelayRequestError>()(
+  "CloudRelayRequestError",
+  {
+    operation: EnvironmentHttpRelayOperation,
+    phase: EnvironmentHttpRelayPhase,
+    method: Schema.Literal("POST"),
+    requestUrlInputLength: Schema.Number,
+    requestUrlProtocol: Schema.optionalKey(Schema.String),
+    requestUrlHostname: Schema.optionalKey(Schema.String),
+    responseStatus: Schema.optional(Schema.Number),
+    cause: Schema.Defect(),
+  },
+) {
+  static fromClientFailure(input: {
+    readonly operation: CloudRelayRequestError["operation"];
+    readonly url: string;
+    readonly cause: HttpBody.HttpBodyError | HttpClientError.HttpClientError | Schema.SchemaError;
+    readonly responseStatus?: number;
+  }): CloudRelayRequestError {
+    const diagnostics = getUrlDiagnostics(input.url);
+    const context = {
+      operation: input.operation,
+      method: "POST" as const,
+      requestUrlInputLength: diagnostics.inputLength,
+      ...(diagnostics.protocol === undefined ? {} : { requestUrlProtocol: diagnostics.protocol }),
+      ...(diagnostics.hostname === undefined ? {} : { requestUrlHostname: diagnostics.hostname }),
+    };
+    if (input.cause._tag === "SchemaError") {
+      return new CloudRelayRequestError({
+        ...context,
+        phase: "decode-response",
+        ...(input.responseStatus === undefined ? {} : { responseStatus: input.responseStatus }),
+        cause: input.cause,
+      });
+    }
+
+    if (!HttpClientError.isHttpClientError(input.cause)) {
+      return new CloudRelayRequestError({
+        ...context,
+        phase: "encode-request",
+        cause: input.cause,
+      });
+    }
+
+    const phase: CloudRelayRequestError["phase"] = (() => {
+      switch (input.cause.reason._tag) {
+        case "EncodeError":
+          return "encode-request";
+        case "TransportError":
+        case "InvalidUrlError":
+          return "send-request";
+        case "StatusCodeError":
+          return "check-response-status";
+        case "DecodeError":
+        case "EmptyBodyError":
+          return "decode-response";
+      }
+    })();
+
+    return new CloudRelayRequestError({
+      ...context,
+      phase,
+      ...(input.cause.response === undefined
+        ? input.responseStatus === undefined
+          ? {}
+          : { responseStatus: input.responseStatus }
+        : { responseStatus: input.cause.response.status }),
+      cause: input.cause,
+    });
+  }
+
+  override get message(): string {
+    const responseStatus =
+      this.responseStatus === undefined ? "" : ` with response status ${this.responseStatus}`;
+    return `T3 Connect relay ${this.operation} failed during ${this.phase}${responseStatus}.`;
+  }
+}
+
 const appendCloudCredentialResponseHeaders = HttpEffect.appendPreResponseHandler(
   (_request, response) =>
     Effect.succeed(HttpServerResponse.setHeaders(response, CLOUD_CREDENTIAL_RESPONSE_HEADERS)),
 );
 
-const failEnvironmentCloudInternalError =
-  (message: string) =>
-  (cause: unknown): Effect.Effect<never, EnvironmentHttpInternalServerError> =>
-    Effect.logError(message, { cause }).pipe(
-      Effect.flatMap(() => Effect.fail(new EnvironmentHttpInternalServerError({ message }))),
-    );
+function errorDiagnosticTag(cause: unknown): string {
+  if (
+    typeof cause === "object" &&
+    cause !== null &&
+    "_tag" in cause &&
+    typeof cause._tag === "string"
+  ) {
+    return cause._tag;
+  }
+  if (cause instanceof Error) return cause.name;
+  return typeof cause;
+}
 
-const failCloudCliTokenManagerError = (error: CliTokenManager.CloudCliTokenManagerError) =>
-  failEnvironmentCloudInternalError(error.message)(error);
+type EnvironmentCloudInternalErrorContext =
+  | Exclude<EnvironmentHttpInternalOperation, "relay_request">
+  | {
+      readonly operation: "relay_request";
+      readonly relayOperation: CloudRelayRequestError["operation"];
+      readonly relayPhase: CloudRelayRequestError["phase"];
+      readonly responseStatus?: number;
+    };
+
+const failEnvironmentCloudInternalError =
+  (context: EnvironmentCloudInternalErrorContext) =>
+  (cause: unknown): Effect.Effect<never, EnvironmentHttpInternalServerError> => {
+    const error =
+      typeof context === "string"
+        ? new EnvironmentHttpInternalServerError({ operation: context, cause })
+        : new EnvironmentHttpInternalServerError({ ...context, cause });
+    const logContext =
+      typeof context === "string"
+        ? { operation: context, causeTag: errorDiagnosticTag(cause) }
+        : { ...context, causeTag: errorDiagnosticTag(cause) };
+    return Effect.logError(error.message, logContext).pipe(
+      Effect.flatMap(() => Effect.fail(error)),
+    );
+  };
 
 const requireRelayUrl = relayUrlConfig.pipe(
   Effect.mapError(
-    () =>
-      new EnvironmentHttpInternalServerError({
-        message: "T3CODE_RELAY_URL must be configured as a secure absolute HTTPS origin.",
+    (cause) =>
+      new CloudRelayConfigurationError({
+        configKey: "T3CODE_RELAY_URL",
+        cause,
       }),
   ),
 );
@@ -126,11 +254,12 @@ export function consumeCloudReplayGuards(input: {
     input.names.map((name) =>
       input.secrets.create(name, input.value).pipe(
         Effect.as(true),
-        Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
-          ServerSecretStore.isSecretAlreadyExistsError(error)
-            ? Effect.succeed(false)
-            : Effect.fail(error),
-        ),
+        Effect.catchTags({
+          SecretStorePersistError: (error) =>
+            ServerSecretStore.isSecretAlreadyExistsError(error)
+              ? Effect.succeed(false)
+              : Effect.fail(error),
+        }),
       ),
     ),
     { concurrency: input.names.length },
@@ -153,9 +282,10 @@ function validateCloudMintPublicKey(
 ): Effect.Effect<void, EnvironmentHttpBadRequestError> {
   return Effect.try({
     try: () => NodeCrypto.createPublicKey(publicKey.replace(/\\n/g, "\n")),
-    catch: () =>
+    catch: (cause) =>
       new EnvironmentHttpBadRequestError({
-        message: "Cloud mint public key must be a valid Ed25519 public key.",
+        reason: "invalid_cloud_mint_public_key",
+        cause,
       }),
   }).pipe(
     Effect.flatMap((key) =>
@@ -163,7 +293,7 @@ function validateCloudMintPublicKey(
         ? Effect.void
         : Effect.fail(
             new EnvironmentHttpBadRequestError({
-              message: "Cloud mint public key must be a valid Ed25519 public key.",
+              reason: "invalid_cloud_mint_public_key",
             }),
           ),
     ),
@@ -176,28 +306,28 @@ function validateRelayConfigPayload(
   if (!isSecureRelayUrl(payload.relayUrl)) {
     return Effect.fail(
       new EnvironmentHttpBadRequestError({
-        message: "Relay URL must be a secure absolute HTTPS URL.",
+        reason: "invalid_relay_url",
       }),
     );
   }
   if (payload.relayIssuer !== undefined && !isSecureRelayUrl(payload.relayIssuer)) {
     return Effect.fail(
       new EnvironmentHttpBadRequestError({
-        message: "Relay issuer must be a secure absolute HTTPS URL.",
+        reason: "invalid_relay_issuer",
       }),
     );
   }
   if (payload.environmentCredential.trim().length === 0) {
     return Effect.fail(
       new EnvironmentHttpBadRequestError({
-        message: "Relay environment credential is required.",
+        reason: "missing_relay_environment_credential",
       }),
     );
   }
   if (payload.cloudUserId.trim().length === 0) {
     return Effect.fail(
       new EnvironmentHttpBadRequestError({
-        message: "Cloud user id is required.",
+        reason: "missing_cloud_user_id",
       }),
     );
   }
@@ -207,7 +337,7 @@ function validateRelayConfigPayload(
 function validateLinkedCloudUser(input: {
   readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
   readonly cloudUserId: string;
-}): Effect.Effect<void, EnvironmentAuth.ServerAuthInternalError | EnvironmentHttpConflictError> {
+}) {
   return input.secrets.get(CLOUD_LINKED_USER_ID).pipe(
     Effect.mapError(
       (cause) =>
@@ -224,17 +354,14 @@ function validateLinkedCloudUser(input: {
         ? Effect.void
         : Effect.fail(
             new EnvironmentHttpConflictError({
-              message:
-                "This environment is already linked to a different cloud account. Unlink it before switching accounts.",
+              reason: "linked_to_different_cloud_account",
             }),
           );
     }),
   );
 }
 
-function readInstalledCloudUserId(
-  secrets: ServerSecretStore.ServerSecretStore["Service"],
-): Effect.Effect<string, EnvironmentAuth.ServerAuthInternalError> {
+function readInstalledCloudUserId(secrets: ServerSecretStore.ServerSecretStore["Service"]) {
   return secrets.get(CLOUD_LINKED_USER_ID).pipe(
     Effect.mapError(
       (cause) =>
@@ -359,7 +486,7 @@ const makeCloudLinkProof = Effect.fn("environment.cloud.makeLinkProof")(function
     })
   ) {
     return yield* new EnvironmentHttpBadRequestError({
-      message: "Invalid managed endpoint origin.",
+      reason: "invalid_managed_endpoint_origin",
     });
   }
   const now = yield* DateTime.now;
@@ -402,24 +529,23 @@ const cloudLinkProofHandler = Effect.fn("environment.cloud.linkProof")(
     const requestUrl = requestAbsoluteUrl(httpRequest);
     if (requestUrl === null || hasForwardedAuthorityHeaders(httpRequest)) {
       return yield* new EnvironmentHttpBadRequestError({
-        message: "Invalid managed endpoint origin.",
+        reason: "invalid_managed_endpoint_origin",
       });
     }
     const proof = yield* makeCloudLinkProof(dependencies, request, requestUrl);
     yield* appendCloudCredentialResponseHeaders;
     return proof satisfies RelayEnvironmentLinkProof;
   },
-  Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-    failEnvironmentCloudInternalError(error.message)(error),
-  ),
-  Effect.catchIf(
-    ServerSecretStore.isSecretStoreError,
-    failEnvironmentCloudInternalError("Could not generate environment link proof."),
-  ),
-  Effect.catchTag(
-    "PlatformError",
-    failEnvironmentCloudInternalError("Could not generate environment link proof."),
-  ),
+  Effect.catchTags({
+    ServerAuthCloudLinkJwtSigningError: (error) =>
+      failEnvironmentCloudInternalError("sign_cloud_link_jwt")(error),
+    SecretStoreReadError: failEnvironmentCloudInternalError("generate_link_proof"),
+    SecretStoreDecodeError: failEnvironmentCloudInternalError("generate_link_proof"),
+    SecretStoreEncodeError: failEnvironmentCloudInternalError("generate_link_proof"),
+    SecretStorePersistError: failEnvironmentCloudInternalError("generate_link_proof"),
+    SecretStoreConcurrentReadError: failEnvironmentCloudInternalError("generate_link_proof"),
+    PlatformError: failEnvironmentCloudInternalError("generate_link_proof"),
+  }),
 );
 
 const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(function* (
@@ -439,7 +565,6 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
     endpointRuntimeStatus.status === "disabled" || endpointRuntimeStatus.status === "running";
   if (!ok) {
     return yield* new EnvironmentCloudEndpointUnavailableError({
-      message: "Managed endpoint runtime could not be started.",
       endpointRuntimeStatus,
     });
   }
@@ -472,22 +597,22 @@ const cloudRelayConfigHandler = Effect.fn("environment.cloud.relayConfig")(
     yield* requireEnvironmentScope(AuthRelayWriteScope);
     return yield* applyCloudRelayConfig(dependencies, payload);
   },
-  Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-    failEnvironmentCloudInternalError(error.message)(error),
-  ),
-  Effect.catchIf(
-    ServerSecretStore.isSecretStoreError,
-    failEnvironmentCloudInternalError("Could not persist environment relay configuration."),
-  ),
-  Effect.catchTag(
-    "SchemaError",
-    failEnvironmentCloudInternalError("Could not persist environment relay configuration."),
-  ),
+  Effect.catchTags({
+    ServerAuthLinkedCloudAccountVerificationError: (error) =>
+      failEnvironmentCloudInternalError("verify_linked_cloud_account")(error),
+    SecretStoreTemporaryPathGenerationError: failEnvironmentCloudInternalError(
+      "persist_relay_configuration",
+    ),
+    SecretStorePersistError: failEnvironmentCloudInternalError("persist_relay_configuration"),
+    SecretStoreRemoveError: failEnvironmentCloudInternalError("persist_relay_configuration"),
+    SchemaError: failEnvironmentCloudInternalError("persist_relay_configuration"),
+  }),
 );
 
 const relayClientRequest = <A>(
   dependencies: CloudHttpDependencies,
   input: {
+    readonly operation: CloudRelayRequestError["operation"];
     readonly url: string;
     readonly token: string;
     readonly payload: unknown;
@@ -497,14 +622,46 @@ const relayClientRequest = <A>(
   HttpClientRequest.post(input.url).pipe(
     HttpClientRequest.bearerToken(input.token),
     HttpClientRequest.bodyJson(input.payload),
-    Effect.flatMap(dependencies.httpClient.execute),
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap(HttpClientResponse.schemaBodyJson(input.schema)),
-    Effect.mapError(
-      (cause) =>
-        new EnvironmentHttpInternalServerError({
-          message: `T3 Connect relay request failed: ${String(cause)}`,
-        }),
+    Effect.mapError((cause) =>
+      CloudRelayRequestError.fromClientFailure({
+        operation: input.operation,
+        url: input.url,
+        cause,
+      }),
+    ),
+    Effect.flatMap((request) =>
+      dependencies.httpClient.execute(request).pipe(
+        Effect.mapError((cause) =>
+          CloudRelayRequestError.fromClientFailure({
+            operation: input.operation,
+            url: input.url,
+            cause,
+          }),
+        ),
+      ),
+    ),
+    Effect.flatMap((response) =>
+      HttpClientResponse.filterStatusOk(response).pipe(
+        Effect.mapError((cause) =>
+          CloudRelayRequestError.fromClientFailure({
+            operation: input.operation,
+            url: input.url,
+            cause,
+          }),
+        ),
+      ),
+    ),
+    Effect.flatMap((response) =>
+      HttpClientResponse.schemaBodyJson(input.schema)(response).pipe(
+        Effect.mapError((cause) =>
+          CloudRelayRequestError.fromClientFailure({
+            operation: input.operation,
+            url: input.url,
+            responseStatus: response.status,
+            cause,
+          }),
+        ),
+      ),
     ),
     withRelayClientTracing,
   );
@@ -513,14 +670,15 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
   function* (dependencies: CloudHttpDependencies, localOrigin: string) {
     const localUrl = yield* Effect.try({
       try: () => new URL(localOrigin),
-      catch: () =>
+      catch: (cause) =>
         new EnvironmentHttpBadRequestError({
-          message: "Could not resolve local environment origin.",
+          reason: "invalid_local_environment_origin",
+          cause,
         }),
     });
     if (localUrl.origin !== localOrigin) {
       return yield* new EnvironmentHttpBadRequestError({
-        message: "Could not resolve local environment origin.",
+        reason: "invalid_local_environment_origin",
       });
     }
     const localWsOrigin = localOrigin.replace(/^http/u, "ws");
@@ -530,7 +688,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
           onNone: () =>
             Effect.fail(
               new EnvironmentHttpUnauthorizedError({
-                message: "Run `t3 connect link` to authorize this environment.",
+                reason: "cloud_cli_authorization_required",
               }),
             ),
           onSome: Effect.succeed,
@@ -539,6 +697,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
     );
     const relayUrl = yield* requireRelayUrl;
     const challenge = yield* relayClientRequest(dependencies, {
+      operation: "create-link-challenge",
       url: `${relayUrl}/v1/client/environment-link-challenges`,
       token: token.accessToken,
       payload: {
@@ -566,6 +725,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
       localOrigin,
     );
     const link = yield* relayClientRequest(dependencies, {
+      operation: "create-environment-link",
       url: `${relayUrl}/v1/client/environment-links`,
       token: token.accessToken,
       payload: {
@@ -586,16 +746,41 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
       endpointRuntime: link.endpointRuntime,
     });
   },
-  Effect.catchIf(
-    ServerSecretStore.isSecretStoreError,
-    failEnvironmentCloudInternalError("Could not persist desired T3 Connect link state."),
-  ),
   Effect.catchTags({
-    CloudCliCredentialRemovalError: failCloudCliTokenManagerError,
-    CloudCliCredentialRefreshError: failCloudCliTokenManagerError,
-    CloudCliCredentialReadError: failCloudCliTokenManagerError,
-    CloudCliAuthorizationError: failCloudCliTokenManagerError,
-    CloudCliAuthorizationTimeoutError: failCloudCliTokenManagerError,
+    ServerAuthLinkedCloudAccountVerificationError: (error) =>
+      failEnvironmentCloudInternalError("verify_linked_cloud_account")(error),
+    ServerAuthCloudLinkJwtSigningError: (error) =>
+      failEnvironmentCloudInternalError("sign_cloud_link_jwt")(error),
+    SecretStoreReadError: failEnvironmentCloudInternalError("persist_desired_link_state"),
+    SecretStoreTemporaryPathGenerationError: failEnvironmentCloudInternalError(
+      "persist_desired_link_state",
+    ),
+    SecretStorePersistError: failEnvironmentCloudInternalError("persist_desired_link_state"),
+    SecretStoreRemoveError: failEnvironmentCloudInternalError("persist_desired_link_state"),
+    SecretStoreDecodeError: failEnvironmentCloudInternalError("persist_desired_link_state"),
+    SecretStoreEncodeError: failEnvironmentCloudInternalError("persist_desired_link_state"),
+    SecretStoreConcurrentReadError: failEnvironmentCloudInternalError("persist_desired_link_state"),
+    SchemaError: failEnvironmentCloudInternalError("persist_desired_link_state"),
+    PlatformError: failEnvironmentCloudInternalError("persist_desired_link_state"),
+    CloudRelayConfigurationError: (error) =>
+      failEnvironmentCloudInternalError("read_relay_url_configuration")(error),
+    CloudRelayRequestError: (error) =>
+      failEnvironmentCloudInternalError({
+        operation: "relay_request",
+        relayOperation: error.operation,
+        relayPhase: error.phase,
+        ...(error.responseStatus === undefined ? {} : { responseStatus: error.responseStatus }),
+      })(error),
+    CloudCliCredentialRemovalError: (error) =>
+      failEnvironmentCloudInternalError("remove_cloud_cli_credential")(error),
+    CloudCliCredentialRefreshError: (error) =>
+      failEnvironmentCloudInternalError("refresh_cloud_cli_credential")(error),
+    CloudCliCredentialReadError: (error) =>
+      failEnvironmentCloudInternalError("read_cloud_cli_credential")(error),
+    CloudCliAuthorizationError: (error) =>
+      failEnvironmentCloudInternalError("authorize_cloud_cli")(error),
+    CloudCliAuthorizationTimeoutError: (error) =>
+      failEnvironmentCloudInternalError("await_cloud_cli_authorization")(error),
   }),
 );
 
@@ -633,10 +818,9 @@ const cloudLinkStateHandler = Effect.fn("environment.cloud.linkState")(
     yield* requireEnvironmentScope(AuthRelayReadScope);
     return yield* readCloudLinkState(dependencies);
   },
-  Effect.catchIf(
-    ServerSecretStore.isSecretStoreError,
-    failEnvironmentCloudInternalError("Could not read environment relay configuration."),
-  ),
+  Effect.catchTags({
+    SecretStoreReadError: failEnvironmentCloudInternalError("read_relay_configuration"),
+  }),
 );
 
 const cloudUnlinkHandler = Effect.fn("environment.cloud.unlink")(
@@ -658,10 +842,13 @@ const cloudUnlinkHandler = Effect.fn("environment.cloud.unlink")(
     yield* setCliDesiredCloudLink(false);
     return { ok: true, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
   },
-  Effect.catchIf(
-    ServerSecretStore.isSecretStoreError,
-    failEnvironmentCloudInternalError("Could not remove environment relay configuration."),
-  ),
+  Effect.catchTags({
+    SecretStoreTemporaryPathGenerationError: failEnvironmentCloudInternalError(
+      "remove_relay_configuration",
+    ),
+    SecretStorePersistError: failEnvironmentCloudInternalError("remove_relay_configuration"),
+    SecretStoreRemoveError: failEnvironmentCloudInternalError("remove_relay_configuration"),
+  }),
 );
 
 const cloudPreferencesHandler = Effect.fn("environment.cloud.preferences")(
@@ -676,10 +863,13 @@ const cloudPreferencesHandler = Effect.fn("environment.cloud.preferences")(
     );
     return yield* readCloudLinkState(dependencies);
   },
-  Effect.catchIf(
-    ServerSecretStore.isSecretStoreError,
-    failEnvironmentCloudInternalError("Could not persist environment cloud preferences."),
-  ),
+  Effect.catchTags({
+    SecretStoreReadError: failEnvironmentCloudInternalError("persist_cloud_preferences"),
+    SecretStoreTemporaryPathGenerationError: failEnvironmentCloudInternalError(
+      "persist_cloud_preferences",
+    ),
+    SecretStorePersistError: failEnvironmentCloudInternalError("persist_cloud_preferences"),
+  }),
 );
 
 const cloudEnvironmentHealthHandler = Effect.fn("environment.cloud.health")(
@@ -730,7 +920,7 @@ const cloudEnvironmentHealthHandler = Effect.fn("environment.cloud.health")(
       !hasExactScope({ scopes: proofOption.value.scope, expected: "environment:status" })
     ) {
       return yield* new EnvironmentHttpUnauthorizedError({
-        message: "Invalid cloud health request.",
+        reason: "invalid_cloud_health_request",
       });
     }
     const proof = proofOption.value;
@@ -744,7 +934,7 @@ const cloudEnvironmentHealthHandler = Effect.fn("environment.cloud.health")(
     });
     if (!consumedReplayGuards) {
       return yield* new EnvironmentHttpConflictError({
-        message: "Cloud health request was already consumed.",
+        reason: "cloud_health_request_replayed",
       });
     }
 
@@ -787,17 +977,26 @@ const cloudEnvironmentHealthHandler = Effect.fn("environment.cloud.health")(
     yield* appendCloudCredentialResponseHeaders;
     return response;
   },
-  Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-    failEnvironmentCloudInternalError(error.message)(error),
-  ),
-  Effect.catchIf(
-    ServerSecretStore.isSecretStoreError,
-    failEnvironmentCloudInternalError("Could not answer cloud health request."),
-  ),
-  Effect.catchTag(
-    "PlatformError",
-    failEnvironmentCloudInternalError("Could not answer cloud health request."),
-  ),
+  Effect.catchTags({
+    ServerAuthLinkedCloudAccountReadError: (error) =>
+      failEnvironmentCloudInternalError("read_linked_cloud_account")(error),
+    ServerAuthLinkedCloudAccountMissingError: (error) =>
+      failEnvironmentCloudInternalError("require_linked_cloud_account")(error),
+    ServerAuthCloudMintPublicKeyMissingError: (error) =>
+      failEnvironmentCloudInternalError("read_cloud_mint_public_key")(error),
+    ServerAuthCloudRelayIssuerMissingError: (error) =>
+      failEnvironmentCloudInternalError("read_cloud_relay_issuer")(error),
+    ServerAuthCloudHealthJwtSigningError: (error) =>
+      failEnvironmentCloudInternalError("sign_cloud_health_jwt")(error),
+    SecretStoreReadError: failEnvironmentCloudInternalError("answer_cloud_health_request"),
+    SecretStorePersistError: failEnvironmentCloudInternalError("answer_cloud_health_request"),
+    SecretStoreDecodeError: failEnvironmentCloudInternalError("answer_cloud_health_request"),
+    SecretStoreEncodeError: failEnvironmentCloudInternalError("answer_cloud_health_request"),
+    SecretStoreConcurrentReadError: failEnvironmentCloudInternalError(
+      "answer_cloud_health_request",
+    ),
+    PlatformError: failEnvironmentCloudInternalError("answer_cloud_health_request"),
+  }),
 );
 
 const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")(
@@ -849,7 +1048,7 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
       !hasExactScope({ scopes: proofOption.value.scope, expected: "environment:connect" })
     ) {
       return yield* new EnvironmentHttpUnauthorizedError({
-        message: "Invalid cloud mint request.",
+        reason: "invalid_cloud_mint_request",
       });
     }
     const proof = proofOption.value;
@@ -863,7 +1062,7 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
     });
     if (!consumedReplayGuards) {
       return yield* new EnvironmentHttpConflictError({
-        message: "Cloud mint request was already consumed.",
+        reason: "cloud_mint_request_replayed",
       });
     }
 
@@ -908,17 +1107,28 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
     yield* appendCloudCredentialResponseHeaders;
     return response;
   },
-  Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-    failEnvironmentCloudInternalError(error.message)(error),
-  ),
-  Effect.catchIf(
-    ServerSecretStore.isSecretStoreError,
-    failEnvironmentCloudInternalError("Could not issue cloud connection credential."),
-  ),
-  Effect.catchTag(
-    "PlatformError",
-    failEnvironmentCloudInternalError("Could not issue cloud connection credential."),
-  ),
+  Effect.catchTags({
+    ServerAuthLinkedCloudAccountReadError: (error) =>
+      failEnvironmentCloudInternalError("read_linked_cloud_account")(error),
+    ServerAuthLinkedCloudAccountMissingError: (error) =>
+      failEnvironmentCloudInternalError("require_linked_cloud_account")(error),
+    ServerAuthCloudMintPublicKeyMissingError: (error) =>
+      failEnvironmentCloudInternalError("read_cloud_mint_public_key")(error),
+    ServerAuthCloudRelayIssuerMissingError: (error) =>
+      failEnvironmentCloudInternalError("read_cloud_relay_issuer")(error),
+    ServerAuthPairingLinkCreationError: (error) =>
+      failEnvironmentCloudInternalError("create_cloud_pairing_link")(error),
+    ServerAuthCloudMintJwtSigningError: (error) =>
+      failEnvironmentCloudInternalError("sign_cloud_mint_jwt")(error),
+    SecretStoreReadError: failEnvironmentCloudInternalError("issue_cloud_connection_credential"),
+    SecretStorePersistError: failEnvironmentCloudInternalError("issue_cloud_connection_credential"),
+    SecretStoreDecodeError: failEnvironmentCloudInternalError("issue_cloud_connection_credential"),
+    SecretStoreEncodeError: failEnvironmentCloudInternalError("issue_cloud_connection_credential"),
+    SecretStoreConcurrentReadError: failEnvironmentCloudInternalError(
+      "issue_cloud_connection_credential",
+    ),
+    PlatformError: failEnvironmentCloudInternalError("issue_cloud_connection_credential"),
+  }),
 );
 
 export const connectHttpApiLayer = HttpApiBuilder.group(

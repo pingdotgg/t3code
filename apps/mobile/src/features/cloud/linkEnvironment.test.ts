@@ -607,7 +607,8 @@ describe("mobile cloud link environment client", () => {
           Response.json(
             {
               _tag: "EnvironmentHttpUnauthorizedError",
-              message: "Invalid environment bearer session.",
+              reason: "cloud_cli_authorization_required",
+              message: "Run `t3 connect link` to authorize this environment.",
             },
             { status: 401 },
           ),
@@ -623,7 +624,7 @@ describe("mobile cloud link environment client", () => {
       ).pipe(Effect.flip);
       expect(error._tag).toBe("CloudEnvironmentLinkError");
       expect(error.message).toBe(
-        "Could not obtain environment link proof: Invalid environment bearer session.",
+        "Could not obtain environment link proof: Run `t3 connect link` to authorize this environment.",
       );
       expect(fetchMock).toHaveBeenCalledTimes(2);
     }),
