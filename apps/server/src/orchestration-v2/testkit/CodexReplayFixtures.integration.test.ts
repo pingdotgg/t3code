@@ -31,7 +31,7 @@ type ProtocolReplayEntry = Extract<
 
 const CODEX_REPLAY_FIXTURES = ORCHESTRATOR_REPLAY_FIXTURES.flatMap((fixture) =>
   fixture.providers
-    .filter((provider) => provider.provider === "codex")
+    .filter((provider) => provider.driver === "codex")
     .map((provider) => ({
       scenario: fixture.name,
       transcriptFile: provider.transcriptFile,

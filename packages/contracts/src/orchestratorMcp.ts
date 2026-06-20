@@ -13,7 +13,7 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
-import { ProviderInteractionMode, RuntimeMode } from "./orchestration.ts";
+import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,

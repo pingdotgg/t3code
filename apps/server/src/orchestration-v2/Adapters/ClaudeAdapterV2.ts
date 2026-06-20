@@ -96,9 +96,9 @@ import {
   subagentThreadTitle,
 } from "../SubagentProjection.ts";
 
-export const CLAUDE_PROVIDER = "claudeAgent" as const;
+export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
-export const CLAUDE_DRIVER_KIND = ProviderDriverKind.make(CLAUDE_PROVIDER);
+export const CLAUDE_DRIVER_KIND = CLAUDE_PROVIDER;
 export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_DRIVER_KIND);
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 
@@ -674,13 +674,15 @@ export function claudeMcpQueryOverrides(input: {
 
 function providerSession(input: {
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+  readonly providerInstanceId: ProviderInstanceId;
   readonly cwd: string | null;
   readonly model: string;
   readonly now: DateTime.Utc;
 }): OrchestrationV2ProviderSession {
   return {
     id: input.providerSessionId,
-    provider: CLAUDE_PROVIDER,
+    driver: CLAUDE_PROVIDER,
+    providerInstanceId: input.providerInstanceId,
     status: "ready",
     cwd: input.cwd ?? process.cwd(),
     model: input.model,
@@ -721,6 +723,7 @@ function resultTextFromSdkMessage(
 
 function makeProviderThread(input: {
   readonly idAllocator: IdAllocatorV2Shape;
+  readonly providerInstanceId: ProviderInstanceId;
   readonly appThreadId: OrchestrationV2ProviderThread["appThreadId"];
   readonly ownerNodeId?: OrchestrationV2ProviderThread["ownerNodeId"];
   readonly providerSessionId: OrchestrationV2ProviderThread["providerSessionId"];
@@ -730,15 +733,16 @@ function makeProviderThread(input: {
 }): OrchestrationV2ProviderThread {
   return {
     id: input.idAllocator.derive.providerThread({
-      provider: CLAUDE_PROVIDER,
+      driver: CLAUDE_PROVIDER,
       nativeThreadId: input.nativeThreadId,
     }),
-    provider: CLAUDE_PROVIDER,
+    driver: CLAUDE_PROVIDER,
+    providerInstanceId: input.providerInstanceId,
     providerSessionId: input.providerSessionId,
     appThreadId: input.appThreadId,
     ownerNodeId: input.ownerNodeId ?? null,
     nativeThreadRef: {
-      provider: CLAUDE_PROVIDER,
+      driver: CLAUDE_PROVIDER,
       nativeId: input.nativeThreadId,
       strength: "strong",
     },
@@ -759,7 +763,7 @@ const getNativeThreadId = Effect.fnUntraced(function* (
   const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
   if (nativeThreadId === undefined || nativeThreadId === null) {
     return yield* new ProviderAdapterProtocolError({
-      provider: CLAUDE_PROVIDER,
+      driver: CLAUDE_PROVIDER,
       detail: `Provider thread ${providerThread.id} is missing a native Claude session id.`,
     });
   }
@@ -781,15 +785,15 @@ const getNativeConversationHeadId = Effect.fnUntraced(function* (
   if (nativeHeadRef === null) {
     return undefined;
   }
-  if (nativeHeadRef.provider !== CLAUDE_PROVIDER) {
+  if (nativeHeadRef.driver !== CLAUDE_PROVIDER) {
     return yield* new ProviderAdapterProtocolError({
-      provider: CLAUDE_PROVIDER,
+      driver: CLAUDE_PROVIDER,
       detail: `Provider thread ${providerThread.id} has a non-Claude native conversation head reference.`,
     });
   }
   if (nativeHeadRef.nativeId === null) {
     return yield* new ProviderAdapterProtocolError({
-      provider: CLAUDE_PROVIDER,
+      driver: CLAUDE_PROVIDER,
       detail: `Provider thread ${providerThread.id} has a Claude native conversation head reference without a native id.`,
     });
   }
@@ -808,7 +812,7 @@ const resolveClaudeForkUpToMessageId = Effect.fn("ClaudeAdapterV2.resolveForkUpT
     const boundaryIndex = sourceTurns.findIndex((turn) => turn.id === input.providerTurnId);
     if (boundaryIndex < 0) {
       return yield* new ProviderAdapterForkThreadError({
-        provider: CLAUDE_PROVIDER,
+        driver: CLAUDE_PROVIDER,
         providerThreadId: input.sourceProviderThread.id,
         cause: `Cannot fork Claude thread from provider turn ${input.providerTurnId}: source turn was not found in provider thread ${input.sourceProviderThread.id}.`,
       });
@@ -831,7 +835,7 @@ const resolveClaudeForkUpToMessageId = Effect.fn("ClaudeAdapterV2.resolveForkUpT
     }
 
     return yield* new ProviderAdapterForkThreadError({
-      provider: CLAUDE_PROVIDER,
+      driver: CLAUDE_PROVIDER,
       providerThreadId: input.sourceProviderThread.id,
       cause: `Cannot fork Claude thread from prior provider turn ${input.providerTurnId}: no SDK assistant message cursor was recorded for that turn.`,
     });
@@ -848,7 +852,7 @@ const resolveClaudeRollbackResumeSessionAt = Effect.fn(
       const target = input.target;
       if (target.providerTurn.providerThreadId !== input.providerThread.id) {
         return yield* new ProviderAdapterRollbackThreadError({
-          provider: CLAUDE_PROVIDER,
+          driver: CLAUDE_PROVIDER,
           providerThreadId: input.providerThread.id,
           cause: `Cannot roll back Claude thread ${input.providerThread.id} to provider turn ${target.providerTurn.id}: target turn belongs to provider thread ${target.providerTurn.providerThreadId}.`,
         });
@@ -857,7 +861,7 @@ const resolveClaudeRollbackResumeSessionAt = Effect.fn(
       const nativeTurnRef = target.providerTurn.nativeTurnRef;
       if (
         nativeTurnRef !== null &&
-        nativeTurnRef.provider === CLAUDE_PROVIDER &&
+        nativeTurnRef.driver === CLAUDE_PROVIDER &&
         nativeTurnRef.nativeId !== null &&
         !isSyntheticClaudeTurnId(nativeTurnRef.nativeId)
       ) {
@@ -872,7 +876,7 @@ const resolveClaudeRollbackResumeSessionAt = Effect.fn(
       }
 
       return yield* new ProviderAdapterRollbackThreadError({
-        provider: CLAUDE_PROVIDER,
+        driver: CLAUDE_PROVIDER,
         providerThreadId: input.providerThread.id,
         cause: `Cannot roll back Claude thread ${input.providerThread.id} to provider turn ${target.providerTurn.id}: no SDK assistant message cursor was recorded for that turn.`,
       });
@@ -1553,19 +1557,19 @@ function buildAssistantArtifacts(input: {
   readonly turnItem: OrchestrationV2TurnItem;
 } {
   const nodeId = input.idAllocator.derive.nodeFromProviderItem({
-    provider: CLAUDE_PROVIDER,
+    driver: CLAUDE_PROVIDER,
     nativeItemId: input.nativeItemId,
   });
   const messageId = input.idAllocator.derive.messageFromProviderItem({
-    provider: CLAUDE_PROVIDER,
+    driver: CLAUDE_PROVIDER,
     nativeItemId: input.nativeItemId,
   });
   const turnItemId = input.idAllocator.derive.turnItemFromProviderItem({
-    provider: CLAUDE_PROVIDER,
+    driver: CLAUDE_PROVIDER,
     nativeItemId: input.nativeItemId,
   });
   const nativeItemRef = {
-    provider: CLAUDE_PROVIDER,
+    driver: CLAUDE_PROVIDER,
     nativeId: input.nativeItemId,
     strength: "strong" as const,
   };
@@ -1694,7 +1698,7 @@ export function makeClaudeAdapterV2(
 
   return ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
-    provider: CLAUDE_PROVIDER,
+    driver: CLAUDE_PROVIDER,
     getCapabilities: () => Effect.succeed(ClaudeProviderCapabilitiesV2),
     openSession: Effect.fn("ClaudeAdapterV2.openSession")(
       function* (input: ProviderAdapterV2OpenSessionInput) {
@@ -1702,6 +1706,7 @@ export function makeClaudeAdapterV2(
         const now = yield* DateTime.now;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
+          providerInstanceId: adapterOptions.instanceId,
           cwd: input.runtimePolicy.cwd,
           model: input.modelSelection.model,
           now,
@@ -1758,7 +1763,7 @@ export function makeClaudeAdapterV2(
           nodeId: input.context.input.rootNodeId,
           runAttemptId: input.context.input.attemptId,
           nativeTurnRef: {
-            provider: CLAUDE_PROVIDER,
+            driver: CLAUDE_PROVIDER,
             nativeId: input.context.nativeMessageCursor ?? input.context.nativeTurnId,
             strength: "weak",
           },
@@ -1789,15 +1794,15 @@ export function makeClaudeAdapterV2(
         }) => {
           const completedAt = input.status === "running" ? null : input.updatedAt;
           const nodeId = idAllocator.derive.nodeFromProviderItem({
-            provider: CLAUDE_PROVIDER,
+            driver: CLAUDE_PROVIDER,
             nativeItemId: input.nativeItemId,
           });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-            provider: CLAUDE_PROVIDER,
+            driver: CLAUDE_PROVIDER,
             nativeItemId: input.nativeItemId,
           });
           const nativeItemRef = {
-            provider: CLAUDE_PROVIDER,
+            driver: CLAUDE_PROVIDER,
             nativeId: input.nativeItemId,
             strength: "strong" as const,
           };
@@ -1898,12 +1903,12 @@ export function makeClaudeAdapterV2(
         }) {
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: CLAUDE_PROVIDER,
+            driver: CLAUDE_PROVIDER,
             node: artifacts.node,
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider: CLAUDE_PROVIDER,
+            driver: CLAUDE_PROVIDER,
             turnItem: artifacts.turnItem,
           });
         });
@@ -1934,19 +1939,19 @@ export function makeClaudeAdapterV2(
           const nodeId =
             existingSubagent?.task.id ??
             idAllocator.derive.nodeFromProviderItem({
-              provider: CLAUDE_PROVIDER,
+              driver: CLAUDE_PROVIDER,
               nativeItemId,
             });
           const childRootNodeId =
             existingSubagent?.childRootNodeId ??
             idAllocator.derive.nodeFromProviderItem({
-              provider: CLAUDE_PROVIDER,
+              driver: CLAUDE_PROVIDER,
               nativeItemId: `${nativeItemId}:thread-root`,
             });
           const childThreadId =
             existingSubagent?.childThreadId ??
             idAllocator.derive.threadFromProviderThread({
-              provider: CLAUDE_PROVIDER,
+              driver: CLAUDE_PROVIDER,
               nativeThreadId: `${input.context.input.providerThread.id}:${input.taskId}`,
             });
           if (existingSubagent === undefined) {
@@ -1963,11 +1968,12 @@ export function makeClaudeAdapterV2(
               parentNodeId: input.context.input.rootNodeId,
               origin: "provider_native" as const,
               createdBy: "agent" as const,
-              provider: CLAUDE_PROVIDER,
+              driver: CLAUDE_PROVIDER,
+              providerInstanceId: input.context.input.modelSelection.instanceId,
               providerThreadId: null,
               childThreadId,
               nativeTaskRef: {
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 nativeId: input.taskId,
                 strength: "strong" as const,
               },
@@ -1991,7 +1997,7 @@ export function makeClaudeAdapterV2(
             turnItemId:
               existingSubagent?.turnItemId ??
               idAllocator.derive.turnItemFromProviderItem({
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 nativeItemId: `${nativeItemId}:subagent`,
               }),
             turnItemOrdinal,
@@ -2023,14 +2029,14 @@ export function makeClaudeAdapterV2(
             });
             yield* emitProviderEvent({
               type: "app_thread.created",
-              provider: CLAUDE_PROVIDER,
+              driver: CLAUDE_PROVIDER,
               appThread: childThread,
             });
           }
 
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: CLAUDE_PROVIDER,
+            driver: CLAUDE_PROVIDER,
             node: {
               id: nodeId,
               threadId: input.context.input.threadId,
@@ -2043,7 +2049,7 @@ export function makeClaudeAdapterV2(
               providerThreadId: input.context.input.providerThread.id,
               providerTurnId: input.context.providerTurnId,
               nativeItemRef: {
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 nativeId: input.taskId,
                 strength: "strong",
               },
@@ -2055,7 +2061,7 @@ export function makeClaudeAdapterV2(
           });
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: CLAUDE_PROVIDER,
+            driver: CLAUDE_PROVIDER,
             node: {
               id: childRootNodeId,
               threadId: childThreadId,
@@ -2078,11 +2084,11 @@ export function makeClaudeAdapterV2(
             const promptNativeItemId = `${nativeItemId}:prompt`;
             const promptArtifacts = makeSubagentConversationArtifacts({
               messageId: idAllocator.derive.messageFromProviderItem({
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 nativeItemId: promptNativeItemId,
               }),
               turnItemId: idAllocator.derive.turnItemFromProviderItem({
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 nativeItemId: promptNativeItemId,
               }),
               threadId: childThreadId,
@@ -2090,7 +2096,7 @@ export function makeClaudeAdapterV2(
               providerThreadId: null,
               providerTurnId: null,
               nativeItemRef: {
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 nativeId: promptNativeItemId,
                 strength: "strong",
               },
@@ -2101,23 +2107,23 @@ export function makeClaudeAdapterV2(
             });
             yield* emitProviderEvent({
               type: "message.updated",
-              provider: CLAUDE_PROVIDER,
+              driver: CLAUDE_PROVIDER,
               message: promptArtifacts.message,
             });
             yield* emitProviderEvent({
               type: "turn_item.updated",
-              provider: CLAUDE_PROVIDER,
+              driver: CLAUDE_PROVIDER,
               turnItem: promptArtifacts.turnItem,
             });
           }
           yield* emitProviderEvent({
             type: "subagent.updated",
-            provider: CLAUDE_PROVIDER,
+            driver: CLAUDE_PROVIDER,
             subagent: task,
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider: CLAUDE_PROVIDER,
+            driver: CLAUDE_PROVIDER,
             turnItem: {
               id: subagent.turnItemId,
               threadId: task.threadId,
@@ -2136,7 +2142,8 @@ export function makeClaudeAdapterV2(
               type: "subagent",
               subagentId: task.id,
               origin: task.origin,
-              provider: task.provider,
+              driver: task.driver,
+              providerInstanceId: task.providerInstanceId,
               childThreadId: task.childThreadId,
               prompt: task.prompt,
               result: task.result,
@@ -2153,11 +2160,11 @@ export function makeClaudeAdapterV2(
             subagent.resultItemOrdinal = resultItemOrdinal;
             const resultArtifacts = makeSubagentConversationArtifacts({
               messageId: idAllocator.derive.messageFromProviderItem({
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 nativeItemId: resultNativeItemId,
               }),
               turnItemId: idAllocator.derive.turnItemFromProviderItem({
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 nativeItemId: resultNativeItemId,
               }),
               threadId: childThreadId,
@@ -2165,7 +2172,7 @@ export function makeClaudeAdapterV2(
               providerThreadId: null,
               providerTurnId: null,
               nativeItemRef: {
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 nativeId: resultNativeItemId,
                 strength: "strong",
               },
@@ -2176,12 +2183,12 @@ export function makeClaudeAdapterV2(
             });
             yield* emitProviderEvent({
               type: "message.updated",
-              provider: CLAUDE_PROVIDER,
+              driver: CLAUDE_PROVIDER,
               message: resultArtifacts.message,
             });
             yield* emitProviderEvent({
               type: "turn_item.updated",
-              provider: CLAUDE_PROVIDER,
+              driver: CLAUDE_PROVIDER,
               turnItem: resultArtifacts.turnItem,
             });
           }
@@ -2255,7 +2262,7 @@ export function makeClaudeAdapterV2(
         }) {
           const createdAt = yield* DateTime.now;
           const requestId = yield* idAllocator.allocate.runtimeRequest({
-            provider: CLAUDE_PROVIDER,
+            driver: CLAUDE_PROVIDER,
             providerTurnId: input.context.providerTurnId,
             nativeRequestId: input.nativeRequestId,
           });
@@ -2263,7 +2270,7 @@ export function makeClaudeAdapterV2(
           const providerSessionId = input.context.input.providerThread.providerSessionId;
           if (providerSessionId === null) {
             return yield* new ProviderAdapterProtocolError({
-              provider: CLAUDE_PROVIDER,
+              driver: CLAUDE_PROVIDER,
               detail: `Provider thread ${input.context.input.providerThread.id} is missing a provider session id.`,
             });
           }
@@ -2272,7 +2279,7 @@ export function makeClaudeAdapterV2(
             `${input.nativeItemId}:approval:${input.nativeRequestId}`,
           );
           const nativeItemRef = {
-            provider: CLAUDE_PROVIDER,
+            driver: CLAUDE_PROVIDER,
             nativeId: input.nativeRequestId,
             strength: "strong" as const,
           };
@@ -2281,7 +2288,7 @@ export function makeClaudeAdapterV2(
             threadId: input.context.input.threadId,
             runId: input.context.input.runId,
             parentNodeId: idAllocator.derive.nodeFromProviderItem({
-              provider: CLAUDE_PROVIDER,
+              driver: CLAUDE_PROVIDER,
               nativeItemId: input.nativeItemId,
             }),
             rootNodeId: input.context.input.rootNodeId,
@@ -2301,7 +2308,7 @@ export function makeClaudeAdapterV2(
             nodeId,
             providerTurnId: input.context.providerTurnId,
             nativeRequestRef: {
-              provider: CLAUDE_PROVIDER,
+              driver: CLAUDE_PROVIDER,
               nativeId: input.nativeRequestId,
               strength: "strong",
             },
@@ -2385,17 +2392,17 @@ export function makeClaudeAdapterV2(
               [
                 emitProviderEvent({
                   type: "node.updated",
-                  provider: CLAUDE_PROVIDER,
+                  driver: CLAUDE_PROVIDER,
                   node: artifacts.node,
                 }),
                 emitProviderEvent({
                   type: "message.updated",
-                  provider: CLAUDE_PROVIDER,
+                  driver: CLAUDE_PROVIDER,
                   message: artifacts.message,
                 }),
                 emitProviderEvent({
                   type: "turn_item.updated",
-                  provider: CLAUDE_PROVIDER,
+                  driver: CLAUDE_PROVIDER,
                   turnItem: artifacts.turnItem,
                 }),
               ],
@@ -2407,7 +2414,7 @@ export function makeClaudeAdapterV2(
             [
               emitProviderEvent({
                 type: "provider_turn.updated",
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 providerTurn: providerTurnPayload({
                   context: input.context,
                   status: input.status,
@@ -2419,7 +2426,7 @@ export function makeClaudeAdapterV2(
                 ? [
                     emitProviderEvent({
                       type: "provider_thread.updated" as const,
-                      provider: CLAUDE_PROVIDER,
+                      driver: CLAUDE_PROVIDER,
                       providerThread: {
                         ...input.context.input.providerThread,
                         providerSessionId: session.id,
@@ -2436,7 +2443,7 @@ export function makeClaudeAdapterV2(
                 : []),
               emitProviderEvent({
                 type: "turn.terminal",
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 providerTurnId: input.context.providerTurnId,
                 status: input.status,
               }),
@@ -2672,17 +2679,17 @@ export function makeClaudeAdapterV2(
             [
               emitProviderEvent({
                 type: "node.updated",
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 node: artifacts.node,
               }),
               emitProviderEvent({
                 type: "runtime_request.updated",
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 runtimeRequest: artifacts.request,
               }),
               emitProviderEvent({
                 type: "turn_item.updated",
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 turnItem: artifacts.turnItem,
               }),
             ],
@@ -2813,14 +2820,14 @@ export function makeClaudeAdapterV2(
             const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
             const nativeTurnId = `turn:${turnInput.attemptId}`;
             const providerTurnId = idAllocator.derive.providerTurn({
-              provider: CLAUDE_PROVIDER,
+              driver: CLAUDE_PROVIDER,
               nativeTurnId,
             });
             const providerTurnOrdinal = turnInput.providerTurnOrdinal;
             const currentTurn = yield* Ref.get(activeTurn);
             if (currentTurn !== null) {
               return yield* new ProviderAdapterProtocolError({
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 detail: `Claude provider turn ${currentTurn.providerTurnId} is still active.`,
               });
             }
@@ -2844,7 +2851,7 @@ export function makeClaudeAdapterV2(
             yield* Ref.set(activeTurn, context);
             yield* emitProviderEvent({
               type: "provider_turn.updated",
-              provider: CLAUDE_PROVIDER,
+              driver: CLAUDE_PROVIDER,
               providerTurn: providerTurnPayload({
                 context,
                 status: "running",
@@ -2860,7 +2867,7 @@ export function makeClaudeAdapterV2(
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterTurnStartError({
-                    provider: CLAUDE_PROVIDER,
+                    driver: CLAUDE_PROVIDER,
                     threadId: turnInput.threadId,
                     providerThreadId: turnInput.providerThread.id,
                     runId: turnInput.runId,
@@ -2875,14 +2882,14 @@ export function makeClaudeAdapterV2(
             const existing = yield* Ref.get(queryContext);
             if (existing === null) {
               return yield* new ProviderAdapterProtocolError({
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 detail: `Claude provider thread ${turnInput.providerThread.id} has no live query.`,
               });
             }
             const currentTurn = yield* Ref.get(activeTurn);
             if (currentTurn?.providerTurnId !== turnInput.providerTurnId) {
               return yield* new ProviderAdapterProtocolError({
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
               });
             }
@@ -2921,7 +2928,7 @@ export function makeClaudeAdapterV2(
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterInterruptError({
-                    provider: CLAUDE_PROVIDER,
+                    driver: CLAUDE_PROVIDER,
                     providerThreadId: turnInput.providerThread.id,
                     providerTurnId: turnInput.providerTurnId,
                     cause,
@@ -2935,14 +2942,14 @@ export function makeClaudeAdapterV2(
             const existing = yield* Ref.get(queryContext);
             if (existing === null) {
               return yield* new ProviderAdapterProtocolError({
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 detail: `Claude provider thread ${turnInput.providerThread.id} has no live query.`,
               });
             }
             const currentTurn = yield* Ref.get(activeTurn);
             if (currentTurn?.providerTurnId !== turnInput.providerTurnId) {
               return yield* new ProviderAdapterProtocolError({
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
               });
             }
@@ -2960,7 +2967,7 @@ export function makeClaudeAdapterV2(
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterSteerRunError({
-                    provider: CLAUDE_PROVIDER,
+                    driver: CLAUDE_PROVIDER,
                     providerThreadId: turnInput.providerThread.id,
                     providerTurnId: turnInput.providerTurnId,
                     cause,
@@ -3012,7 +3019,7 @@ export function makeClaudeAdapterV2(
 
         const runtime: ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
-          provider: CLAUDE_PROVIDER,
+          driver: CLAUDE_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
           rawEvents: Stream.empty,
@@ -3023,6 +3030,7 @@ export function makeClaudeAdapterV2(
               const nativeThreadId = yield* queryRunner.allocateSessionId;
               return makeProviderThread({
                 idAllocator,
+                providerInstanceId: adapterOptions.instanceId,
                 appThreadId: threadInput.threadId,
                 providerSessionId: input.providerSessionId,
                 nativeThreadId,
@@ -3034,7 +3042,7 @@ export function makeClaudeAdapterV2(
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterEnsureThreadError({
-                      provider: CLAUDE_PROVIDER,
+                      driver: CLAUDE_PROVIDER,
                       threadId: threadInput.threadId,
                       cause,
                     }),
@@ -3056,7 +3064,7 @@ export function makeClaudeAdapterV2(
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterResumeThreadError({
-                      provider: CLAUDE_PROVIDER,
+                      driver: CLAUDE_PROVIDER,
                       providerSessionId: input.providerSessionId,
                       providerThreadId: threadInput.providerThread.id,
                       cause,
@@ -3074,20 +3082,20 @@ export function makeClaudeAdapterV2(
               );
               if (pending === undefined) {
                 return yield* new ProviderAdapterRuntimeRequestResponseError({
-                  provider: CLAUDE_PROVIDER,
+                  driver: CLAUDE_PROVIDER,
                   requestId: requestInput.requestId,
                   cause: new ProviderAdapterProtocolError({
-                    provider: CLAUDE_PROVIDER,
+                    driver: CLAUDE_PROVIDER,
                     detail: `No pending Claude runtime request ${requestInput.requestId}.`,
                   }),
                 });
               }
               if (requestInput.decision === undefined) {
                 return yield* new ProviderAdapterRuntimeRequestResponseError({
-                  provider: CLAUDE_PROVIDER,
+                  driver: CLAUDE_PROVIDER,
                   requestId: requestInput.requestId,
                   cause: new ProviderAdapterProtocolError({
-                    provider: CLAUDE_PROVIDER,
+                    driver: CLAUDE_PROVIDER,
                     detail: `Claude ${pending.requestKind} request ${requestInput.requestId} requires an approval decision.`,
                   }),
                 });
@@ -3100,7 +3108,7 @@ export function makeClaudeAdapterV2(
                   Schema.is(ProviderAdapterRuntimeRequestResponseError)(cause)
                     ? cause
                     : new ProviderAdapterRuntimeRequestResponseError({
-                        provider: CLAUDE_PROVIDER,
+                        driver: CLAUDE_PROVIDER,
                         requestId: requestInput.requestId,
                         cause,
                       }),
@@ -3110,7 +3118,7 @@ export function makeClaudeAdapterV2(
           readThreadSnapshot: (snapshotInput) =>
             Effect.fail(
               new ProviderAdapterReadThreadSnapshotError({
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 providerThreadId: snapshotInput.providerThread.id,
                 cause: "Claude V2 adapter does not implement snapshots.",
               }),
@@ -3120,7 +3128,7 @@ export function makeClaudeAdapterV2(
               const currentTurn = yield* Ref.get(activeTurn);
               if (currentTurn !== null) {
                 return yield* new ProviderAdapterProtocolError({
-                  provider: CLAUDE_PROVIDER,
+                  driver: CLAUDE_PROVIDER,
                   detail: `Cannot roll back Claude provider thread ${rollbackInput.providerThread.id} while provider turn ${currentTurn.providerTurnId} is active.`,
                 });
               }
@@ -3135,6 +3143,7 @@ export function makeClaudeAdapterV2(
                   providerThread: {
                     ...makeProviderThread({
                       idAllocator,
+                      providerInstanceId: adapterOptions.instanceId,
                       appThreadId: rollbackInput.providerThread.appThreadId,
                       ...(rollbackInput.providerThread.ownerNodeId === null
                         ? {}
@@ -3163,7 +3172,7 @@ export function makeClaudeAdapterV2(
                     resumeSessionAt === null
                       ? null
                       : {
-                          provider: CLAUDE_PROVIDER,
+                          driver: CLAUDE_PROVIDER,
                           nativeId: resumeSessionAt,
                           strength: "weak" as const,
                         },
@@ -3182,7 +3191,7 @@ export function makeClaudeAdapterV2(
                   Schema.is(ProviderAdapterRollbackThreadError)(cause)
                     ? cause
                     : new ProviderAdapterRollbackThreadError({
-                        provider: CLAUDE_PROVIDER,
+                        driver: CLAUDE_PROVIDER,
                         providerThreadId: rollbackInput.providerThread.id,
                         cause,
                       }),
@@ -3194,7 +3203,7 @@ export function makeClaudeAdapterV2(
               const currentTurn = yield* Ref.get(activeTurn);
               if (currentTurn !== null) {
                 return yield* new ProviderAdapterProtocolError({
-                  provider: CLAUDE_PROVIDER,
+                  driver: CLAUDE_PROVIDER,
                   detail: `Cannot fork Claude provider thread ${forkInput.sourceProviderThread.id} while provider turn ${currentTurn.providerTurnId} is active.`,
                 });
               }
@@ -3220,6 +3229,7 @@ export function makeClaudeAdapterV2(
               const now = yield* DateTime.now;
               return makeProviderThread({
                 idAllocator,
+                providerInstanceId: adapterOptions.instanceId,
                 appThreadId: forkInput.targetThreadId,
                 ownerNodeId: forkInput.ownerNodeId ?? null,
                 providerSessionId: input.providerSessionId,
@@ -3238,7 +3248,7 @@ export function makeClaudeAdapterV2(
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterForkThreadError({
-                      provider: CLAUDE_PROVIDER,
+                      driver: CLAUDE_PROVIDER,
                       providerThreadId: forkInput.sourceProviderThread.id,
                       cause,
                     }),
@@ -3254,7 +3264,7 @@ export function makeClaudeAdapterV2(
           Effect.mapError(
             (cause) =>
               new ProviderAdapterOpenSessionError({
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 providerSessionId: input.providerSessionId,
                 cause,
               }),

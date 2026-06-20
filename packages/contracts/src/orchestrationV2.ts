@@ -25,16 +25,17 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
+import { ChatAttachment } from "./chatAttachment.ts";
+import { ModelSelection } from "./modelSelection.ts";
 import {
-  ChatAttachment,
-  ModelSelection,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   ProviderKind,
   ProviderRequestKind,
   ProviderUserInputAnswers,
   RuntimeMode,
-} from "./orchestration.ts";
+} from "./providerPolicy.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);
 export type OrchestrationV2Actor = typeof OrchestrationV2Actor.Type;
@@ -57,7 +58,7 @@ export const OrchestrationV2NativeRefStrength = Schema.Literals(["strong", "weak
 export type OrchestrationV2NativeRefStrength = typeof OrchestrationV2NativeRefStrength.Type;
 
 export const OrchestrationV2ProviderRef = Schema.Struct({
-  provider: ProviderKind,
+  driver: ProviderDriverKind,
   nativeId: Schema.NullOr(TrimmedNonEmptyString),
   strength: OrchestrationV2NativeRefStrength,
   fingerprint: Schema.optional(TrimmedNonEmptyString),
@@ -130,8 +131,8 @@ export const OrchestrationV2ContextTransfer = Schema.Struct({
   targetThreadId: ThreadId,
   sourcePoint: OrchestrationV2ContextSourcePoint,
   basePoint: Schema.NullOr(OrchestrationV2ContextSourcePoint),
-  sourceProvider: Schema.NullOr(ProviderKind),
-  targetProvider: Schema.NullOr(ProviderKind),
+  sourceProviderInstanceId: Schema.NullOr(ProviderInstanceId),
+  targetProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   targetRunId: Schema.NullOr(RunId),
   status: Schema.Literals([
     "pending",
@@ -281,7 +282,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
-  defaultProvider: ProviderKind,
+  providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -324,7 +325,7 @@ export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
   threadId: ThreadId,
   ordinal: PositiveInt,
-  provider: ProviderKind,
+  providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
   providerThreadId: Schema.NullOr(ProviderThreadId),
   userMessageId: MessageId,
@@ -351,7 +352,7 @@ export const OrchestrationV2RunAttempt = Schema.Struct({
   runId: RunId,
   attemptOrdinal: PositiveInt,
   rootNodeId: NodeId,
-  provider: ProviderKind,
+  providerInstanceId: ProviderInstanceId,
   providerThreadId: ProviderThreadId,
   providerTurnId: Schema.NullOr(ProviderTurnId),
   reason: Schema.Literals(["initial", "steering_restart", "retry", "provider_recovery"]),
@@ -416,7 +417,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   parentNodeId: NodeId,
   origin: Schema.Literals(["provider_native", "app_owned"]),
   createdBy: OrchestrationV2Actor,
-  provider: ProviderKind,
+  driver: ProviderDriverKind,
+  providerInstanceId: ProviderInstanceId,
   providerThreadId: Schema.NullOr(ProviderThreadId),
   childThreadId: Schema.NullOr(ThreadId),
   nativeTaskRef: Schema.NullOr(OrchestrationV2ProviderRef),
@@ -456,7 +458,8 @@ export type OrchestrationV2CheckpointScope = typeof OrchestrationV2CheckpointSco
 
 export const OrchestrationV2ProviderSession = Schema.Struct({
   id: ProviderSessionId,
-  provider: ProviderKind,
+  driver: ProviderDriverKind,
+  providerInstanceId: ProviderInstanceId,
   status: Schema.Literals(["starting", "ready", "running", "waiting", "stopped", "error"]),
   cwd: TrimmedNonEmptyString,
   model: Schema.NullOr(TrimmedNonEmptyString),
@@ -469,7 +472,8 @@ export type OrchestrationV2ProviderSession = typeof OrchestrationV2ProviderSessi
 
 export const OrchestrationV2ProviderThread = Schema.Struct({
   id: ProviderThreadId,
-  provider: ProviderKind,
+  driver: ProviderDriverKind,
+  providerInstanceId: ProviderInstanceId,
   providerSessionId: Schema.NullOr(ProviderSessionId),
   appThreadId: Schema.NullOr(ThreadId),
   ownerNodeId: Schema.NullOr(NodeId),
@@ -512,7 +516,7 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
   status: Schema.Literals(["pending", "ready", "failed", "superseded"]),
   summaryMessageId: Schema.NullOr(MessageId),
   summaryText: Schema.String,
-  createdByProvider: Schema.NullOr(ProviderKind),
+  createdByProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
 });
@@ -638,6 +642,14 @@ export const OrchestrationV2Checkpoint = Schema.Struct({
   capturedAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2Checkpoint = typeof OrchestrationV2Checkpoint.Type;
+
+export const OrchestrationV2CheckpointRollbackRequest = Schema.Struct({
+  scopeId: CheckpointScopeId,
+  checkpointId: CheckpointId,
+  requestedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2CheckpointRollbackRequest =
+  typeof OrchestrationV2CheckpointRollbackRequest.Type;
 
 export const OrchestrationV2TurnItemStatus = Schema.Literals([
   "pending",
@@ -790,7 +802,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("compaction"),
-    provider: Schema.NullOr(ProviderKind),
+    driver: Schema.NullOr(ProviderDriverKind),
     summary: Schema.optional(Schema.String),
     beforeTokenCount: Schema.optional(NonNegativeInt),
     afterTokenCount: Schema.optional(NonNegativeInt),
@@ -801,8 +813,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     contextHandoffId: ContextHandoffId,
     fromProviderThreadIds: Schema.Array(ProviderThreadId),
     toProviderThreadId: ProviderThreadId,
-    fromProviders: Schema.Array(ProviderKind),
-    toProvider: ProviderKind,
+    fromProviderInstanceIds: Schema.Array(ProviderInstanceId),
+    toProviderInstanceId: ProviderInstanceId,
     strategy: Schema.Literals([
       "delta_since_target_last_seen",
       "fork_delta_summary",
@@ -832,7 +844,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("subagent"),
     subagentId: NodeId,
     origin: Schema.Literals(["provider_native", "app_owned"]),
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
+    providerInstanceId: ProviderInstanceId,
     childThreadId: Schema.NullOr(ThreadId),
     prompt: Schema.String,
     result: Schema.NullOr(Schema.String),
@@ -858,7 +871,8 @@ export type OrchestrationV2ProjectedTurnItem = typeof OrchestrationV2ProjectedTu
 
 export const OrchestrationV2RawProviderEvent = Schema.Struct({
   id: RawEventId,
-  provider: ProviderKind,
+  driver: ProviderDriverKind,
+  providerInstanceId: ProviderInstanceId,
   providerSessionId: ProviderSessionId,
   sequence: PositiveInt,
   direction: Schema.Literals(["incoming", "outgoing"]),
@@ -875,7 +889,8 @@ const OrchestrationV2EventBase = Schema.Struct({
   threadId: ThreadId,
   runId: Schema.optional(RunId),
   nodeId: Schema.optional(NodeId),
-  provider: Schema.optional(ProviderKind),
+  driver: Schema.optional(ProviderDriverKind),
+  providerInstanceId: Schema.optional(ProviderInstanceId),
   rawEventId: Schema.optional(RawEventId),
   occurredAt: Schema.DateTimeUtc,
 });
@@ -884,6 +899,20 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("thread.created"),
+    payload: OrchestrationV2AppThread,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literals([
+      "thread.archived",
+      "thread.unarchived",
+      "thread.deleted",
+      "thread.metadata-updated",
+      "thread.runtime-mode-updated",
+      "thread.interaction-mode-updated",
+      "thread.model-selection-updated",
+      "thread.provider-switched",
+    ]),
     payload: OrchestrationV2AppThread,
   }),
   Schema.Struct({
@@ -963,6 +992,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("checkpoint.rollback-requested"),
+    payload: OrchestrationV2CheckpointRollbackRequest,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("context-handoff.updated"),
     payload: OrchestrationV2ContextHandoff,
   }),
@@ -1007,29 +1041,56 @@ export const OrchestrationV2ShellThreadStatus = Schema.Union([
 ]);
 export type OrchestrationV2ShellThreadStatus = typeof OrchestrationV2ShellThreadStatus.Type;
 
+export const OrchestrationV2PendingRuntimeRequestSummary = Schema.Struct({
+  id: RuntimeRequestId,
+  kind: OrchestrationV2RuntimeRequest.fields.kind,
+  createdAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2PendingRuntimeRequestSummary =
+  typeof OrchestrationV2PendingRuntimeRequestSummary.Type;
+
+export const OrchestrationV2LatestVisibleMessageSummary = Schema.Struct({
+  id: MessageId,
+  role: OrchestrationV2ConversationMessage.fields.role,
+  text: Schema.String,
+  updatedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2LatestVisibleMessageSummary =
+  typeof OrchestrationV2LatestVisibleMessageSummary.Type;
+
 export const OrchestrationV2ThreadShell = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
   title: Schema.String,
-  defaultProvider: ProviderKind,
+  providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(OrchestrationV2AppThread.fields.forkedFrom),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   latestRunId: Schema.NullOr(RunId),
+  activeRunId: Schema.NullOr(RunId),
   status: OrchestrationV2ShellThreadStatus,
+  pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
+  latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),
   itemCount: NonNegativeInt,
   visibleItemCount: NonNegativeInt,
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
+  archivedAt: Schema.NullOr(Schema.DateTimeUtc),
+  deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
 
 export const OrchestrationV2ShellSnapshot = Schema.Struct({
+  schemaVersion: PositiveInt,
+  snapshotSequence: NonNegativeInt,
   threads: Schema.Array(OrchestrationV2ThreadShell),
+  archivedThreads: Schema.Array(OrchestrationV2ThreadShell),
 });
 export type OrchestrationV2ShellSnapshot = typeof OrchestrationV2ShellSnapshot.Type;
 
@@ -1040,7 +1101,15 @@ export const OrchestrationV2ShellStreamItem = Schema.Union([
   }),
   Schema.Struct({
     kind: Schema.Literal("thread.updated"),
+    sequence: NonNegativeInt,
+    location: Schema.Literals(["active", "archive"]),
     thread: OrchestrationV2ThreadShell,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("thread.removed"),
+    sequence: NonNegativeInt,
+    location: Schema.Literals(["active", "archive"]),
+    threadId: ThreadId,
   }),
 ]);
 export type OrchestrationV2ShellStreamItem = typeof OrchestrationV2ShellStreamItem.Type;
@@ -1170,6 +1239,12 @@ export const OrchestrationV2CheckpointJson = OrchestrationV2Checkpoint.mapFields
 }));
 export type OrchestrationV2CheckpointJson = typeof OrchestrationV2CheckpointJson.Type;
 
+export const OrchestrationV2CheckpointRollbackRequestJson =
+  OrchestrationV2CheckpointRollbackRequest.mapFields((fields) => ({
+    ...fields,
+    requestedAt: Schema.DateTimeUtcFromString,
+  }));
+
 const OrchestrationV2TurnItemJsonBaseFields = {
   ...OrchestrationV2TurnItemBaseFields,
   startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -1276,7 +1351,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("compaction"),
-    provider: Schema.NullOr(ProviderKind),
+    driver: Schema.NullOr(ProviderDriverKind),
     summary: Schema.optional(Schema.String),
     beforeTokenCount: Schema.optional(NonNegativeInt),
     afterTokenCount: Schema.optional(NonNegativeInt),
@@ -1287,8 +1362,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     contextHandoffId: ContextHandoffId,
     fromProviderThreadIds: Schema.Array(ProviderThreadId),
     toProviderThreadId: ProviderThreadId,
-    fromProviders: Schema.Array(ProviderKind),
-    toProvider: ProviderKind,
+    fromProviderInstanceIds: Schema.Array(ProviderInstanceId),
+    toProviderInstanceId: ProviderInstanceId,
     strategy: Schema.Literals([
       "delta_since_target_last_seen",
       "fork_delta_summary",
@@ -1318,7 +1393,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("subagent"),
     subagentId: NodeId,
     origin: Schema.Literals(["provider_native", "app_owned"]),
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
+    providerInstanceId: ProviderInstanceId,
     childThreadId: Schema.NullOr(ThreadId),
     prompt: Schema.String,
     result: Schema.NullOr(Schema.String),
@@ -1350,6 +1426,20 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("thread.created"),
+    payload: OrchestrationV2AppThreadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literals([
+      "thread.archived",
+      "thread.unarchived",
+      "thread.deleted",
+      "thread.metadata-updated",
+      "thread.runtime-mode-updated",
+      "thread.interaction-mode-updated",
+      "thread.model-selection-updated",
+      "thread.provider-switched",
+    ]),
     payload: OrchestrationV2AppThreadJson,
   }),
   Schema.Struct({
@@ -1429,6 +1519,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("checkpoint.rollback-requested"),
+    payload: OrchestrationV2CheckpointRollbackRequestJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("context-handoff.updated"),
     payload: OrchestrationV2ContextHandoffJson,
   }),
@@ -1465,6 +1560,54 @@ export const OrchestrationV2Command = Schema.Union([
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.archive"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.unarchive"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.delete"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.metadata.update"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    title: Schema.optional(TrimmedNonEmptyString),
+    branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.runtime-mode.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runtimeMode: RuntimeMode,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.interaction-mode.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    interactionMode: ProviderInteractionMode,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.model-selection.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    modelSelection: ModelSelection,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("provider-session.release"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    providerSessionId: ProviderSessionId,
+    reason: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     type: Schema.Literal("message.dispatch"),
@@ -1555,7 +1698,6 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("provider.switch"),
     commandId: CommandId,
     threadId: ThreadId,
-    provider: ProviderKind,
     modelSelection: ModelSelection,
   }),
 ]);
@@ -1668,7 +1810,7 @@ export const ProviderReplayEntry = Schema.Union([
 export type ProviderReplayEntry = typeof ProviderReplayEntry.Type;
 
 export const ProviderReplayTranscript = Schema.Struct({
-  provider: ProviderKind,
+  provider: TrimmedNonEmptyString,
   protocol: TrimmedNonEmptyString,
   version: TrimmedNonEmptyString,
   scenario: TrimmedNonEmptyString,
@@ -1679,7 +1821,7 @@ export type ProviderReplayTranscript = typeof ProviderReplayTranscript.Type;
 
 export const ProviderReplayTranscriptHeader = Schema.Struct({
   type: Schema.Literal("transcript_start"),
-  provider: ProviderKind,
+  provider: TrimmedNonEmptyString,
   protocol: TrimmedNonEmptyString,
   version: TrimmedNonEmptyString,
   scenario: TrimmedNonEmptyString,

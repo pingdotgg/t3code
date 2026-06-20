@@ -95,7 +95,7 @@ export class CodexAppServerReplayFrameMismatchError extends Schema.TaggedErrorCl
   },
 ) {
   override get message(): string {
-    return `Outbound Codex app-server frame did not match replay cursor ${this.cursor} in scenario ${this.scenario}.`;
+    return `Outbound Codex app-server frame did not match replay cursor ${this.cursor} in scenario ${this.scenario}. Expected ${JSON.stringify(this.expected)}, received ${JSON.stringify(this.actual)}.`;
   }
 }
 
@@ -209,6 +209,37 @@ function normalizeReplayFrame(value: unknown): unknown {
     }
   }
 
+  if (
+    normalized.method === "turn/start" &&
+    typeof normalized.params === "object" &&
+    normalized.params !== null
+  ) {
+    const params = { ...(normalized.params as Record<string, unknown>) };
+    if (params.approvalPolicy === "never") {
+      delete params.approvalPolicy;
+    }
+    if (
+      typeof params.sandboxPolicy === "object" &&
+      params.sandboxPolicy !== null &&
+      (params.sandboxPolicy as Record<string, unknown>).type === "dangerFullAccess"
+    ) {
+      delete params.sandboxPolicy;
+    }
+    if (typeof params.collaborationMode === "object" && params.collaborationMode !== null) {
+      const collaborationMode = {
+        ...(params.collaborationMode as Record<string, unknown>),
+      };
+      if (typeof collaborationMode.settings === "object" && collaborationMode.settings !== null) {
+        collaborationMode.settings = {
+          ...(collaborationMode.settings as Record<string, unknown>),
+          developer_instructions: "<ignored>",
+        };
+      }
+      params.collaborationMode = collaborationMode;
+    }
+    normalized.params = params;
+  }
+
   return normalized;
 }
 
@@ -218,8 +249,56 @@ function sameFrame(left: unknown, right: unknown): boolean {
   );
 }
 
+function normalizeLegacyInboundFrame(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(normalizeLegacyInboundFrame);
+  }
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  const record = value as Record<string, unknown>;
+  const normalized = Object.fromEntries(
+    Object.entries(record).map(([key, entry]) => [key, normalizeLegacyInboundFrame(entry)]),
+  );
+  if (
+    typeof normalized.id === "string" &&
+    normalized.sessionId === undefined &&
+    "modelProvider" in normalized &&
+    "status" in normalized
+  ) {
+    normalized.sessionId = normalized.id;
+  }
+  if (
+    (normalized.method === "item/started" || normalized.method === "item/completed") &&
+    typeof normalized.params === "object" &&
+    normalized.params !== null
+  ) {
+    const params = { ...(normalized.params as Record<string, unknown>) };
+    if (normalized.method === "item/started" && params.startedAtMs === undefined) {
+      params.startedAtMs = 0;
+    }
+    if (normalized.method === "item/completed" && params.completedAtMs === undefined) {
+      params.completedAtMs = 0;
+    }
+    normalized.params = params;
+  }
+  if (
+    typeof normalized.method === "string" &&
+    normalized.method.endsWith("/requestApproval") &&
+    typeof normalized.params === "object" &&
+    normalized.params !== null
+  ) {
+    const params = { ...(normalized.params as Record<string, unknown>) };
+    if (params.startedAtMs === undefined) {
+      params.startedAtMs = 0;
+    }
+    normalized.params = params;
+  }
+  return normalized;
+}
+
 function encodeInboundFrame(frame: unknown): Uint8Array {
-  return encoder.encode(`${JSON.stringify(frame)}\n`);
+  return encoder.encode(`${JSON.stringify(normalizeLegacyInboundFrame(frame))}\n`);
 }
 
 function replayTransportError(

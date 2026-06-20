@@ -55,26 +55,27 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
 >(input: {
   readonly fixtureName: string;
   readonly buildInput: () => OrchestratorFixtureInput;
-  readonly provider: ProviderOrchestratorReplayVariant;
+  readonly driver: ProviderOrchestratorReplayVariant;
   readonly harness: OrchestratorV2ProviderReplayHarness<Transcript, Error>;
   readonly enableAssistantStreaming?: boolean;
 }) {
-  const rawTranscript = yield* readTranscript(input.provider.transcriptFile);
+  const rawTranscript = yield* readTranscript(input.driver.transcriptFile);
   const transcript = yield* input.harness.decodeTranscript(rawTranscript);
   const workspace = yield* checkpointWorkspace(input.fixtureName);
   const materialized = yield* materializeFixtureInput({
     scenario: input.fixtureName,
     fixtureInput: input.buildInput(),
-    modelSelection: input.provider.modelSelection,
+    driver: input.driver.driver,
+    modelSelection: input.driver.modelSelection,
   }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
   const scenario = {
-    name: `${input.fixtureName}/${input.provider.provider}`,
+    name: `${input.fixtureName}/${input.driver.driver}`,
     transcript,
     commands: materialized.commands,
     steps: materialized.steps,
     projectionThreadIds: materialized.projectionThreadIds,
     runtimePolicyOverride: {
-      ...input.provider.runtimePolicyOverride,
+      ...input.driver.runtimePolicyOverride,
       cwd: workspace,
     },
   };
@@ -82,8 +83,7 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   const result = yield* runOrchestratorV2ProviderReplayScenario(scenario, input.harness, {
     enableAssistantStreaming: input.enableAssistantStreaming ?? false,
   }).pipe(provideDeterministicTestRuntime);
-
-  input.provider.assertOutput(result, transcript);
+  input.driver.assertOutput(result, transcript);
   if (input.enableAssistantStreaming !== true) {
     assert.isFalse(
       result.domainEvents.some(isStreamingAssistantEvent),
@@ -95,17 +95,17 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   const projection = result.projections.get(projectionThreadId);
   assert.isDefined(projection);
   const latestRun = projection.runs.at(-1);
-  assert.deepEqual(latestRun?.modelSelection, input.provider.modelSelection);
+  assert.deepEqual(latestRun?.modelSelection, input.driver.modelSelection);
   return result;
 });
 
 function runFixtureProviderWithRegisteredHarness(input: {
   readonly fixtureName: string;
   readonly buildInput: () => OrchestratorFixtureInput;
-  readonly provider: ProviderOrchestratorReplayVariant;
+  readonly driver: ProviderOrchestratorReplayVariant;
   readonly enableAssistantStreaming?: boolean;
 }) {
-  switch (input.provider.provider) {
+  switch (input.driver.driver) {
     case "codex":
       return runFixtureProvider({
         ...input,
@@ -138,7 +138,7 @@ function runFixtureProviderWithRegisteredHarness(input: {
       }).pipe(Effect.mapError(normalizeTestError), Effect.scoped);
     default:
       return Effect.die(
-        new Error(`No replay harness registered for provider ${input.provider.provider}.`),
+        new Error(`No replay harness registered for provider ${input.driver.driver}.`),
       );
   }
 }
@@ -147,12 +147,12 @@ describe("orchestrator replay fixtures", () => {
   for (const fixture of ORCHESTRATOR_REPLAY_FIXTURES) {
     for (const provider of fixture.providers) {
       it.effect(
-        `runs ${fixture.name}/${provider.provider} through OrchestratorV2 using deterministic replay`,
+        `runs ${fixture.name}/${provider.driver} through OrchestratorV2 using deterministic replay`,
         () =>
           runFixtureProviderWithRegisteredHarness({
             fixtureName: fixture.name,
             buildInput: fixture.buildInput,
-            provider,
+            driver: provider,
           }),
       );
     }
@@ -162,21 +162,21 @@ describe("orchestrator replay fixtures", () => {
     (fixture) => fixture.name === "message_steering",
   );
   const cursorSteeringProvider = steeringFixture?.providers.find(
-    (provider) => provider.provider === "cursor",
+    (provider) => provider.driver === "cursor",
   );
   if (cursorSteeringProvider !== undefined) {
     it.effect("executes explicit Cursor restart_active through the recorded SDK boundary", () =>
       runFixtureProviderWithRegisteredHarness({
         fixtureName: "message_steering",
         buildInput: messageRestartInput,
-        provider: cursorSteeringProvider,
+        driver: cursorSteeringProvider,
       }),
     );
   }
 
   const simpleFixture = ORCHESTRATOR_REPLAY_FIXTURES.find((fixture) => fixture.name === "simple");
   const simpleCursorProvider = simpleFixture?.providers.find(
-    (provider) => provider.provider === "cursor",
+    (provider) => provider.driver === "cursor",
   );
   if (simpleFixture !== undefined && simpleCursorProvider !== undefined) {
     it.effect("streams Cursor assistant artifacts only when streaming is enabled", () =>
@@ -184,7 +184,7 @@ describe("orchestrator replay fixtures", () => {
         const result = yield* runFixtureProviderWithRegisteredHarness({
           fixtureName: "simple-cursor-streaming",
           buildInput: simpleFixture.buildInput,
-          provider: simpleCursorProvider,
+          driver: simpleCursorProvider,
           enableAssistantStreaming: true,
         });
 

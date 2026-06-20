@@ -58,6 +58,9 @@ export const CommandReceiptV2 = Schema.Struct({
 export type CommandReceiptV2 = typeof CommandReceiptV2.Type;
 
 export interface CommandReceiptStoreV2Shape {
+  readonly insertIfAbsent: (
+    receipt: CommandReceiptV2,
+  ) => Effect.Effect<boolean, CommandReceiptStoreV2Error>;
   readonly upsert: (receipt: CommandReceiptV2) => Effect.Effect<void, CommandReceiptStoreV2Error>;
   readonly getByCommandId: (
     commandId: CommandId,
@@ -107,6 +110,38 @@ export const layer: Layer.Layer<CommandReceiptStoreV2, never, SqlClient.SqlClien
     const sql = yield* SqlClient.SqlClient;
 
     return CommandReceiptStoreV2.of({
+      insertIfAbsent: (receipt) =>
+        sql<{ readonly command_id: string }>`
+          INSERT INTO orchestration_v2_command_receipts (
+            command_id,
+            thread_id,
+            command_type,
+            accepted_at,
+            result_sequence,
+            status,
+            error
+          )
+          VALUES (
+            ${receipt.commandId},
+            ${receipt.threadId},
+            ${receipt.commandType},
+            ${DateTime.formatIso(receipt.acceptedAt)},
+            ${receipt.resultSequence},
+            ${receipt.status},
+            ${receipt.error}
+          )
+          ON CONFLICT(command_id) DO NOTHING
+          RETURNING command_id
+        `.pipe(
+          Effect.map((rows) => rows.length === 1),
+          Effect.mapError(
+            (cause) =>
+              new CommandReceiptStoreWriteError({
+                commandId: receipt.commandId,
+                cause,
+              }),
+          ),
+        ),
       upsert: (receipt) =>
         sql`
           INSERT INTO orchestration_v2_command_receipts (

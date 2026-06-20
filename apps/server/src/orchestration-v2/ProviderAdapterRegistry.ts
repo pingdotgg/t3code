@@ -1,23 +1,21 @@
 import {
-  defaultInstanceIdForDriver,
-  ProviderDriverKind as ProviderDriverKindSchema,
   ProviderInstanceId,
   type ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
-  type ServerSettings,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
 
+import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
+import {
+  ProviderAdapterDriverCreateError,
+  type AnyProviderAdapterDriver,
+} from "./ProviderAdapterDriver.ts";
 import { ProviderAdapterV2, type ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 
 export class ProviderAdapterRegistryLookupError extends Schema.TaggedErrorClass<ProviderAdapterRegistryLookupError>()(
@@ -48,6 +46,41 @@ export class ProviderAdapterRegistryV2 extends Context.Service<
   ProviderAdapterRegistryV2,
   ProviderAdapterRegistryV2Shape
 >()("t3/orchestration-v2/ProviderAdapterRegistry/ProviderAdapterRegistryV2") {}
+
+/**
+ * Production facade over the canonical provider-instance registry. Adapter
+ * lookup stays dynamic so instance hot reloads and removals are visible
+ * without maintaining a second settings watcher or instance map.
+ */
+export const layerFromProviderInstanceRegistry: Layer.Layer<
+  ProviderAdapterRegistryV2,
+  never,
+  ProviderInstanceRegistry
+> = Layer.effect(
+  ProviderAdapterRegistryV2,
+  Effect.gen(function* () {
+    const instances = yield* ProviderInstanceRegistry;
+    return ProviderAdapterRegistryV2.of({
+      get: (instanceId) =>
+        instances
+          .getInstance(instanceId)
+          .pipe(
+            Effect.flatMap((instance) =>
+              instance === undefined
+                ? new ProviderAdapterRegistryLookupError({ instanceId })
+                : Effect.succeed(instance.orchestrationAdapter),
+            ),
+          ),
+      list: () =>
+        instances.listInstances.pipe(
+          Effect.map((available) => available.map((instance) => instance.instanceId)),
+        ),
+    });
+  }),
+);
+
+export const ProviderAdapterRegistryBuildError = Schema.Union([ProviderAdapterDriverCreateError]);
+export type ProviderAdapterRegistryBuildError = typeof ProviderAdapterRegistryBuildError.Type;
 
 function makeRegistry(
   adapters: ReadonlyArray<ProviderAdapterV2Shape>,
@@ -89,35 +122,6 @@ export function makeSingleLayer(
   return makeLayer([adapter]);
 }
 
-export function deriveProviderAdapterInstanceConfigMap<R>(input: {
-  readonly settings: ServerSettings;
-  readonly drivers: ReadonlyArray<AnyProviderAdapterDriver<R>>;
-}): ProviderInstanceConfigMap {
-  const merged: Record<string, ProviderInstanceConfig> = {
-    ...input.settings.providerInstances,
-  };
-
-  for (const driver of input.drivers) {
-    const instanceId = defaultInstanceIdForDriver(driver.driverKind);
-    if (instanceId in merged) {
-      continue;
-    }
-
-    const legacyKey = driver.driverKind as keyof ServerSettings["providers"];
-    const legacyConfig = input.settings.providers[legacyKey];
-    if (legacyConfig === undefined) {
-      continue;
-    }
-
-    merged[instanceId] = {
-      driver: driver.driverKind,
-      config: legacyConfig,
-    };
-  }
-
-  return merged as ProviderInstanceConfigMap;
-}
-
 const decodedConfigEnabled = (config: unknown): boolean | undefined => {
   if (!config || typeof config !== "object" || globalThis.Array.isArray(config)) {
     return undefined;
@@ -131,17 +135,6 @@ interface LiveAdapterEntry {
   readonly scope: Scope.Closeable;
   readonly entry: ProviderInstanceConfig;
 }
-
-const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
-  Equal.equals(a, b);
-
-const makeSettingsReadError = (cause: unknown): ProviderAdapterDriverCreateError =>
-  new ProviderAdapterDriverCreateError({
-    driver: ProviderDriverKindSchema.make("settings"),
-    instanceId: ProviderInstanceId.make("settings"),
-    detail: "Failed to read server settings before building provider adapters.",
-    cause,
-  });
 
 function makeDriversById<R>(
   drivers: ReadonlyArray<AnyProviderAdapterDriver<R>>,
@@ -244,9 +237,6 @@ const buildAdaptersFromConfigMap = Effect.fn("ProviderAdapterRegistry.buildAdapt
   },
 );
 
-const closeAdapterEntry = (entry: LiveAdapterEntry): Effect.Effect<void> =>
-  Scope.close(entry.scope, Exit.void).pipe(Effect.ignore);
-
 export function makeRegistryFromConfigMap<R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderAdapterDriver<R>>;
   readonly configMap: ProviderInstanceConfigMap;
@@ -272,169 +262,6 @@ export function makeDriverLayer<R>(input: {
       Effect.map((registry) => ProviderAdapterRegistryV2.of(registry)),
     ),
   ) as Layer.Layer<ProviderAdapterRegistryV2, ProviderAdapterRegistryBuildError, R>;
-}
-
-export function makeDriverLayerFromSettings<R>(input: {
-  readonly drivers: ReadonlyArray<AnyProviderAdapterDriver<R>>;
-}): Layer.Layer<
-  ProviderAdapterRegistryV2,
-  ProviderAdapterRegistryBuildError,
-  R | ServerSettingsService
-> {
-  return Layer.effect(
-    ProviderAdapterRegistryV2,
-    Effect.gen(function* () {
-      const settingsService = yield* ServerSettingsService;
-      const parentScope = yield* Effect.scope;
-      const driverContext = yield* Effect.context<R>();
-      const settings = yield* settingsService.getSettings.pipe(
-        Effect.mapError((cause) => makeSettingsReadError(cause)),
-      );
-      const configMap = deriveProviderAdapterInstanceConfigMap({
-        settings,
-        drivers: input.drivers,
-      });
-      const initialAdapters = yield* buildAdaptersFromConfigMap({
-        drivers: input.drivers,
-        configMap,
-        parentScope,
-      });
-      const adaptersRef = yield* Ref.make(initialAdapters);
-      const reconcileSemaphore = yield* Semaphore.make(1);
-      const driversById = makeDriversById(input.drivers);
-
-      const reconcileConfigMapWithR = Effect.fn("ProviderAdapterRegistry.reconcileConfigMap")(
-        function* (
-          nextConfigMap: ProviderInstanceConfigMap,
-        ): Effect.fn.Return<void, ProviderAdapterRegistryBuildError, R> {
-          const previous = yield* Ref.get(adaptersRef);
-          const nextEntries = new Map<ProviderInstanceId, LiveAdapterEntry>();
-          const staleEntries: Array<LiveAdapterEntry> = [];
-          const nextIds = new Set<ProviderInstanceId>();
-
-          for (const [rawInstanceId, entry] of Object.entries(nextConfigMap)) {
-            const instanceId = ProviderInstanceId.make(rawInstanceId);
-            nextIds.add(instanceId);
-
-            if (!driversById.has(entry.driver)) {
-              yield* Effect.logWarning(
-                "Skipping orchestration-v2 provider adapter with unknown driver",
-                {
-                  instanceId,
-                  driver: entry.driver,
-                },
-              );
-              continue;
-            }
-
-            const existing = previous.get(instanceId);
-            if (existing !== undefined && entryEqual(existing.entry, entry)) {
-              nextEntries.set(instanceId, existing);
-              continue;
-            }
-
-            const nextEntry = yield* createAdapterEntryFromConfigEntry({
-              driversById,
-              parentScope,
-              instanceId,
-              entry,
-            });
-            nextEntries.set(instanceId, nextEntry);
-            if (existing !== undefined) {
-              staleEntries.push(existing);
-            }
-          }
-
-          for (const [instanceId, existing] of previous) {
-            if (!nextIds.has(instanceId)) {
-              staleEntries.push(existing);
-            }
-          }
-
-          yield* Ref.set(adaptersRef, nextEntries);
-          for (const entry of staleEntries) {
-            yield* closeAdapterEntry(entry);
-          }
-        },
-      );
-      const reconcileConfigMap = (nextConfigMap: ProviderInstanceConfigMap) =>
-        reconcileConfigMapWithR(nextConfigMap).pipe(Effect.provideContext(driverContext));
-
-      const refreshFromSettings = Effect.fn("ProviderAdapterRegistry.refreshFromSettings")(
-        function* (): Effect.fn.Return<void, ProviderAdapterRegistryV2Error, never> {
-          const latestSettings = yield* settingsService.getSettings.pipe(
-            Effect.mapError((cause) => makeSettingsReadError(cause)),
-          );
-          yield* reconcileConfigMap(
-            deriveProviderAdapterInstanceConfigMap({
-              settings: latestSettings,
-              drivers: input.drivers,
-            }),
-          );
-        },
-      );
-
-      yield* settingsService.streamChanges.pipe(
-        Stream.runForEach((nextSettings) =>
-          reconcileSemaphore.withPermits(1)(
-            reconcileConfigMap(
-              deriveProviderAdapterInstanceConfigMap({
-                settings: nextSettings,
-                drivers: input.drivers,
-              }),
-            ).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logError("Orchestration-v2 provider adapter registry reconcile failed", {
-                  cause,
-                }),
-              ),
-            ),
-          ),
-        ),
-        Effect.forkScoped,
-      );
-
-      const refreshAndGet = Effect.fn("ProviderAdapterRegistry.refreshAndGet")(function* (
-        instanceId: ProviderInstanceId,
-      ): Effect.fn.Return<ProviderAdapterV2Shape, ProviderAdapterRegistryV2Error, never> {
-        return yield* reconcileSemaphore.withPermits(1)(
-          Effect.gen(function* () {
-            const cached = (yield* Ref.get(adaptersRef)).get(instanceId);
-            if (cached !== undefined) {
-              return cached.adapter;
-            }
-
-            yield* refreshFromSettings();
-            const refreshed = (yield* Ref.get(adaptersRef)).get(instanceId);
-            if (refreshed === undefined) {
-              return yield* new ProviderAdapterRegistryLookupError({ instanceId });
-            }
-            return refreshed.adapter;
-          }),
-        );
-      });
-
-      const get = Effect.fn("ProviderAdapterRegistry.get")(function* (
-        instanceId: ProviderInstanceId,
-      ): Effect.fn.Return<ProviderAdapterV2Shape, ProviderAdapterRegistryV2Error, never> {
-        const cached = (yield* Ref.get(adaptersRef)).get(instanceId);
-        if (cached !== undefined) {
-          return cached.adapter;
-        }
-        return yield* refreshAndGet(instanceId);
-      });
-
-      return ProviderAdapterRegistryV2.of({
-        get,
-        list: () =>
-          Ref.get(adaptersRef).pipe(
-            Effect.map((adapters) =>
-              Array.from(adapters.values()).map((entry) => entry.adapter.instanceId),
-            ),
-          ),
-      } satisfies ProviderAdapterRegistryV2Shape);
-    }),
-  );
 }
 
 export const layerFromProviderAdapter: Layer.Layer<

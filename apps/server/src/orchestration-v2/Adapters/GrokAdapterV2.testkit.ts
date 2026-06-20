@@ -70,7 +70,7 @@ export const GrokOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   AcpReplayTranscript,
   AcpReplayTranscriptDecodeError
 > = {
-  provider: GROK_PROVIDER,
+  driver: GROK_PROVIDER,
   decodeTranscript: (transcript) => decodeAcpReplayTranscript(transcript, GROK_PROVIDER),
   makeProviderAdapterRegistryLayer: makeGrokProviderAdapterRegistryReplayLayer,
 };

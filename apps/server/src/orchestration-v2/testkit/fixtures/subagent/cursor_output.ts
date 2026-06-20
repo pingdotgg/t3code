@@ -63,7 +63,7 @@ export function assertCursorSubagentOutput(
   for (const subagent of projection.subagents) {
     assert.equal(subagent.origin, "provider_native");
     assert.equal(subagent.createdBy, "agent");
-    assert.equal(subagent.provider, "cursor");
+    assert.equal(subagent.driver, "cursor");
     assert.isNull(subagent.providerThreadId);
     assert.isNotNull(subagent.childThreadId);
     assert.isNotNull(subagent.nativeTaskRef);
