@@ -88,6 +88,15 @@ export function normalizeDpopHtu(url: string): string | null {
   }
 }
 
+export function redactDpopRequestTarget(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+  } catch {
+    return "<invalid-url>";
+  }
+}
+
 export function computeDpopJwkThumbprint(jwk: DpopPublicJwk): string {
   return Encoding.encodeBase64Url(sha256(new TextEncoder().encode(dpopThumbprintInput(jwk))));
 }

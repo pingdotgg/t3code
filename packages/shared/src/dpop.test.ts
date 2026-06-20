@@ -6,6 +6,7 @@ import {
   computeDpopAccessTokenHash,
   computeDpopJwkThumbprint,
   normalizeDpopHtu,
+  redactDpopRequestTarget,
   type DpopPublicJwk,
   verifyDpopProof,
 } from "./dpop.ts";
@@ -40,6 +41,18 @@ function signDpopProof(input: {
   }).toString("base64url");
   return `${header}.${payload}.${signature}`;
 }
+
+describe("redactDpopRequestTarget", () => {
+  it("retains the scheme, host, port, and path while removing sensitive URL components", () => {
+    const url = "https://user:password@example.com:8443/oauth/token?code=secret#fragment";
+
+    assert.equal(redactDpopRequestTarget(url), "https://example.com:8443/oauth/token");
+  });
+
+  it("returns a safe sentinel for invalid input", () => {
+    assert.equal(redactDpopRequestTarget("not a URL?token=secret"), "<invalid-url>");
+  });
+});
 
 describe("verifyDpopProof", () => {
   const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync("ec", {
