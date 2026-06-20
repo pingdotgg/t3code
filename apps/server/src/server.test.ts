@@ -14,7 +14,7 @@ import {
   GitCommandError,
   KeybindingRule,
   MessageId,
-  ExternalLauncherError,
+  ExternalLauncherCommandNotFoundError,
   type OrchestrationThreadShell,
   TerminalNotRunningError,
   type OrchestrationCommand,
@@ -4691,8 +4691,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("routes websocket rpc shell.openInEditor errors", () =>
     Effect.gen(function* () {
-      const externalLauncherError = new ExternalLauncherError({
-        message: "Editor command not found: cursor",
+      const externalLauncherError = new ExternalLauncherCommandNotFoundError({
+        editor: "cursor",
+        command: "cursor",
       });
       yield* buildAppUnderTest({
         layers: {
