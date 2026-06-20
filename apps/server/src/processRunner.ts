@@ -215,7 +215,7 @@ const collectText = Effect.fn("processRunner.collectText")(function* (input: {
       () => ({ chunks: [], bytes: 0 }),
       (state, chunk) => {
         const remainingBytes = input.maxOutputBytes - state.bytes;
-        if (remainingBytes <= 0 || chunk.byteLength > remainingBytes) {
+        if (chunk.byteLength > remainingBytes) {
           return Effect.fail(
             new ProcessOutputLimitError({
               command: input.command,

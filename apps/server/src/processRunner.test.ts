@@ -222,6 +222,27 @@ describe("runProcess", () => {
     }),
   );
 
+  it.effect("accepts output at the byte limit followed by an empty chunk", () =>
+    Effect.gen(function* () {
+      const output = new TextEncoder().encode("exactly");
+      const spawner = makeSpawner(() =>
+        Effect.succeed(
+          makeHandle({
+            stdout: Stream.make(output, new Uint8Array()),
+          }),
+        ),
+      );
+
+      const result = yield* runWith(spawner)({
+        command: "fake",
+        args: ["exact-limit"],
+        maxOutputBytes: output.byteLength,
+      });
+
+      expect(result.stdout).toBe("exactly");
+    }),
+  );
+
   it.effect("fails fast on output limit before timeout for long-running output", () =>
     Effect.gen(function* () {
       const textChunk = "x".repeat(64);
