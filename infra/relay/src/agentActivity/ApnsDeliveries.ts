@@ -21,9 +21,12 @@ import {
 } from "./agentActivityPayloads.ts";
 import * as Apns from "./ApnsClient.ts";
 import {
-  ApnsDeliveryJobInvalid,
+  ApnsDeliveryJobLiveActivityAggregateMissing,
+  ApnsDeliveryJobPushNotificationMissing,
+  ApnsDeliveryJobQueuePayloadInvalid,
   type ApnsNotificationPayload,
   SignedApnsDeliveryJob,
+  isApnsDeliveryJobVerificationError,
   verifySignedApnsDeliveryJob,
   type ApnsDeliveryJobVerificationError,
 } from "./apnsDeliveryJobs.ts";
@@ -91,17 +94,6 @@ const decodeRelayAgentAwarenessPreferencesJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayAgentAwarenessPreferencesSchema),
 );
 const decodeSignedApnsDeliveryJob = Schema.decodeUnknownEffect(SignedApnsDeliveryJob);
-
-function apnsErrorMessage(error: Apns.ApnsError): string {
-  switch (error._tag) {
-    case "ApnsSigningError":
-      return "Failed to sign APNs request.";
-    case "ApnsHttpRequestError":
-      return "Failed to send APNs request.";
-    case "ApnsInvalidResponseError":
-      return "APNs returned an invalid response.";
-  }
-}
 
 function parseAggregate(value: string | null): RelayAgentActivityAggregateState | null {
   if (!value) {
@@ -273,15 +265,6 @@ function isPermanentApnsTokenFailure(result: Apns.ApnsDeliveryResult): boolean {
   );
 }
 
-function isDeliveryJobVerificationError(value: unknown): value is ApnsDeliveryJobVerificationError {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "_tag" in value &&
-    (value._tag === "ApnsDeliveryJobInvalid" || value._tag === "ApnsDeliveryJobExpired")
-  );
-}
-
 function duplicateJobResult(input: {
   readonly deviceId: string;
   readonly kind: RelayDeliveryKind;
@@ -418,7 +401,7 @@ export class ApnsDeliveries extends Context.Service<
   }
 >()("t3code-relay/agentActivity/ApnsDeliveries") {}
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const attempts = yield* DeliveryAttempts.DeliveryAttempts;
   const liveActivities = yield* LiveActivities.LiveActivities;
   const deliveryQueue = yield* ApnsDeliveryQueue.ApnsDeliveryQueue;
@@ -497,7 +480,7 @@ const make = Effect.gen(function* () {
           Effect.succeed({
             ok: false,
             status: 0,
-            reason: apnsErrorMessage(error),
+            reason: error.message,
             apnsId: null,
           }),
         ),
@@ -614,7 +597,7 @@ const make = Effect.gen(function* () {
           Effect.succeed({
             ok: false,
             status: 0,
-            reason: apnsErrorMessage(error),
+            reason: error.message,
             apnsId: null,
           }),
         ),
@@ -657,12 +640,7 @@ const make = Effect.gen(function* () {
     "relay.apns_deliveries.process_signed_job",
   )(function* (body) {
     const signedJob = yield* decodeSignedApnsDeliveryJob(body).pipe(
-      Effect.mapError(
-        () =>
-          new ApnsDeliveryJobInvalid({
-            reason: "invalid-queue-payload",
-          }),
-      ),
+      Effect.mapError(() => new ApnsDeliveryJobQueuePayloadInvalid()),
     );
     const now = yield* DateTime.now;
     const payload = verifySignedApnsDeliveryJob({
@@ -670,7 +648,7 @@ const make = Effect.gen(function* () {
       job: signedJob,
       nowMs: now.epochMilliseconds,
     });
-    if (isDeliveryJobVerificationError(payload)) {
+    if (isApnsDeliveryJobVerificationError(payload)) {
       return yield* payload;
     }
     yield* Effect.annotateCurrentSpan({
@@ -683,11 +661,7 @@ const make = Effect.gen(function* () {
         case "live_activity_start":
         case "live_activity_update":
           if (payload.aggregate === null) {
-            return Effect.fail(
-              new ApnsDeliveryJobInvalid({
-                reason: "missing-live-activity-aggregate",
-              }),
-            );
+            return Effect.fail(new ApnsDeliveryJobLiveActivityAggregateMissing());
           }
           return sendLiveActivity({
             target: {
@@ -712,11 +686,7 @@ const make = Effect.gen(function* () {
           });
         case "push_notification":
           if (payload.notification === null) {
-            return Effect.fail(
-              new ApnsDeliveryJobInvalid({
-                reason: "missing-push-notification",
-              }),
-            );
+            return Effect.fail(new ApnsDeliveryJobPushNotificationMissing());
           }
           return sendPushNotification({
             target: {

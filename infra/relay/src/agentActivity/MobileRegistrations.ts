@@ -33,7 +33,7 @@ export class MobileRegistrations extends Context.Service<
   }
 >()("t3code-relay/agentActivity/MobileRegistrations") {}
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const devices = yield* Devices.Devices;
   const liveActivities = yield* LiveActivities.LiveActivities;
   const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;

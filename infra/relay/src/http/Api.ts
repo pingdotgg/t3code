@@ -777,18 +777,17 @@ export const serverApi = HttpApiBuilder.group(
               reason: "persistence_failed",
               traceId,
             }),
-          ApnsDeliveryJobInvalid: (_error, traceId) =>
-            new RelayInternalError({
-              code: "internal_error",
-              reason: "internal_error",
-              traceId,
-            }),
-          ApnsDeliveryJobExpired: (_error, traceId) =>
-            new RelayInternalError({
-              code: "internal_error",
-              reason: "internal_error",
-              traceId,
-            }),
+          ApnsDeliveryJobQueuePayloadInvalid: mapApnsDeliveryJobInternalError,
+          ApnsDeliveryJobLiveActivityAggregateMissing: mapApnsDeliveryJobInternalError,
+          ApnsDeliveryJobLiveActivityNotificationUnexpected: mapApnsDeliveryJobInternalError,
+          ApnsDeliveryJobPushNotificationMissing: mapApnsDeliveryJobInternalError,
+          ApnsDeliveryJobPushNotificationAggregateUnexpected: mapApnsDeliveryJobInternalError,
+          ApnsDeliveryJobCreatedAtInvalid: mapApnsDeliveryJobInternalError,
+          ApnsDeliveryJobExpiresAtInvalid: mapApnsDeliveryJobInternalError,
+          ApnsDeliveryJobTimeWindowInvalid: mapApnsDeliveryJobInternalError,
+          ApnsDeliveryJobTimeWindowTooLong: mapApnsDeliveryJobInternalError,
+          ApnsDeliveryJobSignatureInvalid: mapApnsDeliveryJobInternalError,
+          ApnsDeliveryJobExpired: mapApnsDeliveryJobInternalError,
           ApnsDeliveryJobClaimInFlight: (_error, traceId) =>
             new RelayInternalError({
               code: "internal_error",
@@ -891,6 +890,14 @@ function mapRelayCommonApiErrors(authReason: RelayAuthInvalidReason) {
   return <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ): Effect.Effect<A, MapRelayCommonApiError<E>, R> => effect.pipe(Effect.catch(mapError));
+}
+
+function mapApnsDeliveryJobInternalError(_error: unknown, traceId: string) {
+  return new RelayInternalError({
+    code: "internal_error",
+    reason: "internal_error",
+    traceId,
+  });
 }
 
 type TaggedErrorTag<E> = Extract<E, { readonly _tag: string }>["_tag"];
