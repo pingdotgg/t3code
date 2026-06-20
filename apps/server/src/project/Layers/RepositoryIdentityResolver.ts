@@ -83,11 +83,17 @@ interface RepositoryIdentityResolverOptions {
   readonly negativeCacheTtl?: Duration.Input;
 }
 
+interface RepositoryIdentityCacheKey {
+  /** The git top-level path when found, otherwise the original cwd. */
+  readonly cacheKey: string;
+  /** Whether `git rev-parse --show-toplevel` actually resolved a top-level. */
+  readonly resolved: boolean;
+}
+
 const resolveRepositoryIdentityCacheKey = Effect.fn("resolveRepositoryIdentityCacheKey")(function* (
   cwd: string,
-) {
+): Effect.fn.Return<RepositoryIdentityCacheKey, never, ProcessRunner.ProcessRunner> {
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  let cacheKey = cwd;
 
   // git is a real executable on every platform — no cmd.exe shell mode, which
   // would split paths containing spaces during cmd's re-tokenization.
@@ -99,15 +105,13 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("resolveRepositoryIdentityCa
     })
     .pipe(Effect.option);
   if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
-    return cacheKey;
+    return { cacheKey: cwd, resolved: false };
   }
 
   const candidate = topLevelResult.value.stdout.trim();
-  if (candidate.length > 0) {
-    cacheKey = candidate;
-  }
-
-  return cacheKey;
+  return candidate.length > 0
+    ? { cacheKey: candidate, resolved: true }
+    : { cacheKey: cwd, resolved: false };
 });
 
 const resolveRepositoryIdentityFromCacheKey = Effect.fn("resolveRepositoryIdentityFromCacheKey")(
@@ -135,6 +139,38 @@ export const makeRepositoryIdentityResolver = Effect.fn("makeRepositoryIdentityR
   function* (options: RepositoryIdentityResolverOptions = {}) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
 
+    // `git rev-parse --show-toplevel` is otherwise re-run on every resolve. During
+    // `replayEvents` enrichment that means one git subprocess per project event on
+    // every reconnect, which is the dominant cost behind the "Some requests are
+    // slow" toast (#2037). Memoise the cwd -> top-level mapping so a replay burst
+    // resolves each workspace at most once per positive TTL.
+    //
+    // Only a resolved top-level is cached. An unresolved cwd (not a repo, or git
+    // timed out) is intentionally not cached: a timeout is not a definitive answer,
+    // and caching the cwd fallback would let a nested workspace keep resolving
+    // `git remote -v` against the nested path, pinning the identity rootPath to the
+    // nested dir until the entry expired. Re-running rev-parse on the next resolve
+    // self-corrects, matching the pre-cache behaviour.
+    const repositoryIdentityCacheKeyCache = yield* Cache.makeWith<
+      string,
+      RepositoryIdentityCacheKey
+    >(
+      (cwd) =>
+        resolveRepositoryIdentityCacheKey(cwd).pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+        ),
+      {
+        capacity: options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY,
+        timeToLive: Exit.match({
+          onSuccess: (value) =>
+            value.resolved
+              ? (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL)
+              : Duration.zero,
+          onFailure: () => Duration.zero,
+        }),
+      },
+    );
+
     const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
       (cacheKey) =>
         resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
@@ -155,9 +191,7 @@ export const makeRepositoryIdentityResolver = Effect.fn("makeRepositoryIdentityR
     const resolve: RepositoryIdentityResolverShape["resolve"] = Effect.fn(
       "RepositoryIdentityResolver.resolve",
     )(function* (cwd) {
-      const cacheKey = yield* resolveRepositoryIdentityCacheKey(cwd).pipe(
-        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-      );
+      const { cacheKey } = yield* Cache.get(repositoryIdentityCacheKeyCache, cwd);
       return yield* Cache.get(repositoryIdentityCache, cacheKey);
     });
 
