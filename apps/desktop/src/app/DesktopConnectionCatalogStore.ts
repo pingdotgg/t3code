@@ -92,7 +92,6 @@ const writeError = (
 export class DesktopConnectionCatalogStoreDecodeError extends Schema.TaggedErrorClass<DesktopConnectionCatalogStoreDecodeError>()(
   "DesktopConnectionCatalogStoreDecodeError",
   {
-    operation: Schema.Literal("decode-encrypted-catalog"),
     resource: Schema.Literal("encryptedCatalog"),
     catalogPath: Schema.String,
     cause: Schema.Defect(),
@@ -106,7 +105,6 @@ export class DesktopConnectionCatalogStoreDecodeError extends Schema.TaggedError
 export class DesktopConnectionCatalogStoreReadError extends Schema.TaggedErrorClass<DesktopConnectionCatalogStoreReadError>()(
   "DesktopConnectionCatalogStoreReadError",
   {
-    operation: Schema.Literal("read-catalog"),
     catalogPath: Schema.String,
     cause: Schema.Defect(),
   },
@@ -119,7 +117,6 @@ export class DesktopConnectionCatalogStoreReadError extends Schema.TaggedErrorCl
 export class DesktopConnectionCatalogStoreDocumentDecodeError extends Schema.TaggedErrorClass<DesktopConnectionCatalogStoreDocumentDecodeError>()(
   "DesktopConnectionCatalogStoreDocumentDecodeError",
   {
-    operation: Schema.Literal("decode-catalog-document"),
     catalogPath: Schema.String,
     cause: Schema.Defect(),
   },
@@ -187,7 +184,6 @@ function decodeSecretBytes(
     Effect.mapError(
       (cause) =>
         new DesktopConnectionCatalogStoreDecodeError({
-          operation: "decode-encrypted-catalog",
           resource: "encryptedCatalog",
           catalogPath,
           cause,
@@ -209,7 +205,6 @@ const readDocument = (
         ? Effect.succeed<string | null>(null)
         : Effect.fail(
             new DesktopConnectionCatalogStoreReadError({
-              operation: "read-catalog",
               catalogPath,
               cause: error,
             }),
@@ -223,7 +218,6 @@ const readDocument = (
             Effect.mapError(
               (cause) =>
                 new DesktopConnectionCatalogStoreDocumentDecodeError({
-                  operation: "decode-catalog-document",
                   catalogPath,
                   cause,
                 }),

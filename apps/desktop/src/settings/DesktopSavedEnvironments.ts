@@ -106,7 +106,6 @@ const writeError = (
 export class DesktopSavedEnvironmentsReadError extends Schema.TaggedErrorClass<DesktopSavedEnvironmentsReadError>()(
   "DesktopSavedEnvironmentsReadError",
   {
-    operation: Schema.Literal("read-registry"),
     registryPath: Schema.String,
     cause: Schema.Defect(),
   },
@@ -119,7 +118,6 @@ export class DesktopSavedEnvironmentsReadError extends Schema.TaggedErrorClass<D
 export class DesktopSavedEnvironmentsDocumentDecodeError extends Schema.TaggedErrorClass<DesktopSavedEnvironmentsDocumentDecodeError>()(
   "DesktopSavedEnvironmentsDocumentDecodeError",
   {
-    operation: Schema.Literal("decode-registry"),
     registryPath: Schema.String,
     cause: Schema.Defect(),
   },
@@ -132,7 +130,6 @@ export class DesktopSavedEnvironmentsDocumentDecodeError extends Schema.TaggedEr
 export class DesktopSavedEnvironmentSecretDecodeError extends Schema.TaggedErrorClass<DesktopSavedEnvironmentSecretDecodeError>()(
   "DesktopSavedEnvironmentSecretDecodeError",
   {
-    operation: Schema.Literal("decode-secret"),
     environmentId: Schema.String,
     registryPath: Schema.String,
     field: Schema.Literal("encryptedBearerToken"),
@@ -246,7 +243,6 @@ function readRegistryDocument(
         ? Effect.succeed<string | null>(null)
         : Effect.fail(
             new DesktopSavedEnvironmentsReadError({
-              operation: "read-registry",
               registryPath,
               cause: error,
             }),
@@ -260,7 +256,6 @@ function readRegistryDocument(
             Effect.mapError(
               (cause) =>
                 new DesktopSavedEnvironmentsDocumentDecodeError({
-                  operation: "decode-registry",
                   registryPath,
                   cause,
                 }),
@@ -327,7 +322,6 @@ function decodeSecretBytes(
     Effect.mapError(
       (cause) =>
         new DesktopSavedEnvironmentSecretDecodeError({
-          operation: "decode-secret",
           environmentId,
           registryPath,
           field: "encryptedBearerToken",

@@ -245,7 +245,6 @@ describe("DesktopSavedEnvironments", () => {
           .getSecret(savedRegistryRecord.environmentId)
           .pipe(Effect.flip);
         assert.instanceOf(error, DesktopSavedEnvironments.DesktopSavedEnvironmentSecretDecodeError);
-        assert.equal(error.operation, "decode-secret");
         assert.equal(error.environmentId, savedRegistryRecord.environmentId);
         assert.equal(error.registryPath, environment.savedEnvironmentRegistryPath);
         assert.equal(error.field, "encryptedBearerToken");
@@ -368,7 +367,6 @@ describe("DesktopSavedEnvironments", () => {
           registryError,
           DesktopSavedEnvironments.DesktopSavedEnvironmentsDocumentDecodeError,
         );
-        assert.equal(registryError.operation, "decode-registry");
         assert.equal(registryError.registryPath, environment.savedEnvironmentRegistryPath);
         assert.exists(registryError.cause);
         const secretError = yield* savedEnvironments
@@ -414,7 +412,6 @@ describe("DesktopSavedEnvironments", () => {
 
       const error = yield* savedEnvironments.getRegistry.pipe(Effect.flip);
       assert.instanceOf(error, DesktopSavedEnvironments.DesktopSavedEnvironmentsReadError);
-      assert.equal(error.operation, "read-registry");
       assert.equal(error.registryPath, registryPath);
       assert.strictEqual(error.cause, permissionError);
       assert.equal(error.message, `Failed to read desktop saved environments at ${registryPath}.`);
