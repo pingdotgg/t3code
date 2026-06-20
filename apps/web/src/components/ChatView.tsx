@@ -110,6 +110,8 @@ import {
   type RightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
+import { isImagePreviewFile, openFileInPreview } from "../browser/openFileInPreview";
+import { resolvePathLinkTarget } from "../terminal-links";
 import {
   isPreviewSupportedInRuntime,
   setActivePreviewTab,
@@ -179,7 +181,12 @@ import {
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
-import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import {
+  useEnvironmentHttpBaseUrl,
+  useEnvironments,
+  usePrimaryEnvironment,
+} from "../state/environments";
+import { assetEnvironment } from "../state/assets";
 import {
   useProject,
   useProjects,
@@ -228,6 +235,7 @@ import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button } from "./ui/button";
 import {
   buildVersionMismatchDismissalKey,
@@ -1012,6 +1020,9 @@ function ChatViewContent(props: ChatViewProps) {
     reportFailure: false,
   });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
+  const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
+    reportFailure: false,
+  });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
@@ -1339,6 +1350,9 @@ function ChatViewContent(props: ChatViewProps) {
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
   const activeProject = useProject(activeProjectRef);
+  const activeEnvironmentHttpBaseUrl = useEnvironmentHttpBaseUrl(
+    activeProject?.environmentId ?? null,
+  );
   const activeEnvironmentShell = useEnvironmentQuery(
     activeThread ? environmentShell.stateAtom(activeThread.environmentId) : null,
   );
@@ -2740,9 +2754,50 @@ function ChatViewContent(props: ChatViewProps) {
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
-      useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
+      const openFallback = () => {
+        useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
+      };
+      if (
+        !isImagePreviewFile(relativePath) ||
+        !isPreviewSupportedInRuntime() ||
+        !activeWorkspaceRoot ||
+        !activeEnvironmentHttpBaseUrl
+      ) {
+        openFallback();
+        return;
+      }
+
+      const absolutePath = resolvePathLinkTarget(relativePath, activeWorkspaceRoot);
+      void (async () => {
+        const result = await openFileInPreview({
+          threadRef: activeThreadRef,
+          filePath: absolutePath,
+          httpBaseUrl: activeEnvironmentHttpBaseUrl,
+          createAssetUrl,
+          openPreview,
+        });
+        if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+          return;
+        }
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Unable to open image preview",
+            description: error instanceof Error ? error.message : "Opening the file instead.",
+          }),
+        );
+        openFallback();
+      })();
     },
-    [activeProject, activeThreadRef],
+    [
+      activeEnvironmentHttpBaseUrl,
+      activeProject,
+      activeThreadRef,
+      activeWorkspaceRoot,
+      createAssetUrl,
+      openPreview,
+    ],
   );
   const togglePreviewPanel = useCallback(() => {
     if (!activeThreadRef || !isPreviewSupportedInRuntime()) return;

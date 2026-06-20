@@ -76,7 +76,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import {
-  isBrowserPreviewFile,
+  isWorkspacePreviewFile,
   openFileInPreview,
   openUrlInPreview,
   BrowserPreviewUnavailableError,
@@ -1470,7 +1470,7 @@ function ChatMarkdown({
             onOpenInBrowser={
               threadRef &&
               isPreviewSupportedInRuntime() &&
-              isBrowserPreviewFile(fileLinkMeta.filePath)
+              isWorkspacePreviewFile(fileLinkMeta.filePath)
                 ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
                 : undefined
             }
