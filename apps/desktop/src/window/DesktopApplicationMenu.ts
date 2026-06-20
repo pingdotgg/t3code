@@ -1,8 +1,8 @@
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import type * as Electron from "electron";
 
@@ -13,6 +13,18 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
+
+export class DesktopApplicationMenuActionError extends Schema.TaggedErrorClass<DesktopApplicationMenuActionError>()(
+  "DesktopApplicationMenuActionError",
+  {
+    action: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Desktop menu action "${this.action}" failed.`;
+  }
+}
 
 export class DesktopApplicationMenu extends Context.Service<
   DesktopApplicationMenu,
@@ -100,12 +112,10 @@ export const make = Effect.gen(function* () {
       effect.pipe(
         Effect.annotateLogs({ action }),
         Effect.withSpan("desktop.menu.action"),
-        Effect.catchCause((cause) =>
-          logMenuError("desktop menu action failed", {
-            action,
-            cause: Cause.pretty(cause),
-          }),
-        ),
+        Effect.catchCause((cause) => {
+          const error = new DesktopApplicationMenuActionError({ action, cause });
+          return logMenuError(error.message, { error });
+        }),
       ),
     );
   };
