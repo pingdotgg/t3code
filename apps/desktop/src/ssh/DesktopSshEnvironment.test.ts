@@ -19,6 +19,20 @@ function makeTempHomeDir() {
 }
 
 describe("sshEnvironment", () => {
+  it("keeps prompt presentation diagnostics distinct from the legacy wrapper message", () => {
+    const cause = new DesktopSshPasswordPrompts.DesktopSshPromptPresentationError({
+      requestId: "prompt-1",
+      destination: "devbox",
+      cause: new Error("renderer send failed"),
+    });
+
+    assert.equal(cause.message, "Failed to present SSH password prompt for devbox.");
+    assert.equal(
+      DesktopSshEnvironment.toSshPasswordPromptError(cause).message,
+      "T3 Code window is not available for SSH authentication.",
+    );
+  });
+
   it("treats password prompt timeouts as cancellable authentication prompts", () => {
     assert.equal(
       DesktopSshEnvironment.isDesktopSshPasswordPromptCancellation(

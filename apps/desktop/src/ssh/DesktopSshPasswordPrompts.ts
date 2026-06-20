@@ -56,7 +56,7 @@ export class DesktopSshPromptPresentationError extends Schema.TaggedErrorClass<D
   },
 ) {
   override get message(): string {
-    return WINDOW_UNAVAILABLE_MESSAGE;
+    return `Failed to present SSH password prompt for ${this.destination}.`;
   }
 }
 
