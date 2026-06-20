@@ -195,6 +195,10 @@ releaseDate: '2026-03-07T10:36:07.540Z'
   });
 
   it("identifies both sources when duplicate primary file entries conflict", () => {
+    const privateUrl =
+      "https://user:password@example.test/releases/private/app.exe?token=secret-token#fragment";
+    const firstSha512 = "first-private-sha";
+    const secondSha512 = "second-private-sha";
     const manifest = {
       version: "1.0.0",
       releaseDate: "2026-06-20T00:00:00.000Z",
@@ -206,8 +210,8 @@ releaseDate: '2026-03-07T10:36:07.540Z'
         {
           ...manifest,
           files: [
-            { url: "app.exe", sha512: "first", size: 1 },
-            { url: "app.exe", sha512: "second", size: 2 },
+            { url: privateUrl, sha512: firstSha512, size: 1 },
+            { url: privateUrl, sha512: secondSha512, size: 2 },
           ],
         },
         { ...manifest, files: [] },
@@ -217,9 +221,60 @@ releaseDate: '2026-03-07T10:36:07.540Z'
     assert.equal(error._tag, "UpdateManifestFileConflictError");
     if (error._tag === "UpdateManifestFileConflictError") {
       assert.equal(error.existingManifest, "primary");
-      assert.equal(error.existingSha512, "first");
       assert.equal(error.conflictingManifest, "primary");
-      assert.equal(error.conflictingSha512, "second");
+      assert.equal(error.urlInputLength, privateUrl.length);
+      assert.equal(error.urlProtocol, "https:");
+      assert.equal(error.urlHostname, "example.test");
+      assert.equal(error.existingSha512Length, firstSha512.length);
+      assert.equal(error.existingSize, 1);
+      assert.equal(error.conflictingSha512Length, secondSha512.length);
+      assert.equal(error.conflictingSize, 2);
+      assert.isTrue(error.sha512Conflict);
+      assert.isTrue(error.sizeConflict);
+      assert.notProperty(error, "url");
+      assert.notProperty(error, "existingSha512");
+      assert.notProperty(error, "conflictingSha512");
+
+      const diagnostics = [error.message, ...Object.values(error).map(String)].join("\n");
+      assert.notInclude(diagnostics, "user");
+      assert.notInclude(diagnostics, "password");
+      assert.notInclude(diagnostics, "/releases/private/app.exe");
+      assert.notInclude(diagnostics, "secret-token");
+      assert.notInclude(diagnostics, firstSha512);
+      assert.notInclude(diagnostics, secondSha512);
+    }
+  });
+
+  it("reports extra conflicts without retaining arbitrary scalar values", () => {
+    const primaryValue = "primary-private-value";
+    const secondaryValue = "secondary-private-value";
+    const manifest = {
+      version: "1.0.0",
+      releaseDate: "2026-06-20T00:00:00.000Z",
+      files: [{ url: "app.exe", sha512: "sha", size: 1 }],
+    };
+
+    const error = captureUpdateManifestError(() =>
+      mergePlatformUpdateManifests(
+        "win",
+        { ...manifest, extras: { releaseNotes: primaryValue } },
+        { ...manifest, extras: { releaseNotes: secondaryValue } },
+      ),
+    );
+
+    assert.equal(error._tag, "UpdateManifestExtraConflictError");
+    if (error._tag === "UpdateManifestExtraConflictError") {
+      assert.equal(error.key, "releaseNotes");
+      assert.equal(error.primaryValueType, "string");
+      assert.equal(error.primaryValueLength, primaryValue.length);
+      assert.equal(error.secondaryValueType, "string");
+      assert.equal(error.secondaryValueLength, secondaryValue.length);
+      assert.notProperty(error, "primaryValue");
+      assert.notProperty(error, "secondaryValue");
+
+      const diagnostics = [error.message, ...Object.values(error).map(String)].join("\n");
+      assert.notInclude(diagnostics, primaryValue);
+      assert.notInclude(diagnostics, secondaryValue);
     }
   });
 

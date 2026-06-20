@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { getUrlDiagnostics } from "@t3tools/shared/urlDiagnostics";
+
 export interface UpdateManifestFile {
   readonly url: string;
   readonly sha512: string;
@@ -9,6 +11,9 @@ export interface UpdateManifestFile {
 
 export const UpdateManifestScalar = Schema.Union([Schema.String, Schema.Number, Schema.Boolean]);
 export type UpdateManifestScalar = typeof UpdateManifestScalar.Type;
+
+export const UpdateManifestScalarType = Schema.Literals(["string", "number", "boolean"]);
+export type UpdateManifestScalarType = typeof UpdateManifestScalarType.Type;
 
 export const UpdateManifestParseReason = Schema.Literals([
   "incomplete file entry",
@@ -59,12 +64,14 @@ export class UpdateManifestExtraConflictError extends Schema.TaggedErrorClass<Up
   {
     platformLabel: Schema.String,
     key: Schema.String,
-    primaryValue: UpdateManifestScalar,
-    secondaryValue: UpdateManifestScalar,
+    primaryValueType: UpdateManifestScalarType,
+    primaryValueLength: Schema.optionalKey(Schema.Number),
+    secondaryValueType: UpdateManifestScalarType,
+    secondaryValueLength: Schema.optionalKey(Schema.Number),
   },
 ) {
   override get message(): string {
-    return `Cannot merge ${this.platformLabel} update manifests: conflicting '${this.key}' values ('${this.primaryValue}' vs '${this.secondaryValue}').`;
+    return `Cannot merge ${this.platformLabel} update manifests: conflicting '${this.key}' ${this.primaryValueType} and ${this.secondaryValueType} values.`;
   }
 }
 
@@ -72,17 +79,25 @@ export class UpdateManifestFileConflictError extends Schema.TaggedErrorClass<Upd
   "UpdateManifestFileConflictError",
   {
     platformLabel: Schema.String,
-    url: Schema.String,
+    urlInputLength: Schema.Number,
+    urlProtocol: Schema.optionalKey(Schema.String),
+    urlHostname: Schema.optionalKey(Schema.String),
     existingManifest: Schema.Literals(["primary", "secondary"]),
-    existingSha512: Schema.String,
+    existingSha512Length: Schema.Number,
     existingSize: Schema.Number,
     conflictingManifest: Schema.Literals(["primary", "secondary"]),
-    conflictingSha512: Schema.String,
+    conflictingSha512Length: Schema.Number,
     conflictingSize: Schema.Number,
+    sha512Conflict: Schema.Boolean,
+    sizeConflict: Schema.Boolean,
   },
 ) {
   override get message(): string {
-    return `Cannot merge ${this.platformLabel} update manifests: conflicting file entry for ${this.url}.`;
+    const origin =
+      this.urlProtocol === undefined || this.urlHostname === undefined
+        ? ""
+        : ` at ${this.urlProtocol}//${this.urlHostname}`;
+    return `Cannot merge ${this.platformLabel} update manifests: conflicting file entry${origin} (URL input length: ${this.urlInputLength}).`;
   }
 }
 
@@ -327,6 +342,12 @@ export function parseUpdateManifest(
   };
 }
 
+function getScalarType(value: UpdateManifestScalar): UpdateManifestScalarType {
+  if (typeof value === "string") return "string";
+  if (typeof value === "number") return "number";
+  return "boolean";
+}
+
 function mergeExtras(
   primary: Readonly<Record<string, UpdateManifestScalar>>,
   secondary: Readonly<Record<string, UpdateManifestScalar>>,
@@ -340,8 +361,10 @@ function mergeExtras(
       throw new UpdateManifestExtraConflictError({
         platformLabel,
         key,
-        primaryValue: existing,
-        secondaryValue: value,
+        primaryValueType: getScalarType(existing),
+        ...(typeof existing === "string" ? { primaryValueLength: existing.length } : {}),
+        secondaryValueType: getScalarType(value),
+        ...(typeof value === "string" ? { secondaryValueLength: value.length } : {}),
       });
     }
     merged[key] = value;
@@ -374,15 +397,24 @@ export function mergeUpdateManifests(
     for (const file of files) {
       const existing = filesByUrl.get(file.url);
       if (existing && (existing.file.sha512 !== file.sha512 || existing.file.size !== file.size)) {
+        const urlDiagnostics = getUrlDiagnostics(file.url);
         throw new UpdateManifestFileConflictError({
           platformLabel,
-          url: file.url,
+          urlInputLength: urlDiagnostics.inputLength,
+          ...(urlDiagnostics.protocol === undefined
+            ? {}
+            : { urlProtocol: urlDiagnostics.protocol }),
+          ...(urlDiagnostics.hostname === undefined
+            ? {}
+            : { urlHostname: urlDiagnostics.hostname }),
           existingManifest: existing.manifest,
-          existingSha512: existing.file.sha512,
+          existingSha512Length: existing.file.sha512.length,
           existingSize: existing.file.size,
           conflictingManifest: manifest,
-          conflictingSha512: file.sha512,
+          conflictingSha512Length: file.sha512.length,
           conflictingSize: file.size,
+          sha512Conflict: existing.file.sha512 !== file.sha512,
+          sizeConflict: existing.file.size !== file.size,
         });
       }
       filesByUrl.set(file.url, { manifest, file });
