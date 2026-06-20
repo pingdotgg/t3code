@@ -1,29 +1,29 @@
 # Harness Enhancements Tracker
 
-> Last updated: 2026-06-19
+> Last updated: 2026-06-20
 
 This tracks planned improvements to make T3 Code a stronger harness around coding agents, inspired by the useful parts of Conductor's workspace model: persistent context, injected guidance, action-specific prompts, isolated workspaces, review flow, and merge readiness.
 
 ## Priority Summary
 
-| Priority | Enhancement                                       | Status      | Why It Matters                                                                                                                    |
-| -------- | ------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| P0       | Workspace identity and sidebar hierarchy          | Started     | Creates the Project -> Workspace -> Chat model that every other harness feature can attach to.                                    |
-| P0       | Workspace migration and compatibility layer       | Started     | Lets existing projects, threads, routes, and APIs keep working while workspace ownership rolls out.                               |
-| P0       | Dev/prod data isolation and feature flag rollout  | Started     | Lets the new workspace layout run in dev without risking the user's deployed/current T3 Code data.                                |
-| P0       | Workspace context folder                          | Not started | Gives each workspace durable memory across turns, restarts, and provider handoffs.                                                |
-| P0       | Durable task list                                 | Not started | Gives every workspace a trustworthy task state instead of relying on the agent to update a checklist.                             |
-| P1       | Workspace setup scripts and local file copy rules | Not started | Makes workspace creation reliable by handling setup, run scripts, and `.env*` copying before agents start work.                   |
-| P1       | T3 Code harness prompt injection                  | Not started | Teaches Codex, Claude, Cursor, and OpenCode how to behave inside T3 Code workspaces instead of acting like raw CLIs.              |
-| P1       | Context and task update reactor                   | Not started | Keeps `.context` and task state useful after meaningful turns without asking users to manually summarize state.                   |
-| P1       | Action-specific prompts                           | Not started | Makes UI actions such as review, PR creation, fix checks, and handoff more consistent.                                            |
-| P1       | Workspace lifecycle dashboard                     | Not started | Makes the workspace/worktree/branch/terminal/diff/PR lifecycle visible as one unit of work.                                       |
-| P1       | Integrated file editor and review surface         | Not started | Gives users a Conductor-style file editor for inspecting, editing, and reviewing agent changes next to chat, diffs, and comments. |
-| P1       | File diff review improvements                     | Not started | Makes large diffs easier to navigate, filter, comment on, and hand back to agents.                                                |
-| P2       | Merge readiness checks panel                      | Not started | Gives users a clear "ready to merge" gate for git status, tests, PR state, comments, and todos.                                   |
-| P2       | Structured review loop                            | Not started | Lets users send diff comments and unresolved review feedback back to agents with precise context.                                 |
-| P3       | Issue and PR fanout                               | Not started | Enables one workspace per GitHub/Linear issue or PR for parallel agent work.                                                      |
-| P3       | Spotlight-style root runner                       | Not started | Supports projects that need one fixed root checkout, fixed port, shared database, or expensive dev stack.                         |
+| Priority | Enhancement                                       | Status          | Why It Matters                                                                                                                    |
+| -------- | ------------------------------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| P0       | Workspace identity and sidebar hierarchy          | Compat complete | Creates the Project -> Workspace -> Chat model that every other harness feature can attach to.                                    |
+| P0       | Workspace migration and compatibility layer       | Compat complete | Lets existing projects, threads, routes, and APIs keep working while workspace ownership rolls out.                               |
+| P0       | Dev/prod data isolation and feature flag rollout  | Complete        | Lets the new workspace layout run in dev without risking the user's deployed/current T3 Code data.                                |
+| P0       | Workspace context folder                          | Not started     | Gives each workspace durable memory across turns, restarts, and provider handoffs.                                                |
+| P0       | Durable task list                                 | Not started     | Gives every workspace a trustworthy task state instead of relying on the agent to update a checklist.                             |
+| P1       | Workspace setup scripts and local file copy rules | Not started     | Makes workspace creation reliable by handling setup, run scripts, and `.env*` copying before agents start work.                   |
+| P1       | T3 Code harness prompt injection                  | Not started     | Teaches Codex, Claude, Cursor, and OpenCode how to behave inside T3 Code workspaces instead of acting like raw CLIs.              |
+| P1       | Context and task update reactor                   | Not started     | Keeps `.context` and task state useful after meaningful turns without asking users to manually summarize state.                   |
+| P1       | Action-specific prompts                           | Not started     | Makes UI actions such as review, PR creation, fix checks, and handoff more consistent.                                            |
+| P1       | Workspace lifecycle dashboard                     | Not started     | Makes the workspace/worktree/branch/terminal/diff/PR lifecycle visible as one unit of work.                                       |
+| P1       | Integrated file editor and review surface         | Not started     | Gives users a Conductor-style file editor for inspecting, editing, and reviewing agent changes next to chat, diffs, and comments. |
+| P1       | File diff review improvements                     | Not started     | Makes large diffs easier to navigate, filter, comment on, and hand back to agents.                                                |
+| P2       | Merge readiness checks panel                      | Not started     | Gives users a clear "ready to merge" gate for git status, tests, PR state, comments, and todos.                                   |
+| P2       | Structured review loop                            | Not started     | Lets users send diff comments and unresolved review feedback back to agents with precise context.                                 |
+| P3       | Issue and PR fanout                               | Not started     | Enables one workspace per GitHub/Linear issue or PR for parallel agent work.                                                      |
+| P3       | Spotlight-style root runner                       | Not started     | Supports projects that need one fixed root checkout, fixed port, shared database, or expensive dev stack.                         |
 
 ## P0: Workspace Identity and Sidebar Hierarchy
 
@@ -72,11 +72,18 @@ Initial implementation notes:
 - Add workspace-level new-chat creation from the sidebar before adding a larger workspace dashboard.
 - Prevent more than one active agent run per workspace until concurrent same-workspace runs are designed.
 
-Current branch status:
+Completed compatibility scope:
 
 - The workspace layout groups existing threads into generated default workspaces by worktree path, branch, or local checkout.
 - Workspace rows expand/collapse independently from the selected center chat.
 - Terminal drawer state and right-panel visibility follow the active workspace-scoped thread reference, while chat-specific diff and plan data remains attached to the selected chat.
+- Settings and keybinding documentation describe the branch/worktree behavior for new chat creation.
+
+Still pending:
+
+- Add a durable workspace model instead of synthesizing workspace groups from thread metadata.
+- Move branch/worktree ownership fully from thread fields to workspace fields after compatibility is proven.
+- Add workspace-level lifecycle surfaces for changed files, checks, review state, and PR state.
 
 ## P0: Workspace Migration and Compatibility Layer
 
@@ -128,11 +135,17 @@ Rollback and safety:
 - Keep a clear invariant: every visible chat belongs to exactly one workspace.
 - Add tests for old snapshots, new snapshots, and mixed snapshots where some threads have workspace linkage and some do not.
 
-Current branch status:
+Completed compatibility scope:
 
 - There is not yet a durable workspace table. The UI synthesizes compatible workspace groups from existing thread project, branch, worktree, and local-checkout metadata.
 - Projection and client reducer paths preserve an existing worktree identity when stale restored local metadata arrives without a worktree path.
 - Project-scoped new chat creation clears active branch/worktree context when the selected project differs from the current chat, so the draft appears under the selected project instead of the previously active workspace.
+
+Still pending:
+
+- Add persistent workspace IDs and workspace-aware routes/API commands.
+- Backfill durable workspace records once the schema exists.
+- Keep old thread routes as aliases during the durable migration.
 
 ## P0: Dev/Prod Data Isolation and Feature Flag Rollout
 
@@ -180,7 +193,7 @@ The sandbox wrapper sets these defaults:
 - `T3CODE_WORKSPACE_LAYOUT=1` so workspace-first UI work can be developed behind a flag.
 - Refuses `T3CODE_HOME=$HOME/.t3` unless `T3CODE_ALLOW_PROD_HOME=1` is set.
 
-Current branch status:
+Completed scope:
 
 - `vp run dev:sandbox` is available as the repeatable development entrypoint for the workspace layout.
 - The sandbox uses dev-only state, shifted ports, and the workspace layout flag by default.
