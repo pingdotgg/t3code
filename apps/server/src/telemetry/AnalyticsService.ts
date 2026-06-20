@@ -7,6 +7,7 @@
  * @module AnalyticsService
  */
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { getUrlDiagnostics } from "@t3tools/shared/urlDiagnostics";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -14,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -42,6 +44,38 @@ const TelemetryEnvConfig = Config.all({
   ),
   wslDistroName: Config.string("WSL_DISTRO_NAME").pipe(Config.option),
 });
+
+export class AnalyticsBatchDeliveryError extends Schema.TaggedErrorClass<AnalyticsBatchDeliveryError>()(
+  "AnalyticsBatchDeliveryError",
+  {
+    endpointInputLength: Schema.Number,
+    endpointProtocol: Schema.optionalKey(Schema.String),
+    endpointHostname: Schema.optionalKey(Schema.String),
+    eventCount: Schema.Int.check(Schema.isGreaterThan(0)),
+    cause: Schema.Defect(),
+  },
+) {
+  static fromEndpoint(input: {
+    readonly endpoint: string;
+    readonly eventCount: number;
+    readonly cause: unknown;
+  }): AnalyticsBatchDeliveryError {
+    const diagnostics = getUrlDiagnostics(input.endpoint);
+    return new AnalyticsBatchDeliveryError({
+      endpointInputLength: diagnostics.inputLength,
+      ...(diagnostics.protocol === undefined ? {} : { endpointProtocol: diagnostics.protocol }),
+      ...(diagnostics.hostname === undefined ? {} : { endpointHostname: diagnostics.hostname }),
+      eventCount: input.eventCount,
+      cause: input.cause,
+    });
+  }
+
+  override get message(): string {
+    const eventLabel = this.eventCount === 1 ? "event" : "events";
+    const destination = this.endpointHostname ? ` at ${this.endpointHostname}` : "";
+    return `Failed to deliver ${this.eventCount} analytics ${eventLabel} to PostHog${destination} (endpoint input length ${this.endpointInputLength}).`;
+  }
+}
 
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
@@ -75,6 +109,7 @@ export const make = Effect.gen(function* () {
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
   const hostPlatform = yield* HostProcessPlatform;
   const hostArchitecture = yield* HostProcessArchitecture;
+  const batchEndpoint = `${telemetryConfig.posthogHost}/batch/`;
 
   const enqueueBufferedEvent = (event: string, properties?: Readonly<Record<string, unknown>>) =>
     Effect.flatMap(DateTime.now, (now) =>
@@ -126,10 +161,17 @@ export const make = Effect.gen(function* () {
       })),
     };
 
-    yield* HttpClientRequest.post(`${telemetryConfig.posthogHost}/batch/`).pipe(
+    yield* HttpClientRequest.post(batchEndpoint).pipe(
       HttpClientRequest.bodyJson(payload),
       Effect.flatMap(httpClient.execute),
       Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.mapError((cause) =>
+        AnalyticsBatchDeliveryError.fromEndpoint({
+          endpoint: batchEndpoint,
+          eventCount: events.length,
+          cause,
+        }),
+      ),
     );
   });
 
@@ -149,14 +191,32 @@ export const make = Effect.gen(function* () {
       }
 
       yield* sendBatch(batch).pipe(
-        Effect.catch((error) =>
-          Ref.update(bufferRef, (current) => [...batch, ...current]).pipe(
-            Effect.flatMap(() => Effect.fail(error)),
-          ),
-        ),
+        Effect.catchTags({
+          AnalyticsBatchDeliveryError: (error) =>
+            Ref.update(bufferRef, (current) => [...batch, ...current]).pipe(
+              Effect.flatMap(() => Effect.fail(error)),
+            ),
+        }),
       );
     }
-  }).pipe(Effect.catch((cause) => Effect.logError("Failed to flush telemetry", { cause })));
+  }).pipe(
+    Effect.catchTags({
+      AnalyticsBatchDeliveryError: (error) =>
+        Effect.logError(error.message).pipe(
+          Effect.annotateLogs({
+            endpointInputLength: error.endpointInputLength,
+            ...(error.endpointProtocol === undefined
+              ? {}
+              : { endpointProtocol: error.endpointProtocol }),
+            ...(error.endpointHostname === undefined
+              ? {}
+              : { endpointHostname: error.endpointHostname }),
+            eventCount: error.eventCount,
+            cause: error,
+          }),
+        ),
+    }),
+  );
 
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
     function* (event, properties) {
