@@ -50,19 +50,24 @@ describe("ElectronShell", () => {
     Effect.gen(function* () {
       const cause = new Error("open failed");
       openExternalMock.mockRejectedValue(cause);
-      const externalUrl = "https://user:password@example.com/path?access_token=secret#fragment";
+      const externalUrl =
+        "https://user:password@example.com/signed-secret-token/path?access_token=secret#fragment";
 
       const electronShell = yield* ElectronShell.ElectronShell;
       const error = yield* Effect.flip(electronShell.openExternal(externalUrl));
 
       assert.instanceOf(error, ElectronShell.ElectronShellOpenExternalError);
       assert.isTrue(ElectronShell.isElectronShellError(error));
-      assert.strictEqual(error.requestTarget, "https://example.com/path");
+      assert.strictEqual(error.urlHostname, "example.com");
       assert.strictEqual(error.urlLength, externalUrl.length);
+      assert.strictEqual(error.urlProtocol, "https:");
       assert.strictEqual(error.cause, cause);
       assert.notProperty(error, "externalUrl");
-      assert.include(error.message, error.requestTarget);
-      assert.notMatch(error.message, /user|password|access_token|secret|fragment/);
+      assert.notProperty(error, "requestTarget");
+      assert.notMatch(
+        error.message,
+        /user|password|signed-secret-token|path|access_token|secret|fragment/,
+      );
       assert.notInclude(error.message, cause.message);
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
