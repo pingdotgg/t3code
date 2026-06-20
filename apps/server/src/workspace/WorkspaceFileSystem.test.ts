@@ -104,14 +104,89 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const error = yield* workspaceFileSystem
           .readFile({ cwd, relativePath: "linked-secret.txt" })
           .pipe(Effect.flip);
+        const resolvedWorkspaceRoot = yield* fileSystem.realPath(cwd);
+        const resolvedPath = yield* fileSystem.realPath(path.join(outsideDir, "secret.txt"));
 
-        expect(error.message).toBe(
-          `Workspace file operation 'workspaceFileSystem.readFile' failed for 'linked-secret.txt' in '${cwd}'.`,
-        );
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFilePathEscapeError);
+        expect(error).toMatchObject({
+          workspaceRoot: cwd,
+          relativePath: "linked-secret.txt",
+          resolvedWorkspaceRoot,
+          resolvedPath,
+        });
+        expect("cause" in error).toBe(false);
+      }),
+    );
+
+    it.effect("rejects directories without manufacturing an I/O cause", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* fileSystem.makeDirectory(path.join(cwd, "src"));
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "src" })
+          .pipe(Effect.flip);
+        const resolvedPath = yield* fileSystem.realPath(path.join(cwd, "src"));
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspacePathNotFileError);
+        expect(error).toMatchObject({
+          workspaceRoot: cwd,
+          relativePath: "src",
+          resolvedPath,
+        });
+        expect("cause" in error).toBe(false);
+      }),
+    );
+
+    it.effect("rejects binary files without leaking their contents into the error", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const absolutePath = path.join(cwd, "asset.bin");
+        yield* fileSystem.writeFile(absolutePath, Uint8Array.from([0x61, 0, 0x62]));
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "asset.bin" })
+          .pipe(Effect.flip);
+        const resolvedPath = yield* fileSystem.realPath(absolutePath);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceBinaryFileError);
+        expect(error).toMatchObject({
+          workspaceRoot: cwd,
+          relativePath: "asset.bin",
+          resolvedPath,
+        });
+        expect("cause" in error).toBe(false);
+        expect("contents" in error).toBe(false);
+      }),
+    );
+
+    it.effect("preserves the real cause and path for I/O failures", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const resolvedPath = path.join(cwd, "missing.txt");
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "missing.txt" })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+        expect(error).toMatchObject({
+          workspaceRoot: cwd,
+          relativePath: "missing.txt",
+          resolvedPath,
+          operationPath: resolvedPath,
+          operation: "realpath-target",
+        });
         expect(error.cause).toBeInstanceOf(Error);
-        expect((error.cause as Error).message).toBe(
-          "Workspace file path resolves outside the project root.",
-        );
+        expect((error.cause as NodeJS.ErrnoException).code).toBe("ENOENT");
       }),
     );
   });
