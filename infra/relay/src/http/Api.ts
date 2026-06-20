@@ -238,13 +238,12 @@ export const relayEnvironmentAuthLayer = Layer.effect(
         { credential },
       ) {
         const token = readHttpAuthorizationCredential(credential);
-        const principal = yield* credentials
-          .authenticate(token)
-          .pipe(
-            Effect.catchTag("EnvironmentCredentialAuthenticatePersistenceError", () =>
+        const principal = yield* credentials.authenticate(token).pipe(
+          Effect.catchTags({
+            EnvironmentCredentialAuthenticatePersistenceError: () =>
               relayInternalErrorResponse("persistence_failed"),
-            ),
-          );
+          }),
+        );
         if (principal._tag === "None") {
           return yield* relayAuthInvalidError("not_authorized");
         }

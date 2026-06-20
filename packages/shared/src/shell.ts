@@ -604,7 +604,9 @@ export const isCommandAvailable = Effect.fn("shell.isCommandAvailable")(function
 ) {
   return yield* resolveCommandPath(command, options).pipe(
     Effect.as(true),
-    Effect.catchTag("CommandResolutionError", () => Effect.succeed(false)),
+    Effect.catchTags({
+      CommandResolutionError: () => Effect.succeed(false),
+    }),
   );
 });
 
