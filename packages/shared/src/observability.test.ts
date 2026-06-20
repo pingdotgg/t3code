@@ -15,10 +15,19 @@ import * as Tracer from "effect/Tracer";
 import {
   causeErrorTag,
   compactTraceAttributes,
+  errorTag,
   makeLocalFileTracer,
   makeTraceSink,
   type TraceRecord,
 } from "./observability.ts";
+
+describe("errorTag", () => {
+  it("reports structural tags without retaining arbitrary values", () => {
+    assert.equal(errorTag({ _tag: "AcpRequestError" }), "AcpRequestError");
+    assert.equal(errorTag(new TypeError("secret-token-value")), "TypeError");
+    assert.equal(errorTag({ _tag: "secret token value" }), "TaggedError");
+  });
+});
 
 describe("causeErrorTag", () => {
   it("reports the tagged failure value instead of the Cause reason wrapper", () => {
