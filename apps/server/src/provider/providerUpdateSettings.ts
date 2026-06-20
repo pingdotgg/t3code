@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Stream from "effect/Stream";
 
-import type { ServerSettingsShape } from "../serverSettings.ts";
+import type * as ServerSettingsModule from "../serverSettings.ts";
 
 export interface ProviderSnapshotSettings<Settings> {
   readonly provider: Settings;
@@ -29,7 +29,7 @@ export function haveProviderSnapshotSettingsChanged<Settings>(
 
 export function makeProviderSnapshotSettingsSource<Settings>(
   provider: Settings,
-  serverSettings: ServerSettingsShape,
+  serverSettings: ServerSettingsModule.ServerSettingsService["Service"],
 ): {
   readonly getSettings: Effect.Effect<ProviderSnapshotSettings<Settings>, ServerSettingsError>;
   readonly streamSettings: Stream.Stream<ProviderSnapshotSettings<Settings>>;

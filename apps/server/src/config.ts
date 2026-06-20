@@ -6,13 +6,13 @@
  *
  * @module ServerConfig
  */
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as LogLevel from "effect/LogLevel";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Context from "effect/Context";
 
 export const DEFAULT_PORT = 3773;
 
@@ -46,38 +46,51 @@ export interface ServerDerivedPaths {
 }
 
 /**
- * ServerConfigShape - Process/runtime configuration required by the server.
+ * ServerConfig - Service tag for server runtime configuration.
  */
-export interface ServerConfigShape extends ServerDerivedPaths {
-  readonly logLevel: LogLevel.LogLevel;
-  readonly traceMinLevel: LogLevel.LogLevel;
-  readonly traceTimingEnabled: boolean;
-  readonly traceBatchWindowMs: number;
-  readonly traceMaxBytes: number;
-  readonly traceMaxFiles: number;
-  readonly otlpTracesUrl: string | undefined;
-  readonly otlpMetricsUrl: string | undefined;
-  readonly otlpExportIntervalMs: number;
-  readonly otlpServiceName: string;
-  readonly mode: RuntimeMode;
-  readonly port: number;
-  readonly host: string | undefined;
-  readonly cwd: string;
-  readonly baseDir: string;
-  readonly staticDir: string | undefined;
-  readonly devUrl: URL | undefined;
-  readonly noBrowser: boolean;
-  readonly startupPresentation: StartupPresentation;
-  readonly desktopBootstrapToken: string | undefined;
-  readonly autoBootstrapProjectFromCwd: boolean;
-  readonly logWebSocketEvents: boolean;
-  readonly tailscaleServeEnabled: boolean;
-  readonly tailscaleServePort: number;
+export class ServerConfig extends Context.Service<
+  ServerConfig,
+  ServerDerivedPaths & {
+    readonly logLevel: LogLevel.LogLevel;
+    readonly traceMinLevel: LogLevel.LogLevel;
+    readonly traceTimingEnabled: boolean;
+    readonly traceBatchWindowMs: number;
+    readonly traceMaxBytes: number;
+    readonly traceMaxFiles: number;
+    readonly otlpTracesUrl: string | undefined;
+    readonly otlpMetricsUrl: string | undefined;
+    readonly otlpExportIntervalMs: number;
+    readonly otlpServiceName: string;
+    readonly mode: RuntimeMode;
+    readonly port: number;
+    readonly host: string | undefined;
+    readonly cwd: string;
+    readonly baseDir: string;
+    readonly staticDir: string | undefined;
+    readonly devUrl: URL | undefined;
+    readonly noBrowser: boolean;
+    readonly startupPresentation: StartupPresentation;
+    readonly desktopBootstrapToken: string | undefined;
+    readonly autoBootstrapProjectFromCwd: boolean;
+    readonly logWebSocketEvents: boolean;
+    readonly tailscaleServeEnabled: boolean;
+    readonly tailscaleServePort: number;
+  }
+>()("t3/config/ServerConfig") {
+  /** @deprecated Import and use `layerTest` from this module. */
+  static readonly layerTest = (
+    cwd: string,
+    baseDirOrPrefix: string | { readonly prefix: string },
+  ) => layerTest(cwd, baseDirOrPrefix);
 }
 
+export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
+
+export const layer = (config: ServerConfig["Service"]) => Layer.succeed(ServerConfig, make(config));
+
 export const deriveServerPaths = Effect.fn(function* (
-  baseDir: ServerConfigShape["baseDir"],
-  devUrl: ServerConfigShape["devUrl"],
+  baseDir: ServerConfig["Service"]["baseDir"],
+  devUrl: ServerConfig["Service"]["devUrl"],
 ): Effect.fn.Return<ServerDerivedPaths, never, Path.Path> {
   const { join } = yield* Path.Path;
   const stateDir = join(baseDir, devUrl !== undefined ? "dev" : "userdata");
@@ -129,56 +142,50 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
   );
 });
 
-/**
- * ServerConfig - Service tag for server runtime configuration.
- */
-export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShape>()(
-  "t3/config/ServerConfig",
+const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
+  cwd: string,
+  baseDirOrPrefix: string | { readonly prefix: string },
 ) {
-  static readonly layerTest = (cwd: string, baseDirOrPrefix: string | { prefix: string }) =>
-    Layer.effect(
-      ServerConfig,
-      Effect.gen(function* () {
-        const devUrl = undefined;
+  const devUrl = undefined;
+  const fs = yield* FileSystem.FileSystem;
+  const baseDir =
+    typeof baseDirOrPrefix === "string"
+      ? baseDirOrPrefix
+      : yield* fs.makeTempDirectoryScoped({ prefix: baseDirOrPrefix.prefix });
+  const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
+  yield* ensureServerDirectories(derivedPaths);
 
-        const fs = yield* FileSystem.FileSystem;
-        const baseDir =
-          typeof baseDirOrPrefix === "string"
-            ? baseDirOrPrefix
-            : yield* fs.makeTempDirectoryScoped({ prefix: baseDirOrPrefix.prefix });
-        const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
-        yield* ensureServerDirectories(derivedPaths);
+  return ServerConfig.of({
+    logLevel: "Error",
+    traceMinLevel: "Info",
+    traceTimingEnabled: true,
+    traceBatchWindowMs: 200,
+    traceMaxBytes: 10 * 1024 * 1024,
+    traceMaxFiles: 10,
+    otlpTracesUrl: undefined,
+    otlpMetricsUrl: undefined,
+    otlpExportIntervalMs: 10_000,
+    otlpServiceName: "t3-server",
+    cwd,
+    baseDir,
+    ...derivedPaths,
+    mode: "web",
+    autoBootstrapProjectFromCwd: false,
+    logWebSocketEvents: false,
+    tailscaleServeEnabled: false,
+    tailscaleServePort: 443,
+    port: 0,
+    host: undefined,
+    desktopBootstrapToken: undefined,
+    staticDir: undefined,
+    devUrl,
+    noBrowser: false,
+    startupPresentation: "browser",
+  });
+});
 
-        return {
-          logLevel: "Error",
-          traceMinLevel: "Info",
-          traceTimingEnabled: true,
-          traceBatchWindowMs: 200,
-          traceMaxBytes: 10 * 1024 * 1024,
-          traceMaxFiles: 10,
-          otlpTracesUrl: undefined,
-          otlpMetricsUrl: undefined,
-          otlpExportIntervalMs: 10_000,
-          otlpServiceName: "t3-server",
-          cwd,
-          baseDir,
-          ...derivedPaths,
-          mode: "web",
-          autoBootstrapProjectFromCwd: false,
-          logWebSocketEvents: false,
-          tailscaleServeEnabled: false,
-          tailscaleServePort: 443,
-          port: 0,
-          host: undefined,
-          desktopBootstrapToken: undefined,
-          staticDir: undefined,
-          devUrl,
-          noBrowser: false,
-          startupPresentation: "browser",
-        } satisfies ServerConfigShape;
-      }),
-    );
-}
+export const layerTest = (cwd: string, baseDirOrPrefix: string | { readonly prefix: string }) =>
+  Layer.effect(ServerConfig, makeTest(cwd, baseDirOrPrefix));
 
 export const resolveStaticDir = Effect.fn(function* () {
   const { join, resolve } = yield* Path.Path;

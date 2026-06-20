@@ -3,21 +3,22 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import type { ServerConfigShape } from "../config.ts";
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 
-const makeEnvironmentAuthPolicyLayer = (overrides?: Partial<ServerConfigShape>) =>
+const makeEnvironmentAuthPolicyLayer = (
+  overrides?: Partial<ServerConfig.ServerConfig["Service"]>,
+) =>
   EnvironmentAuthPolicy.layer.pipe(
     Layer.provide(
       Layer.effect(
-        ServerConfig,
+        ServerConfig.ServerConfig,
         Effect.gen(function* () {
-          const config = yield* ServerConfig;
+          const config = yield* ServerConfig.ServerConfig;
           return {
             ...config,
             ...overrides,
-          } satisfies ServerConfigShape;
+          } satisfies ServerConfig.ServerConfig["Service"];
         }),
       ).pipe(
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-policy-test-" })),
