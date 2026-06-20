@@ -10,14 +10,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
-import {
-  buildDescendantEntries,
-  isDiagnosticsQueryProcess,
-  type ProcessRow,
-  readProcessRows,
-} from "./ProcessDiagnostics.ts";
+import * as ProcessDiagnostics from "./ProcessDiagnostics.ts";
 
 const SAMPLE_INTERVAL_MS = 5_000;
 const RETENTION_MS = 60 * 60_000;
@@ -41,38 +36,41 @@ interface MonitorState {
   readonly lastError: string | null;
 }
 
-export interface ProcessResourceMonitorShape {
-  readonly readHistory: (
-    input: ServerProcessResourceHistoryInput,
-  ) => Effect.Effect<ServerProcessResourceHistoryResult>;
-}
-
 export class ProcessResourceMonitor extends Context.Service<
   ProcessResourceMonitor,
-  ProcessResourceMonitorShape
+  {
+    readonly readHistory: (
+      input: ServerProcessResourceHistoryInput,
+    ) => Effect.Effect<ServerProcessResourceHistoryResult>;
+  }
 >()("t3/diagnostics/ProcessResourceMonitor") {}
 
 function dateTimeFromMillis(ms: number): DateTime.Utc {
   return DateTime.makeUnsafe(ms);
 }
 
-function sampleKey(row: Pick<ProcessRow, "pid" | "command">): string {
+function sampleKey(row: Pick<ProcessDiagnostics.ProcessRow, "pid" | "command">): string {
   return `${row.pid}:${row.command}`;
 }
 
-function findServerRootRow(rows: ReadonlyArray<ProcessRow>, serverPid: number): ProcessRow | null {
+function findServerRootRow(
+  rows: ReadonlyArray<ProcessDiagnostics.ProcessRow>,
+  serverPid: number,
+): ProcessDiagnostics.ProcessRow | null {
   return rows.find((row) => row.pid === serverPid) ?? null;
 }
 
 export function collectMonitoredSamples(input: {
-  readonly rows: ReadonlyArray<ProcessRow>;
+  readonly rows: ReadonlyArray<ProcessDiagnostics.ProcessRow>;
   readonly serverPid: number;
   readonly sampledAt: DateTime.Utc;
   readonly sampledAtMs: number;
 }): ReadonlyArray<ProcessResourceSample> {
-  const rows = input.rows.filter((row) => !isDiagnosticsQueryProcess(row, input.serverPid));
+  const rows = input.rows.filter(
+    (row) => !ProcessDiagnostics.isDiagnosticsQueryProcess(row, input.serverPid),
+  );
   const root = findServerRootRow(rows, input.serverPid);
-  const descendants = buildDescendantEntries(rows, input.serverPid);
+  const descendants = ProcessDiagnostics.buildDescendantEntries(rows, input.serverPid);
   const samples: ProcessResourceSample[] = [];
 
   if (root) {
@@ -245,14 +243,14 @@ export function aggregateProcessResourceHistory(input: {
   };
 }
 
-export const make = Effect.fn("makeProcessResourceMonitor")(function* () {
+export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const state = yield* Ref.make<MonitorState>({ samples: [], lastError: null });
 
   const sampleOnce = Effect.gen(function* () {
     const sampledAt = yield* DateTime.now;
     const sampledAtMs = DateTime.toEpochMillis(sampledAt);
-    const rows = yield* readProcessRows.pipe(
+    const rows = yield* ProcessDiagnostics.readProcessRows.pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
     const samples = collectMonitoredSamples({
@@ -278,7 +276,7 @@ export const make = Effect.fn("makeProcessResourceMonitor")(function* () {
     Effect.forkScoped,
   );
 
-  const readHistory: ProcessResourceMonitorShape["readHistory"] = (input) =>
+  const readHistory: ProcessResourceMonitor["Service"]["readHistory"] = (input) =>
     Effect.gen(function* () {
       const readAt = yield* DateTime.now;
       const readAtMs = DateTime.toEpochMillis(readAt);
@@ -296,4 +294,4 @@ export const make = Effect.fn("makeProcessResourceMonitor")(function* () {
   return ProcessResourceMonitor.of({ readHistory });
 });
 
-export const layer = Layer.effect(ProcessResourceMonitor, make());
+export const layer = Layer.effect(ProcessResourceMonitor, make);

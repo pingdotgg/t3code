@@ -88,7 +88,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Services/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
-import * as BrowserTraceCollector from "./observability/Services/BrowserTraceCollector.ts";
+import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
 import * as ProjectSetupScriptRunner from "./project/Services/ProjectSetupScriptRunner.ts";
 import * as RepositoryIdentityResolver from "./project/Services/RepositoryIdentityResolver.ts";

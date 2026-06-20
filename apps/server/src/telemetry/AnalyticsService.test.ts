@@ -8,10 +8,9 @@ import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
-import { ServerConfig } from "../../config.ts";
-import { getTelemetryIdentifier } from "../Identify.ts";
-import { AnalyticsService } from "../Services/AnalyticsService.ts";
-import { AnalyticsServiceLayerLive } from "./AnalyticsService.ts";
+import * as ServerConfig from "../config.ts";
+import { getTelemetryIdentifier } from "./Identify.ts";
+import * as AnalyticsService from "./AnalyticsService.ts";
 
 interface RecordedBatchRequest {
   readonly path: string;
@@ -40,11 +39,11 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
   it.effect("flush drains all buffered events across multiple batches", () =>
     Effect.gen(function* () {
       const capturedRequests: Array<RecordedBatchRequest> = [];
-      const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
+      const serverConfigLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
         prefix: "t3-telemetry-base-",
       });
 
-      const telemetryLayer = AnalyticsServiceLayerLive.pipe(Layer.provideMerge(serverConfigLayer));
+      const telemetryLayer = AnalyticsService.layer.pipe(Layer.provideMerge(serverConfigLayer));
       const configLayer = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           T3CODE_TELEMETRY_ENABLED: true,
@@ -79,7 +78,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         yield* Layer.launch(batchServerLayer).pipe(Effect.forkScoped);
         const telemetryIdentifier = yield* getTelemetryIdentifier;
         assert.equal(telemetryIdentifier !== null, true);
-        const analytics = yield* AnalyticsService;
+        const analytics = yield* AnalyticsService.AnalyticsService;
 
         for (let index = 0; index < 45; index += 1) {
           yield* analytics.record("test.flush.drain", { index });

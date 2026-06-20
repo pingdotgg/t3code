@@ -1,25 +1,26 @@
 /**
- * AnalyticsServiceLive - Anonymous PostHog telemetry layer.
+ * Anonymous PostHog telemetry service.
  *
- * Persists a random installation-scoped anonymous id to state dir, buffers
- * events in memory, and flushes batches to PostHog over Effect HttpClient.
+ * Persists an installation-scoped anonymous identifier, buffers events in
+ * memory, and flushes batches over Effect's HTTP client.
  *
- * @module AnalyticsServiceLive
+ * @module AnalyticsService
  */
-
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Config from "effect/Config";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { ServerConfig } from "../../config.ts";
-import { AnalyticsService, type AnalyticsServiceShape } from "../Services/AnalyticsService.ts";
-import { getTelemetryIdentifier } from "../Identify.ts";
-import packageJson from "../../../package.json" with { type: "json" };
+import packageJson from "../../package.json" with { type: "json" };
+import * as ServerConfig from "../config.ts";
+import { getTelemetryIdentifier } from "./Identify.ts";
 
 interface BufferedAnalyticsEvent {
   readonly event: string;
@@ -42,10 +43,33 @@ const TelemetryEnvConfig = Config.all({
   wslDistroName: Config.string("WSL_DISTRO_NAME").pipe(Config.option),
 });
 
-const makeAnalyticsService = Effect.gen(function* () {
+export class AnalyticsService extends Context.Service<
+  AnalyticsService,
+  {
+    /** Record an anonymous event for best-effort buffered delivery. */
+    readonly record: (
+      event: string,
+      properties?: Readonly<Record<string, unknown>>,
+    ) => Effect.Effect<void>;
+
+    /** Flush all currently queued telemetry events. */
+    readonly flush: Effect.Effect<void>;
+  }
+>()("t3/telemetry/AnalyticsService") {
+  /** No-op layer for callers that intentionally disable telemetry. */
+  static readonly layerTest = Layer.succeed(
+    AnalyticsService,
+    AnalyticsService.of({
+      record: () => Effect.void,
+      flush: Effect.void,
+    }),
+  );
+}
+
+export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
   const httpClient = yield* HttpClient.HttpClient;
-  const serverConfig = yield* ServerConfig;
+  const serverConfig = yield* ServerConfig.ServerConfig;
   const identifier = yield* getTelemetryIdentifier;
   const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>([]);
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
@@ -79,7 +103,7 @@ const makeAnalyticsService = Effect.gen(function* () {
       }),
     );
 
-  const sendBatch = Effect.fn("sendBatch")(function* (
+  const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
   ) {
     if (!telemetryConfig.enabled || !identifier) return;
@@ -109,7 +133,7 @@ const makeAnalyticsService = Effect.gen(function* () {
     );
   });
 
-  const flush: AnalyticsServiceShape["flush"] = Effect.gen(function* () {
+  const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
     while (true) {
       const batch = yield* Ref.modify(bufferRef, (current) => {
         if (current.length === 0) {
@@ -134,7 +158,7 @@ const makeAnalyticsService = Effect.gen(function* () {
     }
   }).pipe(Effect.catch((cause) => Effect.logError("Failed to flush telemetry", { cause })));
 
-  const record: AnalyticsServiceShape["record"] = Effect.fn("record")(
+  const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
     function* (event, properties) {
       if (!telemetryConfig.enabled || !identifier) return;
 
@@ -154,10 +178,9 @@ const makeAnalyticsService = Effect.gen(function* () {
 
   yield* Effect.addFinalizer(() => flush);
 
-  return {
-    record,
-    flush,
-  } satisfies AnalyticsServiceShape;
+  return AnalyticsService.of({ record, flush });
 });
 
-export const AnalyticsServiceLayerLive = Layer.effect(AnalyticsService, makeAnalyticsService);
+export const layer = Layer.effect(AnalyticsService, make);
+
+export const layerTest = AnalyticsService.layerTest;
