@@ -223,4 +223,82 @@ describe("Devices", () => {
       Effect.provide(Devices.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)))),
     );
   });
+
+  it.effect("identifies the failed device registration stage", () => {
+    const cause = new Error("push-token claim failed");
+    const fakeDb = {
+      update: () => ({
+        set: (values: Record<string, unknown>) => ({
+          where: () => ("pushToken" in values ? Effect.fail(cause) : Effect.void),
+        }),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const devices = yield* Devices.Devices;
+      const error = yield* devices.register({ userId: "user-2", registration }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        userId: "user-2",
+        deviceId: "device-1",
+        stage: "claim-push-token",
+      });
+      expect(error.cause).toBe(cause);
+      expect(error.message).toBe(
+        "Failed to persist mobile device registration for user-2/device-1 during claim-push-token.",
+      );
+    }).pipe(
+      Effect.provide(Devices.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)))),
+    );
+  });
+
+  it.effect("identifies the failed device unregistration stage", () => {
+    const cause = new Error("live activity delete failed");
+    const fakeDb = {
+      delete: (table: unknown) => ({
+        where: () => (table === relayLiveActivities ? Effect.fail(cause) : Effect.void),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const devices = yield* Devices.Devices;
+      const error = yield* devices
+        .unregister({ userId: "user-2", deviceId: "device-1" })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        userId: "user-2",
+        deviceId: "device-1",
+        stage: "delete-live-activity",
+      });
+      expect(error.cause).toBe(cause);
+      expect(error.message).toBe(
+        "Failed to unregister mobile device user-2/device-1 during delete-live-activity.",
+      );
+    }).pipe(
+      Effect.provide(Devices.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)))),
+    );
+  });
+
+  it.effect("attaches the user to device list failures", () => {
+    const cause = new Error("device list failed");
+    const fakeDb = {
+      select: () => ({
+        from: () => ({
+          where: () => Effect.fail(cause),
+        }),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const devices = yield* Devices.Devices;
+      const error = yield* devices.listForUser({ userId: "user-2" }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ userId: "user-2" });
+      expect(error.cause).toBe(cause);
+      expect(error.message).toBe("Failed to list mobile devices for user-2.");
+    }).pipe(
+      Effect.provide(Devices.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)))),
+    );
+  });
 });
