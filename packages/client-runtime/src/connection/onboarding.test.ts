@@ -155,7 +155,10 @@ describe("connection onboarding", () => {
       expect(error).toMatchObject({
         _tag: "ConnectionBlockedError",
         reason: "configuration",
-        message: "Enter a backend URL.",
+        message: "The pairing details are invalid.",
+        cause: expect.objectContaining({
+          message: "Enter a backend URL.",
+        }),
       });
       expect(calls).toEqual([]);
     }),

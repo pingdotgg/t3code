@@ -77,7 +77,8 @@ const resolvePairingTarget = Effect.fn("clientRuntime.connection.onboarding.reso
       catch: (cause) =>
         new ConnectionBlockedError({
           reason: "configuration",
-          detail: cause instanceof Error ? cause.message : "The pairing details are invalid.",
+          detail: "The pairing details are invalid.",
+          cause,
         }),
     });
   },
@@ -189,7 +190,8 @@ export const prepareBearerConnectionUpdate = Effect.fn(
     catch: (cause) =>
       new ConnectionBlockedError({
         reason: "configuration",
-        detail: cause instanceof Error ? cause.message : "The environment URL is invalid.",
+        detail: "The environment URL is invalid.",
+        cause,
       }),
   });
   const connectionId = entry.target.connectionId;

@@ -100,7 +100,8 @@ const capabilitiesLayer = Layer.succeedContext(
             (error) =>
               new ConnectionTransientError({
                 reason: "network",
-                detail: error.message,
+                detail: "Could not read the T3 Cloud session token.",
+                cause: error,
               }),
           ),
         );
@@ -126,7 +127,8 @@ const capabilitiesLayer = Layer.succeedContext(
           catch: (cause) =>
             new ConnectionTransientError({
               reason: "remote-unavailable",
-              detail: `Could not load the mobile device identity: ${String(cause)}`,
+              detail: "Could not load the mobile device identity.",
+              cause,
             }),
         }).pipe(Effect.map(Option.some)),
       }),

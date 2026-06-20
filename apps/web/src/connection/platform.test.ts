@@ -1,3 +1,4 @@
+import { ConnectionTransientError } from "@t3tools/client-runtime/connection";
 import {
   AuthStandardClientScopes,
   EnvironmentId,
@@ -18,7 +19,7 @@ const TARGET: DesktopSshEnvironmentTarget = {
 
 function makeBridge(
   calls: string[],
-  options?: { readonly failDescriptor?: boolean },
+  options?: { readonly descriptorError?: Error },
 ): DesktopBridge {
   return {
     ensureSshEnvironment: async (target: DesktopSshEnvironmentTarget) => {
@@ -32,8 +33,8 @@ function makeBridge(
     },
     fetchSshEnvironmentDescriptor: async () => {
       calls.push("descriptor");
-      if (options?.failDescriptor === true) {
-        throw new Error("descriptor unavailable");
+      if (options?.descriptorError !== undefined) {
+        throw options.descriptorError;
       }
       return {
         environmentId: EnvironmentId.make("environment-ssh"),
@@ -78,11 +79,27 @@ describe("desktop SSH pairing", () => {
       const calls: string[] = [];
 
       yield* provisionDesktopSshEnvironment(
-        makeBridge(calls, { failDescriptor: true }),
+        makeBridge(calls, { descriptorError: new Error("descriptor unavailable") }),
         TARGET,
       ).pipe(Effect.flip);
 
       expect(calls).toEqual(["ensure", "descriptor"]);
+    }),
+  );
+
+  it.effect("preserves SSH preparation causes without exposing their message", () =>
+    Effect.gen(function* () {
+      const cause = new Error("descriptor response contained a private endpoint");
+
+      const error = yield* provisionDesktopSshEnvironment(
+        makeBridge([], { descriptorError: cause }),
+        TARGET,
+      ).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(ConnectionTransientError);
+      expect(error.message).toBe("Could not prepare the SSH environment.");
+      expect(error.message).not.toContain(cause.message);
+      expect(error.cause).toBe(cause);
     }),
   );
 });

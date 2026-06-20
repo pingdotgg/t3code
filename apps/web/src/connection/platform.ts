@@ -111,11 +111,13 @@ function sshPreparationError(cause: unknown) {
     return new ConnectionBlockedError({
       reason: "authentication",
       detail: message,
+      cause,
     });
   }
   return new ConnectionTransientError({
     reason: "remote-unavailable",
-    detail: `Could not prepare the SSH environment: ${message}`,
+    detail: "Could not prepare the SSH environment.",
+    cause,
   });
 }
 
@@ -172,7 +174,8 @@ const capabilitiesLayer = Layer.effectContext(
             (error) =>
               new ConnectionTransientError({
                 reason: "network",
-                detail: error.message,
+                detail: "Could not read the T3 Cloud session token.",
+                cause: error,
               }),
           ),
         );
@@ -194,7 +197,8 @@ const capabilitiesLayer = Layer.effectContext(
         catch: (cause) =>
           new ConnectionTransientError({
             reason: "remote-unavailable",
-            detail: `Could not load the desktop primary credential: ${String(cause)}`,
+            detail: "Could not load the desktop primary credential.",
+            cause,
           }),
       }).pipe(Effect.map(Option.fromNullishOr)),
     });
@@ -250,7 +254,8 @@ const capabilitiesLayer = Layer.effectContext(
           catch: (cause) =>
             new ConnectionTransientError({
               reason: "remote-unavailable",
-              detail: `Could not disconnect the SSH environment: ${String(cause)}`,
+              detail: "Could not disconnect the SSH environment.",
+              cause,
             }),
         });
       }),
