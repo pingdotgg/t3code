@@ -509,16 +509,26 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
 
       const loadAuthAccessSnapshot = () =>
         Effect.all({
-          pairingLinks: serverAuth.listPairingLinks(),
-          clientSessions: serverAuth.listClientSessions(currentSessionId),
-        }).pipe(
-          Effect.mapError(
-            (error) =>
-              new AuthAccessStreamError({
-                message: error.message,
-              }),
+          pairingLinks: serverAuth.listPairingLinks().pipe(
+            Effect.mapError(
+              (cause) =>
+                new AuthAccessStreamError({
+                  operation: "list-pairing-links",
+                  cause,
+                }),
+            ),
           ),
-        );
+          clientSessions: serverAuth.listClientSessions(currentSessionId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new AuthAccessStreamError({
+                  operation: "list-client-sessions",
+                  currentSessionId,
+                  cause,
+                }),
+            ),
+          ),
+        });
 
       const appendSetupScriptActivity = (input: {
         readonly threadId: ThreadId;

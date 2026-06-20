@@ -276,12 +276,26 @@ export const AuthAccessStreamPairingLinkRemovedEvent = Schema.Struct({
 export type AuthAccessStreamPairingLinkRemovedEvent =
   typeof AuthAccessStreamPairingLinkRemovedEvent.Type;
 
+export const AuthAccessStreamOperation = Schema.Literals([
+  "list-pairing-links",
+  "list-client-sessions",
+]);
+export type AuthAccessStreamOperation = typeof AuthAccessStreamOperation.Type;
+
 export class AuthAccessStreamError extends Schema.TaggedErrorClass<AuthAccessStreamError>()(
   "AuthAccessStreamError",
   {
-    message: Schema.String,
+    operation: AuthAccessStreamOperation,
+    currentSessionId: Schema.optional(AuthSessionId),
+    cause: Schema.Defect(),
   },
-) {}
+) {
+  override get message(): string {
+    const session =
+      this.currentSessionId === undefined ? "" : ` for session ${this.currentSessionId}`;
+    return `Authentication access stream operation ${this.operation} failed${session}.`;
+  }
+}
 
 export class EnvironmentAuthorizationError extends Schema.TaggedErrorClass<EnvironmentAuthorizationError>()(
   "EnvironmentAuthorizationError",
