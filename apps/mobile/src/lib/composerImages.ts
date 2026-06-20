@@ -3,6 +3,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type UploadChatImageAttachment,
 } from "@t3tools/contracts";
+import { getUrlDiagnostics } from "@t3tools/shared/urlDiagnostics";
 import * as Schema from "effect/Schema";
 import { uuidv4 } from "./uuid";
 
@@ -298,15 +299,10 @@ export function isOwnedPastedImageUri(uri: string): boolean {
 }
 
 function describeComposerImageUri(uri: string) {
-  let uriProtocol: string | undefined;
-  try {
-    uriProtocol = new URL(uri).protocol || undefined;
-  } catch {
-    // Malformed URIs still retain a nonsecret input length for diagnostics.
-  }
+  const diagnostics = getUrlDiagnostics(uri);
   return {
-    uriLength: uri.length,
-    ...(uriProtocol === undefined ? {} : { uriProtocol }),
+    uriLength: diagnostics.inputLength,
+    ...(diagnostics.protocol === undefined ? {} : { uriProtocol: diagnostics.protocol }),
   };
 }
 
