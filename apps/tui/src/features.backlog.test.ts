@@ -9,7 +9,8 @@ import { describe, it } from "bun:test";
 // Already shipped (covered by real specs elsewhere, NOT skipped here):
 // plan↔build toggle, rename, archive/unarchive, delete, stop-session, search/filter,
 // multiline composer + paste, tool-call rows, changed-files summary, working indicator,
-// proposed-plan card, implement-plan (^Y, same thread via sourceProposedPlan).
+// proposed-plan card, implement-plan (^Y, same thread via sourceProposedPlan),
+// context-window meter.
 
 describe.skip("Backlog — Low/Med: cycle through all pending approvals", () => {
   it("Given several pending approvals, when navigating, then each can be approved/declined in turn", () => {
@@ -33,10 +34,6 @@ describe.skip("Backlog — Med: checkpoint revert", () => {
   it("Given a selected turn, when reverted, then revertThreadCheckpoint({turnCount}) is sent", () => {
     // Op is trivial; the turn-selection UI is the work.
   });
-});
-
-describe.skip("Backlog — Med: context-window meter", () => {
-  it("Given activity usage, then a context-window meter is shown", () => {});
 });
 
 describe.skip("Backlog — Med/High: model / provider picker", () => {

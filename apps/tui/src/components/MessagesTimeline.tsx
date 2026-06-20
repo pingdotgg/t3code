@@ -4,6 +4,11 @@ import * as React from "react";
 
 import type { PendingApproval } from "../approvals.ts";
 import type { OrchestrationThread } from "../connection.ts";
+import {
+  type ContextWindowSnapshot,
+  deriveContextWindow,
+  formatContextWindow,
+} from "../contextWindow.ts";
 import { clip } from "../format.ts";
 import { type ActionableProposedPlan, latestActionableProposedPlan } from "../proposedPlan.ts";
 import {
@@ -95,6 +100,24 @@ function ChangedFiles({
   );
 }
 
+/** A one-line context-window usage meter under the header. */
+function ContextMeter({
+  snapshot,
+  palette,
+}: {
+  readonly snapshot: ContextWindowSnapshot;
+  readonly palette: Palette;
+}): React.ReactNode {
+  const pct = snapshot.usedPercentage;
+  const color = pct === null ? palette.dim : pct >= 90 ? ansi("red") : pct >= 70 ? ansi("yellow") : ansi("green");
+  return (
+    <text>
+      <span fg={palette.dim}>{"context  "}</span>
+      <span fg={color}>{formatContextWindow(snapshot)}</span>
+    </text>
+  );
+}
+
 /** The proposed-plan card shown after a plan-mode turn (mirrors ProposedPlanCard). */
 function ProposedPlanCard({
   plan,
@@ -143,9 +166,14 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   readonly scrollRef: React.MutableRefObject<ScrollBoxRenderable | null>;
 }): React.ReactNode {
   const palette = usePalette();
+  const contextWindow = React.useMemo(
+    () => (detail ? deriveContextWindow(detail.activities) : null),
+    [detail],
+  );
   const headerHeight = 1;
+  const metaHeight = contextWindow ? 1 : 0;
   const approvalHeight = approvals.length > 0 ? approvals.length + 2 : 0;
-  const bodyHeight = Math.max(1, height - headerHeight - approvalHeight - 2);
+  const bodyHeight = Math.max(1, height - headerHeight - metaHeight - approvalHeight - 2);
 
   const working = detail ? isWorking(detail) : false;
   const startedAt = detail ? workingStartedAt(detail) : null;
@@ -221,6 +249,8 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
           <span fg={palette.dim}>{`  ·  ${detail.runtimeMode}  ·  ${relativeTime(detail.updatedAt)}`}</span>
         </text>
       </box>
+
+      {contextWindow ? <ContextMeter snapshot={contextWindow} palette={palette} /> : null}
 
       <scrollbox
         ref={scrollRef}

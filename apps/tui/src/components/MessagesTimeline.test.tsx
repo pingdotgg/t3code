@@ -129,6 +129,25 @@ describe("MessagesTimeline body", () => {
     expect(frame).toContain("Working");
   });
 
+  it("Given context-window usage, then it renders the meter in the header", async () => {
+    const frame = await bodyFrame({
+      activities: [
+        {
+          id: "c1",
+          tone: "info",
+          kind: "context-window.updated",
+          summary: "ctx",
+          payload: { usedTokens: 144_000, maxTokens: 200_000 },
+          turnId: null,
+          createdAt: "2026-06-19T00:00:01.000Z",
+        },
+      ] as never,
+    });
+    expect(frame).toContain("context");
+    expect(frame).toContain("72%");
+    expect(frame).toContain("144k/200k");
+  });
+
   it("Given an actionable proposed plan, then it renders the plan card", async () => {
     const frame = await bodyFrame({
       proposedPlans: [
