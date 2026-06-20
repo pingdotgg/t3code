@@ -31,7 +31,19 @@ export class ElectronProtocolRegistrationError extends Schema.TaggedErrorClass<E
   },
 ) {
   override get message(): string {
-    return `Failed to register ${this.scheme}: protocol.`;
+    return `Failed to register Electron protocol scheme "${this.scheme}".`;
+  }
+}
+
+export class ElectronProtocolUnregistrationError extends Schema.TaggedErrorClass<ElectronProtocolUnregistrationError>()(
+  "ElectronProtocolUnregistrationError",
+  {
+    scheme: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to unregister Electron protocol scheme "${this.scheme}".`;
   }
 }
 
@@ -133,9 +145,14 @@ export const make = Effect.gen(function* () {
           catch: (cause) => new ElectronProtocolRegistrationError({ scheme: input.scheme, cause }),
         }).pipe(Effect.andThen(Ref.set(registered, true))),
         () =>
-          Effect.sync(() => {
-            Electron.protocol.unhandle(input.scheme);
-          }).pipe(Effect.andThen(Ref.set(registered, false))),
+          Effect.try({
+            try: () => Electron.protocol.unhandle(input.scheme),
+            catch: (cause) =>
+              new ElectronProtocolUnregistrationError({
+                scheme: input.scheme,
+                cause,
+              }),
+          }).pipe(Effect.andThen(Ref.set(registered, false)), Effect.orDie),
       );
     },
   );
