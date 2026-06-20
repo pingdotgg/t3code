@@ -25,7 +25,9 @@ const decodeClientSettingsJsonValue = Schema.decodeEffect(ClientSettingsJson);
 const decodeClientSettingsJson = (raw: string): Effect.Effect<ClientSettings, Schema.SchemaError> =>
   decodeLegacyClientSettingsDocumentJson(raw).pipe(
     Effect.map((document) => document.settings),
-    Effect.catch(() => decodeClientSettingsJsonValue(raw)),
+    Effect.catchTags({
+      SchemaError: () => decodeClientSettingsJsonValue(raw),
+    }),
   );
 const encodeClientSettingsJson = Schema.encodeEffect(ClientSettingsJson);
 
@@ -36,7 +38,6 @@ const DesktopClientSettingsWriteOperation = Schema.Literals([
   "write-temporary-file",
   "replace-settings-file",
 ]);
-type DesktopClientSettingsWriteOperation = typeof DesktopClientSettingsWriteOperation.Type;
 
 export class DesktopClientSettingsWriteError extends Schema.TaggedErrorClass<DesktopClientSettingsWriteError>()(
   "DesktopClientSettingsWriteError",
@@ -50,13 +51,6 @@ export class DesktopClientSettingsWriteError extends Schema.TaggedErrorClass<Des
     return `Desktop client settings write failed during ${this.operation} at ${this.path}.`;
   }
 }
-
-const writeError = (
-  operation: DesktopClientSettingsWriteOperation,
-  path: string,
-  cause: unknown,
-): DesktopClientSettingsWriteError =>
-  new DesktopClientSettingsWriteError({ operation, path, cause });
 
 export class DesktopClientSettings extends Context.Service<
   DesktopClientSettings,
@@ -96,19 +90,45 @@ const writeClientSettings = Effect.fnUntraced(function* (input: {
   const directory = input.path.dirname(input.settingsPath);
   const tempPath = `${input.settingsPath}.${process.pid}.${input.suffix}.tmp`;
   const encoded = yield* encodeClientSettingsJson(input.settings).pipe(
-    Effect.mapError((cause) => writeError("encode-document", input.settingsPath, cause)),
+    Effect.mapError(
+      (cause) =>
+        new DesktopClientSettingsWriteError({
+          operation: "encode-document",
+          path: input.settingsPath,
+          cause,
+        }),
+    ),
   );
-  yield* input.fileSystem
-    .makeDirectory(directory, { recursive: true })
-    .pipe(Effect.mapError((cause) => writeError("create-directory", directory, cause)));
-  yield* input.fileSystem
-    .writeFileString(tempPath, `${encoded}\n`)
-    .pipe(Effect.mapError((cause) => writeError("write-temporary-file", tempPath, cause)));
-  yield* input.fileSystem
-    .rename(tempPath, input.settingsPath)
-    .pipe(
-      Effect.mapError((cause) => writeError("replace-settings-file", input.settingsPath, cause)),
-    );
+  yield* input.fileSystem.makeDirectory(directory, { recursive: true }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DesktopClientSettingsWriteError({
+          operation: "create-directory",
+          path: directory,
+          cause,
+        }),
+    ),
+  );
+  yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DesktopClientSettingsWriteError({
+          operation: "write-temporary-file",
+          path: tempPath,
+          cause,
+        }),
+    ),
+  );
+  yield* input.fileSystem.rename(tempPath, input.settingsPath).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DesktopClientSettingsWriteError({
+          operation: "replace-settings-file",
+          path: input.settingsPath,
+          cause,
+        }),
+    ),
+  );
 });
 
 export const make = Effect.gen(function* () {
@@ -124,8 +144,13 @@ export const make = Effect.gen(function* () {
     set: (settings) =>
       crypto.randomUUIDv4.pipe(
         Effect.map((uuid) => uuid.replace(/-/g, "")),
-        Effect.mapError((cause) =>
-          writeError("create-temporary-file-name", environment.clientSettingsPath, cause),
+        Effect.mapError(
+          (cause) =>
+            new DesktopClientSettingsWriteError({
+              operation: "create-temporary-file-name",
+              path: environment.clientSettingsPath,
+              cause,
+            }),
         ),
         Effect.flatMap((suffix) =>
           writeClientSettings({
