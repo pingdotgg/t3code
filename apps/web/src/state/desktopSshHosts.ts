@@ -5,13 +5,23 @@ import { Atom } from "effect/unstable/reactivity";
 
 type DesktopSshDiscoveryBridge = Pick<DesktopBridge, "discoverSshHosts">;
 
+class DesktopSshDiscoveryUnavailableError extends Schema.TaggedErrorClass<DesktopSshDiscoveryUnavailableError>()(
+  "DesktopSshDiscoveryUnavailableError",
+  {},
+) {
+  override get message(): string {
+    return "Desktop SSH host discovery is unavailable.";
+  }
+}
+
 class DesktopSshDiscoveryError extends Schema.TaggedErrorClass<DesktopSshDiscoveryError>()(
   "DesktopSshDiscoveryError",
-  {
-    message: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to discover SSH hosts.";
+  }
+}
 
 function getDesktopSshDiscoveryBridge(): DesktopSshDiscoveryBridge | undefined {
   return typeof window === "undefined" ? undefined : window.desktopBridge;
@@ -23,17 +33,11 @@ export function createDesktopSshHostsStateAtom(
   const discoverDesktopSshHosts = Effect.fn("discoverDesktopSshHosts")(function* () {
     const bridge = getBridge();
     if (!bridge) {
-      return yield* new DesktopSshDiscoveryError({
-        message: "Desktop SSH host discovery is unavailable.",
-      });
+      return yield* new DesktopSshDiscoveryUnavailableError();
     }
     return yield* Effect.tryPromise({
       try: (): Promise<ReadonlyArray<DesktopDiscoveredSshHost>> => bridge.discoverSshHosts(),
-      catch: (cause) =>
-        new DesktopSshDiscoveryError({
-          message: cause instanceof Error ? cause.message : "Failed to discover SSH hosts.",
-          cause,
-        }),
+      catch: (cause) => new DesktopSshDiscoveryError({ cause }),
     });
   });
 

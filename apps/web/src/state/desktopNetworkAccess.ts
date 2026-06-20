@@ -21,13 +21,32 @@ export interface DesktopNetworkAccessSnapshot {
   readonly serverExposureState: DesktopServerExposureState;
 }
 
-class DesktopNetworkAccessError extends Schema.TaggedErrorClass<DesktopNetworkAccessError>()(
-  "DesktopNetworkAccessError",
-  {
-    message: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
+class DesktopNetworkAccessUnavailableError extends Schema.TaggedErrorClass<DesktopNetworkAccessUnavailableError>()(
+  "DesktopNetworkAccessUnavailableError",
+  {},
+) {
+  override get message(): string {
+    return "Desktop network access is unavailable.";
+  }
+}
+
+class DesktopServerExposureStateLoadError extends Schema.TaggedErrorClass<DesktopServerExposureStateLoadError>()(
+  "DesktopServerExposureStateLoadError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to load desktop server exposure state.";
+  }
+}
+
+class DesktopAdvertisedEndpointsLoadError extends Schema.TaggedErrorClass<DesktopAdvertisedEndpointsLoadError>()(
+  "DesktopAdvertisedEndpointsLoadError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to load advertised desktop endpoints.";
+  }
+}
 
 function getDesktopNetworkAccessBridge(): DesktopNetworkAccessBridge | undefined {
   return typeof window === "undefined" ? undefined : window.desktopBridge;
@@ -39,25 +58,25 @@ export function createDesktopNetworkAccessStateAtom(
   const loadDesktopNetworkAccess = Effect.fn("loadDesktopNetworkAccess")(function* () {
     const bridge = getBridge();
     if (!bridge) {
-      return yield* new DesktopNetworkAccessError({
-        message: "Desktop network access is unavailable.",
-      });
+      return yield* new DesktopNetworkAccessUnavailableError();
     }
-    return yield* Effect.tryPromise({
-      try: async (): Promise<DesktopNetworkAccessSnapshot> => {
-        const [serverExposureState, advertisedEndpoints] = await Promise.all([
-          bridge.getServerExposureState(),
-          bridge.getAdvertisedEndpoints(),
-        ]);
-        return { advertisedEndpoints, serverExposureState };
-      },
-      catch: (cause) =>
-        new DesktopNetworkAccessError({
-          message:
-            cause instanceof Error ? cause.message : "Failed to load desktop network access.",
-          cause,
+    const [serverExposureState, advertisedEndpoints] = yield* Effect.all(
+      [
+        Effect.tryPromise({
+          try: () => bridge.getServerExposureState(),
+          catch: (cause) => new DesktopServerExposureStateLoadError({ cause }),
         }),
-    });
+        Effect.tryPromise({
+          try: () => bridge.getAdvertisedEndpoints(),
+          catch: (cause) => new DesktopAdvertisedEndpointsLoadError({ cause }),
+        }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    return {
+      advertisedEndpoints,
+      serverExposureState,
+    } satisfies DesktopNetworkAccessSnapshot;
   });
 
   return Atom.make(loadDesktopNetworkAccess()).pipe(
