@@ -9,8 +9,11 @@ import * as Effect from "effect/Effect";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 
 import {
+  CloudDpopProofError,
+  CloudDpopStorageError,
   createDpopProof,
   generateDpopProofKeyPair,
+  isCloudDpopError,
   loadOrCreateDpopProofKeyPair,
   cryptoLayer,
 } from "./dpop";
@@ -95,7 +98,36 @@ describe("mobile DPoP", () => {
 
       const error = yield* loadOrCreateDpopProofKeyPair().pipe(Effect.flip);
 
-      expect(error.message).toBe("Stored DPoP proof key is invalid.");
+      expect(error).toBeInstanceOf(CloudDpopStorageError);
+      expect(error).toMatchObject({
+        operation: "decode",
+        storageKey: "t3code.cloud.dpop-proof-key",
+      });
+      expect(error.cause).toMatchObject({ _tag: "SchemaError" });
+      expect(error.message).not.toContain(String(error.cause));
+      expect(isCloudDpopError(error)).toBe(true);
+    }).pipe(Effect.provide(cryptoLayer)),
+  );
+
+  it.effect("preserves request context and the parser cause for an invalid proof URL", () =>
+    Effect.gen(function* () {
+      const proofKey = yield* generateDpopProofKeyPair();
+      const error = yield* createDpopProof({
+        method: "POST",
+        url: "http://",
+        proofKey,
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(CloudDpopProofError);
+      expect(error).toMatchObject({
+        operation: "normalize-url",
+        method: "POST",
+        url: "http://",
+        thumbprint: proofKey.thumbprint,
+      });
+      expect(error.cause).toBeInstanceOf(Error);
+      expect(error.message).not.toContain((error.cause as Error).message);
+      expect(isCloudDpopError(error)).toBe(true);
     }).pipe(Effect.provide(cryptoLayer)),
   );
 
