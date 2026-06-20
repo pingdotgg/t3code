@@ -88,6 +88,7 @@ import { resolvePathLinkTarget } from "~/terminal-links";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { readLocalApi } from "~/localApi";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
+import { openPullRequestLink } from "~/lib/openPullRequestLink";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -1229,7 +1230,8 @@ export default function GitActionsControl({
       });
       return;
     }
-    void api.shell.openExternal(prUrl).catch((err: unknown) => {
+    void openPullRequestLink(api.shell, prUrl).catch((err: unknown) => {
+      console.error(err);
       toastManager.add(
         stackedThreadToast({
           type: "error",
