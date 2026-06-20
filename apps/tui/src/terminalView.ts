@@ -116,3 +116,17 @@ export function readTerminalFrame(term: Terminal): TermFrame {
 
   return { rows, cursor };
 }
+
+/**
+ * The on-screen viewport as plain text — used to copy the terminal to the system
+ * clipboard (OSC 52). Trailing blank lines are dropped.
+ */
+export function readTerminalViewport(term: Terminal): string {
+  const buffer = term.buffer.active;
+  const lines: string[] = [];
+  for (let row = 0; row < term.rows; row += 1) {
+    const line = buffer.getLine(buffer.viewportY + row);
+    lines.push(line ? line.translateToString(true) : "");
+  }
+  return lines.join("\n").replace(/\s*\n+$/u, "");
+}

@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { RGBA } from "@opentui/core";
 import { describe, expect, it } from "bun:test";
 
-import { readTerminalFrame, type TermSegment } from "./terminalView.ts";
+import { readTerminalFrame, readTerminalViewport, type TermSegment } from "./terminalView.ts";
 
 const { Terminal } = createRequire(import.meta.url)(
   "@xterm/headless",
@@ -39,5 +39,15 @@ describe("readTerminalFrame colours", () => {
     const segments = await firstRow("plain");
     const seg = segments.find((s) => s.text.includes("plain"));
     expect(seg?.color).toBeUndefined();
+  });
+});
+
+describe("readTerminalViewport", () => {
+  it("Given written rows, then it returns the on-screen text without trailing blanks", async () => {
+    const term = new Terminal({ cols: 40, rows: 4, allowProposedApi: true });
+    const text = await new Promise<string>((resolve) => {
+      term.write("first line\r\nsecond line\r\n", () => resolve(readTerminalViewport(term)));
+    });
+    expect(text).toBe("first line\nsecond line");
   });
 });

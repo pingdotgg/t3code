@@ -115,6 +115,8 @@ export function ChatView({
   const [terminalHeight, setTerminalHeight] = React.useState<number | null>(null);
   const [listWidth] = React.useState(LIST_PANE_WIDTH);
   const scrollRef = React.useRef<ScrollBoxRenderable | null>(null);
+  // Filled by the terminal drawer with a getter for its viewport text (for ^O copy).
+  const terminalCopyRef = React.useRef<(() => string) | null>(null);
 
   const projects = state.shell?.projects ?? [];
   // projectIndex is held across shell updates; clamp it so a shrinking project
@@ -468,6 +470,18 @@ export function ChatView({
     onToggleTerminal: toggleTerminal,
     onGrowTerminal: () => resizeTerminal(2),
     onShrinkTerminal: () => resizeTerminal(-2),
+    onTerminalCopy: () => {
+      const text = terminalCopyRef.current?.() ?? "";
+      if (text.length === 0) {
+        store.setStatus("Terminal is empty.", "info");
+        return;
+      }
+      const copied = renderer.copyToClipboardOSC52(text);
+      store.setStatus(
+        copied ? "Terminal copied to clipboard." : "Clipboard not supported by this terminal.",
+        copied ? "success" : "error",
+      );
+    },
     onGrowPrompt: () => resizePrompt(2),
     onShrinkPrompt: () => resizePrompt(-2),
     onEditInEditor: editInEditor,
@@ -758,6 +772,7 @@ export function ChatView({
           cols={termCols}
           rows={termRows}
           focused={terminalFocused}
+          copyRef={terminalCopyRef}
         />
       ) : null}
 

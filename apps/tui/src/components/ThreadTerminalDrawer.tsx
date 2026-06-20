@@ -1,11 +1,12 @@
 import { createRequire } from "node:module";
 
 import { RGBA } from "@opentui/core";
+import { usePaste } from "@opentui/react";
 import type { ThreadId } from "@t3tools/contracts";
 import * as React from "react";
 
 import type { TuiClient } from "../connection.ts";
-import { readTerminalFrame, type TermSegment } from "../terminalView.ts";
+import { readTerminalFrame, readTerminalViewport, type TermSegment } from "../terminalView.ts";
 import { ansi, THEME, usePalette } from "../theme.ts";
 
 // The embedded terminal pane (mirrors apps/web/src/components/ThreadTerminalDrawer.tsx).
@@ -57,6 +58,7 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
   cols,
   rows,
   focused,
+  copyRef,
 }: {
   readonly client: TuiClient;
   readonly info: TerminalInfo;
@@ -64,6 +66,8 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
   readonly rows: number;
   /** Whether keystrokes are routed to this terminal (drives the focus affordance). */
   readonly focused: boolean;
+  /** Filled with a getter for the viewport text so the app can copy it (OSC 52). */
+  readonly copyRef: React.MutableRefObject<(() => string) | null>;
 }): React.ReactNode {
   const palette = usePalette();
   const safeCols = Math.max(2, cols);
@@ -91,6 +95,25 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
     },
     [],
   );
+
+  // Expose the viewport text so the app can copy it to the clipboard.
+  React.useEffect(() => {
+    copyRef.current = () => readTerminalViewport(term);
+    return () => {
+      copyRef.current = null;
+    };
+  }, [copyRef, term]);
+
+  // Forward a paste to the PTY while the terminal is focused (the prompt editor
+  // handles its own paste). Wrap in bracketed-paste markers when the running
+  // program asked for them, so multi-line pastes don't auto-execute line by line.
+  usePaste((event) => {
+    if (!focused) return;
+    const text = new TextDecoder().decode(event.bytes);
+    if (text.length === 0) return;
+    const data = term.modes.bracketedPasteMode ? `[200~${text}[201~` : text;
+    void client.terminalWrite(info.threadId, info.terminalId, data).catch(() => {});
+  });
 
   React.useEffect(() => {
     if (term.cols !== safeCols || term.rows !== safeRows) term.resize(safeCols, safeRows);
@@ -155,7 +178,9 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
       <text>
         <span fg={focused ? palette.accent : ansi("yellow")}>{`Terminal · ${info.title}`}</span>
         <span fg={palette.dim}>
-          {focused ? "  ·  ^P prompt · ^E close · ^↑/^↓ resize" : "  ·  ^P focus · ^E close"}
+          {focused
+            ? "  ·  ^P prompt · ^E close · ^↑/^↓ resize · ^O copy · paste ✓"
+            : "  ·  ^P focus · ^E close"}
         </span>
       </text>
       {frame.rows.map((segments, index) => (

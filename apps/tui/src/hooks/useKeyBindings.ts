@@ -34,6 +34,7 @@ export interface KeyBindingActions {
   readonly onToggleFocus: () => void;
   readonly onGrowTerminal: () => void;
   readonly onShrinkTerminal: () => void;
+  readonly onTerminalCopy: () => void;
   readonly onTerminalKey: (sequence: string) => void;
   // Thread-actions overlay (^K)
   readonly onOpenActions: () => void;
@@ -104,12 +105,13 @@ export interface KeyBindingActions {
 
 export function useKeyBindings(actions: KeyBindingActions): void {
   useKeyboard((key) => {
-    // ── Terminal focused: ^E/^P/^↑/^↓ are intercepted; everything else → PTY ──
+    // ── Terminal focused: ^E/^P/^↑/^↓/^O are intercepted; everything else → PTY ──
     if (actions.mode === "terminal") {
       if (key.ctrl && key.name === "e") return actions.onToggleTerminal();
       if (key.ctrl && key.name === "p") return actions.onToggleFocus();
       if (key.ctrl && key.name === "up") return actions.onGrowTerminal();
       if (key.ctrl && key.name === "down") return actions.onShrinkTerminal();
+      if (key.ctrl && key.name === "o") return actions.onTerminalCopy();
       if (key.sequence) actions.onTerminalKey(key.sequence);
       return;
     }
