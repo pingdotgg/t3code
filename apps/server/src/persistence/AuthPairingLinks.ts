@@ -10,8 +10,8 @@ import { AuthEnvironmentScopes } from "@t3tools/contracts";
 
 import {
   type AuthPairingLinkRepositoryError,
-  toPersistenceDecodeError,
-  toPersistenceSqlError,
+  PersistenceDecodeError,
+  PersistenceSqlError,
 } from "./Errors.ts";
 
 export const AuthPairingLinkRecord = Schema.Struct({
@@ -90,8 +90,8 @@ export class AuthPairingLinkRepository extends Context.Service<
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
   return (cause: unknown): AuthPairingLinkRepositoryError =>
     Schema.isSchemaError(cause)
-      ? toPersistenceDecodeError(decodeOperation)(cause)
-      : toPersistenceSqlError(sqlOperation)(cause);
+      ? PersistenceDecodeError.fromSchemaError(decodeOperation, cause)
+      : new PersistenceSqlError({ operation: sqlOperation, cause });
 }
 
 export const make = Effect.gen(function* () {

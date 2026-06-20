@@ -16,9 +16,9 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  PersistenceDecodeError,
+  PersistenceSqlError,
   type ProviderSessionRuntimeRepositoryError,
-  toPersistenceDecodeError,
-  toPersistenceSqlError,
 } from "./Errors.ts";
 
 /**
@@ -117,8 +117,8 @@ const DeleteRuntimeRequestSchema = GetRuntimeRequestSchema;
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
   return (cause: unknown): ProviderSessionRuntimeRepositoryError =>
     Schema.isSchemaError(cause)
-      ? toPersistenceDecodeError(decodeOperation)(cause)
-      : toPersistenceSqlError(sqlOperation)(cause);
+      ? PersistenceDecodeError.fromSchemaError(decodeOperation, cause)
+      : new PersistenceSqlError({ operation: sqlOperation, cause });
 }
 
 export const make = Effect.gen(function* () {
@@ -235,9 +235,10 @@ export const make = Effect.gen(function* () {
           onNone: () => Effect.succeed(Option.none()),
           onSome: (row) =>
             decodeRuntime(row).pipe(
-              Effect.mapError(
-                toPersistenceDecodeError(
+              Effect.mapError((cause) =>
+                PersistenceDecodeError.fromSchemaError(
                   "ProviderSessionRuntimeRepository.getByThreadId:rowToRuntime",
+                  cause,
                 ),
               ),
               Effect.map((runtime) => Option.some(runtime)),
@@ -259,8 +260,11 @@ export const make = Effect.gen(function* () {
           rows,
           (row) =>
             decodeRuntime(row).pipe(
-              Effect.mapError(
-                toPersistenceDecodeError("ProviderSessionRuntimeRepository.list:rowToRuntime"),
+              Effect.mapError((cause) =>
+                PersistenceDecodeError.fromSchemaError(
+                  "ProviderSessionRuntimeRepository.list:rowToRuntime",
+                  cause,
+                ),
               ),
             ),
           { concurrency: "unbounded" },
@@ -273,7 +277,11 @@ export const make = Effect.gen(function* () {
   ) =>
     deleteRuntimeByThreadId(input).pipe(
       Effect.mapError(
-        toPersistenceSqlError("ProviderSessionRuntimeRepository.deleteByThreadId:query"),
+        (cause) =>
+          new PersistenceSqlError({
+            operation: "ProviderSessionRuntimeRepository.deleteByThreadId:query",
+            cause,
+          }),
       ),
     );
 

@@ -15,8 +15,8 @@ import {
 
 import {
   type AuthSessionRepositoryError,
-  toPersistenceDecodeError,
-  toPersistenceSqlError,
+  PersistenceDecodeError,
+  PersistenceSqlError,
 } from "./Errors.ts";
 
 export const AuthSessionClientMetadataRecord = Schema.Struct({
@@ -146,8 +146,8 @@ function toAuthSessionRecord(row: typeof AuthSessionDbRow.Type): AuthSessionReco
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
   return (cause: unknown): AuthSessionRepositoryError =>
     Schema.isSchemaError(cause)
-      ? toPersistenceDecodeError(decodeOperation)(cause)
-      : toPersistenceSqlError(sqlOperation)(cause);
+      ? PersistenceDecodeError.fromSchemaError(decodeOperation, cause)
+      : new PersistenceSqlError({ operation: sqlOperation, cause });
 }
 
 export const make = Effect.gen(function* () {
