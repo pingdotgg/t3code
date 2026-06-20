@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createRequire } from "node:module";
+import * as NodeModule from "node:module";
 
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -482,7 +482,7 @@ const stageClerkPasskeyNativeBinaries = Effect.fn("stageClerkPasskeyNativeBinari
     path.join(stageAppDir, "node_modules", "@clerk", "electron-passkeys", "index.js"),
   );
   const packageDir = path.dirname(packageEntryPath);
-  const packageRequire = createRequire(packageEntryPath);
+  const packageRequire = NodeModule.createRequire(packageEntryPath);
 
   for (const artifact of resolveClerkPasskeyNativeArtifacts(platform, arch)) {
     const sourcePath = yield* Effect.try({

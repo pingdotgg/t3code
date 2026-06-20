@@ -4,7 +4,7 @@
  *
  * @module SqliteClient
  */
-import { DatabaseSync, type StatementSync } from "node:sqlite";
+import * as NodeSqlite from "node:sqlite";
 
 import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
@@ -69,7 +69,7 @@ const checkNodeSqliteCompat = () => {
 
 const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
   options: SqliteClientConfig,
-  openDatabase: () => DatabaseSync,
+  openDatabase: () => NodeSqlite.DatabaseSync,
 ): Effect.fn.Return<Client.SqlClient, never, Scope.Scope | Reactivity.Reactivity> {
   yield* checkNodeSqliteCompat();
 
@@ -86,8 +86,8 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
       Effect.sync(() => db.close()),
     );
 
-    const statementReaderCache = new WeakMap<StatementSync, boolean>();
-    const hasRows = (statement: StatementSync): boolean => {
+    const statementReaderCache = new WeakMap<NodeSqlite.StatementSync, boolean>();
+    const hasRows = (statement: NodeSqlite.StatementSync): boolean => {
       const cached = statementReaderCache.get(statement);
       if (cached !== undefined) {
         return cached;
@@ -113,7 +113,11 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
         }),
     });
 
-    const runStatement = (statement: StatementSync, params: ReadonlyArray<unknown>, raw: boolean) =>
+    const runStatement = (
+      statement: NodeSqlite.StatementSync,
+      params: ReadonlyArray<unknown>,
+      raw: boolean,
+    ) =>
       Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
         statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
         try {
@@ -220,7 +224,7 @@ const make = (
   makeWithDatabase(
     options,
     () =>
-      new DatabaseSync(options.filename, {
+      new NodeSqlite.DatabaseSync(options.filename, {
         readOnly: options.readonly ?? false,
         allowExtension: options.allowExtension ?? false,
       }),
@@ -236,7 +240,7 @@ const makeMemory = (
       readonly: false,
     },
     () => {
-      const database = new DatabaseSync(":memory:", {
+      const database = new NodeSqlite.DatabaseSync(":memory:", {
         allowExtension: config.allowExtension ?? false,
       });
       return database;

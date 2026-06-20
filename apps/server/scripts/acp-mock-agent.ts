@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off
-import { appendFileSync } from "node:fs";
+import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
 
@@ -42,7 +42,7 @@ function logExit(reason: string): void {
   if (!exitLogPath) {
     return;
   }
-  appendFileSync(exitLogPath, `${reason}\n`, "utf8");
+  NodeFS.appendFileSync(exitLogPath, `${reason}\n`, "utf8");
 }
 
 process.once("SIGTERM", () => {
@@ -693,7 +693,7 @@ const program = Effect.gen(function* () {
               }
               const payload = event.payload;
               return Effect.sync(() => {
-                appendFileSync(
+                NodeFS.appendFileSync(
                   requestLogPath,
                   payload.endsWith("\n") ? payload : `${payload}\n`,
                   "utf8",

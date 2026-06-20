@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NFS from "node:fs";
-import * as Net from "node:net";
-import * as readline from "node:readline";
-import type { Readable } from "node:stream";
+import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
+import * as NodeReadline from "node:readline";
+import type * as NodeStream from "node:stream";
 
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -33,7 +33,7 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
   const timeoutMs = options?.timeoutMs ?? 1000;
 
   return yield* Effect.callback<Option.Option<A>, BootstrapError>((resume) => {
-    const input = readline.createInterface({
+    const input = NodeReadline.createInterface({
       input: stream,
       crlfDelay: Infinity,
     });
@@ -96,7 +96,7 @@ const isUnavailableBootstrapFdError = Predicate.compose(
 
 const isFdReady = (fd: number) =>
   Effect.try({
-    try: () => NFS.fstatSync(fd),
+    try: () => NodeFS.fstatSync(fd),
     catch: (error) =>
       new BootstrapError({
         message: "Failed to stat bootstrap fd.",
@@ -113,7 +113,7 @@ const isFdReady = (fd: number) =>
 const makeBootstrapInputStream = (fd: number) =>
   Effect.gen(function* () {
     const platform = yield* HostProcessPlatform;
-    return yield* Effect.try<Readable, BootstrapError>({
+    return yield* Effect.try<NodeStream.Readable, BootstrapError>({
       try: () => {
         const fdPath = resolveFdPath(fd, platform);
         if (fdPath === undefined) {
@@ -122,8 +122,8 @@ const makeBootstrapInputStream = (fd: number) =>
 
         let streamFd: number | undefined;
         try {
-          streamFd = NFS.openSync(fdPath, "r");
-          return NFS.createReadStream("", {
+          streamFd = NodeFS.openSync(fdPath, "r");
+          return NodeFS.createReadStream("", {
             fd: streamFd,
             encoding: "utf8",
             autoClose: true,
@@ -131,7 +131,7 @@ const makeBootstrapInputStream = (fd: number) =>
         } catch (error) {
           if (isBootstrapFdPathDuplicationError(error)) {
             if (streamFd !== undefined) {
-              NFS.closeSync(streamFd);
+              NodeFS.closeSync(streamFd);
             }
             return makeDirectBootstrapStream(fd);
           }
@@ -146,15 +146,15 @@ const makeBootstrapInputStream = (fd: number) =>
     });
   });
 
-const makeDirectBootstrapStream = (fd: number): Readable => {
+const makeDirectBootstrapStream = (fd: number): NodeStream.Readable => {
   try {
-    return NFS.createReadStream("", {
+    return NodeFS.createReadStream("", {
       fd,
       encoding: "utf8",
       autoClose: true,
     });
   } catch {
-    const stream = new Net.Socket({
+    const stream = new NodeNet.Socket({
       fd,
       readable: true,
       writable: false,

@@ -1,4 +1,4 @@
-import { networkInterfaces } from "node:os";
+import * as NodeOS from "node:os";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -27,7 +27,7 @@ export class DesktopNetworkInterfaces extends Context.Service<
 
 export const make = (): DesktopNetworkInterfaces["Service"] =>
   DesktopNetworkInterfaces.of({
-    read: Effect.sync(() => networkInterfaces()),
+    read: Effect.sync(() => NodeOS.networkInterfaces()),
   });
 
 export const layer = Layer.succeed(DesktopNetworkInterfaces, make());

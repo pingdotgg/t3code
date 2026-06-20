@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { dirname } from "node:path";
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -76,7 +76,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       });
       const serverConfig = yield* makeServerConfig(baseDir);
       const environmentIdPath = serverConfig.environmentIdPath;
-      yield* fileSystem.makeDirectory(dirname(environmentIdPath), { recursive: true });
+      yield* fileSystem.makeDirectory(NodePath.dirname(environmentIdPath), { recursive: true });
       yield* fileSystem.writeFileString(environmentIdPath, "persisted-environment-id\n");
       const writeAttempts: string[] = [];
       const failingFileSystemLayer = FileSystem.layerNoop({

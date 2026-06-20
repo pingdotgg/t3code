@@ -6,7 +6,7 @@
  *
  * @module WorkspacePaths
  */
-import { homedir } from "node:os";
+import * as NodeOS from "node:os";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -105,10 +105,10 @@ function toPosixRelativePath(input: string): string {
 
 function expandHomePath(input: string, path: Path.Path): string {
   if (input === "~") {
-    return homedir();
+    return NodeOS.homedir();
   }
   if (input.startsWith("~/") || input.startsWith("~\\")) {
-    return path.join(homedir(), input.slice(2));
+    return path.join(NodeOS.homedir(), input.slice(2));
   }
   return input;
 }

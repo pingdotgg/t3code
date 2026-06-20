@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import NodePath from "node:path";
+import * as NodePath from "node:path";
 
 export function normalizeAttachmentRelativePath(rawRelativePath: string): string | null {
   const normalized = NodePath.normalize(rawRelativePath).replace(/^[/\\]+/, "");

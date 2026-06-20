@@ -22,7 +22,7 @@ import {
 import { BrowserWindow } from "electron";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { pathToFileURL } from "node:url";
+import * as NodeURL from "node:url";
 
 import * as PreviewManager from "../../preview/Manager.ts";
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
@@ -196,7 +196,7 @@ export const getPreviewConfig = DesktopIpc.makeIpcMethod({
     return {
       partition: yield* manager.getBrowserPartition(environmentId),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
-      preloadUrl: pathToFileURL(`${__dirname}/preview-pick-preload.cjs`).href,
+      preloadUrl: NodeURL.pathToFileURL(`${__dirname}/preview-pick-preload.cjs`).href,
     };
   }),
 });

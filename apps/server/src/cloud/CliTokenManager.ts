@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - The CLI loopback OAuth callback is a Node HTTP boundary.
-import { createServer } from "node:http";
+import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Clock from "effect/Clock";
@@ -206,7 +206,7 @@ export const make = Effect.gen(function* () {
       disableLogger: true,
     }).pipe(
       Layer.provide(
-        NodeHttpServer.layer(createServer, {
+        NodeHttpServer.layer(NodeHttp.createServer, {
           host: "127.0.0.1",
           port: 34338,
           disablePreemptiveShutdown: true,

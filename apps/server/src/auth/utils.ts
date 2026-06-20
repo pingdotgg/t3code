@@ -4,7 +4,7 @@ import type {
   AuthClientPresentationMetadata,
 } from "@t3tools/contracts";
 import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as Crypto from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import * as Encoding from "effect/Encoding";
 import * as Result from "effect/Result";
 
@@ -32,7 +32,7 @@ export function base64UrlDecodeUtf8(input: string): string {
 }
 
 export function signPayload(payload: string, secret: Uint8Array): string {
-  return Crypto.createHmac("sha256", Buffer.from(secret)).update(payload).digest("base64url");
+  return NodeCrypto.createHmac("sha256", Buffer.from(secret)).update(payload).digest("base64url");
 }
 
 export function timingSafeEqualBase64Url(left: string, right: string): boolean {
@@ -41,7 +41,7 @@ export function timingSafeEqualBase64Url(left: string, right: string): boolean {
   if (leftBuffer.length !== rightBuffer.length) {
     return false;
   }
-  return Crypto.timingSafeEqual(leftBuffer, rightBuffer);
+  return NodeCrypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function normalizeNonEmptyString(value: string | null | undefined): string | undefined {

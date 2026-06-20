@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests exercise root env file precedence directly.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { loadRepoEnv, resolvePublicConfig } from "./public-config.ts";
@@ -10,7 +10,7 @@ const temporaryDirectories: string[] = [];
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
+    NodeFS.rmSync(directory, { recursive: true, force: true });
   }
 });
 
@@ -43,12 +43,12 @@ describe("loadRepoEnv", () => {
 
   it("applies process, root local, and root precedence in that order", () => {
     const repoRoot = makeTemporaryDirectory();
-    writeFileSync(
-      join(repoRoot, ".env"),
+    NodeFS.writeFileSync(
+      NodePath.join(repoRoot, ".env"),
       "T3CODE_CLERK_PUBLISHABLE_KEY=pk_root\nT3CODE_CLERK_JWT_TEMPLATE=template_root\nT3CODE_CLERK_CLI_OAUTH_CLIENT_ID=oauth_root\nT3CODE_RELAY_URL=https://root.example.test\n",
     );
-    writeFileSync(
-      join(repoRoot, ".env.local"),
+    NodeFS.writeFileSync(
+      NodePath.join(repoRoot, ".env.local"),
       "T3CODE_CLERK_PUBLISHABLE_KEY=pk_local\nT3CODE_CLERK_JWT_TEMPLATE=template_local\nT3CODE_CLERK_CLI_OAUTH_CLIENT_ID=oauth_local\nT3CODE_RELAY_URL=https://local.example.test\n",
     );
 
@@ -148,7 +148,7 @@ describe("loadRepoEnv", () => {
 });
 
 function makeTemporaryDirectory() {
-  const directory = mkdtempSync(join(tmpdir(), "t3code-public-config-"));
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-public-config-"));
   temporaryDirectories.push(directory);
   return directory;
 }

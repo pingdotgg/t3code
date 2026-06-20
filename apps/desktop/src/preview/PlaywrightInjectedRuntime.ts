@@ -1,14 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off - Extracts Playwright's installed Node bundle for browser injection.
-import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-import { runInNewContext } from "node:vm";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
+import * as NodeVM from "node:vm";
 
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-const require = createRequire(import.meta.url);
+const require = NodeModule.createRequire(import.meta.url);
 const encodeUnknownJson = Schema.encodeUnknownEffect(Schema.UnknownFromJsonString);
 
 export class PlaywrightInjectedRuntimeError extends Data.TaggedError(
@@ -32,7 +32,11 @@ export const playwrightInjectedRuntimeSource = Effect.fn("PlaywrightInjectedRunt
       catch: (cause) => fail("resolvePackage", cause),
     });
     const coreBundle = yield* Effect.tryPromise({
-      try: () => readFile(join(dirname(packageJsonPath), "lib/coreBundle.js"), "utf8"),
+      try: () =>
+        NodeFSP.readFile(
+          NodePath.join(NodePath.dirname(packageJsonPath), "lib/coreBundle.js"),
+          "utf8",
+        ),
       catch: (cause) => fail("readCoreBundle", cause),
     });
     const marker = "source3 = ";
@@ -53,7 +57,7 @@ export const playwrightInjectedRuntimeSource = Effect.fn("PlaywrightInjectedRunt
     }
     const literal = coreBundle.slice(literalStart, literalEnd);
     const source = yield* Effect.try({
-      try: () => runInNewContext(literal, Object.create(null), { timeout: 1_000 }),
+      try: () => NodeVM.runInNewContext(literal, Object.create(null), { timeout: 1_000 }),
       catch: (cause) => fail("evaluateSourceLiteral", cause),
     });
     if (typeof source !== "string" || source.length < 100_000) {

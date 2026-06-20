@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 
 import type { ChatAttachment } from "@t3tools/contracts";
 
@@ -39,7 +39,7 @@ export function createAttachmentId(threadId: string): string | null {
   if (!threadSegment) {
     return null;
   }
-  return `${threadSegment}-${randomUUID()}`;
+  return `${threadSegment}-${NodeCrypto.randomUUID()}`;
 }
 
 export function parseThreadSegmentFromAttachmentId(attachmentId: string): string | null {
@@ -89,7 +89,7 @@ export function resolveAttachmentPathById(input: {
       attachmentsDir: input.attachmentsDir,
       relativePath: `${normalizedId}${extension}`,
     });
-    if (maybePath && existsSync(maybePath)) {
+    if (maybePath && NodeFS.existsSync(maybePath)) {
       return maybePath;
     }
   }

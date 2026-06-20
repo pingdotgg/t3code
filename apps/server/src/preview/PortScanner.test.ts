@@ -1,4 +1,4 @@
-import * as net from "node:net";
+import * as NodeNet from "node:net";
 
 import { it as effectIt } from "@effect/vitest";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -17,9 +17,9 @@ const TestPortDiscoveryLive = PortScanner.layer.pipe(
   ),
 );
 
-const openServer = (port: number): Effect.Effect<net.Server | null> =>
+const openServer = (port: number): Effect.Effect<NodeNet.Server | null> =>
   Effect.callback((resume) => {
-    const server = net.createServer();
+    const server = NodeNet.createServer();
     server.once("error", () => {
       resume(Effect.succeed(null));
     });
@@ -31,7 +31,7 @@ const openServer = (port: number): Effect.Effect<net.Server | null> =>
     });
   });
 
-const closeServer = (server: net.Server): Effect.Effect<void> =>
+const closeServer = (server: NodeNet.Server): Effect.Effect<void> =>
   Effect.callback((resume) => {
     server.close(() => resume(Effect.void));
   });

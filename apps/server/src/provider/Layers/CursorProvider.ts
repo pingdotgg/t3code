@@ -1,4 +1,4 @@
-import * as NodeOs from "node:os";
+import * as NodeOS from "node:os";
 import type {
   CursorSettings,
   ModelCapabilities,
@@ -746,7 +746,7 @@ function isCursorAboutJsonFormatUnsupported(result: CommandResult): boolean {
 const readCursorCliConfigChannel = Effect.fn("readCursorCliConfigChannel")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const configPath = path.join(NodeOs.homedir(), ".cursor", "cli-config.json");
+  const configPath = path.join(NodeOS.homedir(), ".cursor", "cli-config.json");
   const raw = yield* fileSystem.readFileString(configPath).pipe(Effect.orElseSucceed(() => ""));
   return parseCursorCliConfigChannel(raw);
 });

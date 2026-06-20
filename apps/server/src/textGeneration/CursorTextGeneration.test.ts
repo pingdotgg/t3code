@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as path from "node:path";
-import * as os from "node:os";
-import { fileURLToPath } from "node:url";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
+import * as NodeURL from "node:url";
+import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -21,8 +21,8 @@ import * as TextGeneration from "./TextGeneration.ts";
 import { makeCursorTextGeneration } from "./CursorTextGeneration.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const mockAgentPath = path.join(__dirname, "../../scripts/acp-mock-agent.ts");
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const mockAgentPath = NodePath.join(__dirname, "../../scripts/acp-mock-agent.ts");
 
 function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -33,10 +33,10 @@ const CursorTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(proces
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
 function makeAcpAgentWrapper(dir: string, env: Record<string, string>): string {
-  const binDir = path.join(dir, "bin");
-  const agentPath = path.join(binDir, "agent");
-  mkdirSync(binDir, { recursive: true });
-  writeFileSync(
+  const binDir = NodePath.join(dir, "bin");
+  const agentPath = NodePath.join(binDir, "agent");
+  NodeFS.mkdirSync(binDir, { recursive: true });
+  NodeFS.writeFileSync(
     agentPath,
     [
       "#!/bin/sh",
@@ -50,7 +50,7 @@ function makeAcpAgentWrapper(dir: string, env: Record<string, string>): string {
     ].join("\n"),
     "utf8",
   );
-  chmodSync(agentPath, 0o755);
+  NodeFS.chmodSync(agentPath, 0o755);
   return agentPath;
 }
 
@@ -59,10 +59,10 @@ function withFakeAcpAgent<A, E, R>(
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), "t3code-cursor-text-acp-"));
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-acp-"));
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
-        rmSync(tempDir, { recursive: true, force: true });
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }),
     );
     const agentPath = makeAcpAgentWrapper(tempDir, env);
@@ -76,7 +76,7 @@ function waitForFileContent(path: string): Effect.Effect<string> {
   return Effect.gen(function* () {
     const deadline = (yield* Clock.currentTimeMillis) + 5_000;
     for (;;) {
-      const result = yield* Effect.exit(Effect.sync(() => readFileSync(path, "utf8")));
+      const result = yield* Effect.exit(Effect.sync(() => NodeFS.readFileSync(path, "utf8")));
       if (Exit.isSuccess(result)) {
         return result.value;
       }
@@ -92,8 +92,10 @@ function waitForFileContent(path: string): Effect.Effect<string> {
 
 it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
   it.effect("uses ACP model config options instead of raw CLI model ids", () => {
-    const requestLogDir = mkdtempSync(path.join(os.tmpdir(), "t3code-cursor-text-log-"));
-    const requestLogPath = path.join(requestLogDir, "requests.ndjson");
+    const requestLogDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-log-"),
+    );
+    const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
 
     return withFakeAcpAgent(
       {
@@ -123,7 +125,7 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
           expect(generated.subject).toBe("Add generated commit message");
           expect(generated.body).toBe("- verify cursor acp model config path");
 
-          const requests = readFileSync(requestLogPath, "utf8")
+          const requests = NodeFS.readFileSync(requestLogPath, "utf8")
             .trim()
             .split("\n")
             .filter((line) => line.length > 0)
@@ -181,7 +183,7 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
             ]),
           );
 
-          rmSync(requestLogDir, { recursive: true, force: true });
+          NodeFS.rmSync(requestLogDir, { recursive: true, force: true });
         }),
     );
   });
@@ -235,8 +237,10 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
   );
 
   it.effect("closes the ACP child process after text generation completes", () => {
-    const exitLogDir = mkdtempSync(path.join(os.tmpdir(), "t3code-cursor-text-exit-log-"));
-    const exitLogPath = path.join(exitLogDir, "exit.log");
+    const exitLogDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-exit-log-"),
+    );
+    const exitLogPath = NodePath.join(exitLogDir, "exit.log");
 
     return withFakeAcpAgent(
       {
@@ -265,7 +269,7 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
           const exitLog = yield* waitForFileContent(exitLogPath);
           expect(exitLog).toContain("exit:0");
 
-          rmSync(exitLogDir, { recursive: true, force: true });
+          NodeFS.rmSync(exitLogDir, { recursive: true, force: true });
         }),
     );
   });
