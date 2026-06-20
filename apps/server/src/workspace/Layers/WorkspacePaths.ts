@@ -10,6 +10,7 @@ import {
   WorkspaceRootCreateFailedError,
   WorkspaceRootNotDirectoryError,
   WorkspaceRootNotExistsError,
+  WorkspaceRootStatFailedError,
   type WorkspacePathsShape,
 } from "../Services/WorkspacePaths.ts";
 
@@ -31,26 +32,54 @@ export const makeWorkspacePaths = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
+  const statWorkspaceRoot = Effect.fn("WorkspacePaths.statWorkspaceRoot")(function* (
+    workspaceRoot: string,
+    normalizedWorkspaceRoot: string,
+    phase: WorkspaceRootStatFailedError["phase"],
+  ) {
+    return yield* fileSystem.stat(normalizedWorkspaceRoot).pipe(
+      Effect.matchEffect({
+        onFailure: (cause) =>
+          cause.reason._tag === "NotFound"
+            ? Effect.succeed(null)
+            : Effect.fail(
+                new WorkspaceRootStatFailedError({
+                  workspaceRoot,
+                  normalizedWorkspaceRoot,
+                  phase,
+                  cause,
+                }),
+              ),
+        onSuccess: Effect.succeed,
+      }),
+    );
+  });
+
   const normalizeWorkspaceRoot: WorkspacePathsShape["normalizeWorkspaceRoot"] = Effect.fn(
     "WorkspacePaths.normalizeWorkspaceRoot",
   )(function* (workspaceRoot, options) {
     const normalizedWorkspaceRoot = path.resolve(expandHomePath(workspaceRoot.trim(), path));
-    let workspaceStat = yield* fileSystem
-      .stat(normalizedWorkspaceRoot)
-      .pipe(Effect.orElseSucceed(() => null));
+    let workspaceStat = yield* statWorkspaceRoot(
+      workspaceRoot,
+      normalizedWorkspaceRoot,
+      "validate-existing",
+    );
     if (!workspaceStat && options?.createIfMissing) {
       yield* fileSystem.makeDirectory(normalizedWorkspaceRoot, { recursive: true }).pipe(
         Effect.mapError(
-          () =>
+          (cause) =>
             new WorkspaceRootCreateFailedError({
               workspaceRoot,
               normalizedWorkspaceRoot,
+              cause,
             }),
         ),
       );
-      workspaceStat = yield* fileSystem
-        .stat(normalizedWorkspaceRoot)
-        .pipe(Effect.orElseSucceed(() => null));
+      workspaceStat = yield* statWorkspaceRoot(
+        workspaceRoot,
+        normalizedWorkspaceRoot,
+        "verify-created",
+      );
     }
     if (!workspaceStat) {
       return yield* new WorkspaceRootNotExistsError({

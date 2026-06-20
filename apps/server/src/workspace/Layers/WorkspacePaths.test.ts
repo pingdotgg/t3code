@@ -4,9 +4,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 
-import { WorkspacePaths } from "../Services/WorkspacePaths.ts";
-import { WorkspacePathsLive } from "./WorkspacePaths.ts";
+import {
+  WorkspacePaths,
+  WorkspaceRootStatFailedError,
+} from "../Services/WorkspacePaths.ts";
+import { makeWorkspacePaths, WorkspacePathsLive } from "./WorkspacePaths.ts";
 
 const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(WorkspacePathsLive),
@@ -90,6 +94,79 @@ it.layer(TestLayer)("WorkspacePathsLive", (it) => {
         const error = yield* workspacePaths.normalizeWorkspaceRoot(filePath).pipe(Effect.flip);
 
         expect(error.message).toContain("Workspace root is not a directory:");
+      }),
+    );
+
+    it.effect("preserves non-NotFound stat failures while validating the root", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const workspacePaths = yield* makeWorkspacePaths.pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            stat: (path) =>
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "stat",
+                  pathOrDescriptor: String(path),
+                  description: "Test PermissionDenied stat failure.",
+                }),
+              ),
+          }),
+        );
+        const path = yield* Path.Path;
+        const workspaceRoot = " ./permission-denied ";
+        const normalizedWorkspaceRoot = path.resolve(workspaceRoot.trim());
+
+        const error = yield* workspacePaths.normalizeWorkspaceRoot(workspaceRoot).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceRootStatFailedError);
+        expect(error).toMatchObject({
+          workspaceRoot,
+          normalizedWorkspaceRoot,
+          phase: "validate-existing",
+        });
+      }),
+    );
+
+    it.effect("preserves stat failures while verifying a newly created root", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        let statCalls = 0;
+        const workspacePaths = yield* makeWorkspacePaths.pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            stat: (path) => {
+              statCalls += 1;
+              const reason = statCalls === 1 ? "NotFound" : "PermissionDenied";
+              return Effect.fail(
+                PlatformError.systemError({
+                  _tag: reason,
+                  module: "FileSystem",
+                  method: "stat",
+                  pathOrDescriptor: String(path),
+                  description: `Test ${reason} stat failure.`,
+                }),
+              );
+            },
+            makeDirectory: () => Effect.void,
+          }),
+        );
+        const path = yield* Path.Path;
+        const workspaceRoot = " ./created-then-unreadable ";
+        const normalizedWorkspaceRoot = path.resolve(workspaceRoot.trim());
+
+        const error = yield* workspacePaths
+          .normalizeWorkspaceRoot(workspaceRoot, { createIfMissing: true })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceRootStatFailedError);
+        expect(error).toMatchObject({
+          workspaceRoot,
+          normalizedWorkspaceRoot,
+          phase: "verify-created",
+        });
       }),
     );
   });

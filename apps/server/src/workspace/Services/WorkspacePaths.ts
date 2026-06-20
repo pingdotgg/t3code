@@ -27,10 +27,25 @@ export class WorkspaceRootCreateFailedError extends Schema.TaggedErrorClass<Work
   {
     workspaceRoot: Schema.String,
     normalizedWorkspaceRoot: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
     return `Failed to create workspace root: ${this.normalizedWorkspaceRoot}`;
+  }
+}
+
+export class WorkspaceRootStatFailedError extends Schema.TaggedErrorClass<WorkspaceRootStatFailedError>()(
+  "WorkspaceRootStatFailedError",
+  {
+    workspaceRoot: Schema.String,
+    normalizedWorkspaceRoot: Schema.String,
+    phase: Schema.Literals(["validate-existing", "verify-created"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to stat workspace root '${this.normalizedWorkspaceRoot}' during '${this.phase}'.`;
   }
 }
 
@@ -61,6 +76,7 @@ export class WorkspacePathOutsideRootError extends Schema.TaggedErrorClass<Works
 export const WorkspacePathsError = Schema.Union([
   WorkspaceRootNotExistsError,
   WorkspaceRootCreateFailedError,
+  WorkspaceRootStatFailedError,
   WorkspaceRootNotDirectoryError,
   WorkspacePathOutsideRootError,
 ]);
@@ -78,7 +94,10 @@ export interface WorkspacePathsShape {
     options?: { readonly createIfMissing?: boolean },
   ) => Effect.Effect<
     string,
-    WorkspaceRootNotExistsError | WorkspaceRootCreateFailedError | WorkspaceRootNotDirectoryError
+    | WorkspaceRootNotExistsError
+    | WorkspaceRootCreateFailedError
+    | WorkspaceRootStatFailedError
+    | WorkspaceRootNotDirectoryError
   >;
 
   /**

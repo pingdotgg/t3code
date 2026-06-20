@@ -21,6 +21,7 @@ import {
   WorkspaceRootCreateFailedError,
   WorkspaceRootNotDirectoryError,
   WorkspaceRootNotExistsError,
+  WorkspaceRootStatFailedError,
 } from "./WorkspacePaths.ts";
 
 export class WorkspaceEntriesWindowsPathUnsupportedError extends Schema.TaggedErrorClass<WorkspaceEntriesWindowsPathUnsupportedError>()(
@@ -126,6 +127,7 @@ export class WorkspaceSearchIndexRefreshFailed extends Schema.TaggedErrorClass<W
 export const WorkspaceEntriesError = Schema.Union([
   WorkspaceRootNotExistsError,
   WorkspaceRootCreateFailedError,
+  WorkspaceRootStatFailedError,
   WorkspaceRootNotDirectoryError,
   WorkspaceSearchIndexCreateFailed,
   WorkspaceSearchIndexScanTimedOut,

@@ -136,6 +136,12 @@ function projectEntriesFailureContext(error: WorkspaceEntriesError): {
         failure: "workspace_root_create_failed",
         normalizedCwd: error.normalizedWorkspaceRoot,
       };
+    case "WorkspaceRootStatFailedError":
+      return {
+        failure: "workspace_root_stat_failed",
+        normalizedCwd: error.normalizedWorkspaceRoot,
+        detail: error.phase,
+      };
     case "WorkspaceRootNotDirectoryError":
       return {
         failure: "workspace_root_not_directory",
