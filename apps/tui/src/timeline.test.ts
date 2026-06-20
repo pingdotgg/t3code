@@ -12,6 +12,7 @@ import {
   diffStat,
   isWorking,
   revertableCheckpoints,
+  withTurnSeparators,
   workingElapsedSeconds,
 } from "./timeline.ts";
 
@@ -49,6 +50,34 @@ describe("buildTimeline", () => {
       [toolActivity("a1", "2026-06-19T00:00:00.000Z")],
     );
     expect(rows.map((r) => r.kind)).toEqual(["message", "tool"]);
+  });
+});
+
+describe("withTurnSeparators", () => {
+  const msgRow = (id: string, turnId: string | null) =>
+    ({ kind: "message", id, message: { id, turnId } }) as never;
+  const toolRow = (id: string, turnId: string | null) =>
+    ({ kind: "tool", id, entry: { id, turnId } }) as never;
+
+  it("Given rows across two turns, then a numbered separator precedes the second turn", () => {
+    const entries = withTurnSeparators([
+      msgRow("m1", "t1"),
+      toolRow("a1", "t1"),
+      msgRow("m2", "t2"),
+    ]);
+    expect(entries.map((e) => e.kind)).toEqual(["message", "tool", "separator", "message"]);
+    const separator = entries.find((e) => e.kind === "separator");
+    expect(separator).toMatchObject({ kind: "separator", turnNumber: 2 });
+  });
+
+  it("Given a single turn, then no separator is inserted", () => {
+    const entries = withTurnSeparators([msgRow("m1", "t1"), toolRow("a1", "t1")]);
+    expect(entries.some((e) => e.kind === "separator")).toBe(false);
+  });
+
+  it("Given a null turnId, then it does not start a new turn", () => {
+    const entries = withTurnSeparators([msgRow("m0", null), msgRow("m1", "t1"), msgRow("m2", "t1")]);
+    expect(entries.some((e) => e.kind === "separator")).toBe(false);
   });
 });
 

@@ -17,6 +17,7 @@ import {
   changedFilesByMessage,
   diffStat,
   isWorking,
+  withTurnSeparators,
   workingStartedAt,
 } from "../timeline.ts";
 import { ansi, type Palette, relativeTime, sessionStatusColor, usePalette } from "../theme.ts";
@@ -181,7 +182,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   const startedAt = detail ? workingStartedAt(detail) : null;
 
   const timeline = React.useMemo(
-    () => (detail ? buildTimeline(detail.messages, detail.activities) : []),
+    () => (detail ? withTurnSeparators(buildTimeline(detail.messages, detail.activities)) : []),
     [detail],
   );
   const checkpointByMessage = React.useMemo(
@@ -251,6 +252,14 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
         style={{ rootOptions: { backgroundColor: "transparent" } }}
       >
         {timeline.map((row) => {
+          if (row.kind === "separator") {
+            const head = `── turn ${row.turnNumber} `;
+            return (
+              <box key={row.id} marginBottom={1}>
+                <text fg={palette.dim}>{head + "─".repeat(Math.max(0, width - head.length))}</text>
+              </box>
+            );
+          }
           if (row.kind === "tool") {
             return (
               <box key={row.id} marginBottom={1}>

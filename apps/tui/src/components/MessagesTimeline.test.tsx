@@ -127,6 +127,16 @@ describe("MessagesTimeline body", () => {
     expect(frame).toContain("-2");
   });
 
+  it("Given messages across two turns, then a numbered turn separator is shown", async () => {
+    const frame = await bodyFrame({
+      messages: [
+        { id: "m1", role: "user", text: "first", turnId: "t1", createdAt: "2026-06-19T00:00:00.000Z", streaming: false },
+        { id: "m2", role: "user", text: "second", turnId: "t2", createdAt: "2026-06-19T00:00:02.000Z", streaming: false },
+      ] as never,
+    });
+    expect(frame).toContain("turn 2");
+  });
+
   it("Given a running turn, then it renders the working indicator", async () => {
     const frame = await bodyFrame({
       session: { status: "running" } as never,

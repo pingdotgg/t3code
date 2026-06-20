@@ -15,6 +15,37 @@ export type TimelineRow =
   | { readonly kind: "message"; readonly id: string; readonly message: OrchestrationMessage }
   | { readonly kind: "tool"; readonly id: string; readonly entry: WorkLogEntry };
 
+export type TimelineEntry =
+  | TimelineRow
+  | { readonly kind: "separator"; readonly id: string; readonly turnNumber: number };
+
+function rowTurnId(row: TimelineRow): string | null {
+  return row.kind === "message" ? row.message.turnId : row.entry.turnId;
+}
+
+/**
+ * Insert a separator before the first row of each turn after the first, numbering
+ * turns 1..N in order — so the conversation reads as distinct turns (mirrors the
+ * web timeline's turn folds).
+ */
+export function withTurnSeparators(rows: ReadonlyArray<TimelineRow>): TimelineEntry[] {
+  const out: TimelineEntry[] = [];
+  let lastTurnId: string | null = null;
+  let turnNumber = 0;
+  for (const row of rows) {
+    const turnId = rowTurnId(row);
+    if (turnId !== null && turnId !== lastTurnId) {
+      turnNumber += 1;
+      if (lastTurnId !== null) {
+        out.push({ kind: "separator", id: `sep:${turnId}:${turnNumber}`, turnNumber });
+      }
+      lastTurnId = turnId;
+    }
+    out.push(row);
+  }
+  return out;
+}
+
 interface OrderedRow {
   readonly row: TimelineRow;
   readonly createdAt: string;
