@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Schema from "effect/Schema";
 
-import { encodeOAuthScope, parseAllowedOAuthScope, parseOAuthScope } from "./oauthScope.ts";
+import {
+  encodeOAuthScope,
+  OAuthScopeEncodingError,
+  parseAllowedOAuthScope,
+  parseOAuthScope,
+} from "./oauthScope.ts";
+
+const isOAuthScopeEncodingError = Schema.is(OAuthScopeEncodingError);
 
 describe("OAuth scopes", () => {
   it("parses an RFC 6749 space-delimited scope set without duplicating permissions", () => {
@@ -31,5 +39,23 @@ describe("OAuth scopes", () => {
         allowedScopes: new Set(["orchestration:read", "access:write"] as const),
       }),
     ).toBeNull();
+  });
+
+  it("reports invalid encoding input structurally", () => {
+    expect.assertions(5);
+
+    try {
+      encodeOAuthScope(["access:read", "invalid scope", "access:read"]);
+    } catch (error) {
+      expect(error).toBeInstanceOf(OAuthScopeEncodingError);
+      if (!isOAuthScopeEncodingError(error)) return;
+
+      expect(error.scopes).toEqual(["access:read", "invalid scope", "access:read"]);
+      expect(error.invalidScopes).toEqual(["invalid scope"]);
+      expect(error.duplicateScopes).toEqual(["access:read"]);
+      expect(error.message).toBe(
+        "OAuth scopes must be non-empty, syntactically valid, and unique.",
+      );
+    }
   });
 });
