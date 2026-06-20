@@ -584,6 +584,11 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
     implementPlan: (thread, planId) =>
       runtime.runPromise(
         Effect.gen(function* () {
+          // Implementing means leaving plan mode so the agent executes the plan.
+          // Persist the thread's interaction mode first (mirrors the web's
+          // persistThreadSettingsForNextTurn → setThreadInteractionMode) so the
+          // composer reflects build mode and later replies don't revert to plan.
+          yield* setThreadInteractionMode({ threadId: thread.id, interactionMode: "default" });
           const messageId = MessageIdSchema.make(yield* newId);
           yield* startThreadTurn({
             threadId: thread.id,
@@ -594,7 +599,6 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
               attachments: [],
             },
             runtimeMode: thread.runtimeMode,
-            // Implementing means leaving plan mode so the agent executes the plan.
             interactionMode: "default",
             sourceProposedPlan: { threadId: thread.id, planId: OrchestrationProposedPlanId.make(planId) },
           });
