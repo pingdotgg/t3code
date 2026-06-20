@@ -253,7 +253,7 @@ export const make = Effect.gen(function* () {
 
     window.webContents.setWindowOpenHandler(({ url }) => {
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
-        void runPromise(electronShell.openExternal(url));
+        void runPromise(electronShell.openExternal(url).pipe(Effect.ignore({ log: true })));
       }
       return { action: "deny" };
     });
@@ -269,7 +269,7 @@ export const make = Effect.gen(function* () {
 
       event.preventDefault();
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
-        void runPromise(electronShell.openExternal(url));
+        void runPromise(electronShell.openExternal(url).pipe(Effect.ignore({ log: true })));
       }
     });
 
