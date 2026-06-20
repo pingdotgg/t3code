@@ -1,5 +1,6 @@
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { Atom } from "effect/unstable/reactivity";
 
 import {
@@ -22,9 +23,18 @@ type SourceHighlighter = (input: SourceHighlightInput) => Promise<SourceHighligh
 
 class SourceHighlightCacheKey extends Data.Class<SourceHighlightInput> {}
 
-class SourceHighlightError extends Data.TaggedError("SourceHighlightError")<{
-  readonly cause: unknown;
-}> {}
+export class SourceHighlightError extends Schema.TaggedErrorClass<SourceHighlightError>()(
+  "SourceHighlightError",
+  {
+    path: Schema.String,
+    theme: Schema.Literals(["light", "dark"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not highlight ${this.path} with the ${this.theme} theme.`;
+  }
+}
 
 export function createSourceHighlightAtomFamily(options?: {
   readonly highlight?: SourceHighlighter;
@@ -36,7 +46,8 @@ export function createSourceHighlightAtomFamily(options?: {
     Atom.make(
       Effect.tryPromise({
         try: () => highlight(request),
-        catch: (cause) => new SourceHighlightError({ cause }),
+        catch: (cause) =>
+          new SourceHighlightError({ path: request.path, theme: request.theme, cause }),
       }),
     ).pipe(
       Atom.setIdleTTL(idleTtlMs),
