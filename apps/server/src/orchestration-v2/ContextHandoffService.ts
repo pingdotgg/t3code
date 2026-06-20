@@ -1,7 +1,7 @@
 import {
   OrchestrationV2ContextHandoff,
   type OrchestrationV2TurnItem,
-  type ProviderKind,
+  ProviderInstanceId,
   ProviderThreadId,
   RunId,
   ThreadId,
@@ -46,8 +46,8 @@ export interface ContextHandoffServiceV2Shape {
     readonly transferId: OrchestrationV2ContextHandoff["transferId"];
     readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
     readonly toProviderThreadId: ProviderThreadId;
-    readonly fromProvider: ProviderKind;
-    readonly toProvider: ProviderKind;
+    readonly fromProviderInstanceId: ProviderInstanceId;
+    readonly toProviderInstanceId: ProviderInstanceId;
     readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
     readonly deltaItems: ReadonlyArray<OrchestrationV2TurnItem>;
     readonly createdAt: DateTime.Utc;
@@ -58,8 +58,8 @@ export interface ContextHandoffServiceV2Shape {
     readonly transferId: NonNullable<OrchestrationV2ContextHandoff["transferId"]>;
     readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
     readonly toProviderThreadId: ProviderThreadId;
-    readonly fromProvider: ProviderKind;
-    readonly toProvider: ProviderKind;
+    readonly fromProviderInstanceId: ProviderInstanceId;
+    readonly toProviderInstanceId: ProviderInstanceId;
     readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
     readonly strategy: Extract<
       OrchestrationV2ContextHandoff["strategy"],
@@ -124,8 +124,8 @@ function makeForkDeltaSummary(input: {
 }
 
 function makeProviderHandoffSummary(input: {
-  readonly fromProvider: ProviderKind;
-  readonly toProvider: ProviderKind;
+  readonly fromProviderInstanceId: ProviderInstanceId;
+  readonly toProviderInstanceId: ProviderInstanceId;
   readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
   readonly strategy: Extract<
     OrchestrationV2ContextHandoff["strategy"],
@@ -144,8 +144,8 @@ function makeProviderHandoffSummary(input: {
     input.strategy === "full_thread_summary"
       ? "Full conversation context for provider handoff."
       : "Conversation delta since this provider last participated.",
-    `From provider: ${input.fromProvider}`,
-    `To provider: ${input.toProvider}`,
+    `From driver: ${input.fromProviderInstanceId}`,
+    `To driver: ${input.toProviderInstanceId}`,
     `Covered app runs: ${input.coveredRunOrdinals.from}-${input.coveredRunOrdinals.to}`,
     "",
     "Canonical conversation context:",
@@ -191,8 +191,8 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       const handoffId = yield* idAllocator.allocate
         .contextHandoff({
           threadId: input.threadId,
-          fromProvider: "codex",
-          toProvider: "codex",
+          fromProviderInstanceId: ProviderInstanceId.make("manual"),
+          toProviderInstanceId: ProviderInstanceId.make("manual"),
         })
         .pipe(
           Effect.mapError(
@@ -218,7 +218,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         status: "ready",
         summaryMessageId: null,
         summaryText: "Manual context handoff.",
-        createdByProvider: null,
+        createdByProviderInstanceId: null,
         createdAt: now,
         updatedAt: now,
       } satisfies OrchestrationV2ContextHandoff;
@@ -232,8 +232,8 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         readonly transferId: OrchestrationV2ContextHandoff["transferId"];
         readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
         readonly toProviderThreadId: ProviderThreadId;
-        readonly fromProvider: ProviderKind;
-        readonly toProvider: ProviderKind;
+        readonly fromProviderInstanceId: ProviderInstanceId;
+        readonly toProviderInstanceId: ProviderInstanceId;
         readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
         readonly deltaItems: ReadonlyArray<OrchestrationV2TurnItem>;
         readonly createdAt: DateTime.Utc;
@@ -241,8 +241,8 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         const handoffId = yield* idAllocator.allocate
           .contextHandoff({
             threadId: input.targetThreadId,
-            fromProvider: input.fromProvider,
-            toProvider: input.toProvider,
+            fromProviderInstanceId: input.fromProviderInstanceId,
+            toProviderInstanceId: input.toProviderInstanceId,
           })
           .pipe(
             Effect.mapError(
@@ -268,7 +268,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           status: "ready",
           summaryMessageId: null,
           summaryText: makeForkDeltaSummary(input),
-          createdByProvider: null,
+          createdByProviderInstanceId: null,
           createdAt: input.createdAt,
           updatedAt: input.createdAt,
         } satisfies OrchestrationV2ContextHandoff;
@@ -283,8 +283,8 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       readonly transferId: NonNullable<OrchestrationV2ContextHandoff["transferId"]>;
       readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
       readonly toProviderThreadId: ProviderThreadId;
-      readonly fromProvider: ProviderKind;
-      readonly toProvider: ProviderKind;
+      readonly fromProviderInstanceId: ProviderInstanceId;
+      readonly toProviderInstanceId: ProviderInstanceId;
       readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
       readonly strategy: Extract<
         OrchestrationV2ContextHandoff["strategy"],
@@ -296,8 +296,8 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       const handoffId = yield* idAllocator.allocate
         .contextHandoff({
           threadId: input.threadId,
-          fromProvider: input.fromProvider,
-          toProvider: input.toProvider,
+          fromProviderInstanceId: input.fromProviderInstanceId,
+          toProviderInstanceId: input.toProviderInstanceId,
         })
         .pipe(
           Effect.mapError(
@@ -323,7 +323,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         status: "ready",
         summaryMessageId: null,
         summaryText: makeProviderHandoffSummary(input),
-        createdByProvider: null,
+        createdByProviderInstanceId: null,
         createdAt: input.createdAt,
         updatedAt: input.createdAt,
       } satisfies OrchestrationV2ContextHandoff;
