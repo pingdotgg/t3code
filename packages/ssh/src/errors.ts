@@ -289,47 +289,60 @@ export const SshHttpBridgeError = Schema.Union([
 ]);
 export type SshHttpBridgeError = typeof SshHttpBridgeError.Type;
 
+const SshReadinessUrlDiagnostics = Schema.Struct({
+  protocol: Schema.String,
+  hostname: Schema.String,
+  port: Schema.optional(Schema.String),
+  urlLength: Schema.Number,
+  pathnameLength: Schema.Number,
+  hasQuery: Schema.Boolean,
+  hasFragment: Schema.Boolean,
+});
+
+type SshReadinessUrlDiagnostics = typeof SshReadinessUrlDiagnostics.Type;
+
+function readinessTarget(diagnostics: SshReadinessUrlDiagnostics): string {
+  const port = diagnostics.port === undefined ? "" : `:${diagnostics.port}`;
+  return `${diagnostics.protocol}//${diagnostics.hostname}${port}`;
+}
+
 export class SshReadinessProbeError extends Schema.TaggedErrorClass<SshReadinessProbeError>()(
   "SshReadinessProbeError",
   {
-    requestTarget: Schema.String,
-    requestUrlLength: Schema.Number,
+    request: SshReadinessUrlDiagnostics,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Backend readiness probe failed at ${this.requestTarget}.`;
+    return `Backend readiness probe failed at ${readinessTarget(this.request)}.`;
   }
 }
 
 export class SshReadinessProbeTimeoutError extends Schema.TaggedErrorClass<SshReadinessProbeTimeoutError>()(
   "SshReadinessProbeTimeoutError",
   {
-    requestTarget: Schema.String,
-    requestUrlLength: Schema.Number,
+    request: SshReadinessUrlDiagnostics,
     timeoutMs: Schema.Number,
     attempt: Schema.Number,
   },
 ) {
   override get message(): string {
-    return `Backend readiness probe exceeded ${this.timeoutMs}ms at ${this.requestTarget}.`;
+    return `Backend readiness probe exceeded ${this.timeoutMs}ms at ${readinessTarget(this.request)}.`;
   }
 }
 
 export class SshReadinessTimeoutError extends Schema.TaggedErrorClass<SshReadinessTimeoutError>()(
   "SshReadinessTimeoutError",
   {
-    baseTarget: Schema.String,
-    baseUrlLength: Schema.Number,
-    requestTarget: Schema.String,
-    requestUrlLength: Schema.Number,
+    base: SshReadinessUrlDiagnostics,
+    request: SshReadinessUrlDiagnostics,
     timeoutMs: Schema.Number,
     attempts: Schema.Number,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Timed out waiting ${this.timeoutMs}ms for backend readiness at ${this.baseTarget}.`;
+    return `Timed out waiting ${this.timeoutMs}ms for backend readiness at ${readinessTarget(this.base)}.`;
   }
 }
 

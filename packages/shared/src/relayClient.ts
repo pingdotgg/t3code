@@ -22,6 +22,7 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
+import { getUrlDiagnostics } from "./urlDiagnostics.ts";
 
 export const CLOUDFLARED_VERSION = "2026.5.2";
 export const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
@@ -48,10 +49,25 @@ export type RelayClientStatus =
 
 export type AvailableRelayClient = Extract<RelayClientStatus, { readonly status: "available" }>;
 
+const RelayClientUrlDiagnosticFields = {
+  urlInputLength: Schema.Number,
+  urlProtocol: Schema.optional(Schema.String),
+  urlHostname: Schema.optional(Schema.String),
+};
+
+function relayClientUrlDiagnostics(input: string) {
+  const diagnostics = getUrlDiagnostics(input);
+  return {
+    urlInputLength: diagnostics.inputLength,
+    ...(diagnostics.protocol === undefined ? {} : { urlProtocol: diagnostics.protocol }),
+    ...(diagnostics.hostname === undefined ? {} : { urlHostname: diagnostics.hostname }),
+  };
+}
+
 export class RelayClientDownloadError extends Schema.TaggedErrorClass<RelayClientDownloadError>()(
   "RelayClientDownloadError",
   {
-    url: Schema.String,
+    ...RelayClientUrlDiagnosticFields,
     cause: Schema.Defect(),
   },
 ) {
@@ -63,7 +79,7 @@ export class RelayClientDownloadError extends Schema.TaggedErrorClass<RelayClien
 export class RelayClientDownloadReadError extends Schema.TaggedErrorClass<RelayClientDownloadReadError>()(
   "RelayClientDownloadReadError",
   {
-    url: Schema.String,
+    ...RelayClientUrlDiagnosticFields,
     cause: Schema.Defect(),
   },
 ) {
@@ -121,7 +137,7 @@ export class RelayClientUnsupportedPlatformError extends Schema.TaggedErrorClass
 export class RelayClientChecksumVerificationError extends Schema.TaggedErrorClass<RelayClientChecksumVerificationError>()(
   "RelayClientChecksumVerificationError",
   {
-    url: Schema.String,
+    ...RelayClientUrlDiagnosticFields,
     expectedChecksum: Schema.String,
     cause: Schema.Defect(),
   },
@@ -481,7 +497,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       Effect.mapError(
         (cause) =>
           new RelayClientDownloadError({
-            url: asset.url,
+            ...relayClientUrlDiagnostics(asset.url),
             cause,
           }),
       ),
@@ -491,7 +507,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
         Effect.mapError(
           (cause) =>
             new RelayClientDownloadReadError({
-              url: asset.url,
+              ...relayClientUrlDiagnostics(asset.url),
               cause,
             }),
         ),
@@ -502,7 +518,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       Effect.mapError(
         (cause) =>
           new RelayClientChecksumVerificationError({
-            url: asset.url,
+            ...relayClientUrlDiagnostics(asset.url),
             expectedChecksum: asset.sha256,
             cause,
           }),

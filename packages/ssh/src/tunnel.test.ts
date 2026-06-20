@@ -277,16 +277,34 @@ describe("ssh tunnel scripts", () => {
       if (Result.isFailure(result)) {
         assert.instanceOf(result.failure, SshReadinessTimeoutError);
         const timeoutError = result.failure as SshReadinessTimeoutError;
-        assert.equal(timeoutError.baseTarget, "http://127.0.0.1:41773/");
-        assert.equal(timeoutError.requestTarget, "http://127.0.0.1:41773/ready");
-        assert.isAbove(timeoutError.baseUrlLength, timeoutError.baseTarget.length);
-        assert.isAbove(timeoutError.requestUrlLength, timeoutError.requestTarget.length);
+        assert.deepEqual(timeoutError.base, {
+          protocol: "http:",
+          hostname: "127.0.0.1",
+          port: "41773",
+          urlLength: 50,
+          pathnameLength: 1,
+          hasQuery: true,
+          hasFragment: true,
+        });
+        assert.deepEqual(timeoutError.request, {
+          protocol: "http:",
+          hostname: "127.0.0.1",
+          port: "41773",
+          urlLength: 63,
+          pathnameLength: 6,
+          hasQuery: true,
+          hasFragment: true,
+        });
         assert.isFalse("baseUrl" in timeoutError);
         assert.isFalse("requestUrl" in timeoutError);
+        assert.isFalse("baseTarget" in timeoutError);
+        assert.isFalse("requestTarget" in timeoutError);
         assert.notInclude(timeoutError.message, "secret");
+        assert.notInclude(timeoutError.message, "/ready");
+        assert.notInclude(timeoutError.message, "request-secret");
         assert.equal(
           timeoutError.message,
-          "Timed out waiting 1000ms for backend readiness at http://127.0.0.1:41773/.",
+          "Timed out waiting 1000ms for backend readiness at http://127.0.0.1:41773.",
         );
         assert.isAbove(timeoutError.attempts, 0);
         assert.instanceOf(timeoutError.cause, SshReadinessProbeTimeoutError);
@@ -351,19 +369,33 @@ describe("ssh tunnel scripts", () => {
     assert.deepEqual(
       SshTunnel.describeReadinessCause(
         new SshReadinessProbeTimeoutError({
-          requestTarget: "http://127.0.0.1:41773/ready",
-          requestUrlLength: 28,
+          request: {
+            protocol: "http:",
+            hostname: "127.0.0.1",
+            port: "41773",
+            urlLength: 28,
+            pathnameLength: 6,
+            hasQuery: false,
+            hasFragment: false,
+          },
           timeoutMs: 250,
           attempt: 3,
         }),
       ),
       {
         _tag: "SshReadinessProbeTimeoutError",
-        requestTarget: "http://127.0.0.1:41773/ready",
-        requestUrlLength: 28,
+        request: {
+          protocol: "http:",
+          hostname: "127.0.0.1",
+          port: "41773",
+          urlLength: 28,
+          pathnameLength: 6,
+          hasQuery: false,
+          hasFragment: false,
+        },
         timeoutMs: 250,
         attempt: 3,
-        message: "Backend readiness probe exceeded 250ms at http://127.0.0.1:41773/ready.",
+        message: "Backend readiness probe exceeded 250ms at http://127.0.0.1:41773.",
       },
     );
   });

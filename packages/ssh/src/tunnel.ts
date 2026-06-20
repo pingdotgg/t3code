@@ -272,8 +272,16 @@ export function describeReadinessCause(cause: unknown): unknown {
   };
 }
 
-function readinessUrlTarget(url: URL): string {
-  return `${url.origin}${url.pathname}`;
+function readinessUrlDiagnostics(url: URL, urlLength: number) {
+  return {
+    protocol: url.protocol,
+    hostname: url.hostname,
+    ...(url.port === "" ? {} : { port: url.port }),
+    urlLength,
+    pathnameLength: utf8ByteLength(url.pathname),
+    hasQuery: url.search !== "",
+    hasFragment: url.hash !== "",
+  };
 }
 
 export const REMOTE_PICK_PORT_SCRIPT = `const fs = require("node:fs");
@@ -892,19 +900,15 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
   const baseUrl = new URL(input.baseUrl);
   const request = new URL(input.path ?? "/", baseUrl);
   const requestUrl = request.toString();
-  const baseTarget = readinessUrlTarget(baseUrl);
-  const requestTarget = readinessUrlTarget(request);
-  const baseUrlLength = utf8ByteLength(input.baseUrl);
-  const requestUrlLength = utf8ByteLength(requestUrl);
+  const base = readinessUrlDiagnostics(baseUrl, utf8ByteLength(input.baseUrl));
+  const requestDiagnostics = readinessUrlDiagnostics(request, utf8ByteLength(requestUrl));
   const client = yield* HttpClient.HttpClient;
   const lastProbeFailure = yield* Ref.make<unknown>(null);
   let attempt = 0;
 
   yield* Effect.logDebug("ssh.tunnel.httpReady.start", {
-    baseTarget,
-    baseUrlLength,
-    requestTarget,
-    requestUrlLength,
+    base,
+    request: requestDiagnostics,
     timeoutMs,
     intervalMs,
     probeTimeoutMs,
@@ -920,8 +924,7 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
           Effect.mapError(
             (cause) =>
               new SshReadinessProbeError({
-                requestTarget,
-                requestUrlLength,
+                request: requestDiagnostics,
                 cause,
               }),
           ),
@@ -931,8 +934,7 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
           onNone: () =>
             Effect.fail(
               new SshReadinessProbeTimeoutError({
-                requestTarget,
-                requestUrlLength,
+                request: requestDiagnostics,
                 timeoutMs: probeTimeoutMs,
                 attempt,
               }),
@@ -943,8 +945,7 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
           isSshReadinessError(cause)
             ? cause
             : new SshReadinessProbeError({
-                requestTarget,
-                requestUrlLength,
+                request: requestDiagnostics,
                 cause,
               }),
         ),
@@ -960,8 +961,7 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
       isSshReadinessError(cause)
         ? cause
         : new SshReadinessProbeError({
-            requestTarget,
-            requestUrlLength,
+            request: requestDiagnostics,
             cause,
           }),
     ),
@@ -971,20 +971,16 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
   return yield* Option.match(result, {
     onSome: () =>
       Effect.logDebug("ssh.tunnel.httpReady.succeeded", {
-        baseTarget,
-        baseUrlLength,
-        requestTarget,
-        requestUrlLength,
+        base,
+        request: requestDiagnostics,
         attempts: attempt,
       }),
     onNone: () =>
       Effect.gen(function* () {
         const lastFailure = yield* Ref.get(lastProbeFailure);
         yield* Effect.logWarning("ssh.tunnel.httpReady.timedOut", {
-          baseTarget,
-          baseUrlLength,
-          requestTarget,
-          requestUrlLength,
+          base,
+          request: requestDiagnostics,
           timeoutMs,
           intervalMs,
           probeTimeoutMs,
@@ -992,10 +988,8 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
           lastFailure: describeReadinessCause(lastFailure),
         });
         return yield* new SshReadinessTimeoutError({
-          baseTarget,
-          baseUrlLength,
-          requestTarget,
-          requestUrlLength,
+          base,
+          request: requestDiagnostics,
           timeoutMs,
           attempts: attempt,
           ...(lastFailure === null ? {} : { cause: lastFailure }),

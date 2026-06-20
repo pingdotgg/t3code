@@ -40,12 +40,12 @@ function makeHandle(exitCode = 0) {
   });
 }
 
-const makeHttpClientLayer = (bytes: Uint8Array) =>
+const makeHttpClientLayer = (bytes: Uint8Array, status = 200) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
       Effect.succeed(
-        HttpClientResponse.fromWeb(request, new Response(bytes.buffer as ArrayBuffer)),
+        HttpClientResponse.fromWeb(request, new Response(bytes.buffer as ArrayBuffer, { status })),
       ),
     ),
   );
@@ -190,6 +190,50 @@ describe("RelayClient", () => {
         Layer.mergeAll(
           NodeServices.layer,
           makeHttpClientLayer(new TextEncoder().encode("tampered")),
+          makeSpawnerLayer([]),
+          hostRuntimeLayer(),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps sensitive release URL components out of install diagnostics", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-cloudflared-test-",
+      });
+      const releaseUrl =
+        "https://download-user:download-password@example.test/private/cloudflared?signature=secret#fragment";
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({
+        baseDir,
+        releaseAsset: {
+          url: releaseUrl,
+          sha256: "00",
+          archive: "binary",
+        },
+      });
+
+      const error = yield* manager.install.pipe(Effect.flip);
+      expect(error).toBeInstanceOf(RelayClient.RelayClientDownloadError);
+      expect(error).toMatchObject({
+        urlInputLength: releaseUrl.length,
+        urlProtocol: "https:",
+        urlHostname: "example.test",
+      });
+      expect("url" in error).toBe(false);
+      expect(error.cause).toBeDefined();
+      expect(error.message).not.toContain("download-user");
+      expect(error.message).not.toContain("download-password");
+      expect(error.message).not.toContain("/private/cloudflared");
+      expect(error.message).not.toContain("signature=secret");
+      expect(error.message).not.toContain("fragment");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          makeHttpClientLayer(new Uint8Array(), 500),
           makeSpawnerLayer([]),
           hostRuntimeLayer(),
         ),

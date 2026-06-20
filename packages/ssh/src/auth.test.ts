@@ -54,15 +54,36 @@ describe("ssh auth", () => {
     assert.equal(isSshAuthFailure(helperFailure), false);
 
     const readinessFailure = new SshErrors.SshReadinessTimeoutError({
-      baseTarget: "http://127.0.0.1:41773/",
-      baseUrlLength: 23,
-      requestTarget: "http://127.0.0.1:41773/ready",
-      requestUrlLength: 28,
+      base: {
+        protocol: "http:",
+        hostname: "127.0.0.1",
+        port: "41773",
+        urlLength: 23,
+        pathnameLength: 1,
+        hasQuery: false,
+        hasFragment: false,
+      },
+      request: {
+        protocol: "http:",
+        hostname: "127.0.0.1",
+        port: "41773",
+        urlLength: 28,
+        pathnameLength: 6,
+        hasQuery: false,
+        hasFragment: false,
+      },
       timeoutMs: 1_000,
       attempts: 1,
       cause: new SshErrors.SshReadinessProbeError({
-        requestTarget: "http://127.0.0.1:41773/ready",
-        requestUrlLength: 28,
+        request: {
+          protocol: "http:",
+          hostname: "127.0.0.1",
+          port: "41773",
+          urlLength: 28,
+          pathnameLength: 6,
+          hasQuery: false,
+          hasFragment: false,
+        },
         cause: new Error("HTTP authentication failed."),
       }),
     });
