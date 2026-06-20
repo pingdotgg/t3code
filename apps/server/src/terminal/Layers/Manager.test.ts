@@ -912,7 +912,11 @@ it.layer(
             if (input.command === "pgrep") {
               return processOutput("9001\n");
             }
-            if (input.command === "ps" && input.args[0] === "-p" && input.args.includes("comm=")) {
+            if (
+              input.command === "ps" &&
+              input.args.includes("-p") &&
+              input.args.includes("comm=")
+            ) {
               return processOutput("bash\n");
             }
             return processOutput("", 1);

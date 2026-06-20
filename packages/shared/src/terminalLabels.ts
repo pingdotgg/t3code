@@ -9,13 +9,17 @@ function decodeTerminalLabelPart(value: string): string {
   }
 }
 
+function humanizeActionScriptId(scriptId: string): string {
+  return decodeTerminalLabelPart(scriptId).replace(/[-:]+/g, " ").trim();
+}
+
 function formatActionTerminalLabel(actionId: string): string {
-  const fallbackMatch = /^(.*):([1-9][0-9]*)$/.exec(actionId);
-  if (fallbackMatch) {
-    const scriptId = decodeTerminalLabelPart(fallbackMatch[1] ?? "").replace(/[-:]+/g, " ");
-    return `${scriptId} (${fallbackMatch[2]})`;
+  const instanceMatch = /^(.*):([1-9][0-9]*)$/.exec(actionId);
+  if (instanceMatch) {
+    const [, scriptId = "", instanceIndex = ""] = instanceMatch;
+    return `${humanizeActionScriptId(scriptId)} (${instanceIndex})`;
   }
-  return decodeTerminalLabelPart(actionId).replace(/[-:]+/g, " ");
+  return humanizeActionScriptId(actionId);
 }
 
 export function getTerminalLabel(terminalId: string): string {

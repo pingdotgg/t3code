@@ -17,8 +17,12 @@ describe("getTerminalLabel", () => {
     expect(getTerminalLabel("action-lint")).toBe("Action: lint");
     expect(getTerminalLabel("action-dist-desktop-dmg-2")).toBe("Action: dist desktop dmg 2");
     expect(getTerminalLabel("action-build:2")).toBe("Action: build (2)");
+    expect(getTerminalLabel("action-build:dev:2")).toBe("Action: build dev (2)");
     expect(getTerminalLabel("action-build%3Adev:2")).toBe("Action: build dev (2)");
+    expect(getTerminalLabel("action-build%3Adev")).toBe("Action: build dev");
     expect(getTerminalLabel("action-build-2")).toBe("Action: build 2");
+    expect(getTerminalLabel("action-build:0")).toBe("Action: build 0");
+    expect(getTerminalLabel("action-build--:2")).toBe("Action: build (2)");
   });
 
   it("falls back to the raw id for unknown shapes", () => {
