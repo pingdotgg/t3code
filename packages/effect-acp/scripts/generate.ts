@@ -15,17 +15,100 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const CURRENT_SCHEMA_RELEASE = "v0.11.3";
 
-interface GenerateCommandError {
-  readonly _tag: "GenerateCommandError";
-  readonly message: string;
-}
-
 interface GeneratedPaths {
   readonly generatedDir: string;
   readonly upstreamSchemaPath: string;
   readonly upstreamMetaPath: string;
   readonly schemaOutputPath: string;
   readonly metaOutputPath: string;
+}
+
+export class AcpGeneratorDownloadError extends Schema.TaggedErrorClass<AcpGeneratorDownloadError>()(
+  "AcpGeneratorDownloadError",
+  {
+    url: Schema.String,
+    outputPath: Schema.String,
+    stage: Schema.Literals(["request", "read-response"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to download ${this.url} to ${this.outputPath} during ${this.stage}.`;
+  }
+}
+
+export class AcpGeneratorDownloadFileError extends Schema.TaggedErrorClass<AcpGeneratorDownloadFileError>()(
+  "AcpGeneratorDownloadFileError",
+  {
+    url: Schema.String,
+    outputPath: Schema.String,
+    stage: Schema.Literals(["create-directory", "write-file"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to store the download from ${this.url} at ${this.outputPath} during ${this.stage}.`;
+  }
+}
+
+export class AcpGeneratorDocumentDecodeError extends Schema.TaggedErrorClass<AcpGeneratorDocumentDecodeError>()(
+  "AcpGeneratorDocumentDecodeError",
+  {
+    document: Schema.Literals(["schema", "metadata"]),
+    filePath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to decode the upstream ACP ${this.document} document at ${this.filePath}.`;
+  }
+}
+
+export class AcpGeneratorFormatProcessError extends Schema.TaggedErrorClass<AcpGeneratorFormatProcessError>()(
+  "AcpGeneratorFormatProcessError",
+  {
+    stage: Schema.Literals(["spawn", "wait-for-exit"]),
+    command: Schema.String,
+    args: Schema.Array(Schema.String),
+    generatedDir: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `ACP generator formatting command ${JSON.stringify([this.command, ...this.args])} failed during ${this.stage} for ${this.generatedDir}.`;
+  }
+}
+
+export class AcpGeneratorFormatExitError extends Schema.TaggedErrorClass<AcpGeneratorFormatExitError>()(
+  "AcpGeneratorFormatExitError",
+  {
+    command: Schema.String,
+    args: Schema.Array(Schema.String),
+    generatedDir: Schema.String,
+    exitCode: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `ACP generator formatting command ${JSON.stringify([this.command, ...this.args])} exited with code ${this.exitCode} for ${this.generatedDir}.`;
+  }
+}
+
+export class AcpGeneratorSchemaValueDeclarationMissingError extends Schema.TaggedErrorClass<AcpGeneratorSchemaValueDeclarationMissingError>()(
+  "AcpGeneratorSchemaValueDeclarationMissingError",
+  { typeDeclaration: Schema.String },
+) {
+  override get message(): string {
+    return `Generated ACP schema type declaration has no following value declaration: ${this.typeDeclaration}`;
+  }
+}
+
+export class AcpGeneratorSchemaNameParseError extends Schema.TaggedErrorClass<AcpGeneratorSchemaNameParseError>()(
+  "AcpGeneratorSchemaNameParseError",
+  { typeDeclaration: Schema.String },
+) {
+  override get message(): string {
+    return `Could not extract an ACP schema name from generated declaration: ${this.typeDeclaration}`;
+  }
 }
 
 const UpstreamJsonSchemaSchema = Schema.Struct({
@@ -66,18 +149,51 @@ const ensureGeneratedDir = Effect.fn("ensureGeneratedDir")(function* () {
   yield* fs.makeDirectory(generatedDir, { recursive: true });
 });
 
-const downloadFile = Effect.fn("downloadFile")(function* (url: string, outputPath: string) {
+export const downloadFile = Effect.fn("downloadFile")(function* (url: string, outputPath: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
-
-  const text = yield* HttpClient.get(url).pipe(
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap((response) => response.text),
+  yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new AcpGeneratorDownloadFileError({
+          url,
+          outputPath,
+          stage: "create-directory",
+          cause,
+        }),
+    ),
   );
 
-  yield* fs.writeFileString(outputPath, text);
+  const response = yield* HttpClient.get(url).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.mapError(
+      (cause) => new AcpGeneratorDownloadError({ url, outputPath, stage: "request", cause }),
+    ),
+  );
+  const text = yield* response.text.pipe(
+    Effect.mapError(
+      (cause) =>
+        new AcpGeneratorDownloadError({
+          url,
+          outputPath,
+          stage: "read-response",
+          cause,
+        }),
+    ),
+  );
+
+  yield* fs.writeFileString(outputPath, text).pipe(
+    Effect.mapError(
+      (cause) =>
+        new AcpGeneratorDownloadFileError({
+          url,
+          outputPath,
+          stage: "write-file",
+          cause,
+        }),
+    ),
+  );
 });
 
 const downloadSchemas = Effect.fn("downloadSchemas")(function* (tag: string) {
@@ -85,19 +201,82 @@ const downloadSchemas = Effect.fn("downloadSchemas")(function* (tag: string) {
   const fs = yield* FileSystem.FileSystem;
   const baseUrl = `https://github.com/agentclientprotocol/agent-client-protocol/releases/download/${tag}`;
 
-  yield* downloadFile(`${baseUrl}/schema.unstable.json`, upstreamSchemaPath);
-  yield* downloadFile(`${baseUrl}/meta.unstable.json`, upstreamMetaPath);
-
   yield* Effect.addFinalizer(() =>
     Effect.all([fs.remove(upstreamSchemaPath), fs.remove(upstreamMetaPath)]).pipe(
       Effect.ignoreCause({ log: true }),
     ),
   );
+
+  yield* downloadFile(`${baseUrl}/schema.unstable.json`, upstreamSchemaPath);
+  yield* downloadFile(`${baseUrl}/meta.unstable.json`, upstreamMetaPath);
 });
 
 const readFileString = Effect.fn("readJsonFile")(function* (filePath: string) {
   const fs = yield* FileSystem.FileSystem;
   return yield* fs.readFileString(filePath);
+});
+
+export const decodeUpstreamSchemaDocument = Effect.fn("decodeUpstreamSchemaDocument")(function* (
+  raw: string,
+  filePath: string,
+) {
+  return yield* decodeUpstreamSchema(raw).pipe(
+    Effect.mapError(
+      (cause) => new AcpGeneratorDocumentDecodeError({ document: "schema", filePath, cause }),
+    ),
+  );
+});
+
+export const decodeMetaDocument = Effect.fn("decodeMetaDocument")(function* (
+  raw: string,
+  filePath: string,
+) {
+  return yield* decodeMetaJson(raw).pipe(
+    Effect.mapError(
+      (cause) => new AcpGeneratorDocumentDecodeError({ document: "metadata", filePath, cause }),
+    ),
+  );
+});
+
+export const formatGeneratedFiles = Effect.fn("formatGeneratedFiles")(function* (
+  generatedDir: string,
+) {
+  const command = "bun";
+  const args = ["oxfmt", generatedDir];
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const child = yield* spawner.spawn(ChildProcess.make(command, args)).pipe(
+    Effect.mapError(
+      (cause) =>
+        new AcpGeneratorFormatProcessError({
+          stage: "spawn",
+          command,
+          args,
+          generatedDir,
+          cause,
+        }),
+    ),
+  );
+  const exitCode = yield* child.exitCode.pipe(
+    Effect.mapError(
+      (cause) =>
+        new AcpGeneratorFormatProcessError({
+          stage: "wait-for-exit",
+          command,
+          args,
+          generatedDir,
+          cause,
+        }),
+    ),
+  );
+
+  if (exitCode !== 0) {
+    return yield* new AcpGeneratorFormatExitError({
+      command,
+      args,
+      generatedDir,
+      exitCode,
+    });
+  }
 });
 
 const writeGeneratedFiles = Effect.fn("writeGeneratedFiles")(function* (
@@ -128,12 +307,14 @@ function collectSchemaEntries(
 
     const constLine = lines[index + 1];
     if (!constLine?.startsWith("export const ")) {
-      throw new Error(`Malformed generator output near: ${typeLine}`);
+      throw new AcpGeneratorSchemaValueDeclarationMissingError({
+        typeDeclaration: typeLine,
+      });
     }
 
     const match = /^export type ([A-Za-z0-9_]+)/.exec(typeLine);
     if (!match?.[1]) {
-      throw new Error(`Could not extract schema name from: ${typeLine}`);
+      throw new AcpGeneratorSchemaNameParseError({ typeDeclaration: typeLine });
     }
 
     entries.push({
@@ -204,10 +385,10 @@ const generateSchemas = Effect.fn("generateSchemas")(function* (skipDownload: bo
     yield* downloadSchemas(CURRENT_SCHEMA_RELEASE);
   }
 
-  const upstreamSchema = yield* readFileString(upstreamSchemaPath).pipe(
-    Effect.flatMap(decodeUpstreamSchema),
-  );
-  const upstreamMeta = yield* readFileString(upstreamMetaPath).pipe(Effect.flatMap(decodeMetaJson));
+  const upstreamSchemaRaw = yield* readFileString(upstreamSchemaPath);
+  const upstreamSchema = yield* decodeUpstreamSchemaDocument(upstreamSchemaRaw, upstreamSchemaPath);
+  const upstreamMetaRaw = yield* readFileString(upstreamMetaPath);
+  const upstreamMeta = yield* decodeMetaDocument(upstreamMetaRaw, upstreamMetaPath);
   const normalizedDefinitions = Object.fromEntries(
     Object.entries(upstreamSchema.$defs).map(([name, schema]) => [
       name,
@@ -264,18 +445,7 @@ const generateSchemas = Effect.fn("generateSchemas")(function* (skipDownload: bo
   );
 
   const { generatedDir } = yield* getGeneratedPaths();
-  yield* Effect.service(ChildProcessSpawner.ChildProcessSpawner).pipe(
-    Effect.flatMap((spawner) => spawner.spawn(ChildProcess.make("bun", ["oxfmt", generatedDir]))),
-    Effect.flatMap((child) => child.exitCode),
-    Effect.tap((code) =>
-      code === 0
-        ? Effect.void
-        : Effect.fail<GenerateCommandError>({
-            _tag: "GenerateCommandError",
-            message: `oxfmt failed with exit code ${code}`,
-          }),
-    ),
-  );
+  yield* formatGeneratedFiles(generatedDir);
 });
 
 const generateCommand = Command.make(
@@ -292,8 +462,10 @@ const runtimeLayer = Layer.mergeAll(
   FetchHttpClient.layer,
 );
 
-Command.run(generateCommand, { version: "0.0.0" }).pipe(
-  Effect.scoped,
-  Effect.provide(runtimeLayer),
-  NodeRuntime.runMain,
-);
+if (import.meta.main) {
+  Command.run(generateCommand, { version: "0.0.0" }).pipe(
+    Effect.scoped,
+    Effect.provide(runtimeLayer),
+    NodeRuntime.runMain,
+  );
+}
