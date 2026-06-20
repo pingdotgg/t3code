@@ -100,6 +100,44 @@ describe("ElectronApp", () => {
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
 
+  it.effect("reports which app metadata property failed", () =>
+    Effect.gen(function* () {
+      const cause = new Error("version unavailable");
+      getVersionMock.mockImplementationOnce(() => {
+        throw cause;
+      });
+
+      const electronApp = yield* ElectronApp.ElectronApp;
+      const error = yield* electronApp.metadata.pipe(Effect.flip);
+
+      assert.instanceOf(error, ElectronApp.ElectronAppMetadataReadError);
+      assert.strictEqual(error.property, "app-version");
+      assert.strictEqual(error.cause, cause);
+      assert.strictEqual(
+        error.message,
+        'Failed to read Electron app metadata property "app-version".',
+      );
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
+  it.effect("preserves Electron readiness failures", () =>
+    Effect.gen(function* () {
+      const cause = new Error("ready failed");
+      whenReadyMock.mockRejectedValueOnce(cause);
+
+      const electronApp = yield* ElectronApp.ElectronApp;
+      const error = yield* electronApp.whenReady.pipe(Effect.flip);
+
+      assert.instanceOf(error, ElectronApp.ElectronAppWhenReadyError);
+      assert.strictEqual(error.isPackaged, true);
+      assert.strictEqual(error.cause, cause);
+      assert.strictEqual(
+        error.message,
+        "Failed to wait for the Electron app to become ready (packaged: true).",
+      );
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
   it.effect("scopes app event listeners", () =>
     Effect.gen(function* () {
       const listener = vi.fn();
