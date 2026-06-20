@@ -9,11 +9,9 @@ import {
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -52,16 +50,64 @@ type ProjectCliDispatchCommand = Extract<
   { type: "project.create" | "project.meta.update" | "project.delete" }
 >;
 
-class ProjectCommandError extends Data.TaggedError("ProjectCommandError")<{
-  readonly message: string;
-}> {}
+const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
+const ProjectCommandOperation = Schema.Literals([
+  "generateProjectCommandId",
+  "callLiveServer",
+  "validateProjectTitle",
+  "resolveProjectTarget",
+  "addProject",
+]);
+
+export class ProjectCommandError extends Schema.TaggedErrorClass<ProjectCommandError>()(
+  "ProjectCommandError",
+  {
+    operation: ProjectCommandOperation,
+    detail: Schema.String,
+    code: Schema.optional(Schema.String),
+    traceId: Schema.optional(Schema.String),
+    status: Schema.optional(Schema.Number),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  static fromLiveServerRequest(cause: unknown): ProjectCommandError {
+    if (isEnvironmentHttpCommonError(cause)) {
+      return new ProjectCommandError({
+        operation: "callLiveServer",
+        detail: `Server request failed (${cause.code}, trace ${cause.traceId}).`,
+        code: cause.code,
+        traceId: cause.traceId,
+        cause,
+      });
+    }
+    if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
+      return new ProjectCommandError({
+        operation: "callLiveServer",
+        detail: `Server request failed with undeclared status ${cause.response.status}.`,
+        status: cause.response.status,
+        cause,
+      });
+    }
+    return new ProjectCommandError({
+      operation: "callLiveServer",
+      detail: "Failed to call the running server.",
+      cause,
+    });
+  }
+
+  override get message(): string {
+    return this.detail;
+  }
+}
 
 const projectCommandUuid = Crypto.Crypto.pipe(
   Effect.flatMap((crypto) => crypto.randomUUIDv4),
   Effect.mapError(
-    () =>
+    (cause) =>
       new ProjectCommandError({
-        message: "Failed to generate a project command identifier.",
+        operation: "generateProjectCommandId",
+        detail: "Failed to generate a project command identifier.",
+        cause,
       }),
   ),
 );
@@ -75,7 +121,6 @@ const ProjectCliRuntimeLive = Layer.mergeAll(
 );
 
 const PROJECT_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(1);
-const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 const withProjectCliSessionToken = <A, E, R>(
   environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
   run: (token: string) => Effect.Effect<A, E, R>,
@@ -91,28 +136,6 @@ const withProjectCliSessionToken = <A, E, R>(
 
 const withProjectCliLiveServerTimeout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.timeout(PROJECT_CLI_LIVE_SERVER_TIMEOUT));
-
-const failLiveServerRequest = (cause: unknown) => {
-  if (isEnvironmentHttpCommonError(cause)) {
-    return Effect.fail(
-      new ProjectCommandError({
-        message: `Server request failed (${cause.code}, trace ${cause.traceId}).`,
-      }),
-    );
-  }
-  if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
-    return Effect.fail(
-      new ProjectCommandError({
-        message: `Server request failed with undeclared status ${cause.response.status}.`,
-      }),
-    );
-  }
-  return Effect.fail(
-    new ProjectCommandError({
-      message: `Failed to call running server: ${String(cause)}.`,
-    }),
-  );
-};
 
 const makeLiveServerClient = (origin: string) =>
   HttpApiClient.make(EnvironmentHttpApi, {
@@ -135,7 +158,10 @@ const resolveProjectTitle = Effect.fn("resolveProjectTitle")(function* (
     if (trimmed.length > 0) {
       return trimmed;
     }
-    return yield* new ProjectCommandError({ message: "Project title cannot be empty." });
+    return yield* new ProjectCommandError({
+      operation: "validateProjectTitle",
+      detail: "Project title cannot be empty.",
+    });
   }
 
   const path = yield* Path.Path;
@@ -149,7 +175,10 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
 }) {
   const trimmedIdentifier = input.identifier.trim();
   if (trimmedIdentifier.length === 0) {
-    return yield* new ProjectCommandError({ message: "Project identifier cannot be empty." });
+    return yield* new ProjectCommandError({
+      operation: "resolveProjectTarget",
+      detail: "Project identifier cannot be empty.",
+    });
   }
 
   const activeProjects = input.snapshot.projects.filter((project) => project.deletedAt === null);
@@ -162,12 +191,11 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
     } satisfies ProjectMutationTarget;
   }
 
-  const normalizedWorkspaceRootResult = yield* Effect.exit(
+  const normalizedWorkspaceRootResult = yield* Effect.result(
     normalizeWorkspaceRootForProjectCommand(trimmedIdentifier),
   );
-  const normalizedWorkspaceRoot = Exit.isSuccess(normalizedWorkspaceRootResult)
-    ? normalizedWorkspaceRootResult.value
-    : null;
+  const normalizedWorkspaceRoot =
+    normalizedWorkspaceRootResult._tag === "Success" ? normalizedWorkspaceRootResult.success : null;
 
   const exactWorkspaceMatch =
     normalizedWorkspaceRoot === null
@@ -177,7 +205,11 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
   const resolved = exactWorkspaceMatch;
   if (!resolved) {
     return yield* new ProjectCommandError({
-      message: `No active project found for '${trimmedIdentifier}'.`,
+      operation: "resolveProjectTarget",
+      detail: `No active project found for '${trimmedIdentifier}'.`,
+      ...(normalizedWorkspaceRootResult._tag === "Failure"
+        ? { cause: normalizedWorkspaceRootResult.failure }
+        : {}),
     });
   }
 
@@ -194,7 +226,10 @@ const fetchLiveOrchestrationSnapshot = (origin: string, bearerToken: string) =>
     return yield* client.orchestration.snapshot({
       headers: { authorization: `Bearer ${bearerToken}` },
     });
-  }).pipe(withProjectCliLiveServerTimeout, Effect.catch(failLiveServerRequest));
+  }).pipe(
+    withProjectCliLiveServerTimeout,
+    Effect.mapError(ProjectCommandError.fromLiveServerRequest),
+  );
 
 const dispatchLiveOrchestrationCommand = (
   origin: string,
@@ -207,7 +242,10 @@ const dispatchLiveOrchestrationCommand = (
       headers: { authorization: `Bearer ${bearerToken}` },
       payload: command,
     } as Parameters<typeof client.orchestration.dispatch>[0]);
-  }).pipe(withProjectCliLiveServerTimeout, Effect.catch(failLiveServerRequest));
+  }).pipe(
+    withProjectCliLiveServerTimeout,
+    Effect.mapError(ProjectCommandError.fromLiveServerRequest),
+  );
 
 const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
@@ -232,11 +270,15 @@ const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecu
       ),
     );
 
-    const attempted = yield* Effect.exit(attempt);
-    if (Exit.isSuccess(attempted)) {
-      return Option.some(attempted.value);
+    const attempted = yield* Effect.result(attempt);
+    if (attempted._tag === "Success") {
+      return Option.some(attempted.success);
     }
 
+    yield* Effect.logDebug("Failed to connect to the persisted project CLI server.", {
+      origin: runtimeState.value.origin,
+      cause: attempted.failure,
+    });
     yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
     return Option.none<{ readonly origin: string }>();
   },
@@ -335,7 +377,8 @@ const projectAddCommand = Command.make("add", {
         );
         if (existingProject) {
           return yield* new ProjectCommandError({
-            message: `An active project already exists for '${workspaceRoot}'.`,
+            operation: "addProject",
+            detail: `An active project already exists for '${workspaceRoot}'.`,
           });
         }
 
