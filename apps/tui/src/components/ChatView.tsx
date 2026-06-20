@@ -204,7 +204,7 @@ export function ChatView({
             options: models.map((model) => ({
               name: model.label,
               description: model.providerLabel,
-              value: `${model.instanceId} ${model.model}`,
+              value: `${model.instanceId} ${model.model}`,
             })),
             selectedIndex: currentModelIndex(models, detail.modelSelection ?? null),
           };
@@ -237,7 +237,7 @@ export function ChatView({
             options: result.choices.map((choice) => ({
               name: choice.label,
               description: choice.description ?? result.descriptorId,
-              value: `${result.descriptorId} ${choice.id}`,
+              value: `${result.descriptorId} ${choice.id}`,
             })),
             selectedIndex: Math.max(
               0,
@@ -275,7 +275,7 @@ export function ChatView({
         .catch((error) => store.setStatus(`access change failed: ${String(error)}`, "error"));
       store.setStatus(`Access → ${runtimeModeLabel(mode)}`, "success");
     } else if (kind === "model") {
-      const [instanceId, model] = value.split(" ");
+      const [instanceId, model] = value.split(" ");
       if (instanceId && model) {
         void client
           .setModel(detail.id, instanceId, model)
@@ -283,7 +283,7 @@ export function ChatView({
         store.setStatus(`Model → ${model}`, "success");
       }
     } else if (kind === "reasoning") {
-      const [descriptorId, choiceId] = value.split(" ");
+      const [descriptorId, choiceId] = value.split(" ");
       if (descriptorId && choiceId) {
         void client
           .setReasoning(detail, descriptorId, choiceId)
