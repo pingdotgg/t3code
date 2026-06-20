@@ -163,6 +163,28 @@ export const PreviewAutomationEvaluationDetailKind = Schema.Literals([
 export type PreviewAutomationEvaluationDetailKind =
   typeof PreviewAutomationEvaluationDetailKind.Type;
 
+const previewAutomationEvaluationDetail = (exceptionDetails: unknown) => {
+  if (typeof exceptionDetails !== "object" || exceptionDetails === null) {
+    return { detailKind: "unknown" as const };
+  }
+  const details = exceptionDetails as Record<string, unknown>;
+  const exception = details["exception"];
+  const description =
+    typeof exception === "object" &&
+    exception !== null &&
+    typeof (exception as Record<string, unknown>)["description"] === "string"
+      ? (exception as Record<string, unknown>)["description"]
+      : undefined;
+  if (typeof description === "string" && description.length > 0) {
+    return { detailKind: "exception-description" as const, detail: description };
+  }
+  const text = details["text"];
+  if (typeof text === "string" && text.length > 0) {
+    return { detailKind: "exception-text" as const, detail: text };
+  }
+  return { detailKind: "unknown" as const };
+};
+
 const previewAutomationTargetLabel = (
   selectorKind: PreviewAutomationSelectorKind,
   selectorLength?: number,
@@ -876,9 +898,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         const interrupted = isPreviewAutomationControlInterruptedError(error);
         const errorMessage = isPreviewOperationError(error)
           ? PreviewOperationError.toTimelineMessage(error)
-          : error instanceof Error
-            ? error.message
-            : String(error);
+          : isPreviewAutomationEvaluationError(error)
+            ? PreviewAutomationEvaluationError.toTimelineMessage(error)
+            : isPreviewAutomationInvalidSelectorError(error)
+              ? PreviewAutomationInvalidSelectorError.toTimelineMessage(error)
+              : error instanceof Error
+                ? error.message
+                : String(error);
         yield* replaceAction(tabId, {
           ...actionEvent,
           status: interrupted ? "interrupted" : "failed",
@@ -910,18 +936,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         if (!response.exceptionDetails) {
           return Effect.succeed(response.result?.value as A);
         }
-        const description = response.exceptionDetails.exception?.description;
-        const text = response.exceptionDetails.text;
+        const detail = previewAutomationEvaluationDetail(response.exceptionDetails);
         return Effect.fail(
           new PreviewAutomationEvaluationError({
             tabId,
-            detailKind:
-              description !== undefined
-                ? "exception-description"
-                : text !== undefined
-                  ? "exception-text"
-                  : "unknown",
-            detailLength: description?.length ?? text?.length ?? 0,
+            detailKind: detail.detailKind,
+            detailLength: detail.detail?.length ?? 0,
             cause: response.exceptionDetails,
           }),
         );
@@ -2467,6 +2487,10 @@ export class PreviewAutomationEvaluationError extends Schema.TaggedErrorClass<Pr
     cause: Schema.Defect(),
   },
 ) {
+  static toTimelineMessage(error: PreviewAutomationEvaluationError): string {
+    return previewAutomationEvaluationDetail(error.cause).detail ?? error.message;
+  }
+
   override get message(): string {
     return `Preview JavaScript evaluation failed in tab ${this.tabId}`;
   }
@@ -2513,6 +2537,12 @@ export class PreviewAutomationInvalidSelectorError extends Schema.TaggedErrorCla
     cause: Schema.Defect(),
   },
 ) {
+  static toTimelineMessage(error: PreviewAutomationInvalidSelectorError): string {
+    if (typeof error.cause !== "object" || error.cause === null) return error.message;
+    const reason = (error.cause as Record<string, unknown>)["message"];
+    return typeof reason === "string" && reason.length > 0 ? reason : error.message;
+  }
+
   get detail(): {
     readonly selectorKind: PreviewAutomationSelectorKind;
     readonly selectorLength?: number;
@@ -2594,6 +2624,10 @@ export type PreviewManagerError = typeof PreviewManagerError.Type;
 export const isPreviewManagerError = Schema.is(PreviewManagerError);
 export const isPreviewAutomationControlInterruptedError = Schema.is(
   PreviewAutomationControlInterruptedError,
+);
+export const isPreviewAutomationEvaluationError = Schema.is(PreviewAutomationEvaluationError);
+export const isPreviewAutomationInvalidSelectorError = Schema.is(
+  PreviewAutomationInvalidSelectorError,
 );
 
 export class PreviewManager extends Context.Service<

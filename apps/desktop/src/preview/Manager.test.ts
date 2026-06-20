@@ -511,6 +511,61 @@ describe("PreviewManager", () => {
       }),
     ),
   );
+
+  effectIt.effect("derives evaluation detail kind and length from the same non-empty source", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const text = "ReferenceError: fallbackDetail is not defined";
+        const exceptionDetails = {
+          text,
+          exception: { description: "" },
+        };
+        const sendCommand = vi.fn(async (method: string) =>
+          method === "Runtime.evaluate" ? { exceptionDetails } : undefined,
+        );
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        const exit = yield* Effect.exit(
+          manager.automationEvaluate("tab_1", { expression: "fallbackDetail" }),
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isSuccess(exit)) return;
+        const error = Option.getOrThrow(Cause.findErrorOption(exit.cause));
+        expect(error).toMatchObject({
+          _tag: "PreviewAutomationEvaluationError",
+          detailKind: "exception-text",
+          detailLength: text.length,
+          cause: exceptionDetails,
+        });
+      }),
+    ),
+  );
 });
 
 describe("PreviewOperationError", () => {
@@ -529,16 +584,18 @@ describe("PreviewOperationError", () => {
 });
 
 describe("Preview automation diagnostics", () => {
-  it("keeps browser exception detail only in the exact cause", () => {
-    const secret = "browser-exception-secret";
+  it("keeps browser exception detail out of structural diagnostics", () => {
+    const secret = "unrelated-browser-payload-secret";
+    const detail = "ReferenceError: missingValue is not defined";
     const cause = {
       text: "Uncaught Error",
-      exception: { description: secret },
+      exception: { description: detail },
+      unsafePayload: secret,
     };
     const error = new PreviewManager.PreviewAutomationEvaluationError({
       tabId: "tab_1",
       detailKind: "exception-description",
-      detailLength: secret.length,
+      detailLength: detail.length,
       cause,
     });
 
@@ -553,6 +610,10 @@ describe("Preview automation diagnostics", () => {
     expect(error.message).not.toContain(secret);
     expect(JSON.stringify(encodedDiagnostics)).not.toContain(secret);
     expect("detail" in error).toBe(false);
+    expect(PreviewManager.PreviewAutomationEvaluationError.toTimelineMessage(error)).toBe(detail);
+    expect(PreviewManager.PreviewAutomationEvaluationError.toTimelineMessage(error)).not.toContain(
+      secret,
+    );
   });
 
   it("retains bounded selector diagnostics without exposing selector or reason text", () => {
@@ -588,6 +649,9 @@ describe("Preview automation diagnostics", () => {
     expect(JSON.stringify(encodedDiagnostics)).not.toContain("secret");
     expect("selector" in error).toBe(false);
     expect("reason" in error).toBe(false);
+    expect(PreviewManager.PreviewAutomationInvalidSelectorError.toTimelineMessage(error)).toBe(
+      reason,
+    );
   });
 
   it("does not retain a missing target locator", () => {
