@@ -19,11 +19,20 @@ function summarizeSchemaIssue(issue: SchemaIssue.Issue): string {
 // Core Persistence Errors
 // ===============================
 
+export const PersistenceErrorCorrelation = Schema.Union([
+  Schema.Struct({ sessionId: Schema.String }),
+  Schema.Struct({ currentSessionId: Schema.String }),
+  Schema.Struct({ pairingLinkId: Schema.String }),
+  Schema.Struct({ threadId: Schema.String }),
+]);
+export type PersistenceErrorCorrelation = typeof PersistenceErrorCorrelation.Type;
+
 export class PersistenceSqlError extends Schema.TaggedErrorClass<PersistenceSqlError>()(
   "PersistenceSqlError",
   {
     operation: Schema.String,
     detail: Schema.optional(Schema.String),
+    correlation: Schema.optional(PersistenceErrorCorrelation),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -39,13 +48,19 @@ export class PersistenceDecodeError extends Schema.TaggedErrorClass<PersistenceD
   {
     operation: Schema.String,
     issue: Schema.String,
+    correlation: Schema.optional(PersistenceErrorCorrelation),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
-  static fromSchemaError(operation: string, cause: Schema.SchemaError): PersistenceDecodeError {
+  static fromSchemaError(
+    operation: string,
+    cause: Schema.SchemaError,
+    correlation?: PersistenceErrorCorrelation,
+  ): PersistenceDecodeError {
     return new PersistenceDecodeError({
       operation,
       issue: summarizeSchemaIssue(cause.issue),
+      ...(correlation === undefined ? {} : { correlation }),
       cause,
     });
   }
