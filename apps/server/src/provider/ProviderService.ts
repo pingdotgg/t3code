@@ -764,7 +764,7 @@ export const make = Effect.fn("ProviderService.make")(function* (options?: Provi
         ...parsed,
         attachments: parsed.attachments ?? [],
       };
-      if (!input.input && input.attachments.length === 0) {
+      if (!input.input?.trim() && input.attachments.length === 0) {
         return yield* new ProviderValidationError({
           operation: "ProviderService.sendTurn",
           issue: "Either input text or at least one attachment is required",
