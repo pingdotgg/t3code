@@ -40,23 +40,22 @@ export class DeviceListPersistenceError extends Schema.TaggedErrorClass<DeviceLi
   }
 }
 
-export interface DevicesShape {
-  readonly register: (input: {
-    readonly userId: string;
-    readonly registration: RelayDeviceRegistrationRequest;
-  }) => Effect.Effect<void, DeviceRegistrationPersistenceError>;
-  readonly unregister: (input: {
-    readonly userId: string;
-    readonly deviceId: string;
-  }) => Effect.Effect<void, DeviceUnregistrationPersistenceError>;
-  readonly listForUser: (input: {
-    readonly userId: string;
-  }) => Effect.Effect<ReadonlyArray<RelayClientDeviceRecord>, DeviceListPersistenceError>;
-}
-
-export class Devices extends Context.Service<Devices, DevicesShape>()(
-  "t3code-relay/agentActivity/Devices",
-) {}
+export class Devices extends Context.Service<
+  Devices,
+  {
+    readonly register: (input: {
+      readonly userId: string;
+      readonly registration: RelayDeviceRegistrationRequest;
+    }) => Effect.Effect<void, DeviceRegistrationPersistenceError>;
+    readonly unregister: (input: {
+      readonly userId: string;
+      readonly deviceId: string;
+    }) => Effect.Effect<void, DeviceUnregistrationPersistenceError>;
+    readonly listForUser: (input: {
+      readonly userId: string;
+    }) => Effect.Effect<ReadonlyArray<RelayClientDeviceRecord>, DeviceListPersistenceError>;
+  }
+>()("t3code-relay/agentActivity/Devices") {}
 
 const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;

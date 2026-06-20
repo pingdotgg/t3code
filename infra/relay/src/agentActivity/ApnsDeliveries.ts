@@ -356,7 +356,7 @@ export type SendLiveActivityDeliveryInput =
     });
 
 function makeLiveActivityDeliveryRequest(
-  apns: Apns.ApnsClientShape,
+  apns: Apns.ApnsClient["Service"],
   input: SendLiveActivityDeliveryInput,
   now: DateTime.DateTime,
 ) {
@@ -391,33 +391,32 @@ function makeLiveActivityDeliveryRequest(
   }
 }
 
-export interface ApnsDeliveriesShape {
-  readonly sendForTarget: (input: {
-    readonly target: LiveActivities.TargetRow;
-    readonly aggregate: RelayAgentActivityAggregateState | null;
-    readonly nowMs: number;
-  }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
-  readonly sendPushNotificationForTarget: (input: {
-    readonly target: LiveActivities.TargetRow;
-    readonly aggregate: RelayAgentActivityAggregateState | null;
-  }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
-  readonly sendLiveActivity: (
-    input: SendLiveActivityDeliveryInput,
-  ) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
-  readonly processSignedJob: (
-    body: unknown,
-  ) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
-  readonly sendPushNotification: (input: {
-    readonly target: LiveActivityDeliveryTarget;
-    readonly token: string;
-    readonly sourceJobId?: string | null;
-    readonly notification: ApnsNotificationPayload;
-  }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
-}
-
-export class ApnsDeliveries extends Context.Service<ApnsDeliveries, ApnsDeliveriesShape>()(
-  "t3code-relay/agentActivity/ApnsDeliveries",
-) {}
+export class ApnsDeliveries extends Context.Service<
+  ApnsDeliveries,
+  {
+    readonly sendForTarget: (input: {
+      readonly target: LiveActivities.TargetRow;
+      readonly aggregate: RelayAgentActivityAggregateState | null;
+      readonly nowMs: number;
+    }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
+    readonly sendPushNotificationForTarget: (input: {
+      readonly target: LiveActivities.TargetRow;
+      readonly aggregate: RelayAgentActivityAggregateState | null;
+    }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
+    readonly sendLiveActivity: (
+      input: SendLiveActivityDeliveryInput,
+    ) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
+    readonly processSignedJob: (
+      body: unknown,
+    ) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
+    readonly sendPushNotification: (input: {
+      readonly target: LiveActivityDeliveryTarget;
+      readonly token: string;
+      readonly sourceJobId?: string | null;
+      readonly notification: ApnsNotificationPayload;
+    }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
+  }
+>()("t3code-relay/agentActivity/ApnsDeliveries") {}
 
 const make = Effect.gen(function* () {
   const attempts = yield* DeliveryAttempts.DeliveryAttempts;
@@ -442,7 +441,7 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const sendLiveActivity: ApnsDeliveriesShape["sendLiveActivity"] = Effect.fn(
+  const sendLiveActivity: ApnsDeliveries["Service"]["sendLiveActivity"] = Effect.fn(
     "relay.apns_deliveries.send_live_activity",
   )(function* (input) {
     yield* Effect.annotateCurrentSpan({
@@ -550,7 +549,7 @@ const make = Effect.gen(function* () {
     };
   });
 
-  const sendPushNotification: ApnsDeliveriesShape["sendPushNotification"] = Effect.fn(
+  const sendPushNotification: ApnsDeliveries["Service"]["sendPushNotification"] = Effect.fn(
     "relay.apns_deliveries.send_push_notification",
   )(function* (input) {
     yield* Effect.annotateCurrentSpan({
@@ -654,14 +653,14 @@ const make = Effect.gen(function* () {
     };
   });
 
-  const processSignedJob: ApnsDeliveriesShape["processSignedJob"] = Effect.fn(
+  const processSignedJob: ApnsDeliveries["Service"]["processSignedJob"] = Effect.fn(
     "relay.apns_deliveries.process_signed_job",
   )(function* (body) {
     const signedJob = yield* decodeSignedApnsDeliveryJob(body).pipe(
       Effect.mapError(
         () =>
           new ApnsDeliveryJobInvalid({
-            message: "Invalid APNs delivery queue job.",
+            reason: "invalid-queue-payload",
           }),
       ),
     );
@@ -686,7 +685,7 @@ const make = Effect.gen(function* () {
           if (payload.aggregate === null) {
             return Effect.fail(
               new ApnsDeliveryJobInvalid({
-                message: "Live Activity start/update jobs require an aggregate.",
+                reason: "missing-live-activity-aggregate",
               }),
             );
           }
@@ -715,7 +714,7 @@ const make = Effect.gen(function* () {
           if (payload.notification === null) {
             return Effect.fail(
               new ApnsDeliveryJobInvalid({
-                message: "Push notification jobs require a notification payload.",
+                reason: "missing-push-notification",
               }),
             );
           }

@@ -38,7 +38,9 @@ const device: RelayDeviceRegistrationRequest = {
   },
 };
 
-function makeDevices(overrides: Partial<Devices.DevicesShape> = {}): Devices.DevicesShape {
+function makeDevices(
+  overrides: Partial<Devices.Devices["Service"]> = {},
+): Devices.Devices["Service"] {
   return {
     register: () => Effect.void,
     unregister: () => Effect.void,
@@ -48,8 +50,8 @@ function makeDevices(overrides: Partial<Devices.DevicesShape> = {}): Devices.Dev
 }
 
 function makeLiveActivities(
-  overrides: Partial<LiveActivities.LiveActivitiesShape> = {},
-): LiveActivities.LiveActivitiesShape {
+  overrides: Partial<LiveActivities.LiveActivities["Service"]> = {},
+): LiveActivities.LiveActivities["Service"] {
   return {
     register: () => Effect.void,
     listTargets: () => Effect.succeed([]),
@@ -62,8 +64,8 @@ function makeLiveActivities(
 }
 
 function makeAgentActivityRows(
-  overrides: Partial<AgentActivityRows.AgentActivityRowsShape> = {},
-): AgentActivityRows.AgentActivityRowsShape {
+  overrides: Partial<AgentActivityRows.AgentActivityRows["Service"]> = {},
+): AgentActivityRows.AgentActivityRows["Service"] {
   return {
     upsert: () => Effect.void,
     remove: () => Effect.void,
@@ -108,8 +110,8 @@ function makeEnvironmentLinks(
 }
 
 function makeDeliveryAttempts(
-  overrides: Partial<DeliveryAttempts.DeliveryAttemptsShape> = {},
-): DeliveryAttempts.DeliveryAttemptsShape {
+  overrides: Partial<DeliveryAttempts.DeliveryAttempts["Service"]> = {},
+): DeliveryAttempts.DeliveryAttempts["Service"] {
   return {
     record: () => Effect.void,
     claimSourceJob: () => Effect.succeed("claimed"),
@@ -138,8 +140,8 @@ const config = RelayConfiguration.RelayConfiguration.of({
 });
 
 function makeRegistrationReplayLayer(input: {
-  readonly devices: Devices.DevicesShape;
-  readonly liveActivities: LiveActivities.LiveActivitiesShape;
+  readonly devices: Devices.Devices["Service"];
+  readonly liveActivities: LiveActivities.LiveActivities["Service"];
   readonly queuedJobs: Array<SignedApnsDeliveryJob>;
 }) {
   return MobileRegistrations.layer.pipe(
@@ -167,8 +169,8 @@ function makeRegistrationReplayLayer(input: {
 }
 
 function makeAgentActivityPublisher(
-  overrides: Partial<AgentActivityPublisher.AgentActivityPublisherShape> = {},
-): AgentActivityPublisher.AgentActivityPublisherShape {
+  overrides: Partial<AgentActivityPublisher.AgentActivityPublisher["Service"]> = {},
+): AgentActivityPublisher.AgentActivityPublisher["Service"] {
   return {
     publish: () => Effect.succeed({ ok: true, deliveries: [] }),
     replayForLiveActivityRegistration: () => Effect.succeed(null),
@@ -178,10 +180,10 @@ function makeAgentActivityPublisher(
 
 describe("MobileRegistrations", () => {
   it.effect("registers devices through the device persistence service", () => {
-    let registered: Parameters<Devices.DevicesShape["register"]>[0] | null = null;
+    let registered: Parameters<Devices.Devices["Service"]["register"]>[0] | null = null;
     let replayed:
       | Parameters<
-          AgentActivityPublisher.AgentActivityPublisherShape["replayForLiveActivityRegistration"]
+          AgentActivityPublisher.AgentActivityPublisher["Service"]["replayForLiveActivityRegistration"]
         >[0]
       | null = null;
 
@@ -263,7 +265,7 @@ describe("MobileRegistrations", () => {
   });
 
   it.effect("unregisters the current user's device", () => {
-    let unregistered: Parameters<Devices.DevicesShape["unregister"]>[0] | null = null;
+    let unregistered: Parameters<Devices.Devices["Service"]["unregister"]>[0] | null = null;
 
     return Effect.gen(function* () {
       const result = yield* Effect.gen(function* () {
@@ -310,10 +312,11 @@ describe("MobileRegistrations", () => {
       deviceId: "device-1" as const,
       activityPushToken: "activity-token" as const,
     };
-    let registered: Parameters<LiveActivities.LiveActivitiesShape["register"]>[0] | null = null;
+    let registered: Parameters<LiveActivities.LiveActivities["Service"]["register"]>[0] | null =
+      null;
     let replayed:
       | Parameters<
-          AgentActivityPublisher.AgentActivityPublisherShape["replayForLiveActivityRegistration"]
+          AgentActivityPublisher.AgentActivityPublisher["Service"]["replayForLiveActivityRegistration"]
         >[0]
       | null = null;
 
@@ -372,9 +375,9 @@ describe("MobileRegistrations", () => {
     () => {
       const queuedJobs: Array<SignedApnsDeliveryJob> = [];
       const queuedStarts: Array<
-        Parameters<LiveActivities.LiveActivitiesShape["markStartQueued"]>[0]
+        Parameters<LiveActivities.LiveActivities["Service"]["markStartQueued"]>[0]
       > = [];
-      const registeredDevices: Array<Parameters<Devices.DevicesShape["register"]>[0]> = [];
+      const registeredDevices: Array<Parameters<Devices.Devices["Service"]["register"]>[0]> = [];
       const devices = makeDevices({
         register: (input) =>
           Effect.sync(() => {

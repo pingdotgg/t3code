@@ -8,8 +8,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { Headers, HttpClient, HttpClientRequest } from "effect/unstable/http";
-import * as RelayConfiguration from "../Config.ts";
+import * as Headers from "effect/unstable/http/Headers";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import type * as RelayConfiguration from "../Config.ts";
 import type { ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
 
 const LIVE_ACTIVITY_NAME = "AgentActivity";
@@ -231,29 +233,28 @@ function apnsReasonFromBody(body: string): string | undefined {
   });
 }
 
-export interface ApnsClientShape {
-  readonly makeLiveActivityRequest: typeof makeLiveActivityRequest;
-  readonly makePushNotificationRequest: typeof makePushNotificationRequest;
-  readonly sendLiveActivityRequest: (input: {
-    readonly credentials: RelayConfiguration.ApnsCredentials;
-    readonly request: ApnsLiveActivityRequest;
-    readonly issuedAtUnixSeconds: number;
-  }) => Effect.Effect<ApnsDeliveryResult, ApnsError>;
-  readonly sendPushNotificationRequest: (input: {
-    readonly credentials: RelayConfiguration.ApnsCredentials;
-    readonly request: ApnsPushNotificationRequest;
-    readonly issuedAtUnixSeconds: number;
-  }) => Effect.Effect<ApnsDeliveryResult, ApnsError>;
-}
-
-export class ApnsClient extends Context.Service<ApnsClient, ApnsClientShape>()(
-  "t3code-relay/agentActivity/ApnsClient",
-) {}
+export class ApnsClient extends Context.Service<
+  ApnsClient,
+  {
+    readonly makeLiveActivityRequest: typeof makeLiveActivityRequest;
+    readonly makePushNotificationRequest: typeof makePushNotificationRequest;
+    readonly sendLiveActivityRequest: (input: {
+      readonly credentials: RelayConfiguration.ApnsCredentials;
+      readonly request: ApnsLiveActivityRequest;
+      readonly issuedAtUnixSeconds: number;
+    }) => Effect.Effect<ApnsDeliveryResult, ApnsError>;
+    readonly sendPushNotificationRequest: (input: {
+      readonly credentials: RelayConfiguration.ApnsCredentials;
+      readonly request: ApnsPushNotificationRequest;
+      readonly issuedAtUnixSeconds: number;
+    }) => Effect.Effect<ApnsDeliveryResult, ApnsError>;
+  }
+>()("t3code-relay/agentActivity/ApnsClient") {}
 
 const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
 
-  const sendLiveActivityRequest: ApnsClientShape["sendLiveActivityRequest"] = Effect.fn(
+  const sendLiveActivityRequest: ApnsClient["Service"]["sendLiveActivityRequest"] = Effect.fn(
     "relay.apns.send_live_activity_request",
   )(function* (input) {
     yield* Effect.annotateCurrentSpan({ "relay.apns.event": input.request.event });
@@ -288,40 +289,41 @@ const make = Effect.gen(function* () {
     };
   });
 
-  const sendPushNotificationRequest: ApnsClientShape["sendPushNotificationRequest"] = Effect.fn(
-    "relay.apns.send_push_notification_request",
-  )(function* (input) {
-    yield* Effect.annotateCurrentSpan({ "relay.apns.event": "push_notification" });
-    const jwt = yield* makeApnsJwt({
-      ...input.credentials,
-      issuedAtUnixSeconds: input.issuedAtUnixSeconds,
+  const sendPushNotificationRequest: ApnsClient["Service"]["sendPushNotificationRequest"] =
+    Effect.fn("relay.apns.send_push_notification_request")(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.apns.event": "push_notification" });
+      const jwt = yield* makeApnsJwt({
+        ...input.credentials,
+        issuedAtUnixSeconds: input.issuedAtUnixSeconds,
+      });
+      const host =
+        input.credentials.environment === "production"
+          ? "https://api.push.apple.com"
+          : "https://api.sandbox.push.apple.com";
+      const response = yield* HttpClientRequest.post(
+        `${host}/3/device/${input.request.token}`,
+      ).pipe(
+        HttpClientRequest.setHeaders({
+          authorization: `bearer ${jwt}`,
+          "apns-priority": input.request.priority,
+          "apns-push-type": "alert",
+          "apns-topic": input.credentials.bundleId,
+        }),
+        HttpClientRequest.bodyJson(input.request.payload),
+        Effect.flatMap(httpClient.execute),
+        Effect.mapError((cause) => new ApnsHttpRequestError({ cause })),
+      );
+      const responseText = yield* response.text.pipe(
+        Effect.mapError((cause) => new ApnsHttpRequestError({ cause })),
+      );
+      const reason = apnsReasonFromBody(responseText);
+      return {
+        ok: response.status >= 200 && response.status < 300,
+        status: response.status,
+        ...(reason === undefined ? {} : { reason }),
+        apnsId: Option.getOrNull(Headers.get(response.headers, "apns-id")),
+      };
     });
-    const host =
-      input.credentials.environment === "production"
-        ? "https://api.push.apple.com"
-        : "https://api.sandbox.push.apple.com";
-    const response = yield* HttpClientRequest.post(`${host}/3/device/${input.request.token}`).pipe(
-      HttpClientRequest.setHeaders({
-        authorization: `bearer ${jwt}`,
-        "apns-priority": input.request.priority,
-        "apns-push-type": "alert",
-        "apns-topic": input.credentials.bundleId,
-      }),
-      HttpClientRequest.bodyJson(input.request.payload),
-      Effect.flatMap(httpClient.execute),
-      Effect.mapError((cause) => new ApnsHttpRequestError({ cause })),
-    );
-    const responseText = yield* response.text.pipe(
-      Effect.mapError((cause) => new ApnsHttpRequestError({ cause })),
-    );
-    const reason = apnsReasonFromBody(responseText);
-    return {
-      ok: response.status >= 200 && response.status < 300,
-      status: response.status,
-      ...(reason === undefined ? {} : { reason }),
-      apnsId: Option.getOrNull(Headers.get(response.headers, "apns-id")),
-    };
-  });
 
   return ApnsClient.of({
     makeLiveActivityRequest,
