@@ -39,13 +39,14 @@ export interface TraceDiagnosticsOptions {
   readonly readAt?: DateTime.Utc;
 }
 
-export interface TraceDiagnosticsShape {
-  readonly read: (options: TraceDiagnosticsOptions) => Effect.Effect<ServerTraceDiagnosticsResult>;
-}
-
-export class TraceDiagnostics extends Context.Service<TraceDiagnostics, TraceDiagnosticsShape>()(
-  "t3/diagnostics/TraceDiagnostics",
-) {}
+export class TraceDiagnostics extends Context.Service<
+  TraceDiagnostics,
+  {
+    readonly read: (
+      options: TraceDiagnosticsOptions,
+    ) => Effect.Effect<ServerTraceDiagnosticsResult>;
+  }
+>()("t3/diagnostics/TraceDiagnostics") {}
 
 interface TraceDiagnosticsInput {
   readonly traceFilePath: string;
@@ -395,10 +396,10 @@ function readTraceFile(
   );
 }
 
-export const make = Effect.fn("makeTraceDiagnostics")(function* () {
+export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
 
-  const read: TraceDiagnosticsShape["read"] = Effect.fn("TraceDiagnostics.read")(
+  const read: TraceDiagnostics["Service"]["read"] = Effect.fn("TraceDiagnostics.read")(
     function* (options) {
       const readAt = options.readAt ?? (yield* DateTime.now);
       const slowSpanThresholdMs = options.slowSpanThresholdMs ?? DEFAULT_SLOW_SPAN_THRESHOLD_MS;
@@ -449,7 +450,7 @@ export const make = Effect.fn("makeTraceDiagnostics")(function* () {
   return TraceDiagnostics.of({ read });
 });
 
-export const layer = Layer.effect(TraceDiagnostics, make());
+export const layer = Layer.effect(TraceDiagnostics, make);
 
 export function readTraceDiagnostics(
   options: TraceDiagnosticsOptions,

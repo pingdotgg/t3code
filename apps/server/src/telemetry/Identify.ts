@@ -6,7 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 
 const CodexAuthJsonSchema = Schema.Struct({
   tokens: Schema.Struct({
@@ -19,9 +19,14 @@ const ClaudeJsonSchema = Schema.Struct({
 });
 
 class IdentifyUserError extends Schema.TaggedErrorClass<IdentifyUserError>()("IdentifyUserError", {
-  message: Schema.String,
-  cause: Schema.optional(Schema.Defect()),
-}) {}
+  operation: Schema.Literal("hash_identifier"),
+  algorithm: Schema.Literal("SHA-256"),
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return `Failed to hash telemetry identifier with ${this.algorithm}.`;
+  }
+}
 
 const hash = (value: string) =>
   Crypto.Crypto.pipe(
@@ -30,7 +35,8 @@ const hash = (value: string) =>
     Effect.mapError(
       (cause) =>
         new IdentifyUserError({
-          message: "Failed to hash identifier",
+          operation: "hash_identifier",
+          algorithm: "SHA-256",
           cause,
         }),
     ),
@@ -64,7 +70,7 @@ const getClaudeUserId = Effect.gen(function* () {
 
 const upsertAnonymousId = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  const { anonymousIdPath } = yield* ServerConfig;
+  const { anonymousIdPath } = yield* ServerConfig.ServerConfig;
 
   const anonymousId = yield* fileSystem.readFileString(anonymousIdPath).pipe(
     Effect.catch(() =>
