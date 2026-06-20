@@ -35,6 +35,31 @@ describe.sequential("primary environment HTTP layer", () => {
     }).pipe(Effect.provide(makePrimaryEnvironmentHttpLayer()));
   });
 
+  it.effect("uses cookie credentials for vite-proxied configured loopback environments", () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubEnv("VITE_HTTP_URL", "http://localhost:13773");
+    vi.stubEnv("VITE_WS_URL", "ws://localhost:13773");
+    vi.stubEnv("VITE_DEV_SERVER_URL", "http://localhost:5733");
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: {
+          href: "http://localhost:5733/pair",
+          origin: "http://localhost:5733",
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* HttpClient.get("http://localhost:5733/api/auth/session");
+
+      const request = new Request(fetchMock.mock.calls[0]?.[0], fetchMock.mock.calls[0]?.[1]);
+      expect(request.credentials).toBe("include");
+      expect(request.headers.get("authorization")).toBeNull();
+    }).pipe(Effect.provide(makePrimaryEnvironmentHttpLayer()));
+  });
+
   it.effect("uses bearer auth without cookies for desktop-managed primaries", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);

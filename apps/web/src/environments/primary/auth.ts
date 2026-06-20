@@ -150,6 +150,10 @@ type ServerAuthGateState =
 
 let bootstrapPromise: Promise<ServerAuthGateState> | null = null;
 let resolvedAuthenticatedGateState: ServerAuthGateState | null = null;
+let credentialSubmitPromise: {
+  readonly credential: string;
+  readonly promise: Promise<void>;
+} | null = null;
 const AUTH_SESSION_ESTABLISH_TIMEOUT_MS = 2_000;
 const AUTH_SESSION_ESTABLISH_STEP_MS = 100;
 
@@ -350,8 +354,46 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
     });
   }
 
+  if (credentialSubmitPromise?.credential === trimmedCredential) {
+    return credentialSubmitPromise.promise;
+  }
+
+  const nextPromise = submitServerAuthCredentialOnce(trimmedCredential);
+  credentialSubmitPromise = {
+    credential: trimmedCredential,
+    promise: nextPromise,
+  };
+  try {
+    await nextPromise;
+  } finally {
+    if (credentialSubmitPromise?.promise === nextPromise) {
+      credentialSubmitPromise = null;
+    }
+  }
+}
+
+async function submitServerAuthCredentialOnce(trimmedCredential: string): Promise<void> {
+  if (resolvedAuthenticatedGateState?.status === "authenticated") {
+    bootstrapPromise = null;
+    stripPairingTokenFromUrl();
+    return;
+  }
   resolvedAuthenticatedGateState = null;
-  await exchangeBootstrapCredential(trimmedCredential);
+  try {
+    await exchangeBootstrapCredential(trimmedCredential);
+  } catch (error) {
+    if (isBootstrapHttpError(error) && error.status === 401) {
+      const currentSession = await fetchSessionState().catch(() => null);
+      if (currentSession?.authenticated) {
+        resolvedAuthenticatedGateState = { status: "authenticated" };
+        bootstrapPromise = null;
+        stripPairingTokenFromUrl();
+        return;
+      }
+    }
+    throw error;
+  }
+  resolvedAuthenticatedGateState = { status: "authenticated" };
   bootstrapPromise = null;
   stripPairingTokenFromUrl();
 }
@@ -543,4 +585,5 @@ export async function reauthenticatePrimaryEnvironment(): Promise<ServerAuthGate
 export function __resetServerAuthBootstrapForTests() {
   bootstrapPromise = null;
   resolvedAuthenticatedGateState = null;
+  credentialSubmitPromise = null;
 }

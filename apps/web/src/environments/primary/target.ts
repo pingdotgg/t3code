@@ -145,9 +145,6 @@ export function isLoopbackHostname(hostname: string): boolean {
   return LOOPBACK_HOSTNAMES.has(normalizeHostname(hostname));
 }
 
-function resolveHttpRequestBaseUrl(primaryTarget: PrimaryEnvironmentTarget): string {
-  const httpBaseUrl = primaryTarget.target.httpBaseUrl;
-
 function effectiveUrlOrigin(url: URL): string {
   return url.origin === "null" ? `${url.protocol}//${url.host}` : url.origin;
 }
@@ -224,7 +221,13 @@ function resolveConfiguredPrimaryTarget(): PrimaryEnvironmentTarget | null {
   return {
     source: "configured",
     target: {
-      httpBaseUrl: normalizeBaseUrl(resolvedHttpBaseUrl, "configured", "http-base-url"),
+      httpBaseUrl: resolveHttpRequestBaseUrl({
+        source: "configured",
+        target: {
+          httpBaseUrl: normalizeBaseUrl(resolvedHttpBaseUrl, "configured", "http-base-url"),
+          wsBaseUrl: normalizeBaseUrl(resolvedWsBaseUrl, "configured", "websocket-base-url"),
+        },
+      }),
       wsBaseUrl: normalizeBaseUrl(resolvedWsBaseUrl, "configured", "websocket-base-url"),
     },
   };
