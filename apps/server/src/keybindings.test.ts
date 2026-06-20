@@ -1,17 +1,16 @@
 import { KeybindingCommand, KeybindingRule, KeybindingsConfig } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { assertFailure } from "@effect/vitest/utils";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
-import { KeybindingsConfigError } from "@t3tools/contracts";
 
 const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
 const encodeKeybindingsConfigJson = Schema.encodeEffect(KeybindingsConfigJson);
@@ -33,12 +32,6 @@ const makeKeybindingsLayer = () => {
     ),
   );
 };
-
-const toDetailResult = <A, R>(effect: Effect.Effect<A, KeybindingsConfigError, R>) =>
-  effect.pipe(
-    Effect.mapError((error) => error.detail),
-    Effect.result,
-  );
 
 const writeKeybindingsConfig = (configPath: string, rules: readonly KeybindingRule[]) =>
   Effect.gen(function* () {
@@ -223,15 +216,21 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.deepEqual(configState.issues, [
         {
           kind: "keybindings.malformed-config",
-          message: configState.issues[0]?.message ?? "",
+          message: "Expected the keybindings configuration to be a JSON array.",
         },
       ]);
       assert.equal(yield* fs.readFileString(keybindingsConfigPath), "{ not-json");
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
-  it.effect("ignores invalid entries in runtime and reports them as issues", () =>
-    Effect.gen(function* () {
+  it.effect("ignores invalid entries in runtime and reports them as issues", () => {
+    const logs: ReadonlyArray<unknown>[] = [];
+    const logger = Logger.make(({ message }) => {
+      logs.push(Array.isArray(message) ? message : [message]);
+    });
+    const secret = "private-shortcut-payload";
+
+    return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
       yield* fs.writeFileString(
@@ -240,7 +239,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         JSON.stringify([
           { key: "mod+j", command: "terminal.toggle" },
           { key: "mod+shift+d+o", command: "terminal.new" },
-          { key: "mod+x", command: "invalid.command" },
+          { key: "mod+x", command: secret },
         ]),
       );
 
@@ -250,23 +249,55 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       });
 
       assert.isTrue(configState.keybindings.some((entry) => entry.command === "terminal.toggle"));
-      assert.isFalse(
-        configState.keybindings.some((entry) => String(entry.command) === "invalid.command"),
-      );
+      assert.isFalse(configState.keybindings.some((entry) => String(entry.command) === secret));
       assert.deepEqual(configState.issues, [
         {
           kind: "keybindings.invalid-entry",
           index: 1,
-          message: configState.issues[0]?.message ?? "",
+          message: "The keybinding entry contains an invalid shortcut or when expression.",
         },
         {
           kind: "keybindings.invalid-entry",
           index: 2,
-          message: configState.issues[1]?.message ?? "",
+          message: "Expected a keybinding entry with key, command, and optional when fields.",
         },
       ]);
-    }).pipe(Effect.provide(makeKeybindingsLayer())),
-  );
+      const invalidEntryLog = logs.find((log) => {
+        const attributes = log[1];
+        return (
+          String(log[0]).includes("ignoring invalid keybinding entry") &&
+          typeof attributes === "object" &&
+          attributes !== null &&
+          Reflect.get(attributes, "entryIndex") === 2
+        );
+      });
+      if (!invalidEntryLog) {
+        return assert.fail("Expected invalid keybinding warning");
+      }
+      const attributes = invalidEntryLog[1];
+      if (typeof attributes !== "object" || attributes === null) {
+        return assert.fail("Expected structured invalid keybinding attributes");
+      }
+      assert.equal(Reflect.get(attributes, "validationStage"), "entry-schema");
+      assert.equal(Reflect.get(attributes, "validationInputKind"), "object");
+      assert.equal(Reflect.get(attributes, "validationInputSize"), 2);
+      assert.equal(Reflect.get(attributes, "validationHasKeyField"), true);
+      assert.equal(Reflect.get(attributes, "validationHasCommandField"), true);
+      assert.equal(Reflect.get(attributes, "validationHasWhenField"), false);
+      assert.equal(Reflect.get(attributes, "causeReasonCount"), 1);
+      assert.isFalse("entry" in attributes);
+      assert.isFalse("cause" in attributes);
+      assert.isFalse(String(invalidEntryLog[0]).includes(secret));
+      assert.isFalse(Object.values(attributes).some((value) => String(value).includes(secret)));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          makeKeybindingsLayer(),
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+    );
+  });
 
   it.effect(
     "upserts missing default keybindings on startup without overriding existing command rules",
@@ -301,9 +332,9 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
   );
 
   it.effect("skips conflicting default keybindings on startup and logs a detailed warning", () => {
-    const messages: string[] = [];
+    const logs: ReadonlyArray<unknown>[] = [];
     const logger = Logger.make(({ message }) => {
-      messages.push(String(message));
+      logs.push(Array.isArray(message) ? message : [message]);
     });
 
     return Effect.gen(function* () {
@@ -321,11 +352,21 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.isFalse(persisted.some((entry) => entry.command === "terminal.toggle"));
       assert.isTrue(persisted.some((entry) => entry.command === "script.custom-action.run"));
 
-      assert.isTrue(
-        messages.some((message) =>
-          message.includes("skipping default keybinding due to shortcut conflict"),
-        ),
+      const warning = logs.find((log) =>
+        String(log[0]).includes("skipping default keybinding due to shortcut conflict"),
       );
+      if (!warning) {
+        return assert.fail("Expected shortcut conflict warning");
+      }
+      const attributes = warning[1];
+      if (typeof attributes !== "object" || attributes === null) {
+        return assert.fail("Expected structured shortcut conflict attributes");
+      }
+      assert.equal(Reflect.get(attributes, "defaultCommand"), "terminal.toggle");
+      assert.equal(Reflect.get(attributes, "conflictingCommand"), "script.custom-action.run");
+      assert.equal(Reflect.get(attributes, "hasWhenContext"), false);
+      assert.isFalse("key" in attributes);
+      assert.isFalse("when" in attributes);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -443,15 +484,24 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           key: "mod+shift+r",
           command: "script.run-tests.run",
         });
-      }).pipe(toDetailResult);
-      assertFailure(result, "expected JSON array");
+      }).pipe(Effect.result);
+      if (Result.isSuccess(result)) {
+        return assert.fail("Expected malformed config update to fail");
+      }
+      assert.equal(result.failure._tag, "KeybindingsConfigError");
+      assert.equal(result.failure.operation, "decode");
+      assert.isTrue(Schema.isSchemaError(result.failure.cause));
+      assert.equal(
+        result.failure.message,
+        `Keybindings config operation 'decode' failed at ${keybindingsConfigPath}.`,
+      );
 
       const persistedRaw = yield* fs.readFileString(keybindingsConfigPath);
       assert.equal(persistedRaw, "{ not-json");
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
-  it.effect("reports non-array config parse errors without duplicate prefix", () =>
+  it.effect("returns stable structured decode errors across retries", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
@@ -466,8 +516,12 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           key: "mod+shift+r",
           command: "script.run-tests.run",
         });
-      }).pipe(toDetailResult);
-      assertFailure(firstResult, "expected JSON array");
+      }).pipe(Effect.result);
+      if (Result.isSuccess(firstResult)) {
+        return assert.fail("Expected first malformed config update to fail");
+      }
+      assert.equal(firstResult.failure.operation, "decode");
+      assert.isTrue(Schema.isSchemaError(firstResult.failure.cause));
 
       const secondResult = yield* Effect.gen(function* () {
         const keybindings = yield* Keybindings.Keybindings;
@@ -475,8 +529,13 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           key: "mod+shift+r",
           command: "script.run-tests.run",
         });
-      }).pipe(toDetailResult);
-      assertFailure(secondResult, "expected JSON array");
+      }).pipe(Effect.result);
+      if (Result.isSuccess(secondResult)) {
+        return assert.fail("Expected second malformed config update to fail");
+      }
+      assert.equal(secondResult.failure.operation, "decode");
+      assert.isTrue(Schema.isSchemaError(secondResult.failure.cause));
+      assert.equal(secondResult.failure.message, firstResult.failure.message);
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
@@ -496,8 +555,11 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           key: "mod+shift+r",
           command: "script.run-tests.run",
         });
-      }).pipe(toDetailResult);
-      assertFailure(result, "failed to write keybindings config");
+      }).pipe(Effect.result);
+      if (Result.isSuccess(result)) {
+        return assert.fail("Expected update in a read-only directory to fail");
+      }
+      assert.equal(result.failure.operation, "write");
 
       yield* fs.chmod(dirname(keybindingsConfigPath), 0o700);
 

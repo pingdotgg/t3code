@@ -51,7 +51,7 @@ function mapInitialConfigError(error: InitialConfigError): ConnectionAttemptErro
         detail: error.message,
         cause: error,
       });
-    case "KeybindingsConfigParseError":
+    case "KeybindingsConfigError":
     case "ServerSettingsError":
       return new ConnectionTransientErrorClass({
         reason: "remote-unavailable",
