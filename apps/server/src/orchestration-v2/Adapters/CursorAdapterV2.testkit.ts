@@ -58,7 +58,7 @@ const decodeCursorAgentSdkReplayTranscript = Schema.decodeUnknownEffect(
 export class CursorReplayTranscriptDecodeError extends Schema.TaggedErrorClass<CursorReplayTranscriptDecodeError>()(
   "CursorReplayTranscriptDecodeError",
   {
-    provider: Schema.optional(Schema.String),
+    driver: Schema.optional(Schema.String),
     protocol: Schema.optional(Schema.String),
     scenario: Schema.optional(Schema.String),
     cause: Schema.Defect(),
@@ -628,7 +628,7 @@ export const CursorOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarnes
   CursorAgentSdkReplayTranscript,
   CursorOrchestratorReplayHarnessError
 > = {
-  provider: CURSOR_PROVIDER,
+  driver: CURSOR_PROVIDER,
   decodeTranscript: (transcript) =>
     decodeCursorAgentSdkReplayTranscript(transcript).pipe(
       Effect.mapError(

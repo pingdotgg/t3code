@@ -92,8 +92,8 @@ import {
 } from "../ProviderAdapterDriver.ts";
 import { makeSubagentChildThread, subagentThreadTitle } from "../SubagentProjection.ts";
 
-export const OPENCODE_PROVIDER = "opencode" as const;
-export const OPENCODE_DRIVER_KIND = ProviderDriverKind.make(OPENCODE_PROVIDER);
+export const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
+export const OPENCODE_DRIVER_KIND = OPENCODE_PROVIDER;
 export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_DRIVER_KIND);
 const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettingsSchema)({});
 
@@ -274,7 +274,7 @@ export interface OpenCodeAdapterV2Options {
 
 function protocolError(detail: string, payload?: unknown): ProviderAdapterProtocolError {
   return new ProviderAdapterProtocolError({
-    provider: OPENCODE_PROVIDER,
+    driver: OPENCODE_PROVIDER,
     detail,
     ...(payload === undefined ? {} : { payload }),
   });
@@ -628,6 +628,7 @@ function taskSessionId(part: ToolPart): string | null {
 
 function makeProviderThread(input: {
   readonly idAllocator: IdAllocatorV2Shape;
+  readonly providerInstanceId: ProviderInstanceId;
   readonly providerSessionId: OrchestrationV2ProviderThread["providerSessionId"];
   readonly appThreadId: OrchestrationV2ProviderThread["appThreadId"];
   readonly ownerNodeId?: OrchestrationV2ProviderThread["ownerNodeId"];
@@ -638,15 +639,16 @@ function makeProviderThread(input: {
   const createdAt = dateTimeFromEpoch(input.nativeSession.time.created, input.now);
   return {
     id: input.idAllocator.derive.providerThread({
-      provider: OPENCODE_PROVIDER,
+      driver: OPENCODE_PROVIDER,
       nativeThreadId: input.nativeSession.id,
     }),
-    provider: OPENCODE_PROVIDER,
+    driver: OPENCODE_PROVIDER,
+    providerInstanceId: input.providerInstanceId,
     providerSessionId: input.providerSessionId,
     appThreadId: input.appThreadId,
     ownerNodeId: input.ownerNodeId ?? null,
     nativeThreadRef: {
-      provider: OPENCODE_PROVIDER,
+      driver: OPENCODE_PROVIDER,
       nativeId: input.nativeSession.id,
       strength: "strong",
     },
@@ -663,7 +665,7 @@ function makeProviderThread(input: {
 
 function providerRef(nativeId: string, strength: "strong" | "weak" = "strong") {
   return {
-    provider: OPENCODE_PROVIDER,
+    driver: OPENCODE_PROVIDER,
     nativeId,
     strength,
   } satisfies OrchestrationV2ProviderRef;
@@ -701,7 +703,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
 
   return ProviderAdapterV2.of({
     instanceId: options.instanceId,
-    provider: OPENCODE_PROVIDER,
+    driver: OPENCODE_PROVIDER,
     getCapabilities: () => Effect.succeed(OpenCodeProviderCapabilitiesV2),
     openSession: Effect.fn("OpenCodeAdapterV2.openSession")(
       function* (input: ProviderAdapterV2OpenSessionInput) {
@@ -738,7 +740,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
         const now = yield* DateTime.now;
         let sessionEntity: OrchestrationV2ProviderSession = {
           id: input.providerSessionId,
-          provider: OPENCODE_PROVIDER,
+          driver: OPENCODE_PROVIDER,
+          providerInstanceId: options.instanceId,
           status: "ready",
           cwd,
           model: input.modelSelection.model,
@@ -775,7 +778,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             });
             yield* Queue.offer(rawEvents, {
               id: rawEventId,
-              provider: OPENCODE_PROVIDER,
+              driver: OPENCODE_PROVIDER,
+              providerInstanceId: options.instanceId,
               providerSessionId: input.providerSessionId,
               sequence,
               direction: raw.direction,
@@ -825,7 +829,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             sessionEntity = { ...sessionEntity, status, lastError, updatedAt };
             yield* emitProviderEvent({
               type: "provider_session.updated",
-              provider: OPENCODE_PROVIDER,
+              driver: OPENCODE_PROVIDER,
               providerSession: sessionEntity,
             });
           });
@@ -839,7 +843,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             state.providerThread = { ...state.providerThread, ...patch, updatedAt };
             yield* emitProviderEvent({
               type: "provider_thread.updated",
-              provider: OPENCODE_PROVIDER,
+              driver: OPENCODE_PROVIDER,
               providerThread: state.providerThread,
             });
           });
@@ -871,7 +875,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           state.providerTurns.set(String(providerTurn.id), providerTurn);
           return emitProviderEvent({
             type: "provider_turn.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             threadId: turn.threadId,
             providerTurn,
           });
@@ -891,17 +895,17 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           const completedAt = isCompleted ? dateTimeFromEpoch(part.time?.end, emittedAt) : null;
           const nativeItemRef = providerRef(part.id);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             nativeItemId: part.id,
           });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             nativeItemId: part.id,
           });
           const ordinal = itemOrdinal(turn, part.id);
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             node: {
               id: nodeId,
               threadId: turn.threadId,
@@ -922,7 +926,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           });
           if (part.type === "text") {
             const messageId = idAllocator.derive.messageFromProviderItem({
-              provider: OPENCODE_PROVIDER,
+              driver: OPENCODE_PROVIDER,
               nativeItemId: part.id,
             });
             const message: OrchestrationV2ConversationMessage = {
@@ -942,12 +946,12 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             state.messages.set(String(message.id), message);
             yield* emitProviderEvent({
               type: "message.updated",
-              provider: OPENCODE_PROVIDER,
+              driver: OPENCODE_PROVIDER,
               message,
             });
             yield* emitProviderEvent({
               type: "turn_item.updated",
-              provider: OPENCODE_PROVIDER,
+              driver: OPENCODE_PROVIDER,
               turnItem: {
                 id: turnItemId,
                 threadId: turn.threadId,
@@ -973,7 +977,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           }
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             turnItem: {
               id: turnItemId,
               threadId: turn.threadId,
@@ -1004,11 +1008,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           const now = yield* DateTime.now;
           const nativeItemRef = providerRef(part.id);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             nativeItemId: part.id,
           });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             nativeItemId: part.id,
           });
           const input = toolInput(part);
@@ -1036,11 +1040,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           if (childSessionId !== null && context.childSessionId === null) {
             context.childSessionId = childSessionId;
             context.childThreadId = idAllocator.derive.threadFromProviderThread({
-              provider: OPENCODE_PROVIDER,
+              driver: OPENCODE_PROVIDER,
               nativeThreadId: childSessionId,
             });
             context.childProviderThreadId = idAllocator.derive.providerThread({
-              provider: OPENCODE_PROVIDER,
+              driver: OPENCODE_PROVIDER,
               nativeThreadId: childSessionId,
             });
             subagentsByChildSessionId.set(childSessionId, context);
@@ -1067,7 +1071,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             });
             const childProviderThread: OrchestrationV2ProviderThread = {
               id: context.childProviderThreadId,
-              provider: OPENCODE_PROVIDER,
+              driver: OPENCODE_PROVIDER,
+              providerInstanceId: options.instanceId,
               providerSessionId: inputProviderSessionId,
               appThreadId: context.childThreadId,
               ownerNodeId: nodeId,
@@ -1115,12 +1120,12 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             });
             yield* emitProviderEvent({
               type: "app_thread.created",
-              provider: OPENCODE_PROVIDER,
+              driver: OPENCODE_PROVIDER,
               appThread: childThread,
             });
             yield* emitProviderEvent({
               type: "provider_thread.updated",
-              provider: OPENCODE_PROVIDER,
+              driver: OPENCODE_PROVIDER,
               providerThread: childProviderThread,
             });
           }
@@ -1143,7 +1148,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             parentNodeId: turn.rootNodeId,
             origin: "provider_native",
             createdBy: "agent",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
+            providerInstanceId: options.instanceId,
             providerThreadId: context.childProviderThreadId,
             childThreadId: context.childThreadId,
             nativeTaskRef: nativeItemRef,
@@ -1158,7 +1164,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           };
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             node: {
               id: nodeId,
               threadId: turn.threadId,
@@ -1179,12 +1185,12 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           });
           yield* emitProviderEvent({
             type: "subagent.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             subagent,
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             turnItem: {
               id: turnItemId,
               threadId: turn.threadId,
@@ -1203,7 +1209,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               type: "subagent",
               subagentId: nodeId,
               origin: "provider_native",
-              provider: OPENCODE_PROVIDER,
+              driver: OPENCODE_PROVIDER,
+              providerInstanceId: options.instanceId,
               childThreadId: context.childThreadId,
               prompt,
               result: context.result,
@@ -1230,11 +1237,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           const completedAt = toolCompletedAt(part, now);
           const nativeItemRef = providerRef(part.id);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             nativeItemId: part.id,
           });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             nativeItemId: part.id,
           });
           const base = {
@@ -1344,7 +1351,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           }
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             node: {
               id: nodeId,
               threadId: turn.threadId,
@@ -1365,7 +1372,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             turnItem,
           });
         });
@@ -1380,17 +1387,17 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             turn.planId = yield* idAllocator.allocate.plan({
               threadId: turn.threadId,
               ...(turn.runId === null ? {} : { runId: turn.runId }),
-              provider: OPENCODE_PROVIDER,
+              driver: OPENCODE_PROVIDER,
             });
           }
           const planId = turn.planId;
           const nativeItemId = `${state.nativeSessionId}:todo:${turn.providerTurnId}`;
           const nodeId = idAllocator.derive.nodeFromProviderItem({
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             nativeItemId,
           });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             nativeItemId,
           });
           const steps: Array<OrchestrationV2PlanStep> = todos.map((todo, index) => ({
@@ -1406,7 +1413,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           const completed = steps.length > 0 && steps.every((step) => step.status === "completed");
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             node: {
               id: nodeId,
               threadId: turn.threadId,
@@ -1427,7 +1434,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           });
           yield* emitProviderEvent({
             type: "plan.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             plan: {
               id: planId,
               threadId: turn.threadId,
@@ -1440,7 +1447,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             turnItem: {
               id: turnItemId,
               threadId: turn.threadId,
@@ -1532,7 +1539,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           if (pendingRequestsByNativeId.has(nativeRequestId)) return;
           const now = yield* DateTime.now;
           const requestId = yield* idAllocator.allocate.runtimeRequest({
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             providerTurnId: turn.providerTurnId,
             nativeRequestId,
           });
@@ -1583,7 +1590,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           state.runtimeRequests.set(String(requestId), runtimeRequest);
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             node: {
               id: nodeId,
               threadId: turn.threadId,
@@ -1604,13 +1611,13 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           });
           yield* emitProviderEvent({
             type: "runtime_request.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             threadId: turn.threadId,
             runtimeRequest,
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             turnItem: runtimeRequestTurnItem(pending, "waiting", null, now),
           });
           yield* updateProviderSession("waiting", null);
@@ -1633,14 +1640,14 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             pending.state.runtimeRequests.set(String(pending.requestId), resolved);
             yield* emitProviderEvent({
               type: "runtime_request.updated",
-              provider: OPENCODE_PROVIDER,
+              driver: OPENCODE_PROVIDER,
               threadId: pending.turn.threadId,
               runtimeRequest: resolved,
             });
           }
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             node: {
               id: pending.nodeId,
               threadId: pending.turn.threadId,
@@ -1661,7 +1668,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             turnItem: runtimeRequestTurnItem(
               pending,
               status === "resolved" ? "completed" : "cancelled",
@@ -1707,7 +1714,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           if (!turn.isRoot) {
             yield* emitProviderEvent({
               type: "node.updated",
-              provider: OPENCODE_PROVIDER,
+              driver: OPENCODE_PROVIDER,
               node: {
                 id: turn.rootNodeId,
                 threadId: turn.threadId,
@@ -1737,7 +1744,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           );
           yield* emitProviderEvent({
             type: "turn.terminal",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             providerTurnId: turn.providerTurnId,
             status,
           });
@@ -1751,11 +1758,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           const now = yield* DateTime.now;
           const startedAt = dateTimeFromEpoch(message.time.created, now);
           const rootNodeId = idAllocator.derive.nodeFromProviderItem({
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             nativeItemId: `${state.nativeSessionId}:root:${message.id}`,
           });
           const providerTurnId = idAllocator.derive.providerTurn({
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             nativeTurnId: message.id,
           });
           const providerTurn: OrchestrationV2ProviderTurn = {
@@ -1795,7 +1802,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           state.providerTurns.set(String(providerTurnId), providerTurn);
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             node: {
               id: rootNodeId,
               threadId: turn.threadId,
@@ -1825,11 +1832,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
         ) {
           const now = yield* DateTime.now;
           const messageId = idAllocator.derive.messageFromProviderItem({
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             nativeItemId: part.messageID,
           });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             nativeItemId: part.messageID,
           });
           const projected: OrchestrationV2ConversationMessage = {
@@ -1849,12 +1856,12 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           state.messages.set(String(messageId), projected);
           yield* emitProviderEvent({
             type: "message.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             message: projected,
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider: OPENCODE_PROVIDER,
+            driver: OPENCODE_PROVIDER,
             turnItem: {
               createdBy: "agent",
               creationSource: "provider",
@@ -2198,7 +2205,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   createdBy: info.role === "user" ? "user" : "agent",
                   creationSource: "provider",
                   id: idAllocator.derive.messageFromProviderItem({
-                    provider: OPENCODE_PROVIDER,
+                    driver: OPENCODE_PROVIDER,
                     nativeItemId: info.id,
                   }),
                   threadId: providerThread.appThreadId ?? input.threadId,
@@ -2236,7 +2243,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
 
         const runtimeSession: ProviderAdapterV2SessionRuntime = {
           instanceId: options.instanceId,
-          provider: OPENCODE_PROVIDER,
+          driver: OPENCODE_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: sessionEntity,
           rawEvents: Stream.fromEffectRepeat(Queue.take(rawEvents)),
@@ -2264,6 +2271,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               const createdAt = yield* DateTime.now;
               const providerThread = makeProviderThread({
                 idAllocator,
+                providerInstanceId: options.instanceId,
                 providerSessionId: input.providerSessionId,
                 appThreadId: threadInput.threadId,
                 nativeSession,
@@ -2275,7 +2283,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterEnsureThreadError({
-                    provider: OPENCODE_PROVIDER,
+                    driver: OPENCODE_PROVIDER,
                     threadId: threadInput.threadId,
                     cause,
                   }),
@@ -2301,7 +2309,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterResumeThreadError({
-                    provider: OPENCODE_PROVIDER,
+                    driver: OPENCODE_PROVIDER,
                     providerSessionId: input.providerSessionId,
                     providerThreadId: threadInput.providerThread.id,
                     cause,
@@ -2330,7 +2338,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               const startedAt = yield* DateTime.now;
               const syntheticNativeTurnId = `${sessionId}:attempt:${turnInput.attemptId}`;
               const providerTurnId = idAllocator.derive.providerTurn({
-                provider: OPENCODE_PROVIDER,
+                driver: OPENCODE_PROVIDER,
                 nativeTurnId: syntheticNativeTurnId,
               });
               const providerTurn: OrchestrationV2ProviderTurn = {
@@ -2405,7 +2413,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterTurnStartError({
-                    provider: OPENCODE_PROVIDER,
+                    driver: OPENCODE_PROVIDER,
                     threadId: turnInput.threadId,
                     providerThreadId: turnInput.providerThread.id,
                     runId: turnInput.runId,
@@ -2463,7 +2471,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterSteerRunError({
-                    provider: OPENCODE_PROVIDER,
+                    driver: OPENCODE_PROVIDER,
                     providerThreadId: steerInput.providerThread.id,
                     providerTurnId: steerInput.providerTurnId,
                     cause,
@@ -2492,7 +2500,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterInterruptError({
-                    provider: OPENCODE_PROVIDER,
+                    driver: OPENCODE_PROVIDER,
                     providerThreadId: interruptInput.providerThread.id,
                     providerTurnId: interruptInput.providerTurnId,
                     cause,
@@ -2544,7 +2552,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterRuntimeRequestResponseError({
-                    provider: OPENCODE_PROVIDER,
+                    driver: OPENCODE_PROVIDER,
                     requestId: requestInput.requestId,
                     cause,
                   }),
@@ -2555,7 +2563,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterReadThreadSnapshotError({
-                    provider: OPENCODE_PROVIDER,
+                    driver: OPENCODE_PROVIDER,
                     providerThreadId: snapshotInput.providerThread.id,
                     cause,
                   }),
@@ -2606,7 +2614,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterRollbackThreadError({
-                    provider: OPENCODE_PROVIDER,
+                    driver: OPENCODE_PROVIDER,
                     providerThreadId: rollbackInput.providerThread.id,
                     checkpointId: rollbackInput.target.checkpointId,
                     cause,
@@ -2649,6 +2657,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               const forkedAt = yield* DateTime.now;
               const providerThread = makeProviderThread({
                 idAllocator,
+                providerInstanceId: options.instanceId,
                 providerSessionId: input.providerSessionId,
                 appThreadId: forkInput.targetThreadId,
                 ...(forkInput.ownerNodeId === undefined
@@ -2669,7 +2678,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterForkThreadError({
-                    provider: OPENCODE_PROVIDER,
+                    driver: OPENCODE_PROVIDER,
                     providerThreadId: forkInput.sourceProviderThread.id,
                     cause,
                   }),
@@ -2684,7 +2693,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           Effect.mapError(
             (cause) =>
               new ProviderAdapterOpenSessionError({
-                provider: OPENCODE_PROVIDER,
+                driver: OPENCODE_PROVIDER,
                 providerSessionId: input.providerSessionId,
                 cause,
               }),

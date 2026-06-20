@@ -3,7 +3,7 @@ import {
   ModelSelection,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ThreadProjection,
-  ProviderKind,
+  ProviderInstanceId,
   ProviderTurnId,
   RunId,
   ThreadId,
@@ -34,7 +34,7 @@ export const MessageDispatchDecisionV2 = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("switch_provider"),
-    fromProvider: ProviderKind,
+    fromProviderInstanceId: ProviderInstanceId,
     toModelSelection: ModelSelection,
   }),
 ]);
@@ -79,11 +79,11 @@ export class CommandPolicyUnsupportedError extends Schema.TaggedErrorClass<Comma
     commandId: CommandId,
     threadId: ThreadId,
     requestedMode: Schema.String,
-    provider: ProviderKind,
+    providerInstanceId: ProviderInstanceId,
   },
 ) {
   override get message(): string {
-    return `${this.provider} cannot satisfy message dispatch mode ${this.requestedMode} for command ${this.commandId}.`;
+    return `${this.providerInstanceId} cannot satisfy message dispatch mode ${this.requestedMode} for command ${this.commandId}.`;
   }
 }
 
@@ -92,13 +92,13 @@ export class CommandPolicyCapabilityUnsupportedError extends Schema.TaggedErrorC
   {
     commandId: CommandId,
     threadId: ThreadId,
-    provider: ProviderKind,
+    providerInstanceId: ProviderInstanceId,
     capability: CommandPolicyCapability,
     detail: Schema.String,
   },
 ) {
   override get message(): string {
-    return `${this.provider} cannot satisfy ${this.capability} for command ${this.commandId}: ${this.detail}`;
+    return `${this.providerInstanceId} cannot satisfy ${this.capability} for command ${this.commandId}: ${this.detail}`;
   }
 }
 
@@ -112,7 +112,7 @@ export type CommandPolicyV2Error = typeof CommandPolicyV2Error.Type;
 interface CapabilityCheckInput {
   readonly commandId: CommandId;
   readonly threadId: ThreadId;
-  readonly provider: ProviderKind;
+  readonly providerInstanceId: ProviderInstanceId;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
 }
 
@@ -173,7 +173,7 @@ function unsupported(
   return new CommandPolicyCapabilityUnsupportedError({
     commandId: input.commandId,
     threadId: input.threadId,
-    provider: input.provider,
+    providerInstanceId: input.providerInstanceId,
     capability,
     detail,
   });
@@ -183,7 +183,11 @@ const ensureQueuedMessages: CommandPolicyV2Shape["ensureQueuedMessages"] = (inpu
   input.capabilities.turns.supportsQueuedMessages
     ? Effect.void
     : Effect.fail(
-        unsupported(input, "queued_messages", "provider does not support app-owned queued turns"),
+        unsupported(
+          input,
+          "queued_messages",
+          "providerInstanceId does not support app-owned queued turns",
+        ),
       );
 
 const decideSteeringExecution: CommandPolicyV2Shape["decideSteeringExecution"] = (input) => {
@@ -200,7 +204,7 @@ const decideSteeringExecution: CommandPolicyV2Shape["decideSteeringExecution"] =
     unsupported(
       input,
       input.capabilities.turns.supportsInterrupt ? "interrupt_restart_steering" : "active_steering",
-      "provider cannot steer active turns directly or by interrupt-and-restart",
+      "providerInstanceId cannot steer active turns directly or by interrupt-and-restart",
     ),
   );
 };
@@ -208,22 +212,32 @@ const decideSteeringExecution: CommandPolicyV2Shape["decideSteeringExecution"] =
 const ensureInterrupt: CommandPolicyV2Shape["ensureInterrupt"] = (input) =>
   input.capabilities.turns.supportsInterrupt
     ? Effect.void
-    : Effect.fail(unsupported(input, "interrupt", "provider does not support turn interrupts"));
+    : Effect.fail(
+        unsupported(input, "interrupt", "providerInstanceId does not support turn interrupts"),
+      );
 
 const ensureNativeFork: CommandPolicyV2Shape["ensureNativeFork"] = (input) => {
   if (!input.capabilities.threads.canForkThread) {
     return Effect.fail(
-      unsupported(input, "native_fork", "provider does not support native thread forks"),
+      unsupported(input, "native_fork", "providerInstanceId does not support native thread forks"),
     );
   }
   if (input.fromSpecificTurn && !input.capabilities.threads.canForkFromTurn) {
     return Effect.fail(
-      unsupported(input, "fork_from_turn", "provider cannot fork from a specific completed turn"),
+      unsupported(
+        input,
+        "fork_from_turn",
+        "providerInstanceId cannot fork from a specific completed turn",
+      ),
     );
   }
   if (input.capabilities.identity.nativeThreadIds !== "strong") {
     return Effect.fail(
-      unsupported(input, "native_fork", "provider does not expose strong native thread ids"),
+      unsupported(
+        input,
+        "native_fork",
+        "providerInstanceId does not expose strong native thread ids",
+      ),
     );
   }
   return Effect.void;
@@ -235,12 +249,16 @@ const ensureRollback: CommandPolicyV2Shape["ensureRollback"] = (input) => {
     !input.capabilities.checkpointing.providerCanRollbackConversation
   ) {
     return Effect.fail(
-      unsupported(input, "rollback", "provider conversation rollback is unavailable"),
+      unsupported(input, "rollback", "providerInstanceId conversation rollback is unavailable"),
     );
   }
   if (!input.capabilities.checkpointing.providerRollbackReturnsSnapshot) {
     return Effect.fail(
-      unsupported(input, "rollback_snapshot", "rollback must return a provider thread snapshot"),
+      unsupported(
+        input,
+        "rollback_snapshot",
+        "rollback must return a providerInstanceId thread snapshot",
+      ),
     );
   }
   return Effect.void;
@@ -249,12 +267,16 @@ const ensureRollback: CommandPolicyV2Shape["ensureRollback"] = (input) => {
 const ensureContextHandoff: CommandPolicyV2Shape["ensureContextHandoff"] = (input) => {
   if (!input.capabilities.context.canConsumeHandoffSummaries) {
     return Effect.fail(
-      unsupported(input, "context_handoff", "provider cannot consume handoff summaries"),
+      unsupported(input, "context_handoff", "providerInstanceId cannot consume handoff summaries"),
     );
   }
   if (!input.capabilities.context.acceptsSyntheticUserContext) {
     return Effect.fail(
-      unsupported(input, "context_handoff", "provider cannot receive synthetic user context"),
+      unsupported(
+        input,
+        "context_handoff",
+        "providerInstanceId cannot receive synthetic user context",
+      ),
     );
   }
   if (
@@ -262,7 +284,7 @@ const ensureContextHandoff: CommandPolicyV2Shape["ensureContextHandoff"] = (inpu
     !input.capabilities.context.supportsDeltaHandoff
   ) {
     return Effect.fail(
-      unsupported(input, "context_handoff", "provider does not support delta handoff"),
+      unsupported(input, "context_handoff", "providerInstanceId does not support delta handoff"),
     );
   }
   if (
@@ -270,7 +292,11 @@ const ensureContextHandoff: CommandPolicyV2Shape["ensureContextHandoff"] = (inpu
     !input.capabilities.context.supportsFullThreadHandoff
   ) {
     return Effect.fail(
-      unsupported(input, "context_handoff", "provider does not support full-thread handoff"),
+      unsupported(
+        input,
+        "context_handoff",
+        "providerInstanceId does not support full-thread handoff",
+      ),
     );
   }
   return Effect.void;
@@ -291,7 +317,7 @@ const decideForkExecution: CommandPolicyV2Shape["decideForkExecution"] = (input)
   return ensureContextHandoff({
     commandId: input.commandId,
     threadId: input.threadId,
-    provider: input.provider,
+    providerInstanceId: input.providerInstanceId,
     capabilities: input.capabilities,
     strategy: "full_thread_summary",
   }).pipe(Effect.as("portable_context"));
@@ -311,7 +337,7 @@ const decideMessageDispatch: CommandPolicyV2Shape["decideMessageDispatch"] = (in
             commandId: input.commandId,
             threadId: input.projection.thread.id,
             requestedMode: input.requestedMode.type,
-            provider: modelSelection.provider,
+            providerInstanceId: modelSelection.instanceId,
           }),
         );
       }
@@ -327,7 +353,7 @@ const decideMessageDispatch: CommandPolicyV2Shape["decideMessageDispatch"] = (in
             new CommandPolicyMessageDispatchError({
               commandId: input.commandId,
               threadId: input.projection.thread.id,
-              cause: `No running provider turn found for active run ${activeRun.id}.`,
+              cause: `No running providerInstanceId turn found for active run ${activeRun.id}.`,
             }),
           )
         : Effect.succeed({
@@ -343,7 +369,7 @@ const decideMessageDispatch: CommandPolicyV2Shape["decideMessageDispatch"] = (in
             commandId: input.commandId,
             threadId: input.projection.thread.id,
             requestedMode: input.requestedMode.type,
-            provider: modelSelection.provider,
+            providerInstanceId: modelSelection.instanceId,
           }),
         );
       }
@@ -355,7 +381,7 @@ const decideMessageDispatch: CommandPolicyV2Shape["decideMessageDispatch"] = (in
             new CommandPolicyMessageDispatchError({
               commandId: input.commandId,
               threadId: input.projection.thread.id,
-              cause: `No running provider turn found for active run ${activeRun.id}.`,
+              cause: `No running providerInstanceId turn found for active run ${activeRun.id}.`,
             }),
           )
         : Effect.succeed({
@@ -370,7 +396,7 @@ const decideMessageDispatch: CommandPolicyV2Shape["decideMessageDispatch"] = (in
         : ensureQueuedMessages({
             commandId: input.commandId,
             threadId: input.projection.thread.id,
-            provider: modelSelection.provider,
+            providerInstanceId: modelSelection.instanceId,
             capabilities: input.capabilities,
           }).pipe(Effect.as({ type: "queue_after_active", activeRunId: activeRun.id }));
     case "start_immediately":
@@ -380,7 +406,7 @@ const decideMessageDispatch: CommandPolicyV2Shape["decideMessageDispatch"] = (in
       return ensureQueuedMessages({
         commandId: input.commandId,
         threadId: input.projection.thread.id,
-        provider: modelSelection.provider,
+        providerInstanceId: modelSelection.instanceId,
         capabilities: input.capabilities,
       }).pipe(Effect.as({ type: "queue_after_active", activeRunId: activeRun.id }));
   }

@@ -18,7 +18,8 @@ import {
   OrchestrationV2TurnItem,
   ProviderApprovalDecision,
   ProviderInteractionMode,
-  ProviderKind,
+  ProviderDriverKind,
+  ProviderInstanceId,
   ProviderUserInputAnswers,
   ProviderSessionId,
   ProviderThreadId,
@@ -67,59 +68,59 @@ export type ProviderAdapterV2SessionStatus = typeof ProviderAdapterV2SessionStat
 export const ProviderAdapterV2Event = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("app_thread.created"),
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     appThread: OrchestrationV2AppThread,
   }),
   Schema.Struct({
     type: Schema.Literal("provider_session.updated"),
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     providerSession: OrchestrationV2ProviderSession,
   }),
   Schema.Struct({
     type: Schema.Literal("provider_thread.updated"),
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     providerThread: OrchestrationV2ProviderThread,
   }),
   Schema.Struct({
     type: Schema.Literal("provider_turn.updated"),
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     threadId: Schema.optional(ThreadId),
     providerTurn: OrchestrationV2ProviderTurn,
   }),
   Schema.Struct({
     type: Schema.Literal("node.updated"),
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     node: OrchestrationV2ExecutionNode,
   }),
   Schema.Struct({
     type: Schema.Literal("subagent.updated"),
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     subagent: OrchestrationV2Subagent,
   }),
   Schema.Struct({
     type: Schema.Literal("message.updated"),
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     message: OrchestrationV2ConversationMessage,
   }),
   Schema.Struct({
     type: Schema.Literal("turn_item.updated"),
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     turnItem: OrchestrationV2TurnItem,
   }),
   Schema.Struct({
     type: Schema.Literal("runtime_request.updated"),
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     threadId: Schema.optional(ThreadId),
     runtimeRequest: OrchestrationV2RuntimeRequest,
   }),
   Schema.Struct({
     type: Schema.Literal("plan.updated"),
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     plan: OrchestrationV2PlanArtifact,
   }),
   Schema.Struct({
     type: Schema.Literal("turn.terminal"),
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     providerTurnId: ProviderTurnId,
     status: Schema.Literals(["completed", "interrupted", "failed", "cancelled"]),
   }),
@@ -129,112 +130,112 @@ export type ProviderAdapterV2Event = typeof ProviderAdapterV2Event.Type;
 export class ProviderAdapterCapabilitiesError extends Schema.TaggedErrorClass<ProviderAdapterCapabilitiesError>()(
   "ProviderAdapterCapabilitiesError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to read ${this.provider} provider capabilities.`;
+    return `Failed to read ${this.driver} provider capabilities.`;
   }
 }
 
 export class ProviderAdapterOpenSessionError extends Schema.TaggedErrorClass<ProviderAdapterOpenSessionError>()(
   "ProviderAdapterOpenSessionError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to open ${this.provider} provider session ${this.providerSessionId}.`;
+    return `Failed to open ${this.driver} provider session ${this.providerSessionId}.`;
   }
 }
 
 export class ProviderAdapterCloseSessionError extends Schema.TaggedErrorClass<ProviderAdapterCloseSessionError>()(
   "ProviderAdapterCloseSessionError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to close ${this.provider} provider session ${this.providerSessionId}.`;
+    return `Failed to close ${this.driver} provider session ${this.providerSessionId}.`;
   }
 }
 
 export class ProviderAdapterResumeThreadError extends Schema.TaggedErrorClass<ProviderAdapterResumeThreadError>()(
   "ProviderAdapterResumeThreadError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
     providerThreadId: ProviderThreadId,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to resume ${this.provider} provider thread ${this.providerThreadId}.`;
+    return `Failed to resume ${this.driver} provider thread ${this.providerThreadId}.`;
   }
 }
 
 export class ProviderAdapterEnsureThreadError extends Schema.TaggedErrorClass<ProviderAdapterEnsureThreadError>()(
   "ProviderAdapterEnsureThreadError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     threadId: ThreadId,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to ensure ${this.provider} provider thread for app thread ${this.threadId}.`;
+    return `Failed to ensure ${this.driver} provider thread for app thread ${this.threadId}.`;
   }
 }
 
 export class ProviderAdapterReadThreadSnapshotError extends Schema.TaggedErrorClass<ProviderAdapterReadThreadSnapshotError>()(
   "ProviderAdapterReadThreadSnapshotError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     providerThreadId: ProviderThreadId,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to read ${this.provider} provider thread snapshot ${this.providerThreadId}.`;
+    return `Failed to read ${this.driver} provider thread snapshot ${this.providerThreadId}.`;
   }
 }
 
 export class ProviderAdapterRollbackThreadError extends Schema.TaggedErrorClass<ProviderAdapterRollbackThreadError>()(
   "ProviderAdapterRollbackThreadError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     providerThreadId: ProviderThreadId,
     checkpointId: Schema.optional(CheckpointId),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to roll back ${this.provider} provider thread ${this.providerThreadId}.`;
+    return `Failed to roll back ${this.driver} provider thread ${this.providerThreadId}.`;
   }
 }
 
 export class ProviderAdapterForkThreadError extends Schema.TaggedErrorClass<ProviderAdapterForkThreadError>()(
   "ProviderAdapterForkThreadError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     providerThreadId: ProviderThreadId,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to fork ${this.provider} provider thread ${this.providerThreadId}.`;
+    return `Failed to fork ${this.driver} provider thread ${this.providerThreadId}.`;
   }
 }
 
 export class ProviderAdapterTurnStartError extends Schema.TaggedErrorClass<ProviderAdapterTurnStartError>()(
   "ProviderAdapterTurnStartError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
     runId: RunId,
@@ -242,86 +243,86 @@ export class ProviderAdapterTurnStartError extends Schema.TaggedErrorClass<Provi
   },
 ) {
   override get message(): string {
-    return `Failed to start run ${this.runId} on ${this.provider} provider thread ${this.providerThreadId}.`;
+    return `Failed to start run ${this.runId} on ${this.driver} provider thread ${this.providerThreadId}.`;
   }
 }
 
 export class ProviderAdapterSteerRunUnsupportedError extends Schema.TaggedErrorClass<ProviderAdapterSteerRunUnsupportedError>()(
   "ProviderAdapterSteerRunUnsupportedError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     providerThreadId: ProviderThreadId,
   },
 ) {
   override get message(): string {
-    return `${this.provider} provider thread ${this.providerThreadId} does not support active-run steering.`;
+    return `${this.driver} provider thread ${this.providerThreadId} does not support active-run steering.`;
   }
 }
 
 export class ProviderAdapterSteerRunError extends Schema.TaggedErrorClass<ProviderAdapterSteerRunError>()(
   "ProviderAdapterSteerRunError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to steer active run ${this.providerTurnId} on ${this.provider} provider thread ${this.providerThreadId}.`;
+    return `Failed to steer active run ${this.providerTurnId} on ${this.driver} provider thread ${this.providerThreadId}.`;
   }
 }
 
 export class ProviderAdapterInterruptError extends Schema.TaggedErrorClass<ProviderAdapterInterruptError>()(
   "ProviderAdapterInterruptError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to interrupt ${this.provider} provider turn ${this.providerTurnId}.`;
+    return `Failed to interrupt ${this.driver} provider turn ${this.providerTurnId}.`;
   }
 }
 
 export class ProviderAdapterRuntimeRequestResponseError extends Schema.TaggedErrorClass<ProviderAdapterRuntimeRequestResponseError>()(
   "ProviderAdapterRuntimeRequestResponseError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     requestId: RuntimeRequestId,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to respond to ${this.provider} runtime request ${this.requestId}.`;
+    return `Failed to respond to ${this.driver} runtime request ${this.requestId}.`;
   }
 }
 
 export class ProviderAdapterEventStreamError extends Schema.TaggedErrorClass<ProviderAdapterEventStreamError>()(
   "ProviderAdapterEventStreamError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed while streaming ${this.provider} provider session ${this.providerSessionId} events.`;
+    return `Failed while streaming ${this.driver} provider session ${this.providerSessionId} events.`;
   }
 }
 
 export class ProviderAdapterProtocolError extends Schema.TaggedErrorClass<ProviderAdapterProtocolError>()(
   "ProviderAdapterProtocolError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     detail: Schema.String,
     payload: Schema.optional(Schema.Unknown),
   },
 ) {
   override get message(): string {
-    return `${this.provider} provider protocol error: ${this.detail}.`;
+    return `${this.driver} provider protocol error: ${this.detail}.`;
   }
 }
 
@@ -434,7 +435,8 @@ export interface ProviderAdapterV2ForkThreadInput {
 }
 
 export interface ProviderAdapterV2SessionRuntime {
-  readonly provider: ProviderKind;
+  readonly instanceId: ProviderInstanceId;
+  readonly driver: ProviderDriverKind;
   readonly providerSessionId: ProviderSessionId;
   readonly providerSession: OrchestrationV2ProviderSession;
   readonly rawEvents: Stream.Stream<OrchestrationV2RawProviderEvent, ProviderAdapterV2Error>;
@@ -469,7 +471,8 @@ export interface ProviderAdapterV2SessionRuntime {
 }
 
 export interface ProviderAdapterV2Shape {
-  readonly provider: ProviderKind;
+  readonly instanceId: ProviderInstanceId;
+  readonly driver: ProviderDriverKind;
   readonly getCapabilities: () => Effect.Effect<
     OrchestrationV2ProviderCapabilities,
     ProviderAdapterV2Error

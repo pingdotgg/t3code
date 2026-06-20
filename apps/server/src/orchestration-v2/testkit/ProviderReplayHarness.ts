@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { ProviderKind, ProviderReplayTranscript } from "@t3tools/contracts";
+import type { ProviderDriverKind, ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -16,11 +16,19 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
+import { layer as checkpointCaptureServiceLayer } from "../CheckpointCaptureService.ts";
 import { layer as checkpointServiceLayer } from "../CheckpointService.ts";
+import { layer as checkpointRollbackServiceLayer } from "../CheckpointRollbackService.ts";
 import { layer as commandPolicyLayer } from "../CommandPolicy.ts";
 import { layer as commandReceiptStoreLayer } from "../CommandReceiptStore.ts";
 import { layer as contextHandoffServiceLayer } from "../ContextHandoffService.ts";
-import { layer as eventSinkLayer } from "../EventSink.ts";
+import { layer as effectOutboxLayer } from "../EffectOutbox.ts";
+import {
+  daemonLayer as effectWorkerDaemonLayer,
+  executorLayer as effectExecutorLayer,
+  layer as effectWorkerLayer,
+} from "../EffectWorker.ts";
+import { layerFromStores as eventSinkLayer } from "../EventSink.ts";
 import { layer as eventStoreLayer } from "../EventStore.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { layer as orchestratorLayer } from "../Orchestrator.ts";
@@ -29,12 +37,18 @@ import type { OrchestratorV2, OrchestratorV2Error } from "../Orchestrator.ts";
 import { ProviderAdapterRegistryV2 } from "../ProviderAdapterRegistry.ts";
 import { layer as providerEventIngestorLayer } from "../ProviderEventIngestor.ts";
 import { layer as providerSessionManagerLayer } from "../ProviderSessionManager.ts";
+import { layer as providerSwitchServiceLayer } from "../ProviderSwitchService.ts";
+import { layer as providerTurnControlServiceLayer } from "../ProviderTurnControlService.ts";
+import { layer as providerTurnStartServiceLayer } from "../ProviderTurnStartService.ts";
 import { layer as runExecutionServiceLayer } from "../RunExecutionService.ts";
 import {
   layer as runtimePolicyLayer,
   layerWithOverride as runtimePolicyLayerWithOverride,
   type RuntimePolicyV2Override,
 } from "../RuntimePolicy.ts";
+import { layer as turnItemPositionStoreLayer } from "../TurnItemPositionStore.ts";
+import { layer as runtimeRequestServiceLayer } from "../RuntimeRequestService.ts";
+import { layer as threadForkServiceLayer } from "../ThreadForkService.ts";
 import {
   runOrchestratorV2Scenario,
   type OrchestratorV2ScenarioStepError,
@@ -133,7 +147,7 @@ export interface OrchestratorV2ProviderReplayHarness<
   Transcript extends ProviderReplayTranscript = ProviderReplayTranscript,
   Error = never,
 > {
-  readonly provider: ProviderKind;
+  readonly driver: ProviderDriverKind;
   readonly decodeTranscript: (
     transcript: ProviderReplayTranscript,
   ) => Effect.Effect<Transcript, Error>;
@@ -213,9 +227,13 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const serverSettingsLayer = ServerSettingsService.layerTest({
     enableAssistantStreaming: options.enableAssistantStreaming ?? false,
   }).pipe(Layer.orDie);
-  const storesLayer = Layer.merge(eventStoreLayer, projectionStoreLayer).pipe(
-    Layer.provide(databaseLayer),
-  );
+  const storesLayer = Layer.mergeAll(
+    eventStoreLayer,
+    projectionStoreLayer,
+    commandReceiptStoreLayer,
+    effectOutboxLayer,
+    turnItemPositionStoreLayer,
+  ).pipe(Layer.provide(databaseLayer));
   const eventSinkProvided = eventSinkLayer.pipe(
     Layer.provide(Layer.mergeAll(storesLayer, databaseLayer)),
   );
@@ -258,17 +276,75 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       ),
     ),
   );
-  return orchestratorLayer.pipe(
+  const providerTurnStartServiceProvided = providerTurnStartServiceLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        eventSinkProvided,
+        idAllocatorLayer,
+        storesLayer,
+        providerSessionManagerProvided,
+        runExecutionServiceProvided,
+        runtimeLayer,
+      ),
+    ),
+  );
+  const providerTurnControlServiceProvided = providerTurnControlServiceLayer.pipe(
+    Layer.provide(Layer.merge(storesLayer, providerSessionManagerProvided)),
+  );
+  const runtimeRequestServiceProvided = runtimeRequestServiceLayer.pipe(
+    Layer.provide(Layer.merge(storesLayer, providerSessionManagerProvided)),
+  );
+  const checkpointRollbackServiceProvided = checkpointRollbackServiceLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        checkpointServiceProvided,
+        eventSinkProvided,
+        idAllocatorLayer,
+        storesLayer,
+        providerSessionManagerProvided,
+        runtimeLayer,
+      ),
+    ),
+  );
+  const checkpointCaptureServiceProvided = checkpointCaptureServiceLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(checkpointServiceProvided, eventSinkProvided, idAllocatorLayer, storesLayer),
+    ),
+  );
+  const effectExecutorProvided = effectExecutorLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        checkpointCaptureServiceProvided,
+        checkpointRollbackServiceProvided,
+        providerSessionManagerProvided,
+        providerTurnControlServiceProvided,
+        providerTurnStartServiceProvided,
+        runtimeRequestServiceProvided,
+      ),
+    ),
+  );
+  const effectWorkerProvided = effectWorkerLayer.pipe(
+    Layer.provide(Layer.merge(storesLayer, effectExecutorProvided)),
+  );
+  const effectWorkerDaemonProvided = effectWorkerDaemonLayer.pipe(
+    Layer.provide(effectWorkerProvided),
+  );
+  const orchestratorProvided = orchestratorLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
         checkpointServiceProvided,
         commandPolicyLayer,
         contextHandoffServiceProvided,
+        effectWorkerProvided,
         persistenceLayer,
+        registryLayer,
         runtimeLayer,
         providerSessionManagerProvided,
+        providerSwitchServiceLayer,
         runExecutionServiceProvided,
+        threadForkServiceLayer,
       ),
     ),
   );
+  return Layer.merge(orchestratorProvided, effectWorkerDaemonProvided);
 }

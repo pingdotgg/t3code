@@ -22,6 +22,7 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import {
   buildCodexTurnStartParams,
+  CODEX_DRIVER_KIND,
   codexAppServerMcpLaunchConfig,
   makeCodexAppServerProtocolLogger,
   makeCodexAppServerSpawnCommand,
@@ -284,12 +285,13 @@ describe("CodexAdapterV2 rollback mapping", () => {
       const providerThreadId = ProviderThreadId.make("provider-thread-codex-rollback");
       const providerThread: OrchestrationV2ProviderThread = {
         id: providerThreadId,
-        provider: "codex",
+        driver: CODEX_DRIVER_KIND,
+        providerInstanceId: ProviderInstanceId.make("codex"),
         providerSessionId: ProviderSessionId.make("provider-session-codex-rollback"),
         appThreadId: ThreadId.make("thread-codex-rollback"),
         ownerNodeId: null,
         nativeThreadRef: {
-          provider: "codex",
+          driver: CODEX_DRIVER_KIND,
           nativeId: "native-thread-codex-rollback",
           strength: "strong",
         },
@@ -312,7 +314,7 @@ describe("CodexAdapterV2 rollback mapping", () => {
         nodeId: NodeId.make(`node-${id}`),
         runAttemptId: RunAttemptId.make(`run-attempt-${id}`),
         nativeTurnRef: {
-          provider: "codex",
+          driver: CODEX_DRIVER_KIND,
           nativeId: `native-${id}`,
           strength: "strong",
         },

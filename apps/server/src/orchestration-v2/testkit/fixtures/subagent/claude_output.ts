@@ -69,7 +69,7 @@ export function assertClaudeSubagentOutput(
   for (const subagent of projection.subagents) {
     assert.equal(subagent.origin, "provider_native");
     assert.equal(subagent.createdBy, "agent");
-    assert.equal(subagent.provider, "claudeAgent");
+    assert.equal(subagent.driver, "claudeAgent");
     assert.equal(subagent.status, "completed");
     assert.isNull(subagent.providerThreadId);
     assert.isNotNull(subagent.childThreadId);

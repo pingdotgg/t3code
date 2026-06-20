@@ -59,7 +59,12 @@ import Migration026V2 from "./Migrations/026_OrchestrationV2.ts";
 >>>>>>> d788fb20eb (Implement orchestration v2 runtime)
 =======
 import Migration034V2 from "./Migrations/034_OrchestrationV2Subagents.ts";
+<<<<<<< HEAD
 >>>>>>> 3273fa742b (feat(orchestration-v2): model native subagents)
+=======
+import Migration033V2 from "./Migrations/033_OrchestrationV2.ts";
+import Migration035V2 from "./Migrations/035_OrchestrationV2Foundation.ts";
+>>>>>>> c4eea8d512 (Map orchestration turns to provider instances)
 
 /**
  * Migration loader with all migrations defined inline.
@@ -119,7 +124,11 @@ export const migrationEntries = [
 >>>>>>> d788fb20eb (Implement orchestration v2 runtime)
 =======
   [39, "OrchestrationV2Subagents", Migration034V2],
+<<<<<<< HEAD
 >>>>>>> 3273fa742b (feat(orchestration-v2): model native subagents)
+=======
+  [40, "OrchestrationV2Foundation", Migration035V2],
+>>>>>>> c4eea8d512 (Map orchestration turns to provider instances)
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

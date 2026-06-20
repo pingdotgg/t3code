@@ -1,5 +1,10 @@
 import { assert, it } from "@effect/vitest";
-import { CommandId, type OrchestrationV2ProviderCapabilities, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  type OrchestrationV2ProviderCapabilities,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -32,7 +37,7 @@ layer("CommandPolicyV2", (it) => {
       const result = yield* policy.decideSteeringExecution({
         commandId,
         threadId,
-        provider: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
         capabilities: baseCapabilities,
       });
 
@@ -47,7 +52,7 @@ layer("CommandPolicyV2", (it) => {
       const result = yield* policy.decideSteeringExecution({
         commandId,
         threadId,
-        provider: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
         capabilities: capabilities((current) => ({
           ...current,
           turns: {
@@ -70,7 +75,7 @@ layer("CommandPolicyV2", (it) => {
       const result = yield* policy.decideSteeringExecution({
         commandId,
         threadId,
-        provider: "grok",
+        providerInstanceId: ProviderInstanceId.make("grok"),
         capabilities: GrokProviderCapabilitiesV2,
       });
 
@@ -85,7 +90,7 @@ layer("CommandPolicyV2", (it) => {
       const result = yield* policy.decideSteeringExecution({
         commandId,
         threadId,
-        provider: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
         capabilities: CodexProviderCapabilitiesV2,
         forceRestart: true,
       });
@@ -102,7 +107,7 @@ layer("CommandPolicyV2", (it) => {
         .decideSteeringExecution({
           commandId,
           threadId,
-          provider: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
           capabilities: capabilities((current) => ({
             ...current,
             turns: {
@@ -128,7 +133,7 @@ layer("CommandPolicyV2", (it) => {
         .ensureNativeFork({
           commandId,
           threadId,
-          provider: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
           fromSpecificTurn: true,
           capabilities: capabilities((current) => ({
             ...current,
@@ -152,7 +157,7 @@ layer("CommandPolicyV2", (it) => {
       const result = yield* policy.decideForkExecution({
         commandId,
         threadId,
-        provider: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
         capabilities: CodexProviderCapabilitiesV2,
         sameProvider: true,
         hasStrongNativeSource: true,
@@ -170,7 +175,7 @@ layer("CommandPolicyV2", (it) => {
       const result = yield* policy.decideForkExecution({
         commandId,
         threadId,
-        provider: "cursor",
+        providerInstanceId: ProviderInstanceId.make("cursor"),
         capabilities: CursorProviderCapabilitiesV2,
         sameProvider: true,
         hasStrongNativeSource: true,
@@ -188,7 +193,7 @@ layer("CommandPolicyV2", (it) => {
       const result = yield* policy.decideForkExecution({
         commandId,
         threadId,
-        provider: "grok",
+        providerInstanceId: ProviderInstanceId.make("grok"),
         capabilities: GrokProviderCapabilitiesV2,
         sameProvider: true,
         hasStrongNativeSource: true,
@@ -207,7 +212,7 @@ layer("CommandPolicyV2", (it) => {
         .decideForkExecution({
           commandId,
           threadId,
-          provider: "cursor",
+          providerInstanceId: ProviderInstanceId.make("cursor"),
           capabilities: capabilities((current) => ({
             ...current,
             threads: {
@@ -238,7 +243,7 @@ layer("CommandPolicyV2", (it) => {
         .ensureRollback({
           commandId,
           threadId,
-          provider: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
           capabilities: capabilities((current) => ({
             ...current,
             checkpointing: {
@@ -262,7 +267,7 @@ layer("CommandPolicyV2", (it) => {
         .ensureContextHandoff({
           commandId,
           threadId,
-          provider: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
           strategy: "fork_delta_context",
           capabilities: capabilities((current) => ({
             ...current,
@@ -287,7 +292,7 @@ layer("CommandPolicyV2", (it) => {
         .ensureQueuedMessages({
           commandId,
           threadId,
-          provider: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
           capabilities: capabilities((current) => ({
             ...current,
             turns: {

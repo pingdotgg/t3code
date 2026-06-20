@@ -10,15 +10,7 @@ import {
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
   ProviderOptionSelections,
 } from "./model.ts";
-import { ModelSelection } from "./orchestration.ts";
-import {
-  DEFAULT_PREVIEW_APPEARANCE,
-  DEFAULT_PREVIEW_ZOOM_FACTOR,
-  FILL_PREVIEW_VIEWPORT,
-  PreviewAppearancePreference,
-  PreviewViewportSetting,
-  PreviewZoomFactor,
-} from "./preview.ts";
+import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────

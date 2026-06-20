@@ -41,8 +41,8 @@ import {
   type AcpAdapterV2RuntimeInput,
 } from "./AcpAdapterV2.ts";
 
-export const GROK_PROVIDER = "grok" as const;
-export const GROK_DRIVER_KIND = ProviderDriverKind.make(GROK_PROVIDER);
+export const GROK_PROVIDER = ProviderDriverKind.make("grok");
+export const GROK_DRIVER_KIND = GROK_PROVIDER;
 export const GROK_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(GROK_DRIVER_KIND);
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 
@@ -119,7 +119,7 @@ export const registerGrokAcpExtensions: NonNullable<AcpAdapterV2Flavor["register
 
 export function makeGrokAdapterV2(options: GrokAdapterV2Options) {
   const flavor: AcpAdapterV2Flavor = {
-    provider: GROK_PROVIDER,
+    driver: GROK_PROVIDER,
     capabilities: GrokProviderCapabilitiesV2,
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
     makeRuntime:

@@ -80,7 +80,7 @@ export const AcpRegistryOrchestratorReplayHarness: OrchestratorV2ProviderReplayH
   AcpReplayTranscript,
   AcpReplayTranscriptDecodeError
 > = {
-  provider: ACP_REGISTRY_PROVIDER,
+  driver: ACP_REGISTRY_PROVIDER,
   decodeTranscript: (transcript) =>
     decodeAcpReplayTranscript(transcript, ACP_REGISTRY_PROVIDER, {
       retargetProvider: true,

@@ -7,7 +7,11 @@ import {
   type SDKUserMessage,
   type SendOptions,
 } from "@cursor/sdk";
-import type { OrchestrationV2ProviderSession, ThreadId } from "@t3tools/contracts";
+import {
+  type OrchestrationV2ProviderSession,
+  ProviderDriverKind,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -20,7 +24,7 @@ import {
 } from "../../provider/Layers/EventNdjsonLogger.ts";
 
 export const CURSOR_AGENT_SDK_PROTOCOL = "cursor-agent-sdk.local" as const;
-export const CURSOR_PROVIDER = "cursor" as const;
+export const CURSOR_PROVIDER = ProviderDriverKind.make("cursor");
 
 export class CursorAgentSdkRunnerError extends Schema.TaggedErrorClass<CursorAgentSdkRunnerError>()(
   "CursorAgentSdkRunnerError",

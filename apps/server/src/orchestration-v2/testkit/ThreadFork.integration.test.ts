@@ -548,19 +548,15 @@ describe("orchestration V2 thread fork", () => {
             event.threadId === materialized.targetThreadId &&
             event.type === "provider-session.updated",
         );
+        const targetRunCreatedIndex = result.domainEvents.findIndex(
+          (event) => event.threadId === materialized.targetThreadId && event.type === "run.created",
+        );
         assert.isAtLeast(transferCreatedIndex, 0);
         assert.isAbove(targetProviderSessionIndex, transferCreatedIndex);
-        assert.isEmpty(
-          result.domainEvents
-            .slice(0, targetProviderSessionIndex)
-            .filter((event) => event.threadId === materialized.targetThreadId)
-            .filter(
-              (event) =>
-                event.type === "provider-session.updated" ||
-                event.type === "provider-thread.updated" ||
-                event.type === "run.created",
-            ),
-          "thread.fork must not eagerly create provider runtime state for the target thread",
+        assert.isAbove(
+          targetProviderSessionIndex,
+          targetRunCreatedIndex,
+          "provider runtime state must be materialized only after the target run commits",
         );
 
         const forkEvents = result.domainEvents.filter(
