@@ -85,7 +85,11 @@ export function EnvironmentConnectionNotice(props: {
                 accessibilityHint="Copies the trace ID"
                 accessibilityRole="button"
                 className="underline decoration-dotted"
-                onPress={() => copyTextWithHaptic(props.connection.traceId!)}
+                onPress={() =>
+                  copyTextWithHaptic(props.connection.traceId!, {
+                    target: "connection-trace-id",
+                  })
+                }
               >
                 {props.connection.traceId}
               </Text>

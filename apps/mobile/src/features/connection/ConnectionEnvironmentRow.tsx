@@ -101,7 +101,7 @@ export function ConnectionEnvironmentRow(props: {
                     className="underline"
                     onLongPress={(event) => {
                       event.stopPropagation();
-                      copyTextWithHaptic(statusTraceId);
+                      copyTextWithHaptic(statusTraceId, { target: "connection-trace-id" });
                     }}
                     onPress={(event) => {
                       event.stopPropagation();
