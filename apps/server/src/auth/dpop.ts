@@ -9,7 +9,6 @@ import {
   ServerAuthDpopReplayKeyCalculationError,
   ServerAuthDpopReplayStateRecordError,
   ServerAuthInvalidCredentialError,
-  type ServerAuthInternalError,
 } from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 
@@ -31,13 +30,19 @@ export function requestAbsoluteUrl(request: HttpServerRequest.HttpServerRequest)
 
 export const mapDpopReplayStoreError = (
   error: ServerSecretStore.SecretStoreError,
-): ServerAuthInvalidCredentialError | ServerAuthInternalError =>
+  context: {
+    readonly proofKeyThumbprint: string;
+    readonly proofId: string;
+    readonly replayKey: string;
+  },
+): ServerAuthInvalidCredentialError | ServerAuthDpopReplayStateRecordError =>
   ServerSecretStore.isSecretAlreadyExistsError(error)
     ? new ServerAuthInvalidCredentialError({
         diagnostic: "DPoP proof replayed.",
         cause: error,
       })
     : new ServerAuthDpopReplayStateRecordError({
+        ...context,
         cause: error,
       });
 
@@ -71,6 +76,8 @@ export const verifyRequestDpopProof = (input: {
       Effect.mapError(
         (cause) =>
           new ServerAuthDpopReplayKeyCalculationError({
+            proofKeyThumbprint: result.thumbprint,
+            proofId: result.jti,
             cause,
           }),
       ),
@@ -88,8 +95,12 @@ export const verifyRequestDpopProof = (input: {
         ),
       )
       .pipe(
-        Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
-          Effect.fail(mapDpopReplayStoreError(error)),
+        Effect.mapError((error) =>
+          mapDpopReplayStoreError(error, {
+            proofKeyThumbprint: result.thumbprint,
+            proofId: result.jti,
+            replayKey,
+          }),
         ),
       );
     return result.thumbprint;

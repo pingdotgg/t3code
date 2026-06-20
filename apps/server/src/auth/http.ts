@@ -151,6 +151,22 @@ export function failEnvironmentInternal(reason: EnvironmentInternalErrorReason, 
   });
 }
 
+const failAuthenticationInternal = (error: EnvironmentAuth.ServerAuthAuthenticationInternalError) =>
+  failEnvironmentInternal("internal_error", error);
+
+export const catchEnvironmentAuthenticationErrors = <A, R>(
+  effect: Effect.Effect<A, EnvironmentAuth.ServerAuthAuthenticationError, R>,
+) =>
+  effect.pipe(
+    Effect.catchTags({
+      ServerAuthMissingCredentialError: () => failEnvironmentAuthInvalid("missing_credential"),
+      ServerAuthInvalidCredentialError: () => failEnvironmentAuthInvalid("invalid_credential"),
+      ServerAuthSessionCredentialValidationError: failAuthenticationInternal,
+      ServerAuthDpopReplayStateRecordError: failAuthenticationInternal,
+      ServerAuthDpopReplayKeyCalculationError: failAuthenticationInternal,
+    }),
+  );
+
 export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope")(function* (
   scope: AuthEnvironmentScope,
 ) {
@@ -168,13 +184,8 @@ export const environmentAuthenticatedAuthLayer = Layer.effect(
     return (httpEffect) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
-          Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-            failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
-          ),
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("internal_error", error),
-          ),
+        const session = yield* catchEnvironmentAuthenticationErrors(
+          serverAuth.authenticateHttpRequest(request),
         );
         return yield* httpEffect.pipe(
           Effect.provideService(EnvironmentAuthenticatedPrincipal, {
@@ -183,7 +194,11 @@ export const environmentAuthenticatedAuthLayer = Layer.effect(
           }),
           session.subject === "cloud-connect" ? traceAuthenticatedRelayRequest : identity,
         );
-      }).pipe(Effect.catchTag("EnvironmentAuthInvalidError", appendDpopChallengeOnUnauthorized));
+      }).pipe(
+        Effect.catchTags({
+          EnvironmentAuthInvalidError: appendDpopChallengeOnUnauthorized,
+        }),
+      );
   }),
 );
 
@@ -203,9 +218,11 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             const request = yield* HttpServerRequest.HttpServerRequest;
             return yield* serverAuth.getSessionState(request);
           },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("internal_error", error),
-          ),
+          Effect.catchTags({
+            ServerAuthSessionCredentialValidationError: failAuthenticationInternal,
+            ServerAuthDpopReplayStateRecordError: failAuthenticationInternal,
+            ServerAuthDpopReplayKeyCalculationError: failAuthenticationInternal,
+          }),
         ),
       )
       .handle(
@@ -233,12 +250,14 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             yield* appendCredentialResponseHeaders;
             return result.response;
           },
-          Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-            failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
-          ),
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("browser_session_issuance_failed", error),
-          ),
+          Effect.catchTags({
+            ServerAuthInvalidCredentialError: () =>
+              failEnvironmentAuthInvalid("invalid_credential"),
+            ServerAuthBootstrapCredentialValidationError: (error) =>
+              failEnvironmentInternal("browser_session_issuance_failed", error),
+            ServerAuthAuthenticatedSessionIssueError: (error) =>
+              failEnvironmentInternal("browser_session_issuance_failed", error),
+          }),
         ),
       )
       .handle(
@@ -268,14 +287,16 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             }
             const proofKeyThumbprint = args.headers.dpop
               ? yield* verifyRequestDpopProof({ request }).pipe(
-                  Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, () =>
-                    appendDpopChallengeHeader.pipe(
-                      Effect.andThen(failEnvironmentAuthInvalid("invalid_credential")),
-                    ),
-                  ),
-                  Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-                    failEnvironmentInternal("access_token_issuance_failed", error),
-                  ),
+                  Effect.catchTags({
+                    ServerAuthInvalidCredentialError: () =>
+                      appendDpopChallengeHeader.pipe(
+                        Effect.andThen(failEnvironmentAuthInvalid("invalid_credential")),
+                      ),
+                    ServerAuthDpopReplayStateRecordError: (error) =>
+                      failEnvironmentInternal("access_token_issuance_failed", error),
+                    ServerAuthDpopReplayKeyCalculationError: (error) =>
+                      failEnvironmentInternal("access_token_issuance_failed", error),
+                  }),
                 )
               : undefined;
             yield* appendCredentialResponseHeaders;
@@ -296,15 +317,16 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             );
           },
           traceRelayRequest,
-          Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-            failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
-          ),
-          Effect.catchIf(EnvironmentAuth.isServerAuthInvalidRequestError, (error) =>
-            failEnvironmentInvalidRequest(EnvironmentAuth.serverAuthInvalidRequestReason(error)),
-          ),
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("access_token_issuance_failed", error),
-          ),
+          Effect.catchTags({
+            ServerAuthInvalidCredentialError: () =>
+              failEnvironmentAuthInvalid("invalid_credential"),
+            ServerAuthScopeNotGrantedError: () =>
+              failEnvironmentInvalidRequest("scope_not_granted"),
+            ServerAuthBootstrapCredentialValidationError: (error) =>
+              failEnvironmentInternal("access_token_issuance_failed", error),
+            ServerAuthAuthenticatedAccessTokenIssueError: (error) =>
+              failEnvironmentInternal("access_token_issuance_failed", error),
+          }),
         ),
       )
       .handle(
@@ -316,9 +338,10 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             yield* appendCredentialResponseHeaders;
             return yield* serverAuth.issueWebSocketTicket(session);
           },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("websocket_ticket_issuance_failed", error),
-          ),
+          Effect.catchTags({
+            ServerAuthWebSocketTokenIssueError: (error) =>
+              failEnvironmentInternal("websocket_ticket_issuance_failed", error),
+          }),
         ),
       )
       .handle(
@@ -341,9 +364,10 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             }
             return yield* serverAuth.issuePairingCredential(args.payload);
           },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("pairing_credential_issuance_failed", error),
-          ),
+          Effect.catchTags({
+            ServerAuthPairingLinkCreationError: (error) =>
+              failEnvironmentInternal("pairing_credential_issuance_failed", error),
+          }),
         ),
       )
       .handle(
@@ -354,9 +378,10 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             yield* requireEnvironmentScope(AuthAccessReadScope);
             return yield* serverAuth.listPairingLinks();
           },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("pairing_links_load_failed", error),
-          ),
+          Effect.catchTags({
+            ServerAuthPairingLinksListError: (error) =>
+              failEnvironmentInternal("pairing_links_load_failed", error),
+          }),
         ),
       )
       .handle(
@@ -368,9 +393,10 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             const revoked = yield* serverAuth.revokePairingLink(args.payload.id);
             return { revoked };
           },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("pairing_link_revoke_failed", error),
-          ),
+          Effect.catchTags({
+            ServerAuthPairingLinkRevocationError: (error) =>
+              failEnvironmentInternal("pairing_link_revoke_failed", error),
+          }),
         ),
       )
       .handle(
@@ -381,9 +407,10 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             const session = yield* requireEnvironmentScope(AuthAccessReadScope);
             return yield* serverAuth.listClientSessions(session.sessionId);
           },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("client_sessions_load_failed", error),
-          ),
+          Effect.catchTags({
+            ServerAuthSessionsListError: (error) =>
+              failEnvironmentInternal("client_sessions_load_failed", error),
+          }),
         ),
       )
       .handle(
@@ -398,12 +425,12 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             );
             return { revoked };
           },
-          Effect.catchTag("ServerAuthForbiddenOperationError", () =>
-            failEnvironmentOperationForbidden("current_session_revoke_not_allowed"),
-          ),
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("client_session_revoke_failed", error),
-          ),
+          Effect.catchTags({
+            ServerAuthForbiddenOperationError: () =>
+              failEnvironmentOperationForbidden("current_session_revoke_not_allowed"),
+            ServerAuthSessionRevocationError: (error) =>
+              failEnvironmentInternal("client_session_revoke_failed", error),
+          }),
         ),
       )
       .handle(
@@ -415,9 +442,10 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             const revokedCount = yield* serverAuth.revokeOtherClientSessions(session.sessionId);
             return { revokedCount };
           },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("client_session_revoke_failed", error),
-          ),
+          Effect.catchTags({
+            ServerAuthOtherSessionsRevocationError: (error) =>
+              failEnvironmentInternal("client_session_revoke_failed", error),
+          }),
         ),
       );
   }),

@@ -114,6 +114,16 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         .pipe(Effect.flip);
 
       expect(error._tag).toBe("ServerAuthScopeNotGrantedError");
+      if (error._tag === "ServerAuthScopeNotGrantedError") {
+        expect(error.requestedScopes).toEqual(["orchestration:read", "access:write"]);
+        expect(error.grantedScopes).toEqual([
+          "orchestration:read",
+          "orchestration:operate",
+          "terminal:operate",
+          "review:write",
+          "relay:read",
+        ]);
+      }
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
   );
 
@@ -251,5 +261,21 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
           }),
         ),
       ),
+  );
+
+  it.effect("retains both session ids when rejecting self-revocation", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const issued = yield* serverAuth.issueSession();
+      const error = yield* serverAuth
+        .revokeClientSession(issued.sessionId, issued.sessionId)
+        .pipe(Effect.flip);
+
+      expect(error._tag).toBe("ServerAuthForbiddenOperationError");
+      if (error._tag === "ServerAuthForbiddenOperationError") {
+        expect(error.currentSessionId).toBe(issued.sessionId);
+        expect(error.targetSessionId).toBe(issued.sessionId);
+      }
+    }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
   );
 });
