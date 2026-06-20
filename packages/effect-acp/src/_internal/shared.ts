@@ -12,7 +12,7 @@ export const callRpc = <A>(
 ): Effect.Effect<A, AcpError.AcpError> =>
   effect.pipe(
     Effect.catchIf(isError, (error) =>
-      Effect.fail(AcpError.AcpRequestError.fromProtocolError(error)),
+      Effect.fail(AcpError.AcpRequestError.fromProtocolError(error, { method })),
     ),
     Effect.catchTags({
       RpcClientError: (cause) =>

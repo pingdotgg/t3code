@@ -51,6 +51,8 @@ describe("effect-acp errors", () => {
         code: -32602,
         errorMessage: "Invalid params",
         data: { field: "sessionId" },
+        method: "session/load",
+        operation: "receive-response",
       });
     });
   });

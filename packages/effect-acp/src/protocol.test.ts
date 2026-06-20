@@ -260,15 +260,33 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       const bigintError = yield* transport.notify("x/test", 1n).pipe(Effect.flip);
       assert.instanceOf(bigintError, AcpError.AcpProtocolParseError);
       assert.equal(bigintError.operation, "encode-message");
+      assert.equal(bigintError.method, "x/test");
       assert.instanceOf(bigintError.cause, TypeError);
-      assert.equal(bigintError.message, "ACP protocol operation 'encode-message' failed.");
+      assert.equal(
+        bigintError.message,
+        "ACP protocol operation 'encode-message' failed for method 'x/test'.",
+      );
 
       const circular: Record<string, unknown> = {};
       circular.self = circular;
       const circularError = yield* transport.notify("x/test", circular).pipe(Effect.flip);
       assert.instanceOf(circularError, AcpError.AcpProtocolParseError);
       assert.equal(circularError.operation, "encode-message");
+      assert.equal(circularError.method, "x/test");
       assert.instanceOf(circularError.cause, TypeError);
+
+      const requestError = yield* transport.request("x/request", 1n).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected request encoding to fail"),
+        }),
+      );
+      assert.instanceOf(requestError, AcpError.AcpProtocolParseError);
+      assert.deepInclude(requestError, {
+        operation: "encode-message",
+        method: "x/request",
+        requestId: "1",
+      });
     }),
   );
 
@@ -307,6 +325,60 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
 
       const resolved = yield* Fiber.join(response);
       assert.deepEqual(resolved, { ok: true });
+    }),
+  );
+
+  it.effect("correlates extension response errors with the originating request", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+      });
+
+      const response = yield* transport
+        .request("x/private", { hello: "world" })
+        .pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          `${encodeUnknownJsonString({
+            jsonrpc: "2.0",
+            id: 1,
+            error: {
+              _tag: "Cause",
+              code: -32602,
+              message: "Invalid params",
+              data: [
+                {
+                  _tag: "Fail",
+                  error: {
+                    code: -32602,
+                    message: "Invalid params",
+                    data: { field: "hello" },
+                  },
+                },
+              ],
+            },
+          })}\n`,
+        ),
+      );
+
+      const error = yield* Fiber.join(response).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected extension request to fail"),
+        }),
+      );
+      assert.instanceOf(error, AcpError.AcpRequestError);
+      assert.deepInclude(error, {
+        code: -32602,
+        errorMessage: "Invalid params",
+        method: "x/private",
+        requestId: "1",
+        operation: "receive-response",
+      });
     }),
   );
 

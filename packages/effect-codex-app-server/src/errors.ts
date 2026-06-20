@@ -5,6 +5,7 @@ export const CodexAppServerRequestOperation = Schema.Literals([
   "decode-payload",
   "encode-payload",
   "handle-request",
+  "receive-response",
 ]);
 export type CodexAppServerRequestOperation = typeof CodexAppServerRequestOperation.Type;
 
@@ -83,6 +84,7 @@ const payloadKind = (payload: unknown): CodexAppServerPayloadKind => {
 
 export interface CodexAppServerRequestDiagnostics {
   readonly method?: string;
+  readonly requestId?: string;
   readonly operation?: CodexAppServerRequestOperation;
   readonly cause?: unknown;
   readonly issueCount?: number;
@@ -154,6 +156,7 @@ export class CodexAppServerProtocolParseError extends Schema.TaggedErrorClass<Co
   {
     operation: CodexAppServerProtocolParseOperation,
     method: Schema.optionalKey(Schema.String),
+    requestId: Schema.optionalKey(Schema.String),
     detail: Schema.optionalKey(Schema.String),
     issueCount: Schema.optionalKey(Schema.Number),
     issueKinds: Schema.optionalKey(Schema.Array(CodexAppServerSchemaIssueKind)),
@@ -169,7 +172,7 @@ export class CodexAppServerProtocolParseError extends Schema.TaggedErrorClass<Co
   static fromSchemaError(
     operation: CodexAppServerProtocolParseOperation,
     cause: Schema.SchemaError,
-    context: { readonly method?: string } = {},
+    context: { readonly method?: string; readonly requestId?: string } = {},
   ) {
     return new CodexAppServerProtocolParseError({
       operation,
@@ -235,6 +238,7 @@ export class CodexAppServerRequestError extends Schema.TaggedErrorClass<CodexApp
     errorMessage: Schema.String,
     data: Schema.optional(Schema.Unknown),
     method: Schema.optionalKey(Schema.String),
+    requestId: Schema.optionalKey(Schema.String),
     operation: Schema.optionalKey(CodexAppServerRequestOperation),
     issueCount: Schema.optionalKey(Schema.Number),
     issueKinds: Schema.optionalKey(Schema.Array(CodexAppServerSchemaIssueKind)),
@@ -247,11 +251,19 @@ export class CodexAppServerRequestError extends Schema.TaggedErrorClass<CodexApp
     return this.errorMessage;
   }
 
-  static fromProtocolError(error: CodexAppServerProtocolErrorShape) {
+  static fromProtocolError(
+    error: CodexAppServerProtocolErrorShape,
+    method: string,
+    requestId: string,
+  ) {
     return new CodexAppServerRequestError({
       code: error.code,
       errorMessage: error.message,
       ...(error.data !== undefined ? { data: error.data } : {}),
+      method,
+      requestId,
+      operation: "receive-response",
+      cause: error,
     });
   }
 

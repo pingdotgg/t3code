@@ -5,8 +5,11 @@ import * as AcpSchema from "./_generated/schema.gen.ts";
 
 export const AcpRequestOperation = Schema.Literals([
   "decode-extension-request-payload",
+  "encode-extension-response",
   "handle-request",
   "handle-extension-request",
+  "receive-response",
+  "receive-streaming-response",
 ]);
 export type AcpRequestOperation = typeof AcpRequestOperation.Type;
 
@@ -65,6 +68,7 @@ const schemaIssueDiagnostics = (root: SchemaIssue.Issue): AcpSchemaIssueDiagnost
 
 export interface AcpRequestDiagnostics {
   readonly method?: string;
+  readonly requestId?: string;
   readonly operation?: AcpRequestOperation;
   readonly cause?: unknown;
   readonly issueCount?: number;
@@ -109,6 +113,7 @@ export class AcpProtocolParseError extends Schema.TaggedErrorClass<AcpProtocolPa
   {
     operation: AcpProtocolParseOperation,
     method: Schema.optionalKey(Schema.String),
+    requestId: Schema.optionalKey(Schema.String),
     issueCount: Schema.optionalKey(Schema.Number),
     issueKinds: Schema.optionalKey(Schema.Array(AcpSchemaIssueKind)),
     maximumPathDepth: Schema.optionalKey(Schema.Number),
@@ -129,6 +134,19 @@ export class AcpProtocolParseError extends Schema.TaggedErrorClass<AcpProtocolPa
       operation,
       method,
       ...schemaIssueDiagnostics(cause.issue),
+      cause,
+    });
+  }
+
+  static fromEncodingError(
+    method: string | undefined,
+    requestId: string | undefined,
+    cause: unknown,
+  ) {
+    return new AcpProtocolParseError({
+      operation: "encode-message",
+      ...(method === undefined ? {} : { method }),
+      ...(requestId === undefined ? {} : { requestId }),
       cause,
     });
   }
@@ -167,6 +185,7 @@ export class AcpRequestError extends Schema.TaggedErrorClass<AcpRequestError>()(
   errorMessage: Schema.String,
   data: Schema.optional(Schema.Unknown),
   method: Schema.optionalKey(Schema.String),
+  requestId: Schema.optionalKey(Schema.String),
   operation: Schema.optionalKey(AcpRequestOperation),
   issueCount: Schema.optionalKey(Schema.Number),
   issueKinds: Schema.optionalKey(Schema.Array(AcpSchemaIssueKind)),
@@ -177,12 +196,57 @@ export class AcpRequestError extends Schema.TaggedErrorClass<AcpRequestError>()(
     return this.errorMessage;
   }
 
-  static fromProtocolError(error: AcpSchema.Error) {
+  static fromProtocolError(
+    error: AcpSchema.Error,
+    context: {
+      readonly method: string;
+      readonly requestId?: string;
+      readonly cause?: unknown;
+    },
+  ) {
     return new AcpRequestError({
       code: error.code,
       errorMessage: error.message,
       ...(error.data !== undefined ? { data: error.data } : {}),
+      method: context.method,
+      ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
+      operation: "receive-response",
+      cause: context.cause ?? error,
     });
+  }
+
+  static fromExtensionResponseFailure(method: string, requestId: string, cause: unknown) {
+    return AcpRequestError.internalError("Extension request failed", undefined, {
+      method,
+      requestId,
+      operation: "receive-response",
+      cause,
+    });
+  }
+
+  static fromExtensionResponseEncodingError(
+    method: string,
+    requestId: string,
+    cause: AcpProtocolParseError,
+  ) {
+    return AcpRequestError.internalError("Internal error", undefined, {
+      method,
+      requestId,
+      operation: "encode-extension-response",
+      cause,
+    });
+  }
+
+  static unsupportedStreamingResponse(method: string, requestId: string) {
+    return AcpRequestError.internalError(
+      "Streaming extension responses are not supported",
+      undefined,
+      {
+        method,
+        requestId,
+        operation: "receive-streaming-response",
+      },
+    );
   }
 
   static fromCoreHandlerError(error: AcpError, method: string) {
