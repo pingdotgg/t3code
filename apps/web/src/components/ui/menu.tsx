@@ -209,11 +209,8 @@ function MenuSeparator({ className, ...props }: MenuPrimitive.Separator.Props) {
 
 function MenuShortcut({ className, ...props }: React.ComponentProps<"kbd">) {
   return (
-    <kbd
-      className={cn(
-        "ms-auto font-medium font-sans text-muted-foreground/72 text-xs tracking-widest",
-        className,
-      )}
+    <Kbd
+      className={cn("ms-auto h-4 min-w-0 rounded-sm px-1.5 text-[10px]", className)}
       data-slot="menu-shortcut"
       {...props}
     />
