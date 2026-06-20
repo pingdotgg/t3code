@@ -221,6 +221,14 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       }));
   });
 
+  const recoverProcessProbeFailure =
+    (probe: "lsof" | "windows-listeners") => (error: ProcessRunner.ProcessRunError) =>
+      Effect.logDebug("preview port process probe failed; falling back to common-port probes", {
+        cause: error,
+        probe,
+        platform: hostPlatform,
+      }).pipe(Effect.as(null));
+
   const scanOnce = Effect.fn("PortDiscovery.scan")(function* () {
     const state = yield* Ref.get(stateRef);
     const terminalByProcessId = new Map<number, TerminalProcessOwner>();
@@ -230,6 +238,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       }
     }
     if (hostPlatform === "win32") {
+      const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");
       const command =
         'Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object { $processName = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName; Write-Output "$($_.LocalAddress)|$($_.LocalPort)|$($_.OwningProcess)|$processName" }';
       const listeners = yield* processRunner
@@ -242,11 +251,18 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         })
         .pipe(
           Effect.map((result) => parseWindowsListenerOutput(result.stdout, terminalByProcessId)),
-          Effect.catchCause(() => Effect.succeed(null)),
+          Effect.catchTags({
+            ProcessSpawnError: recoverWindowsProbeFailure,
+            ProcessStdinError: recoverWindowsProbeFailure,
+            ProcessOutputLimitError: recoverWindowsProbeFailure,
+            ProcessReadError: recoverWindowsProbeFailure,
+            ProcessTimeoutError: recoverWindowsProbeFailure,
+          }),
         );
       if (listeners !== null) return listeners;
       return yield* probeCommonPorts();
     }
+    const recoverLsofProbeFailure = recoverProcessProbeFailure("lsof");
     const lsofResult = yield* processRunner
       .run({
         command: "lsof",
@@ -257,7 +273,13 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       })
       .pipe(
         Effect.map((result) => parseLsofOutput(result.stdout, terminalByProcessId)),
-        Effect.catchCause(() => Effect.succeed(null)),
+        Effect.catchTags({
+          ProcessSpawnError: recoverLsofProbeFailure,
+          ProcessStdinError: recoverLsofProbeFailure,
+          ProcessOutputLimitError: recoverLsofProbeFailure,
+          ProcessReadError: recoverLsofProbeFailure,
+          ProcessTimeoutError: recoverLsofProbeFailure,
+        }),
       );
     if (lsofResult !== null) return lsofResult;
     return yield* probeCommonPorts();
