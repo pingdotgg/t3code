@@ -55,11 +55,11 @@ export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
   }
 }
 
-function describeExternalUrl(externalUrl: string) {
+function describeExternalUrl(externalUrl: string, inputLength: number) {
   const diagnostics = getUrlDiagnostics(externalUrl);
   return {
     urlHostname: diagnostics.hostname ?? "",
-    urlLength: diagnostics.inputLength,
+    urlLength: inputLength,
     urlProtocol: diagnostics.protocol ?? "",
   };
 }
@@ -75,19 +75,22 @@ export class ElectronShell extends Context.Service<
 >()("@t3tools/desktop/electron/ElectronShell") {}
 
 export const make = ElectronShell.of({
-  openExternal: (rawUrl) =>
-    Option.match(parseSafeExternalUrl(rawUrl), {
+  openExternal: (rawUrl) => {
+    const inputLength = typeof rawUrl === "string" ? rawUrl.length : 0;
+
+    return Option.match(parseSafeExternalUrl(rawUrl), {
       onNone: () => Effect.succeed(false),
       onSome: (externalUrl) =>
         Effect.tryPromise({
           try: () => Electron.shell.openExternal(externalUrl),
           catch: (cause) =>
             new ElectronShellOpenExternalError({
-              ...describeExternalUrl(externalUrl),
+              ...describeExternalUrl(externalUrl, inputLength),
               cause,
             }),
         }).pipe(Effect.as(true)),
-    }),
+    });
+  },
   copyText: (text) =>
     Effect.try({
       try: () => Electron.clipboard.writeText(text),

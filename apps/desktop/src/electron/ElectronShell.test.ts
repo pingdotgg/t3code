@@ -51,7 +51,7 @@ describe("ElectronShell", () => {
       const cause = new Error("open failed");
       openExternalMock.mockRejectedValue(cause);
       const externalUrl =
-        "https://user:password@example.com/signed-secret-token/path?access_token=secret#fragment";
+        "HTTPS://user:password@example.com:443/signed-secret-token/path?access_token=secret#fragment";
 
       const electronShell = yield* ElectronShell.ElectronShell;
       const error = yield* Effect.flip(electronShell.openExternal(externalUrl));
