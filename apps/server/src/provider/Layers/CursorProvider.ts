@@ -10,7 +10,7 @@ import type {
 } from "@t3tools/contracts";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import * as Cause from "effect/Cause";
+import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1006,6 +1006,9 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
 
   if (Result.isFailure(aboutProbe)) {
     const error = aboutProbe.failure;
+    yield* Effect.logWarning("Cursor Agent CLI health check failed.", {
+      errorTag: error._tag,
+    });
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
       enabled: cursorSettings.enabled,
@@ -1018,7 +1021,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
         auth: { status: "unknown" },
         message: isCommandMissingCause(error)
           ? "Cursor Agent CLI (`agent`) is not installed or not on PATH."
-          : `Failed to execute Cursor Agent CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
+          : "Failed to execute Cursor Agent CLI health check.",
       },
     });
   }
@@ -1074,7 +1077,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
     );
     if (Exit.isFailure(discoveryExit)) {
       yield* Effect.logWarning("Cursor ACP model discovery failed", {
-        cause: Cause.pretty(discoveryExit.cause),
+        errorTag: causeErrorTag(discoveryExit.cause),
       });
       discoveryWarning = "Cursor ACP model discovery failed. Check server logs for details.";
     } else if (Option.isNone(discoveryExit.value)) {
@@ -1130,7 +1133,7 @@ export const enrichCursorSnapshot = (input: {
     ),
     Effect.catchCause((cause) =>
       Effect.logWarning("Cursor version advisory enrichment failed", {
-        cause: Cause.pretty(cause),
+        errorTag: causeErrorTag(cause),
       }).pipe(Effect.asVoid),
     ),
   );
