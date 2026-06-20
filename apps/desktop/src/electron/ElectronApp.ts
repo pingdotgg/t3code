@@ -13,41 +13,40 @@ export interface ElectronAppMetadata {
   readonly runningUnderArm64Translation: boolean;
 }
 
-export interface ElectronAppShape {
-  readonly metadata: Effect.Effect<ElectronAppMetadata>;
-  readonly name: Effect.Effect<string>;
-  readonly whenReady: Effect.Effect<void>;
-  readonly quit: Effect.Effect<void>;
-  readonly exit: (code: number) => Effect.Effect<void>;
-  readonly relaunch: (options: Electron.RelaunchOptions) => Effect.Effect<void>;
-  readonly setPath: (
-    name: Parameters<Electron.App["setPath"]>[0],
-    path: string,
-  ) => Effect.Effect<void>;
-  readonly setName: (name: string) => Effect.Effect<void>;
-  readonly setAboutPanelOptions: (
-    options: Electron.AboutPanelOptionsOptions,
-  ) => Effect.Effect<void>;
-  readonly setAppUserModelId: (id: string) => Effect.Effect<void>;
-  readonly requestSingleInstanceLock: Effect.Effect<boolean>;
-  readonly isDefaultProtocolClient: (protocol: string) => Effect.Effect<boolean>;
-  readonly setAsDefaultProtocolClient: (
-    protocol: string,
-    path?: string,
-    args?: readonly string[],
-  ) => Effect.Effect<boolean>;
-  readonly setDesktopName: (desktopName: string) => Effect.Effect<void>;
-  readonly setDockIcon: (iconPath: string) => Effect.Effect<void>;
-  readonly appendCommandLineSwitch: (switchName: string, value?: string) => Effect.Effect<void>;
-  readonly on: <Args extends ReadonlyArray<unknown>>(
-    eventName: string,
-    listener: (...args: Args) => void,
-  ) => Effect.Effect<void, never, Scope.Scope>;
-}
-
-export class ElectronApp extends Context.Service<ElectronApp, ElectronAppShape>()(
-  "@t3tools/desktop/electron/ElectronApp",
-) {}
+export class ElectronApp extends Context.Service<
+  ElectronApp,
+  {
+    readonly metadata: Effect.Effect<ElectronAppMetadata>;
+    readonly name: Effect.Effect<string>;
+    readonly whenReady: Effect.Effect<void>;
+    readonly quit: Effect.Effect<void>;
+    readonly exit: (code: number) => Effect.Effect<void>;
+    readonly relaunch: (options: Electron.RelaunchOptions) => Effect.Effect<void>;
+    readonly setPath: (
+      name: Parameters<Electron.App["setPath"]>[0],
+      path: string,
+    ) => Effect.Effect<void>;
+    readonly setName: (name: string) => Effect.Effect<void>;
+    readonly setAboutPanelOptions: (
+      options: Electron.AboutPanelOptionsOptions,
+    ) => Effect.Effect<void>;
+    readonly setAppUserModelId: (id: string) => Effect.Effect<void>;
+    readonly requestSingleInstanceLock: Effect.Effect<boolean>;
+    readonly isDefaultProtocolClient: (protocol: string) => Effect.Effect<boolean>;
+    readonly setAsDefaultProtocolClient: (
+      protocol: string,
+      path?: string,
+      args?: readonly string[],
+    ) => Effect.Effect<boolean>;
+    readonly setDesktopName: (desktopName: string) => Effect.Effect<void>;
+    readonly setDockIcon: (iconPath: string) => Effect.Effect<void>;
+    readonly appendCommandLineSwitch: (switchName: string, value?: string) => Effect.Effect<void>;
+    readonly on: <Args extends ReadonlyArray<unknown>>(
+      eventName: string,
+      listener: (...args: Args) => void,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+  }
+>()("@t3tools/desktop/electron/ElectronApp") {}
 
 const addScopedAppListener = <Args extends ReadonlyArray<unknown>>(
   eventName: string,
@@ -63,7 +62,7 @@ const addScopedAppListener = <Args extends ReadonlyArray<unknown>>(
       }),
   ).pipe(Effect.asVoid);
 
-const make = ElectronApp.of({
+export const make = ElectronApp.of({
   metadata: Effect.sync(() => ({
     appVersion: Electron.app.getVersion(),
     appPath: Electron.app.getAppPath(),

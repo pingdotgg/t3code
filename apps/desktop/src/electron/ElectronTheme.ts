@@ -6,17 +6,16 @@ import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
 
-export interface ElectronThemeShape {
-  readonly shouldUseDarkColors: Effect.Effect<boolean>;
-  readonly setSource: (theme: DesktopTheme) => Effect.Effect<void>;
-  readonly onUpdated: (listener: () => void) => Effect.Effect<void, never, Scope.Scope>;
-}
+export class ElectronTheme extends Context.Service<
+  ElectronTheme,
+  {
+    readonly shouldUseDarkColors: Effect.Effect<boolean>;
+    readonly setSource: (theme: DesktopTheme) => Effect.Effect<void>;
+    readonly onUpdated: (listener: () => void) => Effect.Effect<void, never, Scope.Scope>;
+  }
+>()("@t3tools/desktop/electron/ElectronTheme") {}
 
-export class ElectronTheme extends Context.Service<ElectronTheme, ElectronThemeShape>()(
-  "@t3tools/desktop/electron/ElectronTheme",
-) {}
-
-const make = ElectronTheme.of({
+export const make = ElectronTheme.of({
   shouldUseDarkColors: Effect.sync(() => Electron.nativeTheme.shouldUseDarkColors),
   setSource: (theme) =>
     Effect.suspend(() => {

@@ -6,7 +6,7 @@ import * as Option from "effect/Option";
 
 import type * as Electron from "electron";
 
-import * as DesktopObservability from "../app/DesktopObservability.ts";
+import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
@@ -26,9 +26,9 @@ type DesktopApplicationMenuRuntimeServices =
   | DesktopWindow.DesktopWindow
   | ElectronDialog.ElectronDialog;
 
-const { logInfo: logUpdaterInfo } = DesktopObservability.makeComponentLogger("desktop-updater");
+const { logInfo: logUpdaterInfo } = makeComponentLogger("desktop-updater");
 
-const { logError: logMenuError } = DesktopObservability.makeComponentLogger("desktop-menu");
+const { logError: logMenuError } = makeComponentLogger("desktop-menu");
 
 const dispatchMenuAction = Effect.fn("desktop.menu.dispatchMenuAction")(function* (
   action: string,

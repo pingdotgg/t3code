@@ -1,8 +1,8 @@
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
@@ -23,13 +23,14 @@ export function getDesktopUrl(isDevelopment: boolean): string {
   return `${getDesktopOrigin(isDevelopment)}/`;
 }
 
-export class ElectronProtocolRegistrationError extends Data.TaggedError(
+export class ElectronProtocolRegistrationError extends Schema.TaggedErrorClass<ElectronProtocolRegistrationError>()(
   "ElectronProtocolRegistrationError",
-)<{
-  readonly scheme: string;
-  readonly cause: unknown;
-}> {
-  override get message() {
+  {
+    scheme: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
     return `Failed to register ${this.scheme}: protocol.`;
   }
 }
@@ -41,15 +42,14 @@ export interface DesktopProtocolRegistrationInput {
   readonly clerkFrontendApiHostname: string | undefined;
 }
 
-export interface ElectronProtocolShape {
-  readonly registerDesktopProtocol: (
-    input: DesktopProtocolRegistrationInput,
-  ) => Effect.Effect<void, ElectronProtocolRegistrationError, Scope.Scope>;
-}
-
-export class ElectronProtocol extends Context.Service<ElectronProtocol, ElectronProtocolShape>()(
-  "@t3tools/desktop/electron/ElectronProtocol",
-) {}
+export class ElectronProtocol extends Context.Service<
+  ElectronProtocol,
+  {
+    readonly registerDesktopProtocol: (
+      input: DesktopProtocolRegistrationInput,
+    ) => Effect.Effect<void, ElectronProtocolRegistrationError, Scope.Scope>;
+  }
+>()("@t3tools/desktop/electron/ElectronProtocol") {}
 
 export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInput): string {
   const clerkOrigin = input.clerkFrontendApiHostname
@@ -114,7 +114,7 @@ async function proxyRequest(
   return withContentSecurityPolicy(response, contentSecurityPolicy);
 }
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const registered = yield* Ref.make(false);
 
   const registerDesktopProtocol = Effect.fn("desktop.electron.protocol.registerDesktopProtocol")(

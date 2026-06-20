@@ -237,7 +237,6 @@ describe("DesktopConnectionCatalogStore", () => {
           error,
           DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreDocumentDecodeError,
         );
-        assert.equal(error.operation, "decode-catalog-document");
         assert.equal(error.catalogPath, catalogPath);
         assert.exists(error.cause);
         assert.equal(yield* fileSystem.readFileString(catalogPath), "{not-json");
@@ -272,7 +271,6 @@ describe("DesktopConnectionCatalogStore", () => {
         error,
         DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreReadError,
       );
-      assert.equal(error.operation, "read-catalog");
       assert.equal(error.catalogPath, `${baseDir}/userdata/connection-catalog.json`);
       assert.strictEqual(error.cause, permissionError);
       assert.equal(
@@ -368,7 +366,6 @@ describe("DesktopConnectionCatalogStore", () => {
           error,
           DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreDecodeError,
         );
-        assert.equal(error.operation, "decode-encrypted-catalog");
         assert.equal(error.resource, "encryptedCatalog");
         assert.equal(error.catalogPath, catalogPath);
         assert.exists(error.cause);
