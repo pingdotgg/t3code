@@ -35,34 +35,28 @@ export interface PreviewAutomationInvokeInput {
   readonly timeoutMs?: number;
 }
 
-export interface PreviewAutomationBrokerShape {
-  readonly connect: (
-    owner: PreviewAutomationOwner,
-  ) => Effect.Effect<Stream.Stream<PreviewAutomationRequest>>;
-  readonly reportOwner: (
-    owner: PreviewAutomationOwner,
-  ) => Effect.Effect<void, PreviewAutomationError>;
-  readonly clearOwner: (owner: PreviewAutomationOwnerIdentity) => Effect.Effect<void>;
-  readonly respond: (
-    response: PreviewAutomationResponse,
-  ) => Effect.Effect<void, PreviewAutomationError>;
-  readonly invoke: <A = unknown>(
-    request: PreviewAutomationInvokeInput,
-  ) => Effect.Effect<A, PreviewAutomationError>;
-}
-
 export class PreviewAutomationBroker extends Context.Service<
   PreviewAutomationBroker,
-  PreviewAutomationBrokerShape
+  {
+    readonly connect: (
+      owner: PreviewAutomationOwner,
+    ) => Effect.Effect<Stream.Stream<PreviewAutomationRequest>>;
+    readonly reportOwner: (
+      owner: PreviewAutomationOwner,
+    ) => Effect.Effect<void, PreviewAutomationError>;
+    readonly clearOwner: (owner: PreviewAutomationOwnerIdentity) => Effect.Effect<void>;
+    readonly respond: (
+      response: PreviewAutomationResponse,
+    ) => Effect.Effect<void, PreviewAutomationError>;
+    readonly invoke: <A = unknown>(
+      request: PreviewAutomationInvokeInput,
+    ) => Effect.Effect<A, PreviewAutomationError>;
+  }
 >()("t3/mcp/PreviewAutomationBroker") {}
 
 interface ClientConnection {
   readonly clientId: string;
-  readonly queue: Queue.Queue<
-    Parameters<PreviewAutomationBrokerShape["respond"]>[0] extends never
-      ? never
-      : import("@t3tools/contracts").PreviewAutomationRequest
-  >;
+  readonly queue: Queue.Queue<PreviewAutomationRequest>;
 }
 
 interface PendingRequest {
@@ -123,7 +117,7 @@ const makeResponseError = (
   }
 };
 
-const make = Effect.gen(function* PreviewAutomationBrokerMake() {
+export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   const state = yield* SynchronizedRef.make<BrokerState>({
     clients: new Map(),
     owners: new Map(),
@@ -166,7 +160,7 @@ const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     yield* Queue.shutdown(queue);
   });
 
-  const connect: PreviewAutomationBrokerShape["connect"] = Effect.fn(
+  const connect: PreviewAutomationBroker["Service"]["connect"] = Effect.fn(
     "PreviewAutomationBroker.connect",
   )(function* (owner) {
     const clientId = owner.clientId;
@@ -189,7 +183,7 @@ const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     return Stream.fromQueue(queue).pipe(Stream.ensuring(disconnect(clientId, queue)));
   });
 
-  const reportOwner: PreviewAutomationBrokerShape["reportOwner"] = Effect.fn(
+  const reportOwner: PreviewAutomationBroker["Service"]["reportOwner"] = Effect.fn(
     "PreviewAutomationBroker.reportOwner",
   )(function* (owner) {
     yield* SynchronizedRef.update(state, (current) => {
@@ -199,7 +193,7 @@ const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     });
   });
 
-  const clearOwner: PreviewAutomationBrokerShape["clearOwner"] = Effect.fn(
+  const clearOwner: PreviewAutomationBroker["Service"]["clearOwner"] = Effect.fn(
     "PreviewAutomationBroker.clearOwner",
   )(function* (owner) {
     yield* SynchronizedRef.update(state, (current) => {
@@ -217,7 +211,7 @@ const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     });
   });
 
-  const respond: PreviewAutomationBrokerShape["respond"] = Effect.fn(
+  const respond: PreviewAutomationBroker["Service"]["respond"] = Effect.fn(
     "PreviewAutomationBroker.respond",
   )(function* (response) {
     const pending = yield* SynchronizedRef.modify(state, (current) => {
@@ -243,7 +237,7 @@ const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   });
 
   const invoke = Effect.fn("PreviewAutomationBroker.invoke")(function* <A = unknown>(
-    input: Parameters<PreviewAutomationBrokerShape["invoke"]>[0],
+    input: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0],
   ): Effect.fn.Return<A, PreviewAutomationError> {
     const current = yield* SynchronizedRef.get(state);
     const candidates = Array.from(current.owners.values())
@@ -317,8 +311,3 @@ const make = Effect.gen(function* PreviewAutomationBrokerMake() {
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
 export const layer = Layer.effect(PreviewAutomationBroker, make);
-
-/** Exposed for tests. */
-export const __testing = {
-  make,
-};

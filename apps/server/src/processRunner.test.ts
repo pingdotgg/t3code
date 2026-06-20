@@ -11,14 +11,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
-import {
-  isWindowsCommandNotFound,
-  ProcessOutputLimitError,
-  ProcessRunner,
-  ProcessTimeoutError,
-  layer as ProcessRunnerLive,
-  type ProcessRunInput,
-} from "./processRunner.ts";
+import * as ProcessRunner from "./processRunner.ts";
 
 type ChildProcessCommand = {
   readonly command: string;
@@ -68,15 +61,16 @@ function makeSpawner(
 }
 
 const runWith =
-  (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => (input: ProcessRunInput) =>
-    Effect.service(ProcessRunner).pipe(
+  (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
+  (input: ProcessRunner.ProcessRunInput) =>
+    Effect.service(ProcessRunner.ProcessRunner).pipe(
       Effect.flatMap((runner) =>
         runner.run({
           ...input,
         }),
       ),
       Effect.provide(
-        ProcessRunnerLive.pipe(
+        ProcessRunner.layer.pipe(
           Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
         ),
       ),
@@ -112,12 +106,12 @@ describe("runProcess", () => {
         return makeHandle({ stdout: "service ok" });
       }),
     );
-    const layer = ProcessRunnerLive.pipe(
+    const layer = ProcessRunner.layer.pipe(
       Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
     );
 
     return Effect.gen(function* () {
-      const runner = yield* ProcessRunner;
+      const runner = yield* ProcessRunner.ProcessRunner;
       const result = yield* runner.run({
         command: "fake",
         args: ["--service"],
@@ -175,7 +169,7 @@ describe("runProcess", () => {
         maxOutputBytes: 128,
       }).pipe(Effect.flip);
 
-      expect(error).toBeInstanceOf(ProcessOutputLimitError);
+      expect(error).toBeInstanceOf(ProcessRunner.ProcessOutputLimitError);
     }),
   );
 
@@ -200,7 +194,7 @@ describe("runProcess", () => {
         timeout: "2 seconds",
       }).pipe(Effect.flip);
 
-      expect(error).toBeInstanceOf(ProcessOutputLimitError);
+      expect(error).toBeInstanceOf(ProcessRunner.ProcessOutputLimitError);
     }),
   );
 
@@ -285,7 +279,7 @@ describe("runProcess", () => {
       yield* TestClock.adjust(Duration.millis(50));
       const error = yield* Fiber.join(errorFiber);
 
-      expect(error).toBeInstanceOf(ProcessTimeoutError);
+      expect(error).toBeInstanceOf(ProcessRunner.ProcessTimeoutError);
     }),
   );
 
@@ -324,7 +318,7 @@ describe("runProcess", () => {
 describe("isWindowsCommandNotFound", () => {
   it.effect("matches the localized German cmd.exe error text", () =>
     Effect.gen(function* () {
-      const isCommandNotFound = yield* isWindowsCommandNotFound(
+      const isCommandNotFound = yield* ProcessRunner.isWindowsCommandNotFound(
         1,
         "wird nicht als interner oder externer Befehl, betriebsfahiges Programm oder Batch-Datei erkannt",
       ).pipe(Effect.provideService(HostProcessPlatform, "win32"));

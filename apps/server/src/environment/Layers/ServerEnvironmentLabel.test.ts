@@ -5,15 +5,15 @@ import * as Layer from "effect/Layer";
 import { HostProcessHostname, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { vi } from "vite-plus/test";
 
-import { ProcessRunner, ProcessSpawnError, type ProcessRunnerShape } from "../../processRunner.ts";
+import * as ProcessRunner from "../../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-const runMock = vi.fn<ProcessRunnerShape["run"]>();
+const runMock = vi.fn<ProcessRunner.ProcessRunner["Service"]["run"]>();
 
 const ProcessRunnerTest = Layer.succeed(
-  ProcessRunner,
-  ProcessRunner.of({
+  ProcessRunner.ProcessRunner,
+  ProcessRunner.ProcessRunner.of({
     run: (input) => runMock(input),
   }),
 );
@@ -136,7 +136,7 @@ describe("resolveServerEnvironmentLabel", () => {
     Effect.gen(function* () {
       runMock.mockReturnValueOnce(
         Effect.fail(
-          new ProcessSpawnError({
+          new ProcessRunner.ProcessSpawnError({
             command: "scutil",
             args: ["--get", "ComputerName"],
             cause: new Error("spawn scutil ENOENT"),

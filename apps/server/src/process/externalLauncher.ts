@@ -22,7 +22,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 // ==============================
 // Definitions
@@ -283,29 +284,22 @@ const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEdit
 });
 
 /**
- * ExternalLauncherShape - Service API for browser and editor launch actions.
- */
-export interface ExternalLauncherShape {
-  readonly resolveAvailableEditors: () => Effect.Effect<ReadonlyArray<EditorId>>;
-  /**
-   * Launch a URL target in the default browser.
-   */
-  readonly launchBrowser: (target: string) => Effect.Effect<void, ExternalLauncherError>;
-
-  /**
-   * Launch a workspace path in a selected editor integration.
-   *
-   * Launches the editor as a detached process so server startup is not blocked.
-   */
-  readonly launchEditor: (input: LaunchEditorInput) => Effect.Effect<void, ExternalLauncherError>;
-}
-
-/**
  * ExternalLauncher - Service tag for browser/editor launch operations.
  */
-export class ExternalLauncher extends Context.Service<ExternalLauncher, ExternalLauncherShape>()(
-  "t3/process/externalLauncher",
-) {}
+export class ExternalLauncher extends Context.Service<
+  ExternalLauncher,
+  {
+    readonly resolveAvailableEditors: () => Effect.Effect<ReadonlyArray<EditorId>>;
+    /** Launch a URL target in the default browser. */
+    readonly launchBrowser: (target: string) => Effect.Effect<void, ExternalLauncherError>;
+    /**
+     * Launch a workspace path in a selected editor integration.
+     *
+     * Launches the editor as a detached process so server startup is not blocked.
+     */
+    readonly launchEditor: (input: LaunchEditorInput) => Effect.Effect<void, ExternalLauncherError>;
+  }
+>()("t3/process/externalLauncher") {}
 
 // ==============================
 // Implementations
@@ -397,7 +391,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
   );
 });
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -410,7 +404,7 @@ const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
-  return {
+  return ExternalLauncher.of({
     resolveAvailableEditors: () => provideCommandResolutionServices(resolveAvailableEditors()),
     launchBrowser: (target) =>
       launchBrowser(target).pipe(
@@ -424,7 +418,7 @@ const make = Effect.gen(function* () {
           ),
         ),
       ),
-  } satisfies ExternalLauncherShape;
+  });
 });
 
 export const layer = Layer.effect(ExternalLauncher, make);

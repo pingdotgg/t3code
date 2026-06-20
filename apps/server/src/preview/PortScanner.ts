@@ -15,30 +15,36 @@ import { ThreadId, type DiscoveredLocalServer } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
 import { LSOF_LOCAL_HOST_TOKENS } from "@t3tools/shared/preview";
-import { Cause, Context, Duration, Effect, Layer, Ref, Schedule, Scope } from "effect";
+import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
+import * as Scope from "effect/Scope";
 
-import { ProcessRunner } from "../processRunner.ts";
+import * as ProcessRunner from "../processRunner.ts";
 
-export interface PortDiscoveryShape {
-  readonly scan: () => Effect.Effect<ReadonlyArray<DiscoveredLocalServer>>;
-  readonly subscribe: (
-    listener: (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>,
-  ) => Effect.Effect<void, never, Scope.Scope>;
-  readonly retain: Effect.Effect<void, never, Scope.Scope>;
-  readonly registerTerminalProcesses: (input: {
-    readonly threadId: string;
-    readonly terminalId: string;
-    readonly processIds: ReadonlyArray<number>;
-  }) => Effect.Effect<void>;
-  readonly unregisterTerminal: (input: {
-    readonly threadId: string;
-    readonly terminalId: string;
-  }) => Effect.Effect<void>;
-}
-
-export class PortDiscovery extends Context.Service<PortDiscovery, PortDiscoveryShape>()(
-  "t3/preview/PortScanner/PortDiscovery",
-) {}
+export class PortDiscovery extends Context.Service<
+  PortDiscovery,
+  {
+    readonly scan: () => Effect.Effect<ReadonlyArray<DiscoveredLocalServer>>;
+    readonly subscribe: (
+      listener: (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+    readonly retain: Effect.Effect<void, never, Scope.Scope>;
+    readonly registerTerminalProcesses: (input: {
+      readonly threadId: string;
+      readonly terminalId: string;
+      readonly processIds: ReadonlyArray<number>;
+    }) => Effect.Effect<void>;
+    readonly unregisterTerminal: (input: {
+      readonly threadId: string;
+      readonly terminalId: string;
+    }) => Effect.Effect<void>;
+  }
+>()("t3/preview/PortScanner/PortDiscovery") {}
 
 export const COMMON_DEV_PORTS: ReadonlyArray<number> = Object.freeze([
   3000, 3001, 3333, 4173, 4200, 4321, 5000, 5173, 5174, 5175, 5500, 8000, 8080, 8081, 8888, 9000,
@@ -180,9 +186,9 @@ const serversEqual = (
   return true;
 };
 
-const make = Effect.gen(function* PortDiscoveryMake() {
+export const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
-  const processRunner = yield* ProcessRunner;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcessPlatform;
   const stateRef = yield* Ref.make<ScannerState>({
     lastSnapshot: [],
@@ -296,14 +302,14 @@ const make = Effect.gen(function* PortDiscoveryMake() {
     }
   });
 
-  const retain: PortDiscoveryShape["retain"] = Effect.acquireRelease(acquireRetention(), () =>
+  const retain: PortDiscovery["Service"]["retain"] = Effect.acquireRelease(acquireRetention(), () =>
     Ref.update(stateRef, (state) => ({
       ...state,
       retainCount: Math.max(0, state.retainCount - 1),
     })),
   );
 
-  const subscribe: PortDiscoveryShape["subscribe"] = Effect.fn("PortDiscovery.subscribe")(
+  const subscribe: PortDiscovery["Service"]["subscribe"] = Effect.fn("PortDiscovery.subscribe")(
     (listener) =>
       Effect.acquireRelease(
         Ref.update(stateRef, (state) => ({
@@ -319,29 +325,28 @@ const make = Effect.gen(function* PortDiscoveryMake() {
       ),
   );
 
-  const registerTerminalProcesses: PortDiscoveryShape["registerTerminalProcesses"] = Effect.fn(
-    "PortDiscovery.registerTerminalProcesses",
-  )(function* (input) {
-    const owner = {
-      threadId: ThreadId.make(input.threadId),
-      terminalId: input.terminalId,
-    };
-    const processIds = new Set(
-      input.processIds.filter((processId) => Number.isInteger(processId) && processId > 0),
-    );
-    yield* Ref.update(stateRef, (state) => {
-      const terminalProcesses = new Map(state.terminalProcesses);
-      const key = terminalOwnerKey(owner);
-      if (processIds.size === 0) {
-        terminalProcesses.delete(key);
-      } else {
-        terminalProcesses.set(key, { owner, processIds });
-      }
-      return { ...state, terminalProcesses };
+  const registerTerminalProcesses: PortDiscovery["Service"]["registerTerminalProcesses"] =
+    Effect.fn("PortDiscovery.registerTerminalProcesses")(function* (input) {
+      const owner = {
+        threadId: ThreadId.make(input.threadId),
+        terminalId: input.terminalId,
+      };
+      const processIds = new Set(
+        input.processIds.filter((processId) => Number.isInteger(processId) && processId > 0),
+      );
+      yield* Ref.update(stateRef, (state) => {
+        const terminalProcesses = new Map(state.terminalProcesses);
+        const key = terminalOwnerKey(owner);
+        if (processIds.size === 0) {
+          terminalProcesses.delete(key);
+        } else {
+          terminalProcesses.set(key, { owner, processIds });
+        }
+        return { ...state, terminalProcesses };
+      });
     });
-  });
 
-  const unregisterTerminal: PortDiscoveryShape["unregisterTerminal"] = Effect.fn(
+  const unregisterTerminal: PortDiscovery["Service"]["unregisterTerminal"] = Effect.fn(
     "PortDiscovery.unregisterTerminal",
   )(function* (input) {
     yield* Ref.update(stateRef, (state) => {
@@ -351,13 +356,13 @@ const make = Effect.gen(function* PortDiscoveryMake() {
     });
   });
 
-  return {
+  return PortDiscovery.of({
     scan: scanOnce,
     subscribe,
     retain,
     registerTerminalProcesses,
     unregisterTerminal,
-  } satisfies PortDiscoveryShape;
+  });
 }).pipe(Effect.withSpan("PortDiscovery.make"));
 
 export const layer = Layer.effect(PortDiscovery, make);

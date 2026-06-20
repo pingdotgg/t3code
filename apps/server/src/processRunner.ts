@@ -1,13 +1,14 @@
-import * as Data from "effect/Data";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
@@ -42,42 +43,82 @@ export interface ProcessRunOutput {
   readonly stderrTruncated: boolean;
 }
 
-export class ProcessSpawnError extends Data.TaggedError("ProcessSpawnError")<{
-  readonly command: string;
-  readonly args: ReadonlyArray<string>;
-  readonly cwd?: string | undefined;
-  readonly cause: unknown;
-}> {}
+const ProcessInvocationFields = {
+  command: Schema.String,
+  args: Schema.Array(Schema.String),
+  cwd: Schema.optional(Schema.String),
+};
 
-export class ProcessStdinError extends Data.TaggedError("ProcessStdinError")<{
+const formatProcessInvocation = (input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd?: string | undefined;
-  readonly cause: unknown;
-}> {}
+}): string => {
+  const command = [input.command, ...input.args].join(" ");
+  return input.cwd === undefined ? `'${command}'` : `'${command}' in '${input.cwd}'`;
+};
 
-export class ProcessOutputLimitError extends Data.TaggedError("ProcessOutputLimitError")<{
-  readonly command: string;
-  readonly args: ReadonlyArray<string>;
-  readonly cwd?: string | undefined;
-  readonly stream: "stdout" | "stderr";
-  readonly maxBytes: number;
-}> {}
+export class ProcessSpawnError extends Schema.TaggedErrorClass<ProcessSpawnError>()(
+  "ProcessSpawnError",
+  {
+    ...ProcessInvocationFields,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to spawn process ${formatProcessInvocation(this)}`;
+  }
+}
 
-export class ProcessReadError extends Data.TaggedError("ProcessReadError")<{
-  readonly command: string;
-  readonly args: ReadonlyArray<string>;
-  readonly cwd?: string | undefined;
-  readonly stream: "stdout" | "stderr" | "exitCode";
-  readonly cause: unknown;
-}> {}
+export class ProcessStdinError extends Schema.TaggedErrorClass<ProcessStdinError>()(
+  "ProcessStdinError",
+  {
+    ...ProcessInvocationFields,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to write stdin for process ${formatProcessInvocation(this)}`;
+  }
+}
 
-export class ProcessTimeoutError extends Data.TaggedError("ProcessTimeoutError")<{
-  readonly command: string;
-  readonly args: ReadonlyArray<string>;
-  readonly cwd?: string | undefined;
-  readonly timeoutMs: number;
-}> {}
+export class ProcessOutputLimitError extends Schema.TaggedErrorClass<ProcessOutputLimitError>()(
+  "ProcessOutputLimitError",
+  {
+    ...ProcessInvocationFields,
+    stream: Schema.Literals(["stdout", "stderr"]),
+    maxBytes: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Process ${formatProcessInvocation(this)} ${this.stream} exceeded ${this.maxBytes} bytes`;
+  }
+}
+
+export class ProcessReadError extends Schema.TaggedErrorClass<ProcessReadError>()(
+  "ProcessReadError",
+  {
+    ...ProcessInvocationFields,
+    stream: Schema.Literals(["stdout", "stderr", "exitCode"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to read ${this.stream} for process ${formatProcessInvocation(this)}`;
+  }
+}
+
+export class ProcessTimeoutError extends Schema.TaggedErrorClass<ProcessTimeoutError>()(
+  "ProcessTimeoutError",
+  {
+    ...ProcessInvocationFields,
+    timeoutMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Process ${formatProcessInvocation(this)} timed out after ${this.timeoutMs}ms`;
+  }
+}
 
 export type ProcessRunError =
   | ProcessSpawnError
@@ -86,13 +127,12 @@ export type ProcessRunError =
   | ProcessReadError
   | ProcessTimeoutError;
 
-export interface ProcessRunnerShape {
-  readonly run: (input: ProcessRunInput) => Effect.Effect<ProcessRunOutput, ProcessRunError>;
-}
-
-export class ProcessRunner extends Context.Service<ProcessRunner, ProcessRunnerShape>()(
-  "t3/processRunner",
-) {}
+export class ProcessRunner extends Context.Service<
+  ProcessRunner,
+  {
+    readonly run: (input: ProcessRunInput) => Effect.Effect<ProcessRunOutput, ProcessRunError>;
+  }
+>()("t3/processRunner") {}
 
 const DEFAULT_TIMEOUT = "60 seconds";
 const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -332,10 +372,10 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   } satisfies ProcessRunOutput;
 });
 
-export const make = Effect.fn("makeProcessRunner")(function* () {
+export const make = Effect.fn("ProcessRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const run: ProcessRunnerShape["run"] = (input) =>
+  const run: ProcessRunner["Service"]["run"] = (input) =>
     finalizeRunProcess(runProcessCore(spawner, input), input);
 
   return ProcessRunner.of({

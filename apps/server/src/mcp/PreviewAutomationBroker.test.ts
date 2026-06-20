@@ -37,7 +37,7 @@ const makeOwner = (overrides: Partial<PreviewAutomationOwner> = {}): PreviewAuto
 it.effect("atomically registers a connected owner and correlates its response", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const broker = yield* PreviewAutomationBroker.__testing.make;
+      const broker = yield* PreviewAutomationBroker.make;
       const requests = yield* broker.connect(makeOwner());
       yield* Stream.runForEach(requests, (request) =>
         broker.respond({
@@ -61,7 +61,7 @@ it.effect("atomically registers a connected owner and correlates its response", 
 
 it.effect("rejects calls when no focused owner exists", () =>
   Effect.gen(function* () {
-    const broker = yield* PreviewAutomationBroker.__testing.make;
+    const broker = yield* PreviewAutomationBroker.make;
     const error = yield* broker
       .invoke<void>({ scope, operation: "status", input: {} })
       .pipe(Effect.flip);
@@ -72,7 +72,7 @@ it.effect("rejects calls when no focused owner exists", () =>
 it.effect("routes interactive commands to a hidden durable browser host", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const broker = yield* PreviewAutomationBroker.__testing.make;
+      const broker = yield* PreviewAutomationBroker.make;
       const requests = yield* broker.connect(
         makeOwner({ clientId: "client-hidden", tabId: "tab-hidden" }),
       );
@@ -89,7 +89,7 @@ it.effect("routes interactive commands to a hidden durable browser host", () =>
 it.effect("lets the browser host resolve an active tab that has not been reported yet", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const broker = yield* PreviewAutomationBroker.__testing.make;
+      const broker = yield* PreviewAutomationBroker.make;
       const requests = yield* broker.connect(makeOwner({ tabId: null }));
       let routedTabId: string | undefined;
       yield* Stream.runForEach(requests, (request) => {
@@ -108,7 +108,7 @@ it.effect("lets the browser host resolve an active tab that has not been reporte
 it.effect("preserves current owner metadata when its request stream reconnects", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const broker = yield* PreviewAutomationBroker.__testing.make;
+      const broker = yield* PreviewAutomationBroker.make;
       const firstRequests = yield* broker.connect(makeOwner());
       yield* Stream.runDrain(firstRequests).pipe(Effect.forkScoped);
       yield* broker.reportOwner(makeOwner({ tabId: "tab-current", visible: true }));
@@ -131,7 +131,7 @@ it.effect("preserves current owner metadata when its request stream reconnects",
 it.effect("ignores stale owner cleanup after the client moves to another thread", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const broker = yield* PreviewAutomationBroker.__testing.make;
+      const broker = yield* PreviewAutomationBroker.make;
       const requests = yield* broker.connect(makeOwner());
       yield* Stream.runForEach(requests, (request) =>
         broker.respond({ requestId: request.requestId, ok: true }),
@@ -152,7 +152,7 @@ it.effect("ignores stale owner cleanup after the client moves to another thread"
 it.effect("fails requests assigned to a browser stream when that stream reconnects", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const broker = yield* PreviewAutomationBroker.__testing.make;
+      const broker = yield* PreviewAutomationBroker.make;
       const _requests = yield* broker.connect(makeOwner());
       const pending = yield* broker
         .invoke<void>({ scope, operation: "status", input: {} })
@@ -170,7 +170,7 @@ it.effect("fails requests assigned to a browser stream when that stream reconnec
 it.effect("falls back to an older connected owner when a newer report is not connected", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const broker = yield* PreviewAutomationBroker.__testing.make;
+      const broker = yield* PreviewAutomationBroker.make;
       const requests = yield* broker.connect(makeOwner({ clientId: "client-connected" }));
       yield* Stream.runForEach(requests, (request) =>
         broker.respond({ requestId: request.requestId, ok: true, result: "connected" }),
