@@ -18,10 +18,15 @@ const base = {
   projectName: "Acme",
   interactionMode: "default",
   newRuntimeMode: "full-access",
+  newBranch: "",
+  newWorktree: "",
+  newField: "message",
   composerEpoch: 0,
   onReplyInput: noop,
   onReplySubmit: noop,
   onDraftInput: noop,
+  onBranchInput: noop,
+  onWorktreeInput: noop,
   onAuxInput: noop,
 } as const;
 
@@ -74,6 +79,15 @@ describe("ChatComposer", () => {
     expect(frame).toContain("Acme");
     expect(frame).toContain("approval-required");
     expect(frame).toContain("plan");
+    expect(frame).toContain("branch");
+    expect(frame).toContain("worktree");
+  });
+
+  it("Given new-thread mode editing the branch field, then the branch value shows in its input", async () => {
+    const frame = await frameOf(
+      <ChatComposer {...base} mode="new" newField="branch" newBranch="feature/x" inputFocused />,
+    );
+    expect(frame).toContain("feature/x");
   });
 
   it("Given a focused multiline reply editor, when text is typed, then it renders the content", async () => {

@@ -92,6 +92,10 @@ export function ChatView({
   const [newRuntimeMode, setNewRuntimeMode] = React.useState<RuntimeMode>("full-access");
   const [newInteractionMode, setNewInteractionMode] =
     React.useState<ProviderInteractionMode>("default");
+  const [newBranch, setNewBranch] = React.useState("");
+  const [newWorktree, setNewWorktree] = React.useState("");
+  // Which text field the new-thread dialog is editing (Tab cycles).
+  const [newField, setNewField] = React.useState<"message" | "branch" | "worktree">("message");
   // Which pending approval ^A/^R act on; ↑/↓ move it while an approval is up.
   const [approvalIndex, setApprovalIndex] = React.useState(0);
   const [activeTerminal, setActiveTerminal] = React.useState<TerminalInfo | null>(null);
@@ -198,7 +202,7 @@ export function ChatView({
   // grows with its line count (up to a cap) so multiline prompts stay visible.
   const replyLineCount = Math.min(Math.max(reply.split("\n").length, 1), 8);
   const composerHeight =
-    focus === "new" ? 7 : focus === "rename" || focus === "filter" ? 5 : replyLineCount + 4;
+    focus === "new" ? 9 : focus === "rename" || focus === "filter" ? 5 : replyLineCount + 4;
   const defaultTerminalHeight = Math.floor(height * 0.4);
   const maxTerminalHeight = Math.max(6, height - composerHeight - 6);
   const terminalDrawerHeight = activeTerminal
@@ -274,11 +278,16 @@ export function ChatView({
           firstMessage: message,
           runtimeMode: newRuntimeMode,
           interactionMode: newInteractionMode,
+          branch: newBranch,
+          worktreePath: newWorktree,
         })
         .catch((error) => store.setStatus(`create failed: ${String(error)}`));
       store.setStatus("Creating thread…");
     }
     setDraft("");
+    setNewBranch("");
+    setNewWorktree("");
+    setNewField("message");
     setFocus("compose");
   };
 
@@ -350,6 +359,9 @@ export function ChatView({
     onToggleFocus: toggleFocus,
     onCancelNew: () => {
       setDraft("");
+      setNewBranch("");
+      setNewWorktree("");
+      setNewField("message");
       setFocus("compose");
     },
     onProjectPrev: () =>
@@ -362,6 +374,10 @@ export function ChatView({
       }),
     onNewTogglePlan: () =>
       setNewInteractionMode((mode) => (mode === "plan" ? "default" : "plan")),
+    onNewCycleField: () =>
+      setNewField((field) =>
+        field === "message" ? "branch" : field === "branch" ? "worktree" : "message",
+      ),
     onSubmitNew: submitNewThread,
     // ↑/↓ move the approval cursor while a pending approval is up (and the reply is
     // empty), otherwise navigate the sidebar — yielding to a multiline reply editor
@@ -388,6 +404,9 @@ export function ChatView({
       setProjectIndex(0);
       setNewRuntimeMode(detail?.runtimeMode ?? "full-access");
       setNewInteractionMode("default");
+      setNewBranch("");
+      setNewWorktree("");
+      setNewField("message");
       setFocus("new");
     },
     onToggleTerminal: toggleTerminal,
@@ -715,11 +734,16 @@ export function ChatView({
           projectName={projects[activeProjectIndex]?.title ?? "(none)"}
           interactionMode={focus === "new" ? newInteractionMode : (detail?.interactionMode ?? "default")}
           newRuntimeMode={newRuntimeMode}
+          newBranch={newBranch}
+          newWorktree={newWorktree}
+          newField={newField}
           inputFocused={!terminalFocused && !diffOpen && !modelOpen}
           composerEpoch={composerEpoch}
           onReplyInput={setReply}
           onReplySubmit={sendReply}
-          onDraftInput={setDraft}
+          onDraftInput={(value) => setDraft(value.replace(/\t/g, ""))}
+          onBranchInput={(value) => setNewBranch(value.replace(/\t/g, ""))}
+          onWorktreeInput={(value) => setNewWorktree(value.replace(/\t/g, ""))}
           onAuxInput={focus === "rename" ? setRenameDraft : store.setFilter}
         />
       )}

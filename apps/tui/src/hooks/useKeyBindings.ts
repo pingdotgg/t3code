@@ -80,6 +80,7 @@ export interface KeyBindingActions {
   readonly onProjectNext: () => void;
   readonly onNewCycleRuntime: () => void;
   readonly onNewTogglePlan: () => void;
+  readonly onNewCycleField: () => void;
   readonly onSubmitNew: () => void;
   // Compose mode
   readonly onNavUp: () => void;
@@ -167,6 +168,7 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       if (key.name === "down") return actions.onProjectNext();
       if (key.ctrl && key.name === "o") return actions.onNewCycleRuntime();
       if (key.ctrl && key.name === "b") return actions.onNewTogglePlan();
+      if (key.name === "tab") return actions.onNewCycleField();
       if (key.name === "return" || key.name === "enter") return actions.onSubmitNew();
       return;
     }

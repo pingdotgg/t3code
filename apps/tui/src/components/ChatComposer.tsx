@@ -29,6 +29,55 @@ const replyKeyBindings: typeof defaultTextareaKeyBindings = [
 // keystrokes that are meant for the terminal. Not mounting it guarantees a single
 // consumer.
 
+// One labelled field in the new-thread dialog. Only the active field mounts a
+// focused <input>; the others render static text (so a single input consumes
+// keystrokes — the same guard the reply composer uses).
+function NewThreadField({
+  label,
+  value,
+  active,
+  inputFocused,
+  placeholder,
+  onInput,
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly active: boolean;
+  readonly inputFocused: boolean;
+  readonly placeholder: string;
+  readonly onInput: (value: string) => void;
+}): React.ReactNode {
+  const palette = usePalette();
+  return (
+    <box flexDirection="row">
+      <text>
+        <span fg={active ? palette.accent : palette.dim}>{active ? "▸ " : "  "}</span>
+        <span fg={active ? palette.accent : palette.dim}>{`${label} ▸ `}</span>
+      </text>
+      {active && inputFocused ? (
+        <input
+          value={value}
+          onInput={onInput}
+          focused
+          placeholder={placeholder}
+          flexGrow={1}
+          textColor={palette.text}
+          cursorColor={palette.accent}
+          placeholderColor={palette.dim}
+        />
+      ) : (
+        <text>
+          {value.length > 0 ? (
+            <span fg={palette.text}>{value}</span>
+          ) : (
+            <span fg={palette.dim}>{placeholder}</span>
+          )}
+        </text>
+      )}
+    </box>
+  );
+}
+
 export const ChatComposer = React.memo(function ChatComposer({
   mode,
   reply,
@@ -38,11 +87,16 @@ export const ChatComposer = React.memo(function ChatComposer({
   projectName,
   interactionMode,
   newRuntimeMode,
+  newBranch,
+  newWorktree,
+  newField,
   inputFocused,
   composerEpoch,
   onReplyInput,
   onReplySubmit,
   onDraftInput,
+  onBranchInput,
+  onWorktreeInput,
   onAuxInput,
 }: {
   readonly mode: "compose" | "new" | "rename" | "filter";
@@ -56,6 +110,10 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly interactionMode: "default" | "plan";
   /** Runtime mode the new thread will start in (shown in the new-thread dialog). */
   readonly newRuntimeMode: string;
+  readonly newBranch: string;
+  readonly newWorktree: string;
+  /** Which new-thread text field is being edited (Tab cycles). */
+  readonly newField: "message" | "branch" | "worktree";
   /** False when the terminal pane holds focus — render static text, not an input. */
   readonly inputFocused: boolean;
   /** Bumped by the parent to remount (clear) the reply editor after send/clear. */
@@ -63,6 +121,8 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly onReplyInput: (value: string) => void;
   readonly onReplySubmit: () => void;
   readonly onDraftInput: (value: string) => void;
+  readonly onBranchInput: (value: string) => void;
+  readonly onWorktreeInput: (value: string) => void;
   readonly onAuxInput: (value: string) => void;
 }): React.ReactNode {
   const palette = usePalette();
@@ -116,7 +176,7 @@ export const ChatComposer = React.memo(function ChatComposer({
         <text>
           <span fg={palette.accent}>new thread ▸ project: </span>
           <span fg={palette.text}>{projectName}</span>
-          <span fg={palette.dim}>{"  ↑/↓ change · Esc cancel"}</span>
+          <span fg={palette.dim}>{"  ↑/↓ change · Tab field · Esc cancel"}</span>
         </text>
         <text>
           <span fg={palette.accent}>options ▸ </span>
@@ -127,21 +187,30 @@ export const ChatComposer = React.memo(function ChatComposer({
           </span>
           <span fg={palette.dim}>{" (^B)"}</span>
         </text>
-        <box flexDirection="row">
-          <text>
-            <span fg={palette.accent}>message ▸ </span>
-          </text>
-          <input
-            value={draft}
-            onInput={onDraftInput}
-            focused={inputFocused}
-            placeholder="Describe the task…"
-            flexGrow={1}
-            textColor={palette.text}
-            cursorColor={palette.accent}
-            placeholderColor={palette.dim}
-          />
-        </box>
+        <NewThreadField
+          label="message"
+          value={draft}
+          active={newField === "message"}
+          inputFocused={inputFocused}
+          placeholder="Describe the task…"
+          onInput={onDraftInput}
+        />
+        <NewThreadField
+          label="branch"
+          value={newBranch}
+          active={newField === "branch"}
+          inputFocused={inputFocused}
+          placeholder="(default branch)"
+          onInput={onBranchInput}
+        />
+        <NewThreadField
+          label="worktree"
+          value={newWorktree}
+          active={newField === "worktree"}
+          inputFocused={inputFocused}
+          placeholder="(no worktree)"
+          onInput={onWorktreeInput}
+        />
       </box>
     );
   }

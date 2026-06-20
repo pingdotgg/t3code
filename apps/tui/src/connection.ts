@@ -92,6 +92,12 @@ const TUI_ENVIRONMENT_ID = EnvironmentId.make("local-tui");
 const TUI_LABEL = "T3 Code";
 const RECONNECT_DELAY = Duration.seconds(2);
 
+/** Trim a free-text field, returning a branded value or null when empty. */
+const toNullableTrimmed = (value: string | null) => {
+  const trimmed = value?.trim() ?? "";
+  return trimmed.length > 0 ? TrimmedNonEmptyString.make(trimmed) : null;
+};
+
 const CONNECTING_STATE: SupervisorConnectionState = {
   desired: true,
   network: "online",
@@ -296,6 +302,8 @@ export interface TuiClient {
     readonly firstMessage: string;
     readonly runtimeMode: RuntimeMode;
     readonly interactionMode: ProviderInteractionMode;
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
   }) => Promise<void>;
   readonly implementPlan: (
     thread: Pick<OrchestrationThread, "id" | "runtimeMode">,
@@ -548,8 +556,8 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
             modelSelection: input.modelSelection,
             runtimeMode: input.runtimeMode,
             interactionMode: input.interactionMode,
-            branch: null,
-            worktreePath: null,
+            branch: toNullableTrimmed(input.branch),
+            worktreePath: toNullableTrimmed(input.worktreePath),
           });
           const messageId = MessageIdSchema.make(yield* newId);
           yield* startThreadTurn({

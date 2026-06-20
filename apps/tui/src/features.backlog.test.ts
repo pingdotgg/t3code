@@ -13,14 +13,8 @@ import { describe, it } from "bun:test";
 // context-window meter, cycle pending approvals (↑/↓), checkpoint revert (^K → v),
 // plan/build badge on the prompt, pending user-input form,
 // new-thread runtime-mode + plan/build options, turn diff viewer (^K → g),
-// model/provider picker (^K → m, via server config + updateThreadMetadata).
-
-describe.skip("Backlog — Low/Med: new-thread branch / worktree fields", () => {
-  it("Given the new-thread dialog, when a branch/worktree is entered, then createThread receives them", () => {
-    // Runtime mode + plan/build are shipped (^O / ^B in the dialog). Branch and
-    // worktree are free-text paths that need a multi-field, focus-switching form.
-  });
-});
+// model/provider picker (^K → m, via server config + updateThreadMetadata),
+// new-thread branch/worktree fields (Tab cycles).
 
 describe.skip("Non-goal: image / file attachments", () => {
   it("is an explicit TUI non-goal — kept here only to document the decision", () => {});
