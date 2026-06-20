@@ -1,19 +1,33 @@
-import type { PreviewAutomationRequest, PreviewAutomationResponse } from "@t3tools/contracts";
-import { ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type PreviewAutomationRequest,
+  type PreviewAutomationResponse,
+  PreviewTabId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { PreviewAutomationTargetUnavailableError } from "./previewAutomationErrors";
 import {
   createPreviewAutomationRequestConsumerAtom,
   serializePreviewAutomationError,
 } from "./previewAutomationRequestConsumer";
 
-const request = (requestId: string): PreviewAutomationRequest => ({
+const environmentId = EnvironmentId.make("environment-1");
+const threadId = ThreadId.make("thread-1");
+const tabId = PreviewTabId.make("tab-1");
+
+const request = (
+  requestId: string,
+  overrides: Partial<PreviewAutomationRequest> = {},
+): PreviewAutomationRequest => ({
   requestId,
-  threadId: ThreadId.make("thread-1"),
+  threadId,
   operation: "status",
   input: {},
   timeoutMs: 15_000,
+  ...overrides,
 });
 
 describe("previewAutomationRequestConsumer", () => {
@@ -30,6 +44,7 @@ describe("previewAutomationRequestConsumer", () => {
     });
     const consumerAtom = createPreviewAutomationRequestConsumerAtom({
       requestsAtom,
+      environmentId,
       handleRequest,
       respond,
       label: "test:preview-automation-consumer",
@@ -56,6 +71,7 @@ describe("previewAutomationRequestConsumer", () => {
     const respond = vi.fn(async (_response: PreviewAutomationResponse) => undefined);
     const consumerAtom = createPreviewAutomationRequestConsumerAtom({
       requestsAtom,
+      environmentId,
       handleRequest: async () => undefined,
       respond,
       label: "test:preview-automation-initial-request",
@@ -69,33 +85,112 @@ describe("previewAutomationRequestConsumer", () => {
     registry.dispose();
   });
 
-  it("preserves typed automation errors in responses", () => {
-    const error = new Error("No preview tab");
-    error.name = "PreviewAutomationTabNotFoundError";
+  it("preserves tagged automation errors and their structured diagnostics", () => {
+    const error = new PreviewAutomationTargetUnavailableError({
+      requestId: "request-1",
+      operation: "click",
+      environmentId,
+      threadId,
+      tabId,
+      bridgeAvailable: false,
+    });
 
-    expect(serializePreviewAutomationError(error)).toEqual({
+    expect(
+      serializePreviewAutomationError(error, {
+        requestId: "request-1",
+        operation: "click",
+        environmentId,
+        threadId,
+        tabId,
+      }),
+    ).toEqual({
       _tag: "PreviewAutomationTabNotFoundError",
-      message: "No preview tab",
+      message:
+        "Preview automation target for click request request-1 is unavailable on environment environment-1 thread thread-1 (tab tab-1, bridge unavailable).",
+      detail: {
+        requestId: "request-1",
+        operation: "click",
+        environmentId: "environment-1",
+        threadId: "thread-1",
+        tabId: "tab-1",
+        bridgeAvailable: false,
+      },
     });
   });
 
-  it("serializes structured automation context without leaking causes", () => {
-    const error = Object.assign(new Error("Preview target unavailable"), {
-      name: "PreviewAutomationTargetUnavailableError",
-      _tag: "PreviewAutomationTargetUnavailableError",
-      responseTag: "PreviewAutomationTabNotFoundError",
-      requestId: "request-1",
-      threadId: "thread-1",
-      cause: new Error("private bridge failure"),
-    });
+  it("correlates unexpected failures without exposing cause details", () => {
+    const cause = new Error("private bridge token: preview-secret");
+    const context = {
+      requestId: "request-2",
+      operation: "snapshot" as const,
+      environmentId,
+      threadId,
+      tabId,
+    };
+    const response = serializePreviewAutomationError(cause, context);
 
-    expect(serializePreviewAutomationError(error)).toEqual({
-      _tag: "PreviewAutomationTabNotFoundError",
-      message: "Preview target unavailable",
+    expect(response).toEqual({
+      _tag: "PreviewAutomationExecutionError",
+      message:
+        "Preview automation snapshot request request-2 failed on environment environment-1 thread thread-1 (tab tab-1).",
       detail: {
-        requestId: "request-1",
+        requestId: "request-2",
+        operation: "snapshot",
+        environmentId: "environment-1",
         threadId: "thread-1",
+        tabId: "tab-1",
       },
     });
+    expect(JSON.stringify(response)).not.toContain("preview-secret");
+  });
+
+  it("sanitizes unexpected handler failures at the response boundary", async () => {
+    const requestsAtom = Atom.make<AsyncResult.AsyncResult<PreviewAutomationRequest, Error>>(
+      AsyncResult.initial<PreviewAutomationRequest, Error>(false),
+    );
+    const responses: PreviewAutomationResponse[] = [];
+    const consumerAtom = createPreviewAutomationRequestConsumerAtom({
+      requestsAtom,
+      environmentId,
+      handleRequest: async () => {
+        throw new Error("desktop IPC secret: do-not-return");
+      },
+      respond: async (response) => {
+        responses.push(response);
+      },
+      label: "test:preview-automation-failure-boundary",
+    });
+    const registry = AtomRegistry.make();
+    registry.mount(consumerAtom);
+
+    registry.set(
+      requestsAtom,
+      AsyncResult.success(
+        request("request-failed", {
+          operation: "click",
+          tabId,
+        }),
+      ),
+    );
+
+    await vi.waitFor(() => expect(responses).toHaveLength(1));
+    expect(responses[0]).toEqual({
+      requestId: "request-failed",
+      ok: false,
+      error: {
+        _tag: "PreviewAutomationExecutionError",
+        message:
+          "Preview automation click request request-failed failed on environment environment-1 thread thread-1 (tab tab-1).",
+        detail: {
+          requestId: "request-failed",
+          operation: "click",
+          environmentId: "environment-1",
+          threadId: "thread-1",
+          tabId: "tab-1",
+        },
+      },
+    });
+    expect(JSON.stringify(responses[0])).not.toContain("do-not-return");
+    registry.dispose();
   });
 });
