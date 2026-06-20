@@ -1,12 +1,19 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 
 import {
+  ProjectFaviconResolutionError,
   ProjectFaviconResolver,
   type ProjectFaviconResolverShape,
 } from "../Services/ProjectFaviconResolver.ts";
+import {
+  WorkspacePaths,
+  WorkspacePathOutsideRootError,
+} from "../../workspace/Services/WorkspacePaths.ts";
 
 // Well-known favicon paths checked in order.
 const FAVICON_CANDIDATES = [
@@ -58,31 +65,63 @@ function extractIconHref(source: string): string | null {
   return null;
 }
 
+const optionOnNotFound = <A, R>(
+  effect: Effect.Effect<A, PlatformError.PlatformError, R>,
+): Effect.Effect<Option.Option<A>, PlatformError.PlatformError, R> =>
+  effect.pipe(
+    Effect.map(Option.some),
+    Effect.catchTags({
+      PlatformError: (error) =>
+        error.reason._tag === "NotFound" ? Effect.succeed(Option.none<A>()) : Effect.fail(error),
+    }),
+  );
+
 export const makeProjectFaviconResolver = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const workspacePaths = yield* WorkspacePaths;
 
-  const resolveIconHref = (projectCwd: string, href: string): string[] => {
+  const resolveIconHref = (href: string): ReadonlyArray<string> => {
     const clean = href.replace(/^\//, "");
-    return [path.join(projectCwd, "public", clean), path.join(projectCwd, clean)];
-  };
-
-  const isPathWithinProject = (projectCwd: string, candidatePath: string): boolean => {
-    const relative = path.relative(path.resolve(projectCwd), path.resolve(candidatePath));
-    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+    return [path.join("public", clean), clean];
   };
 
   const findExistingFile = Effect.fn("ProjectFaviconResolver.findExistingFile")(function* (
     projectCwd: string,
-    candidates: ReadonlyArray<string>,
-  ): Effect.fn.Return<string | null> {
-    for (const candidate of candidates) {
-      if (!isPathWithinProject(projectCwd, candidate)) {
+    relativeCandidates: ReadonlyArray<string>,
+  ): Effect.fn.Return<string | null, ProjectFaviconResolutionError> {
+    for (const relativePath of relativeCandidates) {
+      const candidate = yield* workspacePaths
+        .resolveRelativePathWithinRoot({
+          workspaceRoot: projectCwd,
+          relativePath,
+        })
+        .pipe(
+          Effect.map(Option.some),
+          Effect.catchTags({
+            WorkspacePathOutsideRootError: () =>
+              Effect.succeed(
+                Option.none<{ readonly absolutePath: string; readonly relativePath: string }>(),
+              ),
+          }),
+        );
+      if (Option.isNone(candidate)) {
         continue;
       }
-      const stats = yield* fileSystem.stat(candidate).pipe(Effect.orElseSucceed(() => null));
-      if (stats?.type === "File") {
-        return candidate;
+      const stats = yield* optionOnNotFound(fileSystem.stat(candidate.value.absolutePath)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectFaviconResolutionError({
+              operation: "stat-candidate",
+              workspaceRoot: projectCwd,
+              relativePath,
+              absolutePath: candidate.value.absolutePath,
+              cause,
+            }),
+        ),
+      );
+      if (Option.isSome(stats) && stats.value.type === "File") {
+        return candidate.value.absolutePath;
       }
     }
     return null;
@@ -90,28 +129,63 @@ export const makeProjectFaviconResolver = Effect.gen(function* () {
 
   const resolvePath: ProjectFaviconResolverShape["resolvePath"] = Effect.fn(
     "ProjectFaviconResolver.resolvePath",
-  )(function* (cwd: string): Effect.fn.Return<string | null> {
+  )(function* (cwd: string) {
+    const projectCwd = yield* workspacePaths.normalizeWorkspaceRoot(cwd).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProjectFaviconResolutionError({
+            operation: "normalize-workspace",
+            workspaceRoot: cwd,
+            cause,
+          }),
+      ),
+    );
     for (const candidate of FAVICON_CANDIDATES) {
-      const resolved = path.join(cwd, candidate);
-      const existing = yield* findExistingFile(cwd, [resolved]);
+      const existing = yield* findExistingFile(projectCwd, [candidate]);
       if (existing) {
         return existing;
       }
     }
 
     for (const sourceFile of ICON_SOURCE_FILES) {
-      const sourcePath = path.join(cwd, sourceFile);
-      const source = yield* fileSystem
-        .readFileString(sourcePath)
-        .pipe(Effect.orElseSucceed(() => null));
-      if (!source) {
+      const sourcePath = yield* workspacePaths
+        .resolveRelativePathWithinRoot({
+          workspaceRoot: projectCwd,
+          relativePath: sourceFile,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectFaviconResolutionError({
+                operation: "resolve-path",
+                workspaceRoot: projectCwd,
+                relativePath: sourceFile,
+                cause,
+              }),
+          ),
+        );
+      const source = yield* optionOnNotFound(
+        fileSystem.readFileString(sourcePath.absolutePath),
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectFaviconResolutionError({
+              operation: "read-source",
+              workspaceRoot: projectCwd,
+              relativePath: sourceFile,
+              absolutePath: sourcePath.absolutePath,
+              cause,
+            }),
+        ),
+      );
+      if (Option.isNone(source)) {
         continue;
       }
-      const href = extractIconHref(source);
+      const href = extractIconHref(source.value);
       if (!href) {
         continue;
       }
-      const existing = yield* findExistingFile(cwd, resolveIconHref(cwd, href));
+      const existing = yield* findExistingFile(projectCwd, resolveIconHref(href));
       if (existing) {
         return existing;
       }
