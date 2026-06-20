@@ -1320,7 +1320,9 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               Effect.mapError(
                 (cause) =>
                   new ProjectSearchEntriesError({
-                    ...input,
+                    cwd: input.cwd,
+                    queryLength: input.query.length,
+                    limit: input.limit,
                     ...projectEntriesFailureContext(cause),
                     cause,
                   }),

@@ -64,7 +64,7 @@ export class ProjectSearchEntriesError extends Schema.TaggedErrorClass<ProjectSe
   "ProjectSearchEntriesError",
   {
     cwd: Schema.optional(TrimmedNonEmptyString),
-    query: Schema.optional(TrimmedNonEmptyString),
+    queryLength: Schema.optional(NonNegativeInt),
     limit: Schema.optional(PositiveInt),
     failure: Schema.optional(ProjectEntriesFailure),
     normalizedCwd: Schema.optional(TrimmedNonEmptyString),
@@ -80,7 +80,7 @@ export class ProjectSearchEntriesError extends Schema.TaggedErrorClass<ProjectSe
   constructor(
     props: ProjectEntriesFailureContext & {
       readonly cwd: string;
-      readonly query: string;
+      readonly queryLength: number;
       readonly limit: number;
     },
   ) {

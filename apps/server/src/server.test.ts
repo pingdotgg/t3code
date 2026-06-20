@@ -4449,13 +4449,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       const invalidWorkspace = path.join(workspaceDir, "missing-workspace");
       const missingBrowseParent = path.join(workspaceDir, "missing-browse");
+      const sensitiveQuery = "authorization: Bearer secret-token";
       const wsUrl = yield* getWsServerUrl("/ws");
       const results = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           Effect.all({
             search: client[WS_METHODS.projectsSearchEntries]({
               cwd: invalidWorkspace,
-              query: "needle",
+              query: sensitiveQuery,
               limit: 10,
             }).pipe(Effect.result),
             list: client[WS_METHODS.projectsListEntries]({ cwd: invalidWorkspace }).pipe(
@@ -4485,7 +4486,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         `Failed to search workspace entries in '${invalidWorkspace}'.`,
       );
       assert.equal(searchError.cwd, invalidWorkspace);
-      assert.equal(searchError.query, "needle");
+      assert.equal(searchError.queryLength, sensitiveQuery.length);
+      assert.notProperty(searchError, "query");
+      assert.notInclude(searchError.message, "Bearer");
+      assert.notInclude(searchError.message, "secret-token");
       assert.equal(searchError.limit, 10);
       assert.equal(searchError.failure, "workspace_root_not_found");
       assert.equal(searchError.normalizedCwd, invalidWorkspace);
