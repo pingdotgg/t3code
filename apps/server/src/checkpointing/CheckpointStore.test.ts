@@ -3,6 +3,7 @@ import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import { ThreadId, type VcsError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -10,21 +11,18 @@ import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import { describe, expect } from "vite-plus/test";
 
-import { checkpointRefForThreadTurn } from "../Utils.ts";
-import { CheckpointStoreLive } from "./CheckpointStore.ts";
-import { CheckpointStore } from "../Services/CheckpointStore.ts";
-import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
-import * as VcsProcess from "../../vcs/VcsProcess.ts";
-import type { VcsError } from "@t3tools/contracts";
-import { ServerConfig } from "../../config.ts";
-import { ThreadId } from "@t3tools/contracts";
+import { checkpointRefForThreadTurn } from "./Utils.ts";
+import * as CheckpointStore from "./CheckpointStore.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as ServerConfig from "../config.ts";
 
-const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
+const ServerConfigLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-checkpoint-store-test-",
 });
 const VcsProcessTestLayer = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 const VcsDriverTestLayer = VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcessTestLayer));
-const CheckpointStoreTestLayer = CheckpointStoreLive.pipe(
+const CheckpointStoreTestLayer = CheckpointStore.layer.pipe(
   Layer.provideMerge(VcsDriverTestLayer),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -94,13 +92,13 @@ function buildLargeText(lineCount = 5_000): string {
     .concat("\n");
 }
 
-it.layer(TestLayer)("CheckpointStoreLive", (it) => {
+it.layer(TestLayer)("CheckpointStore.layer", (it) => {
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
-        const checkpointStore = yield* CheckpointStore;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
         const threadId = ThreadId.make("thread-checkpoint-store");
         const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
         const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
@@ -132,7 +130,7 @@ it.layer(TestLayer)("CheckpointStoreLive", (it) => {
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
-        const checkpointStore = yield* CheckpointStore;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
         const threadId = ThreadId.make("thread-checkpoint-store-whitespace");
         const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
         const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
