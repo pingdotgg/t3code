@@ -67,14 +67,29 @@ const readClientSettings = (
   settingsPath: string,
 ): Effect.Effect<Option.Option<ClientSettings>> =>
   fileSystem.readFileString(settingsPath).pipe(
-    Effect.option,
+    Effect.map(Option.some),
+    Effect.catchTags({
+      PlatformError: (cause) =>
+        cause.reason._tag === "NotFound"
+          ? Effect.succeed(Option.none<string>())
+          : Effect.logWarning("Could not read desktop client settings.", cause).pipe(
+              Effect.annotateLogs({ settingsPath }),
+              Effect.as(Option.none<string>()),
+            ),
+    }),
     Effect.flatMap(
       Option.match({
         onNone: () => Effect.succeed(Option.none<ClientSettings>()),
         onSome: (raw) =>
           decodeClientSettingsJson(raw).pipe(
             Effect.map((settings) => Option.some(settings)),
-            Effect.orElseSucceed(() => Option.none<ClientSettings>()),
+            Effect.catchTags({
+              SchemaError: (cause) =>
+                Effect.logWarning("Could not decode desktop client settings.", cause).pipe(
+                  Effect.annotateLogs({ settingsPath }),
+                  Effect.as(Option.none<ClientSettings>()),
+                ),
+            }),
           ),
       }),
     ),
