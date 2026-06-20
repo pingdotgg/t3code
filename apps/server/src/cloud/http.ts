@@ -55,14 +55,8 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { requireEnvironmentScope } from "../auth/http.ts";
-import {
-  ServerEnvironment,
-  type ServerEnvironmentShape,
-} from "../environment/Services/ServerEnvironment.ts";
-import {
-  CloudManagedEndpointRuntime,
-  type CloudManagedEndpointRuntimeShape,
-} from "./ManagedEndpointRuntime.ts";
+import * as ServerEnvironment from "../environment/Services/ServerEnvironment.ts";
+import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
@@ -103,6 +97,9 @@ const failEnvironmentCloudInternalError =
       Effect.flatMap(() => Effect.fail(new EnvironmentHttpInternalServerError({ message }))),
     );
 
+const failCloudCliTokenManagerError = (error: CliTokenManager.CloudCliTokenManagerError) =>
+  failEnvironmentCloudInternalError(error.message)(error.cause);
+
 const requireRelayUrl = relayUrlConfig.pipe(
   Effect.mapError(
     () =>
@@ -121,7 +118,7 @@ function stringToBytes(value: string): Uint8Array {
 }
 
 export function consumeCloudReplayGuards(input: {
-  readonly secrets: ServerSecretStore.ServerSecretStoreShape;
+  readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
   readonly names: ReadonlyArray<string>;
   readonly value: Uint8Array;
 }) {
@@ -208,7 +205,7 @@ function validateRelayConfigPayload(
 }
 
 function validateLinkedCloudUser(input: {
-  readonly secrets: ServerSecretStore.ServerSecretStoreShape;
+  readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
   readonly cloudUserId: string;
 }): Effect.Effect<void, EnvironmentAuth.ServerAuthInternalError | EnvironmentHttpConflictError> {
   return input.secrets.get(CLOUD_LINKED_USER_ID).pipe(
@@ -237,7 +234,7 @@ function validateLinkedCloudUser(input: {
 }
 
 function readInstalledCloudUserId(
-  secrets: ServerSecretStore.ServerSecretStoreShape,
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
 ): Effect.Effect<string, EnvironmentAuth.ServerAuthInternalError> {
   return secrets.get(CLOUD_LINKED_USER_ID).pipe(
     Effect.mapError(
@@ -335,19 +332,19 @@ const decodeCloudHealthProof = Schema.decodeUnknownEffect(RelayCloudEnvironmentH
 const decodeCloudMintProof = Schema.decodeUnknownEffect(RelayCloudMintCredentialProofPayload);
 
 interface CloudHttpDependencies {
-  readonly secrets: ServerSecretStore.ServerSecretStoreShape;
-  readonly environment: ServerEnvironmentShape;
-  readonly endpointRuntime: CloudManagedEndpointRuntimeShape;
-  readonly environmentAuth: EnvironmentAuth.EnvironmentAuthShape;
-  readonly cliTokenManager: CliTokenManager.CloudCliTokenManagerShape;
+  readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
+  readonly environment: ServerEnvironment.ServerEnvironment["Service"];
+  readonly endpointRuntime: ManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"];
+  readonly environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"];
+  readonly cliTokenManager: CliTokenManager.CloudCliTokenManager["Service"];
   readonly httpClient: HttpClient.HttpClient;
 }
 
 const cloudHttpDependencies = Effect.gen(function* () {
   return {
     secrets: yield* ServerSecretStore.ServerSecretStore,
-    environment: yield* ServerEnvironment,
-    endpointRuntime: yield* CloudManagedEndpointRuntime,
+    environment: yield* ServerEnvironment.ServerEnvironment,
+    endpointRuntime: yield* ManagedEndpointRuntime.CloudManagedEndpointRuntime,
     environmentAuth: yield* EnvironmentAuth.EnvironmentAuth,
     cliTokenManager: yield* CliTokenManager.CloudCliTokenManager,
     httpClient: yield* HttpClient.HttpClient,
@@ -595,8 +592,11 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
     });
   },
   Effect.catchTags({
-    CloudCliTokenManagerError: (error) =>
-      failEnvironmentCloudInternalError(error.message)(error.cause),
+    CloudCliCredentialRemovalError: failCloudCliTokenManagerError,
+    CloudCliCredentialRefreshError: failCloudCliTokenManagerError,
+    CloudCliCredentialReadError: failCloudCliTokenManagerError,
+    CloudCliAuthorizationError: failCloudCliTokenManagerError,
+    CloudCliAuthorizationTimeoutError: failCloudCliTokenManagerError,
     SecretStoreError: failEnvironmentCloudInternalError(
       "Could not persist desired T3 Connect link state.",
     ),

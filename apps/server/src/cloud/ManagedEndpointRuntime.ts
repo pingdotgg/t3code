@@ -10,7 +10,8 @@ import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { CLOUD_ENDPOINT_RUNTIME_CONFIG, decodeRuntimeConfig } from "./config.ts";
@@ -27,17 +28,6 @@ const readRuntimeConfig = Effect.gen(function* () {
   }
   return Option.getOrNull(decodeRuntimeConfig(bytesToString(bytes.value)));
 });
-
-export interface CloudManagedEndpointRuntimeShape {
-  readonly applyConfig: (
-    config: RelayManagedEndpointRuntimeConfig | null,
-  ) => Effect.Effect<CloudManagedEndpointRuntimeStatus>;
-}
-
-export class CloudManagedEndpointRuntime extends Context.Service<
-  CloudManagedEndpointRuntime,
-  CloudManagedEndpointRuntimeShape
->()("t3/cloud/ManagedEndpointRuntime/CloudManagedEndpointRuntime") {}
 
 export type CloudManagedEndpointRuntimeStatus =
   | {
@@ -61,6 +51,15 @@ export type CloudManagedEndpointRuntimeStatus =
       readonly status: "unsupported";
       readonly providerKind: RelayManagedEndpointRuntimeConfig["providerKind"];
     };
+
+export class CloudManagedEndpointRuntime extends Context.Service<
+  CloudManagedEndpointRuntime,
+  {
+    readonly applyConfig: (
+      config: RelayManagedEndpointRuntimeConfig | null,
+    ) => Effect.Effect<CloudManagedEndpointRuntimeStatus>;
+  }
+>()("t3/cloud/ManagedEndpointRuntime/CloudManagedEndpointRuntime") {}
 
 interface ActiveConnector {
   readonly child: ChildProcessSpawner.ChildProcessHandle;
@@ -97,13 +96,13 @@ const stopConnector = (connector: ActiveConnector | null) =>
       )
     : Effect.void;
 
-export const makeCloudManagedEndpointRuntime = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relayClient = yield* RelayClient.RelayClient;
   const activeRef = yield* Ref.make<ActiveConnector | null>(null);
   const desiredConfigRef = yield* Ref.make<RelayManagedEndpointRuntimeConfig | null>(null);
   const reconcileSemaphore = yield* Semaphore.make(1);
-  let reconcileConfig: CloudManagedEndpointRuntimeShape["applyConfig"];
+  let reconcileConfig: CloudManagedEndpointRuntime["Service"]["applyConfig"];
 
   const stopActive = Effect.gen(function* () {
     const active = yield* Ref.getAndSet(activeRef, null);
@@ -301,24 +300,20 @@ export const makeCloudManagedEndpointRuntime = Effect.gen(function* () {
       ),
   );
 
-  return CloudManagedEndpointRuntime.of({
+  const runtime = CloudManagedEndpointRuntime.of({
     applyConfig,
   });
+
+  const initialConfig = yield* readRuntimeConfig.pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("Failed to read managed endpoint runtime config", { cause }).pipe(
+        Effect.as(null),
+      ),
+    ),
+  );
+  yield* runtime.applyConfig(initialConfig);
+  yield* Effect.addFinalizer(() => runtime.applyConfig(null));
+  return runtime;
 });
 
-export const layer = Layer.effect(
-  CloudManagedEndpointRuntime,
-  Effect.gen(function* () {
-    const runtime = yield* makeCloudManagedEndpointRuntime;
-    const initialConfig = yield* readRuntimeConfig.pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning("Failed to read managed endpoint runtime config", { cause }).pipe(
-          Effect.as(null),
-        ),
-      ),
-    );
-    yield* runtime.applyConfig(initialConfig);
-    yield* Effect.addFinalizer(() => runtime.applyConfig(null));
-    return runtime;
-  }),
-);
+export const layer = Layer.effect(CloudManagedEndpointRuntime, make);

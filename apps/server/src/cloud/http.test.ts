@@ -9,13 +9,10 @@ import { HttpClient, HttpServerRequest } from "effect/unstable/http";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
+import * as ServerEnvironment from "../environment/Services/ServerEnvironment.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import { consumeCloudReplayGuards, reconcileDesiredCloudLink } from "./http.ts";
-import {
-  CloudManagedEndpointRuntime,
-  type CloudManagedEndpointRuntimeShape,
-} from "./ManagedEndpointRuntime.ts";
+import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "./traceRelayRequest.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
@@ -32,8 +29,8 @@ const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
 const unusedSecretStoreOperation = () => Effect.die("unused secret-store operation");
 
 function makeSecretStore(
-  create: ServerSecretStore.ServerSecretStoreShape["create"],
-): ServerSecretStore.ServerSecretStoreShape {
+  create: ServerSecretStore.ServerSecretStore["Service"]["create"],
+): ServerSecretStore.ServerSecretStore["Service"] {
   return {
     get: unusedSecretStoreOperation,
     set: unusedSecretStoreOperation,
@@ -151,21 +148,21 @@ describe("reconcileDesiredCloudLink", () => {
         makeSecretStore(unusedSecretStoreOperation),
       ),
       Effect.provideService(
-        ServerEnvironment,
-        ServerEnvironment.of({
+        ServerEnvironment.ServerEnvironment,
+        ServerEnvironment.ServerEnvironment.of({
           getEnvironmentId: unusedSecretStoreOperation(),
           getDescriptor: unusedSecretStoreOperation(),
         }),
       ),
       Effect.provideService(
-        CloudManagedEndpointRuntime,
-        CloudManagedEndpointRuntime.of({
+        ManagedEndpointRuntime.CloudManagedEndpointRuntime,
+        ManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
           applyConfig: unusedSecretStoreOperation,
-        } satisfies CloudManagedEndpointRuntimeShape),
+        } satisfies ManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"]),
       ),
       Effect.provideService(
         EnvironmentAuth.EnvironmentAuth,
-        EnvironmentAuth.EnvironmentAuth.of({} as EnvironmentAuth.EnvironmentAuthShape),
+        EnvironmentAuth.EnvironmentAuth.of({} as EnvironmentAuth.EnvironmentAuth["Service"]),
       ),
       Effect.provideService(
         CliTokenManager.CloudCliTokenManager,
