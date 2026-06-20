@@ -33,6 +33,7 @@ import * as DesktopAssets from "./app/DesktopAssets.ts";
 import * as DesktopBackendConfiguration from "./backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./backend/DesktopBackendManager.ts";
 import * as DesktopLocalEnvironmentAuth from "./backend/DesktopLocalEnvironmentAuth.ts";
+import * as DesktopNetworkInterfaces from "./backend/DesktopNetworkInterfaces.ts";
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
 import * as DesktopShutdown from "./app/DesktopShutdown.ts";
@@ -128,7 +129,7 @@ const desktopSshLayer = desktopSshEnvironmentLayer.pipe(
 );
 
 const desktopServerExposureLayer = DesktopServerExposure.layer.pipe(
-  Layer.provideMerge(DesktopServerExposure.networkInterfacesLayer),
+  Layer.provideMerge(DesktopNetworkInterfaces.layer),
   Layer.provideMerge(desktopFoundationLayer),
 );
 

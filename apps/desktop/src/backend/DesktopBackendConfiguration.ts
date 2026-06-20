@@ -14,16 +14,14 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 
-export interface DesktopBackendConfigurationShape {
-  readonly resolve: Effect.Effect<
-    DesktopBackendManager.DesktopBackendStartConfig,
-    PlatformError.PlatformError
-  >;
-}
-
 export class DesktopBackendConfiguration extends Context.Service<
   DesktopBackendConfiguration,
-  DesktopBackendConfigurationShape
+  {
+    readonly resolve: Effect.Effect<
+      DesktopBackendManager.DesktopBackendStartConfig,
+      PlatformError.PlatformError
+    >;
+  }
 >()("@t3tools/desktop/backend/DesktopBackendConfiguration") {}
 
 interface BackendObservabilitySettings {
@@ -130,40 +128,39 @@ const resolveBackendStartConfig = Effect.fn("desktop.backendConfiguration.resolv
   },
 );
 
-export const layer = Layer.effect(
-  DesktopBackendConfiguration,
-  Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-    const crypto = yield* Crypto.Crypto;
-    const tokenRef = yield* Ref.make(Option.none<string>());
-    const getOrCreateBootstrapToken = Effect.gen(function* () {
-      const existing = yield* Ref.get(tokenRef);
-      if (Option.isSome(existing)) {
-        return existing.value;
-      }
+export const make = Effect.gen(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+  const crypto = yield* Crypto.Crypto;
+  const tokenRef = yield* Ref.make(Option.none<string>());
+  const getOrCreateBootstrapToken = Effect.gen(function* () {
+    const existing = yield* Ref.get(tokenRef);
+    if (Option.isSome(existing)) {
+      return existing.value;
+    }
 
-      const token = Encoding.encodeHex(yield* crypto.randomBytes(24));
-      yield* Ref.set(tokenRef, Option.some(token));
-      return token;
-    });
+    const token = Encoding.encodeHex(yield* crypto.randomBytes(24));
+    yield* Ref.set(tokenRef, Option.some(token));
+    return token;
+  });
 
-    return DesktopBackendConfiguration.of({
-      resolve: Effect.gen(function* () {
-        const bootstrapToken = yield* getOrCreateBootstrapToken;
-        const observabilitySettings = yield* readPersistedBackendObservabilitySettings.pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
-        );
-        return yield* resolveBackendStartConfig({
-          bootstrapToken,
-          observabilitySettings,
-        }).pipe(
-          Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
-          Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
-        );
-      }).pipe(Effect.withSpan("desktop.backendConfiguration.resolve")),
-    });
-  }),
-);
+  return DesktopBackendConfiguration.of({
+    resolve: Effect.gen(function* () {
+      const bootstrapToken = yield* getOrCreateBootstrapToken;
+      const observabilitySettings = yield* readPersistedBackendObservabilitySettings.pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+      );
+      return yield* resolveBackendStartConfig({
+        bootstrapToken,
+        observabilitySettings,
+      }).pipe(
+        Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+        Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
+      );
+    }).pipe(Effect.withSpan("desktop.backendConfiguration.resolve")),
+  });
+});
+
+export const layer = Layer.effect(DesktopBackendConfiguration, make);
