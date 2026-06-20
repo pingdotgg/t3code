@@ -1065,6 +1065,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
+        handleOpenInFilePreview();
       } catch (cause) {
         reportMarkdownActionFailure(
           { operation: "open-file-in-browser", target: targetPath },
@@ -1077,9 +1078,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             description: cause instanceof Error ? cause.message : "An error occurred.",
           }),
         );
+        handleOpenInFilePreview();
       }
     })();
-  }, [onOpenInBrowser, targetPath]);
+  }, [handleOpenInFilePreview, onOpenInBrowser, targetPath]);
 
   const handleCopy = useCallback(
     (value: string, title: string) => {
