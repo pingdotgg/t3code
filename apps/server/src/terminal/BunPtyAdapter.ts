@@ -2,9 +2,22 @@
 
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as PtyAdapter from "./PtyAdapter.ts";
+
+export class BunPtyOperationUnavailableError extends Schema.TaggedErrorClass<BunPtyOperationUnavailableError>()(
+  "BunPtyOperationUnavailableError",
+  {
+    operation: Schema.Literals(["write", "resize"]),
+    pid: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Bun PTY ${this.operation} is unavailable for process ${this.pid}.`;
+  }
+}
 
 class BunPtyProcess implements PtyAdapter.PtyProcess {
   private readonly dataListeners = new Set<(data: string) => void>();
@@ -33,14 +46,14 @@ class BunPtyProcess implements PtyAdapter.PtyProcess {
 
   write(data: string): void {
     if (!this.process.terminal) {
-      throw new Error("Bun PTY terminal handle is unavailable");
+      throw new BunPtyOperationUnavailableError({ operation: "write", pid: this.pid });
     }
     this.process.terminal.write(data);
   }
 
   resize(cols: number, rows: number): void {
     if (!this.process.terminal?.resize) {
-      throw new Error("Bun PTY resize is unavailable");
+      throw new BunPtyOperationUnavailableError({ operation: "resize", pid: this.pid });
     }
     this.process.terminal.resize(cols, rows);
   }
