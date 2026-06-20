@@ -9,10 +9,7 @@ import { HttpClient } from "effect/unstable/http";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { savePreferencesPatch } from "../../lib/storage";
 import { linkEnvironmentToCloud } from "../cloud/linkEnvironment";
-import {
-  LiveActivityPreferencePersistenceError,
-  setLiveActivityUpdatesEnabled,
-} from "./liveActivityPreferences";
+import { setLiveActivityUpdatesEnabled } from "./liveActivityPreferences";
 import { refreshAgentAwarenessRegistration } from "./remoteRegistration";
 
 vi.mock("../../lib/storage", () => ({
@@ -97,29 +94,6 @@ describe("liveActivityPreferences", () => {
       expect(linkEnvironmentToCloud).not.toHaveBeenCalled();
     }).pipe(Effect.provide(testLayer)),
   );
-
-  it.effect("preserves preference persistence failures", () => {
-    const cause = new Error("secure storage unavailable");
-    vi.mocked(savePreferencesPatch).mockRejectedValueOnce(cause);
-
-    return Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        setLiveActivityUpdatesEnabled({
-          enabled: false,
-          clerkToken: null,
-          connections: [],
-        }),
-      );
-
-      expect(error).toBeInstanceOf(LiveActivityPreferencePersistenceError);
-      expect(error).toMatchObject({
-        _tag: "LiveActivityPreferencePersistenceError",
-        enabled: false,
-        cause,
-        message: "Failed to save Live Activity update preferences.",
-      });
-    }).pipe(Effect.provide(testLayer));
-  });
 
   it.effect("does not try to re-link managed relay connections without bearer credentials", () => {
     const managedConnection: SavedRemoteConnection = {

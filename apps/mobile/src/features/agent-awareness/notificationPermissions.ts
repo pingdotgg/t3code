@@ -3,18 +3,6 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Platform } from "react-native";
 
-export class AgentNotificationPermissionError extends Schema.TaggedErrorClass<AgentNotificationPermissionError>()(
-  "AgentNotificationPermissionError",
-  {
-    operation: Schema.Literals(["read", "request"]),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Failed to ${this.operation} agent notification permissions.`;
-  }
-}
-
 export type NotificationPermissionResult =
   | { readonly type: "unsupported" }
   | { readonly type: "granted" }
