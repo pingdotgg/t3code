@@ -33,8 +33,24 @@ export const make = Effect.gen(function* () {
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
 
-  const canonicalizePath = (value: string) =>
-    fileSystem.realPath(path.resolve(value)).pipe(Effect.orElseSucceed(() => path.resolve(value)));
+  const canonicalizePath = (value: string) => {
+    const resolvedPath = path.resolve(value);
+    return fileSystem.realPath(resolvedPath).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          cause.reason._tag === "NotFound"
+            ? Effect.succeed(resolvedPath)
+            : Effect.fail(
+                new VcsRepositoryDetectionError({
+                  operation: "ReviewService.assertWorkspaceBoundCwd.canonicalizePath",
+                  cwd: resolvedPath,
+                  detail: "Failed to resolve a path while validating the review workspace.",
+                  cause,
+                }),
+              ),
+      }),
+    );
+  };
 
   const isWithinRoot = (candidate: string, root: string) => {
     const relative = path.relative(root, candidate);
