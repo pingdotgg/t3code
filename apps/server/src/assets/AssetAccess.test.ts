@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -85,7 +86,42 @@ describe("AssetAccess", () => {
         },
         workspaceRoot: root,
       }).pipe(Effect.flip);
-      expect(error.message).toContain("relative to the project root");
+      expect(error.message).toBe("Workspace file path must be relative to the project root.");
+      expect(error.cause).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("preserves non-missing canonical path failures when issuing asset URLs", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-permission-root-",
+      });
+      const htmlPath = path.join(root, "report.html");
+      yield* fileSystem.writeFileString(htmlPath, "<p>report</p>");
+      const cause = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "realPath",
+        pathOrDescriptor: htmlPath,
+      });
+      const failingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        realPath: () => Effect.fail(cause),
+      });
+
+      const error = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: htmlPath,
+        },
+        workspaceRoot: root,
+      }).pipe(Effect.provideService(FileSystem.FileSystem, failingFileSystem), Effect.flip);
+
+      expect(error.message).toBe("Failed to inspect the workspace asset.");
+      expect(error.cause).toBe(cause);
     }).pipe(Effect.provide(testLayer)),
   );
 

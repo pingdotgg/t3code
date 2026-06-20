@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import {
@@ -97,32 +98,58 @@ function decodeRelativePath(value: string): string | null {
   }
 }
 
-const failAccess = (message: string, cause?: unknown) =>
-  new AssetAccessError({ message, ...(cause === undefined ? {} : { cause }) });
+const optionOnNotFound = <A, R>(
+  effect: Effect.Effect<A, PlatformError.PlatformError, R>,
+): Effect.Effect<Option.Option<A>, PlatformError.PlatformError, R> =>
+  effect.pipe(
+    Effect.map(Option.some),
+    Effect.catchTags({
+      PlatformError: (error) =>
+        error.reason._tag === "NotFound" ? Effect.succeed(Option.none<A>()) : Effect.fail(error),
+    }),
+  );
 
 const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWorkspaceFile")(
   function* (input: { readonly workspaceRoot: string; readonly relativePath: string }) {
     const fileSystem = yield* FileSystem.FileSystem;
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
-    const resolved = yield* workspacePaths
-      .resolveRelativePathWithinRoot(input)
-      .pipe(Effect.orElseSucceed(() => null));
-    if (!resolved) return null;
+    const resolved = yield* workspacePaths.resolveRelativePathWithinRoot(input).pipe(
+      Effect.map(Option.some),
+      Effect.catchTags({
+        WorkspacePathOutsideRootError: () => Effect.succeed(Option.none()),
+      }),
+    );
+    if (Option.isNone(resolved)) return null;
 
     const [canonicalRoot, canonicalFile] = yield* Effect.all([
-      fileSystem.realPath(input.workspaceRoot).pipe(Effect.orElseSucceed(() => null)),
-      fileSystem.realPath(resolved.absolutePath).pipe(Effect.orElseSucceed(() => null)),
+      optionOnNotFound(fileSystem.realPath(input.workspaceRoot)),
+      optionOnNotFound(fileSystem.realPath(resolved.value.absolutePath)),
     ]);
-    if (!canonicalRoot || !canonicalFile) return null;
+    if (Option.isNone(canonicalRoot) || Option.isNone(canonicalFile)) return null;
 
     const path = yield* Path.Path;
-    const relative = path.relative(canonicalRoot, canonicalFile);
+    const relative = path.relative(canonicalRoot.value, canonicalFile.value);
     if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return null;
 
-    const info = yield* fileSystem.stat(canonicalFile).pipe(Effect.orElseSucceed(() => null));
-    return info?.type === "File" ? canonicalFile : null;
+    const info = yield* optionOnNotFound(fileSystem.stat(canonicalFile.value));
+    return Option.isSome(info) && info.value.type === "File" ? canonicalFile.value : null;
   },
 );
+
+const resolveCanonicalWorkspaceFileForRequest = (input: {
+  readonly workspaceRoot: string;
+  readonly relativePath: string;
+}) =>
+  resolveCanonicalWorkspaceFile(input).pipe(
+    Effect.tapError((cause) =>
+      Effect.logError("Failed to resolve canonical asset path.", {
+        workspaceRoot: input.workspaceRoot,
+        relativePath: input.relativePath,
+        cause,
+      }),
+    ),
+    Effect.orElseSucceed(() => null),
+  );
 
 export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (input: {
   readonly resource: AssetResource;
@@ -138,30 +165,60 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   switch (input.resource._tag) {
     case "workspace-file": {
       if (!input.workspaceRoot) {
-        return yield* failAccess("Workspace context was not found.");
+        return yield* new AssetAccessError({ message: "Workspace context was not found." });
       }
-      const workspaceRoot = yield* workspacePaths
-        .normalizeWorkspaceRoot(input.workspaceRoot)
-        .pipe(Effect.mapError((cause) => failAccess(cause.message, cause)));
+      const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(input.workspaceRoot).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AssetAccessError({
+              message: "Failed to normalize the workspace root.",
+              cause,
+            }),
+        ),
+      );
       const relativePath = path.isAbsolute(input.resource.path)
         ? path.relative(workspaceRoot, input.resource.path)
         : input.resource.path;
       const resolved = yield* workspacePaths
         .resolveRelativePathWithinRoot({ workspaceRoot, relativePath })
-        .pipe(Effect.mapError((cause) => failAccess(cause.message, cause)));
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new AssetAccessError({
+                message: "Workspace file path must be relative to the project root.",
+                cause,
+              }),
+          ),
+        );
       if (!isWorkspacePreviewEntryPath(resolved.relativePath)) {
-        return yield* failAccess("Only browser documents and images can be previewed.");
+        return yield* new AssetAccessError({
+          message: "Only browser documents and images can be previewed.",
+        });
       }
       const canonicalFile = yield* resolveCanonicalWorkspaceFile({
         workspaceRoot,
         relativePath: resolved.relativePath,
-      });
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AssetAccessError({
+              message: "Failed to inspect the workspace asset.",
+              cause,
+            }),
+        ),
+      );
       if (!canonicalFile) {
-        return yield* failAccess("Workspace asset was not found.");
+        return yield* new AssetAccessError({ message: "Workspace asset was not found." });
       }
-      const canonicalWorkspaceRoot = yield* fileSystem
-        .realPath(workspaceRoot)
-        .pipe(Effect.mapError((cause) => failAccess("Failed to resolve workspace.", cause)));
+      const canonicalWorkspaceRoot = yield* fileSystem.realPath(workspaceRoot).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AssetAccessError({
+              message: "Failed to resolve workspace.",
+              cause,
+            }),
+        ),
+      );
       claims = isWorkspaceImagePreviewPath(resolved.relativePath)
         ? {
             version: 1,
@@ -187,7 +244,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         attachmentId: input.resource.attachmentId,
       });
       if (!attachmentPath) {
-        return yield* failAccess("Attachment was not found.");
+        return yield* new AssetAccessError({ message: "Attachment was not found." });
       }
       claims = {
         version: 1,
@@ -199,24 +256,44 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       break;
     }
     case "project-favicon": {
-      const workspaceRoot = yield* workspacePaths
-        .normalizeWorkspaceRoot(input.resource.cwd)
-        .pipe(Effect.mapError((cause) => failAccess(cause.message, cause)));
+      const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(input.resource.cwd).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AssetAccessError({
+              message: "Failed to normalize the workspace root.",
+              cause,
+            }),
+        ),
+      );
       const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
       const faviconPath = yield* faviconResolver.resolvePath(workspaceRoot);
       const relativePath = faviconPath ? path.relative(workspaceRoot, faviconPath) : null;
       if (
         relativePath &&
-        !(yield* resolveCanonicalWorkspaceFile({ workspaceRoot, relativePath }))
+        !(yield* resolveCanonicalWorkspaceFile({ workspaceRoot, relativePath }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AssetAccessError({
+                message: "Failed to inspect the project favicon.",
+                cause,
+              }),
+          ),
+        ))
       ) {
-        return yield* failAccess("Project favicon was not found.");
+        return yield* new AssetAccessError({ message: "Project favicon was not found." });
       }
       claims = {
         version: 1,
         kind: "project-favicon",
-        workspaceRoot: yield* fileSystem
-          .realPath(workspaceRoot)
-          .pipe(Effect.mapError((cause) => failAccess("Failed to resolve workspace.", cause))),
+        workspaceRoot: yield* fileSystem.realPath(workspaceRoot).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AssetAccessError({
+                message: "Failed to resolve workspace.",
+                cause,
+              }),
+          ),
+        ),
         relativePath,
         expiresAt,
       };
@@ -226,9 +303,15 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   }
 
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
-  const signingSecret = yield* secretStore
-    .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
-    .pipe(Effect.mapError((cause) => failAccess(cause.message, cause)));
+  const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(
+    Effect.mapError(
+      (cause) =>
+        new AssetAccessError({
+          message: "Failed to load the asset signing key.",
+          cause,
+        }),
+    ),
+  );
   const encodedPayload = base64UrlEncode(encodeAssetClaims(claims));
   const token = `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`;
   return {
@@ -245,9 +328,10 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   if (!encodedPayload || !signature) return null;
 
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
-  const signingSecret = yield* secretStore
-    .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
-    .pipe(Effect.orElseSucceed(() => null));
+  const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(
+    Effect.tapError((cause) => Effect.logError("Failed to load the asset signing key.", { cause })),
+    Effect.orElseSucceed(() => null),
+  );
   if (!signingSecret) return null;
   if (!timingSafeEqualBase64Url(signature, signPayload(encodedPayload, signingSecret))) return null;
 
@@ -262,8 +346,17 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     });
     if (!attachmentPath) return null;
     const fileSystem = yield* FileSystem.FileSystem;
-    const info = yield* fileSystem.stat(attachmentPath).pipe(Effect.orElseSucceed(() => null));
-    return info?.type === "File"
+    const info = yield* optionOnNotFound(fileSystem.stat(attachmentPath)).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to inspect attachment asset.", {
+          attachmentId: claims.attachmentId,
+          path: attachmentPath,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    return Option.isSome(info) && info.value.type === "File"
       ? ({ kind: "file", path: attachmentPath } satisfies ResolvedAsset)
       : null;
   }
@@ -272,7 +365,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     if (claims.relativePath === null) {
       return { kind: "project-favicon-fallback" } satisfies ResolvedAsset;
     }
-    const faviconPath = yield* resolveCanonicalWorkspaceFile({
+    const faviconPath = yield* resolveCanonicalWorkspaceFileForRequest({
       workspaceRoot: claims.workspaceRoot,
       relativePath: claims.relativePath,
     });
@@ -284,7 +377,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   const path = yield* Path.Path;
   if (claims.kind === "workspace-file-exact") {
     if (decodedPath !== path.basename(claims.relativePath)) return null;
-    const exactWorkspaceFile = yield* resolveCanonicalWorkspaceFile({
+    const exactWorkspaceFile = yield* resolveCanonicalWorkspaceFileForRequest({
       workspaceRoot: claims.workspaceRoot,
       relativePath: claims.relativePath,
     });
@@ -303,7 +396,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   }
   const joinedRelativePath =
     claims.baseRelativePath === "." ? decodedPath : path.join(claims.baseRelativePath, decodedPath);
-  const workspaceFile = yield* resolveCanonicalWorkspaceFile({
+  const workspaceFile = yield* resolveCanonicalWorkspaceFileForRequest({
     workspaceRoot: claims.workspaceRoot,
     relativePath: joinedRelativePath,
   });
