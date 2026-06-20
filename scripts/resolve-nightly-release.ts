@@ -29,6 +29,17 @@ const DesktopPackageJsonSchema = Schema.Struct({
   version: Schema.NonEmptyString,
 });
 
+export class InvalidDesktopPackageVersionError extends Schema.TaggedErrorClass<InvalidDesktopPackageVersionError>()(
+  "InvalidDesktopPackageVersionError",
+  {
+    version: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Invalid desktop package version '${this.version}'.`;
+  }
+}
+
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
@@ -42,11 +53,11 @@ export const resolveNightlyTargetVersion = (version: string) => {
   const stableCore = resolveNightlyBaseVersion(version);
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(stableCore);
   if (!match) {
-    throw new Error(`Invalid desktop package version '${version}'.`);
+    return Effect.fail(new InvalidDesktopPackageVersionError({ version }));
   }
 
   const [, major, minor, patch] = match;
-  return `${major}.${minor}.${Number(patch) + 1}`;
+  return Effect.succeed(`${major}.${minor}.${Number(patch) + 1}`);
 };
 
 export const resolveNightlyReleaseMetadata = (
@@ -76,7 +87,7 @@ const readDesktopBaseVersion = Effect.fn("readDesktopBaseVersion")(function* (
   const packageJson = yield* fs
     .readFileString(packageJsonPath)
     .pipe(Effect.flatMap(decodeDesktopPackageJson));
-  return resolveNightlyTargetVersion(packageJson.version);
+  return yield* resolveNightlyTargetVersion(packageJson.version);
 });
 
 const writeOutput = Effect.fn("writeOutput")(function* (

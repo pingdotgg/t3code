@@ -15,6 +15,18 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 const ReleaseChannel = Schema.Literals(["stable", "nightly"]);
 type ReleaseChannel = typeof ReleaseChannel.Type;
 
+export class InvalidReleaseTagError extends Schema.TaggedErrorClass<InvalidReleaseTagError>()(
+  "InvalidReleaseTagError",
+  {
+    channel: ReleaseChannel,
+    currentTag: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Invalid ${this.channel} release tag '${this.currentTag}'.`;
+  }
+}
+
 interface StableVersion {
   readonly major: number;
   readonly minor: number;
@@ -121,41 +133,44 @@ const parseNightlyTag = (tag: string): NightlyVersion | undefined => {
   };
 };
 
-const resolvePreviousReleaseTag = (
+export const resolvePreviousReleaseTag = (
   channel: ReleaseChannel,
   currentTag: string,
   tags: ReadonlyArray<string>,
-): string | undefined => {
-  if (channel === "stable") {
-    const current = parseStableTag(currentTag);
+) =>
+  Effect.gen(function* () {
+    if (channel === "stable") {
+      const current = parseStableTag(currentTag);
+      if (!current) {
+        return yield* new InvalidReleaseTagError({ channel, currentTag });
+      }
+
+      const candidates = tags
+        .map((tag) => ({ tag, parsed: parseStableTag(tag) }))
+        .filter(
+          (entry): entry is { tag: string; parsed: StableVersion } => entry.parsed !== undefined,
+        )
+        .filter((entry) => compareStableVersions(entry.parsed, current) < 0)
+        .toSorted((left, right) => compareStableVersions(right.parsed, left.parsed));
+
+      return candidates[0]?.tag;
+    }
+
+    const current = parseNightlyTag(currentTag);
     if (!current) {
-      throw new Error(`Invalid stable release tag '${currentTag}'.`);
+      return yield* new InvalidReleaseTagError({ channel, currentTag });
     }
 
     const candidates = tags
-      .map((tag) => ({ tag, parsed: parseStableTag(tag) }))
+      .map((tag) => ({ tag, parsed: parseNightlyTag(tag) }))
       .filter(
-        (entry): entry is { tag: string; parsed: StableVersion } => entry.parsed !== undefined,
+        (entry): entry is { tag: string; parsed: NightlyVersion } => entry.parsed !== undefined,
       )
-      .filter((entry) => compareStableVersions(entry.parsed, current) < 0)
-      .toSorted((left, right) => compareStableVersions(right.parsed, left.parsed));
+      .filter((entry) => compareNightlyVersions(entry.parsed, current) < 0)
+      .toSorted((left, right) => compareNightlyVersions(right.parsed, left.parsed));
 
     return candidates[0]?.tag;
-  }
-
-  const current = parseNightlyTag(currentTag);
-  if (!current) {
-    throw new Error(`Invalid nightly release tag '${currentTag}'.`);
-  }
-
-  const candidates = tags
-    .map((tag) => ({ tag, parsed: parseNightlyTag(tag) }))
-    .filter((entry): entry is { tag: string; parsed: NightlyVersion } => entry.parsed !== undefined)
-    .filter((entry) => compareNightlyVersions(entry.parsed, current) < 0)
-    .toSorted((left, right) => compareNightlyVersions(right.parsed, left.parsed));
-
-  return candidates[0]?.tag;
-};
+  });
 
 const listGitTags = Effect.fn("listGitTags")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -205,7 +220,7 @@ const command = Command.make(
   },
   ({ channel, currentTag, githubOutput }) =>
     listGitTags().pipe(
-      Effect.map((tags) => resolvePreviousReleaseTag(channel, currentTag, tags)),
+      Effect.flatMap((tags) => resolvePreviousReleaseTag(channel, currentTag, tags)),
       Effect.flatMap((previousTag) => writeOutput(previousTag, githubOutput)),
     ),
 ).pipe(Command.withDescription("Resolve the previous release tag for a stable or nightly series."));
