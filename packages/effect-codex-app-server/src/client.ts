@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as CodexRpc from "./_generated/meta.gen.ts";
 import * as CodexError from "./errors.ts";
@@ -35,45 +35,46 @@ interface CodexAppServerClientRaw {
   readonly respondError: CodexProtocol.CodexAppServerPatchedProtocol["respondError"];
 }
 
-export interface CodexAppServerClientShape {
-  readonly raw: CodexAppServerClientRaw;
-  readonly request: <M extends CodexRpc.ClientRequestMethod>(
-    method: M,
-    payload: CodexRpc.ClientRequestParamsByMethod[M],
-  ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod[M], CodexError.CodexAppServerError>;
-  readonly notify: <M extends CodexRpc.ClientNotificationMethod>(
-    method: M,
-    payload: CodexRpc.ClientNotificationParamsByMethod[M],
-  ) => Effect.Effect<void, CodexError.CodexAppServerError>;
-  readonly handleServerRequest: <M extends CodexRpc.ServerRequestMethod>(
-    method: M,
-    handler: (
-      payload: CodexRpc.ServerRequestParamsByMethod[M],
-    ) => Effect.Effect<CodexRpc.ServerRequestResponsesByMethod[M], CodexError.CodexAppServerError>,
-  ) => Effect.Effect<void>;
-  readonly handleServerNotification: <M extends CodexRpc.ServerNotificationMethod>(
-    method: M,
-    handler: (
-      payload: CodexRpc.ServerNotificationParamsByMethod[M],
-    ) => Effect.Effect<void, CodexError.CodexAppServerError>,
-  ) => Effect.Effect<void>;
-  readonly handleUnknownServerRequest: (
-    handler: (
-      method: string,
-      params: unknown,
-    ) => Effect.Effect<unknown, CodexError.CodexAppServerError>,
-  ) => Effect.Effect<void>;
-  readonly handleUnknownServerNotification: (
-    handler: (
-      method: string,
-      params: unknown,
-    ) => Effect.Effect<void, CodexError.CodexAppServerError>,
-  ) => Effect.Effect<void>;
-}
-
 export class CodexAppServerClient extends Context.Service<
   CodexAppServerClient,
-  CodexAppServerClientShape
+  {
+    readonly raw: CodexAppServerClientRaw;
+    readonly request: <M extends CodexRpc.ClientRequestMethod>(
+      method: M,
+      payload: CodexRpc.ClientRequestParamsByMethod[M],
+    ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod[M], CodexError.CodexAppServerError>;
+    readonly notify: <M extends CodexRpc.ClientNotificationMethod>(
+      method: M,
+      payload: CodexRpc.ClientNotificationParamsByMethod[M],
+    ) => Effect.Effect<void, CodexError.CodexAppServerError>;
+    readonly handleServerRequest: <M extends CodexRpc.ServerRequestMethod>(
+      method: M,
+      handler: (
+        payload: CodexRpc.ServerRequestParamsByMethod[M],
+      ) => Effect.Effect<
+        CodexRpc.ServerRequestResponsesByMethod[M],
+        CodexError.CodexAppServerError
+      >,
+    ) => Effect.Effect<void>;
+    readonly handleServerNotification: <M extends CodexRpc.ServerNotificationMethod>(
+      method: M,
+      handler: (
+        payload: CodexRpc.ServerNotificationParamsByMethod[M],
+      ) => Effect.Effect<void, CodexError.CodexAppServerError>,
+    ) => Effect.Effect<void>;
+    readonly handleUnknownServerRequest: (
+      handler: (
+        method: string,
+        params: unknown,
+      ) => Effect.Effect<unknown, CodexError.CodexAppServerError>,
+    ) => Effect.Effect<void>;
+    readonly handleUnknownServerNotification: (
+      handler: (
+        method: string,
+        params: unknown,
+      ) => Effect.Effect<void, CodexError.CodexAppServerError>,
+    ) => Effect.Effect<void>;
+  }
 >()("effect-codex-app-server/client/CodexAppServerClient") {}
 
 type ServerRequestHandler = (
@@ -87,7 +88,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
   stdio: Stdio.Stdio,
   options: CodexAppServerClientOptions = {},
   terminationError?: Effect.Effect<CodexError.CodexAppServerError>,
-): Effect.fn.Return<CodexAppServerClientShape, never, Scope.Scope> {
+): Effect.fn.Return<CodexAppServerClient["Service"], never, Scope.Scope> {
   const requestHandlers = new Map<string, ServerRequestHandler>();
   const notificationHandlers = new Map<string, Array<ServerNotificationHandler>>();
   let unknownRequestHandler:
@@ -249,6 +250,11 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
   });
 });
 
+export const layer = (
+  stdio: Stdio.Stdio,
+  options: CodexAppServerClientOptions = {},
+): Layer.Layer<CodexAppServerClient> => Layer.effect(CodexAppServerClient, make(stdio, options));
+
 export const layerChildProcess = (
   handle: ChildProcessSpawner.ChildProcessHandle,
   options: CodexAppServerClientOptions = {},
@@ -261,41 +267,3 @@ const makeChildProcessClient = Effect.fn(
   yield* Stream.runDrain(handle.stderr).pipe(Effect.ignore, Effect.forkScoped);
   return yield* make(makeChildStdio(handle), options, makeTerminationError(handle));
 });
-
-export interface CodexAppServerCommandLayerOptions extends CodexAppServerClientOptions {
-  readonly command: string;
-  readonly args?: ReadonlyArray<string>;
-  readonly cwd?: string;
-  readonly env?: Record<string, string>;
-}
-
-export const layerCommand = (
-  options: CodexAppServerCommandLayerOptions,
-): Layer.Layer<
-  CodexAppServerClient,
-  CodexError.CodexAppServerSpawnError,
-  ChildProcessSpawner.ChildProcessSpawner
-> =>
-  Layer.effect(
-    CodexAppServerClient,
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const command = ChildProcess.make(options.command, [...(options.args ?? [])], {
-        ...(options.cwd ? { cwd: options.cwd } : {}),
-        ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
-        forceKillAfter: DEFAULT_APP_SERVER_FORCE_KILL_AFTER,
-        shell: process.platform === "win32",
-      });
-      return yield* spawner.spawn(command).pipe(
-        Effect.mapError(
-          (cause) =>
-            new CodexError.CodexAppServerSpawnError({
-              command: [options.command, ...(options.args ?? [])].join(" "),
-              cause,
-            }),
-        ),
-      );
-    }).pipe(
-      Effect.flatMap((handle) => makeChildProcessClient(handle, options)),
-    ),
-  );

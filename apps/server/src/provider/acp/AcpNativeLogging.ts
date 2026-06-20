@@ -6,9 +6,9 @@ import * as Effect from "effect/Effect";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
 import type { EventNdjsonLogger } from "../Layers/EventNdjsonLogger.ts";
-import type { AcpSessionRequestLogEvent, AcpSessionRuntimeOptions } from "./AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
-function formatRequestLogPayload(event: AcpSessionRequestLogEvent) {
+function formatRequestLogPayload(event: AcpSessionRuntime.AcpSessionRequestLogEvent) {
   return {
     method: event.method,
     status: event.status,
@@ -24,7 +24,7 @@ export const makeAcpNativeLoggerFactory = Effect.fn("makeAcpNativeLoggerFactory"
     readonly nativeEventLogger: EventNdjsonLogger | undefined;
     readonly provider: ProviderDriverKind;
     readonly threadId: ThreadId;
-  }): Pick<AcpSessionRuntimeOptions, "requestLogger" | "protocolLogging"> => {
+  }): Pick<AcpSessionRuntime.AcpSessionRuntimeOptions, "requestLogger" | "protocolLogging"> => {
     const writeNativeAcpLog = (logInput: {
       readonly kind: "request" | "protocol";
       readonly payload: unknown;
@@ -57,7 +57,7 @@ export const makeAcpNativeLoggerFactory = Effect.fn("makeAcpNativeLoggerFactory"
       );
 
     return {
-      requestLogger: (event: AcpSessionRequestLogEvent) =>
+      requestLogger: (event: AcpSessionRuntime.AcpSessionRequestLogEvent) =>
         writeNativeAcpLog({
           kind: "request",
           payload: formatRequestLogPayload(event),
@@ -72,7 +72,7 @@ export const makeAcpNativeLoggerFactory = Effect.fn("makeAcpNativeLoggerFactory"
                   kind: "protocol",
                   payload: event,
                 }),
-            } satisfies NonNullable<AcpSessionRuntimeOptions["protocolLogging"]>,
+            } satisfies NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["protocolLogging"]>,
           }
         : {}),
     };

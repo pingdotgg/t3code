@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
-import { AcpSessionRuntime, type AcpSessionRequestLogEvent } from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -20,9 +20,9 @@ const mockAgentArgs = [mockAgentPath];
 
 describe("AcpSessionRuntime", () => {
   it.effect("merges custom initialize client capabilities into the ACP handshake", () => {
-    const requestEvents: Array<AcpSessionRequestLogEvent> = [];
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       yield* runtime.start();
 
       const initializeStarted = requestEvents.find(
@@ -64,7 +64,7 @@ describe("AcpSessionRuntime", () => {
 
   it.effect("starts a session, prompts, and emits normalized events against the mock agent", () =>
     Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       const started = yield* runtime.start();
 
       expect(started.initializeResult).toMatchObject({ protocolVersion: 1 });
@@ -115,7 +115,7 @@ describe("AcpSessionRuntime", () => {
 
   it.effect("segments assistant text around ACP tool calls", () =>
     Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       yield* runtime.start();
 
       const promptResult = yield* runtime.prompt({
@@ -176,7 +176,7 @@ describe("AcpSessionRuntime", () => {
 
   it.effect("suppresses generic placeholder tool updates until completion", () =>
     Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       yield* runtime.start();
 
       const promptResult = yield* runtime.prompt({
@@ -213,9 +213,9 @@ describe("AcpSessionRuntime", () => {
   );
 
   it.effect("logs ACP requests from the shared runtime", () => {
-    const requestEvents: Array<AcpSessionRequestLogEvent> = [];
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       yield* runtime.start();
 
       yield* runtime.setModel("composer-2");
@@ -265,9 +265,9 @@ describe("AcpSessionRuntime", () => {
   });
 
   it.effect("skips no-op session config writes when the requested value is already active", () => {
-    const requestEvents: Array<AcpSessionRequestLogEvent> = [];
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       yield* runtime.start();
 
       yield* runtime.setConfigOption("model", "default");
@@ -302,7 +302,7 @@ describe("AcpSessionRuntime", () => {
   it.effect("emits low-level ACP protocol logs for raw and decoded messages", () => {
     const protocolEvents: Array<EffectAcpProtocol.AcpProtocolLogEvent> = [];
     return Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       yield* runtime.start();
 
       yield* runtime.prompt({
@@ -350,7 +350,7 @@ describe("AcpSessionRuntime", () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "acp-runtime-"));
     const requestLogPath = path.join(tempDir, "requests.ndjson");
     return Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       yield* runtime.start();
 
       const error = yield* runtime.setModel("composer-2[fast=false]").pipe(Effect.flip);
