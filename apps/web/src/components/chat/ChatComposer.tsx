@@ -287,7 +287,12 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
                         {option.description}
                       </span>
                     </div>
-                    <CheckIcon className={cn("size-4", isSelected ? "opacity-100" : "opacity-0")} />
+                    <CheckIcon
+                      className={cn(
+                        "size-4 text-blue-400",
+                        isSelected ? "opacity-100" : "opacity-0",
+                      )}
+                    />
                   </div>
                 </SelectItem>
               );
