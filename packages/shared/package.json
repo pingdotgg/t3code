@@ -103,6 +103,10 @@
       "types": "./src/dpopCommon.ts",
       "import": "./src/dpopCommon.ts"
     },
+    "./urlDiagnostics": {
+      "types": "./src/urlDiagnostics.ts",
+      "import": "./src/urlDiagnostics.ts"
+    },
     "./relayAuth": {
       "types": "./src/relayAuth.ts",
       "import": "./src/relayAuth.ts"
