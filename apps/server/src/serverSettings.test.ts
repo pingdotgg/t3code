@@ -33,7 +33,7 @@ const makeServerSettingsLayer = () =>
     ),
   );
 
-const makeFailingSecretStoreLayer = (cause: ServerSecretStore.SecretStoreError) =>
+const makeFailingSecretStoreLayer = (cause: ServerSecretStore.SecretStoreReadError) =>
   Layer.succeed(
     ServerSecretStore.ServerSecretStore,
     ServerSecretStore.ServerSecretStore.of({
@@ -55,7 +55,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       description: "Secret backend unavailable.",
     });
     const cause = new ServerSecretStore.SecretStoreReadError({
-      resource: "provider environment secret",
+      secretName: "provider environment secret",
+      secretPath: "/test/secrets/provider-environment-secret.bin",
       cause: platformCause,
     });
     const configLayer = Layer.fresh(
