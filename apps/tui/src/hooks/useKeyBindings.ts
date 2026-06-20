@@ -131,7 +131,8 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     if (key.ctrl && key.name === "a") return actions.onApprove();
     if (key.ctrl && key.name === "r") return actions.onDecline();
     if (key.ctrl && key.name === "o") return actions.onCycleMode();
-    if (key.name === "return" || key.name === "enter") return actions.onSend();
+    // Enter/Shift+Enter are owned by the reply <textarea> (send / newline); it
+    // drives sending through its onSubmit, so the global handler stays out of it.
     if (key.name === "escape") return actions.onEscape();
   });
 }

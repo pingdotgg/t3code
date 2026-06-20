@@ -53,6 +53,8 @@ export function ChatView({
   // Transient key-driven overlay over the composer (thread actions / delete confirm).
   const [overlay, setOverlay] = React.useState<"none" | "actions" | "confirmDelete">("none");
   const [reply, setReply] = React.useState("");
+  // Bumped to remount (clear) the uncontrolled multiline reply editor.
+  const [composerEpoch, setComposerEpoch] = React.useState(0);
   const [draft, setDraft] = React.useState("");
   const [renameDraft, setRenameDraft] = React.useState("");
   const [projectIndex, setProjectIndex] = React.useState(0);
@@ -86,8 +88,11 @@ export function ChatView({
       : null;
 
   // Deterministic viewport heights. The terminal drawer (when open) and the
-  // composer are both shown, so the top panes shrink to fit both.
-  const composerHeight = focus === "new" ? 6 : 5;
+  // composer are both shown, so the top panes shrink to fit both. The reply editor
+  // grows with its line count (up to a cap) so multiline prompts stay visible.
+  const replyLineCount = Math.min(Math.max(reply.split("\n").length, 1), 8);
+  const composerHeight =
+    focus === "new" ? 6 : focus === "rename" || focus === "filter" ? 5 : replyLineCount + 4;
   const defaultTerminalHeight = Math.floor(height * 0.4);
   const maxTerminalHeight = Math.max(6, height - composerHeight - 6);
   const terminalDrawerHeight = activeTerminal
@@ -121,6 +126,11 @@ export function ChatView({
   const moreAbove = listStart > 0;
   const moreBelow = listStart + listViewport < rows.length;
 
+  const clearReply = () => {
+    setReply("");
+    setComposerEpoch((epoch) => epoch + 1);
+  };
+
   const sendReply = () => {
     const text = reply.trim();
     if (text.length === 0) {
@@ -137,7 +147,7 @@ export function ChatView({
       .sendReply(detail, text)
       .catch((error) => store.setStatus(`send failed: ${String(error)}`));
     store.setStatus("Reply sent.");
-    setReply("");
+    clearReply();
   };
 
   const submitNewThread = () => {
@@ -230,8 +240,16 @@ export function ChatView({
       setProjectIndex((index) => (index > 0 ? index - 1 : Math.max(projects.length - 1, 0))),
     onProjectNext: () => setProjectIndex((index) => (index + 1) % Math.max(projects.length, 1)),
     onSubmitNew: submitNewThread,
-    onNavUp: () => store.moveSelection(-1),
-    onNavDown: () => store.moveSelection(1),
+    // ↑/↓ navigate the sidebar, but yield to the reply editor once it has multiple
+    // lines so the cursor can move vertically within a multiline prompt.
+    onNavUp: () => {
+      if (reply.includes("\n")) return;
+      store.moveSelection(-1);
+    },
+    onNavDown: () => {
+      if (reply.includes("\n")) return;
+      store.moveSelection(1);
+    },
     onScrollUp: () => scrollRef.current?.scrollBy({ x: 0, y: -SCROLL_STEP }),
     onScrollDown: () => scrollRef.current?.scrollBy({ x: 0, y: SCROLL_STEP }),
     onNewThread: () => {
@@ -333,7 +351,7 @@ export function ChatView({
     onSend: sendReply,
     onEscape: () => {
       if (reply.length > 0) {
-        setReply("");
+        clearReply();
         return;
       }
       if (detail) {
@@ -402,7 +420,9 @@ export function ChatView({
           placeholder={placeholder}
           projectName={projects[activeProjectIndex]?.title ?? "(none)"}
           inputFocused={!terminalFocused}
+          composerEpoch={composerEpoch}
           onReplyInput={setReply}
+          onReplySubmit={sendReply}
           onDraftInput={setDraft}
           onAuxInput={focus === "rename" ? setRenameDraft : store.setFilter}
         />

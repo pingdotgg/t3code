@@ -16,7 +16,9 @@ const base = {
   auxValue: "",
   placeholder: "Type a reply, Enter to send",
   projectName: "Acme",
+  composerEpoch: 0,
   onReplyInput: noop,
+  onReplySubmit: noop,
   onDraftInput: noop,
   onAuxInput: noop,
 } as const;
@@ -58,7 +60,7 @@ describe("ChatComposer", () => {
     expect(frame).toContain("Acme");
   });
 
-  it("Given a focused reply input, when text is typed, then onInput drives the value (the onInput fix)", async () => {
+  it("Given a focused multiline reply editor, when text is typed, then it renders the content", async () => {
     function Harness(): React.ReactNode {
       const [reply, setReply] = React.useState("");
       return (
@@ -70,6 +72,64 @@ describe("ChatComposer", () => {
     await t.mockInput.typeText("hello");
     const frame = await t.waitForFrame((f) => f.includes("hello"));
     expect(frame).toContain("hello");
+    t.renderer.destroy();
+  });
+
+  it("Given multiline clipboard text, when pasted, then every line is inserted (no single-line cap) without sending", async () => {
+    let sent = 0;
+    let captured = "";
+    function Harness(): React.ReactNode {
+      const [reply, setReply] = React.useState("");
+      return (
+        <ChatComposer
+          {...base}
+          mode="compose"
+          reply={reply}
+          inputFocused
+          onReplyInput={(value) => {
+            captured = value;
+            setReply(value);
+          }}
+          onReplySubmit={() => {
+            sent += 1;
+          }}
+        />
+      );
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 12 });
+    await t.renderOnce();
+    await t.mockInput.pasteBracketedText("line one\nline two\nline three");
+    const frame = await t.waitForFrame((f) => f.includes("line three"));
+    expect(frame).toContain("line one");
+    expect(frame).toContain("line three");
+    expect(captured).toBe("line one\nline two\nline three");
+    expect(sent).toBe(0);
+    t.renderer.destroy();
+  });
+
+  it("Given a reply, when plain Enter is pressed, then it submits (like the web composer)", async () => {
+    let sent = 0;
+    function Harness(): React.ReactNode {
+      const [reply, setReply] = React.useState("");
+      return (
+        <ChatComposer
+          {...base}
+          mode="compose"
+          reply={reply}
+          inputFocused
+          onReplyInput={setReply}
+          onReplySubmit={() => {
+            sent += 1;
+          }}
+        />
+      );
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 8 });
+    await t.renderOnce();
+    await t.mockInput.typeText("ship it");
+    t.mockInput.pressEnter();
+    await t.waitFor(() => sent > 0);
+    expect(sent).toBe(1);
     t.renderer.destroy();
   });
 });
