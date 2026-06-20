@@ -86,8 +86,8 @@ function makeAgentActivityRows(
 }
 
 function makeEnvironmentLinks(
-  overrides: Partial<EnvironmentLinks.EnvironmentLinksShape> = {},
-): EnvironmentLinks.EnvironmentLinksShape {
+  overrides: Partial<EnvironmentLinks.EnvironmentLinks["Service"]> = {},
+): EnvironmentLinks.EnvironmentLinks["Service"] {
   return {
     upsert: () => Effect.void,
     listUsersForEnvironment: () => Effect.succeed(["dev:julius"]),
@@ -153,7 +153,7 @@ function makeRegistrationReplayLayer(input: {
         Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
         Layer.succeed(LiveActivities.LiveActivities, input.liveActivities),
         Layer.succeed(DeliveryAttempts.DeliveryAttempts, makeDeliveryAttempts()),
-        Layer.succeed(RelayConfiguration.RelayConfiguration, config),
+        RelayConfiguration.layer(config),
         Layer.succeed(ApnsDeliveryQueue.ApnsDeliveryQueueSender, {
           send: (body) =>
             Effect.sync(() => {

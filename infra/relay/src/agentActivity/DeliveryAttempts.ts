@@ -7,7 +7,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 
-import { RelayDb } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { relayDeliveryAttempts } from "../persistence/schema.ts";
 
 export class DeliveryAttemptRecordPersistenceError extends Schema.TaggedErrorClass<DeliveryAttemptRecordPersistenceError>()(
@@ -84,7 +84,7 @@ function insertValues(
 }
 
 const make = Effect.gen(function* () {
-  const db = yield* RelayDb;
+  const db = yield* RelayDb.RelayDb;
   const crypto = yield* Crypto.Crypto;
 
   const isExpiredClaim = (claimedAt: string | null, now: DateTime.DateTime) => {

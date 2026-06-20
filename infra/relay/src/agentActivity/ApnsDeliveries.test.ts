@@ -153,7 +153,7 @@ function makeLayer(input: {
     Parameters<LiveActivities.LiveActivitiesShape["invalidateDeliveryToken"]>[0]
   >;
   readonly currentTargets?: ReadonlyArray<LiveActivities.TargetRow>;
-  readonly config?: RelayConfiguration.RelayConfigurationShape;
+  readonly config?: RelayConfiguration.RelayConfiguration["Service"];
   readonly execute?: (
     request: HttpClientRequest.HttpClientRequest,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse>;
@@ -213,7 +213,7 @@ function makeLayer(input: {
               input.invalidatedTokens?.push(invalidated);
             }),
         }),
-        Layer.succeed(RelayConfiguration.RelayConfiguration, input.config ?? config),
+        RelayConfiguration.layer(input.config ?? config),
         input.execute
           ? Layer.succeed(HttpClient.HttpClient, HttpClient.make(input.execute))
           : FetchHttpClient.layer,

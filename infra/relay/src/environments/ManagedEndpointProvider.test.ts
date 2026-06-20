@@ -204,9 +204,9 @@ function providerLayer(
 ) {
   return ManagedEndpointProvider.layer.pipe(
     Layer.provideMerge(NodeServices.layer),
-    Layer.provide(Layer.succeed(RelayConfiguration.RelayConfiguration, config)),
-    Layer.provide(Layer.succeed(ManagedEndpointProvider.ManagedEndpointTunnelClient, tunnelClient)),
-    Layer.provide(Layer.succeed(ManagedEndpointProvider.ManagedEndpointDnsClient, dnsClient)),
+    Layer.provide(RelayConfiguration.layer(config)),
+    Layer.provide(ManagedEndpointProvider.layerTunnelClient(tunnelClient)),
+    Layer.provide(ManagedEndpointProvider.layerDnsClient(dnsClient)),
     Layer.provide(
       Layer.succeed(ManagedEndpointAllocations.ManagedEndpointAllocations, allocations),
     ),
