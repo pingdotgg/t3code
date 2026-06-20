@@ -10,4 +10,6 @@
 8. `08-precommit-format-and-lint.md`
 9. `09-event-state-test-expansion.md`
 10. `10-unify-process-session-abstraction.md`
-19. `19-thread-lineage-context-transfer.md`
+19. `19-version-control-phase-1-vcs-driver-foundation.md`
+20. `20-version-control-phase-2-source-control-provider-foundation.md`
+21. `21-orchestration-v2-application-integration.md`
