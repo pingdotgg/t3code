@@ -771,16 +771,8 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
         relayPhase: error.phase,
         ...(error.responseStatus === undefined ? {} : { responseStatus: error.responseStatus }),
       })(error),
-    CloudCliCredentialRemovalError: (error) =>
-      failEnvironmentCloudInternalError("remove_cloud_cli_credential")(error),
     CloudCliCredentialRefreshError: (error) =>
       failEnvironmentCloudInternalError("refresh_cloud_cli_credential")(error),
-    CloudCliCredentialReadError: (error) =>
-      failEnvironmentCloudInternalError("read_cloud_cli_credential")(error),
-    CloudCliAuthorizationError: (error) =>
-      failEnvironmentCloudInternalError("authorize_cloud_cli")(error),
-    CloudCliAuthorizationTimeoutError: (error) =>
-      failEnvironmentCloudInternalError("await_cloud_cli_authorization")(error),
   }),
 );
 
