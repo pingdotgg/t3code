@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -10,6 +11,20 @@ const COMPOSER_DRAFTS_SCHEMA_VERSION = 1;
 const COMPOSER_DRAFTS_DIRECTORY = "composer-drafts";
 const COMPOSER_DRAFTS_FILE = "drafts.json";
 const PERSIST_DEBOUNCE_MS = 200;
+
+export class ComposerDraftPersistenceError extends Schema.TaggedErrorClass<ComposerDraftPersistenceError>()(
+  "ComposerDraftPersistenceError",
+  {
+    operation: Schema.Literals(["open", "read", "decode", "encode", "write", "hydrate"]),
+    directory: Schema.String,
+    fileName: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Composer draft persistence operation ${this.operation} failed for ${this.directory}/${this.fileName}.`;
+  }
+}
 
 export interface ComposerDraft {
   readonly text: string;
@@ -56,12 +71,16 @@ async function getComposerDraftsFile() {
 }
 
 async function loadPersistedComposerDrafts(): Promise<Record<string, ComposerDraft>> {
+  let operation: ComposerDraftPersistenceError["operation"] = "open";
   try {
     const file = await getComposerDraftsFile();
     if (!file.exists) {
       return {};
     }
-    const parsed = JSON.parse(await file.text()) as Partial<PersistedComposerDrafts>;
+    operation = "read";
+    const raw = await file.text();
+    operation = "decode";
+    const parsed = JSON.parse(raw) as Partial<PersistedComposerDrafts>;
     if (parsed.schemaVersion !== COMPOSER_DRAFTS_SCHEMA_VERSION || !parsed.drafts) {
       return {};
     }
@@ -75,30 +94,53 @@ async function loadPersistedComposerDrafts(): Promise<Record<string, ComposerDra
         );
       }),
     );
-  } catch {
+  } catch (cause) {
+    console.warn(
+      "[composer-drafts] ignored persisted draft failure",
+      new ComposerDraftPersistenceError({
+        operation,
+        directory: COMPOSER_DRAFTS_DIRECTORY,
+        fileName: COMPOSER_DRAFTS_FILE,
+        cause,
+      }),
+    );
     return {};
   }
 }
 
 async function writePersistedComposerDrafts(drafts: Record<string, ComposerDraft>): Promise<void> {
-  const file = await getComposerDraftsFile();
-  const nonEmptyDrafts = Object.fromEntries(
-    Object.entries(drafts).filter(([, draft]) => !isEmptyDraft(draft)),
-  );
-  const document: PersistedComposerDrafts = {
-    schemaVersion: COMPOSER_DRAFTS_SCHEMA_VERSION,
-    drafts: nonEmptyDrafts,
-  };
-  if (!file.exists) {
-    file.create({ intermediates: true, overwrite: true });
+  let operation: ComposerDraftPersistenceError["operation"] = "open";
+  try {
+    const file = await getComposerDraftsFile();
+    operation = "encode";
+    const nonEmptyDrafts = Object.fromEntries(
+      Object.entries(drafts).filter(([, draft]) => !isEmptyDraft(draft)),
+    );
+    const document: PersistedComposerDrafts = {
+      schemaVersion: COMPOSER_DRAFTS_SCHEMA_VERSION,
+      drafts: nonEmptyDrafts,
+    };
+    const encoded = JSON.stringify(document);
+    operation = "write";
+    if (!file.exists) {
+      file.create({ intermediates: true, overwrite: true });
+    }
+    file.write(encoded);
+  } catch (cause) {
+    throw new ComposerDraftPersistenceError({
+      operation,
+      directory: COMPOSER_DRAFTS_DIRECTORY,
+      fileName: COMPOSER_DRAFTS_FILE,
+      cause,
+    });
   }
-  file.write(JSON.stringify(document));
 }
 
 async function savePersistedComposerDrafts(drafts: Record<string, ComposerDraft>): Promise<void> {
   try {
     await writePersistedComposerDrafts(drafts);
-  } catch {
+  } catch (error) {
+    console.warn("[composer-drafts] failed to persist drafts", error);
     // Draft persistence is best-effort; in-memory drafts still keep working.
   }
 }
@@ -128,7 +170,16 @@ export function ensureComposerDraftsLoaded(): void {
         ...current,
       });
     })
-    .catch(() => {
+    .catch((cause) => {
+      console.warn(
+        "[composer-drafts] failed to hydrate drafts",
+        new ComposerDraftPersistenceError({
+          operation: "hydrate",
+          directory: COMPOSER_DRAFTS_DIRECTORY,
+          fileName: COMPOSER_DRAFTS_FILE,
+          cause,
+        }),
+      );
       // Draft loading is best-effort; in-memory drafts still keep working.
     });
 }
