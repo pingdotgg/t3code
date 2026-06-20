@@ -22,23 +22,34 @@ describe("advertised endpoints", () => {
     );
   });
 
-  it("preserves URL parser failures with their input", () => {
+  it("preserves URL parser failures without retaining their raw input", () => {
     const input = "not a URL";
     const error = captureError(() => normalizeHttpBaseUrl(input));
 
     expect(error).toBeInstanceOf(AdvertisedEndpointUrlParseError);
-    expect(error).toMatchObject({ input });
+    expect(error).toMatchObject({ inputLength: input.length });
+    expect(error).not.toHaveProperty("input");
     expect((error as AdvertisedEndpointUrlParseError).cause).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe(`Invalid advertised endpoint URL: ${input}`);
+    expect((error as Error).message).toBe("Invalid advertised endpoint URL.");
   });
 
   it("reports unsupported protocols without inventing a cause", () => {
-    const input = "ftp://relay.example.com/path";
+    const input =
+      "ftp://endpoint-user:endpoint-password@relay.example.com/private/path?token=secret#fragment";
     const error = captureError(() => normalizeHttpBaseUrl(input));
 
     expect(error).toBeInstanceOf(AdvertisedEndpointProtocolError);
-    expect(error).toMatchObject({ input, protocol: "ftp:" });
+    expect(error).toMatchObject({
+      inputLength: input.length,
+      inputProtocol: "ftp:",
+      inputHostname: "relay.example.com",
+      protocol: "ftp:",
+    });
+    expect(error).not.toHaveProperty("input");
     expect((error as Error & { cause?: unknown }).cause).toBeUndefined();
     expect((error as Error).message).toBe("Endpoint must use HTTP or HTTPS. Received ftp:");
+    expect((error as Error).message).not.toContain("endpoint-password");
+    expect((error as Error).message).not.toContain("/private/path");
+    expect((error as Error).message).not.toContain("token=secret");
   });
 });
