@@ -3377,12 +3377,17 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         Effect.map((error) => error.message),
       );
 
-      expect(errorMessage).toContain("hook: fail");
+      expect(errorMessage).toContain("Git command failed in GitVcsDriver.commit.commit");
+      expect(errorMessage).not.toContain("hook: fail");
       expect(events).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             kind: "hook_started",
             hookName: "pre-commit",
+          }),
+          expect.objectContaining({
+            kind: "hook_output",
+            text: "hook: fail",
           }),
           expect.objectContaining({
             kind: "action_failed",
