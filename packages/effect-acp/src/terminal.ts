@@ -23,23 +23,3 @@ export interface AcpTerminal {
    */
   readonly release: Effect.Effect<AcpSchema.ReleaseTerminalResponse, AcpError.AcpError>;
 }
-
-export interface MakeTerminalOptions {
-  readonly sessionId: string;
-  readonly terminalId: string;
-  readonly output: Effect.Effect<AcpSchema.TerminalOutputResponse, AcpError.AcpError>;
-  readonly waitForExit: Effect.Effect<AcpSchema.WaitForTerminalExitResponse, AcpError.AcpError>;
-  readonly kill: Effect.Effect<AcpSchema.KillTerminalResponse, AcpError.AcpError>;
-  readonly release: Effect.Effect<AcpSchema.ReleaseTerminalResponse, AcpError.AcpError>;
-}
-
-export function makeTerminal(options: MakeTerminalOptions): AcpTerminal {
-  return {
-    sessionId: options.sessionId,
-    terminalId: options.terminalId,
-    output: options.output,
-    waitForExit: options.waitForExit,
-    kill: options.kill,
-    release: options.release,
-  };
-}

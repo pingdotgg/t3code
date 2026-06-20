@@ -288,12 +288,12 @@ export const make = Effect.fn("effect-acp/AcpAgent.make")(function* (
         notification.method === AGENT_METHODS.session_cancel
       ) {
         return decodeCancelNotification(notification.params).pipe(
-          Effect.mapError(
-            (error) =>
-              new AcpError.AcpProtocolParseError({
-                detail: `Invalid ${AGENT_METHODS.session_cancel} notification payload`,
-                cause: error,
-              }),
+          Effect.mapError((error) =>
+            AcpError.AcpProtocolParseError.fromSchemaError(
+              "decode-notification-payload",
+              AGENT_METHODS.session_cancel,
+              error,
+            ),
           ),
           Effect.flatMap((decoded) =>
             Effect.forEach(cancelHandlers, (handler) => handler(decoded), { discard: true }),
@@ -376,41 +376,55 @@ export const make = Effect.fn("effect-acp/AcpAgent.make")(function* (
     },
     client: {
       requestPermission: (payload) =>
-        callRpc(rpc[CLIENT_METHODS.session_request_permission](payload)),
-      elicit: (payload) => callRpc(rpc[CLIENT_METHODS.session_elicitation](payload)),
-      readTextFile: (payload) => callRpc(rpc[CLIENT_METHODS.fs_read_text_file](payload)),
-      writeTextFile: (payload) => callRpc(rpc[CLIENT_METHODS.fs_write_text_file](payload)),
+        callRpc(
+          CLIENT_METHODS.session_request_permission,
+          rpc[CLIENT_METHODS.session_request_permission](payload),
+        ),
+      elicit: (payload) =>
+        callRpc(
+          CLIENT_METHODS.session_elicitation,
+          rpc[CLIENT_METHODS.session_elicitation](payload),
+        ),
+      readTextFile: (payload) =>
+        callRpc(CLIENT_METHODS.fs_read_text_file, rpc[CLIENT_METHODS.fs_read_text_file](payload)),
+      writeTextFile: (payload) =>
+        callRpc(CLIENT_METHODS.fs_write_text_file, rpc[CLIENT_METHODS.fs_write_text_file](payload)),
       createTerminal: (payload) =>
-        callRpc(rpc[CLIENT_METHODS.terminal_create](payload)).pipe(
-          Effect.map((response) =>
-            AcpTerminal.makeTerminal({
-              sessionId: payload.sessionId,
-              terminalId: response.terminalId,
-              output: callRpc(
-                rpc[CLIENT_METHODS.terminal_output]({
-                  sessionId: payload.sessionId,
-                  terminalId: response.terminalId,
-                }),
-              ),
-              waitForExit: callRpc(
-                rpc[CLIENT_METHODS.terminal_wait_for_exit]({
-                  sessionId: payload.sessionId,
-                  terminalId: response.terminalId,
-                }),
-              ),
-              kill: callRpc(
-                rpc[CLIENT_METHODS.terminal_kill]({
-                  sessionId: payload.sessionId,
-                  terminalId: response.terminalId,
-                }),
-              ),
-              release: callRpc(
-                rpc[CLIENT_METHODS.terminal_release]({
-                  sessionId: payload.sessionId,
-                  terminalId: response.terminalId,
-                }),
-              ),
-            }),
+        callRpc(CLIENT_METHODS.terminal_create, rpc[CLIENT_METHODS.terminal_create](payload)).pipe(
+          Effect.map(
+            (response) =>
+              ({
+                sessionId: payload.sessionId,
+                terminalId: response.terminalId,
+                output: callRpc(
+                  CLIENT_METHODS.terminal_output,
+                  rpc[CLIENT_METHODS.terminal_output]({
+                    sessionId: payload.sessionId,
+                    terminalId: response.terminalId,
+                  }),
+                ),
+                waitForExit: callRpc(
+                  CLIENT_METHODS.terminal_wait_for_exit,
+                  rpc[CLIENT_METHODS.terminal_wait_for_exit]({
+                    sessionId: payload.sessionId,
+                    terminalId: response.terminalId,
+                  }),
+                ),
+                kill: callRpc(
+                  CLIENT_METHODS.terminal_kill,
+                  rpc[CLIENT_METHODS.terminal_kill]({
+                    sessionId: payload.sessionId,
+                    terminalId: response.terminalId,
+                  }),
+                ),
+                release: callRpc(
+                  CLIENT_METHODS.terminal_release,
+                  rpc[CLIENT_METHODS.terminal_release]({
+                    sessionId: payload.sessionId,
+                    terminalId: response.terminalId,
+                  }),
+                ),
+              }) satisfies AcpTerminal.AcpTerminal,
           ),
         ),
       sessionUpdate: (payload) => transport.notify(CLIENT_METHODS.session_update, payload),

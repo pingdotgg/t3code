@@ -17,7 +17,6 @@ import * as AcpSchema from "./_generated/schema.gen.ts";
 import { CLIENT_METHODS } from "./_generated/meta.gen.ts";
 import * as AcpError from "./errors.ts";
 const isAcpError = Schema.is(AcpError.AcpError);
-const isAcpRequestError = Schema.is(AcpError.AcpRequestError);
 
 export interface AcpProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -114,7 +113,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       try: () => parser.encode(message),
       catch: (cause) =>
         new AcpError.AcpProtocolParseError({
-          detail: "Failed to encode ACP message",
+          operation: "encode-message",
           cause,
         }),
     });
@@ -184,7 +183,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       _tag: "ClientProtocolError",
       error: new RpcClientError.RpcClientError({
         reason: new RpcClientError.RpcClientDefect({
-          message: error.message,
+          message: "ACP protocol terminated.",
           cause: error,
         }),
       }),
@@ -243,7 +242,11 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     }
     return options.onExtRequest(message.tag, message.payload).pipe(
       Effect.matchEffect({
-        onFailure: (error) => respondWithError(message.id, normalizeToRequestError(error)),
+        onFailure: (error) =>
+          respondWithError(
+            message.id,
+            AcpError.AcpRequestError.fromExtensionHandlerError(error, message.tag),
+          ),
         onSuccess: (value) => respondWithSuccess(message.id, value),
       }),
     );
@@ -261,12 +264,12 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
                 params,
               }) satisfies AcpIncomingNotification,
           ),
-          Effect.mapError(
-            (cause) =>
-              new AcpError.AcpProtocolParseError({
-                detail: `Invalid ${CLIENT_METHODS.session_update} notification payload`,
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            AcpError.AcpProtocolParseError.fromSchemaError(
+              "decode-notification-payload",
+              CLIENT_METHODS.session_update,
+              cause,
+            ),
           ),
           Effect.flatMap(dispatchNotification),
         );
@@ -281,12 +284,12 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
                 params,
               }) satisfies AcpIncomingNotification,
           ),
-          Effect.mapError(
-            (cause) =>
-              new AcpError.AcpProtocolParseError({
-                detail: `Invalid ${CLIENT_METHODS.session_elicitation_complete} notification payload`,
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            AcpError.AcpProtocolParseError.fromSchemaError(
+              "decode-notification-payload",
+              CLIENT_METHODS.session_elicitation_complete,
+              cause,
+            ),
           ),
           Effect.flatMap(dispatchNotification),
         );
@@ -379,7 +382,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
               >,
             catch: (cause) =>
               new AcpError.AcpProtocolParseError({
-                detail: "Failed to decode ACP wire message",
+                operation: "decode-wire-message",
                 cause,
               }),
           }),
@@ -396,8 +399,13 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
             direction: "incoming",
             stage: "decode_failed",
             payload: {
-              detail: error.detail,
-              cause: error.cause,
+              operation: error.operation,
+              ...(error.method === undefined ? {} : { method: error.method }),
+              ...(error.issueCount === undefined ? {} : { issueCount: error.issueCount }),
+              ...(error.issueKinds === undefined ? {} : { issueKinds: error.issueKinds }),
+              ...(error.maximumPathDepth === undefined
+                ? {}
+                : { maximumPathDepth: error.maximumPathDepth }),
             },
           }),
         ),
@@ -413,7 +421,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         const normalized: AcpError.AcpError = isAcpError(error)
           ? error
           : new AcpError.AcpTransportError({
-              detail: error instanceof Error ? error.message : String(error),
+              operation: "read-input-stream",
               cause: error,
             });
         return handleTermination(() => Effect.succeed(normalized));
@@ -421,13 +429,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       onSuccess: () =>
         handleTermination(
           () =>
-            options.terminationError ??
-            Effect.succeed(
-              new AcpError.AcpTransportError({
-                detail: "ACP input stream ended",
-                cause: new Error("ACP input stream ended"),
-              }),
-            ),
+            options.terminationError ?? Effect.succeed(new AcpError.AcpInputStreamEndedError({})),
         ),
     }),
     Effect.forkScoped,
@@ -441,7 +443,18 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         Stream.runForEach((message) => f(message)),
         Effect.forever,
       ),
-    send: (_clientId, request) => offerOutgoing(request).pipe(Effect.mapError(toRpcClientError)),
+    send: (_clientId, request) =>
+      offerOutgoing(request).pipe(
+        Effect.mapError(
+          (error) =>
+            new RpcClientError.RpcClientError({
+              reason: new RpcClientError.RpcClientDefect({
+                message: "Failed to send ACP protocol message.",
+                cause: error,
+              }),
+            }),
+        ),
+      ),
     supportsAck: true,
     supportsTransferables: false,
   });
@@ -520,17 +533,4 @@ function isProtocolError(
     "message" in value &&
     typeof value.message === "string"
   );
-}
-
-function normalizeToRequestError(error: AcpError.AcpError): AcpError.AcpRequestError {
-  return isAcpRequestError(error) ? error : AcpError.AcpRequestError.internalError(error.message);
-}
-
-function toRpcClientError(error: AcpError.AcpError): RpcClientError.RpcClientError {
-  return new RpcClientError.RpcClientError({
-    reason: new RpcClientError.RpcClientDefect({
-      message: error.message,
-      cause: error,
-    }),
-  });
 }

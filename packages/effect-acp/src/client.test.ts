@@ -147,7 +147,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
   );
 
   it.effect(
-    "returns formatted invalid params when a typed extension request payload is wrong",
+    "returns structured invalid params without exposing values from typed extension request payloads",
     () =>
       Effect.gen(function* () {
         const handle = yield* makeHandle({ ACP_MOCK_BAD_TYPED_REQUEST: "1" });
@@ -213,8 +213,8 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           assert.fail("Expected prompt to fail for invalid typed extension payload");
         }
         const rendered = Cause.pretty(result.cause);
-        assert.include(rendered, "Invalid x/typed_request payload:");
-        assert.include(rendered, "Expected string, got 123");
+        assert.include(rendered, "Invalid payload for ACP extension method 'x/typed_request'.");
+        assert.notInclude(rendered, "Expected string, got 123");
       }),
   );
 
