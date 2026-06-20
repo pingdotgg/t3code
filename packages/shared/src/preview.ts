@@ -4,6 +4,8 @@
  * on what counts as "loopback" and how to normalise a free-form URL string.
  */
 
+import * as Schema from "effect/Schema";
+
 const TAB_ID_PREFIX = "tab_";
 let nextPreviewTabSequence = 0;
 
@@ -45,15 +47,25 @@ export function isPreviewableUrl(rawUrl: string): boolean {
   }
 }
 
-export class PreviewUrlNormalizationError extends Error {
-  readonly rawUrl: string;
-  readonly detail: string;
-  constructor(rawUrl: string, detail: string) {
-    super(`Invalid preview URL: ${rawUrl} (${detail})`);
-    this.name = "PreviewUrlNormalizationError";
-    this.rawUrl = rawUrl;
-    this.detail = detail;
+export class PreviewUrlNormalizationError extends Schema.TaggedErrorClass<PreviewUrlNormalizationError>()(
+  "PreviewUrlNormalizationError",
+  {
+    inputLength: Schema.Number,
+    reason: Schema.Literals(["empty", "parse", "unsupported-protocol"]),
+    protocol: Schema.optional(Schema.String),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    const protocol = this.protocol === undefined ? "" : `: ${this.protocol}`;
+    return `Invalid preview URL (${this.reason}${protocol}; input length ${this.inputLength}).`;
   }
+}
+
+export const isPreviewUrlNormalizationError = Schema.is(PreviewUrlNormalizationError);
+
+function previewUrlProtocol(rawUrl: string): string | undefined {
+  return /^([A-Za-z][A-Za-z\d+.-]*):/.exec(rawUrl)?.[1]?.toLowerCase().concat(":");
 }
 
 /**
@@ -69,7 +81,7 @@ export class PreviewUrlNormalizationError extends Error {
 export function normalizePreviewUrl(rawUrl: string): string {
   const trimmed = rawUrl.trim();
   if (trimmed.length === 0) {
-    throw new PreviewUrlNormalizationError(rawUrl, "empty");
+    throw new PreviewUrlNormalizationError({ inputLength: rawUrl.length, reason: "empty" });
   }
   const useHttp = LOOPBACK_PREFIX_PATTERN.test(trimmed);
   const candidate = trimmed.includes("://")
@@ -79,13 +91,19 @@ export function normalizePreviewUrl(rawUrl: string): string {
   try {
     parsed = new URL(candidate);
   } catch (cause) {
-    throw new PreviewUrlNormalizationError(
-      rawUrl,
-      cause instanceof Error ? cause.message : "unparseable",
-    );
+    throw new PreviewUrlNormalizationError({
+      inputLength: rawUrl.length,
+      reason: "parse",
+      protocol: previewUrlProtocol(candidate),
+      cause,
+    });
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new PreviewUrlNormalizationError(rawUrl, `unsupported protocol ${parsed.protocol}`);
+    throw new PreviewUrlNormalizationError({
+      inputLength: rawUrl.length,
+      reason: "unsupported-protocol",
+      protocol: parsed.protocol,
+    });
   }
   return parsed.href;
 }
