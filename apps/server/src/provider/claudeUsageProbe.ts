@@ -2,7 +2,7 @@ import type { ServerProviderUsageLimits } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import type { PtyAdapterShape, PtyProcess } from "../terminal/Services/PTY.ts";
+import * as PtyAdapter from "../terminal/PtyAdapter.ts";
 import { makeUnavailableUsageLimits, makeUsageLimitsSnapshot } from "./providerUsageLimits.ts";
 
 const CLAUDE_USAGE_PROBE_TIMEOUT_MS = 4_000;
@@ -323,7 +323,7 @@ function splitLaunchArgs(launchArgs?: string): string[] {
 }
 
 function runProbeLoop(
-  child: PtyProcess,
+  child: PtyAdapter.PtyProcess,
   input: ClaudeUsageProbeInput,
   clock: ProbeClock,
 ): Promise<ClaudeUsageProbeResult> {
@@ -415,7 +415,7 @@ function runProbeLoop(
 
 export function probeClaudeUsageLimits(
   input: ClaudeUsageProbeInput,
-  ptyAdapter: PtyAdapterShape,
+  ptyAdapter: PtyAdapter.PtyAdapter["Service"],
   clock: ProbeClock = defaultClock,
 ): Effect.Effect<ClaudeUsageProbeResult> {
   const probeArgs = [...splitLaunchArgs(input.launchArgs), "--permission-mode", "plan"];
@@ -430,7 +430,7 @@ export function probeClaudeUsageLimits(
         rows: 40,
         env: input.environment ?? process.env,
       })
-      .pipe(Effect.orElseSucceed(() => null as PtyProcess | null));
+      .pipe(Effect.orElseSucceed(() => null as PtyAdapter.PtyProcess | null));
 
     if (!child) {
       return {

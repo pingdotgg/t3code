@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import * as Effect from "effect/Effect";
 
-import { PtySpawnError } from "../terminal/Services/PTY.ts";
-import type { PtySpawnInput } from "../terminal/Services/PTY.ts";
-import type { PtyAdapterShape, PtyProcess } from "../terminal/Services/PTY.ts";
+import * as PtyAdapter from "../terminal/PtyAdapter.ts";
 
 import {
   parseClaudeRuntimeUsageLimits,
@@ -13,7 +11,7 @@ import {
   type ProbeClock,
 } from "./claudeUsageProbe.ts";
 
-class MockPtyChild implements PtyProcess {
+class MockPtyChild implements PtyAdapter.PtyProcess {
   public readonly writes: string[] = [];
   public readonly kill = vi.fn();
 
@@ -63,7 +61,7 @@ class MockPtyChild implements PtyProcess {
   }
 }
 
-function makeMockPtyAdapter(child: MockPtyChild): PtyAdapterShape {
+function makeMockPtyAdapter(child: MockPtyChild): PtyAdapter.PtyAdapter["Service"] {
   return {
     spawn: () => Effect.succeed(child),
   };
@@ -71,8 +69,8 @@ function makeMockPtyAdapter(child: MockPtyChild): PtyAdapterShape {
 
 function makeCapturingPtyAdapter(input: {
   readonly child: MockPtyChild;
-  readonly onSpawn: (spawnInput: PtySpawnInput) => void;
-}): PtyAdapterShape {
+  readonly onSpawn: (spawnInput: PtyAdapter.PtySpawnInput) => void;
+}): PtyAdapter.PtyAdapter["Service"] {
   return {
     spawn: (spawnInput) => {
       input.onSpawn(spawnInput);
@@ -405,12 +403,12 @@ describe("claudeUsageProbe", () => {
   });
 
   it("returns unavailable result when spawn fails", async () => {
-    const failingAdapter: PtyAdapterShape = {
+    const failingAdapter: PtyAdapter.PtyAdapter["Service"] = {
       spawn: () =>
         Effect.fail(
-          new PtySpawnError({
+          new PtyAdapter.PtySpawnError({
             adapter: "mock",
-            message: "spawn failed",
+            cause: new Error("spawn failed"),
           }),
         ),
     };
@@ -433,7 +431,7 @@ describe("claudeUsageProbe", () => {
 
   it("preserves quoted launch arguments when spawning the probe process", async () => {
     const child = new MockPtyChild();
-    let capturedSpawnInput: PtySpawnInput | undefined;
+    let capturedSpawnInput: PtyAdapter.PtySpawnInput | undefined;
     const ptyAdapter = makeCapturingPtyAdapter({
       child,
       onSpawn: (spawnInput) => {

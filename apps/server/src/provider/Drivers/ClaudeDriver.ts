@@ -55,7 +55,7 @@ import {
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
 import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
-import { PtyAdapter } from "../../terminal/Services/PTY.ts";
+import { PtyAdapter } from "../../terminal/PtyAdapter.ts";
 
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 

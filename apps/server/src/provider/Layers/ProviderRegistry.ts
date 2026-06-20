@@ -393,36 +393,27 @@ export const ProviderRegistryLive = Layer.effect(
       instanceId: ProviderInstanceId,
       usageLimits: ServerProviderUsageLimits,
     ) {
-      const [_previousProviders, nextProviders, patchedProvider] = yield* Ref.modify(
-        providersRef,
-        (previousProviders) => {
-          let nextPatchedProvider: ServerProvider | undefined;
-          const nextProviders = previousProviders.map((provider) => {
-            if (provider.instanceId !== instanceId || !provider.enabled) {
-              return provider;
-            }
-            if (Equal.equals(provider.usageLimits, usageLimits)) {
-              return provider;
-            }
-            nextPatchedProvider = { ...provider, usageLimits };
-            return nextPatchedProvider;
-          });
+      const previousProviders = yield* Ref.get(providersRef);
+      let patchedProvider: ServerProvider | undefined;
+      const nextProviders = previousProviders.map((provider) => {
+        if (provider.instanceId !== instanceId || !provider.enabled) {
+          return provider;
+        }
+        if (Equal.equals(provider.usageLimits, usageLimits)) {
+          return provider;
+        }
+        patchedProvider = { ...provider, usageLimits };
+        return patchedProvider;
+      });
 
-          if (
-            nextPatchedProvider === undefined ||
-            !haveProvidersChanged(previousProviders, nextProviders)
-          ) {
-            return [[previousProviders, previousProviders, undefined] as const, previousProviders];
-          }
-
-          return [[previousProviders, nextProviders, nextPatchedProvider] as const, nextProviders];
-        },
-      );
-
-      if (patchedProvider === undefined) {
+      if (
+        patchedProvider === undefined ||
+        !haveProvidersChanged(previousProviders, nextProviders)
+      ) {
         return;
       }
 
+      yield* Ref.set(providersRef, nextProviders);
       yield* persistProvider(patchedProvider);
       yield* PubSub.publish(changesPubSub, nextProviders);
     });
