@@ -2,10 +2,42 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
 
 const SAFE_EXTERNAL_PROTOCOLS = new Set(["http:", "https:"]);
+
+export class ElectronShellOpenExternalError extends Schema.TaggedErrorClass<ElectronShellOpenExternalError>()(
+  "ElectronShellOpenExternalError",
+  {
+    externalUrl: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to open external URL ${this.externalUrl}.`;
+  }
+}
+
+export class ElectronShellCopyTextError extends Schema.TaggedErrorClass<ElectronShellCopyTextError>()(
+  "ElectronShellCopyTextError",
+  {
+    textLength: Schema.Number,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to copy ${this.textLength} characters to the clipboard.`;
+  }
+}
+
+export const ElectronShellError = Schema.Union([
+  ElectronShellOpenExternalError,
+  ElectronShellCopyTextError,
+]);
+export type ElectronShellError = typeof ElectronShellError.Type;
+export const isElectronShellError = Schema.is(ElectronShellError);
 
 export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
   if (typeof rawUrl !== "string") {
@@ -23,8 +55,10 @@ export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
 export class ElectronShell extends Context.Service<
   ElectronShell,
   {
-    readonly openExternal: (rawUrl: unknown) => Effect.Effect<boolean>;
-    readonly copyText: (text: string) => Effect.Effect<void>;
+    readonly openExternal: (
+      rawUrl: unknown,
+    ) => Effect.Effect<boolean, ElectronShellOpenExternalError>;
+    readonly copyText: (text: string) => Effect.Effect<void, ElectronShellCopyTextError>;
   }
 >()("@t3tools/desktop/electron/ElectronShell") {}
 
@@ -33,16 +67,15 @@ export const make = ElectronShell.of({
     Option.match(parseSafeExternalUrl(rawUrl), {
       onNone: () => Effect.succeed(false),
       onSome: (externalUrl) =>
-        Effect.promise(() =>
-          Electron.shell.openExternal(externalUrl).then(
-            () => true,
-            () => false,
-          ),
-        ),
+        Effect.tryPromise({
+          try: () => Electron.shell.openExternal(externalUrl),
+          catch: (cause) => new ElectronShellOpenExternalError({ externalUrl, cause }),
+        }).pipe(Effect.as(true)),
     }),
   copyText: (text) =>
-    Effect.sync(() => {
-      Electron.clipboard.writeText(text);
+    Effect.try({
+      try: () => Electron.clipboard.writeText(text),
+      catch: (cause) => new ElectronShellCopyTextError({ textLength: text.length, cause }),
     }),
 });
 
