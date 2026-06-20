@@ -107,6 +107,8 @@ export default defineConfig({
       ],
       "t3code/no-global-process-runtime": "error",
       "t3code/no-inline-schema-compile": "warn",
+      "t3code/no-manual-effect-runtime-in-tests": "error",
+      "t3code/namespace-node-imports": "error",
     },
     options: {
       // Revisit once Oxlint's tsgolint path can integrate with @effect/tsgo diagnostics.

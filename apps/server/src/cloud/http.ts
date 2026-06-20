@@ -1,4 +1,4 @@
-import { createPublicKey } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import {
   AuthRelayReadScope,
   AuthRelayWriteScope,
@@ -152,7 +152,7 @@ function validateCloudMintPublicKey(
   publicKey: string,
 ): Effect.Effect<void, EnvironmentHttpBadRequestError> {
   return Effect.try({
-    try: () => createPublicKey(publicKey.replace(/\\n/g, "\n")),
+    try: () => NodeCrypto.createPublicKey(publicKey.replace(/\\n/g, "\n")),
     catch: () =>
       new EnvironmentHttpBadRequestError({
         message: "Cloud mint public key must be a valid Ed25519 public key.",

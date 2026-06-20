@@ -1,7 +1,7 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { generateKeyPairSync, type KeyObject, sign } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 
 import {
   AuthAccessTokenType,
@@ -950,14 +950,14 @@ const makeDpopProof = (input: {
   readonly iat: number;
   readonly accessToken?: string;
   readonly jti?: string;
-  readonly privateKey?: KeyObject;
+  readonly privateKey?: NodeCrypto.KeyObject;
   readonly publicJwk?: DpopPublicJwk;
 }) => {
   const keyPair =
     input.privateKey && input.publicJwk
       ? { privateKey: input.privateKey, publicJwk: input.publicJwk }
       : (() => {
-          const { privateKey, publicKey } = generateKeyPairSync("ec", {
+          const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync("ec", {
             namedCurve: "P-256",
           });
           return { privateKey, publicJwk: publicKey.export({ format: "jwk" }) as DpopPublicJwk };
@@ -978,7 +978,7 @@ const makeDpopProof = (input: {
       ...(input.accessToken ? { ath: computeDpopAccessTokenHash(input.accessToken) } : {}),
     }),
   ).toString("base64url");
-  const signature = sign("sha256", Buffer.from(`${header}.${payload}`), {
+  const signature = NodeCrypto.sign("sha256", Buffer.from(`${header}.${payload}`), {
     key: keyPair.privateKey,
     dsaEncoding: "ieee-p1363",
   }).toString("base64url");
@@ -1024,7 +1024,7 @@ const makeCloudMintCredentialRequest = (input: {
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signingInput = `${header}.${encodedPayload}`;
   return {
-    proof: `${signingInput}.${sign(null, Buffer.from(signingInput), input.privateKey).toString("base64url")}`,
+    proof: `${signingInput}.${NodeCrypto.sign(null, Buffer.from(signingInput), input.privateKey).toString("base64url")}`,
   };
 };
 
@@ -1057,7 +1057,7 @@ const makeCloudEnvironmentHealthRequest = (input: {
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signingInput = `${header}.${encodedPayload}`;
   return {
-    proof: `${signingInput}.${sign(null, Buffer.from(signingInput), input.privateKey).toString("base64url")}`,
+    proof: `${signingInput}.${NodeCrypto.sign(null, Buffer.from(signingInput), input.privateKey).toString("base64url")}`,
   };
 };
 
@@ -2054,7 +2054,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2131,7 +2131,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2174,7 +2174,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2268,7 +2268,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2345,7 +2345,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2404,7 +2404,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2463,7 +2463,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2523,7 +2523,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2584,7 +2584,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       Effect.gen(function* () {
         yield* buildAppUnderTest();
 
-        const cloudKeyPair = generateKeyPairSync("ed25519", {
+        const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
           privateKeyEncoding: { format: "pem", type: "pkcs8" },
           publicKeyEncoding: { format: "pem", type: "spki" },
         });
@@ -2664,7 +2664,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2733,7 +2733,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2800,7 +2800,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2851,7 +2851,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2902,7 +2902,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -2967,7 +2967,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -3017,7 +3017,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const cloudKeyPair = generateKeyPairSync("ed25519", {
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });

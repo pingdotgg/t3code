@@ -1,4 +1,4 @@
-import { createRequire } from "node:module";
+import * as NodeModule from "node:module";
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -11,7 +11,7 @@ import * as PtyAdapter from "./PtyAdapter.ts";
 let didEnsureSpawnHelperExecutable = false;
 
 const resolveNodePtySpawnHelperPath = Effect.gen(function* () {
-  const requireForNodePty = createRequire(import.meta.url);
+  const requireForNodePty = NodeModule.createRequire(import.meta.url);
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcessPlatform;

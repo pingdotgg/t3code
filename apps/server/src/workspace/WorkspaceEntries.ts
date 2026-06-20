@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { readdir } from "node:fs/promises";
-import { homedir } from "node:os";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -98,10 +98,10 @@ export class WorkspaceEntries extends Context.Service<
 
 function expandHomePath(input: string, path: Path.Path): string {
   if (input === "~") {
-    return homedir();
+    return NodeOS.homedir();
   }
   if (input.startsWith("~/") || input.startsWith("~\\")) {
-    return path.join(homedir(), input.slice(2));
+    return path.join(NodeOS.homedir(), input.slice(2));
   }
   return input;
 }
@@ -176,7 +176,7 @@ export const make = Effect.gen(function* () {
       const prefix = endsWithSeparator ? "" : path.basename(resolvedInputPath);
 
       const dirents = yield* Effect.tryPromise({
-        try: () => readdir(parentPath, { withFileTypes: true }),
+        try: () => NodeFSP.readdir(parentPath, { withFileTypes: true }),
         catch: (cause) =>
           new WorkspaceEntriesReadDirectoryError({
             cwd: input.cwd,

@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import type {
@@ -348,7 +348,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
   });
 
   it("signs the activity publish JWT and rejects tampering", async () => {
-    const keyPair = generateKeyPairSync("ed25519", {
+    const keyPair = NodeCrypto.generateKeyPairSync("ed25519", {
       privateKeyEncoding: { format: "pem", type: "pkcs8" },
       publicKeyEncoding: { format: "pem", type: "spki" },
     });

@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import fs from "node:fs";
-import path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 export interface RotatingFileSinkOptions {
   readonly filePath: string;
@@ -29,7 +29,7 @@ export class RotatingFileSink {
     this.maxFiles = options.maxFiles;
     this.throwOnError = options.throwOnError ?? false;
 
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
+    NodeFS.mkdirSync(NodePath.dirname(this.filePath), { recursive: true });
     this.pruneOverflowBackups();
     this.currentSize = this.readCurrentSize();
   }
@@ -43,7 +43,7 @@ export class RotatingFileSink {
         this.rotate();
       }
 
-      fs.appendFileSync(this.filePath, buffer);
+      NodeFS.appendFileSync(this.filePath, buffer);
       this.currentSize += buffer.length;
 
       if (this.currentSize > this.maxBytes) {
@@ -60,20 +60,20 @@ export class RotatingFileSink {
   private rotate(): void {
     try {
       const oldest = this.withSuffix(this.maxFiles);
-      if (fs.existsSync(oldest)) {
-        fs.rmSync(oldest, { force: true });
+      if (NodeFS.existsSync(oldest)) {
+        NodeFS.rmSync(oldest, { force: true });
       }
 
       for (let index = this.maxFiles - 1; index >= 1; index -= 1) {
         const source = this.withSuffix(index);
         const target = this.withSuffix(index + 1);
-        if (fs.existsSync(source)) {
-          fs.renameSync(source, target);
+        if (NodeFS.existsSync(source)) {
+          NodeFS.renameSync(source, target);
         }
       }
 
-      if (fs.existsSync(this.filePath)) {
-        fs.renameSync(this.filePath, this.withSuffix(1));
+      if (NodeFS.existsSync(this.filePath)) {
+        NodeFS.renameSync(this.filePath, this.withSuffix(1));
       }
 
       this.currentSize = 0;
@@ -87,13 +87,13 @@ export class RotatingFileSink {
 
   private pruneOverflowBackups(): void {
     try {
-      const dir = path.dirname(this.filePath);
-      const baseName = path.basename(this.filePath);
-      for (const entry of fs.readdirSync(dir)) {
+      const dir = NodePath.dirname(this.filePath);
+      const baseName = NodePath.basename(this.filePath);
+      for (const entry of NodeFS.readdirSync(dir)) {
         if (!entry.startsWith(`${baseName}.`)) continue;
         const suffix = Number(entry.slice(baseName.length + 1));
         if (!Number.isInteger(suffix) || suffix <= this.maxFiles) continue;
-        fs.rmSync(path.join(dir, entry), { force: true });
+        NodeFS.rmSync(NodePath.join(dir, entry), { force: true });
       }
     } catch {
       if (this.throwOnError) {
@@ -104,7 +104,7 @@ export class RotatingFileSink {
 
   private readCurrentSize(): number {
     try {
-      return fs.statSync(this.filePath).size;
+      return NodeFS.statSync(this.filePath).size;
     } catch {
       return 0;
     }
