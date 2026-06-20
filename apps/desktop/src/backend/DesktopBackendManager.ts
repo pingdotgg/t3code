@@ -402,7 +402,7 @@ export const make = Effect.gen(function* () {
         const config = yield* configuration.resolve.pipe(
           Effect.tapError((error) =>
             logBackendManagerError("failed to generate desktop backend configuration", {
-              cause: error.message,
+              cause: error,
             }),
           ),
           Effect.option,
