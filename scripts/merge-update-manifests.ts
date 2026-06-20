@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import {
+  attemptUpdateManifest,
   mergeUpdateManifests,
   parseUpdateManifest,
   serializeUpdateManifest,
@@ -61,19 +62,22 @@ export const mergeUpdateManifestFiles = Effect.fn("mergeUpdateManifestFiles")(fu
   const secondaryPath = path.resolve(secondaryPathArg);
   const outputPath = path.resolve(outputPathArg ?? primaryPathArg);
 
-  const primaryManifest = parsePlatformUpdateManifest(
-    platform,
-    yield* fs.readFileString(primaryPath),
-    primaryPath,
+  const primaryRaw = yield* fs.readFileString(primaryPath);
+  const primaryManifest = yield* attemptUpdateManifest(() =>
+    parsePlatformUpdateManifest(platform, primaryRaw, primaryPath),
   );
-  const secondaryManifest = parsePlatformUpdateManifest(
-    platform,
-    yield* fs.readFileString(secondaryPath),
-    secondaryPath,
+  const secondaryRaw = yield* fs.readFileString(secondaryPath);
+  const secondaryManifest = yield* attemptUpdateManifest(() =>
+    parsePlatformUpdateManifest(platform, secondaryRaw, secondaryPath),
   );
-  const merged = mergePlatformUpdateManifests(platform, primaryManifest, secondaryManifest);
+  const merged = yield* attemptUpdateManifest(() =>
+    mergePlatformUpdateManifests(platform, primaryManifest, secondaryManifest),
+  );
 
-  yield* fs.writeFileString(outputPath, serializePlatformUpdateManifest(platform, merged));
+  const serialized = yield* attemptUpdateManifest(() =>
+    serializePlatformUpdateManifest(platform, merged),
+  );
+  yield* fs.writeFileString(outputPath, serialized);
 });
 
 export const mergeUpdateManifestsCommand = Command.make(
