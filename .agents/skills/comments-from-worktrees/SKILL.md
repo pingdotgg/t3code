@@ -5,6 +5,8 @@ name: comments-from-worktrees
 
 Study @CUSTOMIZED.md.
 
-Your task is to spawn one subagent for each active worktree, and simply instruct it to use the $piz-comments skill. **You do not load this skill yourself.**
+$spawn-worktrees
+
+Your task is to simply instruct each subagent to use the $piz-comments skill. **You do not load this skill yourself**, its instructions are not meant for you, the skill will provide the subagents with the necessary task information.
 
 When all subagents finish, if at least one of them reported changes made, you use the $port-from-worktrees skill.
