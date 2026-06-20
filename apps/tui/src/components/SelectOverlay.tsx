@@ -11,14 +11,13 @@ import { ansi, usePalette } from "../theme.ts";
 
 export type SelectStatus = "loading" | "ready" | "empty" | "error";
 
-const WINDOW = 6;
-
 export const SelectOverlay = React.memo(function SelectOverlay({
   title,
   status,
   options,
   selectedIndex,
   width,
+  maxRows,
   onSelect,
 }: {
   readonly title: string;
@@ -26,11 +25,15 @@ export const SelectOverlay = React.memo(function SelectOverlay({
   readonly options: ReadonlyArray<SelectOption>;
   readonly selectedIndex: number;
   readonly width: number;
+  /** Content rows available; the option list windows to fit. */
+  readonly maxRows: number;
   /** Apply the option at this index (click or Enter). */
   readonly onSelect: (index: number, option: SelectOption | null) => void;
 }): React.ReactNode {
   const palette = usePalette();
   const labelRoom = Math.max(8, width - 6);
+  // Each option is up to 2 rows (name + description); fit as many as the slot allows.
+  const window = Math.max(1, Math.floor(maxRows / 2));
 
   let body: React.ReactNode;
   if (status === "loading") {
@@ -41,10 +44,10 @@ export const SelectOverlay = React.memo(function SelectOverlay({
     body = <text fg={palette.dim}>nothing to choose</text>;
   } else {
     const start = Math.min(
-      Math.max(0, selectedIndex - Math.floor(WINDOW / 2)),
-      Math.max(0, options.length - WINDOW),
+      Math.max(0, selectedIndex - Math.floor(window / 2)),
+      Math.max(0, options.length - window),
     );
-    const visible = options.slice(start, start + WINDOW);
+    const visible = options.slice(start, start + window);
     body = (
       <>
         {visible.map((option, offset) => {

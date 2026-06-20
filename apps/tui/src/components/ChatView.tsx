@@ -334,8 +334,18 @@ export function ChatView({
   const terminalDrawerHeight = activeTerminal
     ? Math.min(Math.max(terminalHeight ?? defaultTerminalHeight, 6), maxTerminalHeight)
     : 0;
-  // +1 each for the controls row and the footer hint line.
-  const bottomReserve = terminalDrawerHeight + composerHeight + 2;
+  // The bottom slot holds either the composer or an open picker. The picker grows
+  // UP into the space above (the panes shrink) instead of overflowing off-screen.
+  // Cap it so the panes always keep at least a few rows. Each option ≈ 2 rows
+  // (name + description) plus the title + border.
+  const aroundReserve = terminalDrawerHeight + 2; // controls row + footer hint
+  const bottomSlotCap = Math.max(4, height - aroundReserve - 4);
+  const pickerWanted = picker
+    ? Math.min(Math.max(picker.options.length, 1) * 2 + 3, Math.floor(height * 0.6))
+    : 0;
+  const bottomSlot = Math.min(picker ? pickerWanted : composerHeight, bottomSlotCap);
+  const pickerContentRows = Math.max(2, bottomSlot - 3);
+  const bottomReserve = terminalDrawerHeight + bottomSlot + 2;
   const panesHeight = Math.max(4, height - bottomReserve);
   const listViewport = Math.max(1, panesHeight - 3);
   const termCols = Math.max(2, width - 4);
@@ -903,7 +913,8 @@ export function ChatView({
           status={picker.status}
           options={picker.options}
           selectedIndex={picker.selectedIndex}
-          width={chatWidth}
+          width={width - 4}
+          maxRows={pickerContentRows}
           onSelect={(index) => applyPicker(index)}
         />
       ) : overlay === "revert" && detail ? (

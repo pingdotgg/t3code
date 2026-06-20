@@ -5,8 +5,8 @@ import { usePalette } from "../theme.ts";
 
 // The composer controls toolbar (mirrors the web ChatComposer's bottom controls
 // row): the always-visible state of plan/build, runtime access, model, and
-// reasoning. Each chip is clickable (onMouseDown) and labelled with the key that
-// also changes it.
+// reasoning. Each chip is a clickable box labelled with the key that also changes
+// it.
 
 function Chip({
   keyHint,
@@ -24,7 +24,7 @@ function Chip({
   const palette = usePalette();
   const labelColor = active ? palette.accent : muted ? palette.dim : palette.text;
   return (
-    <box onMouseDown={onClick} flexShrink={0}>
+    <box onMouseDown={onClick} flexShrink={0} marginRight={3}>
       <text>
         <span fg={active ? palette.accent : palette.dim}>{`${keyHint} `}</span>
         <span fg={labelColor}>{label}</span>
@@ -46,12 +46,6 @@ export const ControlsRow = React.memo(function ControlsRow({
   readonly onOpenModel: () => void;
   readonly onOpenReasoning: () => void;
 }): React.ReactNode {
-  const palette = usePalette();
-  const dot = (
-    <text>
-      <span fg={palette.dim}>{"  ·  "}</span>
-    </text>
-  );
   return (
     <box flexDirection="row" paddingLeft={1} paddingRight={1} flexShrink={0}>
       <Chip
@@ -60,11 +54,8 @@ export const ControlsRow = React.memo(function ControlsRow({
         active={controls.interactionMode === "plan"}
         onClick={onTogglePlan}
       />
-      {dot}
       <Chip keyHint="^O" label={runtimeModeLabel(controls.runtimeMode)} onClick={onOpenAccess} />
-      {dot}
       <Chip keyHint="model" label={controls.model ?? "—"} muted={!controls.model} onClick={onOpenModel} />
-      {dot}
       <Chip
         keyHint="reasoning"
         label={controls.reasoning ?? "—"}

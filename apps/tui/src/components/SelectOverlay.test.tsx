@@ -14,7 +14,7 @@ const options: SelectOption[] = [
 describe("SelectOverlay", () => {
   it("Given options, then it renders names + descriptions and marks the selection", async () => {
     const t = await testRender(
-      <SelectOverlay title="access" status="ready" options={options} selectedIndex={2} width={60} onSelect={() => {}} />,
+      <SelectOverlay title="access" status="ready" options={options} selectedIndex={2} width={60} maxRows={8} onSelect={() => {}} />,
       { width: 64, height: 12 },
     );
     await t.renderOnce();
@@ -33,7 +33,7 @@ describe("SelectOverlay", () => {
         status="ready"
         options={options}
         selectedIndex={0}
-        width={60}
+        width={60} maxRows={8}
         onSelect={(_index, option) => {
           picked = option?.value;
         }}
@@ -53,7 +53,7 @@ describe("SelectOverlay", () => {
     "Given %s status, then it shows the matching placeholder",
     async (status) => {
       const t = await testRender(
-        <SelectOverlay title="model" status={status} options={[]} selectedIndex={0} width={50} onSelect={() => {}} />,
+        <SelectOverlay title="model" status={status} options={[]} selectedIndex={0} width={50} maxRows={6} onSelect={() => {}} />,
         { width: 52, height: 6 },
       );
       await t.renderOnce();
