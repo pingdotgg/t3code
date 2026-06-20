@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Context from "effect/Context";
@@ -45,6 +46,27 @@ export interface SqliteMemoryClientConfig extends Omit<
   "filename" | "readonly"
 > {}
 
+export class UnsupportedNodeSqliteVersionError extends Schema.TaggedErrorClass<UnsupportedNodeSqliteVersionError>()(
+  "UnsupportedNodeSqliteVersionError",
+  {
+    nodeVersion: Schema.String,
+    requirement: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Node.js ${this.nodeVersion} is missing required node:sqlite APIs. Upgrade to ${this.requirement}.`;
+  }
+}
+
+export class UnsupportedNodeSqliteOperationError extends Schema.TaggedErrorClass<UnsupportedNodeSqliteOperationError>()(
+  "UnsupportedNodeSqliteOperationError",
+  {},
+) {
+  override get message(): string {
+    return "Node SQLite does not support executeStream.";
+  }
+}
+
 /**
  * Verify that the current Node.js version includes the `node:sqlite` APIs
  * used by `NodeSqliteClient` — specifically `StatementSync.columns()` (added
@@ -60,8 +82,10 @@ const checkNodeSqliteCompat = () => {
 
   if (!supported) {
     return Effect.die(
-      `Node.js ${process.versions.node} is missing required node:sqlite APIs ` +
-        `(StatementSync.columns). Upgrade to Node.js >=22.16, >=23.11, or >=24.`,
+      new UnsupportedNodeSqliteVersionError({
+        nodeVersion: process.versions.node,
+        requirement: "Node.js >=22.16, >=23.11, or >=24",
+      }),
     );
   }
   return Effect.void;
@@ -70,7 +94,7 @@ const checkNodeSqliteCompat = () => {
 const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
   options: SqliteClientConfig,
   openDatabase: () => NodeSqlite.DatabaseSync,
-): Effect.fn.Return<Client.SqlClient, never, Scope.Scope | Reactivity.Reactivity> {
+): Effect.fn.Return<Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> {
   yield* checkNodeSqliteCompat();
 
   const compiler = Statement.makeCompilerSqlite(options.transformQueryNames);
@@ -80,10 +104,28 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
 
   const makeConnection = Effect.gen(function* () {
     const scope = yield* Effect.scope;
-    const db = openDatabase();
+    const db = yield* Effect.try({
+      try: openDatabase,
+      catch: (cause) =>
+        new SqlError({
+          reason: classifySqliteError(cause, {
+            message: "Failed to open database",
+            operation: "open",
+          }),
+        }),
+    });
     yield* Scope.addFinalizer(
       scope,
-      Effect.sync(() => db.close()),
+      Effect.try({
+        try: () => db.close(),
+        catch: (cause) =>
+          new SqlError({
+            reason: classifySqliteError(cause, {
+              message: "Failed to close database",
+              operation: "close",
+            }),
+          }),
+      }).pipe(Effect.orDie),
     );
 
     const statementReaderCache = new WeakMap<NodeSqlite.StatementSync, boolean>();
@@ -119,8 +161,8 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
       raw: boolean,
     ) =>
       Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
-        statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
         try {
+          statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
           if (hasRows(statement)) {
             return Effect.succeed(statement.all(...(params as any)));
           }
@@ -166,11 +208,20 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
               }),
           }),
         (statement) =>
-          Effect.sync(() => {
-            if (hasRows(statement)) {
-              statement.setReturnArrays(false);
-            }
-          }),
+          Effect.try({
+            try: () => {
+              if (hasRows(statement)) {
+                statement.setReturnArrays(false);
+              }
+            },
+            catch: (cause) =>
+              new SqlError({
+                reason: classifySqliteError(cause, {
+                  message: "Failed to reset statement result mode",
+                  operation: "resetResultMode",
+                }),
+              }),
+          }).pipe(Effect.orDie),
       );
 
     return identity<Connection>({
@@ -184,11 +235,20 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
         return runValues(sql, params);
       },
       executeUnprepared(sql, params, rowTransform) {
-        const effect = runStatement(db.prepare(sql), params ?? [], false);
+        const effect = Effect.try({
+          try: () => db.prepare(sql),
+          catch: (cause) =>
+            new SqlError({
+              reason: classifySqliteError(cause, {
+                message: "Failed to prepare statement",
+                operation: "prepare",
+              }),
+            }),
+        }).pipe(Effect.flatMap((statement) => runStatement(statement, params ?? [], false)));
         return rowTransform ? Effect.map(effect, rowTransform) : effect;
       },
       executeStream(_sql, _params) {
-        return Stream.die("executeStream not implemented");
+        return Stream.die(new UnsupportedNodeSqliteOperationError());
       },
     });
   });
@@ -220,7 +280,7 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
 
 const make = (
   options: SqliteClientConfig,
-): Effect.Effect<Client.SqlClient, never, Scope.Scope | Reactivity.Reactivity> =>
+): Effect.Effect<Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
   makeWithDatabase(
     options,
     () =>
@@ -232,7 +292,7 @@ const make = (
 
 const makeMemory = (
   config: SqliteMemoryClientConfig = {},
-): Effect.Effect<Client.SqlClient, never, Scope.Scope | Reactivity.Reactivity> =>
+): Effect.Effect<Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
   makeWithDatabase(
     {
       ...config,
@@ -249,13 +309,15 @@ const makeMemory = (
 
 export const layerConfig = (
   config: Config.Wrap<SqliteClientConfig>,
-): Layer.Layer<Client.SqlClient, Config.ConfigError> =>
+): Layer.Layer<Client.SqlClient, Config.ConfigError | SqlError> =>
   Layer.effect(Client.SqlClient, Config.unwrap(config).pipe(Effect.flatMap(make))).pipe(
     Layer.provide(Reactivity.layer),
   );
 
-export const layer = (config: SqliteClientConfig): Layer.Layer<Client.SqlClient> =>
+export const layer = (config: SqliteClientConfig): Layer.Layer<Client.SqlClient, SqlError> =>
   Layer.effect(Client.SqlClient, make(config)).pipe(Layer.provide(Reactivity.layer));
 
-export const layerMemory = (config: SqliteMemoryClientConfig = {}): Layer.Layer<Client.SqlClient> =>
+export const layerMemory = (
+  config: SqliteMemoryClientConfig = {},
+): Layer.Layer<Client.SqlClient, SqlError> =>
   Layer.effect(Client.SqlClient, makeMemory(config)).pipe(Layer.provide(Reactivity.layer));
