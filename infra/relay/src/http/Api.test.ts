@@ -108,6 +108,7 @@ describe("relay client authentication", () => {
 describe("relay environment authentication", () => {
   it.effect("preserves credential lookup persistence failures as internal errors", () => {
     const failure = new EnvironmentCredentials.EnvironmentCredentialAuthenticatePersistenceError({
+      stage: "lookup-credential",
       cause: "database unavailable",
     });
     const credentials: EnvironmentCredentials.EnvironmentCredentials["Service"] = {
