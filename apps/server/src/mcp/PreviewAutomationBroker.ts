@@ -128,6 +128,7 @@ const classifyResponseError = (
     remoteTag: error._tag,
     remoteMessageLength: error.message.length,
     ...(error.detail === undefined ? {} : { remoteDetailKind: remoteDetailKind(error.detail) }),
+    cause: error,
   };
   switch (error._tag) {
     case "PreviewAutomationNoFocusedOwnerError":

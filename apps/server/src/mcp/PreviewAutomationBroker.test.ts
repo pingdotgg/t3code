@@ -64,6 +64,11 @@ it.effect("atomically registers a connected owner and correlates its response", 
 it.effect("preserves bounded request and remote selector diagnostics", () => {
   const locator = "role=button[name='request-secret']";
   const remoteMessage = "Unexpected token near remote-secret.";
+  const remoteError = {
+    _tag: "PreviewAutomationInvalidSelectorError",
+    message: remoteMessage,
+    detail: { selector: "role=button[name='remote-secret']" },
+  } as const;
 
   return Effect.scoped(
     Effect.gen(function* () {
@@ -73,11 +78,7 @@ it.effect("preserves bounded request and remote selector diagnostics", () => {
         broker.respond({
           requestId: request.requestId,
           ok: false,
-          error: {
-            _tag: "PreviewAutomationInvalidSelectorError",
-            message: remoteMessage,
-            detail: { selector: "role=button[name='remote-secret']" },
-          },
+          error: remoteError,
         }),
       ).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
@@ -112,6 +113,7 @@ it.effect("preserves bounded request and remote selector diagnostics", () => {
         `Preview automation click received an invalid locator (${locator.length} characters).`,
       );
       expect(error.message).not.toContain("secret");
+      expect(error.cause).toBe(remoteError);
       expect("selector" in error).toBe(false);
       expect("remoteMessage" in error).toBe(false);
       expect("remoteDetail" in error).toBe(false);
