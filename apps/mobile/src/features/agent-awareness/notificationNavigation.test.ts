@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vite-plus/test";
+import type { NotificationResponse } from "expo-notifications";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { consumeLastAgentNotificationResponse } from "./notificationResponseConsumer";
 
 import {
   extractAgentNotificationDeepLink,
@@ -17,6 +20,76 @@ function responseWithData(data: Record<string, unknown>, identifier = "notificat
     },
   };
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("consumeLastAgentNotificationResponse", () => {
+  it("reports which initial-response operation failed", async () => {
+    const cause = new Error("notification lookup unavailable");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await consumeLastAgentNotificationResponse({
+      getLastResponse: () => Promise.reject(cause),
+      clearLastResponse: () => Promise.resolve(),
+      handleResponse: vi.fn(),
+    });
+
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _tag: "NotificationNavigationError",
+        operation: "read",
+      }),
+    );
+  });
+
+  it("routes a response before reporting a clear failure", async () => {
+    const cause = new Error("notification clear unavailable");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const response = responseWithData({}, "notification-clear") as NotificationResponse;
+    const handleResponse = vi.fn();
+
+    await consumeLastAgentNotificationResponse({
+      getLastResponse: () => Promise.resolve(response),
+      clearLastResponse: () => Promise.reject(cause),
+      handleResponse,
+    });
+
+    expect(handleResponse).toHaveBeenCalledWith(response);
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _tag: "NotificationNavigationError",
+        operation: "clear",
+        notificationId: "notification-clear",
+      }),
+    );
+  });
+
+  it("reports routing failures before clearing the response", async () => {
+    const cause = new Error("notification routing unavailable");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const response = responseWithData({}, "notification-route") as NotificationResponse;
+    const clearLastResponse = vi.fn(() => Promise.resolve());
+
+    await consumeLastAgentNotificationResponse({
+      getLastResponse: () => Promise.resolve(response),
+      clearLastResponse,
+      handleResponse: () => {
+        throw cause;
+      },
+    });
+
+    expect(clearLastResponse).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _tag: "NotificationNavigationError",
+        operation: "route",
+        notificationId: "notification-route",
+      }),
+    );
+  });
+});
 
 describe("extractAgentNotificationDeepLink", () => {
   it("uses explicit deep links from APNs payload data", () => {
