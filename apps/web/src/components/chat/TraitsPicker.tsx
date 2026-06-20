@@ -323,7 +323,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                           {option.isDefault ? " (default)" : ""}
                         </span>
                         {option.id === selectedValue ? (
-                          <CheckIcon className="size-3.5 shrink-0" />
+                          <CheckIcon className="size-3.5 shrink-0 text-blue-400" />
                         ) : null}
                       </span>
                     </MenuRadioItem>
@@ -357,7 +357,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                       <span className="flex w-full min-w-0 items-center justify-between gap-3">
                         <span>{value === "on" ? "On" : "Off"}</span>
                         {value === selectedValue ? (
-                          <CheckIcon className="size-3.5 shrink-0" />
+                          <CheckIcon className="size-3.5 shrink-0 text-blue-400" />
                         ) : null}
                       </span>
                     </MenuRadioItem>
