@@ -95,6 +95,14 @@ import {
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import {
+  type AttentionKind,
+  type BranchSyncState,
+  branchAttention,
+  branchHasUpstream,
+  branchSyncCounts,
+  branchSyncState,
+} from "./SourceControlPanel.logic";
 
 interface SourceControlPanelProps {
   readonly environmentId: EnvironmentId;
@@ -253,26 +261,6 @@ function shouldFetchBeforePull(event: ReactMouseEvent): boolean {
 
 function commitUndoActionKey(branchName: string, sha?: string): string {
   return sha ? `commit-undo:${branchName}:${sha}` : `branch-undo-latest:${branchName}`;
-}
-
-function branchSyncCounts(
-  branch: VcsRef,
-  snapshot: VcsPanelSnapshotResult,
-): { readonly aheadCount: number; readonly behindCount: number } {
-  if (branch.current) {
-    return {
-      aheadCount: snapshot.status.aheadCount,
-      behindCount: snapshot.status.behindCount,
-    };
-  }
-  return {
-    aheadCount: branch.aheadCount ?? 0,
-    behindCount: branch.behindCount ?? 0,
-  };
-}
-
-function branchHasUpstream(branch: VcsRef, snapshot: VcsPanelSnapshotResult): boolean {
-  return branch.current ? snapshot.status.hasUpstream : Boolean(branch.upstreamName);
 }
 
 function treeKey(kind: string, id: string): string {
@@ -448,18 +436,6 @@ function BranchSyncLabels({
   );
 }
 
-type BranchSyncState = "fetch" | "pull" | "push" | "publish" | "diverged";
-
-function branchSyncState(branch: VcsRef, snapshot: VcsPanelSnapshotResult): BranchSyncState {
-  const hasUpstream = branchHasUpstream(branch, snapshot);
-  const { aheadCount, behindCount } = branchSyncCounts(branch, snapshot);
-  if (!hasUpstream) return "publish";
-  if (aheadCount > 0 && behindCount > 0) return "diverged";
-  if (behindCount > 0) return "pull";
-  if (aheadCount > 0) return "push";
-  return "fetch";
-}
-
 function branchSyncActionLabel(state: BranchSyncState): string {
   switch (state) {
     case "publish":
@@ -490,8 +466,6 @@ function BranchSyncActionIcon({ state }: { readonly state: BranchSyncState }) {
   }
 }
 
-type AttentionKind = "conflicts" | "diverged" | "behind" | "unpushed" | "dirty" | "stale";
-
 const ATTENTION_RANK: Record<AttentionKind, number> = {
   conflicts: 0,
   diverged: 1,
@@ -500,15 +474,6 @@ const ATTENTION_RANK: Record<AttentionKind, number> = {
   dirty: 4,
   stale: 5,
 };
-
-function branchAttention(branch: VcsRef, snapshot: VcsPanelSnapshotResult): AttentionKind {
-  const hasUpstream = branchHasUpstream(branch, snapshot);
-  const { aheadCount, behindCount } = branchSyncCounts(branch, snapshot);
-  if (aheadCount > 0 && behindCount > 0) return "diverged";
-  if (behindCount > 0) return "behind";
-  if (aheadCount > 0 || !hasUpstream) return "unpushed";
-  return "stale";
-}
 
 function branchActivityTimestamp(branch: {
   readonly lastActivityAt?: string | null | undefined;

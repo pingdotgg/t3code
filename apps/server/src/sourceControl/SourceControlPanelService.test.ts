@@ -344,6 +344,56 @@ describe("SourceControlPanelService", () => {
     );
   });
 
+  it.effect(
+    "publishes to the local branch name when the configured upstream is only a base ref",
+    () => {
+      const calls: ExecuteGitInput[] = [];
+      return Effect.gen(function* () {
+        const service = yield* SourceControlPanelService;
+
+        yield* service.pushBranch({
+          cwd: "/repo",
+          branchName: "split/vscode-extension-work",
+        });
+
+        assert.deepStrictEqual(
+          calls.map((call) => call.args),
+          [
+            [
+              "rev-parse",
+              "--abbrev-ref",
+              "--symbolic-full-name",
+              "split/vscode-extension-work@{upstream}",
+            ],
+            ["remote"],
+            [
+              "push",
+              "-u",
+              "origin",
+              "split/vscode-extension-work:refs/heads/split/vscode-extension-work",
+            ],
+          ],
+        );
+      }).pipe(
+        Effect.provide(
+          makeTestLayer((input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              switch (input.operation) {
+                case "vcs.panel.branchUpstream":
+                  return success("upstream/main\n");
+                case "vcs.panel.pushBranch.remotes":
+                  return success("origin\nupstream\n");
+                default:
+                  return success();
+              }
+            }),
+          ),
+        ),
+      );
+    },
+  );
+
   it.effect("keeps staged rename stats keyed by the destination path", () =>
     Effect.gen(function* () {
       const service = yield* SourceControlPanelService;

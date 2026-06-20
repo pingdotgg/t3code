@@ -46,6 +46,7 @@ import {
 import type { ChangeRequest } from "@t3tools/contracts";
 
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import { parseRemoteNames, parseRemoteRefWithRemoteNames } from "../git/remoteRefs.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
@@ -1758,10 +1759,23 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     force: boolean,
     publishRemoteName?: string,
   ) {
-    const upstream = (yield* upstreamForRef(cwd, branchName)) ?? "";
-    const [remoteName = "origin", ...remoteBranchParts] =
-      upstream.length > 0 ? upstream.split("/") : [publishRemoteName ?? "origin", branchName];
-    const remoteBranchName = remoteBranchParts.join("/") || branchName;
+    const upstream = publishRemoteName ? "" : ((yield* upstreamForRef(cwd, branchName)) ?? "");
+    const remoteNames =
+      upstream.length > 0
+        ? yield* run("vcs.panel.pushBranch.remotes", cwd, ["remote"]).pipe(
+            Effect.map(parseRemoteNames),
+            Effect.orElseSucceed((): readonly string[] => []),
+          )
+        : [];
+    const parsedUpstream =
+      upstream.length > 0 ? parseRemoteRefWithRemoteNames(upstream, remoteNames) : null;
+    const fallbackUpstreamParts = parsedUpstream ? [] : upstream.split("/");
+    const upstreamRemoteName = parsedUpstream?.remoteName ?? fallbackUpstreamParts[0] ?? "origin";
+    const upstreamBranchName =
+      (parsedUpstream?.branchName ?? fallbackUpstreamParts.slice(1).join("/")) || branchName;
+    const hasSameNameUpstream = upstream.length > 0 && upstreamBranchName === branchName;
+    const remoteName = publishRemoteName ?? (hasSameNameUpstream ? upstreamRemoteName : "origin");
+    const remoteBranchName = hasSameNameUpstream ? upstreamBranchName : branchName;
     yield* run("vcs.panel.pushBranch", cwd, [
       "push",
       ...(force ? ["--force-with-lease"] : []),

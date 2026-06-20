@@ -11,6 +11,7 @@ The panel is intentionally an overview and high-level workflow surface. It focus
 Primary implementation files:
 
 - `apps/web/src/components/source-control/SourceControlPanel.tsx`
+- `apps/web/src/components/source-control/SourceControlPanel.logic.ts`
 - `apps/web/src/state/sourceControlPanel.ts`
 - `apps/web/src/components/ChatView.tsx`
 - `apps/web/src/components/RightPanelTabs.tsx`
@@ -63,7 +64,9 @@ This keeps externally-created changes visible without requiring a window blur/re
 - Stashes.
 - Other checked-out worktree branch labels when available.
 
-Fully synced local branches are omitted from `Actionable`; they remain visible under `Remotes` when they track a remote branch.
+Fully synced local branches are omitted from `Actionable`; they remain visible under `Remotes` when they track a same-name remote branch.
+
+Actionable branch sync state is intentionally separate from branch comparison state. A local branch can have a configured Git upstream/base such as `upstream/main` because it was created from that ref, while still being unpublished as `origin/<local-branch-name>` or another remote branch. The panel treats only same-name remote tracking refs as publish/sync upstreams for branch actions. Different-name refs remain valid compare bases and can still make the branch appear in `Actionable`, but they do not make the branch `behind` or `diverged` for sync purposes. In that state the row's sync action is `Publish`, and publishing targets the local branch name on the chosen remote rather than the base ref.
 
 When a repository has multiple remotes, the server checks local branches against same-name branches on other remotes. A same-name remote branch is treated as a likely fork only when the refs share ancestry. The Actionable row is shown only when the local branch is behind that remote branch; a local branch that is only ahead of the other remote branch is omitted because it is rarely meant to push directly to that upstream. These fork rows use the other remote branch as their default `vs. ...` compare base and still show `↑x`/`↓y` counts against that remote branch.
 
@@ -103,9 +106,9 @@ The `Working tree` context menu includes selected-file commit and stash actions 
 
 ## Branch Rows
 
-Branch rows are compact tree items used both in `Actionable` and under `Remotes`. They show branch identity, sync indicators, head labels, and a relative activity date.
+Branch rows are compact tree items used both in `Actionable` and under `Remotes`. They show branch identity, sync indicators, head labels, and a relative activity date. The sync-state rules are isolated in `SourceControlPanel.logic.ts` so Actionable and Remotes use the same definition of published, behind, ahead, diverged, and local-only.
 
-Ahead and behind status is rendered as `↑x` and `↓y`; zero sides are hidden. `↑x` uses the same green as added-line indicators. `↓y` uses the warning/yellow download color. If a branch has both indicators it is diverged; no separate diverged badge is needed.
+Ahead and behind status is rendered as `↑x` and `↓y`; zero sides are hidden. `↑x` uses the same green as added-line indicators. `↓y` uses the warning/yellow download color. If a branch has both indicators against its same-name sync upstream it is diverged; no separate diverged badge is needed. Ahead/behind counts against a different compare base may still appear in fork/change-request rows or expanded branch details, but those counts do not drive the branch sync action.
 
 Synced local branches shown under `Remotes` use a muted target icon before the branch label. Local-only or not-fully-synced branches use the same branch row model and expose the same expandable details wherever they appear.
 
@@ -130,11 +133,11 @@ Expanding a branch reveals branch details:
 - `History`
 - `Changes`
 
-Every expanded branch shows the `vs. ...` row first. Its default base is the branch's upstream when available, otherwise the repository default comparison ref. Actionable same-name fork rows default this base to the other remote branch they are tracking for updates. Actionable PR/MR-derived rows default this base to the found change request's remote base branch. Clicking the row opens a searchable ref picker so the user can choose another compare base. Compare rows do not show count prefixes or extra choose labels. Empty ahead and behind subsections are hidden. Ahead and behind labels include the count directly in the title and use the same colored upload/download icons as branch sync indicators. `History` is collapsed by default and loads commits in pages of 10. When more commits are available, a load-more row appends the next page inline until no more history remains.
+Every expanded branch shows the `vs. ...` row first. Its default base is the branch's configured upstream/base when available, otherwise the repository default comparison ref. This base can be a different-name ref such as `upstream/main`; in that case it is a comparison base only, not proof that the branch has been published. Actionable same-name fork rows default this base to the other remote branch they are tracking for updates. Actionable PR/MR-derived rows default this base to the found change request's remote base branch. Clicking the row opens a searchable ref picker so the user can choose another compare base. Compare rows do not show count prefixes or extra choose labels. Empty ahead and behind subsections are hidden. Ahead and behind labels include the count directly in the title and use the same colored upload/download icons as branch sync indicators. `History` is collapsed by default and loads commits in pages of 10. When more commits are available, a load-more row appends the next page inline until no more history remains.
 
 The branch-level `Changes` row summarizes the selected comparison as file count and line stats before expanding to the changed-file list.
 
-Branch-level `X Ahead` and `Y Behind` rows are only shown for branches that have an upstream. Local-only branches still support the `vs. ...` compare-base row, but they do not render upstream ahead/behind rows because there is no upstream relationship.
+Branch-level `X Ahead` and `Y Behind` rows follow the selected comparison base in the expanded details. Local-only or unpublished branches still support the `vs. ...` compare-base row, including configured base refs such as `upstream/main`; their branch sync action remains publish unless they track a same-name remote branch.
 
 Ahead, behind, history, and changes file lists use the shared compact file-change row model.
 
@@ -179,7 +182,7 @@ Creating a stash is done from the dirty `Working tree` row through `Stash select
 
 Each remote row shows the remote name and fetch URL. Remote action buttons appear on hover/focus and include fetch and remove.
 
-When local-only branches exist, `Remotes` also shows an `unpublished` tree row with those branches and an `x branch(es)` secondary label. Publishing one local-only branch sets its upstream. If the repository has multiple remotes, the panel prompts for the remote to publish to.
+When local-only or unpublished branches exist, `Remotes` also shows an `unpublished` tree row with those branches and an `x branch(es)` secondary label. Publishing one branch sets its same-name remote upstream. If the repository has multiple remotes, the panel prompts for the remote to publish to.
 
 Expanding a remote lists actual remote branches; pseudo-ref rows such as the remote name itself are de-duplicated. Remote branch rows use the same branch item model as `Actionable`, including local tracking state, `↑x`/`↓y` sync indicators, synced-local target icons, selectable compare bases, branch details, and branch actions.
 
@@ -194,7 +197,7 @@ The panel routes all repository mutations through server-side RPC methods and re
 - Stash operations: apply, pop, and drop.
 - Remote operations: list, add, remove, fetch one remote, fetch one branch ref, periodic Actionable fetch, and fetch all remotes.
 
-Non-current branch fetches are scoped to the selected branch. Operation busy state is keyed per action target so fetching one branch does not disable equivalent actions on other branches or remote entries.
+Non-current branch fetches are scoped to the selected branch. Operation busy state is keyed per action target so fetching one branch does not disable equivalent actions on other branches or remote entries. Publish/push handling on the server only reuses a configured upstream when that upstream resolves to the same branch name; otherwise it pushes `<local-branch>:refs/heads/<local-branch>` on the selected/default remote so a base ref such as `upstream/main` cannot become the push target.
 
 Selected-file commit, stash, and discard operations preserve rename source paths when needed, so selecting an `R` row sends both the destination path and the original path to the Git operation. Discard operations also split staged and unstaged portions explicitly. Server-side discard handling partitions tracked, untracked, HEAD-backed, and newly added paths before running Git restore/reset/clean commands, so mixed selections such as tracked edits plus untracked files do not cause one path class to prevent the rest of the selected discard from applying.
 
@@ -207,6 +210,8 @@ The panel keeps version-control actions server-authoritative across browser, des
 ## Validation
 
 The current implementation has been exercised against the throwaway repository at `~/Sites/throwaway` with Playwright for the main panel flows: section resizing/collapse behavior, Actionable selection, selected-file commit and stash dialogs, branch sync indicators, remotes tree expansion, stash expansion, hover-only actions, failure reporting, and live filesystem updates including internal `.git/` event filtering and gitignored-file suppression. Rename coverage includes committing an unstaged `R` row and undoing that commit, verifying that the panel returns to a single `R` row rather than separate `A` and `D` rows.
+
+Focused unit coverage now also covers the sync-vs-compare split: a local branch configured against `upstream/main` is treated as unpublished/publishable instead of diverged, a same-name remote tracking branch remains a normal sync upstream, and server-side publishing targets the local branch name even when Git reports a different configured upstream/base ref.
 
 Before considering source-control changes complete, run:
 
