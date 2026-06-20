@@ -290,22 +290,38 @@ describe("resolveInitialServerAuthGateState", () => {
   });
 
   it("surfaces a friendly error message when an invalid pairing token is submitted", async () => {
+    const cause = new EnvironmentAuthInvalidError({
+      code: "auth_invalid",
+      reason: "invalid_credential",
+      traceId: "trace-invalid-credential",
+    });
     const testApi = await installAuthApi({
-      browserSession: () =>
-        Effect.fail(
-          new EnvironmentAuthInvalidError({
-            code: "auth_invalid",
-            reason: "invalid_credential",
-            traceId: "trace-invalid-credential",
-          }),
-        ),
+      browserSession: () => Effect.fail(cause),
     });
 
-    const { submitServerAuthCredential } = await import("./environments/primary");
+    const { isPrimaryEnvironmentRequestError, submitServerAuthCredential } =
+      await import("./environments/primary");
 
-    await expect(submitServerAuthCredential("bad-token")).rejects.toThrow(
-      "Invalid pairing token. Check the token and try again.",
+    const error = await submitServerAuthCredential("bad-token").then(
+      () => null,
+      (failure: unknown) => failure,
     );
+    expect(error).toMatchObject({
+      _tag: "PrimaryEnvironmentRequestError",
+      operation: "exchange-bootstrap-credential",
+      status: 401,
+      detail: "Invalid pairing token. Check the token and try again.",
+    });
+    expect(isPrimaryEnvironmentRequestError(error)).toBe(true);
+    if (!isPrimaryEnvironmentRequestError(error)) {
+      throw new Error("Expected a structured primary environment request error.");
+    }
+    expect(error.cause).toMatchObject({
+      _tag: "EnvironmentAuthInvalidError",
+      code: "auth_invalid",
+      reason: "invalid_credential",
+      traceId: "trace-invalid-credential",
+    });
     expect(testApi.calls.browserSession).toEqual([{ credential: "bad-token" }]);
   });
 
