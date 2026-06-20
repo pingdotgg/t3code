@@ -29,9 +29,27 @@ export const AssetCreateUrlResult = Schema.Struct({
 });
 export type AssetCreateUrlResult = typeof AssetCreateUrlResult.Type;
 
+export const AssetAccessOperation = Schema.Literals([
+  "resolve-workspace-context",
+  "normalize-workspace-root",
+  "validate-workspace-path",
+  "validate-preview-type",
+  "inspect-workspace-asset",
+  "locate-workspace-asset",
+  "resolve-workspace",
+  "locate-attachment",
+  "resolve-project-favicon",
+  "inspect-project-favicon",
+  "locate-project-favicon",
+  "load-signing-key",
+]);
+export type AssetAccessOperation = typeof AssetAccessOperation.Type;
+
 export class AssetAccessError extends Schema.TaggedErrorClass<AssetAccessError>()(
   "AssetAccessError",
   {
+    operation: AssetAccessOperation,
+    resource: AssetResource,
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },

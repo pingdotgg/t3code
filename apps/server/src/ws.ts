@@ -1414,6 +1414,8 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                   Effect.mapError(
                     (cause) =>
                       new AssetAccessError({
+                        operation: "resolve-workspace-context",
+                        resource: input.resource,
                         message: "Failed to resolve workspace context.",
                         cause,
                       }),
@@ -1421,6 +1423,8 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                 );
               if (Option.isNone(thread)) {
                 return yield* new AssetAccessError({
+                  operation: "resolve-workspace-context",
+                  resource: input.resource,
                   message: "Workspace context was not found.",
                 });
               }
@@ -1430,6 +1434,8 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                   Effect.mapError(
                     (cause) =>
                       new AssetAccessError({
+                        operation: "resolve-workspace-context",
+                        resource: input.resource,
                         message: "Failed to resolve workspace context.",
                         cause,
                       }),
@@ -1437,6 +1443,8 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                 );
               if (Option.isNone(project)) {
                 return yield* new AssetAccessError({
+                  operation: "resolve-workspace-context",
+                  resource: input.resource,
                   message: "Workspace context was not found.",
                 });
               }
