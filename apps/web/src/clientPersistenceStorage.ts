@@ -15,7 +15,8 @@ export function readBrowserClientSettings(): ClientSettings | null {
 
   try {
     return getLocalStorageItem(CLIENT_SETTINGS_STORAGE_KEY, ClientSettingsSchema);
-  } catch {
+  } catch (error) {
+    console.error("Could not read persisted client settings.", error);
     return null;
   }
 }

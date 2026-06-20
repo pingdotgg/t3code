@@ -55,7 +55,8 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     try {
       const stored = getLocalStorageItem(storageKey, WidthSchema);
       return clamp(stored ?? defaultWidth);
-    } catch {
+    } catch (error) {
+      console.error("Could not read persisted panel width.", error);
       return defaultWidth;
     }
   });
@@ -141,8 +142,8 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       // Commit once at drag-end to avoid 60Hz localStorage writes.
       try {
         setLocalStorageItem(storageKey, finalWidth, WidthSchema);
-      } catch {
-        // localStorage may be full / disabled; the in-memory state still wins.
+      } catch (error) {
+        console.error("Could not persist panel width.", error);
       }
       setWidth(finalWidth);
     },

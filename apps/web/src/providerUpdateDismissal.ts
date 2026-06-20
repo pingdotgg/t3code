@@ -21,7 +21,8 @@ function readProviderUpdateDismissals(): ProviderUpdateDismissals {
         keys: [],
       }
     );
-  } catch {
+  } catch (error) {
+    console.error("Could not read provider-update dismissals.", error);
     return { keys: [] };
   }
 }
@@ -33,8 +34,8 @@ function writeProviderUpdateDismissals(document: ProviderUpdateDismissals): void
       document,
       ProviderUpdateDismissalsSchema,
     );
-  } catch {
-    // Dismissal state is best-effort UI state; a storage failure should not block the toast.
+  } catch (error) {
+    console.error("Could not persist provider-update dismissals.", error);
   }
 }
 

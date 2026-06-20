@@ -64,7 +64,8 @@ function readVersionMismatchDismissals(): VersionMismatchDismissals {
         VersionMismatchDismissalsSchema,
       ) ?? { keys: [] }
     );
-  } catch {
+  } catch (error) {
+    console.error("Could not read version-mismatch dismissals.", error);
     return { keys: [] };
   }
 }
@@ -76,8 +77,8 @@ function writeVersionMismatchDismissals(document: VersionMismatchDismissals): vo
       document,
       VersionMismatchDismissalsSchema,
     );
-  } catch {
-    // Dismissal state is best-effort UI state; a storage failure should not block the banner.
+  } catch (error) {
+    console.error("Could not persist version-mismatch dismissals.", error);
   }
 }
 

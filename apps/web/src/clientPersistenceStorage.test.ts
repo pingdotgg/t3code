@@ -51,4 +51,22 @@ describe("clientPersistenceStorage", () => {
 
     expect(readBrowserClientSettings()).toEqual(settings);
   });
+
+  it("reports structured decode failures while preserving the fallback", async () => {
+    const testWindow = getTestWindow();
+    testWindow.localStorage.setItem("t3code:client-settings:v1", "not-json");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
+
+    expect(readBrowserClientSettings()).toBeNull();
+    expect(consoleError).toHaveBeenCalledWith(
+      "Could not read persisted client settings.",
+      expect.objectContaining({
+        _tag: "LocalStorageOperationError",
+        operation: "decode",
+        storageKey: "t3code:client-settings:v1",
+        cause: expect.anything(),
+      }),
+    );
+  });
 });
