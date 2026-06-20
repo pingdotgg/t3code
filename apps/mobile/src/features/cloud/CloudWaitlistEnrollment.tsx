@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { CloudWaitlistJoinRejectedError, joinCloudWaitlist } from "./cloudWaitlistJoin";
 
 export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }) {
   const { errors, fetchStatus, waitlist } = useWaitlist();
@@ -21,12 +22,14 @@ export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }
 
     setRequestError(null);
     try {
-      const { error } = await waitlist.join({ emailAddress: normalizedEmailAddress });
-      if (error) {
-        setRequestError("Could not join the waitlist. Check your email address and try again.");
-      }
-    } catch {
-      setRequestError("Could not join the waitlist. Check your connection and try again.");
+      await joinCloudWaitlist(waitlist, normalizedEmailAddress);
+    } catch (error) {
+      console.error(error);
+      setRequestError(
+        error instanceof CloudWaitlistJoinRejectedError
+          ? "Could not join the waitlist. Check your email address and try again."
+          : "Could not join the waitlist. Check your connection and try again.",
+      );
     }
   };
 
