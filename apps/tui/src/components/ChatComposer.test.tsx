@@ -50,16 +50,6 @@ describe("ChatComposer", () => {
     expect(frame).not.toContain("^P to type a reply");
   });
 
-  it("Given build mode, then the prompt shows a build badge", async () => {
-    const frame = await frameOf(<ChatComposer {...base} mode="compose" interactionMode="default" inputFocused />);
-    expect(frame).toContain("build");
-  });
-
-  it("Given plan mode, then the prompt shows a plan badge", async () => {
-    const frame = await frameOf(<ChatComposer {...base} mode="compose" interactionMode="plan" inputFocused />);
-    expect(frame).toContain("plan");
-  });
-
   it("Given rename mode, when rendered, then it shows the rename label and hint", async () => {
     const frame = await frameOf(<ChatComposer {...base} mode="rename" auxValue="old title" inputFocused />);
     expect(frame).toContain("rename");

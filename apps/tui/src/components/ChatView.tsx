@@ -26,16 +26,12 @@ import { ChatComposer } from "./ChatComposer.tsx";
 import { type DiffStatus, DiffViewer } from "./DiffViewer.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
 import { ModelPicker, type ModelPickerStatus } from "./ModelPicker.tsx";
+import { ControlsRow } from "./ControlsRow.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { RevertMenu, ThreadActionsMenu } from "./ThreadActionsMenu.tsx";
 import { UserInputForm } from "./UserInputForm.tsx";
 import { type TerminalInfo, ThreadTerminalDrawer } from "./ThreadTerminalDrawer.tsx";
-
-const RUNTIME_MODES: ReadonlyArray<RuntimeMode> = [
-  "approval-required",
-  "auto-accept-edits",
-  "full-access",
-];
+import { composerControls, RUNTIME_MODES } from "../controls.ts";
 
 /** Default width of the thread-list pane. */
 const LIST_PANE_WIDTH = 34;
@@ -128,6 +124,7 @@ export function ChatView({
     [state.shell, state.expanded, state.loadedInFull, selectedThreadId, state.filter],
   );
   const detail = state.detail;
+  const controls = composerControls(detail);
   const sessionActive =
     !!detail && ["starting", "running", "ready"].includes(detail.session?.status ?? "");
   const actionablePlan = React.useMemo(
@@ -223,7 +220,8 @@ export function ChatView({
   const terminalDrawerHeight = activeTerminal
     ? Math.min(Math.max(terminalHeight ?? defaultTerminalHeight, 6), maxTerminalHeight)
     : 0;
-  const bottomReserve = terminalDrawerHeight + composerHeight + 1;
+  // +1 each for the controls row and the footer hint line.
+  const bottomReserve = terminalDrawerHeight + composerHeight + 2;
   const panesHeight = Math.max(4, height - bottomReserve);
   const listViewport = Math.max(1, panesHeight - 3);
   const termCols = Math.max(2, width - 4);
@@ -719,12 +717,30 @@ export function ChatView({
       ? "Enter to expand · ↑/↓ to move"
       : "Select a thread with ↑/↓";
 
+  // Contextual footer: only show keys that apply now (^Y with a plan, ^A/^R with
+  // approvals). The persistent state (^B/^O/model/reasoning) lives in the controls
+  // row, so it isn't duplicated here.
+  const composeHint = [
+    "↑/↓",
+    "Enter send",
+    "^G editor",
+    "^↑/^↓ size",
+    "^N new",
+    "^E term",
+    ...(actionablePlan ? ["^Y implement"] : []),
+    ...(approvals.length > 0 ? [approvals.length > 1 ? "^A/^R approve (↑/↓)" : "^A/^R approve"] : []),
+    `^T tools ${workLogExpanded ? "▾" : "▸"}`,
+    "^K actions",
+    "^F find",
+    "Esc stop",
+    "^C quit",
+  ].join(" · ");
   const hint =
     pendingUserInput && userInputDeferred
       ? "⚠ question pending — ^U to answer · ^C quit"
       : activeTerminal
         ? "^P prompt · ^E close term · ^↑/^↓ size term · keys → shell"
-        : "↑/↓ · Enter send · ^↑/^↓ size · ^G editor · ^N new · ^B plan/build · ^Y implement · ^O mode · ^E term · ^T tools · ^A/^R approve · ^K actions · ^F find · Esc stop · ^C quit";
+        : composeHint;
 
   const statusStyle = statusGlyphColor(state.statusKind);
 
@@ -775,6 +791,8 @@ export function ChatView({
           copyRef={terminalCopyRef}
         />
       ) : null}
+
+      <ControlsRow controls={controls} />
 
       {modelOpen && detail ? (
         <ModelPicker

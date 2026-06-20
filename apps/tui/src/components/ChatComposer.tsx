@@ -242,10 +242,7 @@ export const ChatComposer = React.memo(function ChatComposer({
       flexShrink={0}
     >
       <text>
-        <span fg={palette.bg} bg={interactionMode === "plan" ? palette.accent : palette.dim}>
-          {interactionMode === "plan" ? " plan " : " build "}
-        </span>
-        <span fg={palette.accent}>{" › "}</span>
+        <span fg={palette.accent}>{"› "}</span>
       </text>
       {inputFocused ? (
         // Multiline editor: Enter sends, Shift+Enter newlines, paste inserts the
