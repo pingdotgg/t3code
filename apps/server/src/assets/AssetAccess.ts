@@ -266,7 +266,15 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         ),
       );
       const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
-      const faviconPath = yield* faviconResolver.resolvePath(workspaceRoot);
+      const faviconPath = yield* faviconResolver.resolvePath(workspaceRoot).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AssetAccessError({
+              message: "Failed to resolve project favicon.",
+              cause,
+            }),
+        ),
+      );
       const relativePath = faviconPath ? path.relative(workspaceRoot, faviconPath) : null;
       if (
         relativePath &&

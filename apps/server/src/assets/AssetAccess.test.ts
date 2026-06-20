@@ -222,4 +222,37 @@ describe("AssetAccess", () => {
       ).toEqual({ kind: "project-favicon-fallback" });
     }).pipe(Effect.provide(testLayer)),
   );
+
+  it.effect("preserves structured project favicon resolution causes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-error-",
+      });
+      const platformCause = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "stat",
+      });
+      const resolutionCause = new ProjectFaviconResolver.ProjectFaviconResolutionError({
+        operation: "stat-candidate",
+        workspaceRoot: root,
+        relativePath: "favicon.svg",
+        cause: platformCause,
+      });
+      const resolver = ProjectFaviconResolver.ProjectFaviconResolver.of({
+        resolvePath: () => Effect.fail(resolutionCause),
+      });
+
+      const error = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root },
+      }).pipe(
+        Effect.provideService(ProjectFaviconResolver.ProjectFaviconResolver, resolver),
+        Effect.flip,
+      );
+
+      expect(error.message).toBe("Failed to resolve project favicon.");
+      expect(error.cause).toBe(resolutionCause);
+    }).pipe(Effect.provide(testLayer)),
+  );
 });
