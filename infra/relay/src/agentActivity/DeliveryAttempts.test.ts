@@ -320,4 +320,95 @@ describe("DeliveryAttempts", () => {
       ),
     );
   });
+
+  it.effect("preserves operation context and causes for persistence failures", () => {
+    const cause = new Error("database unavailable");
+    const fakeDb = {
+      insert: () => ({
+        values: (values: Record<string, unknown>) =>
+          values.kind === "record"
+            ? Effect.fail(cause)
+            : {
+                onConflictDoNothing: () => ({
+                  returning: () => Effect.fail(cause),
+                }),
+              },
+      }),
+      update: () => ({
+        set: () => ({
+          where: () => Effect.fail(cause),
+        }),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const attempts = yield* DeliveryAttempts.DeliveryAttempts;
+      const recordError = yield* Effect.flip(
+        attempts.record({
+          userId: "user-1",
+          environmentId: "env-1",
+          threadId: "thread-1",
+          deviceId: "device-1",
+          kind: "record",
+          sourceJobId: "job-1",
+          token: "apns-token",
+        }),
+      );
+      const claimError = yield* Effect.flip(
+        attempts.claimSourceJob({
+          userId: "user-2",
+          environmentId: "env-2",
+          threadId: "thread-2",
+          deviceId: "device-2",
+          kind: "claim",
+          sourceJobId: "job-2",
+          token: "apns-token",
+        }),
+      );
+      const completionError = yield* Effect.flip(
+        attempts.completeSourceJob({ sourceJobId: "job-3", apnsStatus: 500 }),
+      );
+
+      expect(recordError).toMatchObject({
+        operation: "record",
+        sourceJobId: "job-1",
+        userId: "user-1",
+        environmentId: "env-1",
+        threadId: "thread-1",
+        deviceId: "device-1",
+        kind: "record",
+        cause,
+        message: "Failed to persist APNs delivery attempt during record.",
+      });
+      expect(claimError).toMatchObject({
+        operation: "claim-source-job",
+        sourceJobId: "job-2",
+        userId: "user-2",
+        environmentId: "env-2",
+        threadId: "thread-2",
+        deviceId: "device-2",
+        kind: "claim",
+        cause,
+        message: "Failed to persist APNs delivery attempt during claim-source-job.",
+      });
+      expect(completionError).toMatchObject({
+        operation: "complete-source-job",
+        sourceJobId: "job-3",
+        userId: null,
+        environmentId: null,
+        threadId: null,
+        deviceId: null,
+        kind: null,
+        cause,
+        message: "Failed to persist APNs delivery attempt during complete-source-job.",
+      });
+    }).pipe(
+      Effect.provide(
+        DeliveryAttempts.layer.pipe(
+          Layer.provide(NodeCryptoLayer.layer),
+          Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)),
+        ),
+      ),
+    );
+  });
 });
