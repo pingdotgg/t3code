@@ -59,8 +59,8 @@ const configWithObservability: DesktopBackendBootstrapValue = {
 };
 
 function makeProcess(options?: {
-  readonly stdout?: Stream.Stream<Uint8Array>;
-  readonly stderr?: Stream.Stream<Uint8Array>;
+  readonly stdout?: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
+  readonly stderr?: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
   readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode, PlatformError.PlatformError>;
   readonly kill?: ChildProcessSpawner.ChildProcessHandle["kill"];
 }): ChildProcessSpawner.ChildProcessHandle {
@@ -386,6 +386,93 @@ describe("DesktopBackendManager", () => {
       assert.equal(error.message, "Failed to read the exit status of desktop backend process 123.");
       assert.notInclude(error.message, "exit-status-secret-sentinel");
       assert.isTrue(isBackendProcessError(error));
+    }),
+  );
+
+  it.effect("reports output stream failures with process and stream context", () =>
+    Effect.gen(function* () {
+      const outputCause = PlatformError.systemError({
+        _tag: "BadResource",
+        module: "ChildProcess",
+        method: "stdout",
+        description: "output-stream-secret-sentinel",
+      });
+      const reported = yield* Deferred.make<DesktopBackendManager.BackendProcessOutputError>();
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            makeProcess({
+              stdout: Stream.fail(outputCause),
+              exitCode: Deferred.await(reported).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+            }),
+          ),
+        ),
+      );
+
+      const exit = yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        onOutputFailure: (error) => Deferred.succeed(reported, error).pipe(Effect.asVoid),
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(spawnerLayer, healthyHttpClientLayer)));
+      const error = yield* Deferred.await(reported);
+
+      assert.equal(exit.code.pipe(Option.getOrUndefined), 0);
+      if (error._tag !== "BackendProcessOutputReadError") {
+        return assert.fail(`Expected output read error, received ${error._tag}`);
+      }
+      assert.equal(error.executablePath, "/electron");
+      assert.equal(error.entryPath, "/server/bin.mjs");
+      assert.equal(error.cwd, "/server");
+      assert.equal(error.httpBaseUrl.href, "http://127.0.0.1:3773/");
+      assert.equal(error.pid, 123);
+      assert.equal(error.streamName, "stdout");
+      assert.strictEqual(error.cause, outputCause);
+      assert.equal(error.message, "Failed to read stdout from desktop backend process 123.");
+      assert.notInclude(error.message, "output-stream-secret-sentinel");
+    }),
+  );
+
+  it.effect("reports output handler failures separately from stream read failures", () =>
+    Effect.gen(function* () {
+      const chunk = new TextEncoder().encode("backend output");
+      const outputCause = new Error("output-handler-secret-sentinel");
+      const reported = yield* Deferred.make<DesktopBackendManager.BackendProcessOutputError>();
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            makeProcess({
+              stdout: Stream.make(chunk),
+              exitCode: Deferred.await(reported).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+            }),
+          ),
+        ),
+      );
+
+      const exit = yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        onOutput: () => Effect.fail(outputCause),
+        onOutputFailure: (error) => Deferred.succeed(reported, error).pipe(Effect.asVoid),
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(spawnerLayer, healthyHttpClientLayer)));
+      const error = yield* Deferred.await(reported);
+
+      assert.equal(exit.code.pipe(Option.getOrUndefined), 0);
+      if (error._tag !== "BackendProcessOutputHandlingError") {
+        return assert.fail(`Expected output handling error, received ${error._tag}`);
+      }
+      assert.equal(error.executablePath, "/electron");
+      assert.equal(error.entryPath, "/server/bin.mjs");
+      assert.equal(error.cwd, "/server");
+      assert.equal(error.httpBaseUrl.href, "http://127.0.0.1:3773/");
+      assert.equal(error.pid, 123);
+      assert.equal(error.streamName, "stdout");
+      assert.equal(error.chunkByteLength, chunk.byteLength);
+      assert.strictEqual(error.cause, outputCause);
+      assert.equal(
+        error.message,
+        `Failed to handle ${chunk.byteLength} bytes from stdout of desktop backend process 123.`,
+      );
+      assert.notInclude(error.message, "output-handler-secret-sentinel");
     }),
   );
 
