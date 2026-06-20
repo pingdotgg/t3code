@@ -4430,24 +4430,68 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
-  it.effect("routes websocket rpc projects.searchEntries errors", () =>
+  it.effect("preserves workspace rpc failure messages", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-workspace-errors-",
+      });
+      const outsideDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-workspace-errors-outside-",
+      });
+      const outsideFile = path.join(outsideDir, "outside.txt");
+      yield* fs.writeFileString(outsideFile, "outside\n");
+      yield* fs.symlink(outsideFile, path.join(workspaceDir, "linked-outside.txt"));
+
       yield* buildAppUnderTest();
 
+      const invalidWorkspace = path.join(workspaceDir, "missing-workspace");
+      const missingBrowseParent = path.join(workspaceDir, "missing-browse");
       const wsUrl = yield* getWsServerUrl("/ws");
-      const result = yield* Effect.scoped(
+      const results = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.projectsSearchEntries]({
-            cwd: "/definitely/not/a/real/workspace/path",
-            query: "needle",
-            limit: 10,
+          Effect.all({
+            search: client[WS_METHODS.projectsSearchEntries]({
+              cwd: invalidWorkspace,
+              query: "needle",
+              limit: 10,
+            }).pipe(Effect.result),
+            list: client[WS_METHODS.projectsListEntries]({ cwd: invalidWorkspace }).pipe(
+              Effect.result,
+            ),
+            read: client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "linked-outside.txt",
+            }).pipe(Effect.result),
+            browse: client[WS_METHODS.filesystemBrowse]({
+              cwd: workspaceDir,
+              partialPath: "./missing-browse/child",
+            }).pipe(Effect.result),
           }),
-        ).pipe(Effect.result),
+        ),
       );
 
-      assertTrue(result._tag === "Failure");
-      assertTrue(result.failure._tag === "ProjectSearchEntriesError");
-      assert.equal(result.failure.message, "Failed to search workspace entries.");
+      assertTrue(results.search._tag === "Failure");
+      assert.equal(
+        results.search.failure.message,
+        `Failed to search workspace entries: Workspace root does not exist: ${invalidWorkspace}`,
+      );
+      assertTrue(results.list._tag === "Failure");
+      assert.equal(
+        results.list.failure.message,
+        `Failed to list workspace entries: Workspace root does not exist: ${invalidWorkspace}`,
+      );
+      assertTrue(results.read._tag === "Failure");
+      assert.equal(
+        results.read.failure.message,
+        "Failed to read workspace file: Workspace file path resolves outside the project root.",
+      );
+      assertTrue(results.browse._tag === "Failure");
+      assert.equal(
+        results.browse.failure.message,
+        `Unable to browse '${missingBrowseParent}': ENOENT: no such file or directory, scandir '${missingBrowseParent}'`,
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -6102,7 +6146,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               threadId: input.threadId,
               worktreePath: input.worktreePath,
               operation: "openTerminal",
-              cause: new Error("pty unavailable"),
+              cause: { message: "pty unavailable" },
             }),
           ),
       );
@@ -6177,8 +6221,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(setupFailureActivity?.activity.kind, "setup-script.failed");
       assert.deepEqual(setupFailureActivity?.activity.payload, {
-        detail:
-          "Project setup script operation 'openTerminal' failed for thread 'thread-bootstrap-setup-failure' in '/tmp/bootstrap-worktree'.",
+        detail: "pty unavailable",
         worktreePath: "/tmp/bootstrap-worktree",
       });
       assertTrue(dispatchedCommands.every((command) => command.type !== "thread.delete"));

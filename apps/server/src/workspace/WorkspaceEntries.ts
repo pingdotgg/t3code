@@ -23,23 +23,6 @@ import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/p
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
-export class WorkspaceEntriesError extends Schema.TaggedErrorClass<WorkspaceEntriesError>()(
-  "WorkspaceEntriesError",
-  {
-    cwd: Schema.String,
-    operation: Schema.Literals([
-      "workspaceEntries.normalizeWorkspaceRoot",
-      "workspaceEntries.search",
-      "workspaceEntries.list",
-    ]),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Workspace entries operation '${this.operation}' failed for '${this.cwd}'.`;
-  }
-}
-
 export class WorkspaceEntriesWindowsPathUnsupportedError extends Schema.TaggedErrorClass<WorkspaceEntriesWindowsPathUnsupportedError>()(
   "WorkspaceEntriesWindowsPathUnsupportedError",
   {
@@ -86,6 +69,16 @@ export const WorkspaceEntriesBrowseError = Schema.Union([
   WorkspaceEntriesReadDirectoryError,
 ]);
 export type WorkspaceEntriesBrowseError = typeof WorkspaceEntriesBrowseError.Type;
+
+export const WorkspaceEntriesError = Schema.Union([
+  WorkspacePaths.WorkspaceRootNotExistsError,
+  WorkspacePaths.WorkspaceRootCreateFailedError,
+  WorkspacePaths.WorkspaceRootNotDirectoryError,
+  WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed,
+  WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut,
+  WorkspaceSearchIndex.WorkspaceSearchIndexSearchFailed,
+]);
+export type WorkspaceEntriesError = typeof WorkspaceEntriesError.Type;
 
 export class WorkspaceEntries extends Context.Service<
   WorkspaceEntries,
@@ -146,16 +139,7 @@ export const make = Effect.gen(function* () {
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
   ): Effect.fn.Return<string, WorkspaceEntriesError> {
-    return yield* workspacePaths.normalizeWorkspaceRoot(cwd).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WorkspaceEntriesError({
-            cwd,
-            operation: "workspaceEntries.normalizeWorkspaceRoot",
-            cause,
-          }),
-      ),
-    );
+    return yield* workspacePaths.normalizeWorkspaceRoot(cwd);
   });
 
   const refresh: WorkspaceEntries["Service"]["refresh"] = Effect.fn("WorkspaceEntries.refresh")(
@@ -243,17 +227,7 @@ export const make = Effect.gen(function* () {
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.search(normalizedQuery, input.limit);
-      }).pipe(
-        Effect.provide(workspaceSearchIndexes.get(normalizedCwd)),
-        Effect.mapError(
-          (cause) =>
-            new WorkspaceEntriesError({
-              cwd: input.cwd,
-              operation: "workspaceEntries.search",
-              cause,
-            }),
-        ),
-      );
+      }).pipe(Effect.provide(workspaceSearchIndexes.get(normalizedCwd)));
     },
   );
 
@@ -263,17 +237,7 @@ export const make = Effect.gen(function* () {
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.list();
-      }).pipe(
-        Effect.provide(workspaceSearchIndexes.get(normalizedCwd)),
-        Effect.mapError(
-          (cause) =>
-            new WorkspaceEntriesError({
-              cwd: input.cwd,
-              operation: "workspaceEntries.list",
-              cause,
-            }),
-        ),
-      );
+      }).pipe(Effect.provide(workspaceSearchIndexes.get(normalizedCwd)));
     },
   );
 

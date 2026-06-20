@@ -112,6 +112,77 @@ const isWorkspacePathOutsideRootError = Schema.is(WorkspacePaths.WorkspacePathOu
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
+function unexpectedCompatibilityError(error: never): never {
+  throw new Error(`Unhandled compatibility error: ${String(error)}`);
+}
+
+/** Preserve pre-structured-error display behavior at the RPC boundary. */
+function legacyPlatformFailureDescription(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+/** Preserve the setup runner's broader pre-refactor message normalization. */
+function legacySetupFailureDescription(cause: unknown): string {
+  if (
+    typeof cause === "object" &&
+    cause !== null &&
+    "message" in cause &&
+    typeof cause.message === "string"
+  ) {
+    return cause.message;
+  }
+  return String(cause);
+}
+
+function workspaceEntriesCompatibilityDetail(
+  error: WorkspaceEntries.WorkspaceEntriesError,
+): string {
+  switch (error._tag) {
+    case "WorkspaceRootNotExistsError":
+      return `Workspace root does not exist: ${error.normalizedWorkspaceRoot}`;
+    case "WorkspaceRootCreateFailedError":
+      return `Failed to create workspace root: ${error.normalizedWorkspaceRoot}`;
+    case "WorkspaceRootNotDirectoryError":
+      return `Workspace root is not a directory: ${error.normalizedWorkspaceRoot}`;
+    case "WorkspaceSearchIndexCreateFailed":
+      return `Failed to create the workspace search index for '${error.cwd}': ${error.reason}`;
+    case "WorkspaceSearchIndexScanTimedOut":
+      return `Workspace search index for '${error.cwd}' did not finish scanning within ${error.timeout}`;
+    case "WorkspaceSearchIndexSearchFailed":
+      return `Workspace search failed for '${error.cwd}': ${error.reason}`;
+    default:
+      return unexpectedCompatibilityError(error);
+  }
+}
+
+function workspaceBrowseCompatibilityDetail(
+  error: WorkspaceEntries.WorkspaceEntriesBrowseError,
+): string {
+  switch (error._tag) {
+    case "WorkspaceEntriesWindowsPathUnsupportedError":
+      return "Windows-style paths are only supported on Windows.";
+    case "WorkspaceEntriesCurrentProjectRequiredError":
+      return "Relative filesystem browse paths require a current project.";
+    case "WorkspaceEntriesReadDirectoryError":
+      return `Unable to browse '${error.parentPath}': ${legacyPlatformFailureDescription(error.cause)}`;
+    default:
+      return unexpectedCompatibilityError(error);
+  }
+}
+
+function projectSetupScriptCompatibilityDetail(
+  error: ProjectSetupScriptRunner.ProjectSetupScriptRunnerError,
+): string {
+  switch (error._tag) {
+    case "ProjectSetupScriptOperationError":
+      return legacySetupFailureDescription(error.cause);
+    case "ProjectSetupScriptProjectNotFoundError":
+      return "Project was not found for setup script execution.";
+    default:
+      return unexpectedCompatibilityError(error);
+  }
+}
+
 function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   OrchestrationEvent,
   {
@@ -561,12 +632,11 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               : Effect.void;
 
           const recordSetupScriptLaunchFailure = (input: {
-            readonly error: unknown;
+            readonly error: ProjectSetupScriptRunner.ProjectSetupScriptRunnerError;
             readonly requestedAt: string;
             readonly worktreePath: string;
           }) => {
-            const detail =
-              input.error instanceof Error ? input.error.message : "Unknown setup failure.";
+            const detail = projectSetupScriptCompatibilityDetail(input.error);
             return appendSetupScriptActivity({
               threadId: command.threadId,
               kind: "setup-script.failed",
@@ -1190,7 +1260,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               Effect.mapError(
                 (cause) =>
                   new ProjectSearchEntriesError({
-                    message: "Failed to search workspace entries.",
+                    message: `Failed to search workspace entries: ${workspaceEntriesCompatibilityDetail(cause)}`,
                     cause,
                   }),
               ),
@@ -1204,7 +1274,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               Effect.mapError(
                 (cause) =>
                   new ProjectListEntriesError({
-                    message: "Failed to list workspace entries.",
+                    message: `Failed to list workspace entries: ${workspaceEntriesCompatibilityDetail(cause)}`,
                     cause,
                   }),
               ),
@@ -1218,7 +1288,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               Effect.mapError((cause) => {
                 const message = isWorkspacePathOutsideRootError(cause)
                   ? "Workspace file path must stay within the project root."
-                  : "Failed to read workspace file.";
+                  : `Failed to read workspace file: ${legacyPlatformFailureDescription(cause.cause)}`;
                 return new ProjectReadFileError({ message, cause });
               }),
             ),
@@ -1251,7 +1321,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               Effect.mapError(
                 (cause) =>
                   new FilesystemBrowseError({
-                    message: "Failed to browse the filesystem.",
+                    message: workspaceBrowseCompatibilityDetail(cause),
                     cause,
                   }),
               ),
