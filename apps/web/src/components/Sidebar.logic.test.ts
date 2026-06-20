@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  activeSidebarThreadPathKeys,
   createThreadJumpHintVisibilityController,
+  flattenSidebarThreadTree,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -15,11 +17,14 @@ import {
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
+  rootSidebarThreads,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  sidebarThreadKey,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  visibleSidebarThreads,
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
@@ -32,6 +37,7 @@ import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type Project,
+  type SidebarThreadSummary,
   type Thread,
 } from "../types";
 
@@ -88,6 +94,99 @@ function makeLatestTurn(overrides?: {
     completedAt: overrides?.completedAt ?? "2026-03-09T10:05:00.000Z",
   };
 }
+
+function makeSidebarThread(input: {
+  id: string;
+  parentThreadId?: string;
+  parentActivitySequence?: number;
+  status?: "running" | "completed" | "errored" | "interrupted" | "stopped";
+}): SidebarThreadSummary {
+  return {
+    id: ThreadId.make(input.id),
+    environmentId: localEnvironmentId,
+    projectId: ProjectId.make("project-1"),
+    title: input.id,
+    createdAt: "2026-03-09T10:00:00.000Z",
+    updatedAt: "2026-03-09T10:00:00.000Z",
+    archivedAt: null,
+    parentRelation: input.parentThreadId
+      ? {
+          kind: "subagent",
+          rootThreadId: ThreadId.make("root-thread"),
+          parentThreadId: ThreadId.make(input.parentThreadId),
+          parentTurnId: null,
+          parentItemId: null,
+          parentActivitySequence: input.parentActivitySequence ?? 1,
+          providerThreadId: `provider-${input.id}`,
+          titleSeed: input.id,
+          depth: 1,
+          startedAt: "2026-03-09T10:00:00.000Z",
+          completedAt: input.status === "running" ? null : "2026-03-09T10:01:00.000Z",
+          status: input.status ?? "running",
+        }
+      : {
+          kind: "root",
+          rootThreadId: ThreadId.make(input.id),
+        },
+  } as SidebarThreadSummary;
+}
+
+describe("subagent sidebar tree helpers", () => {
+  it("keeps running descendants nested under hidden terminal ancestors", () => {
+    const root = makeSidebarThread({ id: "root-thread" });
+    const terminalChild = makeSidebarThread({
+      id: "terminal-child",
+      parentThreadId: "root-thread",
+      parentActivitySequence: 1,
+      status: "completed",
+    });
+    const runningGrandchild = makeSidebarThread({
+      id: "running-grandchild",
+      parentThreadId: "terminal-child",
+      parentActivitySequence: 1,
+      status: "running",
+    });
+    const allThreads = [root, terminalChild, runningGrandchild];
+    const visibleThreads = visibleSidebarThreads(allThreads, new Set());
+
+    expect(visibleThreads.map((thread) => thread.id)).toEqual([
+      ThreadId.make("root-thread"),
+      ThreadId.make("running-grandchild"),
+    ]);
+    expect(rootSidebarThreads(visibleThreads, allThreads).map((thread) => thread.id)).toEqual([
+      ThreadId.make("root-thread"),
+    ]);
+
+    const rendered = flattenSidebarThreadTree({
+      allThreads,
+      roots: [root],
+      visibleThreadKeys: new Set(visibleThreads.map(sidebarThreadKey)),
+    });
+
+    expect(rendered.map(({ thread, depth }) => [thread.id, depth])).toEqual([
+      [ThreadId.make("root-thread"), 0],
+      [ThreadId.make("running-grandchild"), 2],
+    ]);
+  });
+
+  it("keeps an active terminal subagent visible through its parent path", () => {
+    const root = makeSidebarThread({ id: "root-thread" });
+    const terminalChild = makeSidebarThread({
+      id: "terminal-child",
+      parentThreadId: "root-thread",
+      status: "completed",
+    });
+    const allThreads = [root, terminalChild];
+    const activePathKeys = activeSidebarThreadPathKeys(allThreads, sidebarThreadKey(terminalChild));
+    const visibleThreads = visibleSidebarThreads(allThreads, activePathKeys);
+
+    expect(visibleThreads.map((thread) => thread.id)).toEqual([
+      ThreadId.make("root-thread"),
+      ThreadId.make("terminal-child"),
+    ]);
+    expect([...activePathKeys]).toEqual([sidebarThreadKey(terminalChild), sidebarThreadKey(root)]);
+  });
+});
 
 describe("hasUnseenCompletion", () => {
   it("returns true when a thread completed after its last visit", () => {

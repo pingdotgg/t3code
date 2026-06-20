@@ -1814,10 +1814,11 @@ const SubagentWorkEntryButton = memo(function SubagentWorkEntryButton(props: {
   const relationParentItemId = relation?.parentItemId ?? null;
   const relationParentTurnId = relation?.parentTurnId ?? null;
   const relationMatchesThisBlock =
-    Boolean(props.parentTurnId && props.parentTurnId === relationParentTurnId) ||
-    !props.parentItemId ||
-    !relationParentItemId ||
-    relationParentItemId === props.parentItemId;
+    props.parentItemId || relationParentItemId
+      ? props.parentItemId === relationParentItemId
+      : props.parentTurnId || relationParentTurnId
+        ? props.parentTurnId === relationParentTurnId
+        : true;
   if (relation && relationMatchesThisBlock && relation.status !== "running") {
     terminalSnapshotRef.current = {
       status: relation.status,

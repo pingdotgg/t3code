@@ -9,6 +9,7 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -17,6 +18,10 @@ const NIGHTLY_SERVER_VERSION_PATTERN = /-nightly\.\d{8}\.\d+$/;
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+export interface RenderedSidebarThread {
+  thread: SidebarThreadSummary;
+  depth: number;
+}
 type SidebarProject = {
   id: string;
   title: string;
@@ -164,6 +169,164 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   const lastVisitedAt = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(lastVisitedAt)) return true;
   return completedAt > lastVisitedAt;
+}
+
+export function sidebarThreadKey(
+  thread: Pick<SidebarThreadSummary, "environmentId" | "id">,
+): string {
+  return scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+}
+
+export function sidebarThreadParentKey(thread: SidebarThreadSummary): string | null {
+  const relation = thread.parentRelation;
+  if (relation?.kind !== "subagent") {
+    return null;
+  }
+  return scopedThreadKey(scopeThreadRef(thread.environmentId, relation.parentThreadId));
+}
+
+function compareSubagentSidebarChildren(
+  left: SidebarThreadSummary,
+  right: SidebarThreadSummary,
+): number {
+  const leftRelation = left.parentRelation?.kind === "subagent" ? left.parentRelation : null;
+  const rightRelation = right.parentRelation?.kind === "subagent" ? right.parentRelation : null;
+  const sequence =
+    (leftRelation?.parentActivitySequence ?? 0) - (rightRelation?.parentActivitySequence ?? 0);
+  if (sequence !== 0) {
+    return sequence;
+  }
+  const startedAt = (leftRelation?.startedAt ?? left.createdAt).localeCompare(
+    rightRelation?.startedAt ?? right.createdAt,
+  );
+  if (startedAt !== 0) {
+    return startedAt;
+  }
+  return sidebarThreadKey(left).localeCompare(sidebarThreadKey(right));
+}
+
+function subagentSidebarStatus(thread: SidebarThreadSummary) {
+  const relation = thread.parentRelation;
+  return relation?.kind === "subagent" ? relation.status : null;
+}
+
+function subagentIsTerminalInSidebar(thread: SidebarThreadSummary): boolean {
+  const status = subagentSidebarStatus(thread);
+  return status !== null && status !== "running";
+}
+
+export function activeSidebarThreadPathKeys(
+  threads: readonly SidebarThreadSummary[],
+  activeThreadKey: string | null | undefined,
+): Set<string> {
+  const path = new Set<string>();
+  if (!activeThreadKey) {
+    return path;
+  }
+  const threadByKey = new Map(threads.map((thread) => [sidebarThreadKey(thread), thread] as const));
+  let current = threadByKey.get(activeThreadKey) ?? null;
+  while (current) {
+    const key = sidebarThreadKey(current);
+    if (path.has(key)) {
+      break;
+    }
+    path.add(key);
+    const parentKey = sidebarThreadParentKey(current);
+    current = parentKey ? (threadByKey.get(parentKey) ?? null) : null;
+  }
+  return path;
+}
+
+export function visibleSidebarThreads(
+  threads: readonly SidebarThreadSummary[],
+  activePathKeys: ReadonlySet<string>,
+): SidebarThreadSummary[] {
+  return threads.filter(
+    (thread) =>
+      thread.archivedAt === null &&
+      (!subagentIsTerminalInSidebar(thread) || activePathKeys.has(sidebarThreadKey(thread))),
+  );
+}
+
+export function flattenSidebarThreadTree(input: {
+  allThreads: readonly SidebarThreadSummary[];
+  roots: readonly SidebarThreadSummary[];
+  visibleThreadKeys?: ReadonlySet<string>;
+}): RenderedSidebarThread[] {
+  const allThreadKeys = new Set(input.allThreads.map(sidebarThreadKey));
+  const childrenByParentKey = new Map<string, SidebarThreadSummary[]>();
+  for (const thread of input.allThreads) {
+    const parentKey = sidebarThreadParentKey(thread);
+    if (!parentKey || !allThreadKeys.has(parentKey)) {
+      continue;
+    }
+    const children = childrenByParentKey.get(parentKey);
+    if (children) {
+      children.push(thread);
+    } else {
+      childrenByParentKey.set(parentKey, [thread]);
+    }
+  }
+  for (const children of childrenByParentKey.values()) {
+    children.sort(compareSubagentSidebarChildren);
+  }
+
+  const result: RenderedSidebarThread[] = [];
+  const visited = new Set<string>();
+  const visit = (thread: SidebarThreadSummary, depth: number) => {
+    const key = sidebarThreadKey(thread);
+    if (visited.has(key)) {
+      return;
+    }
+    visited.add(key);
+    if (!input.visibleThreadKeys || input.visibleThreadKeys.has(key)) {
+      result.push({ thread, depth });
+    }
+    for (const child of childrenByParentKey.get(key) ?? []) {
+      visit(child, depth + 1);
+    }
+  };
+  for (const root of input.roots) {
+    visit(root, 0);
+  }
+  return result;
+}
+
+export function resolveSidebarRootThread(
+  threads: readonly SidebarThreadSummary[],
+  threadKey: string,
+  threadByKey = new Map(threads.map((thread) => [sidebarThreadKey(thread), thread] as const)),
+): SidebarThreadSummary | null {
+  let current = threadByKey.get(threadKey) ?? null;
+  const seen = new Set<string>();
+  while (current) {
+    const currentKey = sidebarThreadKey(current);
+    if (seen.has(currentKey)) {
+      return current;
+    }
+    seen.add(currentKey);
+    const parentKey = sidebarThreadParentKey(current);
+    if (!parentKey) {
+      return current;
+    }
+    const parent = threadByKey.get(parentKey);
+    if (!parent) {
+      return current;
+    }
+    current = parent;
+  }
+  return null;
+}
+
+export function rootSidebarThreads(
+  threads: readonly SidebarThreadSummary[],
+  allThreads: readonly SidebarThreadSummary[] = threads,
+): SidebarThreadSummary[] {
+  const keys = new Set(allThreads.map(sidebarThreadKey));
+  return threads.filter((thread) => {
+    const parentKey = sidebarThreadParentKey(thread);
+    return !parentKey || !keys.has(parentKey);
+  });
 }
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
