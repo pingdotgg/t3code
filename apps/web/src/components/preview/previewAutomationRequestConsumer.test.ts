@@ -78,4 +78,24 @@ describe("previewAutomationRequestConsumer", () => {
       message: "No preview tab",
     });
   });
+
+  it("serializes structured automation context without leaking causes", () => {
+    const error = Object.assign(new Error("Preview target unavailable"), {
+      name: "PreviewAutomationTargetUnavailableError",
+      _tag: "PreviewAutomationTargetUnavailableError",
+      responseTag: "PreviewAutomationTabNotFoundError",
+      requestId: "request-1",
+      threadId: "thread-1",
+      cause: new Error("private bridge failure"),
+    });
+
+    expect(serializePreviewAutomationError(error)).toEqual({
+      _tag: "PreviewAutomationTabNotFoundError",
+      message: "Preview target unavailable",
+      detail: {
+        requestId: "request-1",
+        threadId: "thread-1",
+      },
+    });
+  });
 });

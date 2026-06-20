@@ -2,14 +2,20 @@
 
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type {
-  PreviewAutomationNavigateInput,
-  PreviewAutomationOpenInput,
-  PreviewAutomationRequest,
-  PreviewAutomationOwner as PreviewAutomationOwnerState,
-  PreviewAutomationStatus,
-  ScopedThreadRef,
+import {
+  EnvironmentId,
+  type PreviewAutomationNavigateInput,
+  type PreviewAutomationOpenInput,
+  PreviewAutomationOperation,
+  type PreviewAutomationOwner as PreviewAutomationOwnerState,
+  type PreviewAutomationRequest,
+  type PreviewAutomationStatus,
+  PreviewTabId,
+  type ScopedThreadRef,
+  ThreadId,
+  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState } from "react";
 
 import {
@@ -29,6 +35,100 @@ import {
   createLatestPreviewAutomationRequestHandler,
   createPreviewAutomationRequestConsumerAtom,
 } from "./previewAutomationRequestConsumer";
+
+export class PreviewAutomationOverlayTimeoutError extends Schema.TaggedErrorClass<PreviewAutomationOverlayTimeoutError>()(
+  "PreviewAutomationOverlayTimeoutError",
+  {
+    requestId: TrimmedNonEmptyString,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    timeoutMs: Schema.Int,
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationTimeoutError";
+  }
+
+  override get message(): string {
+    return `Preview webview for request ${this.requestId} on environment ${this.environmentId} thread ${this.threadId} did not register within ${this.timeoutMs}ms.`;
+  }
+}
+
+export class PreviewAutomationNavigationTimeoutError extends Schema.TaggedErrorClass<PreviewAutomationNavigationTimeoutError>()(
+  "PreviewAutomationNavigationTimeoutError",
+  {
+    requestId: TrimmedNonEmptyString,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    tabId: PreviewTabId,
+    readiness: Schema.Literals(["domContentLoaded", "load"]),
+    timeoutMs: Schema.Int,
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationTimeoutError";
+  }
+
+  override get message(): string {
+    return `Preview navigation for request ${this.requestId} on environment ${this.environmentId} thread ${this.threadId} tab ${this.tabId} did not reach ${this.readiness} readiness within ${this.timeoutMs}ms.`;
+  }
+}
+
+export class PreviewAutomationStaleOwnerError extends Schema.TaggedErrorClass<PreviewAutomationStaleOwnerError>()(
+  "PreviewAutomationStaleOwnerError",
+  {
+    requestId: TrimmedNonEmptyString,
+    environmentId: EnvironmentId,
+    expectedThreadId: ThreadId,
+    requestedThreadId: ThreadId,
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationUnavailableError";
+  }
+
+  override get message(): string {
+    return `Preview automation request ${this.requestId} targeted thread ${this.requestedThreadId}, but the owner for environment ${this.environmentId} is attached to thread ${this.expectedThreadId}.`;
+  }
+}
+
+export class PreviewAutomationTargetUnavailableError extends Schema.TaggedErrorClass<PreviewAutomationTargetUnavailableError>()(
+  "PreviewAutomationTargetUnavailableError",
+  {
+    requestId: TrimmedNonEmptyString,
+    operation: PreviewAutomationOperation,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    tabId: Schema.NullOr(PreviewTabId),
+    bridgeAvailable: Schema.Boolean,
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationTabNotFoundError";
+  }
+
+  override get message(): string {
+    return `Preview automation target for ${this.operation} request ${this.requestId} is unavailable on environment ${this.environmentId} thread ${this.threadId} (tab ${this.tabId ?? "unassigned"}, bridge ${this.bridgeAvailable ? "available" : "unavailable"}).`;
+  }
+}
+
+export class PreviewAutomationRecordingNotActiveError extends Schema.TaggedErrorClass<PreviewAutomationRecordingNotActiveError>()(
+  "PreviewAutomationRecordingNotActiveError",
+  {
+    requestId: TrimmedNonEmptyString,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    tabId: PreviewTabId,
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationExecutionError";
+  }
+
+  override get message(): string {
+    return `Preview automation request ${this.requestId} found no active recording for tab ${this.tabId} on environment ${this.environmentId} thread ${this.threadId}.`;
+  }
+}
 
 export function observeAutomationOwnerConnectedGeneration(
   previousGeneration: number | null,
@@ -51,6 +151,7 @@ export function observeAutomationOwnerConnectedGeneration(
 
 const waitForDesktopOverlay = async (
   threadRef: ScopedThreadRef,
+  requestId: string,
   timeoutMs: number,
 ): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
@@ -63,20 +164,26 @@ const waitForDesktopOverlay = async (
     }
     await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
   }
-  const error = new Error(`Preview webview did not register within ${timeoutMs}ms.`);
-  error.name = "PreviewAutomationTimeoutError";
-  throw error;
+  throw new PreviewAutomationOverlayTimeoutError({
+    requestId,
+    environmentId: threadRef.environmentId,
+    threadId: threadRef.threadId,
+    timeoutMs,
+  });
 };
 
 const waitForNavigationReadiness = async (
+  threadRef: ScopedThreadRef,
+  requestId: string,
   tabId: string,
   readiness: PreviewAutomationNavigateInput["readiness"],
   timeoutMs: number,
 ): Promise<void> => {
-  if (!previewBridge || readiness === "none") return;
+  const targetReadiness = readiness ?? "load";
+  if (!previewBridge || targetReadiness === "none") return;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
-    if (readiness === "domContentLoaded") {
+    if (targetReadiness === "domContentLoaded") {
       const readyState = await previewBridge.automation.evaluate(tabId, {
         expression: "document.readyState",
       });
@@ -87,9 +194,14 @@ const waitForNavigationReadiness = async (
     }
     await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
   }
-  const error = new Error(`Preview navigation did not become ready within ${timeoutMs}ms.`);
-  error.name = "PreviewAutomationTimeoutError";
-  throw error;
+  throw new PreviewAutomationNavigationTimeoutError({
+    requestId,
+    environmentId: threadRef.environmentId,
+    threadId: threadRef.threadId,
+    tabId,
+    readiness: targetReadiness,
+    timeoutMs,
+  });
 };
 
 const currentStatus = async (
@@ -111,12 +223,6 @@ const currentStatus = async (
     title: navStatus && navStatus._tag !== "Idle" ? navStatus.title : null,
     loading: navStatus?._tag === "Loading",
   };
-};
-
-const previewTabNotFoundError = (): Error => {
-  const error = new Error("Preview tab is not initialized.");
-  error.name = "PreviewAutomationTabNotFoundError";
-  return error;
 };
 
 export function PreviewAutomationOwner(props: {
@@ -182,12 +288,23 @@ export function PreviewAutomationOwner(props: {
   const handleRequest = useCallback(
     async (request: PreviewAutomationRequest): Promise<unknown> => {
       if (request.threadId !== threadRef.threadId) {
-        const error = new Error("Preview automation request targeted a stale thread owner.");
-        error.name = "PreviewAutomationUnavailableError";
-        throw error;
+        throw new PreviewAutomationStaleOwnerError({
+          requestId: request.requestId,
+          environmentId: threadRef.environmentId,
+          expectedThreadId: threadRef.threadId,
+          requestedThreadId: request.threadId,
+        });
       }
       const state = readThreadPreviewState(threadRef);
       const tabId = request.tabId ?? state.snapshot?.tabId ?? null;
+      const unavailableTarget = {
+        requestId: request.requestId,
+        operation: request.operation,
+        environmentId: threadRef.environmentId,
+        threadId: threadRef.threadId,
+        tabId,
+        bridgeAvailable: Boolean(previewBridge),
+      };
       switch (request.operation) {
         case "status":
           return currentStatus(threadRef, visible);
@@ -215,11 +332,13 @@ export function PreviewAutomationOwner(props: {
           if (input.show ?? true) {
             useRightPanelStore.getState().openBrowser(threadRef, activeTabId);
           }
-          await waitForDesktopOverlay(threadRef, request.timeoutMs);
+          await waitForDesktopOverlay(threadRef, request.requestId, request.timeoutMs);
           return currentStatus(threadRef, input.show ?? true);
         }
         case "navigate": {
-          if (!previewBridge || !tabId) throw previewTabNotFoundError();
+          if (!previewBridge || !tabId) {
+            throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
+          }
           const input = request.input as PreviewAutomationNavigateInput;
           const resolution = resolveBrowserNavigationTarget(
             threadRef.environmentId,
@@ -227,6 +346,8 @@ export function PreviewAutomationOwner(props: {
           );
           await previewBridge.navigate(tabId, resolution.resolvedUrl);
           await waitForNavigationReadiness(
+            threadRef,
+            request.requestId,
             tabId,
             input.readiness ?? "load",
             input.timeoutMs ?? request.timeoutMs,
@@ -234,46 +355,62 @@ export function PreviewAutomationOwner(props: {
           return currentStatus(threadRef, visible);
         }
         case "snapshot":
-          if (!previewBridge || !tabId) throw previewTabNotFoundError();
+          if (!previewBridge || !tabId) {
+            throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
+          }
           return previewBridge.automation.snapshot(tabId);
         case "click":
-          if (!previewBridge || !tabId) throw previewTabNotFoundError();
+          if (!previewBridge || !tabId) {
+            throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
+          }
           return previewBridge.automation.click(
             tabId,
             request.input as Parameters<typeof previewBridge.automation.click>[1],
           );
         case "type":
-          if (!previewBridge || !tabId) throw previewTabNotFoundError();
+          if (!previewBridge || !tabId) {
+            throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
+          }
           return previewBridge.automation.type(
             tabId,
             request.input as Parameters<typeof previewBridge.automation.type>[1],
           );
         case "press":
-          if (!previewBridge || !tabId) throw previewTabNotFoundError();
+          if (!previewBridge || !tabId) {
+            throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
+          }
           return previewBridge.automation.press(
             tabId,
             request.input as Parameters<typeof previewBridge.automation.press>[1],
           );
         case "scroll":
-          if (!previewBridge || !tabId) throw previewTabNotFoundError();
+          if (!previewBridge || !tabId) {
+            throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
+          }
           return previewBridge.automation.scroll(
             tabId,
             request.input as Parameters<typeof previewBridge.automation.scroll>[1],
           );
         case "evaluate":
-          if (!previewBridge || !tabId) throw previewTabNotFoundError();
+          if (!previewBridge || !tabId) {
+            throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
+          }
           return previewBridge.automation.evaluate(
             tabId,
             request.input as Parameters<typeof previewBridge.automation.evaluate>[1],
           );
         case "waitFor":
-          if (!previewBridge || !tabId) throw previewTabNotFoundError();
+          if (!previewBridge || !tabId) {
+            throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
+          }
           return previewBridge.automation.waitFor(
             tabId,
             request.input as Parameters<typeof previewBridge.automation.waitFor>[1],
           );
         case "recordingStart": {
-          if (!tabId) throw previewTabNotFoundError();
+          if (!tabId) {
+            throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
+          }
           const startedAt = await startBrowserRecording(tabId);
           return {
             tabId,
@@ -282,9 +419,18 @@ export function PreviewAutomationOwner(props: {
           };
         }
         case "recordingStop": {
-          if (!tabId) throw previewTabNotFoundError();
+          if (!tabId) {
+            throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
+          }
           const artifact = await stopBrowserRecording(tabId);
-          if (!artifact) throw new Error("No active recording exists for this preview tab.");
+          if (!artifact) {
+            throw new PreviewAutomationRecordingNotActiveError({
+              requestId: request.requestId,
+              environmentId: threadRef.environmentId,
+              threadId: threadRef.threadId,
+              tabId,
+            });
+          }
           return artifact;
         }
       }

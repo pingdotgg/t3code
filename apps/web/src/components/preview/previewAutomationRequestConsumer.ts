@@ -21,14 +21,40 @@ export function serializePreviewAutomationError(
   error: unknown,
 ): NonNullable<PreviewAutomationResponse["error"]> {
   if (error instanceof Error) {
-    const detail =
+    const explicitDetail =
       "detail" in error && (error as { detail?: unknown }).detail !== undefined
         ? (error as { detail?: unknown }).detail
         : undefined;
+    const structuralDetail =
+      "_tag" in error &&
+      typeof (error as { _tag?: unknown })._tag === "string" &&
+      (error as { _tag: string })._tag.startsWith("PreviewAutomation")
+        ? Object.fromEntries(
+            Object.entries(error).filter(
+              ([key]) =>
+                key !== "_tag" &&
+                key !== "cause" &&
+                key !== "name" &&
+                key !== "message" &&
+                key !== "stack" &&
+                key !== "detail" &&
+                key !== "responseTag",
+            ),
+          )
+        : undefined;
+    const detail = explicitDetail ?? structuralDetail;
+    const responseTag =
+      "responseTag" in error &&
+      typeof (error as { responseTag?: unknown }).responseTag === "string" &&
+      (error as { responseTag: string }).responseTag.startsWith("PreviewAutomation")
+        ? (error as { responseTag: string }).responseTag
+        : undefined;
     return {
-      _tag: error.name.startsWith("PreviewAutomation")
-        ? error.name
-        : "PreviewAutomationExecutionError",
+      _tag:
+        responseTag ??
+        (error.name.startsWith("PreviewAutomation")
+          ? error.name
+          : "PreviewAutomationExecutionError"),
       message: error.message,
       ...(detail === undefined ? {} : { detail }),
     };
