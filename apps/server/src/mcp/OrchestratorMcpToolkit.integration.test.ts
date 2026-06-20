@@ -21,7 +21,6 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ProviderKind,
   ProviderThreadId,
   ProviderTurnId,
   type ServerProvider,
@@ -94,8 +93,8 @@ interface CapturedTurn {
   readonly text: string;
 }
 
-function unsupported(provider: ProviderKind, detail: string) {
-  return Effect.fail(new ProviderAdapterProtocolError({ provider, detail }));
+function unsupported(driver: ProviderDriverKind, detail: string) {
+  return Effect.fail(new ProviderAdapterProtocolError({ driver, detail }));
 }
 
 function makeProviderSnapshot(input: {
@@ -127,7 +126,7 @@ function makeProviderSnapshot(input: {
 
 function makeDeterministicAdapter(input: {
   readonly instanceId: ProviderInstanceId;
-  readonly provider: ProviderKind;
+  readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly shouldComplete: (turn: ProviderAdapterV2TurnInput) => boolean;
@@ -135,7 +134,7 @@ function makeDeterministicAdapter(input: {
 }): ProviderAdapterV2Shape {
   return {
     instanceId: input.instanceId,
-    provider: input.provider,
+    driver: input.driver,
     getCapabilities: () => Effect.succeed(input.capabilities),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
@@ -143,7 +142,8 @@ function makeDeterministicAdapter(input: {
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
-          provider: input.provider,
+          driver: input.driver,
+          providerInstanceId: input.instanceId,
           status: "ready",
           cwd: sessionInput.runtimePolicy.cwd ?? process.cwd(),
           model: sessionInput.modelSelection.model,
@@ -160,7 +160,7 @@ function makeDeterministicAdapter(input: {
 
         return {
           instanceId: input.instanceId,
-          provider: input.provider,
+          driver: input.driver,
           providerSessionId: sessionInput.providerSessionId,
           providerSession,
           rawEvents: Stream.empty,
@@ -168,15 +168,16 @@ function makeDeterministicAdapter(input: {
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
               const createdAt = yield* DateTime.now;
-              const nativeThreadId = `${input.provider}:${threadInput.threadId}`;
+              const nativeThreadId = `${input.driver}:${threadInput.threadId}`;
               return {
                 id: ProviderThreadId.make(`provider-thread:${nativeThreadId}`),
-                provider: input.provider,
+                driver: input.driver,
+                providerInstanceId: input.instanceId,
                 providerSessionId: sessionInput.providerSessionId,
                 appThreadId: threadInput.threadId,
                 ownerNodeId: null,
                 nativeThreadRef: {
-                  provider: input.provider,
+                  driver: input.driver,
                   nativeId: nativeThreadId,
                   strength: "strong",
                 },
@@ -208,14 +209,14 @@ function makeDeterministicAdapter(input: {
               yield* publish([
                 {
                   type: "provider_turn.updated",
-                  provider: input.provider,
+                  driver: input.driver,
                   providerTurn: {
                     id: providerTurnId,
                     providerThreadId: turnInput.providerThread.id,
                     nodeId: turnInput.rootNodeId,
                     runAttemptId: turnInput.attemptId,
                     nativeTurnRef: {
-                      provider: input.provider,
+                      driver: input.driver,
                       nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
                       strength: "strong",
                     },
@@ -233,14 +234,14 @@ function makeDeterministicAdapter(input: {
               yield* publish([
                 {
                   type: "provider_turn.updated",
-                  provider: input.provider,
+                  driver: input.driver,
                   providerTurn: {
                     id: providerTurnId,
                     providerThreadId: turnInput.providerThread.id,
                     nodeId: turnInput.rootNodeId,
                     runAttemptId: turnInput.attemptId,
                     nativeTurnRef: {
-                      provider: input.provider,
+                      driver: input.driver,
                       nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
                       strength: "strong",
                     },
@@ -252,7 +253,7 @@ function makeDeterministicAdapter(input: {
                 },
                 {
                   type: "turn_item.updated",
-                  provider: input.provider,
+                  driver: input.driver,
                   turnItem: {
                     id: TurnItemId.make(
                       `turn-item:${input.instanceId}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
@@ -280,7 +281,7 @@ function makeDeterministicAdapter(input: {
                 },
                 {
                   type: "turn.terminal",
-                  provider: input.provider,
+                  driver: input.driver,
                   providerTurnId,
                   status: "completed",
                 },
@@ -290,16 +291,15 @@ function makeDeterministicAdapter(input: {
           interruptTurn: ({ providerTurnId }) =>
             PubSub.publish(events, {
               type: "turn.terminal",
-              provider: input.provider,
+              driver: input.driver,
               providerTurnId,
               status: "interrupted",
             }).pipe(Effect.asVoid),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () =>
-            unsupported(input.provider, "readThreadSnapshot is unused in this test"),
-          rollbackThread: () =>
-            unsupported(input.provider, "rollbackThread is unused in this test"),
-          forkThread: () => unsupported(input.provider, "forkThread is unused in this test"),
+            unsupported(input.driver, "readThreadSnapshot is unused in this test"),
+          rollbackThread: () => unsupported(input.driver, "rollbackThread is unused in this test"),
+          forkThread: () => unsupported(input.driver, "forkThread is unused in this test"),
         };
       }),
   };
@@ -345,7 +345,7 @@ describe("orchestrator MCP toolkit", () => {
           const registryLayer = makeProviderAdapterRegistryLayer([
             makeDeterministicAdapter({
               instanceId: codexInstanceId,
-              provider: "codex",
+              driver: ProviderDriverKind.make("codex"),
               capabilities: CodexProviderCapabilitiesV2,
               capturedTurns,
               shouldComplete: (turn) =>
@@ -354,7 +354,7 @@ describe("orchestrator MCP toolkit", () => {
             }),
             makeDeterministicAdapter({
               instanceId: claudeInstanceId,
-              provider: "claudeAgent",
+              driver: ProviderDriverKind.make("claudeAgent"),
               capabilities: ClaudeProviderCapabilitiesV2,
               capturedTurns,
               shouldComplete: () => true,

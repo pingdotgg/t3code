@@ -4,19 +4,27 @@ import {
   CommandId,
   type ModelSelection,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 
 import { CheckpointStoreLive } from "../checkpointing/Layers/CheckpointStore.ts";
 import { ServerConfig } from "../config.ts";
 import { GitCoreLive } from "../git/Layers/GitCore.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
+import type { ProviderInstance } from "../provider/ProviderDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
+import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { OrchestrationV2LayerLive } from "./runtimeLayer.ts";
+import { shellStreamItemFromSnapshot } from "./ShellStream.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-orchestration-v2-runtime-layer-",
@@ -32,11 +40,43 @@ const CheckpointStoreTestLayer = CheckpointStoreLive.pipe(
   Layer.provide(NodeServices.layer),
 );
 
+const driver = ProviderDriverKind.make("codex");
+const orchestrationAdapter = {
+  instanceId: modelSelection.instanceId,
+  driver,
+  getCapabilities: () => Effect.die("capabilities are not used by lifecycle tests"),
+  openSession: () => Effect.die("sessions are not used by lifecycle tests"),
+} as ProviderAdapterV2Shape;
+const providerInstance = {
+  instanceId: modelSelection.instanceId,
+  driverKind: driver,
+  continuationIdentity: {
+    driverKind: driver,
+    continuationKey: "codex:test",
+  },
+  displayName: "Codex test",
+  enabled: true,
+  snapshot: {} as ProviderInstance["snapshot"],
+  adapter: {} as ProviderInstance["adapter"],
+  orchestrationAdapter,
+  textGeneration: {} as ProviderInstance["textGeneration"],
+} satisfies ProviderInstance;
+
+const TestProviderInstanceRegistry = Layer.succeed(ProviderInstanceRegistry, {
+  getInstance: (instanceId) =>
+    Effect.succeed(instanceId === providerInstance.instanceId ? providerInstance : undefined),
+  listInstances: Effect.succeed([providerInstance]),
+  listUnavailable: Effect.succeed([]),
+  streamChanges: Stream.empty,
+  subscribeChanges: Effect.never,
+});
+
 const TestLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
   Layer.provide(ServerConfigLayer),
   Layer.provide(ServerSettingsService.layerTest()),
+  Layer.provide(TestProviderInstanceRegistry),
   Layer.provide(NodeServices.layer),
 );
 
@@ -70,8 +110,139 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
       assert.equal(result.sequence, 1);
       assert.equal(projection.thread.id, threadId);
       assert.equal(projection.thread.projectId, projectId);
-      assert.equal(projection.thread.defaultProvider, "codex");
+      assert.equal(projection.thread.providerInstanceId, "codex");
       assert.deepEqual(projection.runs, []);
+    }),
+  );
+
+  it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-lifecycle-thread");
+      const create = {
+        type: "thread.create" as const,
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        commandId: CommandId.make("runtime-layer-lifecycle-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-lifecycle-project"),
+        title: "Lifecycle thread",
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+      };
+
+      const firstCreate = yield* orchestrator.dispatch(create);
+      const retriedCreate = yield* orchestrator.dispatch(create);
+      assert.equal(retriedCreate.sequence, firstCreate.sequence);
+      assert.lengthOf(retriedCreate.storedEvents, 1);
+
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-lifecycle-metadata"),
+        threadId,
+        title: "Renamed lifecycle thread",
+        branch: "feature/v2",
+        worktreePath: "/tmp/t3-v2-worktree",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("runtime-layer-lifecycle-runtime"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.make("runtime-layer-lifecycle-interaction"),
+        threadId,
+        interactionMode: "plan",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make("runtime-layer-lifecycle-model"),
+        threadId,
+        modelSelection: { ...modelSelection, model: "gpt-5.5" },
+      });
+
+      const archive = yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-layer-lifecycle-archive"),
+        threadId,
+      });
+      const archivedShell = yield* orchestrator.getShellSnapshot();
+      assert.notInclude(
+        archivedShell.threads.map((thread) => thread.id),
+        threadId,
+      );
+      assert.include(
+        archivedShell.archivedThreads.map((thread) => thread.id),
+        threadId,
+      );
+      assert.deepEqual(
+        shellStreamItemFromSnapshot({
+          stored: archive.storedEvents[0]!,
+          snapshot: archivedShell,
+        }),
+        {
+          kind: "thread.updated",
+          sequence: archive.sequence,
+          location: "archive",
+          thread: archivedShell.archivedThreads[0]!,
+        },
+      );
+
+      const remove = yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("runtime-layer-lifecycle-delete"),
+        threadId,
+      });
+      const deletedShell = yield* orchestrator.getShellSnapshot();
+      assert.notInclude(
+        deletedShell.threads.map((thread) => thread.id),
+        threadId,
+      );
+      assert.notInclude(
+        deletedShell.archivedThreads.map((thread) => thread.id),
+        threadId,
+      );
+      assert.deepEqual(
+        shellStreamItemFromSnapshot({ stored: remove.storedEvents[0]!, snapshot: deletedShell }),
+        {
+          kind: "thread.removed",
+          sequence: remove.sequence,
+          location: "archive",
+          threadId,
+        },
+      );
+
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(projection.thread.title, "Renamed lifecycle thread");
+      assert.equal(projection.thread.branch, "feature/v2");
+      assert.equal(projection.thread.worktreePath, "/tmp/t3-v2-worktree");
+      assert.equal(projection.thread.runtimeMode, "approval-required");
+      assert.equal(projection.thread.interactionMode, "plan");
+      assert.equal(projection.thread.modelSelection.model, "gpt-5.5");
+      assert.isNotNull(projection.thread.archivedAt);
+      assert.isNotNull(projection.thread.deletedAt);
+    }),
+  );
+
+  it.effect("persists rejected command receipts across retries", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const command = {
+        type: "thread.archive" as const,
+        commandId: CommandId.make("runtime-layer-rejected-command"),
+        threadId: ThreadId.make("runtime-layer-missing-thread"),
+      };
+
+      const first = yield* orchestrator.dispatch(command).pipe(Effect.flip);
+      const retry = yield* orchestrator.dispatch(command).pipe(Effect.flip);
+
+      assert.equal(first._tag, "OrchestratorProjectionError");
+      assert.equal(retry._tag, "OrchestratorCommandPreviouslyRejectedError");
     }),
   );
 });

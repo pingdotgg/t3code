@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { OrchestrationV2Command } from "@t3tools/contracts";
+import { OrchestrationV2Command, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -35,7 +35,7 @@ describe("orchestrator replay fixture contract", () => {
         for (const fixture of ORCHESTRATOR_REPLAY_FIXTURES) {
           assert.isAtLeast(fixture.providers.length, 1, `${fixture.name} must have providers`);
           assertUnique(
-            fixture.providers.map((provider) => provider.provider),
+            fixture.providers.map((provider) => provider.driver),
             `${fixture.name} provider variants`,
           );
 
@@ -44,25 +44,29 @@ describe("orchestrator replay fixture contract", () => {
             const materialized = yield* materializeFixtureInput({
               scenario: fixture.name,
               fixtureInput: fixture.buildInput(),
+              driver: provider.driver,
               modelSelection: provider.modelSelection,
             }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
             const firstCommand = materialized.commands[0];
 
             assert.equal(transcript.scenario, fixture.name);
-            if (provider.provider === "acpRegistry") {
+            if (provider.driver === "acpRegistry") {
               assert.include(
                 ["acpRegistry", "grok"],
                 transcript.provider,
                 "ACP Registry may retarget protocol-standard Grok ACP evidence",
               );
             } else {
-              assert.equal(transcript.provider, provider.provider);
+              assert.equal(transcript.provider, provider.driver);
             }
-            assert.equal(provider.modelSelection.instanceId, provider.provider);
+            assert.equal(
+              provider.modelSelection.instanceId,
+              ProviderInstanceId.make(provider.driver),
+            );
             assert.isDefined(materialized.projectionThreadIds[0]);
             assert.equal(firstCommand?.type, "thread.create");
             if (firstCommand?.type !== "thread.create") {
-              throw new Error(`${fixture.name}/${provider.provider} must start with thread.create`);
+              throw new Error(`${fixture.name}/${provider.driver} must start with thread.create`);
             }
             assert.equal(firstCommand.threadId, materialized.projectionThreadIds[0]);
             assert.equal(materialized.commands.length, fixture.buildInput().steps.length + 1);
@@ -71,7 +75,7 @@ describe("orchestrator replay fixture contract", () => {
 
             assertUnique(
               materialized.commands.map((command) => command.commandId),
-              `${fixture.name}/${provider.provider} command IDs`,
+              `${fixture.name}/${provider.driver} command IDs`,
             );
 
             for (const command of materialized.commands) {
@@ -86,7 +90,7 @@ describe("orchestrator replay fixture contract", () => {
                     (step.type === "respond_to_next_runtime_request" &&
                       step.commandId === command.commandId),
                 ),
-                `${fixture.name}/${provider.provider} command ${command.commandId} must appear in the timeline`,
+                `${fixture.name}/${provider.driver} command ${command.commandId} must appear in the timeline`,
               );
             }
           }
@@ -97,7 +101,7 @@ describe("orchestrator replay fixture contract", () => {
   it.effect("keeps Codex fixture transcripts at the codex app-server boundary", () =>
     Effect.gen(function* () {
       for (const fixture of ORCHESTRATOR_REPLAY_FIXTURES) {
-        for (const provider of fixture.providers.filter((entry) => entry.provider === "codex")) {
+        for (const provider of fixture.providers.filter((entry) => entry.driver === "codex")) {
           const transcript = yield* readTranscript(provider.transcriptFile);
           const first = transcript.entries[0];
           const last = transcript.entries.at(-1);

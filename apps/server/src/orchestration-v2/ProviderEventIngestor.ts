@@ -3,6 +3,7 @@ import {
   CommandId,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
+  ProviderInstanceId,
   ProviderSessionId,
   RawEventId,
   RunId,
@@ -54,6 +55,7 @@ export type ProviderEventIngestorV2Error = typeof ProviderEventIngestorV2Error.T
 export interface ProviderEventIngestorV2Shape {
   readonly normalize: (input: {
     readonly providerSessionId: ProviderSessionId;
+    readonly providerInstanceId: ProviderInstanceId;
     readonly commandId?: CommandId;
     readonly threadId: ThreadId;
     readonly runId?: RunId;
@@ -63,6 +65,7 @@ export interface ProviderEventIngestorV2Shape {
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2DomainEvent>, ProviderEventIngestorV2Error>;
   readonly ingestNormalized: (input: {
     readonly providerSessionId: ProviderSessionId;
+    readonly providerInstanceId: ProviderInstanceId;
     readonly commandId?: CommandId;
     readonly threadId: ThreadId;
     readonly runId?: RunId;
@@ -91,6 +94,7 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
       const makeDomainEvent = (
         input: {
           readonly providerSessionId: ProviderSessionId;
+          readonly providerInstanceId: ProviderInstanceId;
           readonly commandId?: CommandId;
           readonly threadId: ThreadId;
           readonly runId?: RunId;
@@ -120,7 +124,8 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
               threadId,
               runId: payloadInput.runId ?? input.runId,
               nodeId: payloadInput.nodeId ?? input.nodeId,
-              provider: input.event.provider,
+              driver: input.event.driver,
+              providerInstanceId: input.providerInstanceId,
               rawEventId: input.rawEventId,
               occurredAt,
               payload: payloadInput.payload,
