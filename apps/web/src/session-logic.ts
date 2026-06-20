@@ -691,7 +691,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? (activity.payload as Record<string, unknown>)
       : null;
   const commandPreview = extractToolCommand(payload);
-  const commandResult = extractCommandResult(payload);
+  const commandResult = extractCommandResult(payload, {
+    preserveBlankRawOutputStreams: activity.kind === "tool.updated",
+  });
   const changedFiles = extractChangedFiles(payload);
   const patch = extractToolPatch(payload);
   const title = extractToolTitle(payload);
@@ -907,7 +909,7 @@ function mergeTextOutput(
   if (previous.startsWith(next)) {
     return previous;
   }
-  const separator = previous.endsWith("\n") || next.startsWith("\n") ? "" : "\n";
+  const separator = /\s$/u.test(previous) || /^\s/u.test(next) ? "" : "\n";
   return `${previous}${separator}${next}`;
 }
 
@@ -1177,7 +1179,12 @@ function firstIntegerFromRecord(
   return value !== null && Number.isInteger(value) ? value : null;
 }
 
-function extractCommandResult(payload: Record<string, unknown> | null): {
+function extractCommandResult(
+  payload: Record<string, unknown> | null,
+  options: {
+    readonly preserveBlankRawOutputStreams?: boolean;
+  } = {},
+): {
   output: string | null;
   stdout: string | null;
   stderr: string | null;
@@ -1188,14 +1195,18 @@ function extractCommandResult(payload: Record<string, unknown> | null): {
   const item = asRecord(data?.item);
   const itemResult = asRecord(item?.result);
   const rawOutput = asRecord(data?.rawOutput);
-  const rawOutputStdout = firstCommandOutputStringFromRecord(rawOutput, ["stdout"]);
+  const rawOutputStdout = options.preserveBlankRawOutputStreams
+    ? firstRawStringFromRecord(rawOutput, ["stdout"])
+    : firstCommandOutputStringFromRecord(rawOutput, ["stdout"]);
   const stdout =
     rawOutputStdout ??
     firstCommandOutputStringFromRecord(itemResult, ["stdout"]) ??
     firstCommandOutputStringFromRecord(data, ["stdout"]) ??
     firstCommandOutputStringFromRecord(payload, ["stdout"]);
   const stderr =
-    firstCommandOutputStringFromRecord(rawOutput, ["stderr"]) ??
+    (options.preserveBlankRawOutputStreams
+      ? firstRawStringFromRecord(rawOutput, ["stderr"])
+      : firstCommandOutputStringFromRecord(rawOutput, ["stderr"])) ??
     firstCommandOutputStringFromRecord(itemResult, ["stderr"]) ??
     firstCommandOutputStringFromRecord(data, ["stderr"]) ??
     firstCommandOutputStringFromRecord(payload, ["stderr"]);
