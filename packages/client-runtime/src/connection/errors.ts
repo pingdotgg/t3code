@@ -74,21 +74,39 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
 }
 
 export function mapManagedRelayError(error: ManagedRelayClientError): ConnectionAttemptError {
-  if (error.relayError) {
-    return relayProtectedError(error.relayError);
+  switch (error._tag) {
+    case "ManagedRelayRequestFailedError":
+      if (error.relayError) {
+        return relayProtectedError(error.relayError);
+      }
+      return new ConnectionTransientError({
+        reason: "relay-unavailable",
+        detail: error.message,
+        ...(error.traceId ? { traceId: error.traceId } : {}),
+      });
+    case "ManagedRelayRequestTimeoutError":
+      return new ConnectionTransientError({
+        reason: "timeout",
+        detail: error.message,
+      });
+    case "ManagedRelayUrlInvalidError":
+      return new ConnectionBlockedError({
+        reason: "configuration",
+        detail: error.message,
+      });
+    case "ManagedRelayAccessTokenScopesUnexpectedError":
+      return new ConnectionBlockedError({
+        reason: "permission",
+        detail: error.message,
+      });
+    case "ManagedRelayDpopKeyLoadError":
+    case "ManagedRelayTokenProofCreationError":
+    case "ManagedRelayRequestProofCreationError":
+      return new ConnectionBlockedError({
+        reason: "authentication",
+        detail: error.message,
+      });
   }
-  if (error.cause?._tag === "ManagedRelayRequestTimeoutError") {
-    return new ConnectionTransientError({
-      reason: "timeout",
-      detail: error.message,
-      ...(error.traceId ? { traceId: error.traceId } : {}),
-    });
-  }
-  return new ConnectionTransientError({
-    reason: "relay-unavailable",
-    detail: error.message,
-    ...(error.traceId ? { traceId: error.traceId } : {}),
-  });
 }
 
 export function mapRemoteEnvironmentError(

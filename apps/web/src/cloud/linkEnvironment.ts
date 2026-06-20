@@ -25,7 +25,7 @@ import {
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { request, runStream } from "@t3tools/client-runtime/rpc";
 import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
-import { ManagedRelayClient, type ManagedRelayClientError } from "@t3tools/client-runtime/relay";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
 import {
   readPrimaryEnvironmentDescriptor,
@@ -164,13 +164,15 @@ function relayProtectedErrorMessage(error: RelayProtectedErrorType): string {
 }
 
 function decodedRelayClientError(message: string) {
-  return (cause: ManagedRelayClientError) => {
-    const relayError = cause.relayError;
+  return (cause: ManagedRelay.ManagedRelayClientError) => {
+    const relayError =
+      cause._tag === "ManagedRelayRequestFailedError" ? cause.relayError : undefined;
+    const traceId = cause._tag === "ManagedRelayRequestFailedError" ? cause.traceId : undefined;
     const detail = relayError ? relayProtectedErrorMessage(relayError) : null;
     return new CloudEnvironmentLinkError({
       message: detail ? `${message}: ${detail}` : message,
       cause,
-      ...(cause.traceId ? { traceId: cause.traceId } : {}),
+      ...(traceId ? { traceId } : {}),
     });
   };
 }
@@ -268,7 +270,7 @@ export function listManagedCloudEnvironments(input: {
 }): Effect.Effect<
   ReadonlyArray<RelayClientEnvironmentRecord>,
   CloudEnvironmentLinkError,
-  ManagedRelayClient
+  ManagedRelay.ManagedRelayClient
 > {
   return Effect.gen(function* () {
     const configuredRelayUrl = relayUrl();
@@ -277,7 +279,7 @@ export function listManagedCloudEnvironments(input: {
         message: "T3CODE_RELAY_URL is not configured.",
       });
     }
-    const relayClient = yield* ManagedRelayClient;
+    const relayClient = yield* ManagedRelay.ManagedRelayClient;
     return yield* relayClient
       .listEnvironments({
         clerkToken: input.clerkToken,
@@ -299,7 +301,7 @@ export function listCloudDevices(input: {
 }): Effect.Effect<
   ReadonlyArray<RelayClientDeviceRecord>,
   CloudEnvironmentLinkError,
-  ManagedRelayClient
+  ManagedRelay.ManagedRelayClient
 > {
   return Effect.gen(function* () {
     if (!relayUrl()) {
@@ -307,7 +309,7 @@ export function listCloudDevices(input: {
         message: "T3CODE_RELAY_URL is not configured.",
       });
     }
-    const relayClient = yield* ManagedRelayClient;
+    const relayClient = yield* ManagedRelay.ManagedRelayClient;
     return yield* relayClient.listDevices({ clerkToken: input.clerkToken }).pipe(
       Effect.mapError(
         (cause) =>
@@ -351,7 +353,11 @@ export function updatePrimaryCloudPreferences(input: {
 export function unlinkPrimaryEnvironmentFromCloud(input: {
   readonly target: CloudLinkTarget;
   readonly clerkToken: string | null;
-}): Effect.Effect<void, CloudEnvironmentLinkError, HttpClient.HttpClient | ManagedRelayClient> {
+}): Effect.Effect<
+  void,
+  CloudEnvironmentLinkError,
+  HttpClient.HttpClient | ManagedRelay.ManagedRelayClient
+> {
   return Effect.gen(function* () {
     const client = yield* makeEnvironmentHttpApiClient(input.target.httpBaseUrl);
     yield* client.connect
@@ -360,7 +366,7 @@ export function unlinkPrimaryEnvironmentFromCloud(input: {
 
     const configuredRelayUrl = relayUrl();
     if (configuredRelayUrl && input.clerkToken) {
-      const relayClient = yield* ManagedRelayClient;
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
       yield* relayClient
         .unlinkEnvironment({
           clerkToken: input.clerkToken,
@@ -383,7 +389,7 @@ export function linkPrimaryEnvironmentToCloud(input: {
 }): Effect.Effect<
   void,
   CloudEnvironmentLinkError,
-  EnvironmentRegistry | HttpClient.HttpClient | ManagedRelayClient
+  EnvironmentRegistry | HttpClient.HttpClient | ManagedRelay.ManagedRelayClient
 > {
   return Effect.gen(function* () {
     const configuredRelayUrl = relayUrl();
@@ -392,7 +398,7 @@ export function linkPrimaryEnvironmentToCloud(input: {
         message: "T3CODE_RELAY_URL is not configured.",
       });
     }
-    const relayClient = yield* ManagedRelayClient;
+    const relayClient = yield* ManagedRelay.ManagedRelayClient;
     const environmentClient = yield* makeEnvironmentHttpApiClient(input.target.httpBaseUrl);
     yield* ensureRelayClientAvailable(EnvironmentId.make(input.target.environmentId));
 

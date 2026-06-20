@@ -446,11 +446,9 @@ describe("ConnectionResolver", () => {
       const brokerLayer = yield* makeDependencies({
         connectEnvironment: () =>
           Effect.fail(
-            new ManagedRelay.ManagedRelayClientError({
-              message: "Relay timed out.",
-              cause: new ManagedRelay.ManagedRelayRequestTimeoutError({
-                message: "Relay timed out.",
-              }),
+            new ManagedRelay.ManagedRelayRequestTimeoutError({
+              activity: "Relay environment connection",
+              timeoutMs: ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS,
             }),
           ),
       });

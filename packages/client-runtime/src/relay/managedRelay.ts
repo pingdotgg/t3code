@@ -5,7 +5,7 @@ import {
   type RelayClientDeviceRecord,
   RelayConnectEnvironmentEndpoint,
   type RelayDeviceRegistrationRequest,
-  type RelayDpopAccessTokenScope,
+  RelayDpopAccessTokenScope,
   RelayDpopTokenExchangeGrantType,
   type RelayEnvironmentConnectRequest,
   type RelayEnvironmentConnectResponse,
@@ -33,57 +33,183 @@ import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
-import { HttpClientError } from "effect/unstable/http";
-import type { HttpMethod } from "effect/unstable/http/HttpMethod";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import type * as HttpMethod from "effect/unstable/http/HttpMethod";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
 export interface ManagedRelayDpopProofInput {
-  readonly method: HttpMethod;
+  readonly method: HttpMethod.HttpMethod;
   readonly url: string;
   readonly accessToken?: string;
 }
 
-export class ManagedRelayDpopSignerError extends Data.TaggedError("ManagedRelayDpopSignerError")<{
-  readonly cause: unknown;
-}> {}
+export class ManagedRelayDpopKeyLoadError extends Schema.TaggedErrorClass<ManagedRelayDpopKeyLoadError>()(
+  "ManagedRelayDpopKeyLoadError",
+  {
+    keyStore: Schema.Literals(["expo-secure-store", "indexed-db"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Could not load relay DPoP proof key.";
+  }
+}
 
-export class ManagedRelayRequestTimeoutError extends Data.TaggedError(
+export class ManagedRelayDpopProofCreationError extends Schema.TaggedErrorClass<ManagedRelayDpopProofCreationError>()(
+  "ManagedRelayDpopProofCreationError",
+  {
+    method: Schema.String,
+    url: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not create the relay DPoP proof for ${this.method} ${this.url}.`;
+  }
+}
+
+export const ManagedRelayDpopSignerError = Schema.Union([
+  ManagedRelayDpopKeyLoadError,
+  ManagedRelayDpopProofCreationError,
+]);
+export type ManagedRelayDpopSignerError = typeof ManagedRelayDpopSignerError.Type;
+
+export const ManagedRelayRequestAction = Schema.Literals([
+  "exchange relay DPoP access token",
+  "list relay-managed environments",
+  "list relay client devices",
+  "create relay environment link challenge",
+  "link relay environment",
+  "unlink relay environment",
+  "get relay environment status",
+  "connect relay environment",
+  "register relay mobile device",
+  "unregister relay mobile device",
+  "register relay live activity",
+]);
+export type ManagedRelayRequestAction = typeof ManagedRelayRequestAction.Type;
+
+export const ManagedRelayRequestActivity = Schema.Literals([
+  "Relay DPoP access token exchange",
+  "Relay environment listing",
+  "Relay client device listing",
+  "Relay environment link challenge",
+  "Relay environment linking",
+  "Relay environment unlinking",
+  "Relay environment status request",
+  "Relay environment connection",
+  "Relay mobile device registration",
+  "Relay mobile device unregistration",
+  "Relay Live Activity registration",
+]);
+export type ManagedRelayRequestActivity = typeof ManagedRelayRequestActivity.Type;
+
+export class ManagedRelayRequestTimeoutError extends Schema.TaggedErrorClass<ManagedRelayRequestTimeoutError>()(
   "ManagedRelayRequestTimeoutError",
-)<{
-  readonly message: string;
-}> {}
+  {
+    activity: ManagedRelayRequestActivity,
+    timeoutMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `${this.activity} timed out.`;
+  }
+}
+
+export class ManagedRelayUrlInvalidError extends Schema.TaggedErrorClass<ManagedRelayUrlInvalidError>()(
+  "ManagedRelayUrlInvalidError",
+  {
+    relayUrl: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "Relay URL must be a secure absolute HTTPS origin.";
+  }
+}
+
+export class ManagedRelayRequestFailedError extends Schema.TaggedErrorClass<ManagedRelayRequestFailedError>()(
+  "ManagedRelayRequestFailedError",
+  {
+    action: ManagedRelayRequestAction,
+    cause: Schema.Defect(),
+    relayError: Schema.optional(RelayProtectedError),
+    traceId: Schema.optional(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `Could not ${this.action}.`;
+  }
+}
+
+export class ManagedRelayAccessTokenScopesUnexpectedError extends Schema.TaggedErrorClass<ManagedRelayAccessTokenScopesUnexpectedError>()(
+  "ManagedRelayAccessTokenScopesUnexpectedError",
+  {
+    requestedScopes: Schema.Array(RelayDpopAccessTokenScope),
+    grantedScope: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "Relay granted unexpected DPoP access token scopes.";
+  }
+}
+
+export class ManagedRelayTokenProofCreationError extends Schema.TaggedErrorClass<ManagedRelayTokenProofCreationError>()(
+  "ManagedRelayTokenProofCreationError",
+  {
+    method: Schema.String,
+    url: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Could not create relay token DPoP proof.";
+  }
+}
+
+export class ManagedRelayRequestProofCreationError extends Schema.TaggedErrorClass<ManagedRelayRequestProofCreationError>()(
+  "ManagedRelayRequestProofCreationError",
+  {
+    method: Schema.String,
+    url: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Could not create relay request DPoP proof.";
+  }
+}
+
+export const ManagedRelayClientError = Schema.Union([
+  ManagedRelayUrlInvalidError,
+  ManagedRelayRequestFailedError,
+  ManagedRelayRequestTimeoutError,
+  ManagedRelayAccessTokenScopesUnexpectedError,
+  ManagedRelayDpopKeyLoadError,
+  ManagedRelayTokenProofCreationError,
+  ManagedRelayRequestProofCreationError,
+]);
+export type ManagedRelayClientError = typeof ManagedRelayClientError.Type;
 
 type RelayHttpRequestError =
   | RelayProtectedErrorType
   | HttpClientError.HttpClientError
-  | Schema.SchemaError
-  | ManagedRelayRequestTimeoutError;
-
-export interface ManagedRelayDpopSignerShape {
-  readonly thumbprint: Effect.Effect<string, ManagedRelayDpopSignerError>;
-  readonly createProof: (
-    input: ManagedRelayDpopProofInput,
-  ) => Effect.Effect<string, ManagedRelayDpopSignerError>;
-}
+  | Schema.SchemaError;
 
 export class ManagedRelayDpopSigner extends Context.Service<
   ManagedRelayDpopSigner,
-  ManagedRelayDpopSignerShape
+  {
+    readonly thumbprint: Effect.Effect<string, ManagedRelayDpopKeyLoadError>;
+    readonly createProof: (
+      input: ManagedRelayDpopProofInput,
+    ) => Effect.Effect<string, ManagedRelayDpopProofCreationError>;
+  }
 >()("@t3tools/client-runtime/relay/managedRelay/ManagedRelayDpopSigner") {}
-
-export class ManagedRelayClientError extends Data.TaggedError("ManagedRelayClientError")<{
-  readonly message: string;
-  readonly cause?: RelayHttpRequestError | ManagedRelayDpopSignerError;
-  readonly relayError?: RelayProtectedErrorType;
-  readonly traceId?: string;
-}> {}
 
 export const MANAGED_RELAY_REQUEST_TIMEOUT_MS = 10_000;
 
@@ -115,100 +241,96 @@ export interface ManagedRelayClientLayerOptions {
   readonly accessTokenStore?: ManagedRelayAccessTokenStore;
 }
 
-export interface ManagedRelayClientShape {
-  readonly relayUrl: string;
-  readonly listEnvironments: (input: {
-    readonly clerkToken: string;
-  }) => Effect.Effect<ReadonlyArray<RelayClientEnvironmentRecord>, ManagedRelayClientError>;
-  readonly listDevices: (input: {
-    readonly clerkToken: string;
-  }) => Effect.Effect<ReadonlyArray<RelayClientDeviceRecord>, ManagedRelayClientError>;
-  readonly createEnvironmentLinkChallenge: (input: {
-    readonly clerkToken: string;
-    readonly payload: RelayEnvironmentLinkChallengeRequest;
-  }) => Effect.Effect<RelayEnvironmentLinkChallengeResponse, ManagedRelayClientError>;
-  readonly linkEnvironment: (input: {
-    readonly clerkToken: string;
-    readonly payload: RelayEnvironmentLinkRequest;
-  }) => Effect.Effect<RelayEnvironmentLinkResponse, ManagedRelayClientError>;
-  readonly unlinkEnvironment: (input: {
-    readonly clerkToken: string;
-    readonly environmentId: RelayClientEnvironmentRecord["environmentId"];
-  }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
-  readonly getEnvironmentStatus: (input: {
-    readonly clerkToken: string;
-    readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
-    readonly environmentId: RelayClientEnvironmentRecord["environmentId"];
-  }) => Effect.Effect<RelayEnvironmentStatusResponse, ManagedRelayClientError>;
-  readonly connectEnvironment: (input: {
-    readonly clerkToken: string;
-    readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
-    readonly environmentId: RelayClientEnvironmentRecord["environmentId"];
-    readonly deviceId?: string;
-  }) => Effect.Effect<RelayEnvironmentConnectResponse, ManagedRelayClientError>;
-  readonly registerDevice: (input: {
-    readonly clerkToken: string;
-    readonly payload: RelayDeviceRegistrationRequest;
-  }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
-  readonly unregisterDevice: (input: {
-    readonly clerkToken: string;
-    readonly deviceId: string;
-  }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
-  readonly registerLiveActivity: (input: {
-    readonly clerkToken: string;
-    readonly payload: RelayLiveActivityRegistrationRequest;
-  }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
-  readonly resetTokenCache: Effect.Effect<void>;
-}
-
 export class ManagedRelayClient extends Context.Service<
   ManagedRelayClient,
-  ManagedRelayClientShape
+  {
+    readonly relayUrl: string;
+    readonly listEnvironments: (input: {
+      readonly clerkToken: string;
+    }) => Effect.Effect<ReadonlyArray<RelayClientEnvironmentRecord>, ManagedRelayClientError>;
+    readonly listDevices: (input: {
+      readonly clerkToken: string;
+    }) => Effect.Effect<ReadonlyArray<RelayClientDeviceRecord>, ManagedRelayClientError>;
+    readonly createEnvironmentLinkChallenge: (input: {
+      readonly clerkToken: string;
+      readonly payload: RelayEnvironmentLinkChallengeRequest;
+    }) => Effect.Effect<RelayEnvironmentLinkChallengeResponse, ManagedRelayClientError>;
+    readonly linkEnvironment: (input: {
+      readonly clerkToken: string;
+      readonly payload: RelayEnvironmentLinkRequest;
+    }) => Effect.Effect<RelayEnvironmentLinkResponse, ManagedRelayClientError>;
+    readonly unlinkEnvironment: (input: {
+      readonly clerkToken: string;
+      readonly environmentId: RelayClientEnvironmentRecord["environmentId"];
+    }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
+    readonly getEnvironmentStatus: (input: {
+      readonly clerkToken: string;
+      readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
+      readonly environmentId: RelayClientEnvironmentRecord["environmentId"];
+    }) => Effect.Effect<RelayEnvironmentStatusResponse, ManagedRelayClientError>;
+    readonly connectEnvironment: (input: {
+      readonly clerkToken: string;
+      readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
+      readonly environmentId: RelayClientEnvironmentRecord["environmentId"];
+      readonly deviceId?: string;
+    }) => Effect.Effect<RelayEnvironmentConnectResponse, ManagedRelayClientError>;
+    readonly registerDevice: (input: {
+      readonly clerkToken: string;
+      readonly payload: RelayDeviceRegistrationRequest;
+    }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
+    readonly unregisterDevice: (input: {
+      readonly clerkToken: string;
+      readonly deviceId: string;
+    }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
+    readonly registerLiveActivity: (input: {
+      readonly clerkToken: string;
+      readonly payload: RelayLiveActivityRegistrationRequest;
+    }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
+    readonly resetTokenCache: Effect.Effect<void>;
+  }
 >()("@t3tools/client-runtime/relay/managedRelay/ManagedRelayClient") {}
 
 const isRelayProtectedError = Schema.is(RelayProtectedError);
 
-function relayClientError(message: string, cause?: RelayHttpRequestError): ManagedRelayClientError {
-  return new ManagedRelayClientError({
-    message,
-    ...(cause === undefined ? {} : { cause }),
-  });
-}
-
-function relayLocalError(
-  message: string,
-  cause: ManagedRelayDpopSignerError,
-): ManagedRelayClientError {
-  return new ManagedRelayClientError({ message, cause });
-}
-
-function relayRequestError(message: string) {
+function relayRequestError(action: ManagedRelayRequestAction) {
   return (cause: RelayHttpRequestError): ManagedRelayClientError =>
-    new ManagedRelayClientError({
-      message,
+    new ManagedRelayRequestFailedError({
+      action,
       cause,
       ...(isRelayProtectedError(cause) ? { relayError: cause, traceId: cause.traceId } : {}),
     });
 }
 
+function proofCreationErrorFields(error: ManagedRelayDpopProofCreationError) {
+  return {
+    method: error.method,
+    url: error.url,
+    cause: error,
+  };
+}
+
 function isRejectedDpopAccessToken(error: ManagedRelayClientError): boolean {
   return (
+    error._tag === "ManagedRelayRequestFailedError" &&
     error.relayError?._tag === "RelayAuthInvalidError" &&
     error.relayError.reason === "invalid_bearer"
   );
 }
 
-function timeoutRelayRequest(message: string) {
+function timeoutRelayRequest(activity: ManagedRelayRequestActivity) {
   return <A, E, R>(
-    request: Effect.Effect<A, E, R>,
+    effect: Effect.Effect<A, E, R>,
   ): Effect.Effect<A, E | ManagedRelayClientError, R> =>
-    request.pipe(
+    effect.pipe(
       Effect.timeoutOption(Duration.millis(MANAGED_RELAY_REQUEST_TIMEOUT_MS)),
       Effect.flatMap(
         Option.match({
           onNone: () =>
             Effect.fail(
-              relayClientError(message, new ManagedRelayRequestTimeoutError({ message })),
+              new ManagedRelayRequestTimeoutError({
+                activity,
+                timeoutMs: MANAGED_RELAY_REQUEST_TIMEOUT_MS,
+              }),
             ),
           onSome: Effect.succeed,
         }),
@@ -258,10 +380,10 @@ function dpopHeaders(authorization: ManagedRelayAuthorization) {
   };
 }
 
-function disabledManagedRelayClient(relayUrl: string): ManagedRelayClientShape {
+function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Service"] {
   const unavailable = (spanName: string) =>
     Effect.fn(spanName)(function* () {
-      return yield* relayClientError("Relay URL must be a secure absolute HTTPS origin.");
+      return yield* new ManagedRelayUrlInvalidError({ relayUrl });
     });
   return ManagedRelayClient.of({
     relayUrl,
@@ -283,482 +405,475 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClientShape {
   });
 }
 
-export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions) {
-  return Layer.effect(
-    ManagedRelayClient,
-    Effect.gen(function* () {
-      const relayUrl = normalizeSecureRelayUrl(options.relayUrl);
-      if (relayUrl === null) {
-        return disabledManagedRelayClient(options.relayUrl);
+export const make = Effect.fn("ManagedRelayClient.make")(function* (
+  options: ManagedRelayClientLayerOptions,
+) {
+  const relayUrl = normalizeSecureRelayUrl(options.relayUrl);
+  if (relayUrl === null) {
+    return disabledManagedRelayClient(options.relayUrl);
+  }
+  const signer = yield* ManagedRelayDpopSigner;
+  const client = yield* HttpApiClient.make(RelayApi, { baseUrl: relayUrl });
+  const initialTokens = options.accessTokenStore ? yield* options.accessTokenStore.load : [];
+  const cachedTokens = yield* SynchronizedRef.make<
+    ReadonlyArray<ManagedRelayAccessTokenCacheEntry>
+  >(initialTokens.filter((token) => token.clientId === options.clientId));
+  const urlBuilder = HttpApiClient.urlBuilder(RelayApi, { baseUrl: relayUrl });
+
+  type DpopProofTarget = Pick<ManagedRelayDpopProofInput, "method" | "url">;
+  const dpopProofTargets = {
+    exchangeAccessToken: (): DpopProofTarget => ({
+      method: RelayExchangeDpopAccessTokenEndpoint.method,
+      url: urlBuilder.token.exchangeDpopAccessToken(),
+    }),
+    getEnvironmentStatus: (
+      environmentId: RelayClientEnvironmentRecord["environmentId"],
+    ): DpopProofTarget => ({
+      method: RelayGetEnvironmentStatusEndpoint.method,
+      url: urlBuilder.dpopClient.getEnvironmentStatus({ params: { environmentId } }),
+    }),
+    connectEnvironment: (
+      environmentId: RelayClientEnvironmentRecord["environmentId"],
+    ): DpopProofTarget => ({
+      method: RelayConnectEnvironmentEndpoint.method,
+      url: urlBuilder.dpopClient.connectEnvironment({ params: { environmentId } }),
+    }),
+    registerDevice: (): DpopProofTarget => ({
+      method: RelayRegisterDeviceEndpoint.method,
+      url: urlBuilder.mobile.registerDevice(),
+    }),
+    unregisterDevice: (deviceId: string): DpopProofTarget => ({
+      method: RelayUnregisterDeviceEndpoint.method,
+      url: urlBuilder.mobile.unregisterDevice({ params: { deviceId } }),
+    }),
+    registerLiveActivity: (): DpopProofTarget => ({
+      method: RelayRegisterLiveActivityEndpoint.method,
+      url: urlBuilder.mobile.registerLiveActivity(),
+    }),
+  };
+
+  const exchangeAccessToken = Effect.fn("clientRuntime.managedRelay.exchangeAccessToken")(
+    function* (input: {
+      readonly clerkToken: string;
+      readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
+    }) {
+      yield* Effect.annotateCurrentSpan({
+        "relay.client_id": options.clientId,
+        "relay.scopes": input.scopes.join(" "),
+      });
+      const proof = yield* signer
+        .createProof(dpopProofTargets.exchangeAccessToken())
+        .pipe(
+          Effect.mapError(
+            (error) => new ManagedRelayTokenProofCreationError(proofCreationErrorFields(error)),
+          ),
+        );
+      const response = yield* client.token
+        .exchangeDpopAccessToken({
+          headers: { dpop: proof },
+          payload: {
+            grant_type: RelayDpopTokenExchangeGrantType,
+            subject_token: input.clerkToken,
+            subject_token_type: RelayJwtSubjectTokenType,
+            requested_token_type: RelayAccessTokenType,
+            resource: relayUrl,
+            scope: encodeOAuthScope(input.scopes),
+            client_id: options.clientId,
+          },
+        })
+        .pipe(
+          Effect.mapError(relayRequestError("exchange relay DPoP access token")),
+          timeoutRelayRequest("Relay DPoP access token exchange"),
+        );
+      if (!oauthScopeSetEquals(response.scope, input.scopes)) {
+        return yield* new ManagedRelayAccessTokenScopesUnexpectedError({
+          requestedScopes: input.scopes,
+          grantedScope: response.scope,
+        });
       }
-      const signer = yield* ManagedRelayDpopSigner;
-      const client = yield* HttpApiClient.make(RelayApi, { baseUrl: relayUrl });
-      const initialTokens = options.accessTokenStore ? yield* options.accessTokenStore.load : [];
-      const cachedTokens = yield* SynchronizedRef.make<
-        ReadonlyArray<ManagedRelayAccessTokenCacheEntry>
-      >(initialTokens.filter((token) => token.clientId === options.clientId));
-      const urlBuilder = HttpApiClient.urlBuilder(RelayApi, { baseUrl: relayUrl });
+      return response;
+    },
+  );
 
-      type DpopProofTarget = Pick<ManagedRelayDpopProofInput, "method" | "url">;
-      const dpopProofTargets = {
-        exchangeAccessToken: (): DpopProofTarget => ({
-          method: RelayExchangeDpopAccessTokenEndpoint.method,
-          url: urlBuilder.token.exchangeDpopAccessToken(),
-        }),
-        getEnvironmentStatus: (
-          environmentId: RelayClientEnvironmentRecord["environmentId"],
-        ): DpopProofTarget => ({
-          method: RelayGetEnvironmentStatusEndpoint.method,
-          url: urlBuilder.dpopClient.getEnvironmentStatus({ params: { environmentId } }),
-        }),
-        connectEnvironment: (
-          environmentId: RelayClientEnvironmentRecord["environmentId"],
-        ): DpopProofTarget => ({
-          method: RelayConnectEnvironmentEndpoint.method,
-          url: urlBuilder.dpopClient.connectEnvironment({ params: { environmentId } }),
-        }),
-        registerDevice: (): DpopProofTarget => ({
-          method: RelayRegisterDeviceEndpoint.method,
-          url: urlBuilder.mobile.registerDevice(),
-        }),
-        unregisterDevice: (deviceId: string): DpopProofTarget => ({
-          method: RelayUnregisterDeviceEndpoint.method,
-          url: urlBuilder.mobile.unregisterDevice({ params: { deviceId } }),
-        }),
-        registerLiveActivity: (): DpopProofTarget => ({
-          method: RelayRegisterLiveActivityEndpoint.method,
-          url: urlBuilder.mobile.registerLiveActivity(),
-        }),
-      };
-
-      const exchangeAccessToken = Effect.fn("clientRuntime.managedRelay.exchangeAccessToken")(
-        function* (input: {
-          readonly clerkToken: string;
-          readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
-        }) {
-          yield* Effect.annotateCurrentSpan({
-            "relay.client_id": options.clientId,
-            "relay.scopes": input.scopes.join(" "),
-          });
-          const proof = yield* signer
-            .createProof(dpopProofTargets.exchangeAccessToken())
-            .pipe(
-              Effect.mapError((cause) =>
-                relayLocalError("Could not create relay token DPoP proof.", cause),
-              ),
-            );
-          const response = yield* client.token
-            .exchangeDpopAccessToken({
-              headers: { dpop: proof },
-              payload: {
-                grant_type: RelayDpopTokenExchangeGrantType,
-                subject_token: input.clerkToken,
-                subject_token_type: RelayJwtSubjectTokenType,
-                requested_token_type: RelayAccessTokenType,
-                resource: relayUrl,
-                scope: encodeOAuthScope(input.scopes),
-                client_id: options.clientId,
-              },
-            })
-            .pipe(
-              Effect.mapError(relayRequestError("Could not exchange relay DPoP access token.")),
-              timeoutRelayRequest("Relay DPoP access token exchange timed out."),
-            );
-          if (!oauthScopeSetEquals(response.scope, input.scopes)) {
-            return yield* relayClientError("Relay granted unexpected DPoP access token scopes.");
-          }
-          return response;
-        },
-      );
-
-      const obtainAccessToken = Effect.fn("clientRuntime.managedRelay.obtainAccessToken")(
-        function* (input: {
-          readonly clerkToken: string;
-          readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
-          readonly thumbprint: string;
-        }) {
-          yield* Effect.annotateCurrentSpan({
-            "relay.client_id": options.clientId,
-            "relay.scopes": input.scopes.join(" "),
-          });
-          const nowMillis = yield* Clock.currentTimeMillis;
-          const accountId = relayAccountId(input.clerkToken);
-          if (Option.isNone(accountId)) {
-            yield* Effect.annotateCurrentSpan({
-              "relay.token_cache.result": "bypass",
-              "relay.token_cache.bypass_reason": "invalid_subject_token",
-            });
-            const response = yield* exchangeAccessToken(input);
-            return {
-              accountId: "",
+  const obtainAccessToken = Effect.fn("clientRuntime.managedRelay.obtainAccessToken")(
+    function* (input: {
+      readonly clerkToken: string;
+      readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
+      readonly thumbprint: string;
+    }) {
+      yield* Effect.annotateCurrentSpan({
+        "relay.client_id": options.clientId,
+        "relay.scopes": input.scopes.join(" "),
+      });
+      const nowMillis = yield* Clock.currentTimeMillis;
+      const accountId = relayAccountId(input.clerkToken);
+      if (Option.isNone(accountId)) {
+        yield* Effect.annotateCurrentSpan({
+          "relay.token_cache.result": "bypass",
+          "relay.token_cache.bypass_reason": "invalid_subject_token",
+        });
+        const response = yield* exchangeAccessToken(input);
+        return {
+          accountId: "",
+          clientId: options.clientId,
+          relayUrl,
+          thumbprint: input.thumbprint,
+          scopes: input.scopes,
+          accessToken: response.access_token,
+          expiresAtMillis: nowMillis + response.expires_in * 1_000,
+        } satisfies ManagedRelayAccessTokenCacheEntry;
+      }
+      return yield* SynchronizedRef.modifyEffect(cachedTokens, (tokens) =>
+        Effect.gen(function* () {
+          const activeTokens = tokens.filter((token) => token.expiresAtMillis > nowMillis + 5_000);
+          const cached = activeTokens.find((token) =>
+            tokenMatches(token, {
+              accountId: accountId.value,
               clientId: options.clientId,
               relayUrl,
               thumbprint: input.thumbprint,
               scopes: input.scopes,
-              accessToken: response.access_token,
-              expiresAtMillis: nowMillis + response.expires_in * 1_000,
-            } satisfies ManagedRelayAccessTokenCacheEntry;
-          }
-          return yield* SynchronizedRef.modifyEffect(cachedTokens, (tokens) =>
-            Effect.gen(function* () {
-              const activeTokens = tokens.filter(
-                (token) => token.expiresAtMillis > nowMillis + 5_000,
-              );
-              const cached = activeTokens.find((token) =>
-                tokenMatches(token, {
-                  accountId: accountId.value,
-                  clientId: options.clientId,
-                  relayUrl,
-                  thumbprint: input.thumbprint,
-                  scopes: input.scopes,
-                  nowMillis,
-                }),
-              );
-              if (cached) {
-                yield* Effect.annotateCurrentSpan({
-                  "relay.token_cache.result": "hit",
-                });
-                return [cached, activeTokens] as const;
-              }
-              yield* Effect.annotateCurrentSpan({
-                "relay.token_cache.result": "miss",
-              });
-              const response = yield* exchangeAccessToken(input);
-              const next: ManagedRelayAccessTokenCacheEntry = {
-                accountId: accountId.value,
-                clientId: options.clientId,
-                relayUrl,
-                thumbprint: input.thumbprint,
-                scopes: input.scopes,
-                accessToken: response.access_token,
-                expiresAtMillis: nowMillis + response.expires_in * 1_000,
-              };
-              const nextTokens = [...activeTokens, next];
-              if (options.accessTokenStore) {
-                yield* options.accessTokenStore.save(nextTokens);
-              }
-              return [next, nextTokens] as const;
+              nowMillis,
             }),
-          ).pipe(Effect.withSpan("clientRuntime.managedRelay.tokenCacheCriticalSection"));
-        },
-      );
+          );
+          if (cached) {
+            yield* Effect.annotateCurrentSpan({
+              "relay.token_cache.result": "hit",
+            });
+            return [cached, activeTokens] as const;
+          }
+          yield* Effect.annotateCurrentSpan({
+            "relay.token_cache.result": "miss",
+          });
+          const response = yield* exchangeAccessToken(input);
+          const next: ManagedRelayAccessTokenCacheEntry = {
+            accountId: accountId.value,
+            clientId: options.clientId,
+            relayUrl,
+            thumbprint: input.thumbprint,
+            scopes: input.scopes,
+            accessToken: response.access_token,
+            expiresAtMillis: nowMillis + response.expires_in * 1_000,
+          };
+          const nextTokens = [...activeTokens, next];
+          if (options.accessTokenStore) {
+            yield* options.accessTokenStore.save(nextTokens);
+          }
+          return [next, nextTokens] as const;
+        }),
+      ).pipe(Effect.withSpan("clientRuntime.managedRelay.tokenCacheCriticalSection"));
+    },
+  );
 
-      const authorize = Effect.fn("clientRuntime.managedRelay.authorize")(function* (input: {
-        readonly clerkToken: string;
-        readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
-        readonly target: DpopProofTarget;
-      }) {
-        yield* Effect.annotateCurrentSpan({
-          "relay.client_id": options.clientId,
-          "relay.scopes": input.scopes.join(" "),
-          "http.request.method": input.target.method,
-          "url.full": input.target.url,
-        });
-        const thumbprint = yield* signer.thumbprint.pipe(
-          Effect.mapError((cause) =>
-            relayLocalError("Could not load relay DPoP proof key.", cause),
+  const authorize = Effect.fn("clientRuntime.managedRelay.authorize")(function* (input: {
+    readonly clerkToken: string;
+    readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
+    readonly target: DpopProofTarget;
+  }) {
+    yield* Effect.annotateCurrentSpan({
+      "relay.client_id": options.clientId,
+      "relay.scopes": input.scopes.join(" "),
+      "http.request.method": input.target.method,
+      "url.full": input.target.url,
+    });
+    const thumbprint = yield* signer.thumbprint;
+    const token = yield* obtainAccessToken({
+      clerkToken: input.clerkToken,
+      scopes: input.scopes,
+      thumbprint,
+    });
+    const proof = yield* signer
+      .createProof({
+        ...input.target,
+        accessToken: token.accessToken,
+      })
+      .pipe(
+        Effect.mapError(
+          (error) => new ManagedRelayRequestProofCreationError(proofCreationErrorFields(error)),
+        ),
+      );
+    return { accessToken: token.accessToken, proof, thumbprint };
+  });
+
+  const invalidateAccessToken = Effect.fn("clientRuntime.managedRelay.invalidateAccessToken")(
+    function* (accessToken: string) {
+      return yield* SynchronizedRef.modifyEffect(cachedTokens, (tokens) => {
+        const nextTokens = tokens.filter((token) => token.accessToken !== accessToken);
+        if (nextTokens.length === tokens.length) {
+          return Effect.succeed([false, tokens] as const);
+        }
+        return (
+          options.accessTokenStore ? options.accessTokenStore.save(nextTokens) : Effect.void
+        ).pipe(Effect.as([true, nextTokens] as const));
+      });
+    },
+  );
+
+  const runDpopRequest = <A>(
+    input: {
+      readonly clerkToken: string;
+      readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
+      readonly target: DpopProofTarget;
+    },
+    request: (
+      authorization: ManagedRelayAuthorization,
+    ) => Effect.Effect<A, ManagedRelayClientError>,
+  ): Effect.Effect<A, ManagedRelayClientError> => {
+    const attempt = (refreshRejectedToken: boolean): Effect.Effect<A, ManagedRelayClientError> =>
+      authorize(input).pipe(
+        Effect.flatMap((authorization) =>
+          request(authorization).pipe(
+            Effect.catch((error) => {
+              if (!isRejectedDpopAccessToken(error)) {
+                return Effect.fail(error);
+              }
+              return invalidateAccessToken(authorization.accessToken).pipe(
+                Effect.tap((invalidated) =>
+                  Effect.annotateCurrentSpan({
+                    "relay.token_cache.invalidated": invalidated,
+                    "relay.token_cache.invalidation_reason": "invalid_bearer",
+                    "relay.token_cache.retry_after_invalidation": refreshRejectedToken,
+                  }),
+                ),
+                Effect.tap((invalidated) =>
+                  invalidated && refreshRejectedToken
+                    ? Effect.logWarning(
+                        "Relay rejected a cached DPoP access token; refreshing it once.",
+                      )
+                    : Effect.void,
+                ),
+                Effect.andThen(refreshRejectedToken ? attempt(false) : Effect.fail(error)),
+              );
+            }),
           ),
-        );
-        const token = yield* obtainAccessToken({
-          clerkToken: input.clerkToken,
-          scopes: input.scopes,
-          thumbprint,
-        });
-        const proof = yield* signer
-          .createProof({
-            ...input.target,
-            accessToken: token.accessToken,
+        ),
+      );
+    return attempt(true);
+  };
+
+  const mobileRegistrationRequest = <A>(
+    input: {
+      readonly clerkToken: string;
+      readonly target: DpopProofTarget;
+    },
+    request: (
+      authorization: ManagedRelayAuthorization,
+    ) => Effect.Effect<A, ManagedRelayClientError>,
+  ) =>
+    runDpopRequest(
+      {
+        ...input,
+        scopes: [RelayMobileRegistrationScope],
+      },
+      request,
+    );
+
+  return ManagedRelayClient.of({
+    relayUrl,
+    listEnvironments: Effect.fnUntraced(
+      function* (input) {
+        return yield* client.client
+          .listEnvironments({ headers: bearerHeaders(input.clerkToken) })
+          .pipe(
+            Effect.map((response) => response.environments),
+            Effect.mapError(relayRequestError("list relay-managed environments")),
+            timeoutRelayRequest("Relay environment listing"),
+          );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.listEnvironments"),
+      withRelayClientTracing,
+    ),
+    listDevices: Effect.fnUntraced(
+      function* (input) {
+        return yield* client.client
+          .listDevices({
+            headers: bearerHeaders(input.clerkToken),
           })
           .pipe(
-            Effect.mapError((cause) =>
-              relayLocalError("Could not create relay request DPoP proof.", cause),
-            ),
+            Effect.map((response) => response.devices),
+            Effect.mapError(relayRequestError("list relay client devices")),
+            timeoutRelayRequest("Relay client device listing"),
           );
-        return { accessToken: token.accessToken, proof, thumbprint };
-      });
-
-      const invalidateAccessToken = Effect.fn("clientRuntime.managedRelay.invalidateAccessToken")(
-        function* (accessToken: string) {
-          return yield* SynchronizedRef.modifyEffect(cachedTokens, (tokens) => {
-            const nextTokens = tokens.filter((token) => token.accessToken !== accessToken);
-            if (nextTokens.length === tokens.length) {
-              return Effect.succeed([false, tokens] as const);
-            }
-            return (
-              options.accessTokenStore ? options.accessTokenStore.save(nextTokens) : Effect.void
-            ).pipe(Effect.as([true, nextTokens] as const));
-          });
-        },
-      );
-
-      const runDpopRequest = <A>(
-        input: {
-          readonly clerkToken: string;
-          readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
-          readonly target: DpopProofTarget;
-        },
-        request: (
-          authorization: ManagedRelayAuthorization,
-        ) => Effect.Effect<A, ManagedRelayClientError>,
-      ): Effect.Effect<A, ManagedRelayClientError> => {
-        const attempt = (
-          refreshRejectedToken: boolean,
-        ): Effect.Effect<A, ManagedRelayClientError> =>
-          authorize(input).pipe(
-            Effect.flatMap((authorization) =>
-              request(authorization).pipe(
-                Effect.catch((error) => {
-                  if (!isRejectedDpopAccessToken(error)) {
-                    return Effect.fail(error);
-                  }
-                  return invalidateAccessToken(authorization.accessToken).pipe(
-                    Effect.tap((invalidated) =>
-                      Effect.annotateCurrentSpan({
-                        "relay.token_cache.invalidated": invalidated,
-                        "relay.token_cache.invalidation_reason": "invalid_bearer",
-                        "relay.token_cache.retry_after_invalidation": refreshRejectedToken,
-                      }),
-                    ),
-                    Effect.tap((invalidated) =>
-                      invalidated && refreshRejectedToken
-                        ? Effect.logWarning(
-                            "Relay rejected a cached DPoP access token; refreshing it once.",
-                          )
-                        : Effect.void,
-                    ),
-                    Effect.andThen(refreshRejectedToken ? attempt(false) : Effect.fail(error)),
-                  );
-                }),
-              ),
-            ),
+      },
+      Effect.withSpan("clientRuntime.managedRelay.listDevices"),
+      withRelayClientTracing,
+    ),
+    createEnvironmentLinkChallenge: Effect.fnUntraced(
+      function* (input) {
+        return yield* client.client
+          .createEnvironmentLinkChallenge({
+            headers: bearerHeaders(input.clerkToken),
+            payload: input.payload,
+          })
+          .pipe(
+            Effect.mapError(relayRequestError("create relay environment link challenge")),
+            timeoutRelayRequest("Relay environment link challenge"),
           );
-        return attempt(true);
-      };
-
-      const mobileRegistrationRequest = <A>(
-        input: {
-          readonly clerkToken: string;
-          readonly target: DpopProofTarget;
-        },
-        request: (
-          authorization: ManagedRelayAuthorization,
-        ) => Effect.Effect<A, ManagedRelayClientError>,
-      ) =>
-        runDpopRequest(
+      },
+      Effect.withSpan("clientRuntime.managedRelay.createEnvironmentLinkChallenge"),
+      withRelayClientTracing,
+    ),
+    linkEnvironment: Effect.fnUntraced(
+      function* (input) {
+        return yield* client.client
+          .linkEnvironment({
+            headers: bearerHeaders(input.clerkToken),
+            payload: input.payload,
+          })
+          .pipe(
+            Effect.mapError(relayRequestError("link relay environment")),
+            timeoutRelayRequest("Relay environment linking"),
+          );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.linkEnvironment"),
+      withRelayClientTracing,
+    ),
+    unlinkEnvironment: Effect.fnUntraced(
+      function* (input) {
+        return yield* client.client
+          .unlinkEnvironment({
+            headers: bearerHeaders(input.clerkToken),
+            params: { environmentId: input.environmentId },
+          })
+          .pipe(
+            Effect.mapError(relayRequestError("unlink relay environment")),
+            timeoutRelayRequest("Relay environment unlinking"),
+          );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.unlinkEnvironment"),
+      withRelayClientTracing,
+    ),
+    getEnvironmentStatus: Effect.fnUntraced(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({
+          "environment.id": input.environmentId,
+        });
+        return yield* runDpopRequest(
           {
-            ...input,
-            scopes: [RelayMobileRegistrationScope],
+            clerkToken: input.clerkToken,
+            scopes: input.scopes,
+            target: dpopProofTargets.getEnvironmentStatus(input.environmentId),
           },
-          request,
-        );
-
-      return ManagedRelayClient.of({
-        relayUrl,
-        listEnvironments: Effect.fnUntraced(
-          function* (input) {
-            return yield* client.client
-              .listEnvironments({ headers: bearerHeaders(input.clerkToken) })
-              .pipe(
-                Effect.map((response) => response.environments),
-                Effect.mapError(relayRequestError("Could not list relay-managed environments.")),
-                timeoutRelayRequest("Relay environment listing timed out."),
-              );
-          },
-          Effect.withSpan("clientRuntime.managedRelay.listEnvironments"),
-          withRelayClientTracing,
-        ),
-        listDevices: Effect.fnUntraced(
-          function* (input) {
-            return yield* client.client
-              .listDevices({
-                headers: bearerHeaders(input.clerkToken),
-              })
-              .pipe(
-                Effect.map((response) => response.devices),
-                Effect.mapError(relayRequestError("Could not list relay client devices.")),
-                timeoutRelayRequest("Relay client device listing timed out."),
-              );
-          },
-          Effect.withSpan("clientRuntime.managedRelay.listDevices"),
-          withRelayClientTracing,
-        ),
-        createEnvironmentLinkChallenge: Effect.fnUntraced(
-          function* (input) {
-            return yield* client.client
-              .createEnvironmentLinkChallenge({
-                headers: bearerHeaders(input.clerkToken),
-                payload: input.payload,
-              })
-              .pipe(
-                Effect.mapError(
-                  relayRequestError("Could not create relay environment link challenge."),
-                ),
-                timeoutRelayRequest("Relay environment link challenge timed out."),
-              );
-          },
-          Effect.withSpan("clientRuntime.managedRelay.createEnvironmentLinkChallenge"),
-          withRelayClientTracing,
-        ),
-        linkEnvironment: Effect.fnUntraced(
-          function* (input) {
-            return yield* client.client
-              .linkEnvironment({
-                headers: bearerHeaders(input.clerkToken),
-                payload: input.payload,
-              })
-              .pipe(
-                Effect.mapError(relayRequestError("Could not link relay environment.")),
-                timeoutRelayRequest("Relay environment linking timed out."),
-              );
-          },
-          Effect.withSpan("clientRuntime.managedRelay.linkEnvironment"),
-          withRelayClientTracing,
-        ),
-        unlinkEnvironment: Effect.fnUntraced(
-          function* (input) {
-            return yield* client.client
-              .unlinkEnvironment({
-                headers: bearerHeaders(input.clerkToken),
+          (authorization) =>
+            client.dpopClient
+              .getEnvironmentStatus({
+                headers: dpopHeaders(authorization),
                 params: { environmentId: input.environmentId },
               })
               .pipe(
-                Effect.mapError(relayRequestError("Could not unlink relay environment.")),
-                timeoutRelayRequest("Relay environment unlinking timed out."),
+                Effect.mapError(relayRequestError("get relay environment status")),
+                timeoutRelayRequest("Relay environment status request"),
+              ),
+        );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.getEnvironmentStatus"),
+      withRelayClientTracing,
+    ),
+    connectEnvironment: Effect.fnUntraced(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({
+          "environment.id": input.environmentId,
+        });
+        return yield* runDpopRequest(
+          {
+            clerkToken: input.clerkToken,
+            scopes: input.scopes,
+            target: dpopProofTargets.connectEnvironment(input.environmentId),
+          },
+          (authorization) => {
+            const payload: RelayEnvironmentConnectRequest = {
+              ...(input.deviceId ? { deviceId: input.deviceId } : {}),
+              clientKeyThumbprint: authorization.thumbprint,
+            };
+            return client.dpopClient
+              .connectEnvironment({
+                headers: dpopHeaders(authorization),
+                params: { environmentId: input.environmentId },
+                payload,
+              })
+              .pipe(
+                Effect.mapError(relayRequestError("connect relay environment")),
+                timeoutRelayRequest("Relay environment connection"),
               );
           },
-          Effect.withSpan("clientRuntime.managedRelay.unlinkEnvironment"),
-          withRelayClientTracing,
-        ),
-        getEnvironmentStatus: Effect.fnUntraced(
-          function* (input) {
-            yield* Effect.annotateCurrentSpan({
-              "environment.id": input.environmentId,
-            });
-            return yield* runDpopRequest(
-              {
-                clerkToken: input.clerkToken,
-                scopes: input.scopes,
-                target: dpopProofTargets.getEnvironmentStatus(input.environmentId),
-              },
-              (authorization) =>
-                client.dpopClient
-                  .getEnvironmentStatus({
-                    headers: dpopHeaders(authorization),
-                    params: { environmentId: input.environmentId },
-                  })
-                  .pipe(
-                    Effect.mapError(relayRequestError("Could not get relay environment status.")),
-                    timeoutRelayRequest("Relay environment status request timed out."),
-                  ),
-            );
+        );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.connectEnvironment"),
+      withRelayClientTracing,
+    ),
+    registerDevice: Effect.fnUntraced(
+      function* (input) {
+        return yield* mobileRegistrationRequest(
+          {
+            clerkToken: input.clerkToken,
+            target: dpopProofTargets.registerDevice(),
           },
-          Effect.withSpan("clientRuntime.managedRelay.getEnvironmentStatus"),
-          withRelayClientTracing,
-        ),
-        connectEnvironment: Effect.fnUntraced(
-          function* (input) {
-            yield* Effect.annotateCurrentSpan({
-              "environment.id": input.environmentId,
-            });
-            return yield* runDpopRequest(
-              {
-                clerkToken: input.clerkToken,
-                scopes: input.scopes,
-                target: dpopProofTargets.connectEnvironment(input.environmentId),
-              },
-              (authorization) => {
-                const payload: RelayEnvironmentConnectRequest = {
-                  ...(input.deviceId ? { deviceId: input.deviceId } : {}),
-                  clientKeyThumbprint: authorization.thumbprint,
-                };
-                return client.dpopClient
-                  .connectEnvironment({
-                    headers: dpopHeaders(authorization),
-                    params: { environmentId: input.environmentId },
-                    payload,
-                  })
-                  .pipe(
-                    Effect.mapError(relayRequestError("Could not connect relay environment.")),
-                    timeoutRelayRequest("Relay environment connection timed out."),
-                  );
-              },
-            );
+          (authorization) =>
+            client.mobile
+              .registerDevice({
+                headers: dpopHeaders(authorization),
+                payload: input.payload,
+              })
+              .pipe(
+                Effect.mapError(relayRequestError("register relay mobile device")),
+                timeoutRelayRequest("Relay mobile device registration"),
+              ),
+        );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.registerDevice"),
+      withRelayClientTracing,
+    ),
+    unregisterDevice: Effect.fnUntraced(
+      function* (input) {
+        return yield* mobileRegistrationRequest(
+          {
+            clerkToken: input.clerkToken,
+            target: dpopProofTargets.unregisterDevice(input.deviceId),
           },
-          Effect.withSpan("clientRuntime.managedRelay.connectEnvironment"),
-          withRelayClientTracing,
-        ),
-        registerDevice: Effect.fnUntraced(
-          function* (input) {
-            return yield* mobileRegistrationRequest(
-              {
-                clerkToken: input.clerkToken,
-                target: dpopProofTargets.registerDevice(),
-              },
-              (authorization) =>
-                client.mobile
-                  .registerDevice({
-                    headers: dpopHeaders(authorization),
-                    payload: input.payload,
-                  })
-                  .pipe(
-                    Effect.mapError(relayRequestError("Could not register relay mobile device.")),
-                    timeoutRelayRequest("Relay mobile device registration timed out."),
-                  ),
-            );
+          (authorization) =>
+            client.mobile
+              .unregisterDevice({
+                headers: dpopHeaders(authorization),
+                params: { deviceId: input.deviceId },
+              })
+              .pipe(
+                Effect.mapError(relayRequestError("unregister relay mobile device")),
+                timeoutRelayRequest("Relay mobile device unregistration"),
+              ),
+        );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.unregisterDevice"),
+      withRelayClientTracing,
+    ),
+    registerLiveActivity: Effect.fnUntraced(
+      function* (input) {
+        return yield* mobileRegistrationRequest(
+          {
+            clerkToken: input.clerkToken,
+            target: dpopProofTargets.registerLiveActivity(),
           },
-          Effect.withSpan("clientRuntime.managedRelay.registerDevice"),
-          withRelayClientTracing,
-        ),
-        unregisterDevice: Effect.fnUntraced(
-          function* (input) {
-            return yield* mobileRegistrationRequest(
-              {
-                clerkToken: input.clerkToken,
-                target: dpopProofTargets.unregisterDevice(input.deviceId),
-              },
-              (authorization) =>
-                client.mobile
-                  .unregisterDevice({
-                    headers: dpopHeaders(authorization),
-                    params: { deviceId: input.deviceId },
-                  })
-                  .pipe(
-                    Effect.mapError(relayRequestError("Could not unregister relay mobile device.")),
-                    timeoutRelayRequest("Relay mobile device unregistration timed out."),
-                  ),
-            );
-          },
-          Effect.withSpan("clientRuntime.managedRelay.unregisterDevice"),
-          withRelayClientTracing,
-        ),
-        registerLiveActivity: Effect.fnUntraced(
-          function* (input) {
-            return yield* mobileRegistrationRequest(
-              {
-                clerkToken: input.clerkToken,
-                target: dpopProofTargets.registerLiveActivity(),
-              },
-              (authorization) =>
-                client.mobile
-                  .registerLiveActivity({
-                    headers: dpopHeaders(authorization),
-                    payload: input.payload,
-                  })
-                  .pipe(
-                    Effect.mapError(relayRequestError("Could not register relay live activity.")),
-                    timeoutRelayRequest("Relay Live Activity registration timed out."),
-                  ),
-            );
-          },
-          Effect.withSpan("clientRuntime.managedRelay.registerLiveActivity"),
-          withRelayClientTracing,
-        ),
-        resetTokenCache: SynchronizedRef.set(cachedTokens, []).pipe(
-          Effect.andThen(options.accessTokenStore ? options.accessTokenStore.clear : Effect.void),
-          Effect.withSpan("clientRuntime.managedRelay.resetTokenCache"),
-          withRelayClientTracing,
-        ),
-      });
-    }),
-  );
-}
+          (authorization) =>
+            client.mobile
+              .registerLiveActivity({
+                headers: dpopHeaders(authorization),
+                payload: input.payload,
+              })
+              .pipe(
+                Effect.mapError(relayRequestError("register relay live activity")),
+                timeoutRelayRequest("Relay Live Activity registration"),
+              ),
+        );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.registerLiveActivity"),
+      withRelayClientTracing,
+    ),
+    resetTokenCache: SynchronizedRef.set(cachedTokens, []).pipe(
+      Effect.andThen(options.accessTokenStore ? options.accessTokenStore.clear : Effect.void),
+      Effect.withSpan("clientRuntime.managedRelay.resetTokenCache"),
+      withRelayClientTracing,
+    ),
+  });
+});
+
+export const layer = (options: ManagedRelayClientLayerOptions) =>
+  Layer.effect(ManagedRelayClient, make(options));

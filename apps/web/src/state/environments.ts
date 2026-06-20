@@ -3,6 +3,7 @@ import {
   connectionCatalogDisplayUrl,
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
+import { Discovery } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { useMemo } from "react";
@@ -81,7 +82,7 @@ export function useEnvironmentHttpBaseUrl(environmentId: EnvironmentId | null): 
   return Option.isSome(prepared) ? prepared.value.httpBaseUrl : null;
 }
 
-export function useRelayEnvironmentDiscovery() {
+export function useRelayEnvironmentDiscovery(): Discovery.RelayEnvironmentDiscoveryState {
   return useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
 }
 

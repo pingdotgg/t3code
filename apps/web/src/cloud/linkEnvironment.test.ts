@@ -21,11 +21,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import { type RpcSession } from "@t3tools/client-runtime/rpc";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
-import {
-  managedRelayClientLayer,
-  ManagedRelayClient,
-  ManagedRelayDpopSigner,
-} from "@t3tools/client-runtime/relay";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth";
 
@@ -60,8 +56,8 @@ vi.mock("./relayClientInstallDialog", () => ({
 
 const createProof = vi.fn(() => Effect.succeed("dpop-proof"));
 const dpopSignerLayer = Layer.succeed(
-  ManagedRelayDpopSigner,
-  ManagedRelayDpopSigner.of({
+  ManagedRelay.ManagedRelayDpopSigner,
+  ManagedRelay.ManagedRelayDpopSigner.of({
     thumbprint: Effect.succeed("thumbprint"),
     createProof,
   }),
@@ -71,7 +67,7 @@ function relayLayer() {
   const http = remoteHttpClientLayer(globalThis.fetch);
   return Layer.mergeAll(
     http,
-    managedRelayClientLayer({
+    ManagedRelay.layer({
       relayUrl: "https://relay.example.test",
       clientId: RelayWebClientId,
     }).pipe(Layer.provideMerge(dpopSignerLayer), Layer.provide(http)),
@@ -129,7 +125,11 @@ function services(options?: Parameters<typeof registryLayer>[0]) {
 }
 
 function withServices<A, E>(
-  effect: Effect.Effect<A, E, HttpClient.HttpClient | ManagedRelayClient | EnvironmentRegistry>,
+  effect: Effect.Effect<
+    A,
+    E,
+    HttpClient.HttpClient | ManagedRelay.ManagedRelayClient | EnvironmentRegistry
+  >,
   options?: Parameters<typeof registryLayer>[0],
 ) {
   return effect.pipe(Effect.provide(services(options)));

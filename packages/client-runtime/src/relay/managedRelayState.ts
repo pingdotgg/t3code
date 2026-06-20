@@ -16,7 +16,7 @@ import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { findErrorTraceId } from "../errors/errorTrace.ts";
-import { ManagedRelayClient } from "./managedRelay.ts";
+import * as ManagedRelay from "./managedRelay.ts";
 
 const DEFAULT_STALE_TIME_MS = 15_000;
 const DEFAULT_IDLE_TTL_MS = 5 * 60_000;
@@ -308,7 +308,7 @@ export function readManagedRelaySnapshotState<A>(
 }
 
 export function createManagedRelayQueryManager(
-  runtime: Atom.AtomRuntime<ManagedRelayClient>,
+  runtime: Atom.AtomRuntime<ManagedRelay.ManagedRelayClient>,
   options?: {
     readonly staleTimeMs?: number;
     readonly idleTtlMs?: number;
@@ -351,7 +351,7 @@ export function createManagedRelayQueryManager(
             { ...base, stage: "clerk-token" },
             requireClerkToken(get, accountId),
           );
-          const relay = yield* ManagedRelayClient;
+          const relay = yield* ManagedRelay.ManagedRelayClient;
           return yield* observe(
             { ...base, stage: "relay-request" },
             relay.listEnvironments({ clerkToken }),
@@ -374,7 +374,7 @@ export function createManagedRelayQueryManager(
             { ...base, stage: "clerk-token" },
             requireClerkToken(get, accountId),
           );
-          const relay = yield* ManagedRelayClient;
+          const relay = yield* ManagedRelay.ManagedRelayClient;
           return yield* observe(
             { ...base, stage: "relay-request" },
             relay.listDevices({ clerkToken }),
@@ -402,7 +402,7 @@ export function createManagedRelayQueryManager(
             { ...base, stage: "clerk-token" },
             requireClerkToken(get, accountId),
           );
-          const relay = yield* ManagedRelayClient;
+          const relay = yield* ManagedRelay.ManagedRelayClient;
           const status = yield* observe(
             { ...base, stage: "relay-request" },
             relay.getEnvironmentStatus({

@@ -1,3 +1,3 @@
-export * from "./discovery.ts";
-export * from "./managedRelay.ts";
+export * as Discovery from "./discovery.ts";
+export * as ManagedRelay from "./managedRelay.ts";
 export * from "./managedRelayState.ts";

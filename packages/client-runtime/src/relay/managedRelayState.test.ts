@@ -12,11 +12,7 @@ import * as Stream from "effect/Stream";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { afterEach, vi } from "vite-plus/test";
 
-import {
-  ManagedRelayClient,
-  ManagedRelayClientError,
-  type ManagedRelayClientShape,
-} from "./managedRelay.ts";
+import * as ManagedRelay from "./managedRelay.ts";
 import {
   createManagedRelayQueryManager,
   createManagedRelaySession,
@@ -66,10 +62,10 @@ function resetRegistry() {
 }
 
 function createManager(
-  overrides?: Partial<ManagedRelayClientShape>,
+  overrides?: Partial<ManagedRelay.ManagedRelayClient["Service"]>,
   onQueryEvent?: (event: ManagedRelayQueryEvent) => void,
 ) {
-  const client = ManagedRelayClient.of({
+  const client = ManagedRelay.ManagedRelayClient.of({
     relayUrl: "https://relay.example.test",
     listEnvironments: () => Effect.succeed([environment]),
     listDevices: () => Effect.succeed([device]),
@@ -90,7 +86,7 @@ function createManager(
     resetTokenCache: Effect.void,
     ...overrides,
   });
-  const runtime = Atom.runtime(Layer.succeed(ManagedRelayClient, client));
+  const runtime = Atom.runtime(Layer.succeed(ManagedRelay.ManagedRelayClient, client));
   return createManagedRelayQueryManager(runtime, {
     staleTimeMs: 60_000,
     ...(onQueryEvent ? { onQueryEvent } : {}),
@@ -363,8 +359,9 @@ describe("createManagedRelayQueryManager", () => {
     const manager = createManager({
       getEnvironmentStatus: () =>
         Effect.fail(
-          new ManagedRelayClientError({
-            message: "Could not get relay environment status.",
+          new ManagedRelay.ManagedRelayRequestFailedError({
+            action: "get relay environment status",
+            cause: new Error("Relay request failed."),
             traceId: "trace-status",
           }),
         ),
