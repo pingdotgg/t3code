@@ -6,8 +6,9 @@ import { describe, it } from "bun:test";
 // component/logic specs) and drop the `.skip`. The effort estimate from the plan is
 // noted on each block.
 //
-// Already shipped this pass (covered by real specs elsewhere, NOT skipped here):
-// plan↔build toggle, rename, archive/unarchive, delete, stop-session, search/filter.
+// Already shipped (covered by real specs elsewhere, NOT skipped here):
+// plan↔build toggle, rename, archive/unarchive, delete, stop-session, search/filter,
+// multiline composer + paste, tool-call rows, changed-files summary, working indicator.
 
 describe.skip("Backlog — Low/Med: cycle through all pending approvals", () => {
   it("Given several pending approvals, when navigating, then each can be approved/declined in turn", () => {
@@ -35,10 +36,6 @@ describe.skip("Backlog — Med: pending multi-question user input form", () => {
 
 describe.skip("Backlog — Med: implement plan in a new thread", () => {
   it("Given a proposed plan, when 'implement in new thread' runs, then createThread + startThreadTurn fire with sourceProposedPlan", () => {});
-});
-
-describe.skip("Backlog — Med: changed-files list", () => {
-  it("Given a completed turn, then its changed files are listed (getTurnDiff)", () => {});
 });
 
 describe.skip("Backlog — Med: checkpoint revert", () => {
