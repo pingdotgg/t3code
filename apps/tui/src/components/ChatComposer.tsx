@@ -37,6 +37,7 @@ export const ChatComposer = React.memo(function ChatComposer({
   placeholder,
   projectName,
   interactionMode,
+  newRuntimeMode,
   inputFocused,
   composerEpoch,
   onReplyInput,
@@ -51,8 +52,10 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly auxValue: string;
   readonly placeholder: string;
   readonly projectName: string;
-  /** Plan/build mode of the active thread; shown as a badge on the reply prompt. */
+  /** Plan/build mode: the new-thread option in "new" mode, else the active thread. */
   readonly interactionMode: "default" | "plan";
+  /** Runtime mode the new thread will start in (shown in the new-thread dialog). */
+  readonly newRuntimeMode: string;
   /** False when the terminal pane holds focus — render static text, not an input. */
   readonly inputFocused: boolean;
   /** Bumped by the parent to remount (clear) the reply editor after send/clear. */
@@ -114,6 +117,15 @@ export const ChatComposer = React.memo(function ChatComposer({
           <span fg={palette.accent}>new thread ▸ project: </span>
           <span fg={palette.text}>{projectName}</span>
           <span fg={palette.dim}>{"  ↑/↓ change · Esc cancel"}</span>
+        </text>
+        <text>
+          <span fg={palette.accent}>options ▸ </span>
+          <span fg={palette.text}>{newRuntimeMode}</span>
+          <span fg={palette.dim}>{" (^O) · "}</span>
+          <span fg={interactionMode === "plan" ? palette.accent : palette.text}>
+            {interactionMode === "plan" ? "plan" : "build"}
+          </span>
+          <span fg={palette.dim}>{" (^B)"}</span>
         </text>
         <box flexDirection="row">
           <text>

@@ -290,6 +290,8 @@ export interface TuiClient {
     readonly title: string;
     readonly modelSelection: ModelSelection;
     readonly firstMessage: string;
+    readonly runtimeMode: RuntimeMode;
+    readonly interactionMode: ProviderInteractionMode;
   }) => Promise<void>;
   readonly implementPlan: (
     thread: Pick<OrchestrationThread, "id" | "runtimeMode">,
@@ -535,8 +537,8 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
             projectId: input.projectId,
             title: input.title,
             modelSelection: input.modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
+            runtimeMode: input.runtimeMode,
+            interactionMode: input.interactionMode,
             branch: null,
             worktreePath: null,
           });
@@ -544,8 +546,8 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
           yield* startThreadTurn({
             threadId,
             message: { messageId, role: "user", text: input.firstMessage, attachments: [] },
-            runtimeMode: "full-access",
-            interactionMode: "default",
+            runtimeMode: input.runtimeMode,
+            interactionMode: input.interactionMode,
           });
         }),
       ),

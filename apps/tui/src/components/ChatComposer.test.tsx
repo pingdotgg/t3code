@@ -17,6 +17,7 @@ const base = {
   placeholder: "Type a reply, Enter to send",
   projectName: "Acme",
   interactionMode: "default",
+  newRuntimeMode: "full-access",
   composerEpoch: 0,
   onReplyInput: noop,
   onReplySubmit: noop,
@@ -65,10 +66,14 @@ describe("ChatComposer", () => {
     expect(frame).toContain("Enter keep");
   });
 
-  it("Given new-thread mode, when rendered, then it shows the dialog and the chosen project", async () => {
-    const frame = await frameOf(<ChatComposer {...base} mode="new" inputFocused />);
+  it("Given new-thread mode, when rendered, then it shows the dialog, project, and options", async () => {
+    const frame = await frameOf(
+      <ChatComposer {...base} mode="new" newRuntimeMode="approval-required" interactionMode="plan" inputFocused />,
+    );
     expect(frame).toContain("new thread");
     expect(frame).toContain("Acme");
+    expect(frame).toContain("approval-required");
+    expect(frame).toContain("plan");
   });
 
   it("Given a focused multiline reply editor, when text is typed, then it renders the content", async () => {

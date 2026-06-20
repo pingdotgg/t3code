@@ -63,6 +63,8 @@ export interface KeyBindingActions {
   readonly onCancelNew: () => void;
   readonly onProjectPrev: () => void;
   readonly onProjectNext: () => void;
+  readonly onNewCycleRuntime: () => void;
+  readonly onNewTogglePlan: () => void;
   readonly onSubmitNew: () => void;
   // Compose mode
   readonly onNavUp: () => void;
@@ -131,6 +133,8 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       if (key.name === "escape") return actions.onCancelNew();
       if (key.name === "up") return actions.onProjectPrev();
       if (key.name === "down") return actions.onProjectNext();
+      if (key.ctrl && key.name === "o") return actions.onNewCycleRuntime();
+      if (key.ctrl && key.name === "b") return actions.onNewTogglePlan();
       if (key.name === "return" || key.name === "enter") return actions.onSubmitNew();
       return;
     }

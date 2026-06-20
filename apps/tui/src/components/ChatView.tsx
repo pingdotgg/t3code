@@ -1,5 +1,9 @@
 import { type ScrollBoxRenderable, SyntaxStyle } from "@opentui/core";
-import { DEFAULT_TERMINAL_ID, type RuntimeMode } from "@t3tools/contracts";
+import {
+  DEFAULT_TERMINAL_ID,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+} from "@t3tools/contracts";
 import { useTerminalDimensions } from "@opentui/react";
 import * as React from "react";
 
@@ -70,6 +74,10 @@ export function ChatView({
   const [draft, setDraft] = React.useState("");
   const [renameDraft, setRenameDraft] = React.useState("");
   const [projectIndex, setProjectIndex] = React.useState(0);
+  // Options for the new-thread dialog (^O cycles runtime, ^B toggles plan/build).
+  const [newRuntimeMode, setNewRuntimeMode] = React.useState<RuntimeMode>("full-access");
+  const [newInteractionMode, setNewInteractionMode] =
+    React.useState<ProviderInteractionMode>("default");
   // Which pending approval ^A/^R act on; ↑/↓ move it while an approval is up.
   const [approvalIndex, setApprovalIndex] = React.useState(0);
   const [activeTerminal, setActiveTerminal] = React.useState<TerminalInfo | null>(null);
@@ -132,7 +140,7 @@ export function ChatView({
   // grows with its line count (up to a cap) so multiline prompts stay visible.
   const replyLineCount = Math.min(Math.max(reply.split("\n").length, 1), 8);
   const composerHeight =
-    focus === "new" ? 6 : focus === "rename" || focus === "filter" ? 5 : replyLineCount + 4;
+    focus === "new" ? 7 : focus === "rename" || focus === "filter" ? 5 : replyLineCount + 4;
   const defaultTerminalHeight = Math.floor(height * 0.4);
   const maxTerminalHeight = Math.max(6, height - composerHeight - 6);
   const terminalDrawerHeight = activeTerminal
@@ -206,6 +214,8 @@ export function ChatView({
           title: message.slice(0, 60),
           modelSelection: project.defaultModelSelection,
           firstMessage: message,
+          runtimeMode: newRuntimeMode,
+          interactionMode: newInteractionMode,
         })
         .catch((error) => store.setStatus(`create failed: ${String(error)}`));
       store.setStatus("Creating thread…");
@@ -283,6 +293,13 @@ export function ChatView({
     onProjectPrev: () =>
       setProjectIndex((index) => (index > 0 ? index - 1 : Math.max(projects.length - 1, 0))),
     onProjectNext: () => setProjectIndex((index) => (index + 1) % Math.max(projects.length, 1)),
+    onNewCycleRuntime: () =>
+      setNewRuntimeMode((mode) => {
+        const current = RUNTIME_MODES.indexOf(mode);
+        return RUNTIME_MODES[(current + 1) % RUNTIME_MODES.length] ?? "full-access";
+      }),
+    onNewTogglePlan: () =>
+      setNewInteractionMode((mode) => (mode === "plan" ? "default" : "plan")),
     onSubmitNew: submitNewThread,
     // ↑/↓ move the approval cursor while a pending approval is up (and the reply is
     // empty), otherwise navigate the sidebar — yielding to a multiline reply editor
@@ -307,6 +324,8 @@ export function ChatView({
     onScrollDown: () => scrollRef.current?.scrollBy({ x: 0, y: SCROLL_STEP }),
     onNewThread: () => {
       setProjectIndex(0);
+      setNewRuntimeMode(detail?.runtimeMode ?? "full-access");
+      setNewInteractionMode("default");
       setFocus("new");
     },
     onToggleTerminal: toggleTerminal,
@@ -574,7 +593,8 @@ export function ChatView({
           auxValue={focus === "rename" ? renameDraft : focus === "filter" ? state.filter : ""}
           placeholder={placeholder}
           projectName={projects[activeProjectIndex]?.title ?? "(none)"}
-          interactionMode={detail?.interactionMode ?? "default"}
+          interactionMode={focus === "new" ? newInteractionMode : (detail?.interactionMode ?? "default")}
+          newRuntimeMode={newRuntimeMode}
           inputFocused={!terminalFocused}
           composerEpoch={composerEpoch}
           onReplyInput={setReply}

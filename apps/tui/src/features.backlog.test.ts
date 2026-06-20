@@ -11,11 +11,13 @@ import { describe, it } from "bun:test";
 // multiline composer + paste, tool-call rows, changed-files summary, working indicator,
 // proposed-plan card, implement-plan (^Y, same thread via sourceProposedPlan),
 // context-window meter, cycle pending approvals (↑/↓), checkpoint revert (^K → v),
-// plan/build badge on the prompt, pending user-input form.
+// plan/build badge on the prompt, pending user-input form,
+// new-thread runtime-mode + plan/build options.
 
-describe.skip("Backlog — Low/Med: new-thread options (branch / worktree / runtimeMode)", () => {
-  it("Given the new-thread dialog, when options are set, then createThread receives them", () => {
-    // createThread already accepts these; the dialog only collects project + message.
+describe.skip("Backlog — Low/Med: new-thread branch / worktree fields", () => {
+  it("Given the new-thread dialog, when a branch/worktree is entered, then createThread receives them", () => {
+    // Runtime mode + plan/build are shipped (^O / ^B in the dialog). Branch and
+    // worktree are free-text paths that need a multi-field, focus-switching form.
   });
 });
 
