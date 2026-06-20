@@ -42,7 +42,7 @@ const decodeOpenCodeSdkReplayTranscript = Schema.decodeUnknownEffect(OpenCodeSdk
 export class OpenCodeReplayTranscriptDecodeError extends Schema.TaggedErrorClass<OpenCodeReplayTranscriptDecodeError>()(
   "OpenCodeReplayTranscriptDecodeError",
   {
-    provider: Schema.optional(Schema.String),
+    driver: Schema.optional(Schema.String),
     protocol: Schema.optional(Schema.String),
     scenario: Schema.optional(Schema.String),
     cause: Schema.Defect(),
@@ -370,7 +370,7 @@ export const OpenCodeOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarn
   OpenCodeSdkReplayTranscript,
   OpenCodeOrchestratorReplayHarnessError
 > = {
-  provider: OPENCODE_PROVIDER,
+  driver: OPENCODE_PROVIDER,
   decodeTranscript: (transcript) =>
     decodeOpenCodeSdkReplayTranscript(transcript).pipe(
       Effect.mapError(

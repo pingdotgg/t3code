@@ -6,6 +6,8 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
+  ProviderDriverKind,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -43,6 +45,11 @@ const TestLayer = Layer.mergeAll(
     Layer.provide(Layer.mergeAll(TestStoresLayer, TestEventSinkLayer, idAllocatorLayer)),
   ),
 );
+const modelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5.4",
+} satisfies ModelSelection;
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
 
 function threadCreatedEvent(
   now: DateTime.Utc,
@@ -57,7 +64,7 @@ function threadCreatedEvent(
       projectId,
     });
     const providerThreadId = idAllocator.derive.providerThread({
-      provider: "codex",
+      driver: CODEX_DRIVER,
       nativeThreadId: "native-thread",
     });
     const thread: OrchestrationV2AppThread = {
@@ -66,11 +73,8 @@ function threadCreatedEvent(
       id: threadId,
       projectId,
       title: "Provider event ingestor",
-      defaultProvider: "codex",
-      modelSelection: {
-        provider: "codex",
-        model: "gpt-5.4",
-      },
+      providerInstanceId: modelSelection.instanceId,
+      modelSelection: modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
@@ -111,20 +115,21 @@ layer("ProviderEventIngestorV2", (it) => {
       const idAllocator = yield* IdAllocatorV2;
       const threadEvent = yield* threadCreatedEvent(now);
       const providerSessionId = yield* idAllocator.allocate.providerSession({
-        provider: "codex",
+        providerInstanceId: modelSelection.instanceId,
         threadId: threadEvent.threadId,
       });
       const providerThread: OrchestrationV2ProviderThread = {
         id: idAllocator.derive.providerThread({
-          provider: "codex",
+          driver: CODEX_DRIVER,
           nativeThreadId: "native-thread",
         }),
-        provider: "codex",
+        driver: CODEX_DRIVER,
+        providerInstanceId: modelSelection.instanceId,
         providerSessionId,
         appThreadId: threadEvent.threadId,
         ownerNodeId: null,
         nativeThreadRef: {
-          provider: "codex",
+          driver: CODEX_DRIVER,
           nativeId: "native-thread",
           strength: "strong",
         },
@@ -141,10 +146,11 @@ layer("ProviderEventIngestorV2", (it) => {
       yield* eventSink.write({ events: [threadEvent] });
       const storedEvents = yield* ingestor.ingestNormalized({
         providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
         threadId: threadEvent.threadId,
         event: {
           type: "provider_thread.updated",
-          provider: "codex",
+          driver: CODEX_DRIVER,
           providerThread,
         },
       });
@@ -194,17 +200,18 @@ layer("ProviderEventIngestorV2", (it) => {
           projectId,
         });
         const providerSessionId = yield* idAllocator.allocate.providerSession({
-          provider: "codex",
+          providerInstanceId: modelSelection.instanceId,
           threadId,
         });
         const normalized = yield* ingestor.normalize({
           providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
           threadId,
           event: {
             type: "turn.terminal",
-            provider: "codex",
+            driver: CODEX_DRIVER,
             providerTurnId: idAllocator.derive.providerTurn({
-              provider: "codex",
+              driver: CODEX_DRIVER,
               nativeTurnId: "native-turn",
             }),
             status: "completed",
@@ -225,7 +232,7 @@ layer("ProviderEventIngestorV2", (it) => {
         throw new Error("Expected a thread.created fixture event");
       }
       const childThreadId = idAllocator.derive.threadFromProviderThread({
-        provider: "codex",
+        driver: CODEX_DRIVER,
         nativeThreadId: "native-subagent-thread",
       });
       const childRootNodeId = NodeId.make("node:subagent-root");
@@ -245,25 +252,27 @@ layer("ProviderEventIngestorV2", (it) => {
         },
       };
       const providerSessionId = yield* idAllocator.allocate.providerSession({
-        provider: "codex",
+        providerInstanceId: modelSelection.instanceId,
         threadId: rootEvent.threadId,
       });
 
       const threadEvents = yield* ingestor.normalize({
         providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
         threadId: rootEvent.threadId,
         event: {
           type: "app_thread.created",
-          provider: "codex",
+          driver: CODEX_DRIVER,
           appThread: childThread,
         },
       });
       const messageEvents = yield* ingestor.normalize({
         providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
         threadId: rootEvent.threadId,
         event: {
           type: "message.updated",
-          provider: "codex",
+          driver: CODEX_DRIVER,
           message: {
             createdBy: "agent",
             creationSource: "provider",

@@ -357,7 +357,7 @@ describe("ClaudeAdapterV2 native fork", () => {
               nodeId: NodeId.make("node-claude-source"),
               runAttemptId: RunAttemptId.make("run-attempt-claude-source"),
               nativeTurnRef: {
-                provider: CLAUDE_PROVIDER,
+                driver: CLAUDE_PROVIDER,
                 nativeId: "assistant-message-cursor",
                 strength: "weak",
               },
@@ -393,7 +393,7 @@ describe("ClaudeAdapterV2 native fork", () => {
             id: targetThreadId,
             projectId: ProjectId.make("project-claude-fork-target"),
             title: "Claude fork target",
-            defaultProvider: ProviderInstanceId.make(CLAUDE_PROVIDER),
+            providerInstanceId: ProviderInstanceId.make(CLAUDE_PROVIDER),
             modelSelection: {
               instanceId: ProviderInstanceId.make(CLAUDE_PROVIDER),
               model: "claude-sonnet-4-6",

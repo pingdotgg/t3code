@@ -138,6 +138,7 @@ export interface ThreadManagementServiceShape {
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
+  readonly getThreadSnapshot: OrchestratorV2["Service"]["getThreadSnapshot"];
   readonly getProjectThread: (input: {
     readonly projectId: ProjectId;
     readonly threadId: ThreadId;
@@ -158,6 +159,7 @@ export interface ThreadManagementServiceShape {
   ) => Effect.Effect<ThreadManagementInterruptResult, ThreadManagementFailure>;
   readonly getThreadEventSequence: OrchestratorV2["Service"]["getThreadEventSequence"];
   readonly streamStoredEvents: OrchestratorV2["Service"]["streamStoredEvents"];
+  readonly streamStoredEventsFrom: OrchestratorV2["Service"]["streamStoredEventsFrom"];
   readonly streamDomainEvents: OrchestratorV2["Service"]["streamDomainEvents"];
 }
 
@@ -442,6 +444,7 @@ const make = Effect.gen(function* () {
   return ThreadManagementService.of({
     dispatch: orchestrator.dispatch,
     getThreadProjection: orchestrator.getThreadProjection,
+    getThreadSnapshot: orchestrator.getThreadSnapshot,
     getProjectThread,
     getShellSnapshot: orchestrator.getShellSnapshot,
     listProjectThreads,
@@ -450,6 +453,7 @@ const make = Effect.gen(function* () {
     interruptThread,
     getThreadEventSequence: orchestrator.getThreadEventSequence,
     streamStoredEvents: orchestrator.streamStoredEvents,
+    streamStoredEventsFrom: orchestrator.streamStoredEventsFrom,
     streamDomainEvents: orchestrator.streamDomainEvents,
   });
 });

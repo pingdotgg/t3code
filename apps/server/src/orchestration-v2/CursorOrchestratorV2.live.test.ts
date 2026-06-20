@@ -10,11 +10,18 @@ import {
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { FetchHttpClient } from "effect/unstable/http";
 import { describe } from "vite-plus/test";
 
 import { CheckpointStoreLive } from "../checkpointing/Layers/CheckpointStore.ts";
 import { ServerConfig } from "../config.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { ProviderInstanceRegistryHydrationLive } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
+import {
+  NoOpProviderEventLoggers,
+  ProviderEventLoggers,
+} from "../provider/Layers/ProviderEventLoggers.ts";
+import { OpenCodeRuntimeLive } from "../provider/opencodeRuntime.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -34,17 +41,30 @@ const vcsDriverRegistryLayer = VcsDriverRegistry.layer.pipe(
 
 const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(vcsDriverRegistryLayer));
 
+const serverSettingsLayer = ServerSettingsService.layerTest({
+  providers: {
+    cursor: { enabled: true },
+  },
+});
+const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      serverConfigLayer.pipe(Layer.provide(NodeServices.layer)),
+      serverSettingsLayer,
+      NodeServices.layer,
+      FetchHttpClient.layer,
+      OpenCodeRuntimeLive.pipe(Layer.provide(NodeServices.layer)),
+      Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
+    ),
+  ),
+);
+
 const liveLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(checkpointStoreLayer),
   Layer.provide(serverConfigLayer),
-  Layer.provide(
-    ServerSettingsService.layerTest({
-      providers: {
-        cursor: { enabled: true },
-      },
-    }),
-  ),
+  Layer.provide(serverSettingsLayer),
+  Layer.provide(providerInstanceRegistryLayer),
   Layer.provide(NodeServices.layer),
 );
 
@@ -141,11 +161,11 @@ describe.runIf(process.env.T3_CURSOR_LIVE_ORCHESTRATOR === "1")(
               .join("\n");
 
           assert.deepEqual(
-            sourceProjection.runs.map((run) => [run.provider, run.status]),
+            sourceProjection.runs.map((run) => [run.providerInstanceId, run.status]),
             [["cursor", "completed"]],
           );
           assert.deepEqual(
-            targetProjection.runs.map((run) => [run.provider, run.status]),
+            targetProjection.runs.map((run) => [run.providerInstanceId, run.status]),
             [["cursor", "completed"]],
           );
           assert.deepEqual(

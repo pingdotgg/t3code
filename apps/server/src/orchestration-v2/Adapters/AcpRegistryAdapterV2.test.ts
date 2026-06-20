@@ -148,7 +148,7 @@ describe("AcpRegistryAdapterV2", () => {
         runtimePolicy,
       });
 
-      assert.equal(runtime.providerSession.provider, "acpRegistry");
+      assert.equal(runtime.providerSession.driver, "acpRegistry");
       assert.equal(providerThread.nativeThreadRef?.nativeId, "mock-session-1");
       assert.isTrue(runtime.providerSession.capabilities.threads.canReadThreadSnapshot);
       assert.isTrue(runtime.providerSession.capabilities.threads.canForkThread);
