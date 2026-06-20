@@ -19,8 +19,75 @@ export const DESKTOP_LOG_FILE_MAX_FILES = 10;
 const DESKTOP_BACKEND_CHILD_LOG_FIBER_ID = "#backend-child";
 
 interface RotatingLogFileWriter {
-  readonly writeBytes: (chunk: Uint8Array) => Effect.Effect<void>;
-  readonly writeText: (chunk: string) => Effect.Effect<void>;
+  readonly filePath: string;
+  readonly writeBytes: (
+    chunk: Uint8Array,
+  ) => Effect.Effect<void, PlatformError.PlatformError | DesktopLogFileWriterRecoveryError>;
+  readonly writeText: (
+    chunk: string,
+  ) => Effect.Effect<void, PlatformError.PlatformError | DesktopLogFileWriterRecoveryError>;
+}
+
+class DesktopLogFileWriterConfigurationError extends Schema.TaggedErrorClass<DesktopLogFileWriterConfigurationError>()(
+  "DesktopLogFileWriterConfigurationError",
+  {
+    option: Schema.Literals(["maxBytes", "maxFiles"]),
+    value: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `${this.option} must be >= 1 (received ${this.value})`;
+  }
+}
+
+class DesktopLogFileWriterRecoveryError extends Schema.TaggedErrorClass<DesktopLogFileWriterRecoveryError>()(
+  "DesktopLogFileWriterRecoveryError",
+  {
+    logFilePath: Schema.String,
+    cause: Schema.Defect(),
+    recoveryCause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to refresh desktop backend output log size after a write failure at ${this.logFilePath}.`;
+  }
+}
+
+export class DesktopBackendOutputLogSetupError extends Schema.TaggedErrorClass<DesktopBackendOutputLogSetupError>()(
+  "DesktopBackendOutputLogSetupError",
+  {
+    logFilePath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to initialize the desktop backend output log at ${this.logFilePath}.`;
+  }
+}
+
+export class DesktopBackendOutputLogWriteError extends Schema.TaggedErrorClass<DesktopBackendOutputLogWriteError>()(
+  "DesktopBackendOutputLogWriteError",
+  {
+    operation: Schema.Literals(["encode-record", "write-record"]),
+    logFilePath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Desktop backend output log operation "${this.operation}" failed at ${this.logFilePath}.`;
+  }
+}
+
+export class DesktopBackendConsoleWriteError extends Schema.TaggedErrorClass<DesktopBackendConsoleWriteError>()(
+  "DesktopBackendConsoleWriteError",
+  {
+    streamName: Schema.Literals(["stdout", "stderr"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to mirror desktop backend output to ${this.streamName}.`;
+  }
 }
 
 export class DesktopBackendOutputLog extends Context.Service<
@@ -36,18 +103,6 @@ export class DesktopBackendOutputLog extends Context.Service<
     ) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopBackendOutputLog") {}
-
-class DesktopLogFileWriterConfigurationError extends Schema.TaggedErrorClass<DesktopLogFileWriterConfigurationError>()(
-  "DesktopLogFileWriterConfigurationError",
-  {
-    option: Schema.Literals(["maxBytes", "maxFiles"]),
-    value: Schema.Number,
-  },
-) {
-  override get message(): string {
-    return `${this.option} must be >= 1 (received ${this.value})`;
-  }
-}
 
 type DesktopLogFileWriterError =
   | DesktopLogFileWriterConfigurationError
@@ -85,10 +140,13 @@ const sanitizeLogValue = (value: string): string => value.replace(/\s+/g, " ").t
 const refreshFileSize = (
   fileSystem: FileSystem.FileSystem,
   filePath: string,
-): Effect.Effect<number, never> =>
+): Effect.Effect<number, PlatformError.PlatformError> =>
   fileSystem.stat(filePath).pipe(
     Effect.map((stat) => Number(stat.size)),
-    Effect.orElseSucceed(() => 0),
+    Effect.catchTags({
+      PlatformError: (error) =>
+        error.reason._tag === "NotFound" ? Effect.succeed(0) : Effect.fail(error),
+    }),
   );
 
 const makeRotatingLogFileWriter = Effect.fn("makeRotatingLogFileWriter")(function* (input: {
@@ -126,41 +184,52 @@ const makeRotatingLogFileWriter = Effect.fn("makeRotatingLogFileWriter")(functio
   const currentSize = yield* Ref.make(yield* refreshFileSize(fileSystem, input.filePath));
   const mutex = yield* Semaphore.make(1);
 
+  const recoverCurrentSize = (
+    cause: PlatformError.PlatformError,
+  ): Effect.Effect<never, PlatformError.PlatformError | DesktopLogFileWriterRecoveryError> =>
+    refreshFileSize(fileSystem, input.filePath).pipe(
+      Effect.matchEffect({
+        onFailure: (recoveryCause) =>
+          Effect.fail(
+            new DesktopLogFileWriterRecoveryError({
+              logFilePath: input.filePath,
+              cause,
+              recoveryCause,
+            }),
+          ),
+        onSuccess: (size) => Ref.set(currentSize, size).pipe(Effect.andThen(Effect.fail(cause))),
+      }),
+    );
+
   const pruneOverflowBackups = Effect.gen(function* () {
-    const entries = yield* fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
+    const entries = yield* fileSystem.readDirectory(directory);
     for (const entry of entries) {
       if (!entry.startsWith(`${baseName}.`)) continue;
       const suffix = Number(entry.slice(baseName.length + 1));
       if (!Number.isInteger(suffix) || suffix <= maxFiles) continue;
-      yield* fileSystem.remove(path.join(directory, entry), { force: true }).pipe(Effect.ignore);
+      yield* fileSystem.remove(path.join(directory, entry), { force: true });
     }
   });
 
   const rotate = Effect.gen(function* () {
-    yield* fileSystem.remove(withSuffix(maxFiles), { force: true }).pipe(Effect.ignore);
+    yield* fileSystem.remove(withSuffix(maxFiles), { force: true });
     for (let index = maxFiles - 1; index >= 1; index -= 1) {
       const source = withSuffix(index);
-      const sourceExists = yield* fileSystem.exists(source).pipe(Effect.orElseSucceed(() => false));
+      const sourceExists = yield* fileSystem.exists(source);
       if (sourceExists) {
         yield* fileSystem.rename(source, withSuffix(index + 1));
       }
     }
-    const currentExists = yield* fileSystem
-      .exists(input.filePath)
-      .pipe(Effect.orElseSucceed(() => false));
+    const currentExists = yield* fileSystem.exists(input.filePath);
     if (currentExists) {
       yield* fileSystem.rename(input.filePath, withSuffix(1));
     }
     yield* Ref.set(currentSize, 0);
-  }).pipe(
-    Effect.catch(() =>
-      refreshFileSize(fileSystem, input.filePath).pipe(
-        Effect.flatMap((size) => Ref.set(currentSize, size)),
-      ),
-    ),
-  );
+  });
 
-  const writeBytes = (chunk: Uint8Array): Effect.Effect<void> => {
+  const writeBytes = (
+    chunk: Uint8Array,
+  ): Effect.Effect<void, PlatformError.PlatformError | DesktopLogFileWriterRecoveryError> => {
     if (chunk.byteLength === 0) return Effect.void;
 
     return mutex.withPermits(1)(
@@ -178,11 +247,9 @@ const makeRotatingLogFileWriter = Effect.fn("makeRotatingLogFileWriter")(functio
           yield* rotate;
         }
       }).pipe(
-        Effect.catch(() =>
-          refreshFileSize(fileSystem, input.filePath).pipe(
-            Effect.flatMap((size) => Ref.set(currentSize, size)),
-          ),
-        ),
+        Effect.catchTags({
+          PlatformError: recoverCurrentSize,
+        }),
       ),
     );
   };
@@ -190,6 +257,7 @@ const makeRotatingLogFileWriter = Effect.fn("makeRotatingLogFileWriter")(functio
   yield* pruneOverflowBackups;
 
   return {
+    filePath: input.filePath,
     writeBytes,
     writeText: (chunk) => writeBytes(textEncoder.encode(chunk)),
   } satisfies RotatingLogFileWriter;
@@ -199,10 +267,17 @@ const writeDevelopmentConsoleOutput = (
   streamName: "stdout" | "stderr",
   chunk: Uint8Array,
 ): Effect.Effect<void> =>
-  Effect.sync(() => {
-    const output = streamName === "stderr" ? process.stderr : process.stdout;
-    output.write(chunk);
-  }).pipe(Effect.ignore);
+  Effect.try({
+    try: () => {
+      const output = streamName === "stderr" ? process.stderr : process.stdout;
+      output.write(chunk);
+    },
+    catch: (cause) => new DesktopBackendConsoleWriteError({ streamName, cause }),
+  }).pipe(
+    Effect.catchTags({
+      DesktopBackendConsoleWriteError: (error) => Effect.logError(error.message, { error }),
+    }),
+  );
 
 const writeBackendChildLogRecord = Effect.fn("desktop.observability.writeBackendChildLogRecord")(
   function* (
@@ -222,17 +297,47 @@ const writeBackendChildLogRecord = Effect.fn("desktop.observability.writeBackend
         annotations: input.annotations,
         spans: {},
         fiberId: DESKTOP_BACKEND_CHILD_LOG_FIBER_ID,
-      });
-      yield* logFile.writeText(`${encoded}\n`);
-    }).pipe(Effect.ignore({ log: true }));
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DesktopBackendOutputLogWriteError({
+              operation: "encode-record",
+              logFilePath: logFile.filePath,
+              cause,
+            }),
+        ),
+      );
+      yield* logFile.writeText(`${encoded}\n`).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DesktopBackendOutputLogWriteError({
+              operation: "write-record",
+              logFilePath: logFile.filePath,
+              cause,
+            }),
+        ),
+      );
+    }).pipe(
+      Effect.catchTags({
+        DesktopBackendOutputLogWriteError: (error) => Effect.logError(error.message, { error }),
+      }),
+    );
   },
 );
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const logFilePath = environment.path.join(environment.logDir, "server-child.log");
   const writer = yield* makeRotatingLogFileWriter({
-    filePath: environment.path.join(environment.logDir, "server-child.log"),
-  }).pipe(Effect.option);
+    filePath: logFilePath,
+  }).pipe(
+    Effect.mapError((cause) => new DesktopBackendOutputLogSetupError({ logFilePath, cause })),
+    Effect.map(Option.some),
+    Effect.catchTags({
+      DesktopBackendOutputLogSetupError: (error) =>
+        Effect.logError(error.message, { error }).pipe(Effect.as(Option.none())),
+    }),
+  );
 
   const service = Option.match(writer, {
     onNone: () => DesktopBackendOutputLogNoop,
