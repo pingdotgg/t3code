@@ -14,13 +14,11 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 
-export interface DesktopApplicationMenuShape {
-  readonly configure: Effect.Effect<void>;
-}
-
 export class DesktopApplicationMenu extends Context.Service<
   DesktopApplicationMenu,
-  DesktopApplicationMenuShape
+  {
+    readonly configure: Effect.Effect<void>;
+  }
 >()("@t3tools/desktop/window/DesktopApplicationMenu") {}
 
 type DesktopApplicationMenuRuntimeServices =
@@ -94,7 +92,7 @@ const handleCheckForUpdatesMenuClick: Effect.Effect<
   yield* checkForUpdatesFromMenu;
 }).pipe(Effect.withSpan("desktop.menu.handleCheckForUpdatesClick"));
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;

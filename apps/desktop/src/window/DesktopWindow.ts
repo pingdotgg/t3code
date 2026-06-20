@@ -42,20 +42,19 @@ export type DesktopWindowError =
   | ElectronWindow.ElectronWindowCreateError
   | PreviewManager.PreviewManagerError;
 
-export interface DesktopWindowShape {
-  readonly createMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
-  readonly ensureMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
-  readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
-  readonly activate: Effect.Effect<void, DesktopWindowError>;
-  readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
-  readonly handleBackendReady: Effect.Effect<void, DesktopWindowError>;
-  readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
-  readonly syncAppearance: Effect.Effect<void>;
-}
-
-export class DesktopWindow extends Context.Service<DesktopWindow, DesktopWindowShape>()(
-  "@t3tools/desktop/window/DesktopWindow",
-) {}
+export class DesktopWindow extends Context.Service<
+  DesktopWindow,
+  {
+    readonly createMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
+    readonly ensureMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
+    readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
+    readonly activate: Effect.Effect<void, DesktopWindowError>;
+    readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
+    readonly handleBackendReady: Effect.Effect<void, DesktopWindowError>;
+    readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
+    readonly syncAppearance: Effect.Effect<void>;
+  }
+>()("@t3tools/desktop/window/DesktopWindow") {}
 
 const { logInfo: logWindowInfo, logWarning: logWindowWarning } =
   DesktopObservability.makeComponentLogger("desktop-window");
@@ -143,7 +142,7 @@ function bindFirstRevealTrigger(
   }
 }
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const assets = yield* DesktopAssets.DesktopAssets;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
