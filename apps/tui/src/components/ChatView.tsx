@@ -168,6 +168,13 @@ export function ChatView({
     };
   }, [client, diffOpen, detail?.id, diffTurnCount]);
 
+  const togglePlanMode = () => {
+    if (!detail) return;
+    const next = detail.interactionMode === "plan" ? "default" : "plan";
+    void client.setInteractionMode(detail.id, next).catch(() => {});
+    store.setStatus(next === "plan" ? "Plan mode." : "Build mode.", "success");
+  };
+
   const openRuntimePicker = () => {
     if (!detail) return;
     setPicker({
@@ -246,11 +253,21 @@ export function ChatView({
       );
   };
 
-  const onPickerSelect = (_index: number, option: SelectOption | null) => {
-    const value = typeof option?.value === "string" ? option.value : null;
-    const kind = picker?.kind;
+  const movePicker = (delta: number) =>
+    setPicker((current) => {
+      if (!current || current.options.length === 0) return current;
+      const count = current.options.length;
+      return { ...current, selectedIndex: (current.selectedIndex + delta + count) % count };
+    });
+
+  const applyPicker = (index: number) => {
+    const current = picker;
     setPicker(null);
-    if (!detail || !value || !kind) return;
+    if (!current || !detail) return;
+    const option = current.options[index];
+    const value = typeof option?.value === "string" ? option.value : null;
+    const kind = current.kind;
+    if (!value) return;
     if (kind === "runtime") {
       const mode = value as RuntimeMode;
       void client
@@ -580,12 +597,7 @@ export function ChatView({
     onGrowPrompt: () => resizePrompt(2),
     onShrinkPrompt: () => resizePrompt(-2),
     onEditInEditor: editInEditor,
-    onTogglePlanMode: () => {
-      if (!detail) return;
-      const next = detail.interactionMode === "plan" ? "default" : "plan";
-      void client.setInteractionMode(detail.id, next).catch(() => {});
-      store.setStatus(next === "plan" ? "Plan mode." : "Build mode.", "success");
-    },
+    onTogglePlanMode: togglePlanMode,
     onImplementPlan: () => {
       if (!detail || !actionablePlan) return;
       void client
@@ -731,6 +743,11 @@ export function ChatView({
       openReasoningPicker();
     },
     onOpenRuntime: openRuntimePicker,
+    onSelectPrev: () => movePicker(-1),
+    onSelectNext: () => movePicker(1),
+    onSelectConfirm: () => {
+      if (picker) applyPicker(picker.selectedIndex);
+    },
     onCloseSelect: () => setPicker(null),
     onCloseOverlay: () => setOverlay("none"),
     onConfirmDelete: () => {
@@ -872,7 +889,13 @@ export function ChatView({
         />
       ) : null}
 
-      <ControlsRow controls={controls} />
+      <ControlsRow
+        controls={controls}
+        onTogglePlan={togglePlanMode}
+        onOpenAccess={openRuntimePicker}
+        onOpenModel={openModelPicker}
+        onOpenReasoning={openReasoningPicker}
+      />
 
       {picker ? (
         <SelectOverlay
@@ -880,8 +903,8 @@ export function ChatView({
           status={picker.status}
           options={picker.options}
           selectedIndex={picker.selectedIndex}
-          height={Math.min(Math.max(picker.options.length * 2, 4), 12)}
-          onSelect={onPickerSelect}
+          width={chatWidth}
+          onSelect={(index) => applyPicker(index)}
         />
       ) : overlay === "revert" && detail ? (
         <RevertMenu checkpoints={checkpoints} selected={Math.min(revertIndex, checkpoints.length - 1)} />

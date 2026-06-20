@@ -5,37 +5,51 @@ import { testRender } from "@opentui/react/test-utils";
 import type { ComposerControls } from "../controls.ts";
 import { ControlsRow } from "./ControlsRow.tsx";
 
-async function frameOf(controls: ComposerControls): Promise<string> {
-  const t = await testRender(<ControlsRow controls={controls} />, { width: 80, height: 3 });
-  await t.renderOnce();
-  const frame = t.captureCharFrame();
-  t.renderer.destroy();
-  return frame;
-}
+const noop = () => {};
+
+const base = {
+  onTogglePlan: noop,
+  onOpenAccess: noop,
+  onOpenModel: noop,
+  onOpenReasoning: noop,
+} as const;
 
 describe("ControlsRow", () => {
-  it("Given control state, then it shows plan/build, runtime, model and reasoning with their keys", async () => {
-    const frame = await frameOf({
+  it("Given control state, then it shows plan/build, access, model and reasoning chips", async () => {
+    const controls: ComposerControls = {
       interactionMode: "plan",
       runtimeMode: "approval-required",
       model: "gpt-5",
       reasoning: "high",
-    });
+    };
+    const t = await testRender(<ControlsRow {...base} controls={controls} />, { width: 80, height: 3 });
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
     expect(frame).toContain("^B Plan");
     expect(frame).toContain("^O Supervised");
-    expect(frame).toContain("gpt-5");
-    expect(frame).toContain("high");
-    expect(frame).toContain("^K m model");
+    expect(frame).toContain("model gpt-5");
+    expect(frame).toContain("reasoning high");
+    t.renderer.destroy();
   });
 
-  it("Given no model, then only the mode chips show", async () => {
-    const frame = await frameOf({
+  it("Given the plan chip is clicked, then onTogglePlan fires", async () => {
+    let toggled = false;
+    const controls: ComposerControls = {
       interactionMode: "default",
       runtimeMode: "full-access",
       model: null,
       reasoning: null,
-    });
-    expect(frame).toContain("^B Build");
-    expect(frame).toContain("^O Full access");
+    };
+    const t = await testRender(
+      <ControlsRow {...base} controls={controls} onTogglePlan={() => (toggled = true)} />,
+      { width: 80, height: 3 },
+    );
+    await t.renderOnce();
+    await t.flush();
+    // The "^B Build" chip starts at the left padding (col 1), row 0.
+    await t.mockMouse.click(3, 0);
+    await t.flush();
+    expect(toggled).toBe(true);
+    t.renderer.destroy();
   });
 });

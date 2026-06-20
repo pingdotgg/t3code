@@ -47,7 +47,7 @@ export function interactionModeLabel(mode: ProviderInteractionMode): string {
 
 // The web stores reasoning under a couple of option ids depending on the provider
 // (apps/web TraitsPicker); read any of them.
-const REASONING_OPTION_IDS = ["reasoningEffort", "effort", "reasoning"];
+const REASONING_OPTION_IDS = new Set(["reasoningEffort", "effort", "reasoning"]);
 
 type ModelSelectionLike = OrchestrationThread["modelSelection"] | null | undefined;
 
@@ -56,7 +56,7 @@ export function getReasoningEffort(selection: ModelSelectionLike): string | null
   const options = selection?.options;
   if (!Array.isArray(options)) return null;
   const match = options.find(
-    (option) => REASONING_OPTION_IDS.includes(option.id) && typeof option.value === "string",
+    (option) => REASONING_OPTION_IDS.has(option.id) && typeof option.value === "string",
   );
   return match ? (match.value as string) : null;
 }

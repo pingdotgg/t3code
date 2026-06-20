@@ -48,8 +48,11 @@ export interface KeyBindingActions {
   readonly onActionReasoning: () => void;
   readonly onCloseOverlay: () => void;
   // Model picker
-  // Native <select> pickers (model / runtime / reasoning): the select owns ↑/↓ +
-  // Enter; we only close on Escape.
+  // Select pickers (model / runtime / reasoning): ↑/↓ move, Enter applies, Esc
+  // closes; rows are also clickable.
+  readonly onSelectPrev: () => void;
+  readonly onSelectNext: () => void;
+  readonly onSelectConfirm: () => void;
   readonly onCloseSelect: () => void;
   readonly onOpenRuntime: () => void;
   // Turn diff viewer
@@ -133,7 +136,9 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       return;
     }
     if (actions.mode === "select") {
-      // The focused <select> handles ↑/↓ + Enter itself; we only intercept Escape.
+      if (key.name === "up") return actions.onSelectPrev();
+      if (key.name === "down") return actions.onSelectNext();
+      if (key.name === "return" || key.name === "enter") return actions.onSelectConfirm();
       if (key.name === "escape") return actions.onCloseSelect();
       return;
     }
