@@ -231,7 +231,7 @@ describe("web cloud link environment client", () => {
           _tag: "ManagedRelayRequestFailedError",
         },
       });
-      expect(error.message).toContain("Relay authentication failed: invalid_bearer");
+      expect(error.message).toBe("Could not list relay-managed environments.");
       expect(isCloudEnvironmentLinkError(error)).toBe(true);
     }),
   );
@@ -296,7 +296,9 @@ describe("web cloud link environment client", () => {
         },
       });
       expect(error.cause).toBeDefined();
-      expect(error.message).toContain("Environment bearer token is invalid.");
+      expect(error.message).toBe(
+        `Could not read environment cloud link state for environment "${TARGET.environmentId}".`,
+      );
       expect(isCloudEnvironmentLinkError(error)).toBe(true);
     }),
   );
