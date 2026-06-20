@@ -1,11 +1,11 @@
-import { EDITORS, EditorId, type EnvironmentId } from "@t3tools/contracts";
+import { EDITORS, EditorId, EnvironmentId } from "@t3tools/contracts";
 import {
   mapAtomCommandResult,
   type AtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
 import { useCallback, useMemo } from "react";
@@ -14,11 +14,29 @@ import { useAtomCommand } from "./state/use-atom-command";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 
-export class PreferredEditorUnavailableError extends Data.TaggedError(
+export class PreferredEditorEnvironmentRequiredError extends Schema.TaggedErrorClass<PreferredEditorEnvironmentRequiredError>()(
+  "PreferredEditorEnvironmentRequiredError",
+  {
+    targetPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Cannot open ${this.targetPath} because no environment is selected.`;
+  }
+}
+
+export class PreferredEditorUnavailableError extends Schema.TaggedErrorClass<PreferredEditorUnavailableError>()(
   "PreferredEditorUnavailableError",
-)<{
-  readonly message: string;
-}> {}
+  {
+    environmentId: EnvironmentId,
+    targetPath: Schema.String,
+    availableEditorIds: Schema.Array(EditorId),
+  },
+) {
+  override get message(): string {
+    return `No available editor can open ${this.targetPath} in environment ${this.environmentId}.`;
+  }
+}
 
 export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
   const [lastEditor, setLastEditor] = useLocalStorage(LAST_EDITOR_KEY, null, EditorId);
@@ -55,13 +73,18 @@ export function useOpenInPreferredEditor(
     async (
       targetPath: string,
     ): Promise<
-      AtomCommandResult<EditorId, OpenInEditorError | PreferredEditorUnavailableError>
+      AtomCommandResult<
+        EditorId,
+        | OpenInEditorError
+        | PreferredEditorEnvironmentRequiredError
+        | PreferredEditorUnavailableError
+      >
     > => {
       if (environmentId === null) {
         return AsyncResult.failure(
           Cause.fail(
-            new PreferredEditorUnavailableError({
-              message: "No environment is selected.",
+            new PreferredEditorEnvironmentRequiredError({
+              targetPath,
             }),
           ),
         );
@@ -71,7 +94,9 @@ export function useOpenInPreferredEditor(
         return AsyncResult.failure(
           Cause.fail(
             new PreferredEditorUnavailableError({
-              message: "No available editors found.",
+              environmentId,
+              targetPath,
+              availableEditorIds: availableEditors,
             }),
           ),
         );
