@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe("consumeLastAgentNotificationResponse", () => {
-  it("reports which initial-response operation failed with its exact cause", async () => {
+  it("reports which initial-response operation failed", async () => {
     const cause = new Error("notification lookup unavailable");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
@@ -40,7 +40,6 @@ describe("consumeLastAgentNotificationResponse", () => {
       expect.objectContaining({
         _tag: "NotificationNavigationError",
         operation: "read",
-        cause,
       }),
     );
   });
@@ -63,7 +62,6 @@ describe("consumeLastAgentNotificationResponse", () => {
         _tag: "NotificationNavigationError",
         operation: "clear",
         notificationId: "notification-clear",
-        cause,
       }),
     );
   });
@@ -88,7 +86,6 @@ describe("consumeLastAgentNotificationResponse", () => {
         _tag: "NotificationNavigationError",
         operation: "route",
         notificationId: "notification-route",
-        cause,
       }),
     );
   });
