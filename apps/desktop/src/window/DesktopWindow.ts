@@ -226,7 +226,9 @@ export const make = Effect.gen(function* () {
           {
             label: "Copy Link",
             click: () => {
-              void runPromise(electronShell.copyText(params.linkURL));
+              void runPromise(
+                electronShell.copyText(params.linkURL).pipe(Effect.ignore({ log: true })),
+              );
             },
           },
           { type: "separator" },
@@ -253,7 +255,7 @@ export const make = Effect.gen(function* () {
 
     window.webContents.setWindowOpenHandler(({ url }) => {
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
-        void runPromise(electronShell.openExternal(url));
+        void runPromise(electronShell.openExternal(url).pipe(Effect.ignore({ log: true })));
       }
       return { action: "deny" };
     });
@@ -269,7 +271,7 @@ export const make = Effect.gen(function* () {
 
       event.preventDefault();
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
-        void runPromise(electronShell.openExternal(url));
+        void runPromise(electronShell.openExternal(url).pipe(Effect.ignore({ log: true })));
       }
     });
 
