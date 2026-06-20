@@ -8,16 +8,45 @@ import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
 
+const ElectronWindowCreateOptions = Schema.Struct({
+  title: Schema.NullOr(Schema.String),
+  width: Schema.NullOr(Schema.Number),
+  height: Schema.NullOr(Schema.Number),
+  minWidth: Schema.NullOr(Schema.Number),
+  minHeight: Schema.NullOr(Schema.Number),
+  show: Schema.NullOr(Schema.Boolean),
+  modal: Schema.NullOr(Schema.Boolean),
+  frame: Schema.NullOr(Schema.Boolean),
+  transparent: Schema.NullOr(Schema.Boolean),
+  backgroundColor: Schema.NullOr(Schema.String),
+  webPreferences: Schema.Struct({
+    preload: Schema.NullOr(Schema.String),
+    partition: Schema.NullOr(Schema.String),
+    sandbox: Schema.NullOr(Schema.Boolean),
+    contextIsolation: Schema.NullOr(Schema.Boolean),
+    nodeIntegration: Schema.NullOr(Schema.Boolean),
+    webviewTag: Schema.NullOr(Schema.Boolean),
+  }),
+});
+
 export class ElectronWindowCreateError extends Schema.TaggedErrorClass<ElectronWindowCreateError>()(
   "ElectronWindowCreateError",
   {
+    options: ElectronWindowCreateOptions,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return "Failed to create Electron BrowserWindow.";
+    const title = this.options.title === null ? "" : ` "${this.options.title}"`;
+    const dimensions =
+      this.options.width === null || this.options.height === null
+        ? ""
+        : ` (${this.options.width}x${this.options.height})`;
+    return `Failed to create Electron BrowserWindow${title}${dimensions}.`;
   }
 }
+
+export const isElectronWindowCreateError = Schema.is(ElectronWindowCreateError);
 
 export class ElectronWindow extends Context.Service<
   ElectronWindow,
@@ -69,11 +98,34 @@ export const make = Effect.gen(function* () {
   );
 
   return ElectronWindow.of({
-    create: (options) =>
-      Effect.try({
+    create: (options) => {
+      const webPreferences = options.webPreferences;
+      const diagnosticOptions = {
+        title: options.title ?? null,
+        width: options.width ?? null,
+        height: options.height ?? null,
+        minWidth: options.minWidth ?? null,
+        minHeight: options.minHeight ?? null,
+        show: options.show ?? null,
+        modal: options.modal ?? null,
+        frame: options.frame ?? null,
+        transparent: options.transparent ?? null,
+        backgroundColor: options.backgroundColor ?? null,
+        webPreferences: {
+          preload: webPreferences?.preload ?? null,
+          partition: webPreferences?.partition ?? null,
+          sandbox: webPreferences?.sandbox ?? null,
+          contextIsolation: webPreferences?.contextIsolation ?? null,
+          nodeIntegration: webPreferences?.nodeIntegration ?? null,
+          webviewTag: webPreferences?.webviewTag ?? null,
+        },
+      } satisfies typeof ElectronWindowCreateOptions.Type;
+
+      return Effect.try({
         try: () => new Electron.BrowserWindow(options),
-        catch: (cause) => new ElectronWindowCreateError({ cause }),
-      }),
+        catch: (cause) => new ElectronWindowCreateError({ options: diagnosticOptions, cause }),
+      });
+    },
     main: liveMain,
     currentMainOrFirst,
     focusedMainOrFirst,
