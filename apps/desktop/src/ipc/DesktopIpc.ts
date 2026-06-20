@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
@@ -33,20 +34,19 @@ export interface DesktopSyncIpcMethod<E, R> {
   readonly handler: () => Effect.Effect<unknown, E, R>;
 }
 
-export interface DesktopIpcShape {
-  readonly handle: <E, R>(
-    input: DesktopIpcMethod<E, R>,
-  ) => Effect.Effect<void, never, R | Scope.Scope>;
-  readonly handleSync: <E, R>(
-    input: DesktopSyncIpcMethod<E, R>,
-  ) => Effect.Effect<void, never, R | Scope.Scope>;
-}
+export class DesktopIpc extends Context.Service<
+  DesktopIpc,
+  {
+    readonly handle: <E, R>(
+      input: DesktopIpcMethod<E, R>,
+    ) => Effect.Effect<void, never, R | Scope.Scope>;
+    readonly handleSync: <E, R>(
+      input: DesktopSyncIpcMethod<E, R>,
+    ) => Effect.Effect<void, never, R | Scope.Scope>;
+  }
+>()("@t3tools/desktop/ipc/DesktopIpc") {}
 
-export class DesktopIpc extends Context.Service<DesktopIpc, DesktopIpcShape>()(
-  "@t3tools/desktop/ipc/DesktopIpc",
-) {}
-
-export const make = (ipcMain: DesktopIpcMain): DesktopIpcShape =>
+export const make = (ipcMain: DesktopIpcMain): DesktopIpc["Service"] =>
   DesktopIpc.of({
     handle: Effect.fn("desktop.ipc.registerInvoke")(function* <E, R>({
       channel,
@@ -96,6 +96,8 @@ export const make = (ipcMain: DesktopIpcMain): DesktopIpcShape =>
       );
     }),
   });
+
+export const layer = (ipcMain: DesktopIpcMain) => Layer.succeed(DesktopIpc, make(ipcMain));
 
 /**
  * Convenience helpers for creating IPC methods

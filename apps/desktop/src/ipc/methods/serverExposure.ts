@@ -9,14 +9,14 @@ import * as Schema from "effect/Schema";
 import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
 import * as DesktopServerExposure from "../../backend/DesktopServerExposure.ts";
 import * as IpcChannels from "../channels.ts";
-import { makeIpcMethod } from "../DesktopIpc.ts";
+import * as DesktopIpc from "../DesktopIpc.ts";
 
 const SetTailscaleServeEnabledInput = Schema.Struct({
   enabled: Schema.Boolean,
   port: Schema.optionalKey(Schema.Number),
 });
 
-export const getServerExposureState = makeIpcMethod({
+export const getServerExposureState = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.GET_SERVER_EXPOSURE_STATE_CHANNEL,
   payload: Schema.Void,
   result: DesktopServerExposureStateSchema,
@@ -26,7 +26,7 @@ export const getServerExposureState = makeIpcMethod({
   }),
 });
 
-export const setServerExposureMode = makeIpcMethod({
+export const setServerExposureMode = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_SERVER_EXPOSURE_MODE_CHANNEL,
   payload: DesktopServerExposureModeSchema,
   result: DesktopServerExposureStateSchema,
@@ -41,7 +41,7 @@ export const setServerExposureMode = makeIpcMethod({
   }),
 });
 
-export const setTailscaleServeEnabled = makeIpcMethod({
+export const setTailscaleServeEnabled = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_TAILSCALE_SERVE_ENABLED_CHANNEL,
   payload: SetTailscaleServeEnabledInput,
   result: DesktopServerExposureStateSchema,
@@ -58,7 +58,7 @@ export const setTailscaleServeEnabled = makeIpcMethod({
   }),
 });
 
-export const getAdvertisedEndpoints = makeIpcMethod({
+export const getAdvertisedEndpoints = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.GET_ADVERTISED_ENDPOINTS_CHANNEL,
   payload: Schema.Void,
   result: Schema.Array(AdvertisedEndpoint),
