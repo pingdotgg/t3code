@@ -133,7 +133,7 @@ function makeDnsClient(
             operation: "update-record",
             hostname: request.name,
             dnsRecordId,
-            cause: `DNS record ${dnsRecordId} does not exist.`,
+            cause: { _tag: "NotFound", dnsRecordId },
           });
         }
       }),
@@ -531,6 +531,59 @@ describe("ManagedEndpointProvider", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("does not hide non-not-found checkpoint update failures", () => {
+    const dnsCalls: DnsCall[] = [];
+    const failure = new ManagedEndpointProvider.ManagedEndpointDnsClientError({
+      operation: "update-record",
+      dnsRecordId: "created-record-id",
+      cause: new Error("Cloudflare DNS unavailable"),
+    });
+    let records: ReadonlyArray<{ readonly id: string }> = [];
+    const dnsClient = ManagedEndpointProvider.ManagedEndpointDnsClient.of({
+      listRecords: (hostname) =>
+        Effect.sync(() => {
+          dnsCalls.push({ operation: "listRecords", input: hostname });
+          return records;
+        }),
+      createRecord: (request) =>
+        Effect.sync(() => {
+          dnsCalls.push({ operation: "createRecord", input: request });
+          const record = { id: "created-record-id" };
+          records = [record];
+          return record;
+        }),
+      updateRecord: (dnsRecordId, request) =>
+        Effect.sync(() => {
+          dnsCalls.push({ operation: "updateRecord", input: { dnsRecordId, request } });
+        }).pipe(Effect.andThen(Effect.fail(failure))),
+      deleteRecord: () => Effect.void,
+    });
+    const layer = providerLayer(makePersistentTunnelClient(), dnsClient, makeAllocations());
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const request = {
+        userId: "user_ABC",
+        environmentId: "env_ABC",
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      } as const;
+      yield* provider.provision(request);
+      const error = yield* Effect.flip(provider.provision(request));
+
+      expect(error).toMatchObject({
+        _tag: "ManagedEndpointProvisioningFailed",
+        stage: "ensure-dns-record",
+        userId: "user_ABC",
+        environmentId: "env_ABC",
+      });
+      expect(dnsCalls.map((call) => call.operation)).toEqual([
+        "listRecords",
+        "createRecord",
+        "updateRecord",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect(
     "deprovisions checkpointed DNS and tunnel resources before removing the allocation",
     () => {
@@ -765,11 +818,11 @@ describe("ManagedEndpointProvider", () => {
     }).pipe(Effect.provide(providerLayer(makeTunnelClient(), dnsClient)));
   });
 
-  it.effect("reports malformed tunnel responses without manufacturing a cause", () => {
+  it.effect("reports mismatched tunnel responses without manufacturing a cause", () => {
     const dnsCalls: DnsCall[] = [];
     const tunnelClient = ManagedEndpointProvider.ManagedEndpointTunnelClient.of({
       ...makeTunnelClient(),
-      create: () => Effect.succeed({ id: "returned-tunnel-id", name: null }),
+      create: () => Effect.succeed({ id: "returned-tunnel-id", name: "unexpected-tunnel" }),
     });
 
     return Effect.gen(function* () {
@@ -790,6 +843,7 @@ describe("ManagedEndpointProvider", () => {
         hostname: expectedManagedHostname("env_ABC"),
         tunnelName: expectedManagedTunnelName("env_ABC"),
         returnedTunnelId: "returned-tunnel-id",
+        returnedTunnelName: "unexpected-tunnel",
       });
       if (error._tag === "ManagedEndpointProvisioningFailed") {
         expect(error.cause).toBeUndefined();

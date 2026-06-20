@@ -120,7 +120,7 @@ const whereAllocation = (input: ManagedEndpointAllocationKey) =>
     eq(relayManagedEndpointAllocations.environmentId, input.environmentId),
   );
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
 
   return ManagedEndpointAllocations.of({
