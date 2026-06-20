@@ -71,7 +71,32 @@ describe("makeCatalogBackend", () => {
 
       expect(error).toBeInstanceOf(ConnectionTransientError);
       expect(error.message).toContain("Desktop secure storage is unavailable");
+      expect(error.cause).toMatchObject({ _tag: "DesktopSecureStorageUnavailableError" });
       expect(setConnectionCatalog).toHaveBeenCalledWith("{}");
+    }),
+  );
+
+  it.effect("preserves secure-storage write failures without exposing them in the message", () =>
+    Effect.gen(function* () {
+      const cause = new Error("credential vault path leaked");
+      vi.stubGlobal("window", {
+        desktopBridge: {
+          getConnectionCatalog: vi.fn().mockResolvedValue(null),
+          setConnectionCatalog: vi.fn().mockRejectedValue(cause),
+        },
+      });
+      const backend = makeCatalogBackend({} as IDBDatabase);
+
+      const error = yield* backend.write("{}").pipe(Effect.flip);
+
+      expect(error.cause).toMatchObject({
+        _tag: "ConnectionStorageOperationError",
+        operation: "save",
+        backend: "desktop-secure-storage",
+        cause,
+      });
+      expect(error.message).toBe("Could not save local connection data.");
+      expect(error.message).not.toContain(cause.message);
     }),
   );
 });

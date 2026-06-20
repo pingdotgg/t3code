@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { migrateLegacyConnectionCatalog } from "./migration";
+import { LegacyConnectionMigrationError, migrateLegacyConnectionCatalog } from "./migration";
 
 describe("migrateLegacyConnectionCatalog", () => {
   it.effect("migrates bearer and relay-managed connections into the new catalog", () =>
@@ -73,6 +73,30 @@ describe("migrateLegacyConnectionCatalog", () => {
       );
 
       expect(catalog.targets).toEqual([]);
+    }),
+  );
+
+  it.effect("preserves parse failures with a stable structural error", () =>
+    Effect.gen(function* () {
+      const error = yield* migrateLegacyConnectionCatalog("{not-json").pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(LegacyConnectionMigrationError);
+      expect(error.stage).toBe("parse");
+      expect(error.cause).toBeInstanceOf(SyntaxError);
+      expect(error.message).toBe("Could not parse the legacy mobile connection catalog.");
+    }),
+  );
+
+  it.effect("distinguishes catalog decoding failures", () =>
+    Effect.gen(function* () {
+      const error = yield* migrateLegacyConnectionCatalog('{"connections":"invalid"}').pipe(
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(LegacyConnectionMigrationError);
+      expect(error.stage).toBe("decode");
+      expect(error.cause).toBeDefined();
+      expect(error.message).toBe("Could not decode the legacy mobile connection catalog.");
     }),
   );
 });

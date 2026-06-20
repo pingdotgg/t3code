@@ -694,7 +694,10 @@ describe("EnvironmentRegistry", () => {
           Effect.fail(
             new Persistence.ConnectionPersistenceError({
               operation: "remove-connection",
-              message: "Storage is unavailable.",
+              stage: "write",
+              resource: "connection-catalog",
+              environmentId: RELAY_TARGET.environmentId,
+              cause: new Error("Storage is unavailable."),
             }),
           ),
       });

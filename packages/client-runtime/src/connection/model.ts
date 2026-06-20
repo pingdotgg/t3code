@@ -75,6 +75,69 @@ export const ConnectionBlockedReason = Schema.Literals([
 ]);
 export type ConnectionBlockedReason = typeof ConnectionBlockedReason.Type;
 
+export const ConnectionStorageOperation = Schema.Literals([
+  "open",
+  "read",
+  "write",
+  "remove",
+  "load",
+  "save",
+  "delete",
+  "decode",
+  "encode",
+  "migrate",
+]);
+export type ConnectionStorageOperation = typeof ConnectionStorageOperation.Type;
+
+export const ConnectionStorageBackend = Schema.Literals([
+  "indexed-db",
+  "desktop-secure-storage",
+  "mobile-secure-storage",
+  "legacy-migration",
+  "schema",
+]);
+export type ConnectionStorageBackend = typeof ConnectionStorageBackend.Type;
+
+export class ConnectionStorageOperationError extends Schema.TaggedErrorClass<ConnectionStorageOperationError>()(
+  "ConnectionStorageOperationError",
+  {
+    operation: ConnectionStorageOperation,
+    backend: ConnectionStorageBackend,
+    storeName: Schema.optionalKey(Schema.String),
+    key: Schema.optionalKey(Schema.Unknown),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not ${this.operation} local connection data.`;
+  }
+}
+
+export class IndexedDbUnavailableError extends Schema.TaggedErrorClass<IndexedDbUnavailableError>()(
+  "IndexedDbUnavailableError",
+  {},
+) {
+  override get message(): string {
+    return "IndexedDB is unavailable in this browser context.";
+  }
+}
+
+export class DesktopSecureStorageUnavailableError extends Schema.TaggedErrorClass<DesktopSecureStorageUnavailableError>()(
+  "DesktopSecureStorageUnavailableError",
+  {},
+) {
+  override get message(): string {
+    return "Desktop secure storage is unavailable in this system context.";
+  }
+}
+
+export const ConnectionStorageFailure = Schema.Union([
+  ConnectionStorageOperationError,
+  IndexedDbUnavailableError,
+  DesktopSecureStorageUnavailableError,
+]);
+export type ConnectionStorageFailure = typeof ConnectionStorageFailure.Type;
+
 export class ConnectionTransientError extends Schema.TaggedErrorClass<ConnectionTransientError>()(
   "ConnectionTransientError",
   {
@@ -84,6 +147,26 @@ export class ConnectionTransientError extends Schema.TaggedErrorClass<Connection
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
+  static fromStorageFailure(cause: ConnectionStorageFailure): ConnectionTransientError {
+    let detail: string;
+    switch (cause._tag) {
+      case "ConnectionStorageOperationError":
+        detail = `Could not ${cause.operation} local connection data.`;
+        break;
+      case "IndexedDbUnavailableError":
+        detail = "IndexedDB is unavailable in this browser context.";
+        break;
+      case "DesktopSecureStorageUnavailableError":
+        detail = "Desktop secure storage is unavailable in this system context.";
+        break;
+    }
+    return new ConnectionTransientError({
+      reason: "remote-unavailable",
+      detail,
+      cause,
+    });
+  }
+
   override get message(): string {
     return this.detail;
   }

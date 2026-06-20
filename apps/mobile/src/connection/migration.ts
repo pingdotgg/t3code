@@ -36,9 +36,14 @@ const decodeLegacyConnectionDocument = Schema.decodeUnknownEffect(LegacyConnecti
 export class LegacyConnectionMigrationError extends Schema.TaggedErrorClass<LegacyConnectionMigrationError>()(
   "LegacyConnectionMigrationError",
   {
-    message: Schema.String,
+    stage: Schema.Literals(["parse", "decode"]),
+    cause: Schema.Defect(),
   },
-) {}
+) {
+  override get message(): string {
+    return `Could not ${this.stage} the legacy mobile connection catalog.`;
+  }
+}
 
 function isRelayManaged(connection: typeof LegacySavedRemoteConnection.Type): boolean {
   return connection.relayManaged === true || connection.authenticationMethod === "dpop";
@@ -92,18 +97,10 @@ export const migrateLegacyConnectionCatalog = Effect.fn(
 )(function* (raw: string) {
   const parsed = yield* Effect.try({
     try: () => JSON.parse(raw) as unknown,
-    catch: (cause) =>
-      new LegacyConnectionMigrationError({
-        message: `Could not parse the legacy mobile connection catalog: ${String(cause)}`,
-      }),
+    catch: (cause) => new LegacyConnectionMigrationError({ stage: "parse", cause }),
   });
   const legacy = yield* decodeLegacyConnectionDocument(parsed).pipe(
-    Effect.mapError(
-      (cause) =>
-        new LegacyConnectionMigrationError({
-          message: `Could not decode the legacy mobile connection catalog: ${String(cause)}`,
-        }),
-    ),
+    Effect.mapError((cause) => new LegacyConnectionMigrationError({ stage: "decode", cause })),
   );
 
   return (legacy.connections ?? []).reduce(migrateConnection, EMPTY_CONNECTION_CATALOG_DOCUMENT);

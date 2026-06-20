@@ -1,8 +1,8 @@
 import {
-  type EnvironmentId,
+  EnvironmentId,
   type OrchestrationThread,
   type OrchestrationShellSnapshot,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -26,9 +26,27 @@ export class ConnectionPersistenceError extends Schema.TaggedErrorClass<Connecti
       "remove-thread",
       "clear-environment",
     ]),
-    message: Schema.String,
+    stage: Schema.Literals(["resolve", "read", "parse", "decode", "encode", "write", "remove"]),
+    resource: Schema.Literals([
+      "connection-catalog",
+      "shell-cache",
+      "legacy-shell-cache",
+      "thread-cache",
+    ]),
+    environmentId: Schema.optionalKey(EnvironmentId),
+    threadId: Schema.optionalKey(ThreadId),
+    path: Schema.optionalKey(Schema.String),
+    cause: Schema.Defect(),
   },
-) {}
+) {
+  override get message(): string {
+    const environment =
+      this.environmentId === undefined ? "" : ` for environment ${this.environmentId}`;
+    const thread = this.threadId === undefined ? "" : ` and thread ${this.threadId}`;
+    const path = this.path === undefined ? "" : ` at ${this.path}`;
+    return `Could not ${this.operation.replaceAll("-", " ")}: ${this.resource.replaceAll("-", " ")} ${this.stage} failed${environment}${thread}${path}.`;
+  }
+}
 
 export class ConnectionTargetStore extends Context.Service<
   ConnectionTargetStore,
