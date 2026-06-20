@@ -21,7 +21,11 @@ const makeServerConfigLayer = (overrides?: Partial<ServerConfig.ServerConfig["Se
         ...overrides,
       } satisfies ServerConfig.ServerConfig["Service"];
     }),
-  ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-server-test-" })));
+  ).pipe(
+    Layer.provide(
+      ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-server-test-" }),
+    ),
+  );
 
 const makeEnvironmentAuthLayer = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
   EnvironmentAuth.layer.pipe(
@@ -53,8 +57,8 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
   it.effect("classifies invalid bootstrap credential failures for the HTTP boundary", () =>
     Effect.sync(() => {
       const error = EnvironmentAuth.toBootstrapExchangeError(
-        new PairingGrantStore.BootstrapCredentialInvalidError({
-          message: "Unknown bootstrap credential.",
+        new PairingGrantStore.UnknownBootstrapCredentialError({
+          reason: "unknown",
         }),
       );
 
@@ -68,13 +72,13 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
   it.effect("maps unexpected bootstrap failures to 500", () =>
     Effect.sync(() => {
       const error = EnvironmentAuth.toBootstrapExchangeError(
-        new PairingGrantStore.BootstrapCredentialInternalError({
-          message: "Failed to consume bootstrap credential.",
+        new PairingGrantStore.BootstrapCredentialConsumeError({
+          operation: "consume",
           cause: new Error("sqlite is unavailable"),
         }),
       );
 
-      expect(error._tag).toBe("ServerAuthInternalError");
+      expect(error._tag).toBe("ServerAuthBootstrapCredentialValidationError");
       expect(error.message).toBe("Failed to validate bootstrap credential.");
     }),
   );
@@ -117,8 +121,8 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         )
         .pipe(Effect.flip);
 
-      expect(error._tag).toBe("ServerAuthInvalidRequestError");
-      if (error._tag === "ServerAuthInvalidRequestError") {
+      expect(error._tag).toBe("ServerAuthScopeNotGrantedError");
+      if (error._tag === "ServerAuthScopeNotGrantedError") {
         expect(error.reason).toBe("scope_not_granted");
       }
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),

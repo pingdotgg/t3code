@@ -5,8 +5,9 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import { mapDpopReplayStoreError } from "./dpop.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
-  new ServerSecretStore.SecretStoreError({
-    message: "Failed to persist DPoP proof.",
+  new ServerSecretStore.SecretStorePersistError({
+    operation: "persist",
+    resource: "DPoP proof",
     cause: PlatformError.systemError({
       _tag: tag,
       module: "FileSystem",
@@ -25,8 +26,8 @@ describe("mapDpopReplayStoreError", () => {
   it("reports replay-store availability failures as internal errors", () => {
     const error = mapDpopReplayStoreError(storeFailure("PermissionDenied"));
 
-    expect(error._tag).toBe("ServerAuthInternalError");
-    if (error._tag === "ServerAuthInternalError") {
+    expect(error._tag).toBe("ServerAuthDpopReplayStateRecordError");
+    if (error._tag === "ServerAuthDpopReplayStateRecordError") {
       expect(error.message).toBe("Failed to record DPoP proof replay state.");
     }
   });

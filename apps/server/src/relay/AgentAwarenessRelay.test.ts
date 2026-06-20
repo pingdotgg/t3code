@@ -67,15 +67,15 @@ function makeMemorySecretStore() {
       Effect.sync(() => {
         const value = values.get(name);
         return value === undefined ? Option.none() : Option.some(Uint8Array.from(value));
-      })) satisfies ServerSecretStore.ServerSecretStoreShape["get"],
+      })) satisfies ServerSecretStore.ServerSecretStore["Service"]["get"],
     set: ((name, value) =>
       Effect.sync(() => {
         values.set(name, Uint8Array.from(value));
-      })) satisfies ServerSecretStore.ServerSecretStoreShape["set"],
+      })) satisfies ServerSecretStore.ServerSecretStore["Service"]["set"],
     create: ((name, value) =>
       Effect.sync(() => {
         values.set(name, Uint8Array.from(value));
-      })) satisfies ServerSecretStore.ServerSecretStoreShape["create"],
+      })) satisfies ServerSecretStore.ServerSecretStore["Service"]["create"],
     getOrCreateRandom: ((name, bytes) =>
       Effect.sync(() => {
         const existing = values.get(name);
@@ -85,12 +85,12 @@ function makeMemorySecretStore() {
         const generated = new Uint8Array(bytes);
         values.set(name, generated);
         return generated;
-      })) satisfies ServerSecretStore.ServerSecretStoreShape["getOrCreateRandom"],
+      })) satisfies ServerSecretStore.ServerSecretStore["Service"]["getOrCreateRandom"],
     remove: ((name) =>
       Effect.sync(() => {
         values.delete(name);
-      })) satisfies ServerSecretStore.ServerSecretStoreShape["remove"],
-  } satisfies ServerSecretStore.ServerSecretStoreShape;
+      })) satisfies ServerSecretStore.ServerSecretStore["Service"]["remove"],
+  } satisfies ServerSecretStore.ServerSecretStore["Service"];
   return {
     store,
     setString: (name: string, value: string) => store.set(name, encodeSecret(value)),

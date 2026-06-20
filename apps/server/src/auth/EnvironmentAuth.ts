@@ -20,12 +20,12 @@ import {
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
@@ -67,123 +67,488 @@ export interface AuthenticatedSession {
   readonly expiresAt?: DateTime.DateTime;
 }
 
-export class ServerAuthInternalError extends Data.TaggedError("ServerAuthInternalError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+const ServerAuthInternalOperation = Schema.Literals([
+  "validate_bootstrap_credential",
+  "validate_session_credential",
+  "issue_authenticated_session",
+  "issue_authenticated_access_token",
+  "create_pairing_link",
+  "list_pairing_links",
+  "revoke_pairing_link",
+  "issue_session_token",
+  "list_sessions",
+  "revoke_session",
+  "revoke_other_sessions",
+  "issue_websocket_token",
+  "record_dpop_replay_state",
+  "calculate_dpop_replay_key",
+  "verify_linked_cloud_account",
+  "read_linked_cloud_account",
+  "missing_linked_cloud_account",
+  "sign_cloud_link_jwt",
+  "missing_cloud_mint_public_key",
+  "missing_cloud_relay_issuer",
+  "sign_cloud_health_jwt",
+  "sign_cloud_mint_jwt",
+]);
+type ServerAuthInternalOperation = typeof ServerAuthInternalOperation.Type;
 
-export class ServerAuthInvalidCredentialError extends Data.TaggedError(
-  "ServerAuthInvalidCredentialError",
-)<{
-  readonly reason: "missing_credential" | "invalid_credential";
-  readonly cause?: unknown;
-}> {}
+const serverAuthInternalErrorContext = {
+  cause: Schema.optional(Schema.Defect()),
+};
 
-export class ServerAuthInvalidRequestError extends Data.TaggedError(
-  "ServerAuthInvalidRequestError",
-)<{
-  readonly reason: "invalid_scope" | "scope_not_granted";
-}> {}
-
-export class ServerAuthForbiddenOperationError extends Data.TaggedError(
-  "ServerAuthForbiddenOperationError",
-)<{
-  readonly reason: "current_session_revoke_not_allowed";
-}> {}
-
-export interface EnvironmentAuthShape {
-  readonly getDescriptor: () => Effect.Effect<ServerAuthDescriptor>;
-  readonly getSessionState: (
-    request: HttpServerRequest.HttpServerRequest,
-  ) => Effect.Effect<AuthSessionState, ServerAuthInternalError>;
-  readonly createBrowserSession: (
-    credential: string,
-    requestMetadata: AuthClientMetadata,
-  ) => Effect.Effect<
-    {
-      readonly response: AuthBrowserSessionResult;
-      readonly sessionToken: string;
-    },
-    ServerAuthInvalidCredentialError | ServerAuthInternalError
-  >;
-  readonly exchangeBootstrapCredentialForAccessToken: (
-    credential: string,
-    requestedScopes: ReadonlyArray<AuthEnvironmentScope> | undefined,
-    requestMetadata: AuthClientMetadata,
-    input?: {
-      readonly proofKeyThumbprint?: string;
-    },
-  ) => Effect.Effect<
-    AuthAccessTokenResult,
-    ServerAuthInvalidCredentialError | ServerAuthInvalidRequestError | ServerAuthInternalError
-  >;
-  readonly createPairingLink: (input?: {
-    readonly ttl?: Duration.Duration;
-    readonly label?: string;
-    readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
-    readonly subject?: string;
-    readonly proofKeyThumbprint?: string;
-  }) => Effect.Effect<IssuedPairingLink, ServerAuthInternalError>;
-  readonly issuePairingCredential: (
-    input?: AuthCreatePairingCredentialInput,
-  ) => Effect.Effect<AuthPairingCredentialResult, ServerAuthInternalError>;
-  readonly issueStartupPairingCredential: () => Effect.Effect<
-    AuthPairingCredentialResult,
-    ServerAuthInternalError
-  >;
-  readonly listPairingLinks: (input?: {
-    readonly excludeSubjects?: ReadonlyArray<string>;
-  }) => Effect.Effect<ReadonlyArray<AuthPairingLink>, ServerAuthInternalError>;
-  readonly revokePairingLink: (id: string) => Effect.Effect<boolean, ServerAuthInternalError>;
-  readonly issueSession: (input?: {
-    readonly ttl?: Duration.Duration;
-    readonly subject?: string;
-    readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
-    readonly label?: string;
-  }) => Effect.Effect<IssuedBearerSession, ServerAuthInternalError>;
-  readonly listSessions: () => Effect.Effect<
-    ReadonlyArray<AuthClientSession>,
-    ServerAuthInternalError
-  >;
-  readonly revokeSession: (
-    sessionId: AuthSessionId,
-  ) => Effect.Effect<boolean, ServerAuthInternalError>;
-  readonly revokeOtherSessionsExcept: (
-    sessionId: AuthSessionId,
-  ) => Effect.Effect<number, ServerAuthInternalError>;
-  readonly listClientSessions: (
-    currentSessionId: AuthSessionId,
-  ) => Effect.Effect<ReadonlyArray<AuthClientSession>, ServerAuthInternalError>;
-  readonly revokeClientSession: (
-    currentSessionId: AuthSessionId,
-    targetSessionId: AuthSessionId,
-  ) => Effect.Effect<boolean, ServerAuthForbiddenOperationError | ServerAuthInternalError>;
-  readonly revokeOtherClientSessions: (
-    currentSessionId: AuthSessionId,
-  ) => Effect.Effect<number, ServerAuthInternalError>;
-  readonly authenticateHttpRequest: (
-    request: HttpServerRequest.HttpServerRequest,
-  ) => Effect.Effect<
-    AuthenticatedSession,
-    ServerAuthInvalidCredentialError | ServerAuthInternalError
-  >;
-  readonly authenticateWebSocketUpgrade: (
-    request: HttpServerRequest.HttpServerRequest,
-  ) => Effect.Effect<
-    AuthenticatedSession,
-    ServerAuthInvalidCredentialError | ServerAuthInternalError
-  >;
-  readonly issueWebSocketTicket: (
-    session: Pick<AuthenticatedSession, "sessionId">,
-  ) => Effect.Effect<AuthWebSocketTicketResult, ServerAuthInternalError>;
-  readonly issueStartupPairingUrl: (
-    baseUrl: string,
-  ) => Effect.Effect<string, ServerAuthInternalError>;
+export class ServerAuthBootstrapCredentialValidationError extends Schema.TaggedErrorClass<ServerAuthBootstrapCredentialValidationError>()(
+  "ServerAuthBootstrapCredentialValidationError",
+  {
+    operation: Schema.Literal("validate_bootstrap_credential"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to validate bootstrap credential.";
+  }
 }
 
-export class EnvironmentAuth extends Context.Service<EnvironmentAuth, EnvironmentAuthShape>()(
-  "t3/auth/EnvironmentAuth",
-) {}
+export class ServerAuthSessionCredentialValidationError extends Schema.TaggedErrorClass<ServerAuthSessionCredentialValidationError>()(
+  "ServerAuthSessionCredentialValidationError",
+  {
+    operation: Schema.Literal("validate_session_credential"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to validate session credential.";
+  }
+}
+
+export class ServerAuthAuthenticatedSessionIssueError extends Schema.TaggedErrorClass<ServerAuthAuthenticatedSessionIssueError>()(
+  "ServerAuthAuthenticatedSessionIssueError",
+  {
+    operation: Schema.Literal("issue_authenticated_session"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to issue authenticated session.";
+  }
+}
+
+export class ServerAuthAuthenticatedAccessTokenIssueError extends Schema.TaggedErrorClass<ServerAuthAuthenticatedAccessTokenIssueError>()(
+  "ServerAuthAuthenticatedAccessTokenIssueError",
+  {
+    operation: Schema.Literal("issue_authenticated_access_token"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to issue authenticated access token.";
+  }
+}
+
+export class ServerAuthPairingLinkCreationError extends Schema.TaggedErrorClass<ServerAuthPairingLinkCreationError>()(
+  "ServerAuthPairingLinkCreationError",
+  {
+    operation: Schema.Literal("create_pairing_link"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to create pairing link.";
+  }
+}
+
+export class ServerAuthPairingLinksListError extends Schema.TaggedErrorClass<ServerAuthPairingLinksListError>()(
+  "ServerAuthPairingLinksListError",
+  {
+    operation: Schema.Literal("list_pairing_links"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to list pairing links.";
+  }
+}
+
+export class ServerAuthPairingLinkRevocationError extends Schema.TaggedErrorClass<ServerAuthPairingLinkRevocationError>()(
+  "ServerAuthPairingLinkRevocationError",
+  {
+    operation: Schema.Literal("revoke_pairing_link"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke pairing link.";
+  }
+}
+
+export class ServerAuthSessionTokenIssueError extends Schema.TaggedErrorClass<ServerAuthSessionTokenIssueError>()(
+  "ServerAuthSessionTokenIssueError",
+  {
+    operation: Schema.Literal("issue_session_token"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to issue session token.";
+  }
+}
+
+export class ServerAuthSessionsListError extends Schema.TaggedErrorClass<ServerAuthSessionsListError>()(
+  "ServerAuthSessionsListError",
+  {
+    operation: Schema.Literal("list_sessions"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to list sessions.";
+  }
+}
+
+export class ServerAuthSessionRevocationError extends Schema.TaggedErrorClass<ServerAuthSessionRevocationError>()(
+  "ServerAuthSessionRevocationError",
+  {
+    operation: Schema.Literal("revoke_session"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke session.";
+  }
+}
+
+export class ServerAuthOtherSessionsRevocationError extends Schema.TaggedErrorClass<ServerAuthOtherSessionsRevocationError>()(
+  "ServerAuthOtherSessionsRevocationError",
+  {
+    operation: Schema.Literal("revoke_other_sessions"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke other sessions.";
+  }
+}
+
+export class ServerAuthWebSocketTokenIssueError extends Schema.TaggedErrorClass<ServerAuthWebSocketTokenIssueError>()(
+  "ServerAuthWebSocketTokenIssueError",
+  {
+    operation: Schema.Literal("issue_websocket_token"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to issue websocket token.";
+  }
+}
+
+export class ServerAuthDpopReplayStateRecordError extends Schema.TaggedErrorClass<ServerAuthDpopReplayStateRecordError>()(
+  "ServerAuthDpopReplayStateRecordError",
+  {
+    operation: Schema.Literal("record_dpop_replay_state"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to record DPoP proof replay state.";
+  }
+}
+
+export class ServerAuthDpopReplayKeyCalculationError extends Schema.TaggedErrorClass<ServerAuthDpopReplayKeyCalculationError>()(
+  "ServerAuthDpopReplayKeyCalculationError",
+  {
+    operation: Schema.Literal("calculate_dpop_replay_key"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to calculate DPoP replay key.";
+  }
+}
+
+export class ServerAuthLinkedCloudAccountVerificationError extends Schema.TaggedErrorClass<ServerAuthLinkedCloudAccountVerificationError>()(
+  "ServerAuthLinkedCloudAccountVerificationError",
+  {
+    operation: Schema.Literal("verify_linked_cloud_account"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Could not verify the linked cloud account.";
+  }
+}
+
+export class ServerAuthLinkedCloudAccountReadError extends Schema.TaggedErrorClass<ServerAuthLinkedCloudAccountReadError>()(
+  "ServerAuthLinkedCloudAccountReadError",
+  {
+    operation: Schema.Literal("read_linked_cloud_account"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Could not read the linked cloud account.";
+  }
+}
+
+export class ServerAuthLinkedCloudAccountMissingError extends Schema.TaggedErrorClass<ServerAuthLinkedCloudAccountMissingError>()(
+  "ServerAuthLinkedCloudAccountMissingError",
+  {
+    operation: Schema.Literal("missing_linked_cloud_account"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Cloud linked user is not installed for this environment.";
+  }
+}
+
+export class ServerAuthCloudLinkJwtSigningError extends Schema.TaggedErrorClass<ServerAuthCloudLinkJwtSigningError>()(
+  "ServerAuthCloudLinkJwtSigningError",
+  {
+    operation: Schema.Literal("sign_cloud_link_jwt"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to sign cloud link JWT.";
+  }
+}
+
+export class ServerAuthCloudMintPublicKeyMissingError extends Schema.TaggedErrorClass<ServerAuthCloudMintPublicKeyMissingError>()(
+  "ServerAuthCloudMintPublicKeyMissingError",
+  {
+    operation: Schema.Literal("missing_cloud_mint_public_key"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Cloud mint public key is not installed for this environment.";
+  }
+}
+
+export class ServerAuthCloudRelayIssuerMissingError extends Schema.TaggedErrorClass<ServerAuthCloudRelayIssuerMissingError>()(
+  "ServerAuthCloudRelayIssuerMissingError",
+  {
+    operation: Schema.Literal("missing_cloud_relay_issuer"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Cloud relay issuer is not installed for this environment.";
+  }
+}
+
+export class ServerAuthCloudHealthJwtSigningError extends Schema.TaggedErrorClass<ServerAuthCloudHealthJwtSigningError>()(
+  "ServerAuthCloudHealthJwtSigningError",
+  {
+    operation: Schema.Literal("sign_cloud_health_jwt"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to sign cloud health JWT.";
+  }
+}
+
+export class ServerAuthCloudMintJwtSigningError extends Schema.TaggedErrorClass<ServerAuthCloudMintJwtSigningError>()(
+  "ServerAuthCloudMintJwtSigningError",
+  {
+    operation: Schema.Literal("sign_cloud_mint_jwt"),
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to sign cloud mint JWT.";
+  }
+}
+
+export const ServerAuthInternalError = Schema.Union([
+  ServerAuthBootstrapCredentialValidationError,
+  ServerAuthSessionCredentialValidationError,
+  ServerAuthAuthenticatedSessionIssueError,
+  ServerAuthAuthenticatedAccessTokenIssueError,
+  ServerAuthPairingLinkCreationError,
+  ServerAuthPairingLinksListError,
+  ServerAuthPairingLinkRevocationError,
+  ServerAuthSessionTokenIssueError,
+  ServerAuthSessionsListError,
+  ServerAuthSessionRevocationError,
+  ServerAuthOtherSessionsRevocationError,
+  ServerAuthWebSocketTokenIssueError,
+  ServerAuthDpopReplayStateRecordError,
+  ServerAuthDpopReplayKeyCalculationError,
+  ServerAuthLinkedCloudAccountVerificationError,
+  ServerAuthLinkedCloudAccountReadError,
+  ServerAuthLinkedCloudAccountMissingError,
+  ServerAuthCloudLinkJwtSigningError,
+  ServerAuthCloudMintPublicKeyMissingError,
+  ServerAuthCloudRelayIssuerMissingError,
+  ServerAuthCloudHealthJwtSigningError,
+  ServerAuthCloudMintJwtSigningError,
+]);
+export type ServerAuthInternalError = typeof ServerAuthInternalError.Type;
+export const isServerAuthInternalError = Schema.is(ServerAuthInternalError);
+
+const serverAuthCredentialErrorContext = {
+  cause: Schema.optional(Schema.Defect()),
+};
+
+export class ServerAuthMissingCredentialError extends Schema.TaggedErrorClass<ServerAuthMissingCredentialError>()(
+  "ServerAuthMissingCredentialError",
+  {
+    reason: Schema.Literal("missing_credential"),
+    ...serverAuthCredentialErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Server authentication credential is missing.";
+  }
+}
+
+export class ServerAuthInvalidCredentialError extends Schema.TaggedErrorClass<ServerAuthInvalidCredentialError>()(
+  "ServerAuthInvalidCredentialError",
+  {
+    reason: Schema.Literal("invalid_credential"),
+    ...serverAuthCredentialErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Server authentication credential is invalid.";
+  }
+}
+
+export const ServerAuthCredentialError = Schema.Union([
+  ServerAuthMissingCredentialError,
+  ServerAuthInvalidCredentialError,
+]);
+export type ServerAuthCredentialError = typeof ServerAuthCredentialError.Type;
+export const isServerAuthCredentialError = Schema.is(ServerAuthCredentialError);
+
+export class ServerAuthInvalidScopeError extends Schema.TaggedErrorClass<ServerAuthInvalidScopeError>()(
+  "ServerAuthInvalidScopeError",
+  {
+    reason: Schema.Literal("invalid_scope"),
+  },
+) {
+  override get message(): string {
+    return "The requested authentication scope is invalid.";
+  }
+}
+
+export class ServerAuthScopeNotGrantedError extends Schema.TaggedErrorClass<ServerAuthScopeNotGrantedError>()(
+  "ServerAuthScopeNotGrantedError",
+  {
+    reason: Schema.Literal("scope_not_granted"),
+  },
+) {
+  override get message(): string {
+    return "The requested authentication scope was not granted.";
+  }
+}
+
+export const ServerAuthInvalidRequestError = Schema.Union([
+  ServerAuthInvalidScopeError,
+  ServerAuthScopeNotGrantedError,
+]);
+export type ServerAuthInvalidRequestError = typeof ServerAuthInvalidRequestError.Type;
+export const isServerAuthInvalidRequestError = Schema.is(ServerAuthInvalidRequestError);
+
+export class ServerAuthForbiddenOperationError extends Schema.TaggedErrorClass<ServerAuthForbiddenOperationError>()(
+  "ServerAuthForbiddenOperationError",
+  {
+    reason: Schema.Literal("current_session_revoke_not_allowed"),
+  },
+) {
+  override get message(): string {
+    return "The current authentication session cannot revoke itself.";
+  }
+}
+
+export class EnvironmentAuth extends Context.Service<
+  EnvironmentAuth,
+  {
+    readonly getDescriptor: () => Effect.Effect<ServerAuthDescriptor>;
+    readonly getSessionState: (
+      request: HttpServerRequest.HttpServerRequest,
+    ) => Effect.Effect<AuthSessionState, ServerAuthInternalError>;
+    readonly createBrowserSession: (
+      credential: string,
+      requestMetadata: AuthClientMetadata,
+    ) => Effect.Effect<
+      {
+        readonly response: AuthBrowserSessionResult;
+        readonly sessionToken: string;
+      },
+      ServerAuthInvalidCredentialError | ServerAuthInternalError
+    >;
+    readonly exchangeBootstrapCredentialForAccessToken: (
+      credential: string,
+      requestedScopes: ReadonlyArray<AuthEnvironmentScope> | undefined,
+      requestMetadata: AuthClientMetadata,
+      input?: {
+        readonly proofKeyThumbprint?: string;
+      },
+    ) => Effect.Effect<
+      AuthAccessTokenResult,
+      ServerAuthInvalidCredentialError | ServerAuthInvalidRequestError | ServerAuthInternalError
+    >;
+    readonly createPairingLink: (input?: {
+      readonly ttl?: Duration.Duration;
+      readonly label?: string;
+      readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+      readonly subject?: string;
+      readonly proofKeyThumbprint?: string;
+    }) => Effect.Effect<IssuedPairingLink, ServerAuthInternalError>;
+    readonly issuePairingCredential: (
+      input?: AuthCreatePairingCredentialInput,
+    ) => Effect.Effect<AuthPairingCredentialResult, ServerAuthInternalError>;
+    readonly issueStartupPairingCredential: () => Effect.Effect<
+      AuthPairingCredentialResult,
+      ServerAuthInternalError
+    >;
+    readonly listPairingLinks: (input?: {
+      readonly excludeSubjects?: ReadonlyArray<string>;
+    }) => Effect.Effect<ReadonlyArray<AuthPairingLink>, ServerAuthInternalError>;
+    readonly revokePairingLink: (id: string) => Effect.Effect<boolean, ServerAuthInternalError>;
+    readonly issueSession: (input?: {
+      readonly ttl?: Duration.Duration;
+      readonly subject?: string;
+      readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+      readonly label?: string;
+    }) => Effect.Effect<IssuedBearerSession, ServerAuthInternalError>;
+    readonly listSessions: () => Effect.Effect<
+      ReadonlyArray<AuthClientSession>,
+      ServerAuthInternalError
+    >;
+    readonly revokeSession: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<boolean, ServerAuthInternalError>;
+    readonly revokeOtherSessionsExcept: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<number, ServerAuthInternalError>;
+    readonly listClientSessions: (
+      currentSessionId: AuthSessionId,
+    ) => Effect.Effect<ReadonlyArray<AuthClientSession>, ServerAuthInternalError>;
+    readonly revokeClientSession: (
+      currentSessionId: AuthSessionId,
+      targetSessionId: AuthSessionId,
+    ) => Effect.Effect<boolean, ServerAuthForbiddenOperationError | ServerAuthInternalError>;
+    readonly revokeOtherClientSessions: (
+      currentSessionId: AuthSessionId,
+    ) => Effect.Effect<number, ServerAuthInternalError>;
+    readonly authenticateHttpRequest: (
+      request: HttpServerRequest.HttpServerRequest,
+    ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
+    readonly authenticateWebSocketUpgrade: (
+      request: HttpServerRequest.HttpServerRequest,
+    ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
+    readonly issueWebSocketTicket: (
+      session: Pick<AuthenticatedSession, "sessionId">,
+    ) => Effect.Effect<AuthWebSocketTicketResult, ServerAuthInternalError>;
+    readonly issueStartupPairingUrl: (
+      baseUrl: string,
+    ) => Effect.Effect<string, ServerAuthInternalError>;
+  }
+>()("t3/auth/EnvironmentAuth") {}
 
 type BootstrapExchangeResult = {
   readonly response: AuthBrowserSessionResult;
@@ -206,19 +571,68 @@ const bySessionPriority = (left: AuthClientSession, right: AuthClientSession) =>
   return right.issuedAt.epochMilliseconds - left.issuedAt.epochMilliseconds;
 };
 
+const serverAuthInternalError = (
+  operation: ServerAuthInternalOperation,
+  cause?: unknown,
+): ServerAuthInternalError => {
+  switch (operation) {
+    case "validate_bootstrap_credential":
+      return new ServerAuthBootstrapCredentialValidationError({ operation, cause });
+    case "validate_session_credential":
+      return new ServerAuthSessionCredentialValidationError({ operation, cause });
+    case "issue_authenticated_session":
+      return new ServerAuthAuthenticatedSessionIssueError({ operation, cause });
+    case "issue_authenticated_access_token":
+      return new ServerAuthAuthenticatedAccessTokenIssueError({ operation, cause });
+    case "create_pairing_link":
+      return new ServerAuthPairingLinkCreationError({ operation, cause });
+    case "list_pairing_links":
+      return new ServerAuthPairingLinksListError({ operation, cause });
+    case "revoke_pairing_link":
+      return new ServerAuthPairingLinkRevocationError({ operation, cause });
+    case "issue_session_token":
+      return new ServerAuthSessionTokenIssueError({ operation, cause });
+    case "list_sessions":
+      return new ServerAuthSessionsListError({ operation, cause });
+    case "revoke_session":
+      return new ServerAuthSessionRevocationError({ operation, cause });
+    case "revoke_other_sessions":
+      return new ServerAuthOtherSessionsRevocationError({ operation, cause });
+    case "issue_websocket_token":
+      return new ServerAuthWebSocketTokenIssueError({ operation, cause });
+    case "record_dpop_replay_state":
+      return new ServerAuthDpopReplayStateRecordError({ operation, cause });
+    case "calculate_dpop_replay_key":
+      return new ServerAuthDpopReplayKeyCalculationError({ operation, cause });
+    case "verify_linked_cloud_account":
+      return new ServerAuthLinkedCloudAccountVerificationError({ operation, cause });
+    case "read_linked_cloud_account":
+      return new ServerAuthLinkedCloudAccountReadError({ operation, cause });
+    case "missing_linked_cloud_account":
+      return new ServerAuthLinkedCloudAccountMissingError({ operation, cause });
+    case "sign_cloud_link_jwt":
+      return new ServerAuthCloudLinkJwtSigningError({ operation, cause });
+    case "missing_cloud_mint_public_key":
+      return new ServerAuthCloudMintPublicKeyMissingError({ operation, cause });
+    case "missing_cloud_relay_issuer":
+      return new ServerAuthCloudRelayIssuerMissingError({ operation, cause });
+    case "sign_cloud_health_jwt":
+      return new ServerAuthCloudHealthJwtSigningError({ operation, cause });
+    case "sign_cloud_mint_jwt":
+      return new ServerAuthCloudMintJwtSigningError({ operation, cause });
+  }
+};
+
 const toInternalError =
-  (message: string) =>
+  (operation: ServerAuthInternalOperation) =>
   (cause: unknown): ServerAuthInternalError =>
-    new ServerAuthInternalError({ message, cause });
+    serverAuthInternalError(operation, cause);
 
 export function toBootstrapExchangeError(
   cause: PairingGrantStore.BootstrapCredentialError,
 ): ServerAuthInvalidCredentialError | ServerAuthInternalError {
-  if (cause._tag === "BootstrapCredentialInternalError") {
-    return new ServerAuthInternalError({
-      message: "Failed to validate bootstrap credential.",
-      cause,
-    });
+  if (PairingGrantStore.isBootstrapCredentialInternalError(cause)) {
+    return serverAuthInternalError("validate_bootstrap_credential", cause);
   }
 
   return new ServerAuthInvalidCredentialError({
@@ -231,17 +645,11 @@ const mapSessionVerificationErrors = <A, R>(
   effect: Effect.Effect<A, SessionStore.SessionCredentialError, R>,
 ): Effect.Effect<A, ServerAuthInvalidCredentialError | ServerAuthInternalError, R> =>
   effect.pipe(
-    Effect.catchTags({
-      SessionCredentialInvalidError: (cause) =>
-        Effect.fail(new ServerAuthInvalidCredentialError({ reason: "invalid_credential", cause })),
-      SessionCredentialInternalError: (cause) =>
-        Effect.fail(
-          new ServerAuthInternalError({
-            message: "Failed to validate session credential.",
-            cause,
-          }),
-        ),
-    }),
+    Effect.mapError((cause) =>
+      SessionStore.isSessionCredentialInvalidError(cause)
+        ? new ServerAuthInvalidCredentialError({ reason: "invalid_credential", cause })
+        : serverAuthInternalError("validate_session_credential", cause),
+    ),
   );
 
 function parseBearerToken(request: HttpServerRequest.HttpServerRequest): string | null {
@@ -262,7 +670,7 @@ function parseDpopToken(request: HttpServerRequest.HttpServerRequest): string | 
   return token.length > 0 ? token : null;
 }
 
-export const make = Effect.fn("makeEnvironmentAuth")(function* () {
+export const make = Effect.gen(function* () {
   const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
   const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
   const sessions = yield* SessionStore.SessionStore;
@@ -277,12 +685,14 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
     ServerAuthInvalidCredentialError | ServerAuthInternalError
   > =>
     sessions.verify(token).pipe(
-      Effect.tapErrorTag("SessionCredentialInvalidError", (cause) =>
-        Effect.logWarning("Rejected authenticated session credential.").pipe(
-          Effect.annotateLogs({
-            reason: cause.message,
-          }),
-        ),
+      Effect.tapError((cause) =>
+        SessionStore.isSessionCredentialInvalidError(cause)
+          ? Effect.logWarning("Rejected authenticated session credential.").pipe(
+              Effect.annotateLogs({
+                reason: cause.message,
+              }),
+            )
+          : Effect.void,
       ),
       Effect.map((session) => ({
         sessionId: session.sessionId,
@@ -295,13 +705,15 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
       mapSessionVerificationErrors,
     );
 
-  const authenticateRequest = (request: HttpServerRequest.HttpServerRequest) => {
+  const authenticateRequest = (
+    request: HttpServerRequest.HttpServerRequest,
+  ): Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError> => {
     const cookieToken = request.cookies[sessions.cookieName];
     const bearerToken = parseBearerToken(request);
     const dpopToken = parseDpopToken(request);
     const credential = cookieToken ?? bearerToken ?? dpopToken;
     if (!credential) {
-      return Effect.fail(new ServerAuthInvalidCredentialError({ reason: "missing_credential" }));
+      return Effect.fail(new ServerAuthMissingCredentialError({ reason: "missing_credential" }));
     }
     return authenticateToken(credential).pipe(
       Effect.flatMap((session) => {
@@ -337,7 +749,7 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
     );
   };
 
-  const getSessionState: EnvironmentAuthShape["getSessionState"] = (request) =>
+  const getSessionState: EnvironmentAuth["Service"]["getSessionState"] = (request) =>
     authenticateRequest(request).pipe(
       Effect.map(
         (session) =>
@@ -349,7 +761,7 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
           }) satisfies AuthSessionState,
       ),
-      Effect.catchTag("ServerAuthInvalidCredentialError", () =>
+      Effect.catchIf(isServerAuthCredentialError, () =>
         Effect.succeed({
           authenticated: false,
           auth: descriptor,
@@ -358,7 +770,7 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
       Effect.withSpan("EnvironmentAuth.getSessionState"),
     );
 
-  const createBrowserSession: EnvironmentAuthShape["createBrowserSession"] = (
+  const createBrowserSession: EnvironmentAuth["Service"]["createBrowserSession"] = (
     credential,
     requestMetadata,
   ) =>
@@ -376,12 +788,8 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
             },
           })
           .pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServerAuthInternalError({
-                  message: "Failed to issue authenticated session.",
-                  cause,
-                }),
+            Effect.mapError((cause) =>
+              serverAuthInternalError("issue_authenticated_session", cause),
             ),
           ),
       ),
@@ -400,7 +808,7 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
       Effect.withSpan("EnvironmentAuth.createBrowserSession"),
     );
 
-  const exchangeBootstrapCredentialForAccessToken: EnvironmentAuthShape["exchangeBootstrapCredentialForAccessToken"] =
+  const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) =>
       bootstrapCredentials.consume(credential, input).pipe(
         Effect.mapError(toBootstrapExchangeError),
@@ -408,7 +816,7 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
           Effect.gen(function* () {
             const grantedScopes = requestedScopes ?? grant.scopes;
             if (!grantedScopes.every((scope) => grant.scopes.includes(scope))) {
-              return yield* new ServerAuthInvalidRequestError({
+              return yield* new ServerAuthScopeNotGrantedError({
                 reason: "scope_not_granted",
               });
             }
@@ -429,12 +837,8 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
                 },
               })
               .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ServerAuthInternalError({
-                      message: "Failed to issue authenticated access token.",
-                      cause,
-                    }),
+                Effect.mapError((cause) =>
+                  serverAuthInternalError("issue_authenticated_access_token", cause),
                 ),
               );
           }),
@@ -482,7 +886,7 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
       ),
     );
 
-  const createPairingLink: EnvironmentAuthShape["createPairingLink"] = Effect.fn(
+  const createPairingLink: EnvironmentAuth["Service"]["createPairingLink"] = Effect.fn(
     "EnvironmentAuth.createPairingLink",
   )(
     function* (input) {
@@ -504,10 +908,10 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
         expiresAt: DateTime.toUtc(issued.expiresAt),
       } satisfies IssuedPairingLink;
     },
-    Effect.mapError(toInternalError("Failed to create pairing link.")),
+    Effect.mapError(toInternalError("create_pairing_link")),
   );
 
-  const listPairingLinks: EnvironmentAuthShape["listPairingLinks"] = (input) =>
+  const listPairingLinks: EnvironmentAuth["Service"]["listPairingLinks"] = (input) =>
     bootstrapCredentials.listActive().pipe(
       Effect.map((pairingLinks) => {
         const excludedSubjects = input?.excludeSubjects ?? [
@@ -519,19 +923,19 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
             (left, right) => right.createdAt.epochMilliseconds - left.createdAt.epochMilliseconds,
           );
       }),
-      Effect.mapError(toInternalError("Failed to list pairing links.")),
+      Effect.mapError(toInternalError("list_pairing_links")),
       Effect.withSpan("EnvironmentAuth.listPairingLinks"),
     );
 
-  const revokePairingLink: EnvironmentAuthShape["revokePairingLink"] = (id) =>
+  const revokePairingLink: EnvironmentAuth["Service"]["revokePairingLink"] = (id) =>
     bootstrapCredentials
       .revoke(id)
       .pipe(
-        Effect.mapError(toInternalError("Failed to revoke pairing link.")),
+        Effect.mapError(toInternalError("revoke_pairing_link")),
         Effect.withSpan("EnvironmentAuth.revokePairingLink"),
       );
 
-  const issueSession: EnvironmentAuthShape["issueSession"] = (input) =>
+  const issueSession: EnvironmentAuth["Service"]["issueSession"] = (input) =>
     sessions
       .issue({
         subject: input?.subject ?? DEFAULT_SESSION_SUBJECT,
@@ -556,49 +960,50 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
               expiresAt: DateTime.toUtc(issued.expiresAt),
             }) satisfies IssuedBearerSession,
         ),
-        Effect.mapError(toInternalError("Failed to issue session token.")),
+        Effect.mapError(toInternalError("issue_session_token")),
         Effect.withSpan("EnvironmentAuth.issueSession"),
       );
 
-  const listSessions: EnvironmentAuthShape["listSessions"] = () =>
+  const listSessions: EnvironmentAuth["Service"]["listSessions"] = () =>
     sessions.listActive().pipe(
       Effect.map((activeSessions) => activeSessions.toSorted(bySessionPriority)),
-      Effect.mapError(toInternalError("Failed to list sessions.")),
+      Effect.mapError(toInternalError("list_sessions")),
       Effect.withSpan("EnvironmentAuth.listSessions"),
     );
 
-  const revokeSession: EnvironmentAuthShape["revokeSession"] = (sessionId) =>
+  const revokeSession: EnvironmentAuth["Service"]["revokeSession"] = (sessionId) =>
     sessions
       .revoke(sessionId)
       .pipe(
-        Effect.mapError(toInternalError("Failed to revoke session.")),
+        Effect.mapError(toInternalError("revoke_session")),
         Effect.withSpan("EnvironmentAuth.revokeSession"),
       );
 
-  const revokeOtherSessionsExcept: EnvironmentAuthShape["revokeOtherSessionsExcept"] = (
+  const revokeOtherSessionsExcept: EnvironmentAuth["Service"]["revokeOtherSessionsExcept"] = (
     sessionId,
   ) =>
     sessions
       .revokeAllExcept(sessionId)
       .pipe(
-        Effect.mapError(toInternalError("Failed to revoke other sessions.")),
+        Effect.mapError(toInternalError("revoke_other_sessions")),
         Effect.withSpan("EnvironmentAuth.revokeOtherSessionsExcept"),
       );
 
-  const issuePairingCredential: EnvironmentAuthShape["issuePairingCredential"] = (input) =>
+  const issuePairingCredential: EnvironmentAuth["Service"]["issuePairingCredential"] = (input) =>
     issuePairingCredentialForSubject({
       scopes: input?.scopes ?? AuthStandardClientScopes,
       subject: "one-time-token",
       ...(input?.label ? { label: input.label } : {}),
     }).pipe(Effect.withSpan("EnvironmentAuth.issuePairingCredential"));
 
-  const issueStartupPairingCredential: EnvironmentAuthShape["issueStartupPairingCredential"] = () =>
-    issuePairingCredentialForSubject({
-      scopes: AuthAdministrativeScopes,
-      subject: INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT,
-    }).pipe(Effect.withSpan("EnvironmentAuth.issueStartupPairingCredential"));
+  const issueStartupPairingCredential: EnvironmentAuth["Service"]["issueStartupPairingCredential"] =
+    () =>
+      issuePairingCredentialForSubject({
+        scopes: AuthAdministrativeScopes,
+        subject: INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT,
+      }).pipe(Effect.withSpan("EnvironmentAuth.issueStartupPairingCredential"));
 
-  const listClientSessions: EnvironmentAuthShape["listClientSessions"] = (currentSessionId) =>
+  const listClientSessions: EnvironmentAuth["Service"]["listClientSessions"] = (currentSessionId) =>
     listSessions().pipe(
       Effect.map((clientSessions) =>
         clientSessions.map(
@@ -611,7 +1016,7 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
       Effect.withSpan("EnvironmentAuth.listClientSessions"),
     );
 
-  const revokeClientSession: EnvironmentAuthShape["revokeClientSession"] = Effect.fn(
+  const revokeClientSession: EnvironmentAuth["Service"]["revokeClientSession"] = Effect.fn(
     "EnvironmentAuth.revokeClientSession",
   )(function* (currentSessionId, targetSessionId) {
     if (currentSessionId === targetSessionId) {
@@ -622,14 +1027,14 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
     return yield* revokeSession(targetSessionId);
   });
 
-  const revokeOtherClientSessions: EnvironmentAuthShape["revokeOtherClientSessions"] = (
+  const revokeOtherClientSessions: EnvironmentAuth["Service"]["revokeOtherClientSessions"] = (
     currentSessionId,
   ) =>
     revokeOtherSessionsExcept(currentSessionId).pipe(
       Effect.withSpan("EnvironmentAuth.revokeOtherClientSessions"),
     );
 
-  const issueStartupPairingUrl: EnvironmentAuthShape["issueStartupPairingUrl"] = (baseUrl) =>
+  const issueStartupPairingUrl: EnvironmentAuth["Service"]["issueStartupPairingUrl"] = (baseUrl) =>
     issueStartupPairingCredential().pipe(
       Effect.map((issued) => {
         const url = new URL(baseUrl);
@@ -641,15 +1046,9 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
       Effect.withSpan("EnvironmentAuth.issueStartupPairingUrl"),
     );
 
-  const issueWebSocketTicket: EnvironmentAuthShape["issueWebSocketTicket"] = (session) =>
+  const issueWebSocketTicket: EnvironmentAuth["Service"]["issueWebSocketTicket"] = (session) =>
     sessions.issueWebSocketToken(session.sessionId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ServerAuthInternalError({
-            message: "Failed to issue websocket token.",
-            cause,
-          }),
-      ),
+      Effect.mapError((cause) => serverAuthInternalError("issue_websocket_token", cause)),
       Effect.map(
         (issued) =>
           ({
@@ -660,10 +1059,12 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
       Effect.withSpan("EnvironmentAuth.issueWebSocketTicket"),
     );
 
-  const authenticateHttpRequest: EnvironmentAuthShape["authenticateHttpRequest"] = (request) =>
+  const authenticateHttpRequest: EnvironmentAuth["Service"]["authenticateHttpRequest"] = (
+    request,
+  ) =>
     authenticateRequest(request).pipe(Effect.withSpan("EnvironmentAuth.authenticateHttpRequest"));
 
-  const authenticateWebSocketUpgrade: EnvironmentAuthShape["authenticateWebSocketUpgrade"] =
+  const authenticateWebSocketUpgrade: EnvironmentAuth["Service"]["authenticateWebSocketUpgrade"] =
     Effect.fn("EnvironmentAuth.authenticateWebSocketUpgrade")(function* (request) {
       const requestUrl = HttpServerRequest.toURL(request);
       if (Option.isSome(requestUrl)) {
@@ -685,7 +1086,7 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
       return yield* authenticateRequest(request);
     });
 
-  return {
+  return EnvironmentAuth.of({
     getDescriptor: () =>
       Effect.succeed(descriptor).pipe(Effect.withSpan("EnvironmentAuth.getDescriptor")),
     getSessionState,
@@ -707,10 +1108,10 @@ export const make = Effect.fn("makeEnvironmentAuth")(function* () {
     authenticateWebSocketUpgrade,
     issueWebSocketTicket,
     issueStartupPairingUrl,
-  } satisfies EnvironmentAuthShape;
+  });
 });
 
-export const layer = Layer.effect(EnvironmentAuth, make()).pipe(
+export const layer = Layer.effect(EnvironmentAuth, make).pipe(
   Layer.provideMerge(PairingGrantStore.layer),
   Layer.provideMerge(SessionStore.layer),
   Layer.provideMerge(EnvironmentAuthPolicy.layer),

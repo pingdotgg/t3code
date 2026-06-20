@@ -19,7 +19,7 @@ import {
   signPayload,
   timingSafeEqualBase64Url,
 } from "../auth/utils.ts";
-import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { resolveAttachmentPathById } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
@@ -225,7 +225,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     }
   }
 
-  const secretStore = yield* ServerSecretStore;
+  const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const signingSecret = yield* secretStore
     .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
     .pipe(Effect.mapError((cause) => failAccess(cause.message, cause)));
@@ -244,7 +244,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   const [encodedPayload, signature] = token.split(".");
   if (!encodedPayload || !signature) return null;
 
-  const secretStore = yield* ServerSecretStore;
+  const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const signingSecret = yield* secretStore
     .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
     .pipe(Effect.orElseSucceed(() => null));

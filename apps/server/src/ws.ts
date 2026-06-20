@@ -1726,10 +1726,12 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
         const sessions = yield* SessionStore.SessionStore;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
-          Effect.catchTags({
-            ServerAuthInvalidCredentialError: (error) => failEnvironmentAuthInvalid(error.reason),
-            ServerAuthInternalError: (error) => failEnvironmentInternal("internal_error", error),
-          }),
+          Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+            failEnvironmentAuthInvalid(error.reason),
+          ),
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("internal_error", error),
+          ),
         );
         const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
           disableTracing: true,

@@ -9,11 +9,11 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as PlatformError from "effect/PlatformError";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 
 const makeServerConfigLayer = () =>
-  ServerConfig.layerTest(process.cwd(), { prefix: "t3-secret-store-test-" });
+  ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-secret-store-test-" });
 
 const makeServerSecretStoreLayer = () =>
   Layer.provide(ServerSecretStore.layer, makeServerConfigLayer());
@@ -231,7 +231,7 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
 
       const error = yield* Effect.flip(secretStore.getOrCreateRandom("session-signing-key", 32));
 
-      assert.instanceOf(error, ServerSecretStore.SecretStoreError);
+      assert.instanceOf(error, ServerSecretStore.SecretStoreReadError);
       assert.include(error.message, "Failed to read secret session-signing-key.");
       assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
@@ -246,7 +246,7 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
         secretStore.set("session-signing-key", Uint8Array.from([1, 2, 3])),
       );
 
-      assert.instanceOf(error, ServerSecretStore.SecretStoreError);
+      assert.instanceOf(error, ServerSecretStore.SecretStorePersistError);
       assert.include(error.message, "Failed to persist secret session-signing-key.");
       assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
@@ -259,7 +259,7 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
 
       const error = yield* Effect.flip(secretStore.remove("session-signing-key"));
 
-      assert.instanceOf(error, ServerSecretStore.SecretStoreError);
+      assert.instanceOf(error, ServerSecretStore.SecretStoreRemoveError);
       assert.include(error.message, "Failed to remove secret session-signing-key.");
       assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");

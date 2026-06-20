@@ -1,7 +1,7 @@
 import type { AuthClientMetadata, AuthClientSession, AuthPairingLink } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import type { IssuedBearerSession, IssuedPairingLink } from "./auth/EnvironmentAuth.ts";
+import type * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 
 const newline = "\n";
 
@@ -25,7 +25,7 @@ function toIsoString(value: DateTime.DateTime | DateTime.Utc): string {
 }
 
 export function formatIssuedPairingCredential(
-  credential: IssuedPairingLink,
+  credential: EnvironmentAuth.IssuedPairingLink,
   options?: {
     readonly json?: boolean;
     readonly baseUrl?: string;
@@ -105,7 +105,7 @@ export function formatPairingCredentialList(
 }
 
 export function formatIssuedSession(
-  session: IssuedBearerSession,
+  session: EnvironmentAuth.IssuedBearerSession,
   options?: {
     readonly json?: boolean;
     readonly tokenOnly?: boolean;

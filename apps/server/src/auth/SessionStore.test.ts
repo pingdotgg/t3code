@@ -24,7 +24,11 @@ const makeServerConfigLayer = (
         ...overrides,
       } satisfies ServerConfig.ServerConfig["Service"];
     }),
-  ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-session-test-" })));
+  ).pipe(
+    Layer.provide(
+      ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-session-test-" }),
+    ),
+  );
 
 const makeSessionStoreLayer = (
   overrides?: Partial<Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapToken">>,
@@ -51,7 +55,7 @@ const failingSessionLookupRepositoryLayer = Layer.succeed(AuthSessions.AuthSessi
 
 const failingSessionLookupCredentialLayer = Layer.effect(
   SessionStore.SessionStore,
-  SessionStore.make(),
+  SessionStore.make,
 ).pipe(
   Layer.provide(failingSessionLookupRepositoryLayer),
   Layer.provide(ServerSecretStore.layer),
@@ -89,7 +93,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       const sessions = yield* SessionStore.SessionStore;
       const error = yield* Effect.flip(sessions.verify("not-a-session-token"));
 
-      expect(error._tag).toBe("SessionCredentialInvalidError");
+      expect(error._tag).toBe("MalformedSessionTokenError");
       expect(error.message).toContain("Malformed session token");
     }).pipe(Effect.provide(makeSessionStoreLayer())),
   );
@@ -105,8 +109,8 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       const sessionError = yield* Effect.flip(sessions.verify(issued.token));
       const websocketError = yield* Effect.flip(sessions.verifyWebSocketToken(websocket.token));
 
-      expect(sessionError._tag).toBe("SessionCredentialInternalError");
-      expect(websocketError._tag).toBe("SessionCredentialInternalError");
+      expect(sessionError._tag).toBe("SessionCredentialVerificationError");
+      expect(websocketError._tag).toBe("WebSocketTokenVerificationError");
       expect(sessionError.cause).toBe(repositoryFailure);
       expect(websocketError.cause).toBe(repositoryFailure);
     }).pipe(Effect.provide(failingSessionLookupCredentialLayer)),

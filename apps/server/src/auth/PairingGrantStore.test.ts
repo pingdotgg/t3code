@@ -22,7 +22,9 @@ const makeServerConfigLayer = (
       } satisfies ServerConfig.ServerConfig["Service"];
     }),
   ).pipe(
-    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-bootstrap-test-" })),
+    Layer.provide(
+      ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-bootstrap-test-" }),
+    ),
   );
 
 const makePairingGrantStoreLayer = (
@@ -61,7 +63,7 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       expect(first.subject).toBe("one-time-token");
       expect(first.label).toBe("Julius iPhone");
       expect(issued.label).toBe("Julius iPhone");
-      expect(second._tag).toBe("BootstrapCredentialInvalidError");
+      expect(second._tag).toBe("UnknownBootstrapCredentialError");
       expect(second.message).toContain("Unknown bootstrap credential");
     }).pipe(Effect.provide(makePairingGrantStoreLayer())),
   );
@@ -85,7 +87,7 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       expect(successes).toHaveLength(1);
       expect(failures).toHaveLength(7);
       for (const failure of failures) {
-        expect(failure.failure._tag).toBe("BootstrapCredentialInvalidError");
+        expect(failure.failure._tag).toBe("UnknownBootstrapCredentialError");
         expect(failure.failure.message).toContain("Unknown bootstrap credential");
       }
     }).pipe(Effect.provide(makePairingGrantStoreLayer())),
@@ -132,7 +134,7 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
         "relay:write",
       ]);
       expect(first.subject).toBe("desktop-bootstrap");
-      expect(second._tag).toBe("BootstrapCredentialInvalidError");
+      expect(second._tag).toBe("UnknownBootstrapCredentialError");
     }).pipe(
       Effect.provide(
         makePairingGrantStoreLayer({
@@ -149,7 +151,7 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       yield* TestClock.adjust(Duration.minutes(6));
       const expired = yield* Effect.flip(bootstrapCredentials.consume("desktop-bootstrap-token"));
 
-      expect(expired._tag).toBe("BootstrapCredentialInvalidError");
+      expect(expired._tag).toBe("ExpiredBootstrapCredentialError");
       expect(expired.message).toContain("Bootstrap credential expired");
     }).pipe(
       Effect.provide(
@@ -183,7 +185,7 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       expect(activeAfterRevoke.map((entry) => entry.id)).not.toContain(first.id);
       expect(activeAfterRevoke.map((entry) => entry.id)).toContain(second.id);
       expect(revokedConsume.message).toContain("no longer available");
-      expect(revokedConsume._tag).toBe("BootstrapCredentialInvalidError");
+      expect(revokedConsume._tag).toBe("UnavailableBootstrapCredentialError");
     }).pipe(Effect.provide(makePairingGrantStoreLayer())),
   );
 });
