@@ -231,6 +231,55 @@ function makeLinks(
 }
 
 describe("EnvironmentConnector", () => {
+  it("redacts endpoint secrets while preserving mapped causes", () => {
+    const httpBaseUrl =
+      "https://environment-user:environment-password@env.example.test/private/workspace?access_token=environment-secret#environment-fragment";
+    const cause = new Error("mint failed");
+    const requestError = EnvironmentConnector.EnvironmentMintRequestFailed.fromEndpoint({
+      userId: "user_123",
+      environmentId: "env-connector-test",
+      operation: "connect",
+      stage: "send_request",
+      httpBaseUrl,
+      cause,
+    });
+    const responseError = EnvironmentConnector.EnvironmentMintResponseInvalid.fromEndpoint({
+      userId: "user_123",
+      environmentId: "env-connector-test",
+      operation: "connect",
+      httpBaseUrl,
+      reason: "proof_verification_failed",
+      cause,
+    });
+    const timeoutError = EnvironmentConnector.EnvironmentMintRequestTimedOut.fromEndpoint({
+      userId: "user_123",
+      environmentId: "env-connector-test",
+      httpBaseUrl,
+      timeoutMs: EnvironmentConnector.ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS,
+    });
+
+    for (const error of [requestError, responseError, timeoutError]) {
+      expect(error).toMatchObject({
+        httpBaseUrlInputLength: httpBaseUrl.length,
+        httpBaseUrlProtocol: "https:",
+        httpBaseUrlHostname: "env.example.test",
+      });
+      const serialized = JSON.stringify(error);
+      for (const secret of [
+        "environment-user",
+        "environment-password",
+        "/private/workspace",
+        "environment-secret",
+        "environment-fragment",
+      ]) {
+        expect(serialized).not.toContain(secret);
+        expect(error.message).not.toContain(secret);
+      }
+    }
+    expect(requestError.cause).toBe(cause);
+    expect(responseError.cause).toBe(cause);
+  });
+
   it.effect("loads the environment link and managed allocation concurrently", () =>
     Effect.gen(function* () {
       const started = yield* Ref.make(0);
@@ -405,24 +454,55 @@ describe("EnvironmentConnector", () => {
       const resolutionSpan = spans.find(
         (span) => span.name === "relay.environment_connector.resolve_managed_endpoint",
       );
-      expect(Object.fromEntries(resolutionSpan?.attributes ?? [])).toMatchObject({
+      const resolutionAttributes = Object.fromEntries(resolutionSpan?.attributes ?? []);
+      expect(resolutionAttributes).toMatchObject({
         "relay.authorization.allocation_hostname": "env.example.test",
         "relay.authorization.allocation_has_ready_at": true,
         "relay.authorization.allocation_has_tunnel_id": true,
         "relay.authorization.allocation_has_dns_record_id": true,
-        "relay.authorization.linked_http_base_url": "https://attacker.example.test/",
-        "relay.authorization.linked_ws_base_url": "wss://attacker.example.test/ws",
-        "relay.authorization.resolved_http_base_url": "https://env.example.test/",
-        "relay.authorization.resolved_ws_base_url": "wss://env.example.test/ws",
+        "relay.authorization.linked_http_base_url.input_length":
+          "https://attacker-user:attacker-password@attacker.example.test/private/workspace?access_token=attacker-secret#attacker-fragment"
+            .length,
+        "relay.authorization.linked_http_base_url.protocol": "https:",
+        "relay.authorization.linked_http_base_url.hostname": "attacker.example.test",
+        "relay.authorization.linked_ws_base_url.input_length":
+          "wss://socket-user:socket-password@attacker.example.test/private/socket?access_token=socket-secret#socket-fragment"
+            .length,
+        "relay.authorization.linked_ws_base_url.protocol": "wss:",
+        "relay.authorization.linked_ws_base_url.hostname": "attacker.example.test",
+        "relay.authorization.resolved_http_base_url.input_length": "https://env.example.test/"
+          .length,
+        "relay.authorization.resolved_http_base_url.protocol": "https:",
+        "relay.authorization.resolved_http_base_url.hostname": "env.example.test",
+        "relay.authorization.resolved_ws_base_url.input_length": "wss://env.example.test/ws".length,
+        "relay.authorization.resolved_ws_base_url.protocol": "wss:",
+        "relay.authorization.resolved_ws_base_url.hostname": "env.example.test",
       });
+      const serializedAttributes = JSON.stringify(resolutionAttributes);
+      for (const secret of [
+        "attacker-user",
+        "attacker-password",
+        "/private/workspace",
+        "attacker-secret",
+        "attacker-fragment",
+        "socket-user",
+        "socket-password",
+        "/private/socket",
+        "socket-secret",
+        "socket-fragment",
+      ]) {
+        expect(serializedAttributes).not.toContain(secret);
+      }
       expect(requestCount).toBe(0);
     }).pipe(
       Effect.provide(
         connectorTestLayer(execute, {
           links: makeLinks({
             endpoint: {
-              httpBaseUrl: "https://attacker.example.test/",
-              wsBaseUrl: "wss://attacker.example.test/ws",
+              httpBaseUrl:
+                "https://attacker-user:attacker-password@attacker.example.test/private/workspace?access_token=attacker-secret#attacker-fragment",
+              wsBaseUrl:
+                "wss://socket-user:socket-password@attacker.example.test/private/socket?access_token=socket-secret#socket-fragment",
               providerKind: "cloudflare_tunnel",
             },
           }),
@@ -720,7 +800,9 @@ describe("EnvironmentConnector", () => {
             userId: "user_123",
             environmentId: "env-connector-test",
             operation: "connect",
-            httpBaseUrl: "https://env.example.test/",
+            httpBaseUrlInputLength: "https://env.example.test/".length,
+            httpBaseUrlProtocol: "https:",
+            httpBaseUrlHostname: "env.example.test",
             reason: "proof_verification_failed",
             cause: { _tag: "RelayJwtError" },
           });
@@ -829,7 +911,9 @@ describe("EnvironmentConnector", () => {
             environmentId: "env-connector-test",
             operation: "connect",
             stage: "send_request",
-            httpBaseUrl: "https://env.example.test/",
+            httpBaseUrlInputLength: "https://env.example.test/".length,
+            httpBaseUrlProtocol: "https:",
+            httpBaseUrlHostname: "env.example.test",
             deviceId: "device-123",
             cause: { _tag: "EnvironmentHttpInternalServerError" },
           });
@@ -870,7 +954,9 @@ describe("EnvironmentConnector", () => {
         expect(result.failure).toMatchObject({
           userId: "user_123",
           environmentId: "env-connector-test",
-          httpBaseUrl: "https://env.example.test/",
+          httpBaseUrlInputLength: "https://env.example.test/".length,
+          httpBaseUrlProtocol: "https:",
+          httpBaseUrlHostname: "env.example.test",
           timeoutMs: EnvironmentConnector.ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS,
         });
       }
