@@ -10,7 +10,7 @@ import {
   threadOutboxRetryDelayMs,
   type QueuedThreadMessage,
 } from "./thread-outbox-model";
-import { createThreadOutboxManager } from "./thread-outbox-manager";
+import { createThreadOutboxManager, ThreadOutboxManagerError } from "./thread-outbox-manager";
 import type { ThreadOutboxStorage } from "./thread-outbox-storage";
 
 function queuedMessage(input: {
@@ -149,9 +149,48 @@ describe("thread outbox", () => {
     registry.dispose();
   });
 
+  it("reports structured load failures and permits a retry", async () => {
+    const registry = AtomRegistry.make();
+    const loadCause = new Error("storage unavailable");
+    const warnings: Array<{ message: string; error: unknown }> = [];
+    let loadCalls = 0;
+    const manager = createThreadOutboxManager({
+      registry,
+      storage: {
+        load: async () => {
+          loadCalls += 1;
+          if (loadCalls === 1) throw loadCause;
+          return [];
+        },
+        write: async () => undefined,
+        remove: async () => undefined,
+      },
+      warn: (message, error) => warnings.push({ message, error }),
+    });
+
+    await manager.load();
+    expect(warnings).toEqual([
+      {
+        message: "[thread-outbox] failed to load persisted messages",
+        error: new ThreadOutboxManagerError({
+          operation: "load",
+          environmentId: null,
+          threadId: null,
+          messageId: null,
+          cause: loadCause,
+        }),
+      },
+    ]);
+
+    await manager.load();
+    expect(loadCalls).toBe(2);
+    registry.dispose();
+  });
+
   it("keeps atom state aligned with durable writes and removals", async () => {
     const registry = AtomRegistry.make();
     const stored = new Map<MessageId, QueuedThreadMessage>();
+    const removalCause = new Error("remove failed");
     let failRemoval = true;
     const storage: ThreadOutboxStorage = {
       load: async () => [...stored.values()],
@@ -160,7 +199,7 @@ describe("thread outbox", () => {
       },
       remove: async (message) => {
         if (failRemoval) {
-          throw new Error("remove failed");
+          throw removalCause;
         }
         stored.delete(message.messageId);
       },
@@ -176,7 +215,15 @@ describe("thread outbox", () => {
       "environment-1:thread-1": [message],
     });
 
-    await expect(manager.remove(message)).rejects.toThrow("remove failed");
+    await expect(manager.remove(message)).rejects.toEqual(
+      new ThreadOutboxManagerError({
+        operation: "remove",
+        environmentId: message.environmentId,
+        threadId: message.threadId,
+        messageId: message.messageId,
+        cause: removalCause,
+      }),
+    );
     expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
       "environment-1:thread-1": [message],
     });
