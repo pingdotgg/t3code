@@ -138,7 +138,7 @@ describe("resolveServerEnvironmentLabel", () => {
         Effect.fail(
           new ProcessRunner.ProcessSpawnError({
             command: "scutil",
-            args: ["--get", "ComputerName"],
+            argumentCount: 2,
             cause: new Error("spawn scutil ENOENT"),
           }),
         ),
