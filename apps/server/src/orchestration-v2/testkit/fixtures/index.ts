@@ -1,3 +1,5 @@
+import { ProviderDriverKind } from "@t3tools/contracts";
+
 import { assertClaudeMessageSteeringOutput } from "./message_steering/claude_output.ts";
 import { assertMessageSteeringOutput } from "./message_steering/codex_output.ts";
 import { assertCursorMessageSteeringOutput } from "./message_steering/cursor_output.ts";
@@ -76,14 +78,14 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: planQuestionsInput,
     providers: [
       {
-        provider: "grok",
+        driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./acp_elicitation/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertPlanQuestionsOutput,
       },
       {
-        provider: "acpRegistry",
+        driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./acp_elicitation/grok_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
@@ -96,37 +98,37 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: simpleInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL("./simple/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         assertOutput: assertSimpleOutput,
       },
       {
-        provider: "claudeAgent",
+        driver: ProviderDriverKind.make("claudeAgent"),
         transcriptFile: new URL("./simple/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertSimpleClaudeOutput,
       },
       {
-        provider: "cursor",
+        driver: ProviderDriverKind.make("cursor"),
         transcriptFile: new URL("./simple/cursor_transcript.ndjson", import.meta.url),
         modelSelection: CURSOR_MODEL_SELECTION,
         assertOutput: assertSimpleOutput,
       },
       {
-        provider: "grok",
+        driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./simple/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
         assertOutput: assertSimpleOutput,
       },
       {
-        provider: "acpRegistry",
+        driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./simple/grok_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         assertOutput: assertSimpleOutput,
       },
       {
-        provider: "opencode",
+        driver: ProviderDriverKind.make("opencode"),
         transcriptFile: new URL("./simple/opencode_transcript.ndjson", import.meta.url),
         modelSelection: OPENCODE_MODEL_SELECTION,
         assertOutput: assertSimpleOutput,
@@ -138,28 +140,28 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: toolCallReadOnlyInput,
     providers: [
       {
-        provider: "claudeAgent",
+        driver: ProviderDriverKind.make("claudeAgent"),
         transcriptFile: new URL("./tool_call_read_only/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertToolCallReadOnlyClaudeOutput,
       },
       {
-        provider: "cursor",
+        driver: ProviderDriverKind.make("cursor"),
         transcriptFile: new URL("./tool_call_read_only/cursor_transcript.ndjson", import.meta.url),
         modelSelection: CURSOR_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertToolCallReadOnlyCursorOutput,
       },
       {
-        provider: "grok",
+        driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./tool_call_read_only/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertToolCallReadOnlyCursorOutput,
       },
       {
-        provider: "acpRegistry",
+        driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./tool_call_read_only/grok_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
@@ -172,7 +174,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: toolCallReadOnlyOnRequestInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL(
           "./tool_call_read_only_on_request/codex_transcript.ndjson",
           import.meta.url,
@@ -182,7 +184,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         assertOutput: assertToolCallReadOnlyOnRequestOutput,
       },
       {
-        provider: "claudeAgent",
+        driver: ProviderDriverKind.make("claudeAgent"),
         transcriptFile: new URL(
           "./tool_call_read_only_on_request/claude_transcript.ndjson",
           import.meta.url,
@@ -192,7 +194,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         assertOutput: assertToolCallReadOnlyOnRequestClaudeOutput,
       },
       {
-        provider: "grok",
+        driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL(
           "./tool_call_read_only_on_request/grok_transcript.ndjson",
           import.meta.url,
@@ -202,7 +204,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         assertOutput: assertToolCallReadOnlyOnRequestOutput,
       },
       {
-        provider: "acpRegistry",
+        driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL(
           "./tool_call_read_only_on_request/grok_transcript.ndjson",
           import.meta.url,
@@ -218,7 +220,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: toolCallWorkspaceNeverInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL(
           "./tool_call_workspace_never/codex_transcript.ndjson",
           import.meta.url,
@@ -228,7 +230,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         assertOutput: assertToolCallWorkspaceNeverOutput,
       },
       {
-        provider: "claudeAgent",
+        driver: ProviderDriverKind.make("claudeAgent"),
         transcriptFile: new URL(
           "./tool_call_workspace_never/claude_transcript.ndjson",
           import.meta.url,
@@ -244,7 +246,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: toolCallRestrictedGranularInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL(
           "./tool_call_restricted_granular/codex_transcript.ndjson",
           import.meta.url,
@@ -254,7 +256,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         assertOutput: assertToolCallRestrictedGranularOutput,
       },
       {
-        provider: "claudeAgent",
+        driver: ProviderDriverKind.make("claudeAgent"),
         transcriptFile: new URL(
           "./tool_call_restricted_granular/claude_transcript.ndjson",
           import.meta.url,
@@ -270,20 +272,20 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: subagentInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL("./subagent/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
         assertOutput: assertSubagentOutput,
       },
       {
-        provider: "claudeAgent",
+        driver: ProviderDriverKind.make("claudeAgent"),
         transcriptFile: new URL("./subagent/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeSubagentOutput,
       },
       {
-        provider: "cursor",
+        driver: ProviderDriverKind.make("cursor"),
         transcriptFile: new URL("./subagent/cursor_transcript.ndjson", import.meta.url),
         modelSelection: CURSOR_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
@@ -296,7 +298,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: subagentContinueInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL("./subagent_continue/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         assertOutput: assertSubagentContinueOutput,
@@ -308,7 +310,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: openCodeSubagentInput,
     providers: [
       {
-        provider: "opencode",
+        driver: ProviderDriverKind.make("opencode"),
         transcriptFile: new URL("./opencode_subagent/opencode_transcript.ndjson", import.meta.url),
         modelSelection: OPENCODE_MODEL_SELECTION,
         assertOutput: assertOpenCodeSubagentOutput,
@@ -320,31 +322,31 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: multiTurnInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL("./multi_turn/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         assertOutput: assertMultiTurnOutput,
       },
       {
-        provider: "claudeAgent",
+        driver: ProviderDriverKind.make("claudeAgent"),
         transcriptFile: new URL("./multi_turn/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertMultiTurnClaudeOutput,
       },
       {
-        provider: "cursor",
+        driver: ProviderDriverKind.make("cursor"),
         transcriptFile: new URL("./multi_turn/cursor_transcript.ndjson", import.meta.url),
         modelSelection: CURSOR_MODEL_SELECTION,
         assertOutput: assertMultiTurnOutput,
       },
       {
-        provider: "grok",
+        driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./multi_turn/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
         assertOutput: assertMultiTurnOutput,
       },
       {
-        provider: "acpRegistry",
+        driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./multi_turn/grok_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         assertOutput: assertMultiTurnOutput,
@@ -356,7 +358,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: multiTurnInput,
     providers: [
       {
-        provider: "claudeAgent",
+        driver: ProviderDriverKind.make("claudeAgent"),
         transcriptFile: new URL("./multi_turn_restart/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertMultiTurnClaudeOutput,
@@ -368,31 +370,31 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: queuedTurnInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL("./queued_turn/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         assertOutput: assertQueuedTurnOutput,
       },
       {
-        provider: "claudeAgent",
+        driver: ProviderDriverKind.make("claudeAgent"),
         transcriptFile: new URL("./queued_turn/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertQueuedTurnOutput,
       },
       {
-        provider: "cursor",
+        driver: ProviderDriverKind.make("cursor"),
         transcriptFile: new URL("./queued_turn/cursor_transcript.ndjson", import.meta.url),
         modelSelection: CURSOR_MODEL_SELECTION,
         assertOutput: assertQueuedTurnOutput,
       },
       {
-        provider: "grok",
+        driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./queued_turn/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
         assertOutput: assertQueuedTurnOutput,
       },
       {
-        provider: "acpRegistry",
+        driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./queued_turn/grok_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         assertOutput: assertQueuedTurnOutput,
@@ -404,27 +406,27 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: todoListInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL("./todo_list/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertTodoListOutput,
       },
       {
-        provider: "cursor",
+        driver: ProviderDriverKind.make("cursor"),
         transcriptFile: new URL("./todo_list/cursor_transcript.ndjson", import.meta.url),
         modelSelection: CURSOR_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertTodoListCursorOutput,
       },
       {
-        provider: "grok",
+        driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./todo_list/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
         assertOutput: assertTodoListGrokOutput,
       },
       {
-        provider: "acpRegistry",
+        driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./todo_list/grok_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         assertOutput: assertTodoListGrokOutput,
@@ -436,13 +438,13 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: webSearchInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL("./web_search/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         assertOutput: assertWebSearchOutput,
       },
       {
-        provider: "claudeAgent",
+        driver: ProviderDriverKind.make("claudeAgent"),
         transcriptFile: new URL("./web_search/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeWebSearchOutput,
@@ -454,21 +456,21 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: planQuestionsInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL("./plan_questions/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertPlanQuestionsOutput,
       },
       {
-        provider: "grok",
+        driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./plan_questions/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertPlanQuestionsOutput,
       },
       {
-        provider: "opencode",
+        driver: ProviderDriverKind.make("opencode"),
         transcriptFile: new URL("./plan_questions/opencode_transcript.ndjson", import.meta.url),
         modelSelection: OPENCODE_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
@@ -481,14 +483,14 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: proposedPlanInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL("./proposed_plan/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertProposedPlanOutput,
       },
       {
-        provider: "cursor",
+        driver: ProviderDriverKind.make("cursor"),
         transcriptFile: new URL("./proposed_plan/cursor_transcript.ndjson", import.meta.url),
         modelSelection: CURSOR_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
@@ -501,31 +503,31 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: messageSteeringInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL("./message_steering/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         assertOutput: assertMessageSteeringOutput,
       },
       {
-        provider: "claudeAgent",
+        driver: ProviderDriverKind.make("claudeAgent"),
         transcriptFile: new URL("./message_steering/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeMessageSteeringOutput,
       },
       {
-        provider: "cursor",
+        driver: ProviderDriverKind.make("cursor"),
         transcriptFile: new URL("./message_steering/cursor_transcript.ndjson", import.meta.url),
         modelSelection: CURSOR_MODEL_SELECTION,
         assertOutput: assertCursorMessageSteeringOutput,
       },
       {
-        provider: "grok",
+        driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./message_steering/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
         assertOutput: assertGrokMessageSteeringOutput,
       },
       {
-        provider: "acpRegistry",
+        driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./message_steering/grok_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         assertOutput: assertGrokMessageSteeringOutput,
@@ -537,35 +539,35 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: turnInterruptInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL("./turn_interrupt/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptOutput,
       },
       {
-        provider: "claudeAgent",
+        driver: ProviderDriverKind.make("claudeAgent"),
         transcriptFile: new URL("./turn_interrupt/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptClaudeOutput,
       },
       {
-        provider: "grok",
+        driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./turn_interrupt/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptOutput,
       },
       {
-        provider: "acpRegistry",
+        driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./turn_interrupt/grok_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptOutput,
       },
       {
-        provider: "opencode",
+        driver: ProviderDriverKind.make("opencode"),
         transcriptFile: new URL("./turn_interrupt/opencode_transcript.ndjson", import.meta.url),
         modelSelection: OPENCODE_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
@@ -578,7 +580,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: turnInterruptMidToolInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL(
           "./turn_interrupt_mid_tool/codex_transcript.ndjson",
           import.meta.url,
@@ -588,7 +590,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         assertOutput: assertTurnInterruptMidToolCodexOutput,
       },
       {
-        provider: "claudeAgent",
+        driver: ProviderDriverKind.make("claudeAgent"),
         transcriptFile: new URL(
           "./turn_interrupt_mid_tool/claude_transcript.ndjson",
           import.meta.url,
@@ -598,7 +600,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         assertOutput: assertTurnInterruptMidToolClaudeOutput,
       },
       {
-        provider: "cursor",
+        driver: ProviderDriverKind.make("cursor"),
         transcriptFile: new URL(
           "./turn_interrupt_mid_tool/cursor_transcript.ndjson",
           import.meta.url,
@@ -614,7 +616,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: turnInterruptRestartInput,
     providers: [
       {
-        provider: "claudeAgent",
+        driver: ProviderDriverKind.make("claudeAgent"),
         transcriptFile: new URL(
           "./turn_interrupt_restart/claude_transcript.ndjson",
           import.meta.url,
@@ -630,13 +632,13 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     buildInput: threadRollbackInput,
     providers: [
       {
-        provider: "codex",
+        driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL("./thread_rollback/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         assertOutput: assertThreadRollbackOutput,
       },
       {
-        provider: "claudeAgent",
+        driver: ProviderDriverKind.make("claudeAgent"),
         transcriptFile: new URL("./thread_rollback/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeThreadRollbackOutput,

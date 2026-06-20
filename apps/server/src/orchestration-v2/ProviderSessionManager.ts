@@ -250,7 +250,7 @@ export const layerWithOptions = (
                   }),
                   type: "provider-session.updated",
                   threadId,
-                  provider: input.entry.runtime.provider,
+                  driver: input.entry.runtime.driver,
                   occurredAt: now,
                   payload,
                 } satisfies OrchestrationV2DomainEvent;
@@ -291,7 +291,7 @@ export const layerWithOptions = (
                 type: "runtime-request.updated",
                 threadId,
                 nodeId: request.nodeId,
-                provider: input.entry.runtime.provider,
+                driver: input.entry.runtime.driver,
                 occurredAt: now,
                 payload: {
                   ...request,
@@ -315,7 +315,7 @@ export const layerWithOptions = (
                   threadId,
                   ...(requestNode.runId === null ? {} : { runId: requestNode.runId }),
                   nodeId: requestNode.id,
-                  provider: input.entry.runtime.provider,
+                  driver: input.entry.runtime.driver,
                   occurredAt: now,
                   payload: {
                     ...requestNode,
@@ -338,7 +338,7 @@ export const layerWithOptions = (
                   threadId,
                   ...(turnItem.runId === null ? {} : { runId: turnItem.runId }),
                   ...(turnItem.nodeId === null ? {} : { nodeId: turnItem.nodeId }),
-                  provider: input.entry.runtime.provider,
+                  driver: input.entry.runtime.driver,
                   occurredAt: now,
                   payload: {
                     ...turnItem,
@@ -426,7 +426,7 @@ export const layerWithOptions = (
             cancelIdleFiber: false,
           }).pipe(
             Effect.catchCause((cause) =>
-              Effect.logWarning("orchestration-v2.provider-session.idle-release-failed", {
+              Effect.logWarning("orchestration-v2.driver-session.idle-release-failed", {
                 providerSessionId: input.providerSessionId,
                 cause,
               }),
@@ -578,7 +578,7 @@ export const layerWithOptions = (
       ) =>
         activity.pipe(
           Effect.catchCause((cause) =>
-            Effect.logWarning("orchestration-v2.provider-session.activity-failed", {
+            Effect.logWarning("orchestration-v2.driver-session.activity-failed", {
               providerSessionId,
               cause,
             }),
@@ -661,7 +661,7 @@ export const layerWithOptions = (
                 reason: "server_shutdown",
               }).pipe(
                 Effect.catchCause((cause) =>
-                  Effect.logWarning("orchestration-v2.provider-session.shutdown-release-failed", {
+                  Effect.logWarning("orchestration-v2.driver-session.shutdown-release-failed", {
                     providerSessionId: entry.runtime.providerSessionId,
                     cause,
                   }),

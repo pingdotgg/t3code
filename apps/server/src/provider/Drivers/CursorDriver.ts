@@ -24,6 +24,10 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
+import {
+  CursorAdapterV2Driver,
+  type CursorAdapterV2DriverEnv,
+} from "../../orchestration-v2/Adapters/CursorAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
 import {
@@ -80,7 +84,7 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
 };
 
 export type CursorDriverEnv =
-  | BackgroundPolicy.BackgroundPolicy
+  | CursorAdapterV2DriverEnv
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
@@ -136,6 +140,24 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
       });
+      const orchestrationAdapter = yield* CursorAdapterV2Driver.create({
+        instanceId,
+        displayName,
+        accentColor,
+        environment,
+        enabled,
+        config,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: "Failed to build Cursor orchestration adapter.",
+              cause,
+            }),
+        ),
+      );
       const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
 
       const discoverModels = yield* makeCursorModelDiscovery(effectiveConfig, processEnv);
@@ -217,6 +239,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
                 ),
               ]).pipe(Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills }))),
         adapter,
+        orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;
     }),
