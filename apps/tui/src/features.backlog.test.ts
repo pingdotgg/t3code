@@ -10,7 +10,7 @@ import { describe, it } from "bun:test";
 // plan↔build toggle, rename, archive/unarchive, delete, stop-session, search/filter,
 // multiline composer + paste, tool-call rows, changed-files summary, working indicator,
 // proposed-plan card, implement-plan (^Y, same thread via sourceProposedPlan),
-// context-window meter, cycle pending approvals (↑/↓).
+// context-window meter, cycle pending approvals (↑/↓), checkpoint revert (^K → v).
 
 describe.skip("Backlog — Low/Med: new-thread options (branch / worktree / runtimeMode)", () => {
   it("Given the new-thread dialog, when options are set, then createThread receives them", () => {
@@ -21,12 +21,6 @@ describe.skip("Backlog — Low/Med: new-thread options (branch / worktree / runt
 describe.skip("Backlog — Med: pending multi-question user input form", () => {
   it("Given a thread awaiting user input, when answered, then respondToThreadUserInput is sent", () => {
     // Data in thread.activities; needs a small select/text form.
-  });
-});
-
-describe.skip("Backlog — Med: checkpoint revert", () => {
-  it("Given a selected turn, when reverted, then revertThreadCheckpoint({turnCount}) is sent", () => {
-    // Op is trivial; the turn-selection UI is the work.
   });
 });
 

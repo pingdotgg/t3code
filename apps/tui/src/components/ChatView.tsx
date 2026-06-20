@@ -9,11 +9,12 @@ import { useKeyBindings } from "../hooks/useKeyBindings.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore } from "../store.ts";
 import { usePalette } from "../theme.ts";
+import { revertableCheckpoints } from "../timeline.ts";
 import { buildRows, selectionEquals } from "./Sidebar.logic.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
 import { Sidebar } from "./Sidebar.tsx";
-import { ThreadActionsMenu } from "./ThreadActionsMenu.tsx";
+import { RevertMenu, ThreadActionsMenu } from "./ThreadActionsMenu.tsx";
 import { type TerminalInfo, ThreadTerminalDrawer } from "./ThreadTerminalDrawer.tsx";
 
 const RUNTIME_MODES: ReadonlyArray<RuntimeMode> = [
@@ -51,8 +52,11 @@ export function ChatView({
   }, [store]);
 
   const [focus, setFocus] = React.useState<"compose" | "new" | "rename" | "filter">("compose");
-  // Transient key-driven overlay over the composer (thread actions / delete confirm).
-  const [overlay, setOverlay] = React.useState<"none" | "actions" | "confirmDelete">("none");
+  // Transient key-driven overlay over the composer (thread actions / delete confirm / revert).
+  const [overlay, setOverlay] = React.useState<"none" | "actions" | "confirmDelete" | "revert">(
+    "none",
+  );
+  const [revertIndex, setRevertIndex] = React.useState(0);
   const [reply, setReply] = React.useState("");
   // Bumped to remount (clear) the uncontrolled multiline reply editor.
   const [composerEpoch, setComposerEpoch] = React.useState(0);
@@ -83,6 +87,10 @@ export function ChatView({
     !!detail && ["starting", "running", "ready"].includes(detail.session?.status ?? "");
   const actionablePlan = React.useMemo(
     () => (detail ? latestActionableProposedPlan(detail) : null),
+    [detail],
+  );
+  const checkpoints = React.useMemo(
+    () => (detail ? revertableCheckpoints(detail.checkpoints) : []),
     [detail],
   );
   const approvals = React.useMemo(
@@ -223,7 +231,9 @@ export function ChatView({
         ? "actions"
         : overlay === "confirmDelete"
           ? "confirmDelete"
-          : focus === "new"
+          : overlay === "revert"
+            ? "revert"
+            : focus === "new"
             ? "new"
             : focus === "rename"
               ? "rename"
@@ -322,6 +332,28 @@ export function ChatView({
       void client.stopSession(detail.id).catch(() => {});
       setOverlay("none");
       store.setStatus("Session stopped.");
+    },
+    onActionRevert: () => {
+      if (!detail) return;
+      if (checkpoints.length === 0) {
+        setOverlay("none");
+        store.setStatus("No checkpoints to revert to.");
+        return;
+      }
+      setRevertIndex(0);
+      setOverlay("revert");
+    },
+    onRevertPrev: () =>
+      setRevertIndex((index) => (index <= 0 ? checkpoints.length - 1 : index - 1)),
+    onRevertNext: () => setRevertIndex((index) => (index + 1) % Math.max(checkpoints.length, 1)),
+    onRevertConfirm: () => {
+      const checkpoint = checkpoints[Math.min(revertIndex, checkpoints.length - 1)];
+      setOverlay("none");
+      if (!detail || !checkpoint) return;
+      void client
+        .revertCheckpoint(detail.id, checkpoint.checkpointTurnCount)
+        .catch((error) => store.setStatus(`revert failed: ${String(error)}`));
+      store.setStatus(`Reverted to turn ${checkpoint.checkpointTurnCount}.`);
     },
     onCloseOverlay: () => setOverlay("none"),
     onConfirmDelete: () => {
@@ -433,7 +465,9 @@ export function ChatView({
         />
       ) : null}
 
-      {overlay !== "none" && detail ? (
+      {overlay === "revert" && detail ? (
+        <RevertMenu checkpoints={checkpoints} selected={Math.min(revertIndex, checkpoints.length - 1)} />
+      ) : (overlay === "actions" || overlay === "confirmDelete") && detail ? (
         <ThreadActionsMenu
           overlay={overlay}
           title={detail.title}

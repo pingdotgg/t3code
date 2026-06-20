@@ -80,6 +80,13 @@ export function diffStat(files: OrchestrationCheckpointSummary["files"]): DiffSt
   return { additions, deletions };
 }
 
+/** Checkpoints ordered newest-first, for the revert picker. */
+export function revertableCheckpoints(
+  checkpoints: OrchestrationThread["checkpoints"],
+): OrchestrationCheckpointSummary[] {
+  return [...checkpoints].sort((a, b) => b.completedAt.localeCompare(a.completedAt));
+}
+
 /**
  * Latest checkpoint (with at least one file) per assistant message id, so the
  * conversation can render a "Changed files" summary under the message that

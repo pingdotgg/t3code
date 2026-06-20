@@ -1,6 +1,8 @@
+import type { OrchestrationCheckpointSummary } from "@t3tools/contracts";
 import * as React from "react";
 
 import { clip } from "../format.ts";
+import { relativeTime } from "../theme.ts";
 import { ansi, usePalette } from "../theme.ts";
 
 // The thread-actions overlay (^K), mirroring the web sidebar's per-thread menu.
@@ -67,8 +69,52 @@ export const ThreadActionsMenu = React.memo(function ThreadActionsMenu({
         <span fg={palette.dim}>{" delete   "}</span>
         <span fg={sessionRunning ? palette.text : palette.dim}>s</span>
         <span fg={palette.dim}>{" stop   "}</span>
+        <span fg={palette.text}>v</span>
+        <span fg={palette.dim}>{" revert   "}</span>
         <span fg={palette.dim}>Esc cancel</span>
       </text>
+    </box>
+  );
+});
+
+/** The checkpoint-revert picker (^K → v): ↑/↓ to choose a turn, Enter reverts. */
+export const RevertMenu = React.memo(function RevertMenu({
+  checkpoints,
+  selected,
+}: {
+  readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;
+  readonly selected: number;
+}): React.ReactNode {
+  const palette = usePalette();
+  const danger = ansi("red");
+  const visible = checkpoints.slice(0, 8);
+  return (
+    <box
+      flexDirection="column"
+      border
+      borderStyle="rounded"
+      borderColor={danger}
+      paddingLeft={1}
+      paddingRight={1}
+      flexShrink={0}
+    >
+      <text>
+        <span fg={danger}>revert ▸ </span>
+        <span fg={palette.dim}>pick a checkpoint — discards changes made after it</span>
+      </text>
+      {visible.map((checkpoint, index) => {
+        const active = index === selected;
+        const fileCount = checkpoint.files.length;
+        return (
+          <text key={`${checkpoint.turnId}:${checkpoint.checkpointTurnCount}`}>
+            <span fg={active ? palette.accent : palette.dim}>{active ? "▸ " : "  "}</span>
+            <span fg={active ? palette.text : palette.dim}>
+              {`turn ${checkpoint.checkpointTurnCount} · ${fileCount} file${fileCount === 1 ? "" : "s"} · ${relativeTime(checkpoint.completedAt)}`}
+            </span>
+          </text>
+        );
+      })}
+      <text fg={palette.dim}>↑/↓ select · Enter revert · Esc cancel</text>
     </box>
   );
 });

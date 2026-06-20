@@ -17,6 +17,7 @@ export type KeyBindingMode =
   | "terminal"
   | "actions"
   | "confirmDelete"
+  | "revert"
   | "new"
   | "rename"
   | "filter"
@@ -37,8 +38,13 @@ export interface KeyBindingActions {
   readonly onActionArchive: () => void;
   readonly onActionDelete: () => void;
   readonly onActionStop: () => void;
+  readonly onActionRevert: () => void;
   readonly onCloseOverlay: () => void;
   readonly onConfirmDelete: () => void;
+  // Checkpoint-revert picker
+  readonly onRevertPrev: () => void;
+  readonly onRevertNext: () => void;
+  readonly onRevertConfirm: () => void;
   // Rename / filter input modes
   readonly onSubmitRename: () => void;
   readonly onCancelRename: () => void;
@@ -87,12 +93,20 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       if (key.name === "a") return actions.onActionArchive();
       if (key.name === "d") return actions.onActionDelete();
       if (key.name === "s") return actions.onActionStop();
+      if (key.name === "v") return actions.onActionRevert();
       if (key.name === "escape") return actions.onCloseOverlay();
       return;
     }
     if (actions.mode === "confirmDelete") {
       if (key.name === "y") return actions.onConfirmDelete();
       if (key.name === "n" || key.name === "escape") return actions.onCloseOverlay();
+      return;
+    }
+    if (actions.mode === "revert") {
+      if (key.name === "up") return actions.onRevertPrev();
+      if (key.name === "down") return actions.onRevertNext();
+      if (key.name === "return" || key.name === "enter") return actions.onRevertConfirm();
+      if (key.name === "escape") return actions.onCloseOverlay();
       return;
     }
 

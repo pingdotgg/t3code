@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   MessageId as MessageIdSchema,
   type ModelSelection,
+  NonNegativeInt,
   type OrchestrationShellSnapshot,
   type OrchestrationThread,
   OrchestrationProposedPlanId,
@@ -33,6 +34,7 @@ import {
   setThreadInteractionMode,
   setThreadRuntimeMode,
   startThreadTurn,
+  revertThreadCheckpoint,
   stopThreadSession,
   unarchiveThread as unarchiveThreadOp,
   updateThreadMetadata,
@@ -305,6 +307,7 @@ export interface TuiClient {
   readonly unarchiveThread: (threadId: ThreadId) => Promise<void>;
   readonly deleteThread: (threadId: ThreadId) => Promise<void>;
   readonly stopSession: (threadId: ThreadId) => Promise<void>;
+  readonly revertCheckpoint: (threadId: ThreadId, turnCount: number) => Promise<void>;
   readonly terminalWrite: (
     threadId: ThreadId,
     terminalId: string,
@@ -599,6 +602,13 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
 
     stopSession: (threadId) =>
       runtime.runPromise(stopThreadSession({ threadId }).pipe(Effect.asVoid)),
+
+    revertCheckpoint: (threadId, turnCount) =>
+      runtime.runPromise(
+        revertThreadCheckpoint({ threadId, turnCount: NonNegativeInt.make(turnCount) }).pipe(
+          Effect.asVoid,
+        ),
+      ),
 
     terminalWrite: (threadId, terminalId, data) =>
       runtime.runPromise(
