@@ -249,6 +249,7 @@ describe("MobileRegistrations", () => {
                     replayForLiveActivityRegistration: () =>
                       Effect.fail(
                         new AgentActivityRows.AgentActivityRowListPersistenceError({
+                          userId: "dev:julius",
                           cause: "replay failed",
                         }),
                       ),

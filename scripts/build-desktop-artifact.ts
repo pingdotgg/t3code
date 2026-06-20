@@ -126,10 +126,21 @@ const getDefaultArch = Effect.fn("getDefaultArch")(function* (platform: typeof B
   return yield* getDefaultBuildArch(platform, config);
 });
 
-class BuildScriptError extends Data.TaggedError("BuildScriptError")<{
+export class BuildScriptError extends Data.TaggedError("BuildScriptError")<{
   readonly message: string;
   readonly cause?: unknown;
-}> {}
+}> {
+  static fromMacPasskeySigningConfiguration(
+    cause: unknown,
+  ): MacPasskeySigningConfigurationError | BuildScriptError {
+    return isMacPasskeySigningConfigurationError(cause)
+      ? cause
+      : new BuildScriptError({
+          message: "Failed to resolve macOS passkey signing configuration.",
+          cause,
+        });
+  }
+}
 
 const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   stream.pipe(
@@ -306,26 +317,128 @@ export interface MacPasskeySigningConfiguration {
   readonly provisioningProfilePath: string;
 }
 
+export const InvalidMacPasskeyRpDomainReason = Schema.Literals([
+  "empty",
+  "scheme-not-allowed",
+  "parse-failed",
+  "credentials-not-allowed",
+  "port-not-allowed",
+  "path-not-allowed",
+  "query-not-allowed",
+  "fragment-not-allowed",
+  "hostname-mismatch",
+]);
+export type InvalidMacPasskeyRpDomainReason = typeof InvalidMacPasskeyRpDomainReason.Type;
+
+export class InvalidMacPasskeyRpDomainError extends Schema.TaggedErrorClass<InvalidMacPasskeyRpDomainError>()(
+  "InvalidMacPasskeyRpDomainError",
+  {
+    reason: InvalidMacPasskeyRpDomainReason,
+    inputLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Invalid passkey RP domain (${this.reason}).`;
+  }
+}
+
+export class InvalidAppleTeamIdError extends Schema.TaggedErrorClass<InvalidAppleTeamIdError>()(
+  "InvalidAppleTeamIdError",
+  {
+    teamId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `T3CODE_APPLE_TEAM_ID '${this.teamId}' must be a 10-character Apple Developer Team ID.`;
+  }
+}
+
+export class MissingMacPasskeyProvisioningProfileError extends Schema.TaggedErrorClass<MissingMacPasskeyProvisioningProfileError>()(
+  "MissingMacPasskeyProvisioningProfileError",
+  {},
+) {
+  override get message(): string {
+    return "T3CODE_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.";
+  }
+}
+
+export class MissingMacPasskeyDomainConfigurationError extends Schema.TaggedErrorClass<MissingMacPasskeyDomainConfigurationError>()(
+  "MissingMacPasskeyDomainConfigurationError",
+  {},
+) {
+  override get message(): string {
+    return "T3CODE_CLERK_PUBLISHABLE_KEY or T3CODE_CLERK_PASSKEY_RP_DOMAINS is required for signed macOS passkey builds.";
+  }
+}
+
+export class InvalidMacPasskeyPublishableKeyError extends Schema.TaggedErrorClass<InvalidMacPasskeyPublishableKeyError>()(
+  "InvalidMacPasskeyPublishableKeyError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "T3CODE_CLERK_PUBLISHABLE_KEY is invalid.";
+  }
+}
+
+export class MissingMacPasskeyRpDomainError extends Schema.TaggedErrorClass<MissingMacPasskeyRpDomainError>()(
+  "MissingMacPasskeyRpDomainError",
+  {},
+) {
+  override get message(): string {
+    return "At least one Clerk passkey RP domain is required.";
+  }
+}
+
+export const MacPasskeySigningConfigurationError = Schema.Union([
+  InvalidMacPasskeyRpDomainError,
+  InvalidAppleTeamIdError,
+  MissingMacPasskeyProvisioningProfileError,
+  MissingMacPasskeyDomainConfigurationError,
+  InvalidMacPasskeyPublishableKeyError,
+  MissingMacPasskeyRpDomainError,
+]);
+export type MacPasskeySigningConfigurationError = typeof MacPasskeySigningConfigurationError.Type;
+export const isMacPasskeySigningConfigurationError = Schema.is(MacPasskeySigningConfigurationError);
+
 function normalizePasskeyRpDomain(value: string): string {
   const normalized = value.trim().toLowerCase();
+  const inputLength = value.length;
+  if (normalized.length === 0) {
+    throw new InvalidMacPasskeyRpDomainError({ reason: "empty", inputLength });
+  }
+  if (/^[a-z][a-z\d+.-]*:\/\//u.test(normalized)) {
+    throw new InvalidMacPasskeyRpDomainError({
+      reason: "scheme-not-allowed",
+      inputLength,
+    });
+  }
+
   let parsed: URL;
   try {
     parsed = new URL(`https://${normalized}`);
-  } catch {
-    throw new Error(`Invalid passkey RP domain: ${value}`);
+  } catch (cause) {
+    throw new InvalidMacPasskeyRpDomainError({ reason: "parse-failed", inputLength, cause });
   }
 
-  if (
-    normalized.length === 0 ||
-    parsed.host !== normalized ||
-    parsed.username.length > 0 ||
-    parsed.password.length > 0 ||
-    parsed.port.length > 0 ||
-    parsed.pathname !== "/" ||
-    parsed.search.length > 0 ||
-    parsed.hash.length > 0
-  ) {
-    throw new Error(`Invalid passkey RP domain: ${value}`);
+  let reason: InvalidMacPasskeyRpDomainReason | undefined;
+  if (parsed.username.length > 0 || parsed.password.length > 0) {
+    reason = "credentials-not-allowed";
+  } else if (parsed.port.length > 0) {
+    reason = "port-not-allowed";
+  } else if (parsed.pathname !== "/") {
+    reason = "path-not-allowed";
+  } else if (parsed.search.length > 0) {
+    reason = "query-not-allowed";
+  } else if (parsed.hash.length > 0) {
+    reason = "fragment-not-allowed";
+  } else if (parsed.host !== normalized) {
+    reason = "hostname-mismatch";
+  }
+  if (reason) {
+    throw new InvalidMacPasskeyRpDomainError({ reason, inputLength });
   }
 
   return parsed.hostname;
@@ -336,14 +449,12 @@ export function resolveMacPasskeySigningConfiguration(
 ): MacPasskeySigningConfiguration {
   const teamId = env.T3CODE_APPLE_TEAM_ID?.trim().toUpperCase() ?? "";
   if (!APPLE_TEAM_ID_PATTERN.test(teamId)) {
-    throw new Error("T3CODE_APPLE_TEAM_ID must be a 10-character Apple Developer Team ID.");
+    throw new InvalidAppleTeamIdError({ teamId });
   }
 
   const provisioningProfilePath = env.T3CODE_MACOS_PROVISIONING_PROFILE?.trim() ?? "";
   if (provisioningProfilePath.length === 0) {
-    throw new Error(
-      "T3CODE_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.",
-    );
+    throw new MissingMacPasskeyProvisioningProfileError();
   }
 
   const configuredRpDomains = env.T3CODE_CLERK_PASSKEY_RP_DOMAINS?.trim();
@@ -353,18 +464,20 @@ export function resolveMacPasskeySigningConfiguration(
   } else {
     const publishableKey = env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim();
     if (!publishableKey) {
-      throw new Error(
-        "T3CODE_CLERK_PUBLISHABLE_KEY or T3CODE_CLERK_PASSKEY_RP_DOMAINS is required for signed macOS passkey builds.",
-      );
+      throw new MissingMacPasskeyDomainConfigurationError();
     }
-    rpDomains = [
-      normalizePasskeyRpDomain(clerkFrontendApiHostnameFromPublishableKey(publishableKey)),
-    ];
+    let hostname: string;
+    try {
+      hostname = clerkFrontendApiHostnameFromPublishableKey(publishableKey);
+    } catch (cause) {
+      throw new InvalidMacPasskeyPublishableKeyError({ cause });
+    }
+    rpDomains = [normalizePasskeyRpDomain(hostname)];
   }
 
   const uniqueRpDomains = [...new Set(rpDomains)];
   if (uniqueRpDomains.length === 0) {
-    throw new Error("At least one Clerk passkey RP domain is required.");
+    throw new MissingMacPasskeyRpDomainError();
   }
 
   return {
@@ -1150,11 +1263,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     options.platform === "mac" && options.signed
       ? yield* Effect.try({
           try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
-          catch: (cause) =>
-            new BuildScriptError({
-              message: cause instanceof Error ? cause.message : String(cause),
-              cause,
-            }),
+          catch: BuildScriptError.fromMacPasskeySigningConfiguration,
         })
       : undefined;
   const macPasskeySigning = configuredMacPasskeySigning
