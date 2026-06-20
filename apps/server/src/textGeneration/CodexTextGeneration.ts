@@ -281,15 +281,16 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
             }),
         ),
         Effect.flatMap(decodeOutput),
-        Effect.catchTag("SchemaError", (cause) =>
-          Effect.fail(
-            new TextGenerationError({
-              operation,
-              detail: "Codex returned invalid structured output.",
-              cause,
-            }),
-          ),
-        ),
+        Effect.catchTags({
+          SchemaError: (cause) =>
+            Effect.fail(
+              new TextGenerationError({
+                operation,
+                detail: "Codex returned invalid structured output.",
+                cause,
+              }),
+            ),
+        }),
       );
     }).pipe(Effect.ensuring(cleanup));
   });

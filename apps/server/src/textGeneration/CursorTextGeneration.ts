@@ -28,30 +28,7 @@ import {
 
 const CURSOR_TIMEOUT_MS = 180_000;
 
-function mapCursorAcpError(
-  operation:
-    | "generateCommitMessage"
-    | "generatePrContent"
-    | "generateBranchName"
-    | "generateThreadTitle",
-  detail: string,
-  cause: unknown,
-): TextGenerationError {
-  return new TextGenerationError({
-    operation,
-    detail,
-    ...(cause !== undefined ? { cause } : {}),
-  });
-}
-
-function isTextGenerationError(error: unknown): error is TextGenerationError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "_tag" in error &&
-    error._tag === "TextGenerationError"
-  );
-}
+const isTextGenerationError = Schema.is(TextGenerationError);
 
 /**
  * Build a Cursor text-generation closure bound to a specific `CursorSettings`
@@ -111,13 +88,14 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
           model: modelSelection.model,
           selections: modelSelection.options,
           mapError: ({ cause, configId, step }) =>
-            mapCursorAcpError(
+            new TextGenerationError({
               operation,
-              step === "set-config-option"
-                ? `Failed to set Cursor ACP config option "${configId}" for text generation.`
-                : "Failed to set Cursor ACP base model for text generation.",
+              detail:
+                step === "set-config-option"
+                  ? `Failed to set Cursor ACP config option "${configId}" for text generation.`
+                  : "Failed to set Cursor ACP base model for text generation.",
               cause,
-            ),
+            }),
         });
 
         return yield* runtime.prompt({
@@ -140,7 +118,11 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         Effect.mapError((cause) =>
           isTextGenerationError(cause)
             ? cause
-            : mapCursorAcpError(operation, "Cursor ACP request failed.", cause),
+            : new TextGenerationError({
+                operation,
+                detail: "Cursor ACP request failed.",
+                cause,
+              }),
         ),
       );
 
@@ -157,21 +139,26 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 
       const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
       return yield* decodeOutput(extractJsonObject(rawResult)).pipe(
-        Effect.catchTag("SchemaError", (cause) =>
-          Effect.fail(
-            new TextGenerationError({
-              operation,
-              detail: "Cursor Agent returned invalid structured output.",
-              cause,
-            }),
-          ),
-        ),
+        Effect.catchTags({
+          SchemaError: (cause) =>
+            Effect.fail(
+              new TextGenerationError({
+                operation,
+                detail: "Cursor Agent returned invalid structured output.",
+                cause,
+              }),
+            ),
+        }),
       );
     }).pipe(
       Effect.mapError((cause) =>
         isTextGenerationError(cause)
           ? cause
-          : mapCursorAcpError(operation, "Cursor ACP text generation failed.", cause),
+          : new TextGenerationError({
+              operation,
+              detail: "Cursor ACP text generation failed.",
+              cause,
+            }),
       ),
       Effect.scoped,
     );

@@ -348,15 +348,16 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
 
     const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson));
     return yield* decodeOutput(extractJsonObject(rawOutput)).pipe(
-      Effect.catchTag("SchemaError", (cause) =>
-        Effect.fail(
-          new TextGenerationError({
-            operation: input.operation,
-            detail: "OpenCode returned invalid structured output.",
-            cause,
-          }),
-        ),
-      ),
+      Effect.catchTags({
+        SchemaError: (cause) =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: input.operation,
+              detail: "OpenCode returned invalid structured output.",
+              cause,
+            }),
+          ),
+      }),
     );
   });
 
