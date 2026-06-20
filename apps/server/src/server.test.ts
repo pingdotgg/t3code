@@ -6041,6 +6041,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           cwd: "/tmp/project",
           refName: fetchedOriginCommit,
           newRefName: "t3code/bootstrap-refName",
+          baseRefName: "main",
           path: null,
         });
         assert.deepEqual(fetchRemote.mock.calls[0]?.[0], {

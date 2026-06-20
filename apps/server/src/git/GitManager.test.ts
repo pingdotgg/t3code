@@ -2239,6 +2239,62 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("generates PR content against the remote base when the local base is stale", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(remoteDir, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+      const peerDir = yield* makeTempDir("t3code-git-peer-");
+      yield* runGit(peerDir, ["clone", remoteDir, "."]);
+      yield* runGit(peerDir, ["config", "user.email", "peer@example.com"]);
+      yield* runGit(peerDir, ["config", "user.name", "Peer User"]);
+      fs.writeFileSync(path.join(peerDir, "remote.txt"), "remote\n");
+      yield* runGit(peerDir, ["add", "remote.txt"]);
+      yield* runGit(peerDir, ["commit", "-m", "Remote base commit"]);
+      yield* runGit(peerDir, ["push", "origin", "main"]);
+
+      yield* runGit(repoDir, ["fetch", "origin"]);
+      yield* runGit(repoDir, [
+        "checkout",
+        "--no-track",
+        "-b",
+        "feature/remote-base",
+        "origin/main",
+      ]);
+      fs.writeFileSync(path.join(repoDir, "feature.txt"), "feature\n");
+      yield* runGit(repoDir, ["add", "feature.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/remote-base"]);
+      yield* runGit(repoDir, ["config", "branch.feature/remote-base.gh-merge-base", "main"]);
+
+      let generatedCommitSummary = "";
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: ["[]", "[]"],
+        },
+        textGeneration: {
+          generatePrContent: (input) => {
+            generatedCommitSummary = input.commitSummary;
+            return Effect.succeed({ title: "Feature PR", body: "Feature body" });
+          },
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "create_pr",
+      });
+
+      expect(result.pr.status).toBe("created");
+      expect(generatedCommitSummary).toContain("Feature commit");
+      expect(generatedCommitSummary).not.toContain("Remote base commit");
+    }),
+  );
+
   it.effect(
     "creates a new PR instead of reusing an unrelated fork PR with the same head branch",
     () =>

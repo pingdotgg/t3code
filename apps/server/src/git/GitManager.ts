@@ -1092,6 +1092,27 @@ export const make = Effect.gen(function* () {
     return "main";
   });
 
+  const resolveBaseRangeRef = Effect.fn("resolveBaseRangeRef")(function* (
+    cwd: string,
+    baseBranch: string,
+  ) {
+    const remoteName = yield* gitCore
+      .resolvePrimaryRemoteName(cwd)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (!remoteName) return baseBranch;
+
+    return yield* gitCore
+      .resolveRemoteTrackingCommit({
+        cwd,
+        refName: baseBranch,
+        fallbackRemoteName: remoteName,
+      })
+      .pipe(
+        Effect.map((resolved) => resolved.commitSha),
+        Effect.orElseSucceed(() => baseBranch),
+      );
+  });
+
   const resolveCommitAndBranchSuggestion = Effect.fn("resolveCommitAndBranchSuggestion")(
     function* (input: {
       cwd: string;
@@ -1298,7 +1319,8 @@ export const make = Effect.gen(function* () {
       phase: "pr",
       label: `Generating ${terms.shortLabel} content...`,
     });
-    const rangeContext = yield* gitCore.readRangeContext(cwd, baseBranch);
+    const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseBranch);
+    const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
 
     const generated = yield* textGeneration.generatePrContent({
       cwd,
