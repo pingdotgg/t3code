@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as ProcessDiagnostics from "./ProcessDiagnostics.ts";
 
@@ -216,6 +217,44 @@ describe("ProcessDiagnostics", () => {
           args: ["-axo", "pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command="],
         },
       ]);
+    }),
+  );
+
+  it.effect("keeps bounded command diagnostics when the process query exits unsuccessfully", () =>
+    Effect.gen(function* () {
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            mockHandle({
+              code: 17,
+              stdout: "partial process output",
+              stderr: "process access denied",
+            }),
+          ),
+        ),
+      );
+
+      const error = yield* ProcessDiagnostics.readProcessRows.pipe(
+        Effect.provide(spawnerLayer),
+        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({
+        _tag: "ProcessDiagnosticsQueryFailedError",
+        command: "ps",
+        argCount: 2,
+        cwd: process.cwd(),
+        exitCode: 17,
+        stdoutBytes: 22,
+        stderrBytes: 21,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      });
+      expect(error.message).toBe(
+        `Process diagnostics query 'ps' failed with exit code 17 in '${process.cwd()}'.`,
+      );
     }),
   );
 
