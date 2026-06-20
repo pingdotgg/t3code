@@ -1273,7 +1273,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           threadId,
           terminalId,
           signal: "SIGTERM",
-          error: error.message,
+          cause: error,
         }).pipe(Effect.as(false)),
       ),
     );
@@ -1297,7 +1297,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           threadId,
           terminalId,
           signal: "SIGKILL",
-          error: error.message,
+          cause: error,
         }),
       ),
     );
@@ -1904,7 +1904,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* Effect.logError("failed to start terminal", {
         threadId: session.threadId,
         terminalId: session.terminalId,
-        error: message,
+        cause: error,
         ...(startedShell ? { shell: startedShell } : {}),
       });
     }
