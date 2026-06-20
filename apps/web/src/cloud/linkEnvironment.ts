@@ -596,7 +596,15 @@ export function unlinkPrimaryEnvironmentFromCloud(input: {
             });
             return Effect.logWarning(error.message, {
               environmentId: input.target.environmentId,
-              relayUrl: configuredRelayUrl,
+              ...(error.relayUrlInputLength === undefined
+                ? {}
+                : { relayUrlInputLength: error.relayUrlInputLength }),
+              ...(error.relayUrlProtocol === undefined
+                ? {}
+                : { relayUrlProtocol: error.relayUrlProtocol }),
+              ...(error.relayUrlHostname === undefined
+                ? {}
+                : { relayUrlHostname: error.relayUrlHostname }),
               cause: error,
             });
           }),
