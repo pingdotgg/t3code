@@ -54,11 +54,7 @@ const { logWarning: logBackendConfigurationWarning } = DesktopObservability.make
   "desktop-backend-configuration",
 );
 
-const readPersistedBackendObservabilitySettings: Effect.Effect<
-  BackendObservabilitySettings,
-  never,
-  FileSystem.FileSystem | DesktopEnvironment.DesktopEnvironment
-> = Effect.gen(function* () {
+const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const exists = yield* fileSystem

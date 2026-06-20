@@ -37,11 +37,7 @@ const dispatchMenuAction = Effect.fn("desktop.menu.dispatchMenuAction")(function
   yield* desktopWindow.dispatchMenuAction(action);
 });
 
-const checkForUpdatesFromMenu: Effect.Effect<
-  void,
-  never,
-  DesktopUpdates.DesktopUpdates | ElectronDialog.ElectronDialog
-> = Effect.gen(function* () {
+const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
   const result = yield* updates.check("menu");
@@ -65,11 +61,7 @@ const checkForUpdatesFromMenu: Effect.Effect<
   }
 }).pipe(Effect.withSpan("desktop.menu.checkForUpdates"));
 
-const handleCheckForUpdatesMenuClick: Effect.Effect<
-  void,
-  DesktopWindow.DesktopWindowError,
-  DesktopUpdates.DesktopUpdates | ElectronDialog.ElectronDialog | DesktopWindow.DesktopWindow
-> = Effect.gen(function* () {
+const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
   const disabledReason = yield* updates.disabledReason;

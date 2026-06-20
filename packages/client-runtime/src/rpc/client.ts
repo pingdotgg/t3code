@@ -1,4 +1,4 @@
-import { ORCHESTRATION_WS_METHODS, type ServerConfig, WS_METHODS } from "@t3tools/contracts";
+import { ORCHESTRATION_WS_METHODS, WS_METHODS } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
@@ -9,7 +9,6 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { RpcClientError } from "effect/unstable/rpc";
 
-import type { ConnectionAttemptError } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 
@@ -237,11 +236,7 @@ export function subscribe<TTag extends EnvironmentSubscriptionRpcTag>(
   );
 }
 
-export const config: Effect.Effect<
-  ServerConfig,
-  EnvironmentRpcUnavailableError | ConnectionAttemptError,
-  EnvironmentSupervisor
-> = Effect.gen(function* () {
+export const config = Effect.gen(function* () {
   const session = yield* currentSession();
   return yield* session.initialConfig;
 }).pipe(Effect.withSpan("EnvironmentRpc.config"));

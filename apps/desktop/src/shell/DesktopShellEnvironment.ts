@@ -211,11 +211,7 @@ const readLoginShellEnvironment = (
         timeout: LOGIN_SHELL_TIMEOUT,
       }).pipe(Effect.map((output) => extractEnvironment(output, names)));
 
-const readLaunchctlPath: Effect.Effect<
-  Option.Option<string>,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner
-> = runCommandOutput({
+const readLaunchctlPath = runCommandOutput({
   command: "/bin/launchctl",
   args: ["getenv", "PATH"],
   timeout: LAUNCHCTL_TIMEOUT,
