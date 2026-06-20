@@ -108,7 +108,7 @@ export const resolveHostMcpServersForProviderStartEffect = Effect.fn(
     t3Home: input.serverConfig.baseDir,
     workspaceRoot: input.sessionInput.projectWorkspaceRoot ?? input.sessionInput.cwd,
     bootstrapServers: input.serverConfig.hostMcpServers,
-  });
+  }).pipe(Effect.catchCause(() => Effect.succeed(input.serverConfig.hostMcpServers)));
 });
 
 export function resolveHostMcpServersForProviderStart(input: {
