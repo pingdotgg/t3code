@@ -45,6 +45,7 @@ export class TraceFileReadError extends Schema.TaggedErrorClass<TraceFileReadErr
   "TraceFileReadError",
   {
     traceFilePath: Schema.String,
+    causeTag: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
@@ -399,7 +400,13 @@ function readTraceFile(
       PlatformError: (cause) =>
         isNotFoundError(cause)
           ? Effect.succeed<TraceFileReadResult>({ _tag: "Missing", path })
-          : Effect.fail(new TraceFileReadError({ traceFilePath: path, cause })),
+          : Effect.fail(
+              new TraceFileReadError({
+                traceFilePath: path,
+                causeTag: cause.reason._tag,
+                cause,
+              }),
+            ),
     }),
   );
 }
@@ -419,7 +426,8 @@ export const make = Effect.gen(function* () {
               Effect.logWarning("Failed to read local trace file.").pipe(
                 Effect.annotateLogs({
                   traceFilePath: cause.traceFilePath,
-                  cause,
+                  errorTag: cause._tag,
+                  causeTag: cause.causeTag,
                 }),
               ),
             ),

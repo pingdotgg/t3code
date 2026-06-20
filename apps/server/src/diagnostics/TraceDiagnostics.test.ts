@@ -41,6 +41,22 @@ function record(input: {
 }
 
 describe("TraceDiagnostics", () => {
+  it("retains exact trace file read causes with a normalized cause tag", () => {
+    const cause = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "readFileString",
+    });
+    const error = new TraceDiagnostics.TraceFileReadError({
+      traceFilePath: "/tmp/server.trace.ndjson",
+      causeTag: cause.reason._tag,
+      cause,
+    });
+
+    assert.strictEqual(error.cause, cause);
+    assert.strictEqual(error.causeTag, "PermissionDenied");
+  });
+
   it.effect("aggregates failures, slow spans, log levels, and parse errors", () =>
     Effect.sync(() => {
       const diagnostics = TraceDiagnostics.aggregateTraceDiagnostics({
@@ -243,8 +259,11 @@ describe("TraceDiagnostics", () => {
         (annotations) => annotations.traceFilePath === `${traceFilePath}.1`,
       );
       assert.exists(failureLog);
-      assert.instanceOf(failureLog.cause, TraceDiagnostics.TraceFileReadError);
-      assert.strictEqual(failureLog.cause.cause, readFailure);
+      assert.deepStrictEqual(failureLog, {
+        traceFilePath: `${traceFilePath}.1`,
+        errorTag: "TraceFileReadError",
+        causeTag: "PermissionDenied",
+      });
     }),
   );
 
