@@ -11,8 +11,8 @@ import { expect } from "vite-plus/test";
 
 import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 
-import { ServerConfig } from "../config.ts";
-import { type TextGenerationShape } from "./TextGeneration.ts";
+import * as ServerConfig from "../config.ts";
+import * as TextGeneration from "./TextGeneration.ts";
 import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
@@ -21,7 +21,7 @@ const DEFAULT_TEST_MODEL_SELECTION = createModelSelection(
   "gpt-5.4-mini",
 );
 
-const CodexTextGenerationTestLayer = ServerConfig.layerTest(process.cwd(), {
+const CodexTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-codex-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -169,7 +169,7 @@ function withFakeCodexEnv<A, E, R>(
     stdinMustContain?: string;
     stdinMustNotContain?: string;
   },
-  effectFn: (textGeneration: TextGenerationShape) => Effect.Effect<A, E, R>,
+  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -427,7 +427,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const { attachmentsDir } = yield* ServerConfig;
+          const { attachmentsDir } = yield* ServerConfig.ServerConfig;
           const attachmentId = "thread-branch-image-attachment";
           const attachmentPath = path.join(attachmentsDir, `${attachmentId}.png`);
           yield* fs.makeDirectory(attachmentsDir, { recursive: true });
@@ -465,7 +465,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const { attachmentsDir } = yield* ServerConfig;
+          const { attachmentsDir } = yield* ServerConfig.ServerConfig;
           const attachmentId = "thread-1-attachment";
           const imagePath = path.join(attachmentsDir, `${attachmentId}.png`);
           yield* fs.makeDirectory(attachmentsDir, { recursive: true });
@@ -514,7 +514,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const { attachmentsDir } = yield* ServerConfig;
+          const { attachmentsDir } = yield* ServerConfig.ServerConfig;
           const missingAttachmentId = "thread-missing-attachment";
           const missingPath = path.join(attachmentsDir, `${missingAttachmentId}.png`);
           yield* fs.remove(missingPath).pipe(Effect.catch(() => Effect.void));

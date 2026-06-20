@@ -16,8 +16,8 @@ import { expect } from "vite-plus/test";
 
 import { CursorSettings, ProviderInstanceId } from "@t3tools/contracts";
 
-import { ServerConfig } from "../config.ts";
-import { type TextGenerationShape } from "./TextGeneration.ts";
+import * as ServerConfig from "../config.ts";
+import * as TextGeneration from "./TextGeneration.ts";
 import { makeCursorTextGeneration } from "./CursorTextGeneration.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
@@ -28,7 +28,7 @@ function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-const CursorTextGenerationTestLayer = ServerConfig.layerTest(process.cwd(), {
+const CursorTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-cursor-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -56,7 +56,7 @@ function makeAcpAgentWrapper(dir: string, env: Record<string, string>): string {
 
 function withFakeAcpAgent<A, E, R>(
   env: Record<string, string>,
-  effectFn: (textGeneration: TextGenerationShape) => Effect.Effect<A, E, R>,
+  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "t3code-cursor-text-acp-"));

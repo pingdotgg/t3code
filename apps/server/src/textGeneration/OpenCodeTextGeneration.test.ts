@@ -9,13 +9,9 @@ import * as TestClock from "effect/testing/TestClock";
 import * as NetService from "@t3tools/shared/Net";
 import { beforeEach, expect } from "vite-plus/test";
 
-import { ServerConfig } from "../config.ts";
-import {
-  OpenCodeRuntime,
-  OpenCodeRuntimeError,
-  type OpenCodeRuntimeShape,
-} from "../provider/opencodeRuntime.ts";
-import { type TextGenerationShape } from "./TextGeneration.ts";
+import * as ServerConfig from "../config.ts";
+import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
+import * as TextGeneration from "./TextGeneration.ts";
 import { makeOpenCodeTextGeneration } from "./OpenCodeTextGeneration.ts";
 
 const runtimeMock = {
@@ -37,7 +33,7 @@ const runtimeMock = {
   },
 };
 
-const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
+const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
   startOpenCodeServerProcess: ({ binaryPath }) =>
     Effect.gen(function* () {
       const index = runtimeMock.state.startCalls.length + 1;
@@ -88,10 +84,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           );
         },
       },
-    }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+    }) as unknown as ReturnType<OpenCodeRuntime.OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
     Effect.fail(
-      new OpenCodeRuntimeError({
+      new OpenCodeRuntime.OpenCodeRuntimeError({
         operation: "loadOpenCodeInventory",
         detail: "OpenCodeRuntimeTestDouble.loadOpenCodeInventory not used in this test",
         cause: null,
@@ -107,11 +103,11 @@ const DEFAULT_TEST_MODEL_SELECTION = {
 const OPENCODE_TEXT_GENERATION_IDLE_TTL_MS = 30_000;
 
 const OpenCodeTextGenerationTestLayer = Layer.succeed(
-  OpenCodeRuntime,
+  OpenCodeRuntime.OpenCodeRuntime,
   OpenCodeRuntimeTestDouble,
 ).pipe(
   Layer.provideMerge(
-    ServerConfig.layerTest(process.cwd(), {
+    ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "t3code-opencode-text-generation-test-",
     }),
   ),
@@ -120,11 +116,11 @@ const OpenCodeTextGenerationTestLayer = Layer.succeed(
 );
 
 const OpenCodeTextGenerationExistingServerTestLayer = Layer.succeed(
-  OpenCodeRuntime,
+  OpenCodeRuntime.OpenCodeRuntime,
   OpenCodeRuntimeTestDouble,
 ).pipe(
   Layer.provideMerge(
-    ServerConfig.layerTest(process.cwd(), {
+    ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "t3code-opencode-text-generation-existing-server-test-",
     }),
   ),
@@ -143,7 +139,7 @@ const EXISTING_SERVER_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
 
 function withOpenCodeTextGeneration<A, E, R>(
   settings: OpenCodeSettings,
-  effectFn: (textGeneration: TextGenerationShape) => Effect.Effect<A, E, R>,
+  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
     const textGeneration = yield* makeOpenCodeTextGeneration(settings);

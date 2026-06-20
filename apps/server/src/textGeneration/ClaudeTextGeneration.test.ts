@@ -9,13 +9,13 @@ import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
-import { ServerConfig } from "../config.ts";
-import { type TextGenerationShape } from "./TextGeneration.ts";
+import * as ServerConfig from "../config.ts";
+import * as TextGeneration from "./TextGeneration.ts";
 import { sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
-const ClaudeTextGenerationTestLayer = ServerConfig.layerTest(process.cwd(), {
+const ClaudeTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-claude-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -79,7 +79,7 @@ function withFakeClaudeEnv<A, E, R>(
     homeMustBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
   },
-  effectFn: (textGeneration: TextGenerationShape) => Effect.Effect<A, E, R>,
+  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

@@ -13,8 +13,8 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 import { GrokSettings, ProviderInstanceId } from "@t3tools/contracts";
 
-import { ServerConfig } from "../config.ts";
-import { type TextGenerationShape } from "./TextGeneration.ts";
+import * as ServerConfig from "../config.ts";
+import * as TextGeneration from "./TextGeneration.ts";
 import { makeGrokTextGeneration } from "./GrokTextGeneration.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
@@ -25,7 +25,7 @@ function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-const GrokTextGenerationTestLayer = ServerConfig.layerTest(process.cwd(), {
+const GrokTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-grok-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -53,7 +53,7 @@ function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
 
 function withFakeAcpGrok<A, E, R>(
   env: Record<string, string>,
-  effectFn: (textGeneration: TextGenerationShape) => Effect.Effect<A, E, R>,
+  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "t3code-grok-text-acp-"));
