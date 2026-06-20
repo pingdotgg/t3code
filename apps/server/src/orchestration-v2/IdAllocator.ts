@@ -9,7 +9,8 @@ import {
   NodeId,
   PlanId,
   ProjectId,
-  ProviderKind,
+  ProviderDriverKind,
+  ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -92,11 +93,11 @@ export interface IdAllocatorV2AllocateShape {
     readonly ordinal: number;
   }) => Effect.Effect<MessageId, IdAllocatorV2Error>;
   readonly providerSession: (input: {
-    readonly provider: ProviderKind;
+    readonly providerInstanceId: ProviderInstanceId;
     readonly threadId: ThreadId;
   }) => Effect.Effect<ProviderSessionId, IdAllocatorV2Error>;
   readonly runtimeRequest: (input: {
-    readonly provider: ProviderKind;
+    readonly driver: ProviderDriverKind;
     readonly providerTurnId?: ProviderTurnId;
     readonly nativeRequestId?: string;
   }) => Effect.Effect<RuntimeRequestId, IdAllocatorV2Error>;
@@ -110,8 +111,8 @@ export interface IdAllocatorV2AllocateShape {
   }) => Effect.Effect<CheckpointId, IdAllocatorV2Error>;
   readonly contextHandoff: (input: {
     readonly threadId: ThreadId;
-    readonly fromProvider: ProviderKind;
-    readonly toProvider: ProviderKind;
+    readonly fromProviderInstanceId: ProviderInstanceId;
+    readonly toProviderInstanceId: ProviderInstanceId;
   }) => Effect.Effect<ContextHandoffId, IdAllocatorV2Error>;
   readonly contextTransfer: (input: {
     readonly sourceThreadId: ThreadId;
@@ -121,7 +122,7 @@ export interface IdAllocatorV2AllocateShape {
   readonly plan: (input: {
     readonly threadId: ThreadId;
     readonly runId?: RunId;
-    readonly provider: ProviderKind;
+    readonly driver: ProviderDriverKind;
   }) => Effect.Effect<PlanId, IdAllocatorV2Error>;
 }
 
@@ -131,7 +132,7 @@ export interface IdAllocatorV2DeriveShape {
   readonly delegatedTaskMessage: (input: { readonly commandId: CommandId }) => MessageId;
   readonly delegatedTaskTurnItem: (input: { readonly commandId: CommandId }) => TurnItemId;
   readonly threadFromProviderThread: (input: {
-    readonly provider: ProviderKind;
+    readonly driver: ProviderDriverKind;
     readonly nativeThreadId: string;
   }) => ThreadId;
   readonly run: (input: { readonly threadId: ThreadId; readonly ordinal: number }) => RunId;
@@ -150,23 +151,23 @@ export interface IdAllocatorV2DeriveShape {
     readonly signal: string;
   }) => TurnItemId;
   readonly providerThread: (input: {
-    readonly provider: ProviderKind;
+    readonly driver: ProviderDriverKind;
     readonly nativeThreadId: string;
   }) => ProviderThreadId;
   readonly providerTurn: (input: {
-    readonly provider: ProviderKind;
+    readonly driver: ProviderDriverKind;
     readonly nativeTurnId: string;
   }) => ProviderTurnId;
   readonly nodeFromProviderItem: (input: {
-    readonly provider: ProviderKind;
+    readonly driver: ProviderDriverKind;
     readonly nativeItemId: string;
   }) => NodeId;
   readonly messageFromProviderItem: (input: {
-    readonly provider: ProviderKind;
+    readonly driver: ProviderDriverKind;
     readonly nativeItemId: string;
   }) => MessageId;
   readonly turnItemFromProviderItem: (input: {
-    readonly provider: ProviderKind;
+    readonly driver: ProviderDriverKind;
     readonly nativeItemId: string;
   }) => TurnItemId;
   readonly approvalNode: (input: { readonly requestId: RuntimeRequestId }) => NodeId;
@@ -270,7 +271,7 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
         randomId<ProviderSessionId, typeof input>({
           kind: "provider_session",
           prefix: "provider-session",
-          parts: ["provider", input.provider, "thread", input.threadId],
+          parts: ["provider-instance", input.providerInstanceId, "thread", input.threadId],
           make: ProviderSessionId.make,
         })(input),
       runtimeRequest: (input) =>
@@ -279,7 +280,7 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
           prefix: "runtime-request",
           parts: [
             "provider",
-            input.provider,
+            input.driver,
             ...(input.providerTurnId === undefined ? [] : ["provider-turn", input.providerTurnId]),
             ...(input.nativeRequestId === undefined
               ? []
@@ -306,10 +307,10 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
           parts: [
             "thread",
             input.threadId,
-            "from-provider",
-            input.fromProvider,
-            "to-provider",
-            input.toProvider,
+            "from-provider-instance",
+            input.fromProviderInstanceId,
+            "to-provider-instance",
+            input.toProviderInstanceId,
           ],
           make: ContextHandoffId.make,
         })(input),
@@ -335,7 +336,7 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
             "thread",
             input.threadId,
             "provider",
-            input.provider,
+            input.driver,
             ...(input.runId === undefined ? [] : ["run", input.runId]),
           ],
           make: PlanId.make,
@@ -351,7 +352,7 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
         TurnItemId.make(joinId("turn-item", "delegated-task", input.commandId)),
       threadFromProviderThread: (input) =>
         ThreadId.make(
-          joinId("thread", "provider", input.provider, "native-thread", input.nativeThreadId),
+          joinId("thread", "provider", input.driver, "native-thread", input.nativeThreadId),
         ),
       run: (input) => RunId.make(joinId("run", "thread", input.threadId, "ordinal", input.ordinal)),
       runAttempt: (input) =>
@@ -369,24 +370,24 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
           joinId(
             "provider-thread",
             "provider",
-            input.provider,
+            input.driver,
             "native-thread",
             input.nativeThreadId,
           ),
         ),
       providerTurn: (input) =>
         ProviderTurnId.make(
-          joinId("provider-turn", "provider", input.provider, "native-turn", input.nativeTurnId),
+          joinId("provider-turn", "provider", input.driver, "native-turn", input.nativeTurnId),
         ),
       nodeFromProviderItem: (input) =>
-        NodeId.make(joinId("node", "provider", input.provider, "native-item", input.nativeItemId)),
+        NodeId.make(joinId("node", "provider", input.driver, "native-item", input.nativeItemId)),
       messageFromProviderItem: (input) =>
         MessageId.make(
-          joinId("message", "provider", input.provider, "native-item", input.nativeItemId),
+          joinId("message", "provider", input.driver, "native-item", input.nativeItemId),
         ),
       turnItemFromProviderItem: (input) =>
         TurnItemId.make(
-          joinId("turn-item", "provider", input.provider, "native-item", input.nativeItemId),
+          joinId("turn-item", "provider", input.driver, "native-item", input.nativeItemId),
         ),
       approvalNode: (input) => NodeId.make(joinId("node", "runtime-request", input.requestId)),
       approvalTurnItem: (input) =>

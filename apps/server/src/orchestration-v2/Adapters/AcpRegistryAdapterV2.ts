@@ -37,8 +37,8 @@ import {
   type AcpAdapterV2RuntimeInput,
 } from "./AcpAdapterV2.ts";
 
-export const ACP_REGISTRY_PROVIDER = "acpRegistry" as const;
-export const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make(ACP_REGISTRY_PROVIDER);
+export const ACP_REGISTRY_PROVIDER = ProviderDriverKind.make("acpRegistry");
+export const ACP_REGISTRY_DRIVER_KIND = ACP_REGISTRY_PROVIDER;
 export const ACP_REGISTRY_DEFAULT_INSTANCE_ID =
   defaultInstanceIdForDriver(ACP_REGISTRY_DRIVER_KIND);
 
@@ -92,7 +92,7 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
 
 export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
   const flavor: AcpAdapterV2Flavor = {
-    provider: ACP_REGISTRY_PROVIDER,
+    driver: ACP_REGISTRY_PROVIDER,
     capabilities: AcpProviderCapabilitiesV2,
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(options),
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),

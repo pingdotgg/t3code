@@ -58,6 +58,7 @@ export interface EventStoreV2Shape {
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventStoreV2Error>;
   readonly read: (input?: {
     readonly afterSequence?: number;
+    readonly throughSequence?: number;
     readonly threadId?: ThreadId;
     readonly limit?: number;
   }) => Stream.Stream<OrchestrationV2StoredEvent, EventStoreV2Error>;
@@ -83,7 +84,8 @@ type EventRow = {
   readonly thread_id: string;
   readonly run_id: string | null;
   readonly node_id: string | null;
-  readonly provider: string | null;
+  readonly driver: string | null;
+  readonly provider_instance_id: string | null;
   readonly raw_event_id: string | null;
   readonly event_type: string;
   readonly occurred_at: string;
@@ -119,7 +121,8 @@ export const layer: Layer.Layer<EventStoreV2, never, SqlClient.SqlClient> = Laye
           threadId: row.thread_id,
           runId: row.run_id ?? undefined,
           nodeId: row.node_id ?? undefined,
-          provider: row.provider ?? undefined,
+          driver: row.driver ?? undefined,
+          providerInstanceId: row.provider_instance_id ?? undefined,
           rawEventId: row.raw_event_id ?? undefined,
           type: row.event_type,
           occurredAt: row.occurred_at,
@@ -161,7 +164,8 @@ export const layer: Layer.Layer<EventStoreV2, never, SqlClient.SqlClient> = Laye
                 thread_id,
                 run_id,
                 node_id,
-                provider,
+                driver,
+                provider_instance_id,
                 raw_event_id,
                 event_type,
                 occurred_at,
@@ -173,7 +177,8 @@ export const layer: Layer.Layer<EventStoreV2, never, SqlClient.SqlClient> = Laye
                 ${event.threadId},
                 ${event.runId ?? null},
                 ${event.nodeId ?? null},
-                ${event.provider ?? null},
+                ${event.driver ?? null},
+                ${event.providerInstanceId ?? null},
                 ${event.rawEventId ?? null},
                 ${event.type},
                 ${normalized.occurredAt},
@@ -186,7 +191,8 @@ export const layer: Layer.Layer<EventStoreV2, never, SqlClient.SqlClient> = Laye
                 thread_id,
                 run_id,
                 node_id,
-                provider,
+                driver,
+                provider_instance_id,
                 raw_event_id,
                 event_type,
                 occurred_at,
@@ -230,13 +236,15 @@ export const layer: Layer.Layer<EventStoreV2, never, SqlClient.SqlClient> = Laye
             thread_id,
             run_id,
             node_id,
-            provider,
+            driver,
+            provider_instance_id,
             raw_event_id,
             event_type,
             occurred_at,
             payload_json
           FROM orchestration_v2_events
           WHERE sequence > ${input?.afterSequence ?? 0}
+            AND sequence <= ${input?.throughSequence ?? Number.MAX_SAFE_INTEGER}
             AND (${input?.threadId ?? null} IS NULL OR thread_id = ${input?.threadId ?? null})
           ORDER BY sequence ASC
           LIMIT ${input?.limit ?? 1000}
@@ -267,7 +275,8 @@ export const layer: Layer.Layer<EventStoreV2, never, SqlClient.SqlClient> = Laye
             thread_id,
             run_id,
             node_id,
-            provider,
+            driver,
+            provider_instance_id,
             raw_event_id,
             event_type,
             occurred_at,

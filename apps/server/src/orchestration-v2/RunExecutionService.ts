@@ -2,7 +2,6 @@ import {
   CommandId,
   type ModelSelection,
   type OrchestrationV2AppThread,
-  type OrchestrationV2Checkpoint,
   type OrchestrationV2CheckpointScope,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
@@ -150,7 +149,6 @@ export const layer: Layer.Layer<
         OrchestrationV2Run["status"],
         "completed" | "interrupted" | "failed" | "cancelled"
       >;
-      readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
     }) =>
       Effect.gen(function* () {
         const completedAt = yield* DateTime.now;
@@ -162,43 +160,43 @@ export const layer: Layer.Layer<
         const shouldFinalizeRun =
           input.shouldFinalizeRun === undefined ? true : yield* input.shouldFinalizeRun();
         if (!shouldFinalizeRun) {
-          yield* eventSink.write({
-            events: [
-              {
-                id: yield* idAllocator.allocate.event({ threadId: input.run.threadId }),
-                type: "run-attempt.updated" as const,
-                threadId: input.run.threadId,
-                runId: input.run.id,
-                nodeId: input.rootNode.id,
-                provider: input.run.provider,
-                occurredAt: completedAt,
-                payload: finalizedAttempt,
-              },
-            ],
-          });
+          // A newer attempt already owns the run and the command that created
+          // it terminalized this attempt as superseded. Preserve that domain
+          // status while retaining the provider's interruption artifact.
+          if (input.status === "interrupted") {
+            yield* eventSink.write({
+              events: [
+                {
+                  id: yield* idAllocator.allocate.event({ threadId: input.run.threadId }),
+                  type: "turn-item.updated" as const,
+                  threadId: input.run.threadId,
+                  runId: input.run.id,
+                  nodeId: input.rootNode.id,
+                  providerInstanceId: input.run.providerInstanceId,
+                  occurredAt: completedAt,
+                  payload: makeInterruptResultTurnItem({
+                    idAllocator,
+                    run: input.run,
+                    rootNode: input.rootNode,
+                    providerThread: input.providerThread,
+                    completedAt,
+                  }),
+                },
+              ],
+            });
+          }
           return;
         }
-        const checkpoint =
-          input.status === "completed"
-            ? yield* checkpointService.capture({
-                scope: input.checkpointScope,
-                runId: input.run.id,
-                nodeId: input.rootNode.id,
-                ordinalWithinScope: input.run.ordinal,
-                appRunOrdinal: input.run.ordinal,
-                capturedAt: completedAt,
-              })
-            : null;
+        const persistedStatus = input.status === "completed" ? "waiting" : input.status;
         const finalizedRun: OrchestrationV2Run = {
           ...input.run,
-          status: input.status,
-          completedAt,
-          checkpointId: checkpoint?.id ?? input.run.checkpointId,
+          status: persistedStatus,
+          completedAt: input.status === "completed" ? null : completedAt,
         };
         const finalizedRootNode: OrchestrationV2ExecutionNode = {
           ...input.rootNode,
-          status: input.status,
-          completedAt,
+          status: persistedStatus,
+          completedAt: input.status === "completed" ? null : completedAt,
           checkpointScopeId: input.checkpointScope.id,
         };
         const finalizedProviderThread: OrchestrationV2ProviderThread = {
@@ -211,7 +209,25 @@ export const layer: Layer.Layer<
         const providerThreadEventId = yield* idAllocator.allocate.event({
           threadId: input.run.threadId,
         });
-        yield* eventSink.write({
+        const checkpointCaptureCommandId = CommandId.make(
+          `command:effect:checkpoint.capture:${input.run.id}`,
+        );
+        yield* eventSink.writeWithEffects({
+          effects:
+            input.status === "completed"
+              ? [
+                  {
+                    id: `effect:checkpoint.capture:${input.run.id}`,
+                    commandId: checkpointCaptureCommandId,
+                    threadId: input.run.threadId,
+                    request: {
+                      type: "checkpoint.capture" as const,
+                      runId: input.run.id,
+                      scopeId: input.checkpointScope.id,
+                    },
+                  },
+                ]
+              : [],
           events: [
             ...(finalizedAttempt === null
               ? []
@@ -222,40 +238,9 @@ export const layer: Layer.Layer<
                     threadId: input.run.threadId,
                     runId: input.run.id,
                     nodeId: input.rootNode.id,
-                    provider: input.run.provider,
+                    providerInstanceId: input.run.providerInstanceId,
                     occurredAt: completedAt,
                     payload: finalizedAttempt,
-                  },
-                ]),
-            ...(checkpoint === null
-              ? []
-              : [
-                  {
-                    id: yield* idAllocator.allocate.event({ threadId: input.run.threadId }),
-                    type: "checkpoint.captured" as const,
-                    threadId: input.run.threadId,
-                    runId: input.run.id,
-                    nodeId: input.rootNode.id,
-                    provider: input.run.provider,
-                    occurredAt: completedAt,
-                    payload: checkpoint,
-                  },
-                  {
-                    id: yield* idAllocator.allocate.event({ threadId: input.run.threadId }),
-                    type: "turn-item.updated" as const,
-                    threadId: input.run.threadId,
-                    runId: input.run.id,
-                    nodeId: input.rootNode.id,
-                    provider: input.run.provider,
-                    occurredAt: completedAt,
-                    payload: makeCheckpointTurnItem({
-                      idAllocator,
-                      run: input.run,
-                      rootNode: input.rootNode,
-                      providerThread: input.providerThread,
-                      checkpoint,
-                      completedAt,
-                    }),
                   },
                 ]),
             ...(input.status === "interrupted"
@@ -266,7 +251,7 @@ export const layer: Layer.Layer<
                     threadId: input.run.threadId,
                     runId: input.run.id,
                     nodeId: input.rootNode.id,
-                    provider: input.run.provider,
+                    providerInstanceId: input.run.providerInstanceId,
                     occurredAt: completedAt,
                     payload: makeInterruptResultTurnItem({
                       idAllocator,
@@ -284,7 +269,7 @@ export const layer: Layer.Layer<
               threadId: input.run.threadId,
               runId: input.run.id,
               nodeId: input.rootNode.id,
-              provider: input.run.provider,
+              providerInstanceId: input.run.providerInstanceId,
               occurredAt: completedAt,
               payload: finalizedRun,
             },
@@ -294,7 +279,7 @@ export const layer: Layer.Layer<
               threadId: input.run.threadId,
               runId: input.run.id,
               nodeId: input.rootNode.id,
-              provider: input.run.provider,
+              providerInstanceId: input.run.providerInstanceId,
               occurredAt: completedAt,
               payload: finalizedRootNode,
             },
@@ -302,7 +287,7 @@ export const layer: Layer.Layer<
               id: providerThreadEventId,
               type: "provider-thread.updated",
               threadId: input.run.threadId,
-              provider: input.run.provider,
+              providerInstanceId: input.run.providerInstanceId,
               occurredAt: completedAt,
               payload: finalizedProviderThread,
             },
@@ -336,6 +321,7 @@ export const layer: Layer.Layer<
                 if (shouldDeliverProviderEvent(event, assistantStreamingEnabled)) {
                   yield* providerEventIngestor.ingestNormalized({
                     providerSessionId: input.providerSessionId,
+                    providerInstanceId: input.run.providerInstanceId,
                     threadId: input.run.threadId,
                     runId: input.run.id,
                     nodeId: input.rootNode.id,
@@ -370,7 +356,6 @@ export const layer: Layer.Layer<
                     ? {}
                     : { shouldFinalizeRun: input.shouldFinalizeRun }),
                   status,
-                  runtimePolicy: input.runtimePolicy,
                 }).pipe(
                   Effect.mapError(
                     (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
@@ -379,7 +364,11 @@ export const layer: Layer.Layer<
               }),
             ),
             Effect.catchCause((cause) =>
-              Ref.get(latestProviderThread).pipe(
+              Effect.logWarning("orchestration V2 provider event ingestion failed", {
+                runId: input.run.id,
+                cause,
+              }).pipe(
+                Effect.andThen(Ref.get(latestProviderThread)),
                 Effect.flatMap((providerThread) =>
                   writeFinalRunEvents({
                     run: input.run,
@@ -391,7 +380,6 @@ export const layer: Layer.Layer<
                       ? {}
                       : { shouldFinalizeRun: input.shouldFinalizeRun }),
                     status: "failed",
-                    runtimePolicy: input.runtimePolicy,
                   }),
                 ),
                 Effect.mapError(
@@ -438,7 +426,11 @@ export const layer: Layer.Layer<
             })
             .pipe(
               Effect.catchCause((cause) =>
-                Fiber.interrupt(providerEventFiber).pipe(
+                Effect.logError("orchestration V2 provider turn start failed", {
+                  runId: input.run.id,
+                  cause,
+                }).pipe(
+                  Effect.andThen(Fiber.interrupt(providerEventFiber)),
                   Effect.andThen(Ref.get(latestProviderThread)),
                   Effect.flatMap((providerThread) =>
                     writeFinalRunEvents({
@@ -451,7 +443,6 @@ export const layer: Layer.Layer<
                         ? {}
                         : { shouldFinalizeRun: input.shouldFinalizeRun }),
                       status: "failed",
-                      runtimePolicy: input.runtimePolicy,
                     }),
                   ),
                   Effect.mapError(
@@ -469,39 +460,6 @@ export const layer: Layer.Layer<
     } satisfies RunExecutionServiceV2Shape);
   }),
 );
-
-function makeCheckpointTurnItem(input: {
-  readonly idAllocator: IdAllocatorV2Shape;
-  readonly run: OrchestrationV2Run;
-  readonly rootNode: OrchestrationV2ExecutionNode;
-  readonly providerThread: OrchestrationV2ProviderThread;
-  readonly checkpoint: OrchestrationV2Checkpoint;
-  readonly completedAt: DateTime.Utc;
-}): OrchestrationV2TurnItem {
-  return {
-    id: input.idAllocator.derive.turnItemFromProviderItem({
-      provider: input.run.provider,
-      nativeItemId: `checkpoint:${input.checkpoint.id}`,
-    }),
-    threadId: input.run.threadId,
-    runId: input.run.id,
-    nodeId: input.rootNode.id,
-    providerThreadId: input.providerThread.id,
-    providerTurnId: input.rootNode.providerTurnId,
-    nativeItemRef: null,
-    parentItemId: null,
-    ordinal: input.run.ordinal * 100 + 99,
-    status: "completed",
-    title: null,
-    startedAt: input.completedAt,
-    completedAt: input.completedAt,
-    updatedAt: input.completedAt,
-    type: "checkpoint",
-    checkpointId: input.checkpoint.id,
-    scopeId: input.checkpoint.scopeId,
-    files: input.checkpoint.files,
-  };
-}
 
 function makeInterruptResultTurnItem(input: {
   readonly idAllocator: IdAllocatorV2Shape;
