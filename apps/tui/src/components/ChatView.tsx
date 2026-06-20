@@ -98,6 +98,8 @@ export function ChatView({
   const [newField, setNewField] = React.useState<"message" | "branch" | "worktree">("message");
   // Which pending approval ^A/^R act on; ↑/↓ move it while an approval is up.
   const [approvalIndex, setApprovalIndex] = React.useState(0);
+  // Collapse long tool-call runs in the conversation (^T toggles).
+  const [workLogExpanded, setWorkLogExpanded] = React.useState(false);
   const [activeTerminal, setActiveTerminal] = React.useState<TerminalInfo | null>(null);
   // The terminal drawer coexists with the prompt; this tracks which one keystrokes go to.
   const [terminalFocused, setTerminalFocused] = React.useState(false);
@@ -425,6 +427,7 @@ export function ChatView({
         .catch((error) => store.setStatus(`implement failed: ${String(error)}`, "error"));
       store.setStatus("Implementing plan…", "busy");
     },
+    onToggleWorkLog: () => setWorkLogExpanded((expanded) => !expanded),
     onOpenActions: () => {
       if (!detail) {
         store.setStatus("Select a thread first.");
@@ -650,7 +653,7 @@ export function ChatView({
       ? "⚠ question pending — ^U to answer · ^C quit"
       : activeTerminal
         ? "^P switch focus · ^E close · ^↑/^↓ size · Enter send · ^N new · ^G stop · ^C quit"
-        : "↑/↓ · Enter send · ^N new · ^B plan/build · ^Y implement · ^O mode · ^E term · ^G stop · ^A/^R approve · ^K actions · ^F find · ^C quit";
+        : "↑/↓ · Enter send · ^N new · ^B plan/build · ^Y implement · ^O mode · ^E term · ^T tools · ^G stop · ^A/^R approve · ^K actions · ^F find · ^C quit";
 
   const statusStyle = statusGlyphColor(state.statusKind);
 
@@ -682,6 +685,7 @@ export function ChatView({
             approvals={approvals}
             approvalIndex={activeApprovalIndex}
             projectHint={selectedProjectTitle}
+            workLogCollapsed={!workLogExpanded}
             width={chatWidth}
             height={panesHeight}
             syntaxStyle={syntaxStyle}

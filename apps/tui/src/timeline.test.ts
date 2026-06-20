@@ -10,6 +10,7 @@ import {
   buildTimeline,
   changedFilesByMessage,
   diffStat,
+  foldWorkLog,
   isWorking,
   revertableCheckpoints,
   withTurnSeparators,
@@ -78,6 +79,37 @@ describe("withTurnSeparators", () => {
   it("Given a null turnId, then it does not start a new turn", () => {
     const entries = withTurnSeparators([msgRow("m0", null), msgRow("m1", "t1"), msgRow("m2", "t1")]);
     expect(entries.some((e) => e.kind === "separator")).toBe(false);
+  });
+});
+
+describe("foldWorkLog", () => {
+  const msgRow = (id: string) => ({ kind: "message", id, message: { id, turnId: "t1" } }) as never;
+  const toolRow = (id: string) => ({ kind: "tool", id, entry: { id, turnId: "t1" } }) as never;
+
+  it("Given a long tool run when collapsed, then earlier rows fold to a marker", () => {
+    const folded = foldWorkLog(
+      [msgRow("m1"), toolRow("a1"), toolRow("a2"), toolRow("a3"), toolRow("a4"), toolRow("a5")],
+      { collapsed: true, recent: 2 },
+    );
+    expect(folded.map((e) => e.kind)).toEqual(["message", "folded", "tool", "tool"]);
+    const marker = folded.find((e) => e.kind === "folded");
+    expect(marker).toMatchObject({ kind: "folded", hiddenCount: 3 });
+    expect(folded.filter((e) => e.kind === "tool").map((e) => (e as { id: string }).id)).toEqual([
+      "a4",
+      "a5",
+    ]);
+  });
+
+  it("Given a short run, then nothing folds", () => {
+    const folded = foldWorkLog([toolRow("a1"), toolRow("a2")], { collapsed: true, recent: 3 });
+    expect(folded.some((e) => e.kind === "folded")).toBe(false);
+  });
+
+  it("Given expanded, then it is a no-op", () => {
+    const rows = [toolRow("a1"), toolRow("a2"), toolRow("a3"), toolRow("a4")];
+    const folded = foldWorkLog(rows, { collapsed: false, recent: 1 });
+    expect(folded.some((e) => e.kind === "folded")).toBe(false);
+    expect(folded).toHaveLength(4);
   });
 });
 

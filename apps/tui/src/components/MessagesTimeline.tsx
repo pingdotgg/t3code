@@ -16,6 +16,7 @@ import {
   buildTimeline,
   changedFilesByMessage,
   diffStat,
+  foldWorkLog,
   isWorking,
   withTurnSeparators,
   workingStartedAt,
@@ -154,6 +155,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   approvals,
   approvalIndex,
   projectHint,
+  workLogCollapsed,
   width,
   height,
   syntaxStyle,
@@ -163,6 +165,8 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   readonly approvals: ReadonlyArray<PendingApproval>;
   readonly approvalIndex: number;
   readonly projectHint: string | null;
+  /** When true, long tool-call runs collapse to their most recent few (^T toggles). */
+  readonly workLogCollapsed: boolean;
   readonly width: number;
   readonly height: number;
   readonly syntaxStyle: SyntaxStyle;
@@ -182,8 +186,14 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   const startedAt = detail ? workingStartedAt(detail) : null;
 
   const timeline = React.useMemo(
-    () => (detail ? withTurnSeparators(buildTimeline(detail.messages, detail.activities)) : []),
-    [detail],
+    () =>
+      detail
+        ? foldWorkLog(withTurnSeparators(buildTimeline(detail.messages, detail.activities)), {
+            collapsed: workLogCollapsed,
+            recent: 3,
+          })
+        : [],
+    [detail, workLogCollapsed],
   );
   const checkpointByMessage = React.useMemo(
     () => (detail ? changedFilesByMessage(detail.checkpoints) : new Map()),
@@ -252,6 +262,13 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
         style={{ rootOptions: { backgroundColor: "transparent" } }}
       >
         {timeline.map((row) => {
+          if (row.kind === "folded") {
+            return (
+              <box key={row.id} marginBottom={1}>
+                <text fg={palette.dim}>{`  ⋯ ${row.hiddenCount} earlier step${row.hiddenCount === 1 ? "" : "s"}  (^T expand)`}</text>
+              </box>
+            );
+          }
           if (row.kind === "separator") {
             const head = `── turn ${row.turnNumber} `;
             return (

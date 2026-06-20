@@ -19,8 +19,46 @@ export type TimelineEntry =
   | TimelineRow
   | { readonly kind: "separator"; readonly id: string; readonly turnNumber: number };
 
+export type FoldedEntry =
+  | TimelineEntry
+  | { readonly kind: "folded"; readonly id: string; readonly hiddenCount: number };
+
 function rowTurnId(row: TimelineRow): string | null {
   return row.kind === "message" ? row.message.turnId : row.entry.turnId;
+}
+
+/**
+ * Collapse runs of consecutive tool rows to their last `recent`, replacing the
+ * earlier ones with a single "folded" marker — progressive disclosure for long
+ * turns (mirrors the web work-log's "first N + show more"). A no-op when expanded.
+ */
+export function foldWorkLog(
+  entries: ReadonlyArray<TimelineEntry>,
+  options: { readonly collapsed: boolean; readonly recent: number },
+): FoldedEntry[] {
+  if (!options.collapsed) return [...entries];
+  const out: FoldedEntry[] = [];
+  let index = 0;
+  while (index < entries.length) {
+    const entry = entries[index];
+    if (!entry || entry.kind !== "tool") {
+      if (entry) out.push(entry);
+      index += 1;
+      continue;
+    }
+    let end = index;
+    while (end < entries.length && entries[end]?.kind === "tool") end += 1;
+    const run = entries.slice(index, end);
+    if (run.length > options.recent) {
+      const hiddenCount = run.length - options.recent;
+      out.push({ kind: "folded", id: `fold:${run[0]?.id ?? index}`, hiddenCount });
+      out.push(...run.slice(hiddenCount));
+    } else {
+      out.push(...run);
+    }
+    index = end;
+  }
+  return out;
 }
 
 /**

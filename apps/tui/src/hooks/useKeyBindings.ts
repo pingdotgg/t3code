@@ -90,6 +90,7 @@ export interface KeyBindingActions {
   readonly onNewThread: () => void;
   readonly onTogglePlanMode: () => void;
   readonly onImplementPlan: () => void;
+  readonly onToggleWorkLog: () => void;
   readonly onInterrupt: () => void;
   readonly onApprove: () => void;
   readonly onDecline: () => void;
@@ -195,6 +196,7 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     if (key.ctrl && key.name === "n") return actions.onNewThread();
     if (key.ctrl && key.name === "b") return actions.onTogglePlanMode();
     if (key.ctrl && key.name === "y") return actions.onImplementPlan();
+    if (key.ctrl && key.name === "t") return actions.onToggleWorkLog();
     if (key.ctrl && key.name === "u") return actions.onReopenUserInput();
     if (key.ctrl && key.name === "k") return actions.onOpenActions();
     if (key.ctrl && key.name === "f") return actions.onOpenFilter();

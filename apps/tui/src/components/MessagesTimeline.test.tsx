@@ -31,6 +31,7 @@ async function headerFrame(mode: "default" | "plan"): Promise<string> {
       detail={detail(mode)}
       approvals={[]}
       approvalIndex={0}
+      workLogCollapsed={false}
       projectHint={null}
       width={80}
       height={10}
@@ -59,6 +60,7 @@ async function bodyFrame(
   over: Partial<OrchestrationThread>,
   approvals: ReadonlyArray<{ requestId: string; requestKind: string; detail?: string; createdAt: string }> = [],
   approvalIndex = 0,
+  workLogCollapsed = false,
 ): Promise<string> {
   const ref = React.createRef<null>();
   const full = { ...detail("default"), ...over } as unknown as OrchestrationThread;
@@ -67,6 +69,7 @@ async function bodyFrame(
       detail={full}
       approvals={approvals as never}
       approvalIndex={approvalIndex}
+      workLogCollapsed={workLogCollapsed}
       projectHint={null}
       width={88}
       height={20}
@@ -135,6 +138,28 @@ describe("MessagesTimeline body", () => {
       ] as never,
     });
     expect(frame).toContain("turn 2");
+  });
+
+  it("Given many tool calls when collapsed, then earlier ones fold into a marker", async () => {
+    const activities = Array.from({ length: 6 }, (_, i) => ({
+      id: `a${i}`,
+      tone: "tool",
+      kind: "tool.completed",
+      summary: `step ${i}`,
+      payload: { itemType: "command_execution", title: `cmd-${i}`, detail: `do ${i}` },
+      turnId: "t1",
+      sequence: i,
+      createdAt: `2026-06-19T00:00:0${i}.000Z`,
+    })) as never;
+    const collapsed = await bodyFrame({ activities }, [], 0, true);
+    expect(collapsed).toContain("3 earlier steps");
+    expect(collapsed).toContain("^T expand");
+    expect(collapsed).toContain("cmd-5"); // the most recent few stay visible
+    expect(collapsed).not.toContain("cmd-0"); // the oldest is folded away
+
+    const expanded = await bodyFrame({ activities }, [], 0, false);
+    expect(expanded).toContain("cmd-0");
+    expect(expanded).not.toContain("earlier steps");
   });
 
   it("Given a running turn, then it renders the working indicator", async () => {
