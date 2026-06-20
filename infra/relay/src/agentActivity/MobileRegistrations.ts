@@ -51,8 +51,10 @@ export const make = Effect.gen(function* () {
           deviceId: input.payload.deviceId,
         })
         .pipe(
-          Effect.tapError((cause) =>
-            Effect.logWarning("device registration activity replay failed", { cause }),
+          Effect.tapError((error) =>
+            Effect.logWarning("device registration activity replay failed", {
+              errorTag: error._tag,
+            }),
           ),
           Effect.ignore,
         );
@@ -70,8 +72,10 @@ export const make = Effect.gen(function* () {
             deviceId: input.payload.deviceId,
           })
           .pipe(
-            Effect.tapError((cause) =>
-              Effect.logWarning("live activity registration replay failed", { cause }),
+            Effect.tapError((error) =>
+              Effect.logWarning("live activity registration replay failed", {
+                errorTag: error._tag,
+              }),
             ),
             Effect.ignore,
           );
