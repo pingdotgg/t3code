@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Schema from "effect/Schema";
 
 import {
   managedEndpointDigestInput,
@@ -7,10 +8,13 @@ import {
   isManagedEndpointHostname,
   managedEndpointTunnelName,
   relayOwnsManagedEndpointZone,
+  RelayPublicDomainLabelTooLongError,
   relayPublicDomainForStage,
   relayResourceNameForStage,
   relayStageSlug,
 } from "./deploymentConfig.ts";
+
+const isRelayPublicDomainLabelTooLongError = Schema.is(RelayPublicDomainLabelTooLongError);
 
 describe("relayStageSlug", () => {
   it("matches Alchemy physical-name sanitization for default developer stages", () => {
@@ -26,6 +30,29 @@ describe("relayPublicDomainForStage", () => {
   it("isolates personal stages below the imported zone", () => {
     expect(relayPublicDomainForStage("dev_julius", "example.com")).toBe(
       "relay-dev-julius.example.com",
+    );
+  });
+
+  it("reports the stage and derived DNS label when the label is too long", () => {
+    const stage = `dev_${"x".repeat(60)}`;
+    let error: unknown;
+
+    try {
+      relayPublicDomainForStage(stage, "example.com");
+    } catch (cause) {
+      error = cause;
+    }
+
+    if (!isRelayPublicDomainLabelTooLongError(error)) {
+      throw error;
+    }
+    expect(error).toMatchObject({
+      stage,
+      label: `relay-dev-${"x".repeat(60)}`,
+      maxLength: 63,
+    });
+    expect(error.message).toBe(
+      `Relay stage '${stage}' produces custom domain label 'relay-dev-${"x".repeat(60)}' (70 characters), exceeding the DNS label limit of 63.`,
     );
   });
 });
