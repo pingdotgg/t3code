@@ -133,6 +133,13 @@ export class ManagedRelayUrlInvalidError extends Schema.TaggedErrorClass<Managed
   }
 }
 
+type RelayHttpRequestError =
+  | RelayProtectedErrorType
+  | HttpClientError.HttpClientError
+  | Schema.SchemaError;
+
+const isRelayProtectedError = Schema.is(RelayProtectedError);
+
 export class ManagedRelayRequestFailedError extends Schema.TaggedErrorClass<ManagedRelayRequestFailedError>()(
   "ManagedRelayRequestFailedError",
   {
@@ -144,6 +151,15 @@ export class ManagedRelayRequestFailedError extends Schema.TaggedErrorClass<Mana
 ) {
   override get message(): string {
     return `Could not ${this.action}.`;
+  }
+
+  static fromHttpRequest(action: ManagedRelayRequestAction) {
+    return (cause: RelayHttpRequestError) =>
+      new ManagedRelayRequestFailedError({
+        action,
+        cause,
+        ...(isRelayProtectedError(cause) ? { relayError: cause, traceId: cause.traceId } : {}),
+      });
   }
 }
 
@@ -195,11 +211,6 @@ export const ManagedRelayClientError = Schema.Union([
   ManagedRelayRequestProofCreationError,
 ]);
 export type ManagedRelayClientError = typeof ManagedRelayClientError.Type;
-
-type RelayHttpRequestError =
-  | RelayProtectedErrorType
-  | HttpClientError.HttpClientError
-  | Schema.SchemaError;
 
 export class ManagedRelayDpopSigner extends Context.Service<
   ManagedRelayDpopSigner,
@@ -290,28 +301,8 @@ export class ManagedRelayClient extends Context.Service<
   }
 >()("@t3tools/client-runtime/relay/managedRelay/ManagedRelayClient") {}
 
-const isRelayProtectedError = Schema.is(RelayProtectedError);
-
-function relayRequestError(action: ManagedRelayRequestAction) {
-  return (cause: RelayHttpRequestError): ManagedRelayClientError =>
-    new ManagedRelayRequestFailedError({
-      action,
-      cause,
-      ...(isRelayProtectedError(cause) ? { relayError: cause, traceId: cause.traceId } : {}),
-    });
-}
-
-function proofCreationErrorFields(error: ManagedRelayDpopProofCreationError) {
-  return {
-    method: error.method,
-    url: error.url,
-    cause: error,
-  };
-}
-
-function isRejectedDpopAccessToken(error: ManagedRelayClientError): boolean {
+function isRejectedDpopAccessToken(error: ManagedRelayRequestFailedError): boolean {
   return (
-    error._tag === "ManagedRelayRequestFailedError" &&
     error.relayError?._tag === "RelayAuthInvalidError" &&
     error.relayError.reason === "invalid_bearer"
   );
@@ -461,13 +452,16 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
         "relay.client_id": options.clientId,
         "relay.scopes": input.scopes.join(" "),
       });
-      const proof = yield* signer
-        .createProof(dpopProofTargets.exchangeAccessToken())
-        .pipe(
-          Effect.mapError(
-            (error) => new ManagedRelayTokenProofCreationError(proofCreationErrorFields(error)),
-          ),
-        );
+      const proof = yield* signer.createProof(dpopProofTargets.exchangeAccessToken()).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ManagedRelayTokenProofCreationError({
+              method: cause.method,
+              url: cause.url,
+              cause,
+            }),
+        ),
+      );
       const response = yield* client.token
         .exchangeDpopAccessToken({
           headers: { dpop: proof },
@@ -482,7 +476,9 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
           },
         })
         .pipe(
-          Effect.mapError(relayRequestError("exchange relay DPoP access token")),
+          Effect.mapError(
+            ManagedRelayRequestFailedError.fromHttpRequest("exchange relay DPoP access token"),
+          ),
           timeoutRelayRequest("Relay DPoP access token exchange"),
         );
       if (!oauthScopeSetEquals(response.scope, input.scopes)) {
@@ -589,7 +585,12 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
       })
       .pipe(
         Effect.mapError(
-          (error) => new ManagedRelayRequestProofCreationError(proofCreationErrorFields(error)),
+          (cause) =>
+            new ManagedRelayRequestProofCreationError({
+              method: cause.method,
+              url: cause.url,
+              cause,
+            }),
         ),
       );
     return { accessToken: token.accessToken, proof, thumbprint };
@@ -623,27 +624,29 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
       authorize(input).pipe(
         Effect.flatMap((authorization) =>
           request(authorization).pipe(
-            Effect.catch((error) => {
-              if (!isRejectedDpopAccessToken(error)) {
-                return Effect.fail(error);
-              }
-              return invalidateAccessToken(authorization.accessToken).pipe(
-                Effect.tap((invalidated) =>
-                  Effect.annotateCurrentSpan({
-                    "relay.token_cache.invalidated": invalidated,
-                    "relay.token_cache.invalidation_reason": "invalid_bearer",
-                    "relay.token_cache.retry_after_invalidation": refreshRejectedToken,
-                  }),
-                ),
-                Effect.tap((invalidated) =>
-                  invalidated && refreshRejectedToken
-                    ? Effect.logWarning(
-                        "Relay rejected a cached DPoP access token; refreshing it once.",
-                      )
-                    : Effect.void,
-                ),
-                Effect.andThen(refreshRejectedToken ? attempt(false) : Effect.fail(error)),
-              );
+            Effect.catchTags({
+              ManagedRelayRequestFailedError: (error) => {
+                if (!isRejectedDpopAccessToken(error)) {
+                  return Effect.fail(error);
+                }
+                return invalidateAccessToken(authorization.accessToken).pipe(
+                  Effect.tap((invalidated) =>
+                    Effect.annotateCurrentSpan({
+                      "relay.token_cache.invalidated": invalidated,
+                      "relay.token_cache.invalidation_reason": "invalid_bearer",
+                      "relay.token_cache.retry_after_invalidation": refreshRejectedToken,
+                    }),
+                  ),
+                  Effect.tap((invalidated) =>
+                    invalidated && refreshRejectedToken
+                      ? Effect.logWarning(
+                          "Relay rejected a cached DPoP access token; refreshing it once.",
+                        )
+                      : Effect.void,
+                  ),
+                  Effect.andThen(refreshRejectedToken ? attempt(false) : Effect.fail(error)),
+                );
+              },
             }),
           ),
         ),
@@ -676,7 +679,9 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
           .listEnvironments({ headers: bearerHeaders(input.clerkToken) })
           .pipe(
             Effect.map((response) => response.environments),
-            Effect.mapError(relayRequestError("list relay-managed environments")),
+            Effect.mapError(
+              ManagedRelayRequestFailedError.fromHttpRequest("list relay-managed environments"),
+            ),
             timeoutRelayRequest("Relay environment listing"),
           );
       },
@@ -691,7 +696,9 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
           })
           .pipe(
             Effect.map((response) => response.devices),
-            Effect.mapError(relayRequestError("list relay client devices")),
+            Effect.mapError(
+              ManagedRelayRequestFailedError.fromHttpRequest("list relay client devices"),
+            ),
             timeoutRelayRequest("Relay client device listing"),
           );
       },
@@ -706,7 +713,11 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
             payload: input.payload,
           })
           .pipe(
-            Effect.mapError(relayRequestError("create relay environment link challenge")),
+            Effect.mapError(
+              ManagedRelayRequestFailedError.fromHttpRequest(
+                "create relay environment link challenge",
+              ),
+            ),
             timeoutRelayRequest("Relay environment link challenge"),
           );
       },
@@ -721,7 +732,9 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
             payload: input.payload,
           })
           .pipe(
-            Effect.mapError(relayRequestError("link relay environment")),
+            Effect.mapError(
+              ManagedRelayRequestFailedError.fromHttpRequest("link relay environment"),
+            ),
             timeoutRelayRequest("Relay environment linking"),
           );
       },
@@ -736,7 +749,9 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
             params: { environmentId: input.environmentId },
           })
           .pipe(
-            Effect.mapError(relayRequestError("unlink relay environment")),
+            Effect.mapError(
+              ManagedRelayRequestFailedError.fromHttpRequest("unlink relay environment"),
+            ),
             timeoutRelayRequest("Relay environment unlinking"),
           );
       },
@@ -761,7 +776,9 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
                 params: { environmentId: input.environmentId },
               })
               .pipe(
-                Effect.mapError(relayRequestError("get relay environment status")),
+                Effect.mapError(
+                  ManagedRelayRequestFailedError.fromHttpRequest("get relay environment status"),
+                ),
                 timeoutRelayRequest("Relay environment status request"),
               ),
         );
@@ -792,7 +809,9 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
                 payload,
               })
               .pipe(
-                Effect.mapError(relayRequestError("connect relay environment")),
+                Effect.mapError(
+                  ManagedRelayRequestFailedError.fromHttpRequest("connect relay environment"),
+                ),
                 timeoutRelayRequest("Relay environment connection"),
               );
           },
@@ -815,7 +834,9 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
                 payload: input.payload,
               })
               .pipe(
-                Effect.mapError(relayRequestError("register relay mobile device")),
+                Effect.mapError(
+                  ManagedRelayRequestFailedError.fromHttpRequest("register relay mobile device"),
+                ),
                 timeoutRelayRequest("Relay mobile device registration"),
               ),
         );
@@ -837,7 +858,9 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
                 params: { deviceId: input.deviceId },
               })
               .pipe(
-                Effect.mapError(relayRequestError("unregister relay mobile device")),
+                Effect.mapError(
+                  ManagedRelayRequestFailedError.fromHttpRequest("unregister relay mobile device"),
+                ),
                 timeoutRelayRequest("Relay mobile device unregistration"),
               ),
         );
@@ -859,7 +882,9 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
                 payload: input.payload,
               })
               .pipe(
-                Effect.mapError(relayRequestError("register relay live activity")),
+                Effect.mapError(
+                  ManagedRelayRequestFailedError.fromHttpRequest("register relay live activity"),
+                ),
                 timeoutRelayRequest("Relay Live Activity registration"),
               ),
         );

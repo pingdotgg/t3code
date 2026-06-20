@@ -14,24 +14,36 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient, HttpClientError } from "effect/unstable/http";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
-export class RemoteEnvironmentAuthFetchError extends Data.TaggedError(
+export class RemoteEnvironmentAuthFetchError extends Schema.TaggedErrorClass<RemoteEnvironmentAuthFetchError>()(
   "RemoteEnvironmentAuthFetchError",
-)<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
+  {
+    requestUrl: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to fetch remote environment endpoint ${this.requestUrl}.`;
+  }
+}
 
-export class RemoteEnvironmentAuthInvalidJsonError extends Data.TaggedError(
+export class RemoteEnvironmentAuthInvalidJsonError extends Schema.TaggedErrorClass<RemoteEnvironmentAuthInvalidJsonError>()(
   "RemoteEnvironmentAuthInvalidJsonError",
-)<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
+  {
+    requestUrl: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Remote environment endpoint returned an invalid response from ${this.requestUrl}.`;
+  }
+}
 
 export class RemoteEnvironmentAuthUndeclaredStatusError extends Data.TaggedError(
   "RemoteEnvironmentAuthUndeclaredStatusError",
@@ -49,21 +61,19 @@ export class RemoteEnvironmentAuthUndeclaredStatusError extends Data.TaggedError
   }
 }
 
-export class RemoteEnvironmentAuthTimeoutError extends Data.TaggedError(
+export class RemoteEnvironmentAuthTimeoutError extends Schema.TaggedErrorClass<RemoteEnvironmentAuthTimeoutError>()(
   "RemoteEnvironmentAuthTimeoutError",
-)<{
-  readonly message: string;
-  readonly requestUrl: string;
-  readonly timeoutMs: number;
-}> {
-  constructor(requestUrl: string, timeoutMs: number) {
-    super({
-      message: `Remote environment endpoint ${requestUrl} timed out after ${timeoutMs}ms.`,
-      requestUrl,
-      timeoutMs,
-    });
+  {
+    requestUrl: Schema.String,
+    timeoutMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Remote environment endpoint ${this.requestUrl} timed out after ${this.timeoutMs}ms.`;
   }
 }
+
+const isRemoteEnvironmentAuthTimeoutError = Schema.is(RemoteEnvironmentAuthTimeoutError);
 
 export type RemoteEnvironmentRequestError =
   | EnvironmentRequestInvalidError
@@ -101,7 +111,7 @@ const failRemoteRequest = (
   requestUrl: string,
   cause: unknown,
 ): Effect.Effect<never, RemoteEnvironmentRequestError> => {
-  if (cause instanceof RemoteEnvironmentAuthTimeoutError) {
+  if (isRemoteEnvironmentAuthTimeoutError(cause)) {
     return Effect.fail(cause);
   }
   if (isEnvironmentHttpCommonError(cause)) {
@@ -110,7 +120,7 @@ const failRemoteRequest = (
   if (Schema.isSchemaError(cause)) {
     return Effect.fail(
       new RemoteEnvironmentAuthInvalidJsonError({
-        message: `Remote environment endpoint returned an invalid response from ${requestUrl}.`,
+        requestUrl,
         cause,
       }),
     );
@@ -124,14 +134,14 @@ const failRemoteRequest = (
     }
     return Effect.fail(
       new RemoteEnvironmentAuthInvalidJsonError({
-        message: `Remote environment endpoint returned an invalid response from ${requestUrl}.`,
+        requestUrl,
         cause,
       }),
     );
   }
   return Effect.fail(
     new RemoteEnvironmentAuthFetchError({
-      message: `Failed to fetch remote environment endpoint ${requestUrl} (${String(cause)}).`,
+      requestUrl,
       cause,
     }),
   );
@@ -146,7 +156,7 @@ export const executeEnvironmentHttpRequest = <A, E, R>(
     Effect.timeoutOption(Duration.millis(timeoutMs)),
     Effect.flatMap(
       Option.match({
-        onNone: () => Effect.fail(new RemoteEnvironmentAuthTimeoutError(requestUrl, timeoutMs)),
+        onNone: () => Effect.fail(new RemoteEnvironmentAuthTimeoutError({ requestUrl, timeoutMs })),
         onSome: Effect.succeed,
       }),
     ),

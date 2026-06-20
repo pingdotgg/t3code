@@ -148,10 +148,11 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(
-            () =>
+            (cause) =>
               new ConnectionBlockedError({
                 reason: "configuration",
                 detail: "Could not create the websocket authorization proof.",
+                cause,
               }),
           ),
         );
@@ -175,10 +176,11 @@ export const make = Effect.gen(function* () {
     }) {
       const thumbprint = yield* signer.thumbprint.pipe(
         Effect.mapError(
-          () =>
+          (cause) =>
             new ConnectionBlockedError({
               reason: "configuration",
               detail: "Could not load the environment authorization key.",
+              cause,
             }),
         ),
         Effect.withSpan("environment.authorization.dpopKey.resolve"),
@@ -248,10 +250,11 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(
-            () =>
+            (cause) =>
               new ConnectionBlockedError({
                 reason: "configuration",
                 detail: "Could not create the environment authorization proof.",
+                cause,
               }),
           ),
         );
