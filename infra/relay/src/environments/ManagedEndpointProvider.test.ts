@@ -130,6 +130,9 @@ function makeDnsClient(
         calls.push({ operation: "updateRecord", input: { dnsRecordId, request } });
         if (!currentRecords.some((record) => record.id === dnsRecordId)) {
           return yield* new ManagedEndpointProvider.ManagedEndpointDnsClientError({
+            operation: "update-record",
+            hostname: request.name,
+            dnsRecordId,
             cause: `DNS record ${dnsRecordId} does not exist.`,
           });
         }
@@ -398,7 +401,13 @@ describe("ManagedEndpointProvider", () => {
       expect(dnsCalls).toHaveLength(0);
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") {
-        expect(result.failure._tag).toBe("ManagedEndpointOriginNotAllowed");
+        expect(result.failure).toMatchObject({
+          _tag: "ManagedEndpointOriginNotAllowed",
+          userId: "user_ABC",
+          environmentId: "env_ABC",
+          host: "192.168.1.10",
+          port: 3773,
+        });
       }
     }).pipe(Effect.provide(providerLayer(makeTunnelClient(), makeDnsClient(dnsCalls))));
   });
@@ -593,6 +602,8 @@ describe("ManagedEndpointProvider", () => {
     const tunnelCalls: TunnelCall[] = [];
     let deleteAttempts = 0;
     const failure = new ManagedEndpointProvider.ManagedEndpointTunnelClientError({
+      operation: "delete",
+      tunnelId: "tunnel-id",
       cause: "Cloudflare tunnel deletion failed",
     });
     const tunnels = makePersistentTunnelClient(tunnelCalls);
@@ -618,6 +629,16 @@ describe("ManagedEndpointProvider", () => {
       });
       const first = yield* Effect.result(provider.deprovision(key));
       expect(first._tag).toBe("Failure");
+      if (first._tag === "Failure") {
+        expect(first.failure).toMatchObject({
+          _tag: "ManagedEndpointDeprovisioningFailed",
+          stage: "delete-tunnel",
+          userId: key.userId,
+          environmentId: key.environmentId,
+          tunnelId: "tunnel-id",
+        });
+        expect(first.failure.cause).toBe(failure);
+      }
       yield* provider.deprovision(key);
 
       expect(allocationCalls.map((call) => call.operation)).toEqual([
@@ -639,13 +660,23 @@ describe("ManagedEndpointProvider", () => {
       ...makeTunnelClient(),
       delete: () =>
         Effect.fail(
-          new ManagedEndpointProvider.ManagedEndpointTunnelClientError({ cause: notFound }),
+          new ManagedEndpointProvider.ManagedEndpointTunnelClientError({
+            operation: "delete",
+            tunnelId: "tunnel-id",
+            cause: notFound,
+          }),
         ),
     });
     const dnsClient = ManagedEndpointProvider.ManagedEndpointDnsClient.of({
       ...makeDnsClient(),
       deleteRecord: () =>
-        Effect.fail(new ManagedEndpointProvider.ManagedEndpointDnsClientError({ cause: notFound })),
+        Effect.fail(
+          new ManagedEndpointProvider.ManagedEndpointDnsClientError({
+            operation: "delete-record",
+            dnsRecordId: "created-record-id",
+            cause: notFound,
+          }),
+        ),
     });
     const layer = providerLayer(tunnelClient, dnsClient, makeAllocations(allocationCalls));
 
@@ -690,6 +721,8 @@ describe("ManagedEndpointProvider", () => {
   it.effect("recovers when DNS creation reports failure after the record became visible", () => {
     const dnsCalls: DnsCall[] = [];
     const failure = new ManagedEndpointProvider.ManagedEndpointDnsClientError({
+      operation: "create-record",
+      hostname: expectedManagedHostname("env_ABC"),
       cause: "ambiguous Cloudflare DNS response",
     });
     let records: ReadonlyArray<{ readonly id: string }> = [];
@@ -732,8 +765,43 @@ describe("ManagedEndpointProvider", () => {
     }).pipe(Effect.provide(providerLayer(makeTunnelClient(), dnsClient)));
   });
 
+  it.effect("reports malformed tunnel responses without manufacturing a cause", () => {
+    const dnsCalls: DnsCall[] = [];
+    const tunnelClient = ManagedEndpointProvider.ManagedEndpointTunnelClient.of({
+      ...makeTunnelClient(),
+      create: () => Effect.succeed({ id: "returned-tunnel-id", name: null }),
+    });
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const error = yield* Effect.flip(
+        provider.provision({
+          userId: "user_ABC",
+          environmentId: "env_ABC",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        }),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "ManagedEndpointProvisioningFailed",
+        stage: "validate-tunnel-response",
+        userId: "user_ABC",
+        environmentId: "env_ABC",
+        hostname: expectedManagedHostname("env_ABC"),
+        tunnelName: expectedManagedTunnelName("env_ABC"),
+        returnedTunnelId: "returned-tunnel-id",
+      });
+      if (error._tag === "ManagedEndpointProvisioningFailed") {
+        expect(error.cause).toBeUndefined();
+      }
+      expect(dnsCalls).toHaveLength(0);
+    }).pipe(Effect.provide(providerLayer(tunnelClient, makeDnsClient(dnsCalls))));
+  });
+
   it.effect("fails provisioning when the DNS client fails", () => {
     const failure = new ManagedEndpointProvider.ManagedEndpointDnsClientError({
+      operation: "list-records",
+      hostname: expectedManagedHostname("env_ABC"),
       cause: "Cloudflare DNS failure",
     });
     const dnsClient = ManagedEndpointProvider.ManagedEndpointDnsClient.of({
@@ -753,8 +821,18 @@ describe("ManagedEndpointProvider", () => {
         }),
       );
 
-      expect(error._tag).toBe("ManagedEndpointProvisioningFailed");
-      expect(error.cause).toBe(failure);
+      expect(error).toMatchObject({
+        _tag: "ManagedEndpointProvisioningFailed",
+        stage: "ensure-dns-record",
+        userId: "user_ABC",
+        environmentId: "env_ABC",
+        hostname: expectedManagedHostname("env_ABC"),
+        tunnelName: expectedManagedTunnelName("env_ABC"),
+        tunnelId: "tunnel-id",
+      });
+      if (error._tag === "ManagedEndpointProvisioningFailed") {
+        expect(error.cause).toBe(failure);
+      }
     }).pipe(Effect.provide(providerLayer(makeTunnelClient(), dnsClient)));
   });
 });
