@@ -6,8 +6,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import {
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 
+import { GitCommandError } from "@t3tools/contracts";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -53,10 +59,15 @@ const repositoryJson = {
 
 function makeLayer(input: {
   readonly response: (request: HttpClientRequest.HttpClientRequest) => Response;
+  readonly requestFailure?: (
+    request: HttpClientRequest.HttpClientRequest,
+  ) => HttpClientError.HttpClientError;
   readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
 }) {
   const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
-    Effect.succeed(HttpClientResponse.fromWeb(request, input.response(request))),
+    input.requestFailure
+      ? Effect.fail(input.requestFailure(request))
+      : Effect.succeed(HttpClientResponse.fromWeb(request, input.response(request))),
   );
   const gitMock = {
     readConfigValue: vi.fn<GitVcsDriver.GitVcsDriver["Service"]["readConfigValue"]>(() =>
@@ -497,6 +508,42 @@ it.effect("reports auth status through the Bitbucket REST /user endpoint", () =>
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("preserves the HTTP client failure without deriving the domain message from it", () => {
+  const transportCause = new Error("socket reset by peer");
+  let requestFailure: HttpClientError.HttpClientError | undefined;
+  const { layer } = makeLayer({
+    response: () => Response.json({}),
+    requestFailure: (request) => {
+      requestFailure = new HttpClientError.HttpClientError({
+        reason: new HttpClientError.TransportError({
+          request,
+          cause: transportCause,
+        }),
+      });
+      return requestFailure;
+    },
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const error = yield* Effect.flip(
+      bitbucket.getPullRequest({
+        cwd: "/repo",
+        reference: "42",
+      }),
+    );
+
+    assert.strictEqual(error.operation, "getPullRequest");
+    assert.strictEqual(error.detail, "Failed to send the Bitbucket request.");
+    assert.strictEqual(
+      error.message,
+      "Bitbucket API failed in getPullRequest: Failed to send the Bitbucket request.",
+    );
+    assert.strictEqual(error.cause, requestFailure);
+    assert.strictEqual(requestFailure?.cause, transportCause);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("checks out same-repository pull requests with the existing Bitbucket remote", () => {
   const { git, layer } = makeLayer({
     response: () =>
@@ -546,6 +593,50 @@ it.effect("checks out same-repository pull requests with the existing Bitbucket 
       cwd: "/repo",
       refName: "feature/source-control",
     });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("preserves Git checkout failures without deriving the domain message from them", () => {
+  const gitCause = new GitCommandError({
+    operation: "fetchRemoteBranch",
+    command: "git fetch origin feature/source-control",
+    cwd: "/repo",
+    detail: "remote rejected the request",
+  });
+  const { layer } = makeLayer({
+    response: () =>
+      Response.json({
+        ...bitbucketPullRequest,
+        source: {
+          branch: { name: "feature/source-control" },
+          repository: {
+            full_name: "pingdotgg/t3code",
+            workspace: { slug: "pingdotgg" },
+          },
+        },
+      }),
+    git: {
+      fetchRemoteBranch: () => Effect.fail(gitCause),
+    },
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const error = yield* Effect.flip(
+      bitbucket.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "42",
+        force: true,
+      }),
+    );
+
+    assert.strictEqual(error.operation, "checkoutPullRequest");
+    assert.strictEqual(error.detail, "Failed to check out the Bitbucket pull request.");
+    assert.strictEqual(
+      error.message,
+      "Bitbucket API failed in checkoutPullRequest: Failed to check out the Bitbucket pull request.",
+    );
+    assert.strictEqual(error.cause, gitCause);
   }).pipe(Effect.provide(layer));
 });
 

@@ -338,14 +338,6 @@ function authFromConfig(
   };
 }
 
-function requestError(operation: string, cause: unknown): BitbucketApiError {
-  return new BitbucketApiError({
-    operation,
-    detail: cause instanceof Error ? cause.message : String(cause),
-    cause,
-  });
-}
-
 function responseError(
   operation: string,
   response: HttpClientResponse.HttpClientResponse,
@@ -412,7 +404,14 @@ export const make = Effect.gen(function* () {
     schema: S,
   ): Effect.Effect<S["Type"], BitbucketApiError, S["DecodingServices"]> =>
     httpClient.execute(withAuth(request.pipe(HttpClientRequest.acceptJson))).pipe(
-      Effect.mapError((cause) => requestError(operation, cause)),
+      Effect.mapError(
+        (cause) =>
+          new BitbucketApiError({
+            operation,
+            detail: "Failed to send the Bitbucket request.",
+            cause,
+          }),
+      ),
       Effect.flatMap((response) => decodeResponse(operation, schema, response)),
     );
 
@@ -746,7 +745,7 @@ export const make = Effect.gen(function* () {
             ? cause
             : new BitbucketApiError({
                 operation: "checkoutPullRequest",
-                detail: cause instanceof Error ? cause.message : String(cause),
+                detail: "Failed to check out the Bitbucket pull request.",
                 cause,
               }),
         ),
