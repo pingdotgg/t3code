@@ -12,14 +12,13 @@ export interface DesktopIconPaths {
   readonly png: Option.Option<string>;
 }
 
-export interface DesktopAssetsShape {
-  readonly iconPaths: Effect.Effect<DesktopIconPaths>;
-  readonly resolveResourcePath: (fileName: string) => Effect.Effect<Option.Option<string>>;
-}
-
-export class DesktopAssets extends Context.Service<DesktopAssets, DesktopAssetsShape>()(
-  "@t3tools/desktop/app/DesktopAssets",
-) {}
+export class DesktopAssets extends Context.Service<
+  DesktopAssets,
+  {
+    readonly iconPaths: Effect.Effect<DesktopIconPaths>;
+    readonly resolveResourcePath: (fileName: string) => Effect.Effect<Option.Option<string>>;
+  }
+>()("@t3tools/desktop/app/DesktopAssets") {}
 
 const resolveResourcePath = Effect.fn("desktop.assets.resolveResourcePath")(function* (
   fileName: string,

@@ -63,7 +63,7 @@ const makeElectronAppLayer = (calls: ElectronAppCalls) =>
       }),
     appendCommandLineSwitch: () => Effect.void,
     on: () => Effect.void,
-  } satisfies ElectronApp.ElectronAppShape);
+  } satisfies ElectronApp.ElectronApp["Service"]);
 
 const makeAssetsLayer = (png: Option.Option<string>) =>
   Layer.succeed(DesktopAssets.DesktopAssets, {
@@ -73,7 +73,7 @@ const makeAssetsLayer = (png: Option.Option<string>) =>
       png,
     }),
     resolveResourcePath: () => Effect.succeed(Option.none()),
-  } satisfies DesktopAssets.DesktopAssetsShape);
+  } satisfies DesktopAssets.DesktopAssets["Service"]);
 
 const makeEnvironmentLayer = (overrides: TestEnvironmentInput = {}) => {
   const { env, ...environmentOverrides } = overrides;

@@ -91,7 +91,7 @@ const desktopAssetsLayer = Layer.succeed(DesktopAssets.DesktopAssets, {
     png: Option.none<string>(),
   }),
   resolveResourcePath: () => Effect.succeed(Option.none<string>()),
-} satisfies DesktopAssets.DesktopAssetsShape);
+} satisfies DesktopAssets.DesktopAssets["Service"]);
 
 const desktopServerExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
   getState: Effect.die("unexpected getState"),
@@ -106,19 +106,19 @@ const desktopServerExposureLayer = Layer.succeed(DesktopServerExposure.DesktopSe
   setMode: () => Effect.die("unexpected setMode"),
   setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
   getAdvertisedEndpoints: Effect.die("unexpected getAdvertisedEndpoints"),
-} satisfies DesktopServerExposure.DesktopServerExposureShape);
+} satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
 
 const electronMenuLayer = Layer.succeed(ElectronMenu.ElectronMenu, {
   setApplicationMenu: () => Effect.void,
   popupTemplate: () => Effect.void,
   showContextMenu: () => Effect.succeed(Option.none()),
-} satisfies ElectronMenu.ElectronMenuShape);
+} satisfies ElectronMenu.ElectronMenu["Service"]);
 
 const electronThemeLayer = Layer.succeed(ElectronTheme.ElectronTheme, {
   shouldUseDarkColors: Effect.succeed(false),
   setSource: () => Effect.void,
   onUpdated: () => Effect.void,
-} satisfies ElectronTheme.ElectronThemeShape);
+} satisfies ElectronTheme.ElectronTheme["Service"]);
 
 const desktopEnvironmentLayer = DesktopEnvironment.layer(environmentInput).pipe(
   Layer.provide(
@@ -156,7 +156,7 @@ function makeTestLayer(input: {
     sendAll: () => Effect.void,
     destroyAll: Effect.void,
     syncAllAppearance: (sync) => sync(input.window),
-  } satisfies ElectronWindow.ElectronWindowShape);
+  } satisfies ElectronWindow.ElectronWindow["Service"]);
 
   return DesktopWindow.layer.pipe(
     Layer.provide(
@@ -173,7 +173,7 @@ function makeTestLayer(input: {
               return true;
             }),
           copyText: () => Effect.void,
-        } satisfies ElectronShell.ElectronShellShape),
+        } satisfies ElectronShell.ElectronShell["Service"]),
         electronThemeLayer,
         electronWindowLayer,
         Layer.mock(PreviewManager.PreviewManager)({

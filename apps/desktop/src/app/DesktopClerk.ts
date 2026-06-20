@@ -14,17 +14,16 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
 
-export interface DesktopClerkShape {
-  readonly configure: Effect.Effect<
-    void,
-    never,
-    ElectronApp.ElectronApp | ElectronWindow.ElectronWindow | Scope.Scope
-  >;
-}
-
-export class DesktopClerk extends Context.Service<DesktopClerk, DesktopClerkShape>()(
-  "@t3tools/desktop/app/DesktopClerk",
-) {}
+export class DesktopClerk extends Context.Service<
+  DesktopClerk,
+  {
+    readonly configure: Effect.Effect<
+      void,
+      never,
+      ElectronApp.ElectronApp | ElectronWindow.ElectronWindow | Scope.Scope
+    >;
+  }
+>()("@t3tools/desktop/app/DesktopClerk") {}
 
 export function resolveDesktopClerkFrontendApiHostname(
   publishableKey: string | undefined,

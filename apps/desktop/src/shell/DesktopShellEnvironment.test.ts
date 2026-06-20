@@ -64,7 +64,7 @@ function runShellEnvironment(input: {
     DesktopEnvironment.DesktopEnvironment,
     DesktopEnvironment.DesktopEnvironment.of({
       platform: input.platform,
-    } as DesktopEnvironment.DesktopEnvironmentShape),
+    } as DesktopEnvironment.DesktopEnvironment["Service"]),
   );
   const spawnerLayer = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,

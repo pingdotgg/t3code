@@ -59,7 +59,7 @@ const environmentLayer = Layer.succeed(
   DesktopEnvironment.DesktopEnvironment,
   DesktopEnvironment.DesktopEnvironment.of({
     browserArtifactsDir: "/tmp/t3/dev/browser-artifacts",
-  } as DesktopEnvironment.DesktopEnvironmentShape),
+  } as DesktopEnvironment.DesktopEnvironment["Service"]),
 );
 
 const fileSystemLayer = FileSystem.layerNoop({
@@ -82,7 +82,7 @@ const layer = PreviewManager.layer.pipe(
 
 const withManager = <A>(
   use: (
-    manager: PreviewManager.PreviewManagerShape,
+    manager: PreviewManager.PreviewManager["Service"],
   ) => Effect.Effect<A, PreviewManager.PreviewManagerError, Scope.Scope>,
 ) =>
   Effect.gen(function* () {

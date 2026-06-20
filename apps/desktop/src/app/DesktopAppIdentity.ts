@@ -18,14 +18,12 @@ const AppPackageMetadata = Schema.Struct({
 });
 const decodeAppPackageMetadata = Schema.decodeEffect(Schema.fromJsonString(AppPackageMetadata));
 
-export interface DesktopAppIdentityShape {
-  readonly resolveUserDataPath: Effect.Effect<string>;
-  readonly configure: Effect.Effect<void>;
-}
-
 export class DesktopAppIdentity extends Context.Service<
   DesktopAppIdentity,
-  DesktopAppIdentityShape
+  {
+    readonly resolveUserDataPath: Effect.Effect<string>;
+    readonly configure: Effect.Effect<void>;
+  }
 >()("@t3tools/desktop/app/DesktopAppIdentity") {}
 
 const normalizeCommitHash = (value: string): Option.Option<string> => {

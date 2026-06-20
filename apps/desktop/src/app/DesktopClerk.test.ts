@@ -21,10 +21,6 @@ vi.mock("@clerk/electron/storage", () => ({
   storage: storageMock,
 }));
 
-import {
-  createDesktopClerkBridge,
-  resolveDesktopClerkFrontendApiHostname,
-} from "./DesktopClerk.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
@@ -32,9 +28,12 @@ describe("DesktopClerk", () => {
   it("derives the Clerk Frontend API hostname used by the desktop CSP", () => {
     const publishableKey = `pk_test_${btoa("clerk.t3.codes$")}`;
 
-    assert.equal(resolveDesktopClerkFrontendApiHostname(publishableKey), "clerk.t3.codes");
-    assert.equal(resolveDesktopClerkFrontendApiHostname(""), undefined);
-    assert.equal(resolveDesktopClerkFrontendApiHostname("invalid"), undefined);
+    assert.equal(
+      DesktopClerk.resolveDesktopClerkFrontendApiHostname(publishableKey),
+      "clerk.t3.codes",
+    );
+    assert.equal(DesktopClerk.resolveDesktopClerkFrontendApiHostname(""), undefined);
+    assert.equal(DesktopClerk.resolveDesktopClerkFrontendApiHostname("invalid"), undefined);
   });
 
   it.effect("acquires and releases the SDK bridge with the layer", () => {
@@ -44,7 +43,7 @@ describe("DesktopClerk", () => {
     const environment = DesktopEnvironment.DesktopEnvironment.of({
       stateDir: "/tmp/t3-state",
       isDevelopment: true,
-    } as unknown as DesktopEnvironment.DesktopEnvironmentShape);
+    } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
     return Effect.gen(function* () {
       yield* Effect.scoped(
@@ -78,7 +77,7 @@ describe("DesktopClerk", () => {
     storageMock.mockReturnValue(storageAdapter);
     createClerkBridgeMock.mockReturnValue(bridge);
 
-    assert.equal(createDesktopClerkBridge("/tmp/t3-state", isDevelopment), bridge);
+    assert.equal(DesktopClerk.createDesktopClerkBridge("/tmp/t3-state", isDevelopment), bridge);
     assert.deepEqual(storageMock.mock.calls, [[{ path: "/tmp/t3-state" }]]);
     assert.deepEqual(createClerkBridgeMock.mock.calls, [
       [
