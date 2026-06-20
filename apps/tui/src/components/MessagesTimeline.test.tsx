@@ -30,6 +30,7 @@ async function headerFrame(mode: "default" | "plan"): Promise<string> {
     <MessagesTimeline
       detail={detail(mode)}
       approvals={[]}
+      approvalIndex={0}
       projectHint={null}
       width={80}
       height={10}
@@ -54,13 +55,18 @@ describe("MessagesTimeline header", () => {
   });
 });
 
-async function bodyFrame(over: Partial<OrchestrationThread>): Promise<string> {
+async function bodyFrame(
+  over: Partial<OrchestrationThread>,
+  approvals: ReadonlyArray<{ requestId: string; requestKind: string; detail?: string; createdAt: string }> = [],
+  approvalIndex = 0,
+): Promise<string> {
   const ref = React.createRef<null>();
   const full = { ...detail("default"), ...over } as unknown as OrchestrationThread;
   const t = await testRender(
     <MessagesTimeline
       detail={full}
-      approvals={[]}
+      approvals={approvals as never}
+      approvalIndex={approvalIndex}
       projectHint={null}
       width={88}
       height={20}
@@ -164,5 +170,20 @@ describe("MessagesTimeline body", () => {
     expect(frame).toContain("Migrate the parser");
     expect(frame).toContain("proposed plan");
     expect(frame).toContain("^Y implement");
+  });
+
+  it("Given several pending approvals, then it shows the count and highlights the selected one", async () => {
+    const frame = await bodyFrame(
+      {},
+      [
+        { requestId: "r1", requestKind: "command", detail: "rm -rf build", createdAt: "2026-06-19T00:00:00.000Z" },
+        { requestId: "r2", requestKind: "file-change", detail: "src/app.ts", createdAt: "2026-06-19T00:00:01.000Z" },
+      ],
+      1,
+    );
+    expect(frame).toContain("(2 of 2)");
+    expect(frame).toContain("↑/↓ select");
+    // The second approval (index 1) is the active one.
+    expect(frame).toContain("▸ file-change");
   });
 });

@@ -151,6 +151,7 @@ function ProposedPlanCard({
 export const MessagesTimeline = React.memo(function MessagesTimeline({
   detail,
   approvals,
+  approvalIndex,
   projectHint,
   width,
   height,
@@ -159,6 +160,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
 }: {
   readonly detail: OrchestrationThread | null;
   readonly approvals: ReadonlyArray<PendingApproval>;
+  readonly approvalIndex: number;
   readonly projectHint: string | null;
   readonly width: number;
   readonly height: number;
@@ -307,13 +309,24 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
         <box flexDirection="column" border borderStyle="rounded" borderColor={ansi("red")} paddingLeft={1} paddingRight={1}>
           <text>
             <span fg={ansi("red")}>Approval required</span>
+            {approvals.length > 1 ? (
+              <span fg={palette.dim}>{`  (${Math.min(approvalIndex, approvals.length - 1) + 1} of ${approvals.length})`}</span>
+            ) : null}
           </text>
-          {approvals.map((approval) => (
-            <text key={approval.requestId}>
-              {`${approval.requestKind}${approval.detail ? `: ${approval.detail}` : ""}`}
-            </text>
-          ))}
-          <text fg={palette.dim}>^A approve   ^R deny</text>
+          {approvals.map((approval, index) => {
+            const active = index === Math.min(approvalIndex, approvals.length - 1);
+            return (
+              <text key={approval.requestId}>
+                <span fg={active ? palette.accent : palette.dim}>{active ? "▸ " : "  "}</span>
+                <span fg={active ? palette.text : palette.dim}>
+                  {`${approval.requestKind}${approval.detail ? `: ${approval.detail}` : ""}`}
+                </span>
+              </text>
+            );
+          })}
+          <text fg={palette.dim}>
+            {approvals.length > 1 ? "↑/↓ select · ^A approve · ^R deny" : "^A approve   ^R deny"}
+          </text>
         </box>
       ) : null}
     </box>

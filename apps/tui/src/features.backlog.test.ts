@@ -10,13 +10,7 @@ import { describe, it } from "bun:test";
 // plan↔build toggle, rename, archive/unarchive, delete, stop-session, search/filter,
 // multiline composer + paste, tool-call rows, changed-files summary, working indicator,
 // proposed-plan card, implement-plan (^Y, same thread via sourceProposedPlan),
-// context-window meter.
-
-describe.skip("Backlog — Low/Med: cycle through all pending approvals", () => {
-  it("Given several pending approvals, when navigating, then each can be approved/declined in turn", () => {
-    // Today ^A/^R act only on approvals[0]; needs an index + per-request navigation.
-  });
-});
+// context-window meter, cycle pending approvals (↑/↓).
 
 describe.skip("Backlog — Low/Med: new-thread options (branch / worktree / runtimeMode)", () => {
   it("Given the new-thread dialog, when options are set, then createThread receives them", () => {

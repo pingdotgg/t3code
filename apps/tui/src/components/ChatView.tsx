@@ -59,6 +59,8 @@ export function ChatView({
   const [draft, setDraft] = React.useState("");
   const [renameDraft, setRenameDraft] = React.useState("");
   const [projectIndex, setProjectIndex] = React.useState(0);
+  // Which pending approval ^A/^R act on; ↑/↓ move it while an approval is up.
+  const [approvalIndex, setApprovalIndex] = React.useState(0);
   const [activeTerminal, setActiveTerminal] = React.useState<TerminalInfo | null>(null);
   // The terminal drawer coexists with the prompt; this tracks which one keystrokes go to.
   const [terminalFocused, setTerminalFocused] = React.useState(false);
@@ -87,6 +89,9 @@ export function ChatView({
     () => (detail ? derivePendingApprovals(detail.activities) : []),
     [detail],
   );
+  // Held across re-derivations; clamp so a shrinking queue can't point past the end.
+  const activeApprovalIndex =
+    approvals.length > 0 ? Math.min(approvalIndex, approvals.length - 1) : 0;
   const selectedProjectTitle =
     state.selection?.kind === "project"
       ? (projects.find((project) => project.id === state.selection?.id)?.title ?? null)
@@ -245,13 +250,22 @@ export function ChatView({
       setProjectIndex((index) => (index > 0 ? index - 1 : Math.max(projects.length - 1, 0))),
     onProjectNext: () => setProjectIndex((index) => (index + 1) % Math.max(projects.length, 1)),
     onSubmitNew: submitNewThread,
-    // ↑/↓ navigate the sidebar, but yield to the reply editor once it has multiple
-    // lines so the cursor can move vertically within a multiline prompt.
+    // ↑/↓ move the approval cursor while a pending approval is up (and the reply is
+    // empty), otherwise navigate the sidebar — yielding to a multiline reply editor
+    // so the cursor can move vertically within the prompt.
     onNavUp: () => {
+      if (approvals.length > 1 && reply.length === 0) {
+        setApprovalIndex((index) => (index <= 0 ? approvals.length - 1 : index - 1));
+        return;
+      }
       if (reply.includes("\n")) return;
       store.moveSelection(-1);
     },
     onNavDown: () => {
+      if (approvals.length > 1 && reply.length === 0) {
+        setApprovalIndex((index) => (index + 1) % approvals.length);
+        return;
+      }
       if (reply.includes("\n")) return;
       store.moveSelection(1);
     },
@@ -344,13 +358,15 @@ export function ChatView({
       store.setStatus("Interrupt sent.");
     },
     onApprove: () => {
-      if (!detail || !approvals[0]) return;
-      void client.approve(detail.id, approvals[0].requestId, "accept").catch(() => {});
+      const approval = approvals[activeApprovalIndex];
+      if (!detail || !approval) return;
+      void client.approve(detail.id, approval.requestId, "accept").catch(() => {});
       store.setStatus("Approved.");
     },
     onDecline: () => {
-      if (!detail || !approvals[0]) return;
-      void client.approve(detail.id, approvals[0].requestId, "decline").catch(() => {});
+      const approval = approvals[activeApprovalIndex];
+      if (!detail || !approval) return;
+      void client.approve(detail.id, approval.requestId, "decline").catch(() => {});
       store.setStatus("Declined.");
     },
     onCycleMode: () => {
@@ -398,6 +414,7 @@ export function ChatView({
         <MessagesTimeline
           detail={detail}
           approvals={approvals}
+          approvalIndex={activeApprovalIndex}
           projectHint={selectedProjectTitle}
           width={chatWidth}
           height={panesHeight}
