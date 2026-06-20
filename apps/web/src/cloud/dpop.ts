@@ -53,14 +53,14 @@ export class BrowserDpopProofError extends Schema.TaggedErrorClass<BrowserDpopPr
   {
     operation: Schema.Literals(["normalize-url", "generate-id", "sign"]),
     method: Schema.String,
-    url: Schema.String,
-    normalizedUrl: Schema.optional(Schema.String),
+    requestTarget: Schema.String,
+    urlLength: Schema.Number,
     thumbprint: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Browser DPoP proof operation "${this.operation}" failed for ${this.method.toUpperCase()} ${this.url}.`;
+    return `Browser DPoP proof operation "${this.operation}" failed for ${this.method.toUpperCase()} ${this.requestTarget}.`;
   }
 }
 
@@ -77,6 +77,15 @@ const DPOP_DATABASE_VERSION = 1;
 const DPOP_KEY_STORE_NAME = "keys";
 const DPOP_KEY_ID = "relay-dpop-proof-key";
 const decodeDpopPublicJwk = Schema.decodeUnknownEffect(DpopPublicJwk);
+
+function redactDpopRequestTarget(url: string): string {
+  try {
+    const parsedUrl = new URL(url);
+    return `${parsedUrl.protocol}//${parsedUrl.host}${parsedUrl.pathname}`;
+  } catch {
+    return "<invalid-url>";
+  }
+}
 
 export const browserCryptoLayer = Layer.succeed(
   Crypto.Crypto,
@@ -222,13 +231,16 @@ export function createBrowserDpopProof(input: {
   Crypto.Crypto
 > {
   return Effect.gen(function* () {
+    const requestTarget = redactDpopRequestTarget(input.url);
+    const urlLength = input.url.length;
     const normalizedUrl = yield* Effect.try({
       try: () => new URL(input.url),
       catch: (cause) =>
         new BrowserDpopProofError({
           operation: "normalize-url",
           method: input.method,
-          url: input.url,
+          requestTarget,
+          urlLength,
           thumbprint: input.proofKey.thumbprint,
           cause,
         }),
@@ -242,8 +254,8 @@ export function createBrowserDpopProof(input: {
           new BrowserDpopProofError({
             operation: "generate-id",
             method: input.method,
-            url: input.url,
-            normalizedUrl: normalizedUrl.toString(),
+            requestTarget,
+            urlLength,
             thumbprint: input.proofKey.thumbprint,
             cause,
           }),
@@ -268,8 +280,8 @@ export function createBrowserDpopProof(input: {
         new BrowserDpopProofError({
           operation: "sign",
           method: input.method,
-          url: input.url,
-          normalizedUrl: normalizedUrl.toString(),
+          requestTarget,
+          urlLength,
           thumbprint: input.proofKey.thumbprint,
           cause,
         }),
