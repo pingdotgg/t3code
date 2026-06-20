@@ -36,6 +36,7 @@ export const ChatComposer = React.memo(function ChatComposer({
   auxValue,
   placeholder,
   projectName,
+  interactionMode,
   inputFocused,
   composerEpoch,
   onReplyInput,
@@ -50,6 +51,8 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly auxValue: string;
   readonly placeholder: string;
   readonly projectName: string;
+  /** Plan/build mode of the active thread; shown as a badge on the reply prompt. */
+  readonly interactionMode: "default" | "plan";
   /** False when the terminal pane holds focus — render static text, not an input. */
   readonly inputFocused: boolean;
   /** Bumped by the parent to remount (clear) the reply editor after send/clear. */
@@ -142,7 +145,10 @@ export const ChatComposer = React.memo(function ChatComposer({
       flexShrink={0}
     >
       <text>
-        <span fg={palette.accent}>{"› "}</span>
+        <span fg={palette.bg} bg={interactionMode === "plan" ? palette.accent : palette.dim}>
+          {interactionMode === "plan" ? " plan " : " build "}
+        </span>
+        <span fg={palette.accent}>{" › "}</span>
       </text>
       {inputFocused ? (
         // Multiline editor: Enter sends, Shift+Enter newlines, paste inserts the

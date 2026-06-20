@@ -16,6 +16,7 @@ const base = {
   auxValue: "",
   placeholder: "Type a reply, Enter to send",
   projectName: "Acme",
+  interactionMode: "default",
   composerEpoch: 0,
   onReplyInput: noop,
   onReplySubmit: noop,
@@ -40,6 +41,16 @@ describe("ChatComposer", () => {
   it("Given compose mode with focus, when rendered, then the ^P hint is gone (input is mounted)", async () => {
     const frame = await frameOf(<ChatComposer {...base} mode="compose" inputFocused />);
     expect(frame).not.toContain("^P to type a reply");
+  });
+
+  it("Given build mode, then the prompt shows a build badge", async () => {
+    const frame = await frameOf(<ChatComposer {...base} mode="compose" interactionMode="default" inputFocused />);
+    expect(frame).toContain("build");
+  });
+
+  it("Given plan mode, then the prompt shows a plan badge", async () => {
+    const frame = await frameOf(<ChatComposer {...base} mode="compose" interactionMode="plan" inputFocused />);
+    expect(frame).toContain("plan");
   });
 
   it("Given rename mode, when rendered, then it shows the rename label and hint", async () => {

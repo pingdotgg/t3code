@@ -482,6 +482,7 @@ export function ChatView({
           auxValue={focus === "rename" ? renameDraft : focus === "filter" ? state.filter : ""}
           placeholder={placeholder}
           projectName={projects[activeProjectIndex]?.title ?? "(none)"}
+          interactionMode={detail?.interactionMode ?? "default"}
           inputFocused={!terminalFocused}
           composerEpoch={composerEpoch}
           onReplyInput={setReply}
