@@ -289,10 +289,19 @@ const environmentHttpConflictMessages = {
   cloud_mint_request_replayed: "Cloud mint request was already consumed.",
 } satisfies Record<EnvironmentHttpConflictReason, string>;
 
+// These HTTP errors cross independently deployed clients, relays, and environment servers. Keep
+// newly added diagnostics optional while decoding so a newer peer can still consume the legacy
+// message-only payload. The constructors below continue to require structured context from new
+// application code and only preserve `message` when Schema is decoding an older wire payload.
+function decodedEnvironmentHttpErrorMessage(props: object): string | undefined {
+  if (!("message" in props)) return undefined;
+  return typeof props.message === "string" ? props.message : undefined;
+}
+
 export class EnvironmentHttpBadRequestError extends Schema.TaggedErrorClass<EnvironmentHttpBadRequestError>()(
   "EnvironmentHttpBadRequestError",
   {
-    reason: EnvironmentHttpBadRequestReason,
+    reason: Schema.optional(EnvironmentHttpBadRequestReason),
     message: Schema.String,
   },
   { httpApiStatus: 400 },
@@ -304,7 +313,9 @@ export class EnvironmentHttpBadRequestError extends Schema.TaggedErrorClass<Envi
   }) {
     super({
       reason: props.reason,
-      message: environmentHttpBadRequestMessages[props.reason],
+      message:
+        decodedEnvironmentHttpErrorMessage(props) ??
+        environmentHttpBadRequestMessages[props.reason],
       ...(props.cause === undefined ? {} : { cause: props.cause }),
     } as any);
   }
@@ -317,7 +328,7 @@ export class EnvironmentHttpBadRequestError extends Schema.TaggedErrorClass<Envi
 export class EnvironmentHttpUnauthorizedError extends Schema.TaggedErrorClass<EnvironmentHttpUnauthorizedError>()(
   "EnvironmentHttpUnauthorizedError",
   {
-    reason: EnvironmentHttpUnauthorizedReason,
+    reason: Schema.optional(EnvironmentHttpUnauthorizedReason),
     message: Schema.String,
   },
   { httpApiStatus: 401 },
@@ -329,7 +340,9 @@ export class EnvironmentHttpUnauthorizedError extends Schema.TaggedErrorClass<En
   }) {
     super({
       reason: props.reason,
-      message: environmentHttpUnauthorizedMessages[props.reason],
+      message:
+        decodedEnvironmentHttpErrorMessage(props) ??
+        environmentHttpUnauthorizedMessages[props.reason],
       ...(props.cause === undefined ? {} : { cause: props.cause }),
     } as any);
   }
@@ -342,7 +355,7 @@ export class EnvironmentHttpUnauthorizedError extends Schema.TaggedErrorClass<En
 export class EnvironmentHttpForbiddenError extends Schema.TaggedErrorClass<EnvironmentHttpForbiddenError>()(
   "EnvironmentHttpForbiddenError",
   {
-    reason: EnvironmentHttpForbiddenReason,
+    reason: Schema.optional(EnvironmentHttpForbiddenReason),
     message: Schema.String,
   },
   { httpApiStatus: 403 },
@@ -354,7 +367,7 @@ export class EnvironmentHttpForbiddenError extends Schema.TaggedErrorClass<Envir
   }) {
     super({
       reason: props.reason,
-      message: "Cloud operation is forbidden.",
+      message: decodedEnvironmentHttpErrorMessage(props) ?? "Cloud operation is forbidden.",
       ...(props.cause === undefined ? {} : { cause: props.cause }),
     } as any);
   }
@@ -367,7 +380,7 @@ export class EnvironmentHttpForbiddenError extends Schema.TaggedErrorClass<Envir
 export class EnvironmentHttpInternalServerError extends Schema.TaggedErrorClass<EnvironmentHttpInternalServerError>()(
   "EnvironmentHttpInternalServerError",
   {
-    operation: EnvironmentHttpInternalOperation,
+    operation: Schema.optional(EnvironmentHttpInternalOperation),
     relayOperation: Schema.optional(EnvironmentHttpRelayOperation),
     relayPhase: Schema.optional(EnvironmentHttpRelayPhase),
     responseStatus: Schema.optional(Schema.Number),
@@ -391,13 +404,14 @@ export class EnvironmentHttpInternalServerError extends Schema.TaggedErrorClass<
         },
   ) {
     const message =
-      props.operation === "relay_request"
+      decodedEnvironmentHttpErrorMessage(props) ??
+      (props.operation === "relay_request"
         ? `T3 Connect relay ${props.relayOperation} failed during ${props.relayPhase}${
             props.responseStatus === undefined
               ? ""
               : ` with response status ${props.responseStatus}`
           }.`
-        : environmentHttpInternalMessages[props.operation];
+        : environmentHttpInternalMessages[props.operation]);
     super({
       ...props,
       message,
@@ -412,7 +426,7 @@ export class EnvironmentHttpInternalServerError extends Schema.TaggedErrorClass<
 export class EnvironmentHttpConflictError extends Schema.TaggedErrorClass<EnvironmentHttpConflictError>()(
   "EnvironmentHttpConflictError",
   {
-    reason: EnvironmentHttpConflictReason,
+    reason: Schema.optional(EnvironmentHttpConflictReason),
     message: Schema.String,
   },
   { httpApiStatus: 409 },
@@ -421,7 +435,8 @@ export class EnvironmentHttpConflictError extends Schema.TaggedErrorClass<Enviro
   constructor(props: { readonly reason: EnvironmentHttpConflictReason; readonly cause?: unknown }) {
     super({
       reason: props.reason,
-      message: environmentHttpConflictMessages[props.reason],
+      message:
+        decodedEnvironmentHttpErrorMessage(props) ?? environmentHttpConflictMessages[props.reason],
       ...(props.cause === undefined ? {} : { cause: props.cause }),
     } as any);
   }
@@ -434,7 +449,7 @@ export class EnvironmentHttpConflictError extends Schema.TaggedErrorClass<Enviro
 export class EnvironmentCloudEndpointUnavailableError extends Schema.TaggedErrorClass<EnvironmentCloudEndpointUnavailableError>()(
   "EnvironmentCloudEndpointUnavailableError",
   {
-    reason: Schema.Literal("runtime_start_failed"),
+    reason: Schema.optional(Schema.Literal("runtime_start_failed")),
     message: Schema.String,
     endpointRuntimeStatus: Schema.Unknown,
   },
@@ -448,7 +463,9 @@ export class EnvironmentCloudEndpointUnavailableError extends Schema.TaggedError
   }) {
     super({
       ...props,
-      message: "Managed endpoint runtime could not be started.",
+      message:
+        decodedEnvironmentHttpErrorMessage(props) ??
+        "Managed endpoint runtime could not be started.",
     } as any);
   }
 

@@ -28,6 +28,13 @@ import {
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "./traceRelayRequest.ts";
 
+const encodeEnvironmentHttpInternalServerError = Schema.encodeUnknownSync(
+  EnvironmentHttpInternalServerError,
+);
+const decodeEnvironmentHttpInternalServerError = Schema.decodeUnknownSync(
+  EnvironmentHttpInternalServerError,
+);
+
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   new ServerSecretStore.SecretStorePersistError({
     operation: "create",
@@ -233,11 +240,21 @@ it("keeps internal causes out of encoded HTTP error bodies", () => {
   });
 
   expect(error.cause).toBe(cause);
-  expect(Schema.encodeUnknownSync(EnvironmentHttpInternalServerError)(error)).toEqual({
+  expect(encodeEnvironmentHttpInternalServerError(error)).toEqual({
     _tag: "EnvironmentHttpInternalServerError",
     operation: "generate_link_proof",
     message: "Could not generate environment link proof.",
   });
+});
+
+it("decodes legacy message-only HTTP errors during rolling deployments", () => {
+  const error = decodeEnvironmentHttpInternalServerError({
+    _tag: "EnvironmentHttpInternalServerError",
+    message: "Legacy environment server failure.",
+  });
+
+  expect(error.operation).toBeUndefined();
+  expect(error.message).toBe("Legacy environment server failure.");
 });
 
 describe("relay request tracing", () => {

@@ -517,6 +517,7 @@ describe("EnvironmentConnector", () => {
           Response.json(
             {
               _tag: "EnvironmentHttpInternalServerError",
+              operation: "answer_cloud_health_request",
               message: "Environment is unavailable.",
             },
             { status: 500 },
