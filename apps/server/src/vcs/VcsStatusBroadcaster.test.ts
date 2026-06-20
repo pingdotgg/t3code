@@ -1,11 +1,13 @@
 import { assert, it, describe } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
@@ -190,6 +192,7 @@ describe("VcsStatusBroadcaster", () => {
                 ? Effect.fail(
                     new GitManagerError({
                       operation: "VcsStatusBroadcaster.test",
+                      cwd: "/repo",
                       detail: "remote status failed",
                     }),
                   )
@@ -431,6 +434,12 @@ describe("VcsStatusBroadcaster", () => {
       remoteInvalidationCalls: 0,
       remoteStatusRefreshUpstreamValues: [] as Array<boolean | undefined>,
     };
+    const privateCwd = "/private/user/workspace/repo";
+    const nestedCause = new Error("private nested VCS failure");
+    const messages: Array<ReadonlyArray<unknown>> = [];
+    const logger = Logger.make<unknown, void>(({ message }) => {
+      messages.push(message as ReadonlyArray<unknown>);
+    });
     let firstRemoteAttemptDeferred: Deferred.Deferred<void> | null = null;
     const testLayer = VcsStatusBroadcaster.layer.pipe(
       Layer.provideMerge(NodeServices.layer),
@@ -449,7 +458,9 @@ describe("VcsStatusBroadcaster", () => {
                 return Effect.fail(
                   new GitManagerError({
                     operation: "VcsStatusBroadcaster.test",
-                    detail: "initial remote status failed",
+                    cwd: privateCwd,
+                    detail: "private initial remote status failure",
+                    cause: nestedCause,
                   }),
                 ).pipe(
                   Effect.ensuring(
@@ -480,7 +491,7 @@ describe("VcsStatusBroadcaster", () => {
       const remoteUpdatedDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
       yield* Stream.runForEach(
         broadcaster.streamStatus(
-          { cwd: "/repo" },
+          { cwd: privateCwd },
           { automaticRemoteRefreshInterval: Effect.succeed(Duration.zero) },
         ),
         (event) =>
@@ -492,6 +503,24 @@ describe("VcsStatusBroadcaster", () => {
       yield* Deferred.await(firstRemoteAttemptDeferred);
       yield* Effect.yieldNow;
       assert.equal(state.remoteStatusCalls, 1);
+      assert.deepStrictEqual(
+        messages.find((message) => message[0] === "VCS remote status refresh failed"),
+        [
+          "VCS remote status refresh failed",
+          {
+            cwdLength: privateCwd.length,
+            reasonCount: 1,
+            failureCount: 1,
+            failureTags: ["GitManagerError"],
+            failureOperations: ["VcsStatusBroadcaster.test"],
+            defectCount: 0,
+            defectTags: [],
+            interruptionCount: 0,
+            consecutiveFailures: 1,
+            nextDelayMs: 30_000,
+          },
+        ],
+      );
 
       yield* TestClock.adjust(Duration.seconds(30));
       const remoteUpdated = yield* Deferred.await(remoteUpdatedDeferred);
@@ -505,7 +534,15 @@ describe("VcsStatusBroadcaster", () => {
       assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, [false, false]);
 
       yield* Scope.close(scope, Exit.void);
-    }).pipe(Effect.provide(Layer.merge(testLayer, TestClock.layer())));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          testLayer,
+          TestClock.layer(),
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+    );
   });
 
   it.effect("delays automatic refresh when a cached remote snapshot is available", () => {
@@ -571,6 +608,27 @@ describe("VcsStatusBroadcaster", () => {
       Duration.toMillis(VcsStatusBroadcaster.remoteRefreshFailureDelay(20, Duration.seconds(1))),
       900_000,
     );
+  });
+
+  it("summarizes refresh causes without exposing nested failure details", () => {
+    const nestedCause = new Error("private nested failure detail");
+    const failure = new GitManagerError({
+      operation: "VcsStatusBroadcaster.remoteStatus",
+      cwd: "/private/user/workspace/repo",
+      detail: "private Git failure detail",
+      cause: nestedCause,
+    });
+    const cause = Cause.combine(Cause.fail(failure), Cause.die(new TypeError("private defect")));
+
+    assert.deepStrictEqual(VcsStatusBroadcaster.remoteRefreshFailureDiagnostics(cause), {
+      reasonCount: 2,
+      failureCount: 1,
+      failureTags: ["GitManagerError"],
+      failureOperations: ["VcsStatusBroadcaster.remoteStatus"],
+      defectCount: 1,
+      defectTags: ["TypeError"],
+      interruptionCount: 0,
+    });
   });
 
   it.effect("stops the remote poller after the last stream subscriber disconnects", () => {

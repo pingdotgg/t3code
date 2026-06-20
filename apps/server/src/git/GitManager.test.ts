@@ -1589,16 +1589,18 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* initRepo(repoDir);
 
       const { manager } = yield* makeManager();
-      const errorMessage = yield* runStackedAction(manager, {
+      const error = yield* runStackedAction(manager, {
         cwd: repoDir,
         action: "commit",
         featureBranch: true,
-      }).pipe(
-        Effect.flip,
-        Effect.map((error) => error.message),
-      );
+      }).pipe(Effect.flip);
 
-      expect(errorMessage).toContain("no changes to commit");
+      expect(error).toMatchObject({
+        _tag: "GitManagerError",
+        operation: "runFeatureBranchStep",
+        cwd: repoDir,
+      });
+      expect(error.message).toContain("no changes to commit");
     }),
   );
 
