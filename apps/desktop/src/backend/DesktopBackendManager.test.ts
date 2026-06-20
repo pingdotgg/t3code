@@ -3,12 +3,15 @@ import {
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -28,6 +31,7 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 const decodeDesktopBackendBootstrap = Schema.decodeEffect(
   Schema.fromJsonString(DesktopBackendBootstrap),
 );
+const isBackendProcessError = Schema.is(DesktopBackendManager.BackendProcessError);
 
 const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "/electron",
@@ -215,6 +219,117 @@ describe("DesktopBackendManager", () => {
 
         assert.deepEqual(yield* decodeBootstrap(bootstrapJson), configWithObservability);
       }).pipe(Effect.provide(managerLayer));
+    }),
+  );
+
+  it.effect("preserves the readiness timeout cause and process context", () =>
+    Effect.gen(function* () {
+      const requested = yield* Deferred.make<HttpClientRequest.HttpClientRequest>();
+      const layer = Layer.merge(
+        TestClock.layer(),
+        httpClientLayer((request) =>
+          Deferred.succeed(requested, request).pipe(Effect.andThen(Effect.never)),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const readiness = yield* DesktopBackendManager.waitForHttpReady({
+          executablePath: baseConfig.executablePath,
+          entryPath: baseConfig.entryPath,
+          cwd: baseConfig.cwd,
+          httpBaseUrl: baseConfig.httpBaseUrl,
+          timeout: Duration.millis(50),
+        }).pipe(Effect.flip, Effect.forkChild);
+
+        const request = yield* Deferred.await(requested);
+        assert.equal(request.url, "http://127.0.0.1:3773/.well-known/t3/environment");
+
+        yield* TestClock.adjust(Duration.millis(50));
+        const error = yield* Fiber.join(readiness);
+
+        assert.instanceOf(error, DesktopBackendManager.BackendReadinessTimeoutError);
+        assert.equal(error.executablePath, "/electron");
+        assert.equal(error.entryPath, "/server/bin.mjs");
+        assert.equal(error.cwd, "/server");
+        assert.equal(error.httpBaseUrl.href, "http://127.0.0.1:3773/");
+        assert.equal(error.readinessUrl.href, "http://127.0.0.1:3773/.well-known/t3/environment");
+        assert.equal(error.timeoutMs, 50);
+        assert.isTrue(Cause.isTimeoutError(error.cause));
+        assert.equal(
+          error.message,
+          "Timed out after 50ms waiting for desktop backend readiness at http://127.0.0.1:3773/.well-known/t3/environment.",
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("reports bootstrap encoding failures with stable process context", () =>
+    Effect.gen(function* () {
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.die("unexpected backend spawn")),
+      );
+      const error = yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        bootstrap: {
+          ...baseConfig.bootstrap,
+          port: 0,
+        },
+      }).pipe(
+        Effect.flip,
+        Effect.scoped,
+        Effect.provide(Layer.merge(spawnerLayer, healthyHttpClientLayer)),
+      );
+
+      if (error._tag !== "BackendProcessBootstrapEncodeError") {
+        return assert.fail(`Expected bootstrap encode error, received ${error._tag}`);
+      }
+      assert.equal(error.executablePath, "/electron");
+      assert.equal(error.entryPath, "/server/bin.mjs");
+      assert.equal(error.cwd, "/server");
+      assert.equal(error.httpBaseUrl.href, "http://127.0.0.1:3773/");
+      assert.isDefined(error.cause);
+      assert.equal(
+        error.message,
+        "Failed to encode the desktop backend bootstrap payload for /server/bin.mjs.",
+      );
+      assert.isTrue(isBackendProcessError(error));
+    }),
+  );
+
+  it.effect("preserves spawn failures without deriving their message from the cause", () =>
+    Effect.gen(function* () {
+      const spawnCause = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "ChildProcessSpawner",
+        method: "spawn",
+        pathOrDescriptor: baseConfig.executablePath,
+        description: "low-level detail that must not become the public message",
+      });
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.fail(spawnCause)),
+      );
+      const error = yield* DesktopBackendManager.runBackendProcess(baseConfig).pipe(
+        Effect.flip,
+        Effect.scoped,
+        Effect.provide(Layer.merge(spawnerLayer, healthyHttpClientLayer)),
+      );
+
+      if (error._tag !== "BackendProcessSpawnError") {
+        return assert.fail(`Expected backend spawn error, received ${error._tag}`);
+      }
+      assert.equal(error.executablePath, "/electron");
+      assert.equal(error.entryPath, "/server/bin.mjs");
+      assert.equal(error.cwd, "/server");
+      assert.equal(error.httpBaseUrl.href, "http://127.0.0.1:3773/");
+      assert.strictEqual(error.cause, spawnCause);
+      assert.equal(
+        error.message,
+        "Failed to spawn desktop backend entry /server/bin.mjs with /electron.",
+      );
+      assert.notInclude(error.message, spawnCause.message);
+      assert.isTrue(isBackendProcessError(error));
     }),
   );
 

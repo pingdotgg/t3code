@@ -43,13 +43,16 @@ type BackendProcessRunRequirements = BackendProcessLayerServices | Scope.Scope;
 
 export type BackendProcessOutputStream = "stdout" | "stderr";
 
-export interface DesktopBackendStartConfig {
+export interface BackendProcessContext {
   readonly executablePath: string;
   readonly entryPath: string;
   readonly cwd: string;
+  readonly httpBaseUrl: URL;
+}
+
+export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly env: Record<string, string | undefined>;
   readonly bootstrap: DesktopBackendBootstrapValue;
-  readonly httpBaseUrl: URL;
   readonly captureOutput: boolean;
 }
 
@@ -59,48 +62,62 @@ interface BackendProcessExit {
   readonly result: Result.Result<ChildProcessSpawner.ExitCode, PlatformError.PlatformError>;
 }
 
-export class BackendTimeoutError extends Schema.TaggedErrorClass<BackendTimeoutError>()(
-  "BackendTimeoutError",
+const backendProcessContextSchema = {
+  executablePath: Schema.String,
+  entryPath: Schema.String,
+  cwd: Schema.String,
+  httpBaseUrl: Schema.URL,
+};
+
+export class BackendReadinessTimeoutError extends Schema.TaggedErrorClass<BackendReadinessTimeoutError>()(
+  "BackendReadinessTimeoutError",
   {
-    url: Schema.URL,
+    ...backendProcessContextSchema,
+    readinessUrl: Schema.URL,
+    timeoutMs: Schema.Number,
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Timed out waiting for backend readiness at ${this.url.href}.`;
+    return `Timed out after ${this.timeoutMs}ms waiting for desktop backend readiness at ${this.readinessUrl.href}.`;
   }
 }
 
-class BackendProcessBootstrapEncodeError extends Schema.TaggedErrorClass<BackendProcessBootstrapEncodeError>()(
+export class BackendProcessBootstrapEncodeError extends Schema.TaggedErrorClass<BackendProcessBootstrapEncodeError>()(
   "BackendProcessBootstrapEncodeError",
   {
-    detail: Schema.String,
+    ...backendProcessContextSchema,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Failed to encode desktop backend bootstrap payload: ${this.detail}`;
+    return `Failed to encode the desktop backend bootstrap payload for ${this.entryPath}.`;
   }
 }
 
-class BackendProcessSpawnError extends Schema.TaggedErrorClass<BackendProcessSpawnError>()(
+export class BackendProcessSpawnError extends Schema.TaggedErrorClass<BackendProcessSpawnError>()(
   "BackendProcessSpawnError",
   {
-    detail: Schema.String,
+    ...backendProcessContextSchema,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Failed to spawn desktop backend process: ${this.detail}`;
+    return `Failed to spawn desktop backend entry ${this.entryPath} with ${this.executablePath}.`;
   }
 }
 
-type BackendProcessError = BackendProcessBootstrapEncodeError | BackendProcessSpawnError;
+export const BackendProcessError = Schema.Union([
+  BackendProcessBootstrapEncodeError,
+  BackendProcessSpawnError,
+]);
+export type BackendProcessError = typeof BackendProcessError.Type;
 
 interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly readinessTimeout?: Duration.Duration;
   readonly onStarted?: (pid: number) => Effect.Effect<void>;
   readonly onReady?: () => Effect.Effect<void>;
-  readonly onReadinessFailure?: (error: BackendTimeoutError) => Effect.Effect<void>;
+  readonly onReadinessFailure?: (error: BackendReadinessTimeoutError) => Effect.Effect<void>;
   readonly onOutput?: (
     streamName: BackendProcessOutputStream,
     chunk: Uint8Array,
@@ -183,11 +200,10 @@ const closeRun = (
   ).pipe(Effect.ignore);
 };
 
-const waitForHttpReady = Effect.fn("desktop.backendManager.waitForHttpReady")(function* (
-  baseUrl: URL,
-  timeout: Duration.Duration,
-): Effect.fn.Return<void, BackendTimeoutError, HttpClient.HttpClient> {
-  const readinessUrl = new URL(BACKEND_READINESS_PATH, baseUrl);
+export const waitForHttpReady = Effect.fn("desktop.backendManager.waitForHttpReady")(function* (
+  options: BackendProcessContext & { readonly timeout: Duration.Duration },
+): Effect.fn.Return<void, BackendReadinessTimeoutError, HttpClient.HttpClient> {
+  const readinessUrl = new URL(BACKEND_READINESS_PATH, options.httpBaseUrl);
   const client = (yield* HttpClient.HttpClient).pipe(
     HttpClient.filterStatusOk,
     HttpClient.transformResponse(Effect.timeout(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT)),
@@ -196,8 +212,19 @@ const waitForHttpReady = Effect.fn("desktop.backendManager.waitForHttpReady")(fu
 
   yield* client.get(readinessUrl).pipe(
     Effect.asVoid,
-    Effect.timeout(timeout),
-    Effect.mapError(() => new BackendTimeoutError({ url: readinessUrl })),
+    Effect.timeout(options.timeout),
+    Effect.mapError(
+      (cause) =>
+        new BackendReadinessTimeoutError({
+          executablePath: options.executablePath,
+          entryPath: options.entryPath,
+          cwd: options.cwd,
+          httpBaseUrl: options.httpBaseUrl,
+          readinessUrl,
+          timeoutMs: Duration.toMillis(options.timeout),
+          cause,
+        }),
+    ),
   );
 });
 
@@ -232,7 +259,7 @@ function drainBackendOutput(
 
 const encodeBootstrapJson = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
 
-const runBackendProcess = Effect.fn("runBackendProcess")(function* (
+export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   options: RunBackendProcessOptions,
 ): Effect.fn.Return<BackendProcessExit, BackendProcessError, BackendProcessRunRequirements> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -240,7 +267,10 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     Effect.mapError(
       (cause) =>
         new BackendProcessBootstrapEncodeError({
-          detail: cause.message,
+          executablePath: options.executablePath,
+          entryPath: options.entryPath,
+          cwd: options.cwd,
+          httpBaseUrl: options.httpBaseUrl,
           cause,
         }),
     ),
@@ -273,7 +303,10 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     Effect.mapError(
       (cause) =>
         new BackendProcessSpawnError({
-          detail: cause.message,
+          executablePath: options.executablePath,
+          entryPath: options.entryPath,
+          cwd: options.cwd,
+          httpBaseUrl: options.httpBaseUrl,
           cause,
         }),
     ),
@@ -284,12 +317,17 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     yield* drainBackendOutput("stdout", handle.stdout, onOutput).pipe(Effect.forkScoped);
     yield* drainBackendOutput("stderr", handle.stderr, onOutput).pipe(Effect.forkScoped);
   }
-  yield* waitForHttpReady(
-    options.httpBaseUrl,
-    options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
-  ).pipe(
+  yield* waitForHttpReady({
+    executablePath: options.executablePath,
+    entryPath: options.entryPath,
+    cwd: options.cwd,
+    httpBaseUrl: options.httpBaseUrl,
+    timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
+  }).pipe(
     Effect.tap(() => options.onReady?.() ?? Effect.void),
-    Effect.catch((error) => options.onReadinessFailure?.(error) ?? Effect.void),
+    Effect.catchTags({
+      BackendReadinessTimeoutError: (error) => options.onReadinessFailure?.(error) ?? Effect.void,
+    }),
     Effect.forkScoped,
   );
 
