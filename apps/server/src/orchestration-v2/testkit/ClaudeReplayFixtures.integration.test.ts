@@ -37,7 +37,7 @@ const readTranscript = Effect.fn("readClaudeReplayFixture")(function* (file: URL
 
 function claudeFixture(name: string) {
   const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find((entry) => entry.name === name);
-  const provider = fixture?.providers.find((entry) => entry.provider === "claudeAgent");
+  const provider = fixture?.providers.find((entry) => entry.driver === "claudeAgent");
   if (fixture === undefined || provider === undefined) {
     throw new Error(`Missing ${name}/claudeAgent replay fixture.`);
   }
@@ -144,7 +144,7 @@ describe("Claude Agent SDK replay fixtures", () => {
 
       for (const fixture of ORCHESTRATOR_REPLAY_FIXTURES) {
         for (const provider of fixture.providers) {
-          if (provider.provider !== "claudeAgent") {
+          if (provider.driver !== "claudeAgent") {
             continue;
           }
 

@@ -439,7 +439,7 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
     case "compaction":
       return item.summary ?? null;
     case "handoff":
-      return item.summary ?? `${item.strategy} handoff to ${item.toProvider}`;
+      return item.summary ?? `${item.strategy} handoff to ${item.toProviderInstanceId}`;
     case "fork":
       return `Forked to thread ${item.targetThreadId}.`;
     case "subagent":
@@ -673,7 +673,7 @@ const make = Effect.gen(function* () {
         childRunId: childRun?.id ?? null,
         childNodeId: task.id,
         status,
-        providerInstanceId: ProviderInstanceId.make(task.provider),
+        providerInstanceId: ProviderInstanceId.make(task.driver),
         model: task.model,
         summary: derivedResult,
         resultContextTransferId: resultTransfer?.id ?? null,
@@ -742,7 +742,7 @@ const make = Effect.gen(function* () {
         if (
           parentRun === undefined ||
           parentRun.rootNodeId === null ||
-          parentRun.provider !== scope.providerInstanceId
+          parentRun.providerInstanceId !== scope.providerInstanceId
         ) {
           return yield* failure(
             "parent_not_active",

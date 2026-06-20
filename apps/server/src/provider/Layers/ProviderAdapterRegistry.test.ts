@@ -96,19 +96,60 @@ const fakeCursorAdapter: CursorAdapterShape = {
   streamEvents: Stream.empty,
 };
 
-const layer = it.layer(
-  Layer.mergeAll(
-    Layer.provide(
-      ProviderAdapterRegistryLive,
-      Layer.mergeAll(
-        Layer.succeed(CodexAdapter, fakeCodexAdapter),
-        Layer.succeed(ClaudeAdapter, fakeClaudeAdapter),
-        Layer.succeed(OpenCodeAdapter, fakeOpenCodeAdapter),
-        Layer.succeed(CursorAdapter, fakeCursorAdapter),
-      ),
-    ),
-    NodeServices.layer,
-  ),
+// ProviderAdapterRegistryLive is now a facade over ProviderInstanceRegistry —
+// it walks `listInstances` once at boot and surfaces the default-instance
+// adapter keyed by its driver kind. To test the facade we supply four fake
+// instances whose `instanceId === defaultInstanceIdForDriver(driverKind)` so
+// they pass the default-instance filter.
+const makeFakeInstance = (
+  driverKindString: "codex" | "claudeAgent" | "cursor" | "opencode",
+  adapter: ProviderInstance["adapter"],
+): ProviderInstance => {
+  const driverKind = ProviderDriverKind.make(driverKindString);
+  return {
+    instanceId: defaultInstanceIdForDriver(driverKind),
+    driverKind,
+    continuationIdentity: {
+      driverKind,
+      continuationKey: `${driverKind}:instance:${defaultInstanceIdForDriver(driverKind)}`,
+    },
+    displayName: undefined,
+    enabled: true,
+    snapshot: {
+      maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+        provider: driverKind,
+        packageName: null,
+      }),
+      getSnapshot: Effect.succeed({} as unknown as ServerProvider),
+      refresh: Effect.succeed({} as unknown as ServerProvider),
+      streamChanges: Stream.empty,
+    },
+    adapter,
+    orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+    textGeneration: {} as unknown as TextGenerationShape,
+  };
+};
+
+const fakeInstances: ReadonlyArray<ProviderInstance> = [
+  makeFakeInstance("codex", fakeCodexAdapter),
+  makeFakeInstance("claudeAgent", fakeClaudeAdapter),
+  makeFakeInstance("opencode", fakeOpenCodeAdapter),
+  makeFakeInstance("cursor", fakeCursorAdapter),
+];
+
+const fakeInstanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry, {
+  getInstance: (instanceId) =>
+    Effect.succeed(fakeInstances.find((instance) => instance.instanceId === instanceId)),
+  listInstances: Effect.succeed(fakeInstances),
+  listUnavailable: Effect.succeed([]),
+  streamChanges: Stream.empty,
+  // Tests never drive changes through this fake; acquire a throwaway
+  // subscription on an unused PubSub so the shape is satisfied.
+  subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) => PubSub.subscribe(pubsub)),
+});
+
+const layer = Layer.mergeAll(
+  Layer.provide(ProviderAdapterRegistryLive, fakeInstanceRegistryLayer),
   NodeServices.layer,
 );
 

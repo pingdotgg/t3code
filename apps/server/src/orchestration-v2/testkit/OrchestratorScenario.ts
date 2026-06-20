@@ -92,6 +92,14 @@ export class OrchestratorV2ScenarioStepError extends Schema.TaggedErrorClass<Orc
 function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<ThreadId> {
   switch (command.type) {
     case "thread.create":
+    case "thread.archive":
+    case "thread.unarchive":
+    case "thread.delete":
+    case "thread.metadata.update":
+    case "thread.runtime-mode.set":
+    case "thread.interaction-mode.set":
+    case "thread.model-selection.set":
+    case "provider-session.release":
     case "message.dispatch":
     case "run.interrupt":
     case "queued-message.promote-to-steer":
@@ -213,9 +221,10 @@ export function runOrchestratorV2Scenario(
             return request;
           }
           if (attemptsRemaining <= 0) {
+            const runState = projection.runs.map((run) => `${run.id}:${run.status}`).join(",");
             return yield* new OrchestratorV2ScenarioStepError({
               scenario: scenario.name,
-              step: `respond_to_next_runtime_request:${threadId}`,
+              step: `respond_to_next_runtime_request:${threadId}:runs=${runState}:providerTurns=${projection.providerTurns.length}`,
             });
           }
           yield* yieldToRuntime;
@@ -232,9 +241,17 @@ export function runOrchestratorV2Scenario(
             return;
           }
           if (attemptsRemaining <= 0) {
+            const activeRuns = projection.runs
+              .filter((run) => ["queued", "starting", "running", "waiting"].includes(run.status))
+              .map((run) => `${run.id}:${run.status}`)
+              .join(",");
+            const pendingRequests = projection.runtimeRequests
+              .filter((request) => request.status === "pending")
+              .map((request) => `${request.id}:${request.kind}`)
+              .join(",");
             return yield* new OrchestratorV2ScenarioStepError({
               scenario: scenario.name,
-              step: `await_thread_idle:${threadId}`,
+              step: `await_thread_idle:${threadId}:runs=${activeRuns}:requests=${pendingRequests}`,
             });
           }
           yield* yieldToRuntime;

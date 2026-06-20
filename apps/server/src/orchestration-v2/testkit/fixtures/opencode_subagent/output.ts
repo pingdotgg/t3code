@@ -36,7 +36,7 @@ export function assertOpenCodeSubagentOutput(
   assert.isDefined(subagent);
   assert.equal(subagent.origin, "provider_native");
   assert.equal(subagent.createdBy, "agent");
-  assert.equal(subagent.provider, "opencode");
+  assert.equal(subagent.driver, "opencode");
   assert.equal(subagent.status, "completed");
   assert.equal(subagent.prompt, "Respond exactly CHILD_OK.");
   assert.include(subagent.result ?? "", "CHILD_OK");

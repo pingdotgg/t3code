@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as CodexReplay from "effect-codex-app-server/replay";
+import { ProviderDriverKind } from "@t3tools/contracts";
 
 import {
   CodexOrchestratorReplayHarness,
@@ -103,6 +104,7 @@ const runCursorRecovery = Effect.fn("runCursorRecovery")(function* (input: {
         { type: "message", text: PROVIDER_THREAD_RESUME_SECOND_PROMPT },
       ],
     },
+    driver: ProviderDriverKind.make("cursor"),
     modelSelection: CURSOR_MODEL_SELECTION,
   });
   const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
@@ -196,6 +198,7 @@ describe("orchestrator replay recovery", () => {
                 { type: "message", text: PROVIDER_THREAD_RESUME_SECOND_PROMPT },
               ],
             },
+            driver: ProviderDriverKind.make("codex"),
             modelSelection: CODEX_MODEL_SELECTION,
           });
           const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =

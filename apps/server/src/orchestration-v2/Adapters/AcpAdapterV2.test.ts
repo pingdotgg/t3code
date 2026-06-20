@@ -4,6 +4,7 @@ import {
   MessageId,
   NodeId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
   RunAttemptId,
@@ -40,6 +41,7 @@ const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
 }).pipe(Layer.provide(NodeServices.layer));
 
 const testLayer = Layer.mergeAll(NodeServices.layer, idAllocatorLayer, serverConfigLayer);
+const ACP_TEST_DRIVER = ProviderDriverKind.make("acp-test");
 
 function makeMockRuntime(input: {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
@@ -86,7 +88,7 @@ function makeTurnInput(input: {
       id: input.threadId,
       projectId: ProjectId.make(`project:${input.threadId}`),
       title: "ACP adapter test",
-      defaultProvider: "acp-test",
+      providerInstanceId: input.instanceId,
       modelSelection,
       runtimeMode: "approval-required",
       interactionMode: "default",
@@ -140,7 +142,7 @@ describe("AcpAdapterV2", () => {
       const adapter = makeAcpAdapterV2({
         instanceId,
         flavor: {
-          provider: "acp-test",
+          driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           makeRuntime,
         },
@@ -197,7 +199,7 @@ describe("AcpAdapterV2", () => {
       const adapter = makeAcpAdapterV2({
         instanceId,
         flavor: {
-          provider: "acp-test",
+          driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
@@ -282,7 +284,7 @@ describe("AcpAdapterV2", () => {
       const adapter = makeAcpAdapterV2({
         instanceId,
         flavor: {
-          provider: "acp-test",
+          driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
@@ -328,7 +330,7 @@ describe("AcpAdapterV2", () => {
         Stream.runHead,
       );
       const providerTurnId = idAllocator.derive.providerTurn({
-        provider: "acp-test",
+        driver: ACP_TEST_DRIVER,
         nativeTurnId: "mock-session-1:turn:1",
       });
       const interruptFiber = yield* runtime

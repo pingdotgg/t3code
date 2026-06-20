@@ -12,6 +12,7 @@ import {
   openCodePermissionRules,
   openCodePermissionRequestKind,
   openCodeToolProjectionKind,
+  OPENCODE_PROVIDER,
   OpenCodeProviderCapabilitiesV2,
 } from "./OpenCodeAdapterV2.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
@@ -46,7 +47,7 @@ function providerTurn(input: {
     nativeTurnRef:
       input.nativeId === null
         ? null
-        : { provider: "opencode", nativeId: input.nativeId, strength: "weak" },
+        : { driver: OPENCODE_PROVIDER, nativeId: input.nativeId, strength: "weak" },
     ordinal: input.ordinal,
     status: "completed",
     startedAt: null,

@@ -47,6 +47,7 @@ import Migration0031 from "./Migrations/031_AuthAuthorizationScopes.ts";
 import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
 import Migration0033 from "./Migrations/033_OrchestrationV2.ts";
 import Migration0034 from "./Migrations/034_OrchestrationV2Subagents.ts";
+import Migration0035 from "./Migrations/035_OrchestrationV2Foundation.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -93,6 +94,7 @@ export const migrationEntries = [
   [32, "AuthPairingProofKeyThumbprint", Migration0032],
   [33, "OrchestrationV2", Migration0033],
   [34, "OrchestrationV2Subagents", Migration0034],
+  [35, "OrchestrationV2Foundation", Migration0035],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

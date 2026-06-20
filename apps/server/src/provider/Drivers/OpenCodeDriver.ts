@@ -24,7 +24,10 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { makeOpenCodeTextGeneration } from "../../textGeneration/OpenCodeTextGeneration.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  OpenCodeAdapterV2Driver,
+  type OpenCodeAdapterV2DriverEnv,
+} from "../../orchestration-v2/Adapters/OpenCodeAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
 import {
@@ -77,7 +80,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
 });
 
 export type OpenCodeDriverEnv =
-  | BackgroundPolicy.BackgroundPolicy
+  | OpenCodeAdapterV2DriverEnv
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
@@ -141,6 +144,24 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
+      const orchestrationAdapter = yield* OpenCodeAdapterV2Driver.create({
+        instanceId,
+        displayName,
+        accentColor,
+        environment,
+        enabled,
+        config,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: "Failed to build OpenCode orchestration adapter.",
+              cause,
+            }),
+        ),
+      );
       const textGeneration = yield* makeOpenCodeTextGeneration(effectiveConfig, processEnv);
 
       const checkProvider = checkOpenCodeProviderStatus(
@@ -188,6 +209,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         enabled,
         snapshot,
         adapter,
+        orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;
     }),
