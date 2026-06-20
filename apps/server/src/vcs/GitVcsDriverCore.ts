@@ -1817,7 +1817,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const dirtyTrackedResult = yield* executeGit(
       "GitVcsDriver.getReviewDiffPreview.dirtyTracked",
       input.cwd,
-      ["diff", "--patch", "--minimal", "HEAD", "--"],
+      [
+        "diff",
+        "--patch",
+        "--minimal",
+        ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
+        "HEAD",
+        "--",
+      ],
       {
         maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
         appendTruncationMarker: true,
@@ -1843,7 +1850,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ? yield* executeGit(
             "GitVcsDriver.getReviewDiffPreview.base",
             input.cwd,
-            ["diff", "--patch", "--minimal", `${baseRef}...HEAD`],
+            [
+              "diff",
+              "--patch",
+              "--minimal",
+              ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
+              `${baseRef}...HEAD`,
+            ],
             {
               maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
               appendTruncationMarker: true,
@@ -2127,11 +2140,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             })
           : [];
 
+      const allBranches = input.includeMatchingRemoteRefs
+        ? [...localBranches, ...remoteBranches]
+        : dedupeRemoteBranchesWithLocalMatches([...localBranches, ...remoteBranches]);
+      const branchesForKind =
+        input.refKind === "local"
+          ? allBranches.filter((ref) => !ref.isRemote)
+          : input.refKind === "remote"
+            ? allBranches.filter((ref) => ref.isRemote)
+            : allBranches;
       const refs = paginateBranches({
-        refs: filterBranchesForListQuery(
-          dedupeRemoteBranchesWithLocalMatches([...localBranches, ...remoteBranches]),
-          input.query,
-        ),
+        refs: filterBranchesForListQuery(branchesForKind, input.query),
         cursor: input.cursor,
         limit: input.limit,
       });

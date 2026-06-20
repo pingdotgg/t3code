@@ -6,7 +6,6 @@ import {
   migratePersistedRightPanelState,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
-  selectActiveRightPanelKindWithUrl,
   selectThreadRightPanelState,
   useRightPanelStore,
 } from "./rightPanelStore";
@@ -252,16 +251,6 @@ describe("rightPanelStore", () => {
     useRightPanelStore.getState().toggle(refA, "preview");
     useRightPanelStore.getState().toggle(refA, "plan");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("plan");
-  });
-
-  it("?diff=1 always wins over persisted state", () => {
-    useRightPanelStore.getState().open(refA, "preview");
-    expect(
-      selectActiveRightPanelKindWithUrl(useRightPanelStore.getState().byThreadKey, refA, true),
-    ).toBe("diff");
-    expect(
-      selectActiveRightPanelKindWithUrl(useRightPanelStore.getState().byThreadKey, refA, false),
-    ).toBe("preview");
   });
 
   it("removeThread clears persisted state", () => {

@@ -550,13 +550,3 @@ export function selectActiveRightPanelSurface(
   if (!state.isOpen) return null;
   return state.surfaces.find((surface) => surface.id === state.activeSurfaceId) ?? null;
 }
-
-export function selectActiveRightPanelKindWithUrl(
-  byThreadKey: Record<string, ThreadRightPanelState>,
-  ref: ScopedThreadRef | null | undefined,
-  diffSearchActive: boolean,
-): RightPanelKind | null {
-  if (!selectThreadRightPanelState(byThreadKey, ref).isOpen) return null;
-  if (diffSearchActive) return "diff";
-  return selectActiveRightPanel(byThreadKey, ref);
-}

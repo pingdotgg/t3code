@@ -689,7 +689,8 @@ label:has(> select#reasoning-effort) select {
   background: color-mix(in srgb, var(--background) 94%, var(--card));
 }
 
-.diff-render-file {
+.diff-render-file,
+.diff-render-surface > diffs-container {
   border: 1px solid var(--border);
   border-radius: 0.5rem;
   overflow: clip;
