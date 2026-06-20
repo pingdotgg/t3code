@@ -20,6 +20,7 @@ function detail(interactionMode: "default" | "plan"): OrchestrationThread {
     messages: [],
     activities: [],
     checkpoints: [],
+    proposedPlans: [],
   } as unknown as OrchestrationThread;
 }
 
@@ -126,5 +127,22 @@ describe("MessagesTimeline body", () => {
       latestTurn: { state: "running", startedAt: "2026-06-19T00:00:00.000Z" } as never,
     });
     expect(frame).toContain("Working");
+  });
+
+  it("Given an actionable proposed plan, then it renders the plan card", async () => {
+    const frame = await bodyFrame({
+      proposedPlans: [
+        {
+          id: "pp1",
+          turnId: null,
+          planMarkdown: "# Migrate the parser\n\nRewrite the tokenizer.",
+          implementedAt: null,
+          createdAt: "2026-06-19T00:00:00.000Z",
+          updatedAt: "2026-06-19T00:00:00.000Z",
+        },
+      ] as never,
+    });
+    expect(frame).toContain("Migrate the parser");
+    expect(frame).toContain("proposed plan");
   });
 });

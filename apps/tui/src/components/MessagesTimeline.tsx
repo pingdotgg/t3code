@@ -5,6 +5,7 @@ import * as React from "react";
 import type { PendingApproval } from "../approvals.ts";
 import type { OrchestrationThread } from "../connection.ts";
 import { clip } from "../format.ts";
+import { type ActionableProposedPlan, latestActionableProposedPlan } from "../proposedPlan.ts";
 import {
   buildTimeline,
   changedFilesByMessage,
@@ -94,6 +95,36 @@ function ChangedFiles({
   );
 }
 
+/** The proposed-plan card shown after a plan-mode turn (mirrors ProposedPlanCard). */
+function ProposedPlanCard({
+  plan,
+  palette,
+  syntaxStyle,
+}: {
+  readonly plan: ActionableProposedPlan;
+  readonly palette: Palette;
+  readonly syntaxStyle: SyntaxStyle;
+}): React.ReactNode {
+  return (
+    <box
+      flexDirection="column"
+      border
+      borderStyle="rounded"
+      borderColor={palette.accent}
+      paddingLeft={1}
+      paddingRight={1}
+      marginBottom={1}
+    >
+      <text>
+        <span fg={palette.accent}>{"◆ "}</span>
+        <strong>{plan.title}</strong>
+      </text>
+      <markdown content={plan.body} syntaxStyle={syntaxStyle} />
+      <text fg={palette.dim}>proposed plan · ^B to build mode, then reply to refine</text>
+    </box>
+  );
+}
+
 export const MessagesTimeline = React.memo(function MessagesTimeline({
   detail,
   approvals,
@@ -133,6 +164,10 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   );
   const checkpointByMessage = React.useMemo(
     () => (detail ? changedFilesByMessage(detail.checkpoints) : new Map()),
+    [detail],
+  );
+  const proposedPlan = React.useMemo(
+    () => (detail ? latestActionableProposedPlan(detail) : null),
     [detail],
   );
 
@@ -225,6 +260,9 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
             </box>
           );
         })}
+        {proposedPlan ? (
+          <ProposedPlanCard plan={proposedPlan} palette={palette} syntaxStyle={syntaxStyle} />
+        ) : null}
         {working ? (
           <box marginBottom={1}>
             <text>

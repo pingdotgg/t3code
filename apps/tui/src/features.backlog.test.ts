@@ -8,7 +8,8 @@ import { describe, it } from "bun:test";
 //
 // Already shipped (covered by real specs elsewhere, NOT skipped here):
 // plan↔build toggle, rename, archive/unarchive, delete, stop-session, search/filter,
-// multiline composer + paste, tool-call rows, changed-files summary, working indicator.
+// multiline composer + paste, tool-call rows, changed-files summary, working indicator,
+// proposed-plan card.
 
 describe.skip("Backlog — Low/Med: cycle through all pending approvals", () => {
   it("Given several pending approvals, when navigating, then each can be approved/declined in turn", () => {
@@ -19,12 +20,6 @@ describe.skip("Backlog — Low/Med: cycle through all pending approvals", () => 
 describe.skip("Backlog — Low/Med: new-thread options (branch / worktree / runtimeMode)", () => {
   it("Given the new-thread dialog, when options are set, then createThread receives them", () => {
     // createThread already accepts these; the dialog only collects project + message.
-  });
-});
-
-describe.skip("Backlog — Low/Med: proposed-plan card", () => {
-  it("Given a thread with an actionable proposed plan, then its markdown renders as a card", () => {
-    // Data: thread.proposedPlans[].markdown + hasActionableProposedPlan.
   });
 });
 
