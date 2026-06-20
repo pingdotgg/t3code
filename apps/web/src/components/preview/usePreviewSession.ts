@@ -4,6 +4,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import {
@@ -13,10 +14,19 @@ import {
 } from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
 
+class PreviewSessionThreadKeyParseError extends Schema.TaggedErrorClass<PreviewSessionThreadKeyParseError>()(
+  "PreviewSessionThreadKeyParseError",
+  { threadKey: Schema.String },
+) {
+  override get message(): string {
+    return `Invalid scoped preview thread key: ${this.threadKey}`;
+  }
+}
+
 const previewSessionSyncAtom = Atom.family((threadKey: string) => {
   const threadRef = parseScopedThreadKey(threadKey);
-  if (!threadRef) {
-    throw new Error(`Invalid scoped preview thread key: ${threadKey}`);
+  if (threadRef === null) {
+    throw new PreviewSessionThreadKeyParseError({ threadKey });
   }
 
   const sessionsAtom = previewEnvironment.list({
