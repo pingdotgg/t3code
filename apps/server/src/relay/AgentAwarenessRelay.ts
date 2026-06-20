@@ -18,6 +18,7 @@ import {
   RELAY_ACTIVITY_PUBLISH_TYP,
   signRelayJwt,
 } from "@t3tools/shared/relayJwt";
+import { getUrlDiagnostics } from "@t3tools/shared/urlDiagnostics";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -96,6 +97,44 @@ export function agentAwarenessPublishIdentity(state: RelayAgentActivityState | n
 
 export function isAgentActivityPublishingEnabled(value: string | null): boolean {
   return value === "true";
+}
+
+export function relayUrlLogAttributes(relayUrl: string | undefined) {
+  if (relayUrl === undefined) {
+    return { relayUrlConfigured: false };
+  }
+  const diagnostics = getUrlDiagnostics(relayUrl);
+  return {
+    relayUrlConfigured: true,
+    relayUrlInputLength: diagnostics.inputLength,
+    ...(diagnostics.protocol === undefined ? {} : { relayUrlProtocol: diagnostics.protocol }),
+    ...(diagnostics.hostname === undefined ? {} : { relayUrlHostname: diagnostics.hostname }),
+  };
+}
+
+export function relayPublishCauseLogAttributes(cause: Cause.Cause<unknown>) {
+  const failureTags = cause.reasons.flatMap((reason) => {
+    if (!Cause.isFailReason(reason)) {
+      return [];
+    }
+    const error = reason.error;
+    if (
+      typeof error !== "object" ||
+      error === null ||
+      !("_tag" in error) ||
+      typeof error._tag !== "string"
+    ) {
+      return [];
+    }
+    return [error._tag];
+  });
+  return {
+    causeReasonCount: cause.reasons.length,
+    causeFailureCount: cause.reasons.filter(Cause.isFailReason).length,
+    causeDefectCount: cause.reasons.filter(Cause.isDieReason).length,
+    causeInterruptionCount: cause.reasons.filter(Cause.isInterruptReason).length,
+    causeFailureTags: [...new Set(failureTags)],
+  };
 }
 
 export function resolveAgentActivityPublishingStartupState(input: {
@@ -417,12 +456,12 @@ export const make = Effect.gen(function* () {
 
   const publishThread: AgentAwarenessRelay["Service"]["publishThread"] = (threadId) =>
     publishThreadUnsafe(threadId).pipe(
-      Effect.catchCause((cause) => {
-        return Effect.logWarning("agent activity publish failed", {
+      Effect.catchCause((cause) =>
+        Effect.logWarning("agent activity publish failed", {
           threadId,
-          cause: Cause.pretty(cause),
-        });
-      }),
+          ...relayPublishCauseLogAttributes(cause),
+        }),
+      ),
       Effect.withSpan("AgentAwarenessRelay.publishThread"),
       withRelayClientTracing,
     );
@@ -467,7 +506,7 @@ export const make = Effect.gen(function* () {
           if (logEnabledWhenReady) {
             const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
             yield* Effect.logInfo("agent activity publishing enabled after link reconciliation", {
-              relayUrl: relayConfig?.url,
+              ...relayUrlLogAttributes(relayConfig?.url),
             });
           }
           return;
@@ -499,7 +538,7 @@ export const make = Effect.gen(function* () {
           break;
         case "enabled":
           yield* Effect.logInfo("agent activity publishing enabled", {
-            relayUrl: relayConfig?.url,
+            ...relayUrlLogAttributes(relayConfig?.url),
           });
           break;
       }

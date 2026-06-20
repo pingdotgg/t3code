@@ -20,6 +20,7 @@ import { CommandId, ProviderInstanceId } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { RELAY_ACTIVITY_PUBLISH_TYP, verifyRelayJwt } from "@t3tools/shared/relayJwt";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -98,6 +99,50 @@ function makeMemorySecretStore() {
 }
 
 describe.sequential("signRelayAgentActivityPublishProof", () => {
+  it("redacts relay URL secrets from log attributes", () => {
+    const relayUrl =
+      "https://relay-user:relay-password@relay.example.test/private/path?token=relay-secret#fragment";
+    const attributes = AgentAwarenessRelay.relayUrlLogAttributes(relayUrl);
+
+    expect(attributes).toEqual({
+      relayUrlConfigured: true,
+      relayUrlInputLength: relayUrl.length,
+      relayUrlProtocol: "https:",
+      relayUrlHostname: "relay.example.test",
+    });
+    const renderedAttributes = Object.values(attributes).join(" ");
+    expect(renderedAttributes).not.toContain("relay-user");
+    expect(renderedAttributes).not.toContain("relay-password");
+    expect(renderedAttributes).not.toContain("private/path");
+    expect(renderedAttributes).not.toContain("relay-secret");
+    expect(renderedAttributes).not.toContain("fragment");
+  });
+
+  it("summarizes publish causes without serializing nested failures or defects", () => {
+    const privateFailureDetail = "private relay response body";
+    const privateDefectDetail = "private relay defect detail";
+    const cause = Cause.combine(
+      Cause.fail({
+        _tag: "RelayPublishError",
+        cause: new Error(privateFailureDetail),
+        detail: privateFailureDetail,
+      }),
+      Cause.die(new Error(privateDefectDetail)),
+    );
+    const attributes = AgentAwarenessRelay.relayPublishCauseLogAttributes(cause);
+
+    expect(attributes).toEqual({
+      causeReasonCount: 2,
+      causeFailureCount: 1,
+      causeDefectCount: 1,
+      causeInterruptionCount: 0,
+      causeFailureTags: ["RelayPublishError"],
+    });
+    const renderedAttributes = Object.values(attributes).join(" ");
+    expect(renderedAttributes).not.toContain(privateFailureDetail);
+    expect(renderedAttributes).not.toContain(privateDefectDetail);
+  });
+
   it("distinguishes pending link credentials from disabled publication", () => {
     expect(
       AgentAwarenessRelay.resolveAgentActivityPublishingStartupState({
