@@ -4626,6 +4626,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(writeError.relativePath, "../escape.txt");
       assert.equal(writeError.failure, "workspace_path_outside_root");
       assert.isDefined(writeError.cause);
+      assert.notProperty(writeError, "contents");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

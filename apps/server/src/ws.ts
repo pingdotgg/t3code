@@ -1365,7 +1365,8 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               Effect.mapError(
                 (cause) =>
                   new ProjectWriteFileError({
-                    ...input,
+                    cwd: input.cwd,
+                    relativePath: input.relativePath,
                     ...projectFileFailureContext(cause),
                     cause,
                   }),
