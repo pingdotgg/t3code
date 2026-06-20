@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -394,6 +395,62 @@ describe("ssh tunnel scripts", () => {
       const result = yield* SshTunnel.issueRemotePairingToken(target);
       assert.equal(result.credential, "LCL4R2TPHDKQ");
     }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("retries authentication when a spawn error wraps an SSH auth failure", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+    const authFailure = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "ChildProcess",
+      method: "spawn",
+      pathOrDescriptor: "ssh",
+      description: "Permission denied (publickey,password).",
+    });
+    const promptAttempts: number[] = [];
+    let launchAttempts = 0;
+    const spawner = ChildProcessSpawner.make((command) => {
+      const args = commandArgs(command);
+      if (args.includes("sh") && args.includes("--")) {
+        launchAttempts += 1;
+        if (launchAttempts === 1) {
+          return Effect.fail(authFailure);
+        }
+        return Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n'));
+      }
+      if (args.includes("-N")) {
+        return Effect.succeed(makeRunningProcess(() => {}));
+      }
+      return Effect.succeed(makeSuccessfulProcess("\n"));
+    });
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshAuth.layer({
+        isAvailable: true,
+        request: (request) =>
+          Effect.sync(() => {
+            promptAttempts.push(request.attempt);
+            return "secret";
+          }),
+      }),
+      SshTunnel.layer(),
+    );
+
+    return Effect.gen(function* () {
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      const environment = yield* manager.ensureEnvironment(target);
+
+      assert.equal(environment.remotePort, 3773);
+      assert.equal(launchAttempts, 2);
+      assert.deepEqual(promptAttempts, [1]);
+    }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
   it.effect("closes the tunnel scope and starts fresh after disconnect", () => {
