@@ -96,6 +96,7 @@ export const ChatComposer = React.memo(function ChatComposer({
   newBranch,
   newWorktree,
   newField,
+  editorRows,
   inputFocused,
   composerEpoch,
   onReplyInput,
@@ -120,6 +121,8 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly newWorktree: string;
   /** Which new-thread text field is being edited (Tab cycles). */
   readonly newField: "message" | "branch" | "worktree";
+  /** Fixed height (rows) of the reply editor; content beyond it scrolls. */
+  readonly editorRows: number;
   /** False when the terminal pane holds focus — render static text, not an input. */
   readonly inputFocused: boolean;
   /** Bumped by the parent to remount (clear) the reply editor after send/clear. */
@@ -133,6 +136,13 @@ export const ChatComposer = React.memo(function ChatComposer({
 }): React.ReactNode {
   const palette = usePalette();
   const replyRef = React.useRef<TextareaRenderable | null>(null);
+  // On (re)mount with a seeded draft — restored after an overlay or pulled back
+  // from $EDITOR — drop the cursor at the end so typing continues from there.
+  React.useEffect(() => {
+    if (reply.length > 0) replyRef.current?.gotoBufferEnd();
+    // Mount/epoch only; not on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composerEpoch]);
 
   if (mode === "rename" || mode === "filter") {
     const label = mode === "rename" ? "rename ▸ " : "find ▸ ";
@@ -250,6 +260,9 @@ export const ChatComposer = React.memo(function ChatComposer({
           initialValue={reply}
           placeholder={placeholder}
           flexGrow={1}
+          // Fixed viewport so long prompts scroll (cursor stays in view) instead of
+          // overflowing; ^↑/^↓ change this height.
+          height={Math.max(1, editorRows)}
           wrapMode="word"
           keyBindings={replyKeyBindings}
           textColor={palette.text}

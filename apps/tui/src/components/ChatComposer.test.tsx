@@ -21,6 +21,7 @@ const base = {
   newBranch: "",
   newWorktree: "",
   newField: "message",
+  editorRows: 3,
   composerEpoch: 0,
   onReplyInput: noop,
   onReplySubmit: noop,

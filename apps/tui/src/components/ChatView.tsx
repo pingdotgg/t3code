@@ -4,10 +4,15 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
-import { useTerminalDimensions } from "@opentui/react";
+import { useRenderer, useTerminalDimensions } from "@opentui/react";
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as React from "react";
 
 import { derivePendingApprovals } from "../approvals.ts";
+import { normalizeEditedPrompt, resolveEditorCommand } from "../promptEditor.ts";
 import type { TuiClient } from "../connection.ts";
 import { useKeyBindings } from "../hooks/useKeyBindings.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
@@ -50,6 +55,7 @@ export function ChatView({
   readonly onExit: () => void;
 }): React.ReactNode {
   const { width, height } = useTerminalDimensions();
+  const renderer = useRenderer();
   const palette = usePalette();
   const store = React.useMemo(() => createStore(client), [client]);
   const syntaxStyle = React.useMemo(() => SyntaxStyle.create(), []);
@@ -100,6 +106,8 @@ export function ChatView({
   const [approvalIndex, setApprovalIndex] = React.useState(0);
   // Collapse long tool-call runs in the conversation (^T toggles).
   const [workLogExpanded, setWorkLogExpanded] = React.useState(false);
+  // User-set prompt height in editor rows; null = auto-grow with content.
+  const [promptHeight, setPromptHeight] = React.useState<number | null>(null);
   const [activeTerminal, setActiveTerminal] = React.useState<TerminalInfo | null>(null);
   // The terminal drawer coexists with the prompt; this tracks which one keystrokes go to.
   const [terminalFocused, setTerminalFocused] = React.useState(false);
@@ -201,10 +209,13 @@ export function ChatView({
 
   // Deterministic viewport heights. The terminal drawer (when open) and the
   // composer are both shown, so the top panes shrink to fit both. The reply editor
-  // grows with its line count (up to a cap) so multiline prompts stay visible.
-  const replyLineCount = Math.min(Math.max(reply.split("\n").length, 1), 8);
+  // auto-grows with its line count (up to a cap), or uses a height the user set
+  // with ^↑/^↓; content beyond that scrolls within the editor.
+  const maxPromptLines = Math.max(3, Math.floor(height * 0.6));
+  const autoPromptLines = Math.min(Math.max(reply.split("\n").length, 1), 8);
+  const promptLines = Math.min(promptHeight ?? autoPromptLines, maxPromptLines);
   const composerHeight =
-    focus === "new" ? 9 : focus === "rename" || focus === "filter" ? 5 : replyLineCount + 4;
+    focus === "new" ? 9 : focus === "rename" || focus === "filter" ? 5 : promptLines + 4;
   const defaultTerminalHeight = Math.floor(height * 0.4);
   const maxTerminalHeight = Math.max(6, height - composerHeight - 6);
   const terminalDrawerHeight = activeTerminal
@@ -325,6 +336,49 @@ export function ChatView({
     );
   };
 
+  const resizePrompt = (delta: number) => {
+    setPromptHeight((current) =>
+      Math.min(Math.max((current ?? autoPromptLines) + delta, 1), maxPromptLines),
+    );
+  };
+
+  // ^G: edit the current draft in $EDITOR. Release the terminal (suspend), run the
+  // editor on a temp file, then read it back into the prompt and re-take the screen.
+  const editInEditor = () => {
+    if (terminalFocused) return;
+    const draftText = reply;
+    void (async () => {
+      let dir: string | null = null;
+      try {
+        dir = await mkdtemp(join(tmpdir(), "t3-prompt-"));
+        const file = join(dir, "prompt.md");
+        await writeFile(file, draftText, "utf8");
+        const { cmd, args } = resolveEditorCommand({
+          VISUAL: process.env.VISUAL,
+          EDITOR: process.env.EDITOR,
+        });
+        renderer.suspend();
+        try {
+          await new Promise<void>((resolve) => {
+            const child = spawn(cmd, [...args, file], { stdio: "inherit" });
+            child.once("exit", () => resolve());
+            child.once("error", () => resolve());
+          });
+        } finally {
+          renderer.resume();
+        }
+        const edited = normalizeEditedPrompt(await readFile(file, "utf8"));
+        setReply(edited);
+        setComposerEpoch((epoch) => epoch + 1);
+        store.setStatus("Prompt updated from $EDITOR.", "success");
+      } catch {
+        store.setStatus("Could not open $EDITOR.", "error");
+      } finally {
+        if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+      }
+    })();
+  };
+
   const keyMode =
     activeTerminal && terminalFocused
       ? "terminal"
@@ -414,6 +468,9 @@ export function ChatView({
     onToggleTerminal: toggleTerminal,
     onGrowTerminal: () => resizeTerminal(2),
     onShrinkTerminal: () => resizeTerminal(-2),
+    onGrowPrompt: () => resizePrompt(2),
+    onShrinkPrompt: () => resizePrompt(-2),
+    onEditInEditor: editInEditor,
     onTogglePlanMode: () => {
       if (!detail) return;
       const next = detail.interactionMode === "plan" ? "default" : "plan";
@@ -652,8 +709,8 @@ export function ChatView({
     pendingUserInput && userInputDeferred
       ? "⚠ question pending — ^U to answer · ^C quit"
       : activeTerminal
-        ? "^P switch focus · ^E close · ^↑/^↓ size · Enter send · ^N new · ^G stop · ^C quit"
-        : "↑/↓ · Enter send · ^N new · ^B plan/build · ^Y implement · ^O mode · ^E term · ^T tools · ^G stop · ^A/^R approve · ^K actions · ^F find · ^C quit";
+        ? "^P prompt · ^E close term · ^↑/^↓ size term · keys → shell"
+        : "↑/↓ · Enter send · ^↑/^↓ size · ^G editor · ^N new · ^B plan/build · ^Y implement · ^O mode · ^E term · ^T tools · ^A/^R approve · ^K actions · ^F find · Esc stop · ^C quit";
 
   const statusStyle = statusGlyphColor(state.statusKind);
 
@@ -743,6 +800,7 @@ export function ChatView({
           newBranch={newBranch}
           newWorktree={newWorktree}
           newField={newField}
+          editorRows={promptLines}
           inputFocused={!terminalFocused && !diffOpen && !modelOpen}
           composerEpoch={composerEpoch}
           onReplyInput={setReply}

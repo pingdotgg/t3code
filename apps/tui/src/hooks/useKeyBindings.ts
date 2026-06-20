@@ -91,6 +91,9 @@ export interface KeyBindingActions {
   readonly onTogglePlanMode: () => void;
   readonly onImplementPlan: () => void;
   readonly onToggleWorkLog: () => void;
+  readonly onGrowPrompt: () => void;
+  readonly onShrinkPrompt: () => void;
+  readonly onEditInEditor: () => void;
   readonly onInterrupt: () => void;
   readonly onApprove: () => void;
   readonly onDecline: () => void;
@@ -189,8 +192,9 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     // ── Compose mode (default) ──────────────────────────────────────────────
     if (key.ctrl && key.name === "e") return actions.onToggleTerminal();
     if (key.ctrl && key.name === "p") return actions.onToggleFocus();
-    if (key.name === "up") return key.ctrl ? actions.onGrowTerminal() : actions.onNavUp();
-    if (key.name === "down") return key.ctrl ? actions.onShrinkTerminal() : actions.onNavDown();
+    // ^↑/^↓ resize the prompt you're focused on; arrows navigate the sidebar.
+    if (key.name === "up") return key.ctrl ? actions.onGrowPrompt() : actions.onNavUp();
+    if (key.name === "down") return key.ctrl ? actions.onShrinkPrompt() : actions.onNavDown();
     if (key.name === "pageup") return actions.onScrollUp();
     if (key.name === "pagedown") return actions.onScrollDown();
     if (key.ctrl && key.name === "n") return actions.onNewThread();
@@ -200,7 +204,8 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     if (key.ctrl && key.name === "u") return actions.onReopenUserInput();
     if (key.ctrl && key.name === "k") return actions.onOpenActions();
     if (key.ctrl && key.name === "f") return actions.onOpenFilter();
-    if (key.ctrl && key.name === "g") return actions.onInterrupt();
+    // ^G opens the draft in $EDITOR (interrupt is on Esc).
+    if (key.ctrl && key.name === "g") return actions.onEditInEditor();
     if (key.ctrl && key.name === "a") return actions.onApprove();
     if (key.ctrl && key.name === "r") return actions.onDecline();
     if (key.ctrl && key.name === "o") return actions.onCycleMode();
