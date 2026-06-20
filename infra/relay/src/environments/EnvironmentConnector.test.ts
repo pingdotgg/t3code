@@ -478,7 +478,9 @@ describe("EnvironmentConnector", () => {
         "relay.authorization.resolved_ws_base_url.protocol": "wss:",
         "relay.authorization.resolved_ws_base_url.hostname": "env.example.test",
       });
-      const serializedAttributes = JSON.stringify(resolutionAttributes);
+      const serializedAttributes = Object.entries(resolutionAttributes)
+        .flatMap(([key, value]) => [key, String(value)])
+        .join("\n");
       for (const secret of [
         "attacker-user",
         "attacker-password",
