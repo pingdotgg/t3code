@@ -46,6 +46,9 @@ Review changed TypeScript and directly affected call sites for the conventions b
 ## Errors and predicates
 
 - Define service failures with `Schema.TaggedErrorClass` and structured attributes. Derive `message` from those attributes rather than storing an unstructured message as the only data.
+- `Schema.Defect()` is not a substitute for modeling an error. Flag error classes whose only meaningful field is `cause`, or whose `message` merely stringifies an opaque cause.
+- Capture stable, serializable domain context such as the operation or stage, resource/path or entity identifier, normalized category/status, and a useful detail. Map failures where that context is known instead of wrapping an entire multi-step pipeline in one generic error.
+- Preserve a real underlying `cause` only when it adds diagnostic value, and make it optional supplemental data alongside the structural fields. Never manufacture an `Error` or opaque defect merely to populate `cause`, and do not erase structured upstream errors into `Schema.Defect()`.
 - Split semantically distinct failures into separate error classes when a `reason`, `kind`, `phase`, or similar discriminator is used to choose the user-facing message or drive caller control flow. A discriminator used only for internal diagnostics may remain a field.
 - Use `Schema.Union` of error classes when a shared schema, predicate, or helper type is useful.
 - Export direct schema predicates such as `export const isFoo = Schema.is(Foo)`. Flag a private `Schema.is` constant wrapped by a redundant function with the same signature.
