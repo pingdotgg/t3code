@@ -4,6 +4,7 @@ import {
   completeRelayClientInstallDialogClose,
   finishRelayClientInstall,
   readRelayClientInstallDialogState,
+  RelayClientInstallConfirmationConflictError,
   reportRelayClientInstallProgress,
   requestRelayClientInstallConfirmation,
   resetRelayClientInstallDialogForTests,
@@ -66,5 +67,29 @@ describe("relay client install dialog coordinator", () => {
 
     completeRelayClientInstallDialogClose();
     expect(readRelayClientInstallDialogState()).toEqual({ status: "idle" });
+  });
+
+  it("rejects concurrent confirmation with the active install state", async () => {
+    const confirmation = requestRelayClientInstallConfirmation("2026.5.2");
+    respondToRelayClientInstallConfirmation(true);
+    await expect(confirmation).resolves.toBe(true);
+    reportRelayClientInstallProgress({ type: "progress", stage: "downloading" });
+
+    const error = await requestRelayClientInstallConfirmation("2026.6.0").then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+
+    expect(error).toBeInstanceOf(RelayClientInstallConfirmationConflictError);
+    expect(error).toMatchObject({
+      requestedVersion: "2026.6.0",
+      activeVersion: "2026.5.2",
+      activeDialogStatus: "installing",
+      activeInstallStage: "downloading",
+    });
+    expect(error).not.toHaveProperty("cause");
+    expect((error as Error).message).toBe(
+      "Cannot confirm relay client installation 2026.6.0; installation 2026.5.2 has dialog status installing.",
+    );
   });
 });
