@@ -31,6 +31,7 @@ import {
   deleteThread as deleteThreadOp,
   interruptThreadTurn,
   respondToThreadApproval,
+  respondToThreadUserInput,
   setThreadInteractionMode,
   setThreadRuntimeMode,
   startThreadTurn,
@@ -299,6 +300,11 @@ export interface TuiClient {
     threadId: ThreadId,
     requestId: string,
     decision: ProviderApprovalDecision,
+  ) => Promise<void>;
+  readonly respondUserInput: (
+    threadId: ThreadId,
+    requestId: string,
+    answers: Record<string, string | string[]>,
   ) => Promise<void>;
   readonly setRuntimeMode: (threadId: ThreadId, mode: RuntimeMode) => Promise<void>;
   readonly setInteractionMode: (threadId: ThreadId, mode: ProviderInteractionMode) => Promise<void>;
@@ -573,6 +579,15 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
           threadId,
           requestId: ApprovalRequestId.make(requestId),
           decision,
+        }).pipe(Effect.asVoid),
+      ),
+
+    respondUserInput: (threadId, requestId, answers) =>
+      runtime.runPromise(
+        respondToThreadUserInput({
+          threadId,
+          requestId: ApprovalRequestId.make(requestId),
+          answers,
         }).pipe(Effect.asVoid),
       ),
 

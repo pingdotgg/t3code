@@ -10,11 +10,13 @@ import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore } from "../store.ts";
 import { usePalette } from "../theme.ts";
 import { revertableCheckpoints } from "../timeline.ts";
+import { buildUserInputAnswers, derivePendingUserInputs } from "../userInput.ts";
 import { buildRows, selectionEquals } from "./Sidebar.logic.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { RevertMenu, ThreadActionsMenu } from "./ThreadActionsMenu.tsx";
+import { UserInputForm } from "./UserInputForm.tsx";
 import { type TerminalInfo, ThreadTerminalDrawer } from "./ThreadTerminalDrawer.tsx";
 
 const RUNTIME_MODES: ReadonlyArray<RuntimeMode> = [
@@ -57,6 +59,11 @@ export function ChatView({
     "none",
   );
   const [revertIndex, setRevertIndex] = React.useState(0);
+  // Pending user-input form state.
+  const [userInputDeferred, setUserInputDeferred] = React.useState(false);
+  const [uiQuestionIndex, setUiQuestionIndex] = React.useState(0);
+  const [uiOptionIndex, setUiOptionIndex] = React.useState(0);
+  const [uiSelections, setUiSelections] = React.useState<Record<string, string[]>>({});
   const [reply, setReply] = React.useState("");
   // Bumped to remount (clear) the uncontrolled multiline reply editor.
   const [composerEpoch, setComposerEpoch] = React.useState(0);
@@ -93,6 +100,21 @@ export function ChatView({
     () => (detail ? revertableCheckpoints(detail.checkpoints) : []),
     [detail],
   );
+  const pendingUserInput = React.useMemo(
+    () => (detail ? (derivePendingUserInputs(detail.activities)[0] ?? null) : null),
+    [detail],
+  );
+  // Reset the answer draft whenever a different request comes in (or it clears).
+  const pendingRequestId = pendingUserInput?.requestId ?? null;
+  React.useEffect(() => {
+    setUserInputDeferred(false);
+    setUiQuestionIndex(0);
+    setUiOptionIndex(0);
+    setUiSelections({});
+  }, [pendingRequestId]);
+  const userInputActive = pendingUserInput !== null && !userInputDeferred;
+  const uiQuestion = pendingUserInput?.questions[uiQuestionIndex] ?? null;
+  const uiSelectedLabels = uiQuestion ? (uiSelections[uiQuestion.id] ?? []) : [];
   const approvals = React.useMemo(
     () => (detail ? derivePendingApprovals(detail.activities) : []),
     [detail],
@@ -239,7 +261,9 @@ export function ChatView({
               ? "rename"
               : focus === "filter"
                 ? "filter"
-                : "compose";
+                : userInputActive
+                  ? "userInput"
+                  : "compose";
 
   useKeyBindings({
     mode: keyMode,
@@ -355,6 +379,63 @@ export function ChatView({
         .catch((error) => store.setStatus(`revert failed: ${String(error)}`));
       store.setStatus(`Reverted to turn ${checkpoint.checkpointTurnCount}.`);
     },
+    onUserInputPrev: () => {
+      const count = uiQuestion?.options.length ?? 0;
+      if (count === 0) return;
+      setUiOptionIndex((index) => (index <= 0 ? count - 1 : index - 1));
+    },
+    onUserInputNext: () => {
+      const count = uiQuestion?.options.length ?? 0;
+      if (count === 0) return;
+      setUiOptionIndex((index) => (index + 1) % count);
+    },
+    onUserInputToggle: () => {
+      if (!uiQuestion) return;
+      const option = uiQuestion.options[uiOptionIndex];
+      if (!option) return;
+      setUiSelections((prev) => {
+        const current = prev[uiQuestion.id] ?? [];
+        if (uiQuestion.multiSelect) {
+          const next = current.includes(option.label)
+            ? current.filter((label) => label !== option.label)
+            : [...current, option.label];
+          return { ...prev, [uiQuestion.id]: next };
+        }
+        return { ...prev, [uiQuestion.id]: [option.label] };
+      });
+    },
+    onUserInputConfirm: () => {
+      if (!detail || !pendingUserInput || !uiQuestion) return;
+      // Plain Enter on a single-select question picks the highlighted option.
+      let selections = uiSelections;
+      if (!uiQuestion.multiSelect) {
+        const option = uiQuestion.options[uiOptionIndex];
+        if (option) selections = { ...uiSelections, [uiQuestion.id]: [option.label] };
+      }
+      if ((selections[uiQuestion.id]?.length ?? 0) === 0) {
+        store.setStatus("Select an option first.");
+        return;
+      }
+      const isLast = uiQuestionIndex >= pendingUserInput.questions.length - 1;
+      if (!isLast) {
+        setUiSelections(selections);
+        setUiQuestionIndex((index) => index + 1);
+        setUiOptionIndex(0);
+        return;
+      }
+      const answers = buildUserInputAnswers(pendingUserInput.questions, selections);
+      void client
+        .respondUserInput(detail.id, pendingUserInput.requestId, answers)
+        .catch((error) => store.setStatus(`answer failed: ${String(error)}`));
+      store.setStatus("Answer sent.");
+      setUiSelections({});
+      setUiQuestionIndex(0);
+      setUiOptionIndex(0);
+    },
+    onUserInputDefer: () => setUserInputDeferred(true),
+    onReopenUserInput: () => {
+      if (pendingUserInput) setUserInputDeferred(false);
+    },
     onCloseOverlay: () => setOverlay("none"),
     onConfirmDelete: () => {
       if (!detail) {
@@ -427,9 +508,12 @@ export function ChatView({
       ? "Enter to expand · ↑/↓ to move"
       : "Select a thread with ↑/↓";
 
-  const hint = activeTerminal
-    ? "^P switch focus · ^E close · ^↑/^↓ size · Enter send · ^N new · ^G stop · ^C quit"
-    : "↑/↓ · Enter send · ^N new · ^B plan/build · ^Y implement · ^O mode · ^E term · ^G stop · ^A/^R approve · ^K actions · ^F find · ^C quit";
+  const hint =
+    pendingUserInput && userInputDeferred
+      ? "⚠ question pending — ^U to answer · ^C quit"
+      : activeTerminal
+        ? "^P switch focus · ^E close · ^↑/^↓ size · Enter send · ^N new · ^G stop · ^C quit"
+        : "↑/↓ · Enter send · ^N new · ^B plan/build · ^Y implement · ^O mode · ^E term · ^G stop · ^A/^R approve · ^K actions · ^F find · ^C quit";
 
   return (
     <box flexDirection="column" width={width} height={height}>
@@ -473,6 +557,14 @@ export function ChatView({
           title={detail.title}
           archived={detail.archivedAt !== null}
           sessionRunning={sessionActive}
+        />
+      ) : keyMode === "userInput" && pendingUserInput ? (
+        <UserInputForm
+          pending={pendingUserInput}
+          questionIndex={uiQuestionIndex}
+          optionIndex={uiOptionIndex}
+          selectedLabels={uiSelectedLabels}
+          width={chatWidth}
         />
       ) : (
         <ChatComposer

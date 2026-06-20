@@ -18,6 +18,7 @@ export type KeyBindingMode =
   | "actions"
   | "confirmDelete"
   | "revert"
+  | "userInput"
   | "new"
   | "rename"
   | "filter"
@@ -45,6 +46,13 @@ export interface KeyBindingActions {
   readonly onRevertPrev: () => void;
   readonly onRevertNext: () => void;
   readonly onRevertConfirm: () => void;
+  // Pending user-input form
+  readonly onUserInputPrev: () => void;
+  readonly onUserInputNext: () => void;
+  readonly onUserInputToggle: () => void;
+  readonly onUserInputConfirm: () => void;
+  readonly onUserInputDefer: () => void;
+  readonly onReopenUserInput: () => void;
   // Rename / filter input modes
   readonly onSubmitRename: () => void;
   readonly onCancelRename: () => void;
@@ -109,6 +117,14 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       if (key.name === "escape") return actions.onCloseOverlay();
       return;
     }
+    if (actions.mode === "userInput") {
+      if (key.name === "up") return actions.onUserInputPrev();
+      if (key.name === "down") return actions.onUserInputNext();
+      if (key.name === "space") return actions.onUserInputToggle();
+      if (key.name === "return" || key.name === "enter") return actions.onUserInputConfirm();
+      if (key.name === "escape") return actions.onUserInputDefer();
+      return;
+    }
 
     // ── New-thread dialog ───────────────────────────────────────────────────
     if (actions.mode === "new") {
@@ -141,6 +157,7 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     if (key.ctrl && key.name === "n") return actions.onNewThread();
     if (key.ctrl && key.name === "b") return actions.onTogglePlanMode();
     if (key.ctrl && key.name === "y") return actions.onImplementPlan();
+    if (key.ctrl && key.name === "u") return actions.onReopenUserInput();
     if (key.ctrl && key.name === "k") return actions.onOpenActions();
     if (key.ctrl && key.name === "f") return actions.onOpenFilter();
     if (key.ctrl && key.name === "g") return actions.onInterrupt();

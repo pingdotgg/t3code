@@ -10,17 +10,12 @@ import { describe, it } from "bun:test";
 // plan↔build toggle, rename, archive/unarchive, delete, stop-session, search/filter,
 // multiline composer + paste, tool-call rows, changed-files summary, working indicator,
 // proposed-plan card, implement-plan (^Y, same thread via sourceProposedPlan),
-// context-window meter, cycle pending approvals (↑/↓), checkpoint revert (^K → v).
+// context-window meter, cycle pending approvals (↑/↓), checkpoint revert (^K → v),
+// plan/build badge on the prompt, pending user-input form.
 
 describe.skip("Backlog — Low/Med: new-thread options (branch / worktree / runtimeMode)", () => {
   it("Given the new-thread dialog, when options are set, then createThread receives them", () => {
     // createThread already accepts these; the dialog only collects project + message.
-  });
-});
-
-describe.skip("Backlog — Med: pending multi-question user input form", () => {
-  it("Given a thread awaiting user input, when answered, then respondToThreadUserInput is sent", () => {
-    // Data in thread.activities; needs a small select/text form.
   });
 });
 
