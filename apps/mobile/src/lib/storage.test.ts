@@ -25,7 +25,7 @@ vi.mock("react-native", () => ({
 }));
 
 vi.mock("./runtime", () => ({
-  mobileRuntime: {
+  runtime: {
     runPromise: vi.fn(),
   },
 }));

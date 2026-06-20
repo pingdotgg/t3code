@@ -26,6 +26,7 @@ import * as RelayConfiguration from "../Config.ts";
 const LINK_CHALLENGE_TYP = "t3-link-challenge+jwt";
 const ACCESS_TOKEN_TYP = "t3-relay-dpop-access+jwt";
 const LINK_CHALLENGE_KIND = "environment_link_challenge";
+export const RELAY_DPOP_ACCESS_TOKEN_TTL = "30 minutes";
 
 const LinkChallengeClaims = Schema.Struct({
   kind: Schema.Literal(LINK_CHALLENGE_KIND),
@@ -71,6 +72,17 @@ const allowedScopesByClientId: Record<
   [RelayWebClientId]: new Set([RelayEnvironmentConnectScope, RelayEnvironmentStatusScope]),
 };
 
+function relayJwtVerificationFailureReason(error: RelayJwtError): string {
+  const cause = error.cause;
+  if (typeof cause === "object" && cause !== null && "code" in cause) {
+    const code = (cause as { readonly code?: unknown }).code;
+    if (typeof code === "string" && code.length > 0) {
+      return code;
+    }
+  }
+  return cause instanceof Error && cause.name ? cause.name : "unknown";
+}
+
 function resolveDpopAccessTokenScopes(input: {
   readonly clientId: RelayPublicClientId;
   readonly scope: string;
@@ -81,45 +93,44 @@ function resolveDpopAccessTokenScopes(input: {
   });
 }
 
-export interface RelayTokensShape {
-  readonly resolveDpopAccessTokenScopes: typeof resolveDpopAccessTokenScopes;
-  readonly issueLinkChallenge: (input: {
-    readonly userId: string;
-    readonly request: RelayEnvironmentLinkChallengeRequest;
-    readonly jti: string;
-    readonly issuedAtEpochSeconds: number;
-    readonly expiresAtEpochSeconds: number;
-  }) => Effect.Effect<string, RelayJwtError>;
-  readonly verifyLinkChallenge: (input: {
-    readonly token: string;
-    readonly userId: string;
-    readonly request: RelayEnvironmentLinkChallengeRequest;
-    readonly nowEpochSeconds: number;
-  }) => Effect.Effect<LinkChallengeClaims | null>;
-  readonly issueDpopAccessToken: (input: {
-    readonly userId: string;
-    readonly proofKeyThumbprint: string;
-    readonly jti: string;
-    readonly issuedAtEpochSeconds: number;
-    readonly expiresAtEpochSeconds: number;
-    readonly clientId: RelayPublicClientId;
-    readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
-  }) => Effect.Effect<string, RelayJwtError>;
-  readonly verifyDpopAccessToken: (input: {
-    readonly token: string;
-    readonly nowEpochSeconds: number;
-  }) => Effect.Effect<RelayDpopAccessTokenClaims | null>;
-}
-
-export class RelayTokens extends Context.Service<RelayTokens, RelayTokensShape>()(
-  "t3code-relay/auth/RelayTokens",
-) {}
+export class RelayTokens extends Context.Service<
+  RelayTokens,
+  {
+    readonly resolveDpopAccessTokenScopes: typeof resolveDpopAccessTokenScopes;
+    readonly issueLinkChallenge: (input: {
+      readonly userId: string;
+      readonly request: RelayEnvironmentLinkChallengeRequest;
+      readonly jti: string;
+      readonly issuedAtEpochSeconds: number;
+      readonly expiresAtEpochSeconds: number;
+    }) => Effect.Effect<string, RelayJwtError>;
+    readonly verifyLinkChallenge: (input: {
+      readonly token: string;
+      readonly userId: string;
+      readonly request: RelayEnvironmentLinkChallengeRequest;
+      readonly nowEpochSeconds: number;
+    }) => Effect.Effect<LinkChallengeClaims | null>;
+    readonly issueDpopAccessToken: (input: {
+      readonly userId: string;
+      readonly proofKeyThumbprint: string;
+      readonly jti: string;
+      readonly issuedAtEpochSeconds: number;
+      readonly expiresAtEpochSeconds: number;
+      readonly clientId: RelayPublicClientId;
+      readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
+    }) => Effect.Effect<string, RelayJwtError>;
+    readonly verifyDpopAccessToken: (input: {
+      readonly token: string;
+      readonly nowEpochSeconds: number;
+    }) => Effect.Effect<RelayDpopAccessTokenClaims | null>;
+  }
+>()("t3code-relay/auth/RelayTokens") {}
 
 const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
   const issuer = normalizeRelayIssuer(config.relayIssuer);
 
-  const issueLinkChallenge: RelayTokensShape["issueLinkChallenge"] = Effect.fn(
+  const issueLinkChallenge: RelayTokens["Service"]["issueLinkChallenge"] = Effect.fn(
     "relay.tokens.issue_link_challenge",
   )(function* (input) {
     return yield* signRelayJwt({
@@ -138,7 +149,7 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const verifyLinkChallenge: RelayTokensShape["verifyLinkChallenge"] = Effect.fn(
+  const verifyLinkChallenge: RelayTokens["Service"]["verifyLinkChallenge"] = Effect.fn(
     "relay.tokens.verify_link_challenge",
   )((input) =>
     verifyRelayJwt({
@@ -165,7 +176,7 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const issueDpopAccessToken: RelayTokensShape["issueDpopAccessToken"] = Effect.fn(
+  const issueDpopAccessToken: RelayTokens["Service"]["issueDpopAccessToken"] = Effect.fn(
     "relay.tokens.issue_dpop_access_token",
   )(function* (input) {
     return yield* signRelayJwt({
@@ -185,7 +196,7 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const verifyDpopAccessToken: RelayTokensShape["verifyDpopAccessToken"] = Effect.fn(
+  const verifyDpopAccessToken: RelayTokens["Service"]["verifyDpopAccessToken"] = Effect.fn(
     "relay.tokens.verify_dpop_access_token",
   )((input) =>
     verifyRelayJwt({
@@ -195,7 +206,14 @@ const make = Effect.gen(function* () {
       issuer,
       audience: issuer,
       nowEpochSeconds: input.nowEpochSeconds,
+      maxTokenAge: RELAY_DPOP_ACCESS_TOKEN_TTL,
     }).pipe(
+      Effect.tapError((error) =>
+        Effect.annotateCurrentSpan(
+          "relay.tokens.verification_failure",
+          relayJwtVerificationFailureReason(error),
+        ),
+      ),
       Effect.flatMap(decodeDpopAccessTokenClaims),
       Effect.map((claims): RelayDpopAccessTokenClaims | null => {
         const scopes = resolveDpopAccessTokenScopes({

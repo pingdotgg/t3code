@@ -1,21 +1,12 @@
 import * as Effect from "effect/Effect";
 
 import * as DesktopIpc from "./DesktopIpc.ts";
-import {
-  clearCloudAuthToken,
-  createCloudAuthRequest,
-  fetchCloudAuth,
-  getCloudAuthToken,
-  setCloudAuthToken,
-} from "./methods/cloudAuth.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
 import {
-  getSavedEnvironmentRegistry,
-  getSavedEnvironmentSecret,
-  removeSavedEnvironmentSecret,
-  setSavedEnvironmentRegistry,
-  setSavedEnvironmentSecret,
-} from "./methods/savedEnvironments.ts";
+  clearConnectionCatalog,
+  getConnectionCatalog,
+  setConnectionCatalog,
+} from "./methods/connectionCatalog.ts";
 import {
   getAdvertisedEndpoints,
   getServerExposureState,
@@ -42,6 +33,7 @@ import {
 import {
   confirm,
   getAppBranding,
+  getLocalEnvironmentBearerToken,
   getLocalEnvironmentBootstrap,
   openExternal,
   pickFolder,
@@ -56,14 +48,13 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
 
   yield* ipc.handleSync(getAppBranding);
   yield* ipc.handleSync(getLocalEnvironmentBootstrap);
+  yield* ipc.handle(getLocalEnvironmentBearerToken);
 
   yield* ipc.handle(getClientSettings);
   yield* ipc.handle(setClientSettings);
-  yield* ipc.handle(getSavedEnvironmentRegistry);
-  yield* ipc.handle(setSavedEnvironmentRegistry);
-  yield* ipc.handle(getSavedEnvironmentSecret);
-  yield* ipc.handle(setSavedEnvironmentSecret);
-  yield* ipc.handle(removeSavedEnvironmentSecret);
+  yield* ipc.handle(getConnectionCatalog);
+  yield* ipc.handle(setConnectionCatalog);
+  yield* ipc.handle(clearConnectionCatalog);
 
   yield* ipc.handle(discoverSshHosts);
   yield* ipc.handle(ensureSshEnvironment);
@@ -84,11 +75,6 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(setTheme);
   yield* ipc.handle(showContextMenu);
   yield* ipc.handle(openExternal);
-  yield* ipc.handle(createCloudAuthRequest);
-  yield* ipc.handle(getCloudAuthToken);
-  yield* ipc.handle(setCloudAuthToken);
-  yield* ipc.handle(clearCloudAuthToken);
-  yield* ipc.handle(fetchCloudAuth);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);
   yield* ipc.handle(downloadUpdate);

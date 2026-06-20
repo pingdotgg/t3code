@@ -1,4 +1,8 @@
 import { memo, useState, useCallback } from "react";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { Badge } from "./ui/badge";
@@ -11,7 +15,6 @@ import {
   ChevronRightIcon,
   EllipsisIcon,
   LoaderIcon,
-  PanelRightCloseIcon,
 } from "lucide-react";
 import { cn } from "~/lib/utils";
 import type { ActivePlanState } from "../session-logic";
@@ -25,9 +28,10 @@ import {
   stripDisplayedPlanMarkdown,
 } from "../proposedPlan";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
-import { readEnvironmentApi } from "~/environmentApi";
+import { projectEnvironment } from "~/state/projects";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 function stepStatusIcon(status: string): React.ReactNode {
   if (status === "completed") {
@@ -61,7 +65,6 @@ interface PlanSidebarProps {
   workspaceRoot: string | undefined;
   timestampFormat: TimestampFormat;
   mode?: "sheet" | "sidebar" | "embedded";
-  onClose: () => void;
 }
 
 const PlanSidebar = memo(function PlanSidebar({
@@ -74,10 +77,12 @@ const PlanSidebar = memo(function PlanSidebar({
   workspaceRoot,
   timestampFormat,
   mode = "sidebar",
-  onClose,
 }: PlanSidebarProps) {
   const [proposedPlanExpanded, setProposedPlanExpanded] = useState(false);
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
+  const writeProjectFile = useAtomCommand(projectEnvironment.writeFile, {
+    reportFailure: false,
+  });
   const { copyToClipboard, isCopied } = useCopyToClipboard();
 
   const planMarkdown = activeProposedPlan?.planMarkdown ?? null;
@@ -96,24 +101,29 @@ const PlanSidebar = memo(function PlanSidebar({
   }, [planMarkdown]);
 
   const handleSaveToWorkspace = useCallback(() => {
-    const api = readEnvironmentApi(environmentId);
-    if (!api || !workspaceRoot || !planMarkdown) return;
+    if (!workspaceRoot || !planMarkdown) return;
     const filename = buildProposedPlanMarkdownFilename(planMarkdown);
     setIsSavingToWorkspace(true);
-    void api.projects
-      .writeFile({
-        cwd: workspaceRoot,
-        relativePath: filename,
-        contents: normalizePlanMarkdownForExport(planMarkdown),
-      })
-      .then((result) => {
+    void (async () => {
+      const result = await writeProjectFile({
+        environmentId,
+        input: {
+          cwd: workspaceRoot,
+          relativePath: filename,
+          contents: normalizePlanMarkdownForExport(planMarkdown),
+        },
+      });
+      setIsSavingToWorkspace(false);
+      if (result._tag === "Success") {
         toastManager.add({
           type: "success",
           title: "Plan saved",
-          description: result.relativePath,
+          description: result.value.relativePath,
         });
-      })
-      .catch((error) => {
+        return;
+      }
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -121,12 +131,9 @@ const PlanSidebar = memo(function PlanSidebar({
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
-      })
-      .then(
-        () => setIsSavingToWorkspace(false),
-        () => setIsSavingToWorkspace(false),
-      );
-  }, [environmentId, planMarkdown, workspaceRoot]);
+      }
+    })();
+  }, [environmentId, planMarkdown, workspaceRoot, writeProjectFile]);
 
   return (
     <div
@@ -182,15 +189,6 @@ const PlanSidebar = memo(function PlanSidebar({
               </MenuPopup>
             </Menu>
           ) : null}
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={onClose}
-            aria-label={`Close ${label.toLowerCase()} sidebar`}
-            className="text-muted-foreground/50 hover:text-foreground/70"
-          >
-            <PanelRightCloseIcon className="size-3.5" />
-          </Button>
         </div>
       </div>
 

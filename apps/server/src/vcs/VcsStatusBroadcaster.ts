@@ -179,18 +179,53 @@ export const layer = Layer.effect(
       },
     );
 
+    const updateCachedStatus = Effect.fn("VcsStatusBroadcaster.updateCachedStatus")(function* (
+      cwd: string,
+      local: VcsStatusLocalResult,
+      remote: VcsStatusRemoteResult | null,
+      options?: { publish?: boolean },
+    ) {
+      const nextLocal = {
+        fingerprint: fingerprintStatusPart(local),
+        value: local,
+      } satisfies CachedValue<VcsStatusLocalResult>;
+      const nextRemote = {
+        fingerprint: fingerprintStatusPart(remote),
+        value: remote,
+      } satisfies CachedValue<VcsStatusRemoteResult | null>;
+      const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
+        const previous = cache.get(cwd) ?? { local: null, remote: null };
+        const nextCache = new Map(cache);
+        nextCache.set(cwd, {
+          local: nextLocal,
+          remote: nextRemote,
+        });
+        return [
+          previous.local?.fingerprint !== nextLocal.fingerprint ||
+            previous.remote?.fingerprint !== nextRemote.fingerprint,
+          nextCache,
+        ] as const;
+      });
+
+      if (options?.publish && shouldPublish) {
+        yield* PubSub.publish(changesPubSub, {
+          cwd,
+          event: {
+            _tag: "snapshot",
+            local,
+            remote,
+          },
+        });
+      }
+
+      return mergeGitStatusParts(local, remote);
+    });
+
     const loadLocalStatus = Effect.fn("VcsStatusBroadcaster.loadLocalStatus")(function* (
       cwd: string,
     ) {
       const local = yield* workflow.localStatus({ cwd });
       return yield* updateCachedLocalStatus(cwd, local);
-    });
-
-    const loadRemoteStatus = Effect.fn("VcsStatusBroadcaster.loadRemoteStatus")(function* (
-      cwd: string,
-    ) {
-      const remote = yield* workflow.remoteStatus({ cwd });
-      return yield* updateCachedRemoteStatus(cwd, remote);
     });
 
     const getOrLoadLocalStatus = Effect.fn("VcsStatusBroadcaster.getOrLoadLocalStatus")(function* (
@@ -203,43 +238,49 @@ export const layer = Layer.effect(
       return yield* loadLocalStatus(cwd);
     });
 
-    const getOrLoadRemoteStatus = Effect.fn("VcsStatusBroadcaster.getOrLoadRemoteStatus")(
-      function* (cwd: string) {
-        const cached = yield* getCachedStatus(cwd);
-        if (cached?.remote) {
-          return cached.remote.value;
-        }
-        return yield* loadRemoteStatus(cwd);
-      },
-    );
-
     const withFileSystem = Effect.provideService(FileSystem.FileSystem, fs);
 
     const getStatus: VcsStatusBroadcasterShape["getStatus"] = Effect.fn(
       "VcsStatusBroadcaster.getStatus",
     )(function* (input) {
       const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
-      const [local, remote] = yield* Effect.all([
-        getOrLoadLocalStatus(cwd),
-        getOrLoadRemoteStatus(cwd),
-      ]);
-      return mergeGitStatusParts(local, remote);
+      const cached = yield* getCachedStatus(cwd);
+      if (cached?.local && cached.remote) {
+        return mergeGitStatusParts(cached.local.value, cached.remote.value);
+      }
+      const [local, remote] = yield* Effect.all(
+        [
+          cached?.local ? Effect.succeed(cached.local.value) : workflow.localStatus({ cwd }),
+          cached?.remote ? Effect.succeed(cached.remote.value) : workflow.remoteStatus({ cwd }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      return yield* updateCachedStatus(cwd, local, remote);
     });
+
+    const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
+      function* (cwd: string) {
+        yield* workflow.invalidateLocalStatus(cwd);
+        const local = yield* workflow.localStatus({ cwd });
+        return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+      },
+    );
 
     const refreshLocalStatus: VcsStatusBroadcasterShape["refreshLocalStatus"] = Effect.fn(
       "VcsStatusBroadcaster.refreshLocalStatus",
     )(function* (rawCwd) {
       const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-      yield* workflow.invalidateLocalStatus(cwd);
-      const local = yield* workflow.localStatus({ cwd });
-      return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+      return yield* refreshLocalStatusCore(cwd);
     });
 
     const refreshRemoteStatus = Effect.fn("VcsStatusBroadcaster.refreshRemoteStatus")(function* (
       cwd: string,
+      options?: { readonly refreshUpstream?: boolean },
     ) {
-      yield* workflow.invalidateRemoteStatus(cwd);
-      const remote = yield* workflow.remoteStatus({ cwd });
+      if (options?.refreshUpstream !== false) {
+        yield* workflow.invalidateRemoteStatus(cwd);
+      }
+      const remote = yield* workflow.remoteStatus({ cwd }, options);
       return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
     });
 
@@ -247,11 +288,15 @@ export const layer = Layer.effect(
       "VcsStatusBroadcaster.refreshStatus",
     )(function* (rawCwd) {
       const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-      const [local, remote] = yield* Effect.all([
-        refreshLocalStatus(cwd),
-        refreshRemoteStatus(cwd),
-      ]);
-      return mergeGitStatusParts(local, remote);
+      yield* Effect.all(
+        [workflow.invalidateLocalStatus(cwd), workflow.invalidateRemoteStatus(cwd)],
+        { concurrency: "unbounded", discard: true },
+      );
+      const [local, remote] = yield* Effect.all(
+        [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd })],
+        { concurrency: "unbounded" },
+      );
+      return yield* updateCachedStatus(cwd, local, remote, { publish: true });
     });
 
     const makeRemoteRefreshLoop = (
@@ -261,17 +306,22 @@ export const layer = Layer.effect(
     ) => {
       return Effect.gen(function* () {
         const consecutiveFailuresRef = yield* Ref.make(0);
+        const needsInitialRefreshRef = yield* Ref.make(refreshImmediately);
         const refreshRemoteStatusIfEnabled = Effect.gen(function* () {
           const configuredInterval = yield* automaticRemoteRefreshInterval;
           const activeInterval = Duration.isZero(configuredInterval)
             ? DEFAULT_VCS_STATUS_REFRESH_INTERVAL
             : configuredInterval;
-          if (Duration.isZero(configuredInterval)) {
+          const needsInitialRefresh = yield* Ref.get(needsInitialRefreshRef);
+          if (Duration.isZero(configuredInterval) && !needsInitialRefresh) {
             return activeInterval;
           }
 
-          const exit = yield* refreshRemoteStatus(cwd).pipe(Effect.exit);
+          const exit = yield* refreshRemoteStatus(cwd, {
+            refreshUpstream: !Duration.isZero(configuredInterval),
+          }).pipe(Effect.exit);
           if (Exit.isSuccess(exit)) {
+            yield* Ref.set(needsInitialRefreshRef, false);
             yield* Ref.set(consecutiveFailuresRef, 0);
             return activeInterval;
           }

@@ -1,5 +1,4 @@
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -16,8 +15,8 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as IpcChannels from "../ipc/channels.ts";
-import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
@@ -32,7 +31,6 @@ type WindowTitleBarOptions = Pick<
 type DesktopWindowRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
   | DesktopAssets.DesktopAssets
-  | DesktopServerExposure.DesktopServerExposure
   | DesktopState.DesktopState
   | ElectronMenu.ElectronMenu
   | ElectronShell.ElectronShell
@@ -40,16 +38,7 @@ type DesktopWindowRuntimeServices =
   | ElectronWindow.ElectronWindow
   | PreviewManager.PreviewManager;
 
-export class DesktopWindowDevServerUrlMissingError extends Data.TaggedError(
-  "DesktopWindowDevServerUrlMissingError",
-)<{}> {
-  override get message() {
-    return "VITE_DEV_SERVER_URL is required in desktop development.";
-  }
-}
-
 export type DesktopWindowError =
-  | DesktopWindowDevServerUrlMissingError
   | ElectronWindow.ElectronWindowCreateError
   | PreviewManager.PreviewManagerError;
 
@@ -70,15 +59,6 @@ export class DesktopWindow extends Context.Service<DesktopWindow, DesktopWindowS
 
 const { logInfo: logWindowInfo, logWarning: logWindowWarning } =
   DesktopObservability.makeComponentLogger("desktop-window");
-
-function resolveDesktopDevServerUrl(
-  environment: DesktopEnvironment.DesktopEnvironmentShape,
-): Effect.Effect<string, DesktopWindowDevServerUrlMissingError> {
-  return Option.match(environment.devServerUrl, {
-    onNone: () => Effect.fail(new DesktopWindowDevServerUrlMissingError()),
-    onSome: (url) => Effect.succeed(url.href),
-  });
-}
 
 function getIconOption(
   iconPaths: DesktopAssets.DesktopIconPaths,
@@ -171,18 +151,16 @@ const make = Effect.gen(function* () {
   const electronTheme = yield* ElectronTheme.ElectronTheme;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const previewManager = yield* PreviewManager.PreviewManager;
-  const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
   const state = yield* DesktopState.DesktopState;
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runPromise = Effect.runPromiseWith(context);
 
-  const createWindow = Effect.fn("desktop.window.createWindow")(function* (
-    backendHttpUrl: URL,
-  ): Effect.fn.Return<Electron.BrowserWindow, DesktopWindowError> {
+  const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
+    Electron.BrowserWindow,
+    DesktopWindowError
+  > {
     yield* previewManager.getBrowserSession();
-    const applicationUrl = environment.isDevelopment
-      ? yield* resolveDesktopDevServerUrl(environment)
-      : backendHttpUrl.href;
+    const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
@@ -350,8 +328,7 @@ const make = Effect.gen(function* () {
   });
 
   const createMain = Effect.gen(function* () {
-    const backendConfig = yield* serverExposure.backendConfig;
-    const window = yield* createWindow(backendConfig.httpBaseUrl);
+    const window = yield* createWindow();
     yield* electronWindow.setMain(window);
     yield* logWindowInfo("main window created");
     return window;

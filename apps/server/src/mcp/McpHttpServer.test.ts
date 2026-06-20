@@ -1,10 +1,11 @@
 import { expect, it } from "@effect/vitest";
+import { NodeHttpServer } from "@effect/platform-node";
 import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/unstable/ai";
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -48,12 +49,73 @@ it("normalizes empty successful notification responses to accepted", () => {
   expect(resultResponse.status).toBe(200);
 });
 
+it.effect("terminates HTTP MCP sessions with DELETE", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const serverLayer = McpServer.layerHttp({
+        name: "MCP termination test",
+        version: "1.0.0",
+        path: "/mcp",
+      });
+      yield* HttpRouter.serve(serverLayer, {
+        disableListenLog: true,
+        disableLogger: true,
+      }).pipe(Layer.build);
+      const httpClient = yield* HttpClient.HttpClient;
+
+      const initializeResponse = yield* httpClient.post("/mcp", {
+        headers: { accept: "application/json, text/event-stream" },
+        body: HttpBody.text(
+          `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"mcp-test","version":"1.0.0"}}}`,
+          "application/json",
+        ),
+      });
+      const sessionId = initializeResponse.headers["mcp-session-id"];
+      expect(initializeResponse.status).toBe(200);
+      expect(sessionId).not.toBeNull();
+
+      const missingSessionResponse = yield* httpClient.del("/mcp");
+      expect(missingSessionResponse.status).toBe(400);
+
+      const unknownSessionResponse = yield* httpClient.del("/mcp", {
+        headers: { "mcp-session-id": "unknown-session" },
+      });
+      expect(unknownSessionResponse.status).toBe(404);
+
+      const terminateResponse = yield* httpClient.del("/mcp", {
+        headers: { "mcp-session-id": sessionId! },
+      });
+      expect(terminateResponse.status).toBe(204);
+
+      const reusedSessionResponse = yield* httpClient.post("/mcp", {
+        headers: {
+          accept: "application/json, text/event-stream",
+          "mcp-session-id": sessionId!,
+        },
+        body: HttpBody.text(
+          `{"jsonrpc":"2.0","id":2,"method":"ping","params":{}}`,
+          "application/json",
+        ),
+      });
+      expect(reusedSessionResponse.status).toBe(404);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("registers annotated tools and preserves authenticated request context", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
       const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-      const requests = yield* broker.connect("mcp-test-client");
+      const requests = yield* broker.connect({
+        clientId: "mcp-test-client",
+        environmentId,
+        threadId,
+        tabId,
+        visible: true,
+        supportsAutomation: true,
+        focusedAt: "2026-06-11T00:00:00.000Z",
+      });
       yield* Stream.runForEach(requests, (request) =>
         broker.respond({
           requestId: request.requestId,

@@ -4,7 +4,7 @@ import { PgDialect, QueryBuilder } from "drizzle-orm/pg-core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { RelayDb, type RelayDatabase } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { relayEnvironmentCredentials } from "../persistence/schema.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
 
@@ -47,7 +47,7 @@ describe("EnvironmentCredentials", () => {
             }),
           };
         },
-      } as unknown as RelayDatabase;
+      } as unknown as RelayDb.RelayDb["Service"];
 
       return Effect.gen(function* () {
         const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
@@ -87,7 +87,7 @@ describe("EnvironmentCredentials", () => {
         Effect.provide(
           EnvironmentCredentials.layer.pipe(
             Layer.provide(NodeCryptoLayer.layer),
-            Layer.provide(Layer.succeed(RelayDb, fakeDb)),
+            Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)),
           ),
         ),
       );
@@ -118,7 +118,7 @@ describe("EnvironmentCredentials", () => {
           },
         };
       },
-    } as unknown as RelayDatabase;
+    } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
@@ -150,7 +150,7 @@ describe("EnvironmentCredentials", () => {
       Effect.provide(
         EnvironmentCredentials.layer.pipe(
           Layer.provide(NodeCryptoLayer.layer),
-          Layer.provide(Layer.succeed(RelayDb, fakeDb)),
+          Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)),
         ),
       ),
     );

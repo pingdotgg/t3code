@@ -19,6 +19,7 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerSettings,
   type ServerProviderState,
 } from "@t3tools/contracts";
 
@@ -49,6 +50,21 @@ export interface ProviderInstanceEntry {
   readonly isAvailable: boolean;
   readonly snapshot: ServerProvider;
   readonly models: ReadonlyArray<ServerProviderModel>;
+}
+
+/**
+ * Whether an instance can currently contribute models to an interactive picker.
+ *
+ * Disabling an instance updates `enabled` independently, while its previous
+ * `ready` probe status can remain in the streamed snapshot until reconciliation.
+ */
+export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
+  return entry.enabled && entry.isAvailable && entry.status === "ready";
+}
+
+/** Picker rails contain configured, enabled instances only. */
+export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
+  return entry.enabled;
 }
 
 /**
@@ -151,6 +167,35 @@ export function deriveProviderInstanceEntries(
       snapshot,
       models: snapshot.models,
     } satisfies ProviderInstanceEntry;
+  });
+}
+
+/**
+ * Overlay the current settings configuration onto streamed provider snapshots.
+ * Provider probes can briefly retain their previous `enabled` value after a
+ * settings write, so picker visibility must follow settings rather than waiting
+ * for probe reconciliation.
+ *
+ * Non-default instances only exist through `providerInstances`; if one is
+ * absent there, its streamed snapshot is stale (for example immediately after
+ * deletion) and is treated as disabled.
+ */
+export function applyProviderInstanceSettings(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  settings: Pick<ServerSettings, "providerInstances" | "providers">,
+): ReadonlyArray<ProviderInstanceEntry> {
+  const legacyProviders = settings.providers as Readonly<
+    Record<string, { readonly enabled?: boolean } | undefined>
+  >;
+
+  return entries.map((entry) => {
+    const explicitInstance = settings.providerInstances?.[entry.instanceId];
+    const enabled = explicitInstance
+      ? (explicitInstance.enabled ?? true)
+      : entry.isDefault
+        ? (legacyProviders[entry.driverKind]?.enabled ?? entry.enabled)
+        : false;
+    return enabled === entry.enabled ? entry : { ...entry, enabled };
   });
 }
 

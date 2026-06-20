@@ -311,12 +311,15 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
 export const enrichGrokSnapshot = (input: {
   readonly snapshot: ServerProvider;
   readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
+  readonly enableProviderUpdateChecks?: boolean;
   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   readonly httpClient: HttpClient.HttpClient;
 }): Effect.Effect<void> => {
   const { snapshot, publishSnapshot } = input;
 
-  return enrichProviderSnapshotWithVersionAdvisory(snapshot, input.maintenanceCapabilities).pipe(
+  return enrichProviderSnapshotWithVersionAdvisory(snapshot, input.maintenanceCapabilities, {
+    enableProviderUpdateChecks: input.enableProviderUpdateChecks,
+  }).pipe(
     Effect.provideService(HttpClient.HttpClient, input.httpClient),
     Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
     Effect.catchCause((cause) =>

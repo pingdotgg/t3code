@@ -1,7 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
@@ -40,18 +41,18 @@ it.layer(NodeServices.layer)("CliState", (it) => {
     Effect.gen(function* () {
       const secrets = yield* ServerSecretStore.ServerSecretStore;
 
-      expect(yield* CliState.readCliDesiredCloudLink).toBe(false);
+      assert.isFalse(yield* CliState.readCliDesiredCloudLink);
       yield* CliState.setCliDesiredCloudLink(true);
-      expect(yield* CliState.readCliDesiredCloudLink).toBe(true);
+      assert.isTrue(yield* CliState.readCliDesiredCloudLink);
 
       for (const name of persistedCloudLinkSecrets) {
         yield* secrets.set(name, new TextEncoder().encode(name));
       }
       yield* CliState.clearPersistedCloudLink;
 
-      expect(yield* CliState.readCliDesiredCloudLink).toBe(false);
+      assert.isFalse(yield* CliState.readCliDesiredCloudLink);
       for (const name of persistedCloudLinkSecrets) {
-        expect(yield* secrets.get(name)).toBe(null);
+        assert.isTrue(Option.isNone(yield* secrets.get(name)));
       }
     }).pipe(Effect.provide(makeTestLayer())),
   );

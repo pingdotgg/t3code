@@ -1,7 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -23,10 +24,10 @@ it.layer(NodeServices.layer)("getOrCreateEnvironmentKeyPairFromSecretStore", (it
       const first = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secretStore);
       const second = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secretStore);
 
-      expect(second).toEqual(first);
-      expect(yield* secretStore.get("cloud-link-ed25519-key-pair")).not.toBeNull();
-      expect(yield* secretStore.get("cloud-link-ed25519-private-key")).toBeNull();
-      expect(yield* secretStore.get("cloud-link-ed25519-public-key")).toBeNull();
+      assert.deepEqual(second, first);
+      assert.isTrue(Option.isSome(yield* secretStore.get("cloud-link-ed25519-key-pair")));
+      assert.isTrue(Option.isNone(yield* secretStore.get("cloud-link-ed25519-private-key")));
+      assert.isTrue(Option.isNone(yield* secretStore.get("cloud-link-ed25519-public-key")));
     }).pipe(Effect.provide(makeServerSecretStoreLayer())),
   );
 
@@ -36,11 +37,11 @@ it.layer(NodeServices.layer)("getOrCreateEnvironmentKeyPairFromSecretStore", (it
       yield* secretStore.set("cloud-link-ed25519-private-key", new TextEncoder().encode("private"));
       yield* secretStore.set("cloud-link-ed25519-public-key", new TextEncoder().encode("public"));
 
-      expect(yield* getOrCreateEnvironmentKeyPairFromSecretStore(secretStore)).toEqual({
+      assert.deepEqual(yield* getOrCreateEnvironmentKeyPairFromSecretStore(secretStore), {
         privateKey: "private",
         publicKey: "public",
       });
-      expect(yield* secretStore.get("cloud-link-ed25519-key-pair")).not.toBeNull();
+      assert.isTrue(Option.isSome(yield* secretStore.get("cloud-link-ed25519-key-pair")));
     }).pipe(Effect.provide(makeServerSecretStoreLayer())),
   );
 
@@ -53,7 +54,9 @@ it.layer(NodeServices.layer)("getOrCreateEnvironmentKeyPairFromSecretStore", (it
       const secretStore = {
         get: (name) =>
           Effect.sync(() =>
-            name === "cloud-link-ed25519-key-pair" && createAttempted ? winner : null,
+            name === "cloud-link-ed25519-key-pair" && createAttempted
+              ? Option.some(winner)
+              : Option.none(),
           ),
         set: unusedSecretStoreOperation,
         create: () =>
@@ -78,7 +81,7 @@ it.layer(NodeServices.layer)("getOrCreateEnvironmentKeyPairFromSecretStore", (it
         remove: unusedSecretStoreOperation,
       } satisfies ServerSecretStore.ServerSecretStoreShape;
 
-      expect(yield* getOrCreateEnvironmentKeyPairFromSecretStore(secretStore)).toEqual({
+      assert.deepEqual(yield* getOrCreateEnvironmentKeyPairFromSecretStore(secretStore), {
         privateKey: "winner-private",
         publicKey: "winner-public",
       });

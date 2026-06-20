@@ -1,6 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { ProviderDriverKind } from "@t3tools/contracts";
-
 import {
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
@@ -11,10 +9,12 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -36,6 +36,44 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("resolveSidebarStageBadgeLabel", () => {
+  it("returns Nightly for nightly primary server versions", () => {
+    expect(
+      resolveSidebarStageBadgeLabel({
+        primaryServerVersion: "0.0.28-nightly.20260616.12",
+        fallbackStageLabel: "Alpha",
+      }),
+    ).toBe("Nightly");
+  });
+
+  it("returns the fallback label for stable primary server versions", () => {
+    expect(
+      resolveSidebarStageBadgeLabel({
+        primaryServerVersion: "0.0.27",
+        fallbackStageLabel: "Alpha",
+      }),
+    ).toBe("Alpha");
+  });
+
+  it("returns the fallback label when the primary server version is missing", () => {
+    expect(
+      resolveSidebarStageBadgeLabel({
+        primaryServerVersion: null,
+        fallbackStageLabel: "Dev",
+      }),
+    ).toBe("Dev");
+  });
+
+  it("returns the fallback label for malformed nightly prerelease versions", () => {
+    expect(
+      resolveSidebarStageBadgeLabel({
+        primaryServerVersion: "0.0.28-nightly.20260616",
+        fallbackStageLabel: "Alpha",
+      }),
+    ).toBe("Alpha");
+  });
+});
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
@@ -64,6 +102,20 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(true);
+  });
+
+  it("treats a missing client visit marker as read", () => {
+    expect(
+      hasUnseenCompletion({
+        hasActionableProposedPlan: false,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        interactionMode: "default",
+        latestTurn: makeLatestTurn(),
+        lastVisitedAt: undefined,
+        session: null,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -171,6 +223,24 @@ describe("shouldClearThreadSelectionOnMouseDown", () => {
   });
 });
 
+describe("isTrailingDoubleClick", () => {
+  it("treats a single click as a normal activation", () => {
+    expect(isTrailingDoubleClick(1)).toBe(false);
+  });
+
+  it("treats synthetic/keyboard activations (detail 0) as a normal activation", () => {
+    expect(isTrailingDoubleClick(0)).toBe(false);
+  });
+
+  it("ignores the second click of a double-click so it does not navigate", () => {
+    expect(isTrailingDoubleClick(2)).toBe(true);
+  });
+
+  it("ignores further clicks of a triple-click", () => {
+    expect(isTrailingDoubleClick(3)).toBe(true);
+  });
+});
+
 describe("resolveSidebarNewThreadEnvMode", () => {
   it("uses the app default when the caller does not request a specific mode", () => {
     expect(
@@ -206,6 +276,7 @@ describe("resolveSidebarNewThreadSeedContext", () => {
           branch: "feature/draft",
           worktreePath: "/repo/.t3/worktrees/draft",
           envMode: "worktree",
+          startFromOrigin: true,
         },
       }),
     ).toEqual({
@@ -247,12 +318,14 @@ describe("resolveSidebarNewThreadSeedContext", () => {
           branch: "feature/new-draft",
           worktreePath: "/repo/worktree",
           envMode: "worktree",
+          startFromOrigin: true,
         },
       }),
     ).toEqual({
       branch: "feature/new-draft",
       worktreePath: "/repo/worktree",
       envMode: "worktree",
+      startFromOrigin: true,
     });
   });
 
@@ -327,17 +400,17 @@ describe("orderItemsByPreferredIds", () => {
       {
         environmentId: EnvironmentId.make("environment-local"),
         id: ProjectId.make("id-alpha"),
-        cwd: "/work/alpha",
+        workspaceRoot: "/work/alpha",
       },
       {
         environmentId: EnvironmentId.make("environment-local"),
         id: ProjectId.make("id-beta"),
-        cwd: "/work/beta",
+        workspaceRoot: "/work/beta",
       },
       {
         environmentId: EnvironmentId.make("environment-local"),
         id: ProjectId.make("id-gamma"),
-        cwd: "/work/gamma",
+        workspaceRoot: "/work/gamma",
       },
     ];
     const ordered = orderItemsByPreferredIds({
@@ -346,10 +419,29 @@ describe("orderItemsByPreferredIds", () => {
       getId: getProjectOrderKey,
     });
 
-    expect(ordered.map((project) => project.cwd)).toEqual([
+    expect(ordered.map((project) => project.workspaceRoot)).toEqual([
       "/work/gamma",
       "/work/alpha",
       "/work/beta",
+    ]);
+  });
+
+  it("resolves legacy preference aliases without materializing project state", () => {
+    const ordered = orderItemsByPreferredIds({
+      items: [
+        { id: "physical-a", cwd: "/work/a" },
+        { id: "physical-b", cwd: "/work/b" },
+        { id: "physical-c", cwd: "/work/c" },
+      ],
+      preferredIds: ["legacy:/work/c", "legacy:/work/a"],
+      getId: (project) => project.id,
+      getPreferenceIds: (project) => [project.id, `legacy:${project.cwd}`],
+    });
+
+    expect(ordered.map((project) => project.id)).toEqual([
+      "physical-c",
+      "physical-a",
+      "physical-b",
     ]);
   });
 });
@@ -481,11 +573,14 @@ describe("resolveThreadStatusPill", () => {
     latestTurn: null,
     lastVisitedAt: undefined,
     session: {
-      provider: ProviderDriverKind.make("codex"),
+      threadId: ThreadId.make("thread-1"),
       status: "running" as const,
-      createdAt: "2026-03-09T10:00:00.000Z",
+      providerName: "Codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      activeTurnId: "turn-1" as never,
+      lastError: null,
       updatedAt: "2026-03-09T10:00:00.000Z",
-      orchestrationStatus: "running" as const,
     },
   };
 
@@ -530,14 +625,14 @@ describe("resolveThreadStatusPill", () => {
           session: {
             ...baseThread.session,
             status: "ready",
-            orchestrationStatus: "ready",
+            activeTurnId: null,
           },
         },
       }),
     ).toMatchObject({ label: "Plan Ready", pulse: false });
   });
 
-  it("does not show plan ready after the proposed plan was implemented elsewhere", () => {
+  it("does not manufacture completed state without a client visit marker", () => {
     expect(
       resolveThreadStatusPill({
         thread: {
@@ -546,11 +641,11 @@ describe("resolveThreadStatusPill", () => {
           session: {
             ...baseThread.session,
             status: "ready",
-            orchestrationStatus: "ready",
+            activeTurnId: null,
           },
         },
       }),
-    ).toMatchObject({ label: "Completed", pulse: false });
+    ).toBeNull();
   });
 
   it("shows completed when there is an unseen completion and no active blocker", () => {
@@ -564,7 +659,7 @@ describe("resolveThreadStatusPill", () => {
           session: {
             ...baseThread.session,
             status: "ready",
-            orchestrationStatus: "ready",
+            activeTurnId: null,
           },
         },
       }),
@@ -702,8 +797,9 @@ function makeProject(overrides: Partial<Project> = {}): Project {
   return {
     id: ProjectId.make("project-1"),
     environmentId: localEnvironmentId,
-    name: "Project",
-    cwd: "/tmp/project",
+    title: "Project",
+    workspaceRoot: "/tmp/project",
+    repositoryIdentity: null,
     defaultModelSelection: {
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5.4",
@@ -720,7 +816,6 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
     id: ThreadId.make("thread-1"),
     environmentId: localEnvironmentId,
-    codexThreadId: null,
     projectId: ProjectId.make("project-1"),
     title: "Thread",
     modelSelection: {
@@ -733,14 +828,14 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     session: null,
     messages: [],
     proposedPlans: [],
-    error: null,
     createdAt: "2026-03-09T10:00:00.000Z",
     archivedAt: null,
+    deletedAt: null,
     updatedAt: "2026-03-09T10:00:00.000Z",
     latestTurn: null,
     branch: null,
     worktreePath: null,
-    turnDiffSummaries: [],
+    checkpoints: [],
     activities: [],
     ...overrides,
   };
@@ -815,8 +910,8 @@ describe("getFallbackThreadIdAfterDelete", () => {
 describe("sortProjectsForSidebar", () => {
   it("sorts projects by the most recent user message across their threads", () => {
     const projects = [
-      makeProject({ id: ProjectId.make("project-1"), name: "Older project" }),
-      makeProject({ id: ProjectId.make("project-2"), name: "Newer project" }),
+      makeProject({ id: ProjectId.make("project-1"), title: "Older project" }),
+      makeProject({ id: ProjectId.make("project-2"), title: "Newer project" }),
     ];
     const threads = [
       makeThread({
@@ -827,9 +922,10 @@ describe("sortProjectsForSidebar", () => {
             id: "message-1" as never,
             role: "user",
             text: "older project user message",
+            turnId: null,
             createdAt: "2026-03-09T10:01:00.000Z",
+            updatedAt: "2026-03-09T10:01:00.000Z",
             streaming: false,
-            completedAt: "2026-03-09T10:01:00.000Z",
           },
         ],
       }),
@@ -842,9 +938,10 @@ describe("sortProjectsForSidebar", () => {
             id: "message-2" as never,
             role: "user",
             text: "newer project user message",
+            turnId: null,
             createdAt: "2026-03-09T10:05:00.000Z",
+            updatedAt: "2026-03-09T10:05:00.000Z",
             streaming: false,
-            completedAt: "2026-03-09T10:05:00.000Z",
           },
         ],
       }),
@@ -863,12 +960,12 @@ describe("sortProjectsForSidebar", () => {
       [
         makeProject({
           id: ProjectId.make("project-1"),
-          name: "Older project",
+          title: "Older project",
           updatedAt: "2026-03-09T10:01:00.000Z",
         }),
         makeProject({
           id: ProjectId.make("project-2"),
-          name: "Newer project",
+          title: "Newer project",
           updatedAt: "2026-03-09T10:05:00.000Z",
         }),
       ],
@@ -887,15 +984,15 @@ describe("sortProjectsForSidebar", () => {
       [
         makeProject({
           id: ProjectId.make("project-2"),
-          name: "Beta",
-          createdAt: undefined,
-          updatedAt: undefined,
+          title: "Beta",
+          createdAt: "invalid-created-at" as never,
+          updatedAt: "invalid-updated-at" as never,
         }),
         makeProject({
           id: ProjectId.make("project-1"),
-          name: "Alpha",
-          createdAt: undefined,
-          updatedAt: undefined,
+          title: "Alpha",
+          createdAt: "invalid-created-at" as never,
+          updatedAt: "invalid-updated-at" as never,
         }),
       ],
       [],
@@ -910,8 +1007,8 @@ describe("sortProjectsForSidebar", () => {
 
   it("preserves manual project ordering", () => {
     const projects = [
-      makeProject({ id: ProjectId.make("project-2"), name: "Second" }),
-      makeProject({ id: ProjectId.make("project-1"), name: "First" }),
+      makeProject({ id: ProjectId.make("project-2"), title: "Second" }),
+      makeProject({ id: ProjectId.make("project-1"), title: "First" }),
     ];
 
     const sorted = sortProjectsForSidebar(projects, [], "manual");
@@ -927,12 +1024,12 @@ describe("sortProjectsForSidebar", () => {
       [
         makeProject({
           id: ProjectId.make("project-1"),
-          name: "Visible project",
+          title: "Visible project",
           updatedAt: "2026-03-09T10:01:00.000Z",
         }),
         makeProject({
           id: ProjectId.make("project-2"),
-          name: "Archived-only project",
+          title: "Archived-only project",
           updatedAt: "2026-03-09T10:00:00.000Z",
         }),
       ],

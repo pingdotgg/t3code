@@ -1,23 +1,29 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   type ArchivedSnapshotEntry,
-  createArchivedThreadsManager,
+  createArchivedThreadSnapshotsAtomFamily,
   makeArchivedThreadsEnvironmentKey,
-  readArchivedThreadsSnapshotState,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
 
-import { readEnvironmentApi } from "../environmentApi";
+import { orchestrationEnvironment } from "../state/orchestration";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 
-const archivedThreadsManager = createArchivedThreadsManager({
-  getRegistry: () => appAtomRegistry,
-  getClient: (environmentId) => readEnvironmentApi(environmentId)?.orchestration ?? null,
+function archivedSnapshotAtom(environmentId: EnvironmentId) {
+  return orchestrationEnvironment.archivedShellSnapshot({
+    environmentId,
+    input: {},
+  });
+}
+
+const archivedSnapshotsAtom = createArchivedThreadSnapshotsAtomFamily({
+  getSnapshotAtom: archivedSnapshotAtom,
+  labelPrefix: "web:archived-thread-snapshots",
 });
 
 export function refreshArchivedThreadsForEnvironment(environmentId: EnvironmentId): void {
-  archivedThreadsManager.refreshForEnvironment(environmentId);
+  appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));
 }
 
 export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<EnvironmentId>): {
@@ -30,14 +36,15 @@ export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<Environ
     () => makeArchivedThreadsEnvironmentKey(environmentIds),
     [environmentIds],
   );
-  const atom = archivedThreadsManager.getAtom(environmentKey);
-  const result = useAtomValue(atom);
+  const result = useAtomValue(archivedSnapshotsAtom(environmentKey));
   const refresh = useCallback(() => {
-    archivedThreadsManager.refresh(environmentIds);
+    for (const environmentId of environmentIds) {
+      appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));
+    }
   }, [environmentIds]);
 
   return {
-    ...readArchivedThreadsSnapshotState(result),
+    ...result,
     refresh,
   };
 }

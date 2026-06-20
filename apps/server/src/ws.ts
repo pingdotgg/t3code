@@ -694,9 +694,22 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
             }
 
             if (bootstrap?.prepareWorktree) {
+              let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
+              if (bootstrap.prepareWorktree.startFromOrigin) {
+                yield* gitWorkflow.fetchRemote({
+                  cwd: bootstrap.prepareWorktree.projectCwd,
+                  remoteName: "origin",
+                });
+                const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
+                  cwd: bootstrap.prepareWorktree.projectCwd,
+                  refName: bootstrap.prepareWorktree.baseBranch,
+                  fallbackRemoteName: "origin",
+                });
+                worktreeBaseRef = resolvedRemoteBase.commitSha;
+              }
               const worktree = yield* gitWorkflow.createWorktree({
                 cwd: bootstrap.prepareWorktree.projectCwd,
-                refName: bootstrap.prepareWorktree.baseBranch,
+                refName: worktreeBaseRef,
                 newRefName: bootstrap.prepareWorktree.branch,
                 path: null,
               });
@@ -1476,7 +1489,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
         [WS_METHODS.previewAutomationConnect]: (input) =>
           observeRpcStreamEffect(
             WS_METHODS.previewAutomationConnect,
-            previewAutomationBroker.connect(input.clientId),
+            previewAutomationBroker.connect(input),
             { "rpc.aggregate": "preview-automation" },
           ),
         [WS_METHODS.previewAutomationRespond]: (input) =>
@@ -1494,7 +1507,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
         [WS_METHODS.previewAutomationClearOwner]: (input) =>
           observeRpcEffect(
             WS_METHODS.previewAutomationClearOwner,
-            previewAutomationBroker.clearOwner(input.clientId),
+            previewAutomationBroker.clearOwner(input),
             { "rpc.aggregate": "preview-automation" },
           ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>

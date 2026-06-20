@@ -57,6 +57,10 @@ public class T3ReviewDiffModule: Module {
         view.setContentWidth(CGFloat(contentWidth))
       }
 
+      Prop("initialRowIndex") { (view: T3ReviewDiffView, initialRowIndex: Double) in
+        view.setInitialRowIndex(initialRowIndex)
+      }
+
       Events("onDebug", "onToggleFile", "onToggleViewedFile", "onPressLine", "onToggleComment")
     }
   }

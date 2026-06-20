@@ -127,7 +127,7 @@ function parseAppUpdateYml(raw: string): Effect.Effect<Option.Option<AppUpdateYm
 function createBaseUpdateState(
   channel: DesktopUpdateChannel,
   enabled: boolean,
-  environment: DesktopEnvironment.DesktopEnvironmentShape,
+  environment: DesktopEnvironment.DesktopEnvironment["Service"],
 ): DesktopUpdateState {
   return {
     ...createInitialDesktopUpdateState(environment.appVersion, environment.runtimeInfo, channel),

@@ -28,18 +28,20 @@ struct T3MarkdownTextAttachmentRange {
   std::string imageUri;
 };
 
-struct T3MarkdownTextChipRange {
-  size_t location;
-  size_t length;
-  bool isSkill;
-};
+inline Float T3MarkdownTextAttachmentSize(const T3MarkdownTextAttachmentRange &) {
+  return 14;
+}
+
+inline Float T3MarkdownTextAttachmentBaselineOffset(
+    const T3MarkdownTextAttachmentRange &) {
+  return -2;
+}
 
 class T3MarkdownTextStateReal final {
  public:
   AttributedString attributedString;
   std::vector<T3MarkdownTextParagraphStyleRange> paragraphStyleRanges;
   std::vector<T3MarkdownTextAttachmentRange> attachmentRanges;
-  std::vector<T3MarkdownTextChipRange> chipRanges;
 };
 
 class T3MarkdownTextShadowNode final : public ConcreteViewShadowNode<
@@ -72,6 +74,5 @@ private:
   mutable AttributedString _attributedString;
   mutable std::vector<T3MarkdownTextParagraphStyleRange> _paragraphStyleRanges;
   mutable std::vector<T3MarkdownTextAttachmentRange> _attachmentRanges;
-  mutable std::vector<T3MarkdownTextChipRange> _chipRanges;
 };
 } // namespace facebook::React
