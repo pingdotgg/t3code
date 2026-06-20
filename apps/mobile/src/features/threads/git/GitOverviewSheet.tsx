@@ -8,11 +8,12 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useMemo } from "react";
-import { Alert, Linking, Pressable, ScrollView, View } from "react-native";
+import { Alert, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../../lib/useThemeColor";
 
 import { AppText as Text } from "../../../components/AppText";
+import { tryOpenExternalUrl } from "../../../lib/openExternalUrl";
 import { buildThreadReviewRoutePath } from "../../../lib/routes";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
@@ -83,13 +84,8 @@ export function GitOverviewSheet() {
       Alert.alert("No open PR", "This branch does not have an open pull request.");
       return;
     }
-    try {
-      await Linking.openURL(prUrl);
-    } catch (error) {
-      Alert.alert(
-        "Unable to open PR",
-        error instanceof Error ? error.message : "An error occurred.",
-      );
+    if (!(await tryOpenExternalUrl(prUrl, "pull-request"))) {
+      Alert.alert("Unable to open PR", "The pull request could not be opened.");
     }
   }, [gitStatus.data]);
 

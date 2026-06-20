@@ -2,14 +2,7 @@ import Stack from "expo-router/stack";
 import { SymbolView } from "expo-symbols";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useMemo, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Linking,
-  Pressable,
-  ScrollView,
-  Text as RNText,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, Text as RNText, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import {
   EnvironmentId,
@@ -23,6 +16,7 @@ import { CopyTextButton } from "../../components/CopyTextButton";
 import { EmptyState } from "../../components/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { cn } from "../../lib/cn";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { buildThreadFilesNavigation } from "../../lib/routes";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -255,7 +249,7 @@ function FilePreviewHeader(props: {
               )}
               onPress={() => {
                 if (typeof props.externalPreviewUri === "string") {
-                  void Linking.openURL(props.externalPreviewUri);
+                  void tryOpenExternalUrl(props.externalPreviewUri, "file-preview");
                 }
               }}
             >
