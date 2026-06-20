@@ -5,7 +5,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
 import { useCallback, useMemo } from "react";
@@ -14,11 +14,23 @@ import { useAtomCommand } from "./state/use-atom-command";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 
-export class PreferredEditorUnavailableError extends Data.TaggedError(
+export class OpenInEditorEnvironmentNotSelectedError extends Schema.TaggedErrorClass<OpenInEditorEnvironmentNotSelectedError>()(
+  "OpenInEditorEnvironmentNotSelectedError",
+  {},
+) {
+  override get message(): string {
+    return "No environment is selected.";
+  }
+}
+
+export class PreferredEditorUnavailableError extends Schema.TaggedErrorClass<PreferredEditorUnavailableError>()(
   "PreferredEditorUnavailableError",
-)<{
-  readonly message: string;
-}> {}
+  {},
+) {
+  override get message(): string {
+    return "No available editors found.";
+  }
+}
 
 export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
   const [lastEditor, setLastEditor] = useLocalStorage(LAST_EDITOR_KEY, null, EditorId);
@@ -55,26 +67,19 @@ export function useOpenInPreferredEditor(
     async (
       targetPath: string,
     ): Promise<
-      AtomCommandResult<EditorId, OpenInEditorError | PreferredEditorUnavailableError>
+      AtomCommandResult<
+        EditorId,
+        | OpenInEditorError
+        | OpenInEditorEnvironmentNotSelectedError
+        | PreferredEditorUnavailableError
+      >
     > => {
       if (environmentId === null) {
-        return AsyncResult.failure(
-          Cause.fail(
-            new PreferredEditorUnavailableError({
-              message: "No environment is selected.",
-            }),
-          ),
-        );
+        return AsyncResult.failure(Cause.fail(new OpenInEditorEnvironmentNotSelectedError()));
       }
       const editor = resolveAndPersistPreferredEditor(availableEditors);
       if (!editor) {
-        return AsyncResult.failure(
-          Cause.fail(
-            new PreferredEditorUnavailableError({
-              message: "No available editors found.",
-            }),
-          ),
-        );
+        return AsyncResult.failure(Cause.fail(new PreferredEditorUnavailableError()));
       }
       const result = await openInEditor({
         environmentId,
