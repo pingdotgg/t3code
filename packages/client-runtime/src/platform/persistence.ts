@@ -51,7 +51,6 @@ export class ConnectionPersistenceError extends Schema.TaggedErrorClass<Connecti
     ]),
     environmentId: Schema.optionalKey(EnvironmentId),
     threadId: Schema.optionalKey(ThreadId),
-    path: Schema.optionalKey(Schema.String),
     cause: Schema.Defect(),
   },
 ) {
@@ -61,7 +60,6 @@ export class ConnectionPersistenceError extends Schema.TaggedErrorClass<Connecti
     readonly resource: ConnectionPersistenceError["resource"];
     readonly environmentId?: EnvironmentId;
     readonly threadId?: ThreadId;
-    readonly path?: string;
     readonly cause: ConnectionTransientError;
   }) {
     const { cause, fallbackStage, ...attributes } = input;
@@ -105,8 +103,7 @@ export class ConnectionPersistenceError extends Schema.TaggedErrorClass<Connecti
     const environment =
       this.environmentId === undefined ? "" : ` for environment ${this.environmentId}`;
     const thread = this.threadId === undefined ? "" : ` and thread ${this.threadId}`;
-    const path = this.path === undefined ? "" : ` at ${this.path}`;
-    return `Could not ${this.operation.replaceAll("-", " ")}: ${this.resource.replaceAll("-", " ")} ${this.stage} failed${environment}${thread}${path}.`;
+    return `Could not ${this.operation.replaceAll("-", " ")}: ${this.resource.replaceAll("-", " ")} ${this.stage} failed${environment}${thread}.`;
   }
 }
 
