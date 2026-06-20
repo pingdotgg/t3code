@@ -28,12 +28,71 @@ describe("browser target resolver", () => {
   it("refuses public relay hosts until the authenticated gateway exists", async () => {
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://relay.example.com" });
     const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(() =>
+
+    try {
       resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
         kind: "environment-port",
         port: 5173,
-      }),
-    ).toThrow(/authenticated preview gateway/);
+      });
+      expect.unreachable("Expected public environment host resolution to fail");
+    } catch (error) {
+      expect(error).toMatchObject({
+        _tag: "BrowserTargetPrivateNetworkRequiredError",
+        environmentId: "environment-1",
+        hostname: "relay.example.com",
+        message:
+          "Environment environment-1 host relay.example.com needs the planned authenticated preview gateway because it is not directly private-network reachable.",
+      });
+    }
+  });
+
+  it("identifies the disconnected environment", async () => {
+    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
+
+    try {
+      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
+        kind: "environment-port",
+        port: 5173,
+      });
+      expect.unreachable("Expected disconnected environment resolution to fail");
+    } catch (error) {
+      expect(error).toMatchObject({
+        _tag: "BrowserTargetEnvironmentDisconnectedError",
+        environmentId: "environment-1",
+        message: "Environment environment-1 is not connected.",
+      });
+    }
+  });
+
+  it("preserves invalid environment URL causes with connection context", async () => {
+    const sensitiveUrl =
+      "https://user:password@[invalid-host]/private/workspace?access_token=secret#fragment";
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: sensitiveUrl });
+    const { BrowserTargetEnvironmentUrlInvalidError, resolveBrowserNavigationTarget } =
+      await import("./browserTargetResolver");
+
+    try {
+      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
+        kind: "environment-port",
+        port: 5173,
+      });
+      expect.unreachable("Expected browser target resolution to fail");
+    } catch (error) {
+      expect(error).toMatchObject({
+        _tag: "BrowserTargetEnvironmentUrlInvalidError",
+        environmentId: "environment-1",
+        httpBaseUrlInputLength: sensitiveUrl.length,
+        cause: expect.any(TypeError),
+        message: `Environment environment-1 has an invalid HTTP base URL input of length ${sensitiveUrl.length}.`,
+      });
+      expect(error).toBeInstanceOf(BrowserTargetEnvironmentUrlInvalidError);
+      expect(error).not.toHaveProperty("httpBaseUrl");
+      expect(error).not.toHaveProperty("httpBaseUrlProtocol");
+      expect(error).not.toHaveProperty("httpBaseUrlHostname");
+      expect(String((error as Error).message)).not.toMatch(
+        /user|password|private|workspace|access_token|secret|fragment/,
+      );
+    }
   });
 
   it("normalizes schemeless localhost server-picker values", async () => {
