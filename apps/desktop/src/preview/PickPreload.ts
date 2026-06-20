@@ -238,12 +238,7 @@ function isPointInFrameViewport(
   const childWindow = childDocument.defaultView;
   const viewportWidth = childWindow?.innerWidth ?? element.clientWidth;
   const viewportHeight = childWindow?.innerHeight ?? element.clientHeight;
-  return (
-    childX >= 0 &&
-    childY >= 0 &&
-    childX <= viewportWidth &&
-    childY <= viewportHeight
-  );
+  return childX >= 0 && childY >= 0 && childX <= viewportWidth && childY <= viewportHeight;
 }
 
 function getDocumentViewportOffset(ownerDocument: Document): ViewportOffset | null {
