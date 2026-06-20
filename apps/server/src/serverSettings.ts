@@ -40,7 +40,6 @@ import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import * as SchemaIssue from "effect/SchemaIssue";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -67,7 +66,7 @@ const normalizeServerSettings = (
       (cause) =>
         new ServerSettingsError({
           settingsPath: "<memory>",
-          detail: `failed to normalize server settings: ${SchemaIssue.makeFormatterDefault()(cause.issue)}`,
+          operation: "normalize",
           cause,
         }),
     ),
@@ -277,7 +276,7 @@ const make = Effect.gen(function* () {
       (cause) =>
         new ServerSettingsError({
           settingsPath,
-          detail: "failed to check settings file existence",
+          operation: "check-exists",
           cause,
         }),
     ),
@@ -288,7 +287,7 @@ const make = Effect.gen(function* () {
       (cause) =>
         new ServerSettingsError({
           settingsPath,
-          detail: "failed to read settings file",
+          operation: "read-file",
           cause,
         }),
     ),
@@ -305,6 +304,7 @@ const make = Effect.gen(function* () {
       yield* Effect.logWarning("failed to parse settings.json, using defaults", {
         path: settingsPath,
         issues: Cause.pretty(decoded.cause),
+        cause: decoded.cause,
       });
       return DEFAULT_SERVER_SETTINGS;
     }
@@ -317,13 +317,6 @@ const make = Effect.gen(function* () {
   });
 
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey);
-
-  const toSettingsError = (detail: string, cause: unknown) =>
-    new ServerSettingsError({
-      settingsPath,
-      detail,
-      cause,
-    });
 
   const materializeProviderEnvironmentSecrets = (
     settings: ServerSettings,
@@ -343,11 +336,15 @@ const make = Effect.gen(function* () {
           const secret = yield* secretStore
             .get(providerEnvironmentSecretName({ instanceId, name: variable.name }))
             .pipe(
-              Effect.mapError((cause) =>
-                toSettingsError(
-                  `failed to read sensitive environment variable ${variable.name}`,
-                  cause,
-                ),
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    operation: "read-secret",
+                    providerInstanceId: instanceId,
+                    environmentVariable: variable.name,
+                    cause,
+                  }),
               ),
             );
           environment.push({
@@ -382,13 +379,18 @@ const make = Effect.gen(function* () {
         for (const variable of instance.environment) {
           const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
           if (!variable.sensitive) {
-            yield* secretStore
-              .remove(secretName)
-              .pipe(
-                Effect.mapError((cause) =>
-                  toSettingsError(`failed to remove environment secret ${variable.name}`, cause),
-                ),
-              );
+            yield* secretStore.remove(secretName).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    operation: "remove-secret",
+                    providerInstanceId: instanceId,
+                    environmentVariable: variable.name,
+                    cause,
+                  }),
+              ),
+            );
             environment.push(redactProviderEnvironmentVariable(variable));
             continue;
           }
@@ -396,22 +398,32 @@ const make = Effect.gen(function* () {
           nextSecretKeys.add(secretName);
           if (!variable.valueRedacted) {
             if (variable.value.length > 0) {
-              yield* secretStore
-                .set(secretName, textEncoder.encode(variable.value))
-                .pipe(
-                  Effect.mapError((cause) =>
-                    toSettingsError(`failed to persist environment secret ${variable.name}`, cause),
-                  ),
-                );
+              yield* secretStore.set(secretName, textEncoder.encode(variable.value)).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ServerSettingsError({
+                      settingsPath,
+                      operation: "write-secret",
+                      providerInstanceId: instanceId,
+                      environmentVariable: variable.name,
+                      cause,
+                    }),
+                ),
+              );
               environment.push({ ...variable, value: "", valueRedacted: true });
             } else {
-              yield* secretStore
-                .remove(secretName)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    toSettingsError(`failed to remove environment secret ${variable.name}`, cause),
-                  ),
-                );
+              yield* secretStore.remove(secretName).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ServerSettingsError({
+                      settingsPath,
+                      operation: "remove-secret",
+                      providerInstanceId: instanceId,
+                      environmentVariable: variable.name,
+                      cause,
+                    }),
+                ),
+              );
               const { valueRedacted: _omit, ...rest } = variable;
               environment.push(rest);
             }
@@ -431,16 +443,18 @@ const make = Effect.gen(function* () {
           if (!variable.sensitive) continue;
           const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
           if (nextSecretKeys.has(secretName)) continue;
-          yield* secretStore
-            .remove(secretName)
-            .pipe(
-              Effect.mapError((cause) =>
-                toSettingsError(
-                  `failed to remove stale environment secret ${variable.name}`,
+          yield* secretStore.remove(secretName).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "remove-stale-secret",
+                  providerInstanceId: instanceId,
+                  environmentVariable: variable.name,
                   cause,
-                ),
-              ),
-            );
+                }),
+            ),
+          );
         }
       }
 
@@ -468,7 +482,7 @@ const make = Effect.gen(function* () {
       (cause) =>
         new ServerSettingsError({
           settingsPath,
-          detail: "failed to write settings file",
+          operation: "write-file",
           cause,
         }),
     ),
@@ -492,7 +506,7 @@ const make = Effect.gen(function* () {
         (cause) =>
           new ServerSettingsError({
             settingsPath,
-            detail: "failed to prepare settings directory",
+            operation: "prepare-directory",
             cause,
           }),
       ),
@@ -571,7 +585,10 @@ const make = Effect.gen(function* () {
           materializeProviderEnvironmentSecrets(settings).pipe(
             Effect.catch((error: ServerSettingsError) =>
               Effect.logWarning("failed to materialize provider environment secrets", {
-                detail: error.detail,
+                operation: error.operation,
+                providerInstanceId: error.providerInstanceId,
+                environmentVariable: error.environmentVariable,
+                cause: error.cause,
               }).pipe(Effect.as(settings)),
             ),
           ),
