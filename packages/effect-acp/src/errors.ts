@@ -108,7 +108,6 @@ export class AcpProtocolParseError extends Schema.TaggedErrorClass<AcpProtocolPa
   {
     operation: AcpProtocolParseOperation,
     method: Schema.optionalKey(Schema.String),
-    detail: Schema.optionalKey(Schema.String),
     issueCount: Schema.optionalKey(Schema.Number),
     issueKinds: Schema.optionalKey(Schema.Array(AcpSchemaIssueKind)),
     maximumPathDepth: Schema.optionalKey(Schema.Number),

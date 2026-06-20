@@ -288,13 +288,12 @@ export const make = Effect.fn("effect-acp/AcpAgent.make")(function* (
         notification.method === AGENT_METHODS.session_cancel
       ) {
         return decodeCancelNotification(notification.params).pipe(
-          Effect.mapError(
-            (error) =>
-              new AcpError.AcpProtocolParseError({
-                operation: "decode-notification-payload",
-                method: AGENT_METHODS.session_cancel,
-                cause: error,
-              }),
+          Effect.mapError((error) =>
+            AcpError.AcpProtocolParseError.fromSchemaError(
+              "decode-notification-payload",
+              AGENT_METHODS.session_cancel,
+              error,
+            ),
           ),
           Effect.flatMap((decoded) =>
             Effect.forEach(cancelHandlers, (handler) => handler(decoded), { discard: true }),

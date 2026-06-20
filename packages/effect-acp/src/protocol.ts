@@ -264,13 +264,12 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
                 params,
               }) satisfies AcpIncomingNotification,
           ),
-          Effect.mapError(
-            (cause) =>
-              new AcpError.AcpProtocolParseError({
-                operation: "decode-notification-payload",
-                method: CLIENT_METHODS.session_update,
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            AcpError.AcpProtocolParseError.fromSchemaError(
+              "decode-notification-payload",
+              CLIENT_METHODS.session_update,
+              cause,
+            ),
           ),
           Effect.flatMap(dispatchNotification),
         );
@@ -285,13 +284,12 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
                 params,
               }) satisfies AcpIncomingNotification,
           ),
-          Effect.mapError(
-            (cause) =>
-              new AcpError.AcpProtocolParseError({
-                operation: "decode-notification-payload",
-                method: CLIENT_METHODS.session_elicitation_complete,
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            AcpError.AcpProtocolParseError.fromSchemaError(
+              "decode-notification-payload",
+              CLIENT_METHODS.session_elicitation_complete,
+              cause,
+            ),
           ),
           Effect.flatMap(dispatchNotification),
         );

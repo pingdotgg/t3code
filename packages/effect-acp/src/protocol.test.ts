@@ -134,6 +134,49 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       }),
   );
 
+  it.effect("keeps invalid core notification values only in the schema cause", () =>
+    Effect.gen(function* () {
+      const secret = "acp-core-notification-secret-sentinel";
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          `${encodeUnknownJsonString({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: { secret },
+              update: {
+                sessionUpdate: "plan",
+                entries: [],
+              },
+            },
+          })}\n`,
+        ),
+      );
+
+      const error = yield* Deferred.await(termination);
+      assert.instanceOf(error, AcpError.AcpProtocolParseError);
+      const parseError = error as AcpError.AcpProtocolParseError;
+      const { cause, ...directDiagnostics } = parseError;
+      assert.equal(parseError.operation, "decode-notification-payload");
+      assert.equal(parseError.method, "session/update");
+      assert.isAbove(parseError.issueCount ?? 0, 0);
+      assert.include(parseError.issueKinds ?? [], "Pointer");
+      assert.isAbove(parseError.maximumPathDepth ?? 0, 0);
+      assert.isTrue(Schema.isSchemaError(cause));
+      assert.notInclude(parseError.message, secret);
+      assert.notInclude(encodeUnknownJsonString(directDiagnostics), secret);
+    }),
+  );
+
   it.effect("logs outgoing notifications when logOutgoing is enabled", () =>
     Effect.gen(function* () {
       const { stdio } = yield* makeInMemoryStdio();
