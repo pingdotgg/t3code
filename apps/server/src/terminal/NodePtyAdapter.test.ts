@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
@@ -55,4 +57,32 @@ it.effect("spawns through the public adapter with the provided host references",
       },
     ]);
   }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("reports native module load failures as structured startup defects", () =>
+  Effect.gen(function* () {
+    const cause = new Error("native binding could not be loaded");
+    const exit = yield* NodePtyAdapter.make(() => Promise.reject(cause)).pipe(Effect.exit);
+
+    assert.isTrue(Exit.isFailure(exit));
+    if (Exit.isFailure(exit)) {
+      assert.isTrue(Cause.hasDies(exit.cause));
+      const error = Cause.squash(exit.cause);
+      assert.instanceOf(error, NodePtyAdapter.NodePtyModuleLoadError);
+      assert.deepInclude(error, {
+        _tag: "NodePtyModuleLoadError",
+        platform: "win32",
+        architecture: "x64",
+      });
+      assert.equal(error.message, "Failed to load node-pty for win32-x64.");
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(HostProcessPlatform, "win32"),
+        Layer.succeed(HostProcessArchitecture, "x64"),
+      ),
+    ),
+  ),
 );
