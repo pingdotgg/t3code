@@ -26,6 +26,12 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
+import {
+  OrchestrationGetFullThreadDiffInput,
+  OrchestrationGetFullThreadDiffResult,
+  OrchestrationGetTurnDiffInput,
+  OrchestrationGetTurnDiffResult,
+} from "./checkpointDiff.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
   ProviderApprovalDecision,
@@ -36,6 +42,7 @@ import {
   RuntimeMode,
 } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { OrchestrationProjectShell } from "./orchestration.ts";
 
 export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);
 export type OrchestrationV2Actor = typeof OrchestrationV2Actor.Type;
@@ -1099,11 +1106,17 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
 
-export const OrchestrationV2ShellSnapshot = Schema.Struct({
+export const OrchestrationV2ThreadShellSnapshot = Schema.Struct({
   schemaVersion: PositiveInt,
   snapshotSequence: NonNegativeInt,
   threads: Schema.Array(OrchestrationV2ThreadShell),
   archivedThreads: Schema.Array(OrchestrationV2ThreadShell),
+});
+export type OrchestrationV2ThreadShellSnapshot = typeof OrchestrationV2ThreadShellSnapshot.Type;
+
+export const OrchestrationV2ShellSnapshot = Schema.Struct({
+  ...OrchestrationV2ThreadShellSnapshot.fields,
+  projects: Schema.Array(OrchestrationProjectShell),
 });
 export type OrchestrationV2ShellSnapshot = typeof OrchestrationV2ShellSnapshot.Type;
 
@@ -1111,6 +1124,16 @@ export const OrchestrationV2ShellStreamItem = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("snapshot"),
     snapshot: OrchestrationV2ShellSnapshot,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("project.updated"),
+    sequence: NonNegativeInt,
+    project: OrchestrationProjectShell,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("project.removed"),
+    sequence: NonNegativeInt,
+    projectId: ProjectId,
   }),
   Schema.Struct({
     kind: Schema.Literal("thread.updated"),
@@ -1730,11 +1753,74 @@ export const OrchestrationV2Command = Schema.Union([
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 export const ORCHESTRATION_V2_WS_METHODS = {
-  dispatchCommand: "orchestrationV2.dispatchCommand",
-  getThreadProjection: "orchestrationV2.getThreadProjection",
-  subscribeShell: "orchestrationV2.subscribeShell",
-  subscribeThread: "orchestrationV2.subscribeThread",
+  dispatchCommand: "orchestration.dispatchCommand",
+  getTurnDiff: "orchestration.getTurnDiff",
+  getFullThreadDiff: "orchestration.getFullThreadDiff",
+  getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
+  getThreadProjection: "orchestration.getThreadProjection",
+  launchThread: "orchestration.launchThread",
+  subscribeArchivedShell: "orchestration.subscribeArchivedShell",
+  subscribeShell: "orchestration.subscribeShell",
+  subscribeThread: "orchestration.subscribeThread",
 } as const;
+
+export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
+  schemaVersion: PositiveInt,
+  snapshotSequence: NonNegativeInt,
+  threads: Schema.Array(OrchestrationV2ThreadShell),
+});
+export type OrchestrationV2ArchivedShellSnapshot = typeof OrchestrationV2ArchivedShellSnapshot.Type;
+
+export const OrchestrationV2ArchivedShellStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("snapshot"),
+    snapshot: OrchestrationV2ArchivedShellSnapshot,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("thread.updated"),
+    sequence: NonNegativeInt,
+    thread: OrchestrationV2ThreadShell,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("thread.removed"),
+    sequence: NonNegativeInt,
+    threadId: ThreadId,
+  }),
+]);
+export type OrchestrationV2ArchivedShellStreamItem =
+  typeof OrchestrationV2ArchivedShellStreamItem.Type;
+
+export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("root") }),
+  Schema.Struct({
+    type: Schema.Literal("worktree"),
+    baseRef: TrimmedNonEmptyString,
+    branch: Schema.optional(TrimmedNonEmptyString),
+  }),
+]);
+export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
+  typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
+
+export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
+  commandId: CommandId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  initialMessage: Schema.optional(
+    Schema.Struct({ text: Schema.String, attachments: Schema.Array(ChatAttachment) }),
+  ),
+});
+export type OrchestrationV2ThreadLaunchInput = typeof OrchestrationV2ThreadLaunchInput.Type;
+
+export const OrchestrationV2ThreadLaunchResult = Schema.Struct({
+  threadId: ThreadId,
+  projection: OrchestrationV2ThreadProjection,
+  resumed: Schema.Boolean,
+});
+export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaunchResult.Type;
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   sequence: NonNegativeInt,
@@ -1789,10 +1875,21 @@ export class OrchestrationV2GetShellSnapshotError extends Schema.TaggedErrorClas
   },
 ) {}
 
+export class OrchestrationV2ThreadLaunchError extends Schema.TaggedErrorClass<OrchestrationV2ThreadLaunchError>()(
+  "OrchestrationV2ThreadLaunchError",
+  {
+    commandId: CommandId,
+    projectId: ProjectId,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 export const OrchestrationV2RpcError = Schema.Union([
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2GetShellSnapshotError,
+  OrchestrationV2ThreadLaunchError,
 ]);
 export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
 
@@ -1801,9 +1898,29 @@ export const OrchestrationV2RpcSchemas = {
     input: OrchestrationV2Command,
     output: OrchestrationV2DispatchCommandResult,
   },
+  getTurnDiff: {
+    input: OrchestrationGetTurnDiffInput,
+    output: OrchestrationGetTurnDiffResult,
+  },
+  getFullThreadDiff: {
+    input: OrchestrationGetFullThreadDiffInput,
+    output: OrchestrationGetFullThreadDiffResult,
+  },
+  getArchivedShellSnapshot: {
+    input: Schema.Struct({}),
+    output: OrchestrationV2ArchivedShellSnapshot,
+  },
   getThreadProjection: {
     input: OrchestrationV2GetThreadProjectionInput,
     output: OrchestrationV2ThreadProjection,
+  },
+  launchThread: {
+    input: OrchestrationV2ThreadLaunchInput,
+    output: OrchestrationV2ThreadLaunchResult,
+  },
+  subscribeArchivedShell: {
+    input: Schema.Struct({}),
+    output: OrchestrationV2ArchivedShellStreamItem,
   },
   subscribeShell: {
     input: Schema.Struct({}),
