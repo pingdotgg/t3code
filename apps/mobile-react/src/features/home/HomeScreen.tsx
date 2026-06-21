@@ -3,6 +3,7 @@ import type {
   EnvironmentScopedThreadShell,
   VcsStatusState,
 } from "@t3tools/client-runtime";
+import { LegendList } from "@legendapp/list/react-native";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
@@ -290,6 +291,45 @@ function ThreadRow(props: {
   );
 }
 
+function ProjectGroupCard(props: {
+  readonly group: ProjectGroup;
+  readonly connection: SavedRemoteConnection | undefined;
+  readonly isExpanded: boolean;
+  readonly onToggleExpand: (key: string) => void;
+  readonly onSelectThread: (thread: EnvironmentScopedThreadShell) => void;
+}) {
+  const visibleThreads = props.isExpanded
+    ? props.group.threads
+    : props.group.threads.slice(0, COLLAPSED_THREAD_LIMIT);
+
+  return (
+    <View>
+      <ProjectGroupLabel
+        project={props.group.project}
+        totalThreadCount={props.group.threads.length}
+        httpBaseUrl={props.connection?.httpBaseUrl ?? null}
+        bearerToken={props.connection?.bearerToken ?? null}
+        isExpanded={props.isExpanded}
+        onToggleExpand={() => props.onToggleExpand(props.group.key)}
+      />
+      <View
+        className="overflow-hidden rounded-[20px] bg-card"
+        style={{ borderCurve: "continuous" }}
+      >
+        {visibleThreads.map((thread, i) => (
+          <ThreadRow
+            key={`${thread.environmentId}:${thread.id}`}
+            thread={thread}
+            projectCwd={props.group.project.workspaceRoot}
+            onPress={() => props.onSelectThread(thread)}
+            isLast={i === visibleThreads.length - 1}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
 export function HomeScreen(props: HomeScreenProps) {
@@ -354,6 +394,40 @@ export function HomeScreen(props: HomeScreenProps) {
     catalogState: props.catalogState,
     projectCount: props.projects.length,
   });
+  const renderProjectGroup = useCallback(
+    ({ item: group }: { readonly item: ProjectGroup }) => (
+      <ProjectGroupCard
+        group={group}
+        connection={props.savedConnectionsById[group.project.environmentId]}
+        isExpanded={expandedProjects.has(group.key)}
+        onToggleExpand={toggleExpanded}
+        onSelectThread={props.onSelectThread}
+      />
+    ),
+    [expandedProjects, props.onSelectThread, props.savedConnectionsById, toggleExpanded],
+  );
+
+  if (hasAnyThreads && hasResults) {
+    return (
+      <LegendList
+        data={projectGroups as ProjectGroup[]}
+        renderItem={renderProjectGroup}
+        keyExtractor={(group) => group.key}
+        estimatedItemSize={360}
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+        keyboardDismissMode="on-drag"
+        keyboardShouldPersistTaps="handled"
+        className="flex-1 bg-screen"
+        contentContainerStyle={{
+          paddingHorizontal: 16,
+          paddingTop: 8,
+          paddingBottom: 24,
+          gap: 20,
+        }}
+      />
+    );
+  }
 
   return (
     <ScrollView
@@ -383,43 +457,8 @@ export function HomeScreen(props: HomeScreenProps) {
             </View>
           ) : null}
         </View>
-      ) : !hasResults ? (
-        <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
       ) : (
-        projectGroups.map((group) => {
-          const connection = props.savedConnectionsById[group.project.environmentId];
-          const isExpanded = expandedProjects.has(group.key);
-          const visibleThreads = isExpanded
-            ? group.threads
-            : group.threads.slice(0, COLLAPSED_THREAD_LIMIT);
-
-          return (
-            <View key={group.key}>
-              <ProjectGroupLabel
-                project={group.project}
-                totalThreadCount={group.threads.length}
-                httpBaseUrl={connection?.httpBaseUrl ?? null}
-                bearerToken={connection?.bearerToken ?? null}
-                isExpanded={isExpanded}
-                onToggleExpand={() => toggleExpanded(group.key)}
-              />
-              <View
-                className="overflow-hidden rounded-[20px] bg-card"
-                style={{ borderCurve: "continuous" }}
-              >
-                {visibleThreads.map((thread, i) => (
-                  <ThreadRow
-                    key={`${thread.environmentId}:${thread.id}`}
-                    thread={thread}
-                    projectCwd={group.project.workspaceRoot}
-                    onPress={() => props.onSelectThread(thread)}
-                    isLast={i === visibleThreads.length - 1}
-                  />
-                ))}
-              </View>
-            </View>
-          );
-        })
+        <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
       )}
     </ScrollView>
   );

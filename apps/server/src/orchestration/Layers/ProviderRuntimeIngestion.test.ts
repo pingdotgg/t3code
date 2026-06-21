@@ -2291,6 +2291,86 @@ describe("ProviderRuntimeIngestion", () => {
     expect(completionEvents).toHaveLength(1);
   });
 
+  it("publishes turn-completed assistant finalization before clearing the active session", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-for-finalization-order"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-finalization-order"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-finalization-order",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-for-finalization-order"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-finalization-order"),
+      itemId: asItemId("item-finalization-order"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "final response",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-for-finalization-order"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-finalization-order"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "ready" &&
+        thread.session?.activeTurnId === null &&
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-finalization-order" && !message.streaming,
+        ),
+    );
+
+    const events = await Effect.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      ),
+    );
+    const assistantCompletionIndex = events.findIndex(
+      (event) =>
+        event.type === "thread.message-sent" &&
+        event.payload.messageId === "assistant:item-finalization-order" &&
+        event.payload.streaming === false,
+    );
+    const sessionReadyIndex = events.findIndex(
+      (event) =>
+        event.type === "thread.session-set" &&
+        event.commandId?.includes("evt-turn-completed-for-finalization-order") === true &&
+        event.payload.session.status === "ready" &&
+        event.payload.session.activeTurnId === null,
+    );
+
+    expect(assistantCompletionIndex).toBeGreaterThanOrEqual(0);
+    expect(sessionReadyIndex).toBeGreaterThanOrEqual(0);
+    expect(assistantCompletionIndex).toBeLessThan(sessionReadyIndex);
+  });
+
   it("maps canonical request events into approval activities with requestKind", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

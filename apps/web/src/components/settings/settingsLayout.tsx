@@ -120,7 +120,7 @@ export function SettingResetButton({ label, onClick }: { label: string; onClick:
 
 export function SettingsPageContainer({ children }: { children: ReactNode }) {
   return (
-    <div className="flex-1 overflow-y-auto p-6 sm:p-8">
+    <div className="scrollbar-gutter-both flex-1 overflow-y-auto p-6 sm:p-8">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">{children}</div>
     </div>
   );

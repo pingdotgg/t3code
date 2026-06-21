@@ -20,6 +20,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   QueuedTurnId,
 } from "@t3tools/contracts";
+import { serializeComposerMentionPath } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   forwardRef,
@@ -112,7 +113,10 @@ import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
-import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
+import {
+  deriveLatestContextWindowSnapshot,
+  formatProviderDisplayName,
+} from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 
@@ -291,6 +295,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
   activeContextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
+  activeThreadProviderDisplayName: string | null;
   isPreparingWorktree: boolean;
   pendingAction: {
     questionIndex: number;
@@ -312,7 +317,12 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
 }) {
   return (
     <>
-      {props.activeContextWindow ? <ContextWindowMeter usage={props.activeContextWindow} /> : null}
+      {props.activeContextWindow ? (
+        <ContextWindowMeter
+          usage={props.activeContextWindow}
+          providerDisplayName={props.activeThreadProviderDisplayName}
+        />
+      ) : null}
       {props.isPreparingWorktree ? (
         <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
       ) : null}
@@ -342,6 +352,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
 export interface ChatComposerHandle {
   focusAtEnd: () => void;
   focusAt: (cursor: number) => void;
+  insertTextAtEnd: (text: string) => boolean;
   openModelPicker: () => void;
   toggleModelPicker: () => void;
   isModelPickerOpen: () => boolean;
@@ -785,6 +796,10 @@ export const ChatComposer = memo(
     const activeContextWindow = useMemo(
       () => deriveLatestContextWindowSnapshot(activeThreadActivities ?? []),
       [activeThreadActivities],
+    );
+    const activeThreadProviderDisplayName = useMemo(
+      () => formatProviderDisplayName(selectedProvider),
+      [selectedProvider],
     );
 
     // ------------------------------------------------------------------
@@ -1495,7 +1510,7 @@ export const ChatComposer = memo(
         const { snapshot, trigger } = resolveActiveComposerTrigger();
         if (!trigger) return;
         if (item.type === "path") {
-          const replacement = `@${item.path} `;
+          const replacement = `@${serializeComposerMentionPath(item.path)} `;
           const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
             snapshot.value,
             trigger.rangeEnd,
@@ -1859,6 +1874,18 @@ export const ChatComposer = memo(
         focusAt: (cursor: number) => {
           composerEditorRef.current?.focusAt(cursor);
         },
+        insertTextAtEnd: (text: string) => {
+          if (
+            text.length === 0 ||
+            isConnecting ||
+            isComposerApprovalState ||
+            pendingUserInputs.length > 0
+          ) {
+            return false;
+          }
+          const rangeEnd = promptRef.current.length;
+          return applyPromptReplacement(rangeEnd, rangeEnd, text);
+        },
         openModelPicker: () => {
           setIsComposerModelPickerOpen(true);
         },
@@ -1936,6 +1963,7 @@ export const ChatComposer = memo(
       }),
       [
         activeThread,
+        applyPromptReplacement,
         composerDraftTarget,
         composerCursor,
         composerTerminalContexts,
@@ -1943,7 +1971,10 @@ export const ChatComposer = memo(
         promptRef,
         composerImagesRef,
         composerTerminalContextsRef,
+        isComposerApprovalState,
         isComposerModelPickerOpen,
+        isConnecting,
+        pendingUserInputs.length,
         readComposerSnapshot,
         selectedModel,
         selectedModelOptionsForDispatch,
@@ -2205,7 +2236,7 @@ export const ChatComposer = memo(
                         ? "Add feedback to refine the plan, or leave this blank to implement it"
                         : phase === "disconnected"
                           ? "Ask for follow-up changes or attach images"
-                          : "Ask anything, @tag files/folders, or use / to show available commands"
+                          : "Ask anything, @tag files/folders, $use skills, or / for commands"
                 }
                 disabled={isConnecting || isComposerApprovalState}
               />
@@ -2318,6 +2349,7 @@ export const ChatComposer = memo(
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     activeContextWindow={activeContextWindow}
+                    activeThreadProviderDisplayName={activeThreadProviderDisplayName}
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
                     showPlanFollowUpPrompt={

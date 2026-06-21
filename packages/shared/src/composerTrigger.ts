@@ -17,6 +17,13 @@ function isWhitespace(char: string): boolean {
   return char === " " || char === "\n" || char === "\t" || char === "\r";
 }
 
+export function serializeComposerMentionPath(path: string): string {
+  if (!/\s|"/.test(path)) {
+    return path;
+  }
+  return `"${path.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
 /**
  * Detect an active trigger (@path, $skill, /command) at the cursor position.
  *

@@ -275,7 +275,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // from TimelineRowCtx, which propagates through LegendList's memo.
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
-      <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden" data-timeline-root="true">
+      <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip" data-timeline-root="true">
         <TimelineRowContent row={item} />
       </div>
     ),
@@ -760,27 +760,30 @@ function AssistantChangedFilesSectionInner({
 
   return (
     <div
-      className="mt-2 rounded-lg border border-border/80 bg-card/45"
+      className="relative mt-4 rounded-2xl bg-card/40 shadow-xs/5 not-dark:bg-clip-padding after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-2xl after:border after:border-input"
       style={{
         fontSize: "var(--app-tool-font-size)",
-        padding: "var(--density-work-group-px)",
       }}
     >
-      <div className="flex items-center justify-between gap-2">
+      <div
+        className="sticky top-0 z-10 flex items-center justify-between gap-2 rounded-t-2xl bg-card/72 backdrop-blur-md"
+        style={{
+          padding: "var(--density-work-group-px)",
+        }}
+      >
         <div className="min-w-0">
-          <p className="text-[0.75em] uppercase tracking-[0.08em] text-muted-foreground/60">
+          <p className="flex items-center gap-1 font-medium text-foreground text-[0.8em] leading-4">
             <span>
               Changed files ({selectedScope === "turn" ? "Turn" : "Snapshot"}) (
               {changedFileCountLabel})
             </span>
             {hasNonZeroStat(summaryStat) && (
-              <>
-                <span className="mx-1">•</span>
-                <DiffStatLabel
-                  additions={summaryStat.additions}
-                  deletions={summaryStat.deletions}
-                />
-              </>
+              <DiffStatLabel
+                additions={summaryStat.additions}
+                className="text-xs leading-4"
+                deletions={summaryStat.deletions}
+                layout="inline"
+              />
             )}
           </p>
           {selectedScope === "turn" && turnFiles.length === 0 && (
@@ -819,15 +822,17 @@ function AssistantChangedFilesSectionInner({
         </div>
       </div>
       {!collapsed && (
-        <ChangedFilesTree
-          key={`changed-files-tree:${turnSummary.turnId}`}
-          turnId={turnSummary.turnId}
-          files={visibleFiles}
-          allDirectoriesExpanded
-          resolvedTheme={resolvedTheme}
-          diffScope={selectedScope}
-          onOpenTurnDiff={onOpenTurnDiff}
-        />
+        <div className="px-2 pb-2">
+          <ChangedFilesTree
+            key={`changed-files-tree:${turnSummary.turnId}`}
+            turnId={turnSummary.turnId}
+            files={visibleFiles}
+            allDirectoriesExpanded
+            resolvedTheme={resolvedTheme}
+            diffScope={selectedScope}
+            onOpenTurnDiff={onOpenTurnDiff}
+          />
+        </div>
       )}
     </div>
   );

@@ -316,6 +316,13 @@ const ChatExportDetailSettingsPatch = Schema.Struct({
   includeQueuedTurns: Schema.optionalKey(Schema.Boolean),
 });
 
+export const ProviderInstanceMutation = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  // `null` removes the instance; a config upserts (replaces) it.
+  config: Schema.NullOr(ProviderInstanceConfig),
+});
+export type ProviderInstanceMutation = typeof ProviderInstanceMutation.Type;
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -344,6 +351,13 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  // Atomic per-instance upsert/remove operations applied server-side against the
+  // freshest settings under the write lock. Unlike `providerInstances` (whole-map
+  // replace), these preserve concurrent edits to *other* instances, so callers
+  // performing read-modify-write on a single instance cannot clobber unrelated
+  // entries written between their read and write. A `null` config removes the
+  // instance; a present config upserts it.
+  providerInstanceMutations: Schema.optionalKey(Schema.Array(ProviderInstanceMutation)),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

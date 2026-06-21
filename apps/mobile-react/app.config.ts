@@ -121,6 +121,10 @@ const config: ExpoConfig = {
         ios: {
           deploymentTarget: "16.4",
         },
+        android: {
+          enableProguardInReleaseBuilds: true,
+          enableShrinkResourcesInReleaseBuilds: true,
+        },
       },
     ],
     "expo-secure-store",

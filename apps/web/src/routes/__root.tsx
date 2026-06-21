@@ -1,8 +1,4 @@
-import {
-  type DesktopNotificationRequest,
-  type DesktopThreadCompletionNotificationStatus,
-  type ServerLifecycleWelcomePayload,
-} from "@t3tools/contracts";
+import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
 import {
   Outlet,
@@ -59,6 +55,7 @@ import {
   resolveInitialServerAuthGateState,
   updatePrimaryEnvironmentDescriptor,
 } from "../environments/primary";
+import { collectThreadCompletionNotifications } from "../threadCompletionNotifications";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -128,7 +125,7 @@ function ThreadCompletionNotificationCoordinator() {
   const environmentStateById = useStore((store) => store.environmentStateById);
   const notificationMode = useSettings((settings) => settings.threadCompletionNotifications);
   const notifiedTurnKeysRef = useRef(new Set<string>());
-  const initializedRef = useRef(false);
+  const bootstrappedEnvironmentIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
     const api = readLocalApi();
@@ -148,93 +145,29 @@ function ThreadCompletionNotificationCoordinator() {
   }, [navigate]);
 
   useEffect(() => {
-    if (notificationMode === "off") {
-      return;
-    }
-
     const api = readLocalApi();
     if (!api || !window.desktopBridge) {
       return;
     }
 
-    const activeThreadKey = parseActiveThreadRouteKey(pathname);
-    for (const environmentState of Object.values(environmentStateById)) {
-      for (const summary of Object.values(environmentState.sidebarThreadSummaryById)) {
-        const latestTurn = summary.latestTurn;
-        if (!latestTurn || !latestTurn.completedAt) {
-          continue;
-        }
-
-        const status = notificationStatusFromTurnState(latestTurn.state);
-        if (!status) {
-          continue;
-        }
-
-        const turnKey = `${summary.environmentId}:${summary.id}:${latestTurn.turnId}`;
-        if (notifiedTurnKeysRef.current.has(turnKey)) {
-          continue;
-        }
-
-        notifiedTurnKeysRef.current.add(turnKey);
-        if (!initializedRef.current) {
-          continue;
-        }
-
-        if (
-          notificationMode === "background-only" &&
-          isThreadVisibleAndFocused(activeThreadKey, summary.environmentId, summary.id)
-        ) {
-          continue;
-        }
-
-        const request: DesktopNotificationRequest = {
-          kind: "thread-turn-completed",
-          environmentId: summary.environmentId,
-          threadId: summary.id,
-          turnId: latestTurn.turnId,
-          title: notificationTitleFromStatus(status),
-          body: summary.title,
-          status,
-          createdAt: latestTurn.completedAt,
-        };
-        void api.notifications.show(request).catch((error) => {
-          console.error("[THREAD_COMPLETION_NOTIFICATION] show failed", error);
-        });
-      }
+    const requests = collectThreadCompletionNotifications({
+      environmentStateById,
+      notificationMode,
+      activeThreadKey: parseActiveThreadRouteKey(pathname),
+      isDocumentFocused: document.visibilityState === "visible" && document.hasFocus(),
+      tracker: {
+        notifiedTurnKeys: notifiedTurnKeysRef.current,
+        bootstrappedEnvironmentIds: bootstrappedEnvironmentIdsRef.current,
+      },
+    });
+    for (const request of requests) {
+      void api.notifications.show(request).catch((error) => {
+        console.error("[THREAD_COMPLETION_NOTIFICATION] show failed", error);
+      });
     }
-
-    initializedRef.current = true;
   }, [environmentStateById, notificationMode, pathname]);
 
   return null;
-}
-
-function notificationStatusFromTurnState(
-  state: string,
-): DesktopThreadCompletionNotificationStatus | null {
-  switch (state) {
-    case "completed":
-      return "completed";
-    case "error":
-      return "failed";
-    case "interrupted":
-      return "interrupted";
-    default:
-      return null;
-  }
-}
-
-function notificationTitleFromStatus(status: DesktopThreadCompletionNotificationStatus): string {
-  switch (status) {
-    case "completed":
-      return "Chat completed";
-    case "failed":
-      return "Chat failed";
-    case "interrupted":
-      return "Chat interrupted";
-    case "cancelled":
-      return "Chat cancelled";
-  }
 }
 
 function parseActiveThreadRouteKey(pathname: string): string | null {
@@ -243,18 +176,6 @@ function parseActiveThreadRouteKey(pathname: string): string | null {
     return null;
   }
   return `${decodeURIComponent(environmentId)}:${decodeURIComponent(threadId)}`;
-}
-
-function isThreadVisibleAndFocused(
-  activeThreadKey: string | null,
-  environmentId: string,
-  threadId: string,
-): boolean {
-  return (
-    document.visibilityState === "visible" &&
-    document.hasFocus() &&
-    activeThreadKey === `${environmentId}:${threadId}`
-  );
 }
 
 function RootRouteErrorView({ error, reset }: ErrorComponentProps) {

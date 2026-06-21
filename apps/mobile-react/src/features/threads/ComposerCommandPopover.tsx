@@ -2,8 +2,8 @@ import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
 import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
 import { SymbolView } from "expo-symbols";
-import { memo } from "react";
-import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "react-native";
+import { memo, useCallback } from "react";
+import { FlatList, Pressable, useColorScheme, View, type ViewStyle } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 
@@ -171,6 +171,16 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
 ) {
   const isDarkMode = useColorScheme() === "dark";
   const label = groupLabel(props.triggerKind);
+  const renderItem = useCallback(
+    ({ item, index }: { item: ComposerCommandItem; index: number }) => (
+      <CommandRow
+        item={item}
+        onPress={() => props.onSelect(item)}
+        isLast={index === props.items.length - 1}
+      />
+    ),
+    [props],
+  );
 
   return (
     <PopoverSurface isDarkMode={isDarkMode}>
@@ -185,20 +195,17 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
         </View>
       ) : null}
       {props.items.length > 0 ? (
-        <ScrollView
+        <FlatList
+          data={props.items as ComposerCommandItem[]}
+          renderItem={renderItem}
+          keyExtractor={(item) => item.id}
           style={{ maxHeight: 180 }}
           keyboardShouldPersistTaps="always"
           showsVerticalScrollIndicator={false}
-        >
-          {props.items.map((item, index) => (
-            <CommandRow
-              key={item.id}
-              item={item}
-              onPress={() => props.onSelect(item)}
-              isLast={index === props.items.length - 1}
-            />
-          ))}
-        </ScrollView>
+          initialNumToRender={8}
+          maxToRenderPerBatch={8}
+          windowSize={3}
+        />
       ) : (
         <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
           <Text className="text-[12px] text-foreground-tertiary">

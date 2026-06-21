@@ -65,6 +65,24 @@ function mergeModelSelectionOptionsById(input: {
   return [...merged.entries()].map(([id, value]) => ({ id, value }));
 }
 
+function applyProviderInstanceMutations(
+  settings: ServerSettings,
+  mutations: ServerSettingsPatch["providerInstanceMutations"],
+): ServerSettings {
+  if (mutations === undefined || mutations.length === 0) {
+    return settings;
+  }
+  const providerInstances = { ...settings.providerInstances };
+  for (const mutation of mutations) {
+    if (mutation.config === null) {
+      delete providerInstances[mutation.instanceId];
+    } else {
+      providerInstances[mutation.instanceId] = mutation.config;
+    }
+  }
+  return { ...settings, providerInstances };
+}
+
 /**
  * Applies a server settings patch while treating textGenerationModelSelection as
  * replace-on-provider/model updates. This prevents stale nested options from
@@ -75,7 +93,8 @@ export function applyServerSettingsPatch(
   patch: ServerSettingsPatch,
 ): ServerSettings {
   const selectionPatch = patch.textGenerationModelSelection;
-  const next = deepMerge(current, patch);
+  const { providerInstanceMutations, ...mergeablePatch } = patch;
+  const next = deepMerge(current, mergeablePatch);
   const nextWithReplacements =
     patch.providerInstances !== undefined
       ? {
@@ -84,7 +103,7 @@ export function applyServerSettingsPatch(
         }
       : next;
   if (!selectionPatch) {
-    return nextWithReplacements;
+    return applyProviderInstanceMutations(nextWithReplacements, providerInstanceMutations);
   }
 
   const instanceId = selectionPatch.instanceId ?? current.textGenerationModelSelection.instanceId;
@@ -96,8 +115,11 @@ export function applyServerSettingsPatch(
         patch: selectionPatch.options,
       });
 
-  return {
-    ...nextWithReplacements,
-    textGenerationModelSelection: createModelSelection(instanceId, model, options),
-  };
+  return applyProviderInstanceMutations(
+    {
+      ...nextWithReplacements,
+      textGenerationModelSelection: createModelSelection(instanceId, model, options),
+    },
+    providerInstanceMutations,
+  );
 }

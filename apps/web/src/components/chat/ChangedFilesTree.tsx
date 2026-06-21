@@ -23,6 +23,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
     [treeNodes],
   );
+  const hasDirectoryNodes = directoryPathsKey.length > 0;
   const expansionStateKey = `${allDirectoriesExpanded ? "expanded" : "collapsed"}\u0000${directoryPathsKey}`;
   const [directoryExpansionState, setDirectoryExpansionState] = useState<{
     key: string;
@@ -61,7 +62,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           <button
             type="button"
             data-scroll-anchor-ignore
-            className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
+            className="group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
             style={{ paddingLeft: `${leftPadding}px` }}
             onClick={() => toggleDirectory(node.path)}
           >
@@ -99,11 +100,13 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
       <button
         key={`file:${node.path}`}
         type="button"
-        className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
+        className="group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
         onClick={() => onOpenTurnDiff(turnId, node.path, diffScope)}
       >
-        <span aria-hidden="true" className="size-3.5 shrink-0" />
+        {hasDirectoryNodes || depth > 0 ? (
+          <span aria-hidden="true" className="size-3.5 shrink-0" />
+        ) : null}
         <VscodeEntryIcon
           pathValue={node.path}
           kind="file"
