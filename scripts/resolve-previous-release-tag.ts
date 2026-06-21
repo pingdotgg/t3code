@@ -26,9 +26,11 @@ export class InvalidReleaseTagError extends Schema.TaggedErrorClass<InvalidRelea
   }
 }
 
+const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
 const releaseTagListProcessContext = {
   executable: Schema.Literal("git"),
-  argumentCount: Schema.Number,
+  argumentCount: NonNegativeInt,
   cwd: Schema.String,
 };
 
@@ -36,7 +38,7 @@ export class ReleaseTagListProcessError extends Schema.TaggedErrorClass<ReleaseT
   "ReleaseTagListProcessError",
   {
     ...releaseTagListProcessContext,
-    operation: Schema.Literals(["spawn", "communicate", "wait-for-exit"]),
+    operation: Schema.Literals(["spawn", "read-stdout", "read-stderr", "wait-for-exit"]),
     cause: Schema.Defect(),
   },
 ) {
@@ -50,12 +52,35 @@ export class ReleaseTagListProcessExitError extends Schema.TaggedErrorClass<Rele
   {
     ...releaseTagListProcessContext,
     exitCode: Schema.Number,
-    stdoutLength: Schema.Number,
-    stderrLength: Schema.Number,
+    stdoutLength: NonNegativeInt,
+    stderrLength: NonNegativeInt,
   },
 ) {
   override get message(): string {
     return `Release tag listing exited with code ${this.exitCode}.`;
+  }
+}
+
+export class PreviousReleaseTagGitHubOutputConfigError extends Schema.TaggedErrorClass<PreviousReleaseTagGitHubOutputConfigError>()(
+  "PreviousReleaseTagGitHubOutputConfigError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to resolve the GITHUB_OUTPUT path for the previous release tag.";
+  }
+}
+
+export class PreviousReleaseTagGitHubOutputAppendError extends Schema.TaggedErrorClass<PreviousReleaseTagGitHubOutputAppendError>()(
+  "PreviousReleaseTagGitHubOutputAppendError",
+  {
+    outputPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to append the previous release tag to ${this.outputPath}.`;
   }
 }
 
@@ -238,7 +263,7 @@ export const listGitTags = Effect.fn("listGitTags")(function* (cwd = process.cwd
           (cause) =>
             new ReleaseTagListProcessError({
               ...context,
-              operation: "communicate",
+              operation: "read-stdout",
               cause,
             }),
         ),
@@ -248,7 +273,7 @@ export const listGitTags = Effect.fn("listGitTags")(function* (cwd = process.cwd
           (cause) =>
             new ReleaseTagListProcessError({
               ...context,
-              operation: "communicate",
+              operation: "read-stderr",
               cause,
             }),
         ),
@@ -280,7 +305,7 @@ export const listGitTags = Effect.fn("listGitTags")(function* (cwd = process.cwd
   return stdout.split(/\r?\n/).map(String.trim).filter(String.isNonEmpty);
 });
 
-const writeOutput = Effect.fn("writeOutput")(function* (
+export const writePreviousReleaseTagOutput = Effect.fn("writePreviousReleaseTagOutput")(function* (
   previousTag: string | undefined,
   writeGithubOutput: boolean,
 ) {
@@ -288,8 +313,23 @@ const writeOutput = Effect.fn("writeOutput")(function* (
 
   if (writeGithubOutput) {
     const fs = yield* FileSystem.FileSystem;
-    const githubOutputPath = yield* Config.nonEmptyString("GITHUB_OUTPUT");
-    yield* fs.writeFileString(githubOutputPath, entry, { flag: "a" });
+    const githubOutputPath = yield* Config.nonEmptyString("GITHUB_OUTPUT").pipe(
+      Effect.mapError(
+        (cause) =>
+          new PreviousReleaseTagGitHubOutputConfigError({
+            cause,
+          }),
+      ),
+    );
+    yield* fs.writeFileString(githubOutputPath, entry, { flag: "a" }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PreviousReleaseTagGitHubOutputAppendError({
+            outputPath: githubOutputPath,
+            cause,
+          }),
+      ),
+    );
     return;
   }
 
@@ -313,7 +353,7 @@ const command = Command.make(
   ({ channel, currentTag, githubOutput }) =>
     listGitTags().pipe(
       Effect.flatMap((tags) => resolvePreviousReleaseTag(channel, currentTag, tags)),
-      Effect.flatMap((previousTag) => writeOutput(previousTag, githubOutput)),
+      Effect.flatMap((previousTag) => writePreviousReleaseTagOutput(previousTag, githubOutput)),
     ),
 ).pipe(Command.withDescription("Resolve the previous release tag for a stable or nightly series."));
 

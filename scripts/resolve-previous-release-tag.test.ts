@@ -1,11 +1,17 @@
 import { assert, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { listGitTags, resolvePreviousReleaseTag } from "./resolve-previous-release-tag.ts";
+import {
+  listGitTags,
+  resolvePreviousReleaseTag,
+  writePreviousReleaseTagOutput,
+} from "./resolve-previous-release-tag.ts";
 
 const encoder = new TextEncoder();
 
@@ -13,6 +19,8 @@ function mockHandle(options: {
   readonly exitCode: number;
   readonly stdout?: string;
   readonly stderr?: string;
+  readonly stdoutError?: PlatformError.PlatformError;
+  readonly stderrError?: PlatformError.PlatformError;
 }) {
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(1),
@@ -21,8 +29,12 @@ function mockHandle(options: {
     kill: () => Effect.void,
     unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
-    stdout: Stream.make(encoder.encode(options.stdout ?? "")),
-    stderr: Stream.make(encoder.encode(options.stderr ?? "")),
+    stdout: options.stdoutError
+      ? Stream.fail(options.stdoutError)
+      : Stream.make(encoder.encode(options.stdout ?? "")),
+    stderr: options.stderrError
+      ? Stream.fail(options.stderrError)
+      : Stream.make(encoder.encode(options.stderr ?? "")),
     all: Stream.empty,
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
@@ -95,6 +107,43 @@ it.effect("preserves git tag spawn context and the exact platform cause", () => 
   });
 });
 
+it.effect("distinguishes stdout and stderr read failures", () =>
+  Effect.gen(function* () {
+    for (const [stream, operation] of [
+      ["stdout", "read-stdout"],
+      ["stderr", "read-stderr"],
+    ] as const) {
+      const cause = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "ChildProcess",
+        method: stream,
+        description: `${stream} unavailable`,
+      });
+      const error = yield* listGitTags("/repo").pipe(
+        Effect.scoped,
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              mockHandle({
+                exitCode: 0,
+                ...(stream === "stdout" ? { stdoutError: cause } : { stderrError: cause }),
+              }),
+            ),
+          ),
+        ),
+        Effect.flip,
+      );
+
+      if (error._tag !== "ReleaseTagListProcessError") {
+        return assert.fail(`Unexpected error: ${error._tag}`);
+      }
+      assert.equal(error.operation, operation);
+      assert.strictEqual(error.cause, cause);
+    }
+  }),
+);
+
 it.effect("reports git tag non-zero exits without manufacturing a cause", () =>
   Effect.gen(function* () {
     const error = yield* listGitTags("/repo").pipe(
@@ -128,3 +177,37 @@ it.effect("reports git tag non-zero exits without manufacturing a cause", () =>
     assert.notProperty(error, "stderr");
   }),
 );
+
+it.effect("preserves the GITHUB_OUTPUT append path and exact cause", () => {
+  const outputPath = "/tmp/previous-tag-github-output";
+  const appendCause = PlatformError.systemError({
+    _tag: "PermissionDenied",
+    module: "FileSystem",
+    method: "writeFileString",
+    pathOrDescriptor: outputPath,
+  });
+
+  return Effect.gen(function* () {
+    const appendError = yield* writePreviousReleaseTagOutput("v1.2.3", true).pipe(
+      Effect.provideService(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          writeFileString: () => Effect.fail(appendCause),
+        }),
+      ),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnv({ env: { GITHUB_OUTPUT: outputPath } }),
+      ),
+      Effect.flip,
+    );
+
+    if (appendError._tag !== "PreviousReleaseTagGitHubOutputAppendError") {
+      return assert.fail(`Unexpected error: ${appendError._tag}`);
+    }
+    assert.equal(appendError.outputPath, outputPath);
+    assert.strictEqual(appendError.cause, appendCause);
+    assert.notProperty(appendError, "contents");
+    assert.notInclude(appendError.message, appendCause.message);
+  });
+});

@@ -1,5 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -10,6 +12,7 @@ import {
   resolveNightlyBaseVersion,
   resolveNightlyReleaseMetadata,
   resolveNightlyTargetVersion,
+  writeNightlyReleaseOutput,
 } from "./resolve-nightly-release.ts";
 
 it("strips prerelease and build metadata when deriving the nightly base version", () => {
@@ -47,6 +50,29 @@ it("derives nightly metadata including the short commit sha in the release name"
       shortSha: "abcdef123456",
     },
   );
+});
+
+it.effect("preserves the GITHUB_OUTPUT configuration cause", () => {
+  const metadata = resolveNightlyReleaseMetadata("1.2.4", "20260620", 42, "abcdef1234567890");
+  const configCause = new ConfigProvider.SourceError({ message: "environment unavailable" });
+
+  return Effect.gen(function* () {
+    const configError = yield* writeNightlyReleaseOutput(metadata, true).pipe(
+      Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.make(() => Effect.fail(configCause)),
+      ),
+      Effect.flip,
+    );
+
+    if (configError._tag !== "NightlyReleaseGitHubOutputConfigError") {
+      return assert.fail(`Unexpected error: ${configError._tag}`);
+    }
+    assert.instanceOf(configError.cause, Config.ConfigError);
+    assert.strictEqual(configError.cause.cause, configCause);
+    assert.notInclude(configError.message, configCause.message);
+  });
 });
 
 it.layer(NodeServices.layer)("readDesktopBaseVersion", (it) => {

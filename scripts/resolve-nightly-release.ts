@@ -11,7 +11,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/unstable/cli";
 
-interface NightlyReleaseMetadata {
+export interface NightlyReleaseMetadata {
   readonly baseVersion: string;
   readonly version: string;
   readonly tag: string;
@@ -50,6 +50,29 @@ export class NightlyReleaseDesktopPackageError extends Schema.TaggedErrorClass<N
 ) {
   override get message(): string {
     return `Failed to ${this.operation} desktop package metadata at ${this.packageJsonPath}.`;
+  }
+}
+
+export class NightlyReleaseGitHubOutputConfigError extends Schema.TaggedErrorClass<NightlyReleaseGitHubOutputConfigError>()(
+  "NightlyReleaseGitHubOutputConfigError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to resolve the GITHUB_OUTPUT path for nightly release metadata.";
+  }
+}
+
+export class NightlyReleaseGitHubOutputAppendError extends Schema.TaggedErrorClass<NightlyReleaseGitHubOutputAppendError>()(
+  "NightlyReleaseGitHubOutputAppendError",
+  {
+    outputPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to append nightly release metadata to ${this.outputPath}.`;
   }
 }
 
@@ -120,7 +143,7 @@ export const readDesktopBaseVersion = Effect.fn("readDesktopBaseVersion")(functi
   return yield* resolveNightlyTargetVersion(packageJson.version);
 });
 
-const writeOutput = Effect.fn("writeOutput")(function* (
+export const writeNightlyReleaseOutput = Effect.fn("writeNightlyReleaseOutput")(function* (
   metadata: NightlyReleaseMetadata,
   writeGithubOutput: boolean,
 ) {
@@ -135,9 +158,24 @@ const writeOutput = Effect.fn("writeOutput")(function* (
   ] as const;
 
   if (writeGithubOutput) {
-    const githubOutputPath = yield* Config.nonEmptyString("GITHUB_OUTPUT");
+    const githubOutputPath = yield* Config.nonEmptyString("GITHUB_OUTPUT").pipe(
+      Effect.mapError(
+        (cause) =>
+          new NightlyReleaseGitHubOutputConfigError({
+            cause,
+          }),
+      ),
+    );
     const serialized = entries.map(([key, value]) => `${key}=${value}\n`).join("");
-    yield* fs.writeFileString(githubOutputPath, serialized, { flag: "a" });
+    yield* fs.writeFileString(githubOutputPath, serialized, { flag: "a" }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new NightlyReleaseGitHubOutputAppendError({
+            outputPath: githubOutputPath,
+            cause,
+          }),
+      ),
+    );
   } else {
     for (const [key, value] of entries) {
       yield* Console.log(`${key}=${value}`);
@@ -172,7 +210,7 @@ const command = Command.make(
   ({ date, runNumber, sha, githubOutput, root }) =>
     readDesktopBaseVersion(Option.getOrUndefined(root)).pipe(
       Effect.map((baseVersion) => resolveNightlyReleaseMetadata(baseVersion, date, runNumber, sha)),
-      Effect.flatMap((metadata) => writeOutput(metadata, githubOutput)),
+      Effect.flatMap((metadata) => writeNightlyReleaseOutput(metadata, githubOutput)),
     ),
 ).pipe(Command.withDescription("Resolve nightly release version metadata."));
 
