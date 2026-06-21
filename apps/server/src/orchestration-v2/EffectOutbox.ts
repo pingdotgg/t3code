@@ -67,18 +67,12 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     scopeId: CheckpointScopeId,
   }),
   Schema.Struct({
-    type: Schema.Literal("provider-thread.fork"),
-    sourceProviderThreadId: ProviderThreadId,
-    targetProviderThreadId: ProviderThreadId,
-  }),
-  Schema.Struct({
     type: Schema.Literal("checkpoint.capture"),
     runId: RunId,
     scopeId: CheckpointScopeId,
   }),
   Schema.Struct({
     type: Schema.Literal("terminal.cleanup"),
-    runId: RunId,
   }),
   Schema.Struct({
     type: Schema.Literal("attachment.cleanup"),
@@ -144,6 +138,7 @@ export interface EffectOutboxV2Shape {
   readonly listByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
+  readonly reclaimRunning: Effect.Effect<number, EffectOutboxError>;
   readonly claimNext: (input: {
     readonly workerId: string;
     readonly leaseDurationMs: number;
@@ -294,6 +289,22 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               : new EffectOutboxError({ operation: "list", cause }),
           ),
         ),
+      reclaimRunning: Effect.gen(function* () {
+        const now = DateTime.formatIso(yield* DateTime.now);
+        const rows = yield* sql<{ readonly effect_id: string }>`
+          UPDATE orchestration_v2_effect_outbox
+          SET
+            status = 'pending',
+            lease_owner = NULL,
+            lease_expires_at = NULL,
+            available_at = ${now},
+            updated_at = ${now}
+          WHERE status = 'running'
+          RETURNING effect_id
+        `;
+        if (rows.length > 0) yield* Queue.offer(available, undefined);
+        return rows.length;
+      }).pipe(Effect.mapError((cause) => new EffectOutboxError({ operation: "reclaim", cause }))),
       claimNext: ({ workerId, leaseDurationMs }) =>
         Effect.gen(function* () {
           const now = yield* DateTime.now;

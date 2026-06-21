@@ -815,16 +815,91 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: updatedThread,
     });
 
+    if (command.type === "thread.delete") {
+      const emitEvent = emit(events, command);
+      const activeRunIds = new Set(
+        projection.runs
+          .filter((run) => ["queued", "starting", "running", "waiting"].includes(run.status))
+          .map((run) => run.id),
+      );
+      for (const run of projection.runs.filter((candidate) => activeRunIds.has(candidate.id))) {
+        yield* emitEvent({
+          type: "run.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...run, status: "cancelled", queuePosition: null, completedAt: now },
+        });
+      }
+      for (const attempt of projection.attempts.filter(
+        (candidate) =>
+          activeRunIds.has(candidate.runId) &&
+          (candidate.status === "pending" || candidate.status === "running"),
+      )) {
+        const run = projection.runs.find((candidate) => candidate.id === attempt.runId)!;
+        yield* emitEvent({
+          type: "run-attempt.updated",
+          threadId: command.threadId,
+          runId: attempt.runId,
+          nodeId: attempt.rootNodeId,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...attempt, status: "cancelled", completedAt: now },
+        });
+      }
+      for (const node of projection.nodes.filter(
+        (candidate) =>
+          candidate.runId !== null &&
+          activeRunIds.has(candidate.runId) &&
+          ["pending", "running", "waiting"].includes(candidate.status),
+      )) {
+        const run = projection.runs.find((candidate) => candidate.id === node.runId)!;
+        yield* emitEvent({
+          type: "node.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          nodeId: node.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...node, status: "cancelled", completedAt: now },
+        });
+      }
+      for (const request of projection.runtimeRequests.filter(
+        (candidate) => candidate.status === "pending",
+      )) {
+        yield* emitEvent({
+          type: "runtime-request.updated",
+          threadId: command.threadId,
+          nodeId: request.nodeId,
+          occurredAt: now,
+          payload: {
+            ...request,
+            status: "cancelled",
+            responseCapability: {
+              type: "not_resumable",
+              reason: "The thread was deleted.",
+            },
+            resolvedAt: now,
+          },
+        });
+      }
+    }
+
     const detachSessionIds = new Set(
       command.type === "thread.archive" || command.type === "thread.delete"
         ? projection.providerSessions.map((session) => session.id)
-        : command.type === "thread.runtime-mode.set"
-          ? projection.providerSessions
-              .filter(
-                (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
-              )
-              .map((session) => session.id)
-          : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
+        : command.type === "thread.metadata.update" &&
+            command.worktreePath !== undefined &&
+            command.worktreePath !== thread.worktreePath
+          ? projection.providerSessions.map((session) => session.id)
+          : command.type === "thread.runtime-mode.set"
+            ? projection.providerSessions
+                .filter(
+                  (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
+                )
+                .map((session) => session.id)
+            : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
     );
     if (detachSessionIds.size > 0) {
       const liveSessions = projection.providerSessions.filter(
@@ -854,9 +929,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ? "Thread archived."
                     : command.type === "thread.delete"
                       ? "Thread deleted."
-                      : command.type === "thread.runtime-mode.set"
-                        ? "Runtime mode changed."
-                        : "Provider or model selection changed.",
+                      : command.type === "thread.metadata.update"
+                        ? "Workspace changed."
+                        : command.type === "thread.runtime-mode.set"
+                          ? "Runtime mode changed."
+                          : "Provider or model selection changed.",
               },
             });
             const pendingEffect = {
@@ -871,15 +948,48 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ? "Thread archived."
                     : command.type === "thread.delete"
                       ? "Thread deleted."
-                      : command.type === "thread.runtime-mode.set"
-                        ? "Runtime mode changed."
-                        : "Provider or model selection changed.",
+                      : command.type === "thread.metadata.update"
+                        ? "Workspace changed."
+                        : command.type === "thread.runtime-mode.set"
+                          ? "Runtime mode changed."
+                          : "Provider or model selection changed.",
               },
             } satisfies PendingOrchestrationEffectV2;
             yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
           }),
         { concurrency: 1, discard: true },
       );
+    }
+
+    if (command.type === "thread.archive" || command.type === "thread.delete") {
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${command.commandId}:terminal.cleanup`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: { type: "terminal.cleanup" },
+        } satisfies PendingOrchestrationEffectV2,
+      ]);
+    }
+
+    if (command.type === "thread.delete") {
+      const attachmentIds = Array.from(
+        new Set(
+          projection.messages.flatMap((message) => message.attachments.map((item) => item.id)),
+        ),
+      );
+      if (attachmentIds.length > 0) {
+        yield* Ref.update(effects, (existing) => [
+          ...existing,
+          {
+            id: `effect:${command.commandId}:attachment.cleanup`,
+            commandId: command.commandId,
+            threadId: command.threadId,
+            request: { type: "attachment.cleanup", attachmentIds },
+          } satisfies PendingOrchestrationEffectV2,
+        ]);
+      }
     }
   });
 
