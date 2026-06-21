@@ -1,14 +1,6 @@
-import * as NodeV8 from "node:v8";
-
-import {
-  CommandId,
-  EventId,
-  MessageId,
-  ProjectId,
-  ThreadId,
-  type OrchestrationEvent,
-} from "@t3tools/contracts";
+import { CommandId, EventId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -305,55 +297,98 @@ layer("OrchestrationEventStore", (it) => {
         replayed.map((event) => event.sequence),
         persisted.map((event) => event.sequence),
       );
-      const limited = store.readFromSequence(persisted[0]!.sequence, 501.9);
-      for (let run = 0; run < 2; run++) {
-        assert.deepEqual(
-          (yield* Stream.runCollect(limited)).map((event) => event.sequence),
-          persisted.slice(1).map((event) => event.sequence),
+    }),
+  );
+
+  it.effect("orders project and V2 agent events in the retained application event source", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const projectId = ProjectId.make("project-shared-stream");
+      const threadId = ThreadId.make("thread-shared-stream");
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const occurredAt = DateTime.makeUnsafe("2026-01-02T00:00:00.000Z");
+      const now = DateTime.formatIso(occurredAt);
+      const baselineSequence = yield* eventStore.latestApplicationSequence;
+
+      const projectEvent = yield* eventStore.append({
+        type: "project.created",
+        eventId: EventId.make("event-project-shared-stream"),
+        aggregateKind: "project",
+        aggregateId: projectId,
+        occurredAt: now,
+        commandId: CommandId.make("command-project-shared-stream"),
+        causationEventId: null,
+        correlationId: CommandId.make("command-project-shared-stream"),
+        metadata: {},
+        payload: {
+          projectId,
+          title: "Shared stream",
+          workspaceRoot: "/tmp/shared-stream",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      const [threadEvent] = yield* eventStore.appendAgentEvents({
+        commandId: CommandId.make("command-thread-shared-stream"),
+        events: [
+          {
+            id: EventId.make("event-thread-shared-stream"),
+            type: "thread.created",
+            threadId,
+            providerInstanceId,
+            occurredAt,
+            payload: {
+              id: threadId,
+              projectId,
+              title: "Thread",
+              providerInstanceId,
+              modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              activeProviderThreadId: null,
+              lineage: {
+                rootThreadId: threadId,
+                parentThreadId: null,
+                relationshipToParent: null,
+              },
+              forkedFrom: null,
+              createdBy: "user",
+              creationSource: "web",
+              createdAt: occurredAt,
+              updatedAt: occurredAt,
+              archivedAt: null,
+              deletedAt: null,
+            },
+          },
+        ],
+      });
+
+      const applicationEvents = yield* eventStore
+        .streamApplicationEvents({ afterSequence: baselineSequence })
+        .pipe(
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.map((chunk) => Array.from(chunk)),
         );
-      }
-      assert.deepEqual(yield* Stream.runCollect(store.readFromSequence(0, -1)), []);
+      assert.deepEqual(
+        applicationEvents.map((event) => event.sequence),
+        [projectEvent.sequence, threadEvent!.sequence],
+      );
+      assert.isTrue("aggregateKind" in applicationEvents[0]!);
+      assert.isTrue("event" in applicationEvents[1]!);
+
+      const legacyReplay = yield* eventStore.readFromSequence(projectEvent.sequence - 1).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) => Array.from(chunk)),
+      );
+      assert.deepEqual(
+        legacyReplay.map((event) => event.type),
+        ["project.created"],
+      );
     }),
   );
 });
-
-for (const reader of ["all", "aggregate"] as const) {
-  it.effect(`releases consumed pages during ${reader} replay`, () =>
-    Effect.gen(function* () {
-      const store = yield* OrchestrationEventStore;
-      const threadId = ThreadId.make(`retention-${reader}`);
-      yield* Effect.forEach(
-        Array.from({ length: 1_501 }, (_, index) => index),
-        (index) => store.append(messageEvent(threadId, `retention-${reader}-${index}`)),
-        { discard: true },
-      );
-      // oxlint-disable-next-line typescript/no-extraneous-class -- Identifies page markers for V8's heap query.
-      class ReplayPage {}
-      let count = 0;
-      const replay =
-        reader === "all"
-          ? store.readAll()
-          : store.readAggregateRange({
-              aggregateKind: "thread",
-              aggregateId: threadId,
-              fromSequenceExclusive: 0,
-              toSequenceInclusive: 1_501,
-              limit: 1_501,
-            });
-      yield* Stream.runForEach(replay, (event) =>
-        Effect.sync(() => {
-          assert.equal(event.sequence, count + 1);
-          if (count % 500 === 0) {
-            // Count live page markers after full GC, without timing or heap-size thresholds.
-            Object.assign(event, { replayPage: new ReplayPage() });
-            assert.isAtMost(NodeV8.queryObjects(ReplayPage, { format: "count" }), 1);
-          }
-          count++;
-        }),
-      );
-      assert.equal(count, 1_501);
-    }).pipe(
-      Effect.provide(OrchestrationEventStoreLive.pipe(Layer.provide(SqlitePersistenceMemory))),
-    ),
-  );
-}

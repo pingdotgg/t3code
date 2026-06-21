@@ -3,7 +3,7 @@ import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2Run,
-  OrchestrationV2ShellSnapshot,
+  OrchestrationV2ThreadShellSnapshot,
   OrchestrationV2StoredEvent,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
@@ -74,7 +74,7 @@ export interface OrchestratorV2ScenarioResult {
   readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
   readonly domainEvents: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly projections: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>;
-  readonly shellSnapshot: OrchestrationV2ShellSnapshot;
+  readonly shellSnapshot: OrchestrationV2ThreadShellSnapshot;
 }
 
 export class OrchestratorV2ScenarioStepError extends Schema.TaggedErrorClass<OrchestratorV2ScenarioStepError>()(
