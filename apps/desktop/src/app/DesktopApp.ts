@@ -1,8 +1,8 @@
 import * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import * as NetService from "@t3tools/shared/Net";
 import * as Crypto from "effect/Crypto";
@@ -33,22 +33,24 @@ const makeDesktopRunId = Crypto.Crypto.pipe(
   Effect.map((value) => value.replaceAll("-", "").slice(0, 12)),
 );
 
-class DesktopBackendPortUnavailableError extends Data.TaggedError(
+export class DesktopBackendPortUnavailableError extends Schema.TaggedErrorClass<DesktopBackendPortUnavailableError>()(
   "DesktopBackendPortUnavailableError",
-)<{
-  readonly startPort: number;
-  readonly maxPort: number;
-  readonly hosts: readonly string[];
-}> {
-  override get message() {
+  {
+    startPort: Schema.Int,
+    maxPort: Schema.Int,
+    hosts: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
     return `No desktop backend port is available on hosts ${this.hosts.join(", ")} between ${this.startPort} and ${this.maxPort}.`;
   }
 }
 
-class DesktopDevelopmentBackendPortRequiredError extends Data.TaggedError(
+export class DesktopDevelopmentBackendPortRequiredError extends Schema.TaggedErrorClass<DesktopDevelopmentBackendPortRequiredError>()(
   "DesktopDevelopmentBackendPortRequiredError",
-)<{}> {
-  override get message() {
+  {},
+) {
+  override get message(): string {
     return "T3CODE_PORT is required in desktop development.";
   }
 }
