@@ -96,16 +96,19 @@ describe("VcsProjectConfig", () => {
         const kind = yield* config.resolveKind({ cwd });
 
         assert.equal(kind, "jj");
-        const [message, context] = messages[0] as [string, Record<string, unknown>];
         const failedCandidate = path.join(cwd, ".t3code", "vcs.json");
-        assert.equal(message, "Failed to inspect VCS project config at " + failedCandidate + ".");
-        assert.deepInclude(context, {
+        const [error] = messages[0] as ReadonlyArray<unknown>;
+        assert.instanceOf(error, VcsProjectConfig.VcsProjectConfigError);
+        assert.equal(
+          error.message,
+          "Failed to inspect VCS project config at " + failedCandidate + ".",
+        );
+        assert.deepInclude(error, {
           operation: "inspect",
           cwd,
           configPath: failedCandidate,
-          errorTag: "VcsProjectConfigError",
+          _tag: "VcsProjectConfigError",
         });
-        assert.equal("cause" in context, false);
       }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
     });
   });
@@ -146,18 +149,19 @@ describe("VcsProjectConfig", () => {
         const kind = yield* config.resolveKind({ cwd: root });
 
         assert.equal(kind, "auto");
-        const [message, context] = messages[0] as [string, Record<string, unknown>];
+        const [error] = messages[0] as ReadonlyArray<unknown>;
+        assert.instanceOf(error, VcsProjectConfig.VcsProjectConfigError);
         assert.equal(
-          message,
+          error.message,
           "Failed to decode VCS project config at " + path.join(configDir, "vcs.json") + ".",
         );
-        assert.deepInclude(context, {
+        assert.deepInclude(error.cause, { _tag: "SchemaError" });
+        assert.deepInclude(error, {
           operation: "decode",
           cwd: root,
           configPath: path.join(configDir, "vcs.json"),
-          errorTag: "VcsProjectConfigError",
+          _tag: "VcsProjectConfigError",
         });
-        assert.equal("cause" in context, false);
       }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
     });
   });
@@ -182,15 +186,16 @@ describe("VcsProjectConfig", () => {
         const kind = yield* config.resolveKind({ cwd: root });
 
         assert.equal(kind, "auto");
-        const [message, context] = messages[0] as [string, Record<string, unknown>];
-        assert.equal(message, "Failed to read VCS project config at " + configPath + ".");
-        assert.deepInclude(context, {
+        const [error] = messages[0] as ReadonlyArray<unknown>;
+        assert.instanceOf(error, VcsProjectConfig.VcsProjectConfigError);
+        assert.equal(error.message, "Failed to read VCS project config at " + configPath + ".");
+        assert.deepInclude(error.cause, { _tag: "PlatformError" });
+        assert.deepInclude(error, {
           operation: "read",
           cwd: root,
           configPath,
-          errorTag: "VcsProjectConfigError",
+          _tag: "VcsProjectConfigError",
         });
-        assert.equal("cause" in context, false);
       }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
     });
   });

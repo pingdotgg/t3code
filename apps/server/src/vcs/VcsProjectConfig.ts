@@ -55,13 +55,14 @@ function configuredKind(config: ProjectVcsConfigFile): VcsDriverKindType | "auto
 }
 
 const logVcsProjectConfigError = (error: VcsProjectConfigError) =>
-  Effect.logWarning(error.message, {
-    operation: error.operation,
-    cwd: error.cwd,
-    configPath: error.configPath,
-    errorTag: error._tag,
-    stack: error.stack,
-  });
+  Effect.logWarning(error).pipe(
+    Effect.annotateLogs({
+      operation: error.operation,
+      cwd: error.cwd,
+      configPath: error.configPath,
+      errorTag: error._tag,
+    }),
+  );
 
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
