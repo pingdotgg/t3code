@@ -133,7 +133,10 @@ export class GitLabCliCommandError extends Schema.TaggedErrorClass<GitLabCliComm
         }
       },
       VcsProcessTimeoutError: (cause) => new GitLabCliCommandError({ ...context, cause }),
-      VcsOutputDecodeError: (cause) => new GitLabCliCommandError({ ...context, cause }),
+      VcsProcessStdinWriteError: (cause) => new GitLabCliCommandError({ ...context, cause }),
+      VcsProcessOutputReadError: (cause) => new GitLabCliCommandError({ ...context, cause }),
+      VcsProcessOutputLimitError: (cause) => new GitLabCliCommandError({ ...context, cause }),
+      VcsProcessMissingExitCodeError: (cause) => new GitLabCliCommandError({ ...context, cause }),
       VcsRepositoryDetectionError: (cause) => new GitLabCliCommandError({ ...context, cause }),
       VcsUnsupportedOperationError: (cause) => new GitLabCliCommandError({ ...context, cause }),
     });

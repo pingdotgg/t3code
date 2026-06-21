@@ -5,11 +5,14 @@ import * as Match from "effect/Match";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
-  VcsOutputDecodeError,
   type VcsError,
   VcsProcessExitError,
   type VcsProcessExitFailureKind,
+  VcsProcessMissingExitCodeError,
+  VcsProcessOutputLimitError,
+  VcsProcessOutputReadError,
   VcsProcessSpawnError,
+  VcsProcessStdinWriteError,
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -114,19 +117,32 @@ export const make = Effect.gen(function* () {
             ProcessSpawnError: (error) =>
               VcsProcessSpawnError.fromProcessSpawnError(baseError, error),
             ProcessOutputLimitError: (error) =>
-              VcsOutputDecodeError.fromProcessOutputLimitError(baseError, error),
+              new VcsProcessOutputLimitError({
+                ...baseError,
+                stream: error.stream,
+                maxBytes: error.maxBytes,
+                observedBytes: error.observedBytes,
+              }),
             ProcessTimeoutError: (error) =>
               VcsProcessTimeoutError.fromProcessTimeoutError(baseError, error),
             ProcessStdinError: (error) =>
-              VcsOutputDecodeError.fromProcessStdinError(baseError, error),
+              new VcsProcessStdinWriteError({
+                ...baseError,
+                stdinBytes: error.stdinBytes,
+                cause: error.cause,
+              }),
             ProcessReadError: (error) =>
-              VcsOutputDecodeError.fromProcessReadError(baseError, error),
+              new VcsProcessOutputReadError({
+                ...baseError,
+                stream: error.stream,
+                cause: error.cause,
+              }),
           }),
         ),
       );
 
     if (result.code === null) {
-      return yield* VcsOutputDecodeError.missingExitCode(baseError);
+      return yield* new VcsProcessMissingExitCodeError(baseError);
     }
 
     if (!input.allowNonZeroExit && result.code !== 0) {

@@ -11,6 +11,7 @@ import {
   VcsProcessSpawnError,
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
 const run = (input: VcsProcess.VcsProcessInput) =>
@@ -23,6 +24,25 @@ const liveLayer = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R | VcsProcess.VcsProcess>) =>
   effect.pipe(Effect.provide(liveLayer));
+
+const baseInput = {
+  operation: "test.process-boundary",
+  command: "git",
+  args: ["status", "--short"],
+  cwd: "/workspace",
+} satisfies VcsProcess.VcsProcessInput;
+
+const captureProcessResult = (
+  result: Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
+) =>
+  VcsProcess.make.pipe(
+    Effect.provideService(
+      ProcessRunner.ProcessRunner,
+      ProcessRunner.ProcessRunner.of({ run: () => result }),
+    ),
+    Effect.flatMap((service) => service.run(baseInput)),
+    Effect.flip,
+  );
 
 describe("VcsProcess.run", () => {
   it.effect("collects stdout", () =>
@@ -139,6 +159,51 @@ describe("VcsProcess.run", () => {
       expect(error).toHaveProperty("cause");
       expect(error.message).not.toContain(secretArgument);
     }).pipe(provideLive),
+  );
+
+  it.effect("preserves real boundary causes without manufacturing structural ones", () =>
+    Effect.gen(function* () {
+      const cause = new Error("secret stdin failure");
+      const error = yield* captureProcessResult(
+        Effect.fail(
+          new ProcessRunner.ProcessStdinError({
+            command: baseInput.command,
+            argumentCount: baseInput.args.length,
+            cwd: baseInput.cwd,
+            stdinBytes: 47,
+            cause,
+          }),
+        ),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "VcsProcessStdinWriteError",
+        operation: baseInput.operation,
+        stdinBytes: 47,
+        cause,
+      });
+      expect(error.message).not.toContain(cause.message);
+
+      const missingExitCodeError = yield* captureProcessResult(
+        Effect.succeed({
+          stdout: "",
+          stderr: "",
+          code: null,
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
+      );
+
+      expect(missingExitCodeError).toMatchObject({
+        _tag: "VcsProcessMissingExitCodeError",
+        operation: baseInput.operation,
+        command: baseInput.command,
+        cwd: baseInput.cwd,
+        argumentCount: baseInput.args.length,
+      });
+      expect(missingExitCodeError).not.toHaveProperty("cause");
+    }),
   );
 
   it.effect("returns output when non-zero exits are allowed", () =>
