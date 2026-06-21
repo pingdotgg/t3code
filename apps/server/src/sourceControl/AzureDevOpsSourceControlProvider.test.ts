@@ -48,11 +48,11 @@ it.effect("maps Azure DevOps PR summaries into provider-neutral change requests"
 
 it.effect("adds change-request context while retaining Azure CLI causes", () =>
   Effect.gen(function* () {
-    const cause = new AzureDevOpsCli.AzureDevOpsCliError({
+    const cause = new AzureDevOpsCli.AzureDevOpsCommandFailedError({
       operation: "execute",
       command: "az",
       cwd: "/repo",
-      detail: "Azure DevOps CLI command failed.",
+      argumentCount: 2,
       cause: new Error("raw upstream detail that should remain in the cause"),
     });
     const provider = yield* makeProvider({
