@@ -190,6 +190,8 @@ type ProviderSessionEventSignal =
 
 export interface ProviderSessionManagerV2LayerOptions {
   readonly idleTimeoutMs?: number;
+  /** Test replay harnesses can omit T3's MCP server from provider protocol fixtures. */
+  readonly configureMcp?: boolean;
 }
 
 function releaseStatusFor(
@@ -236,12 +238,17 @@ export const layerWithOptions = (
 ): Layer.Layer<
   ProviderSessionManagerV2,
   never,
-  EventSinkV2 | IdAllocatorV2 | ProjectionStoreV2 | ProviderAdapterRegistryV2
+  | EventSinkV2
+  | IdAllocatorV2
+  | McpSessionRegistry.McpSessionRegistry
+  | ProjectionStoreV2
+  | ProviderAdapterRegistryV2
 > =>
   Layer.effect(
     ProviderSessionManagerV2,
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistryV2;
+      const mcpSessionRegistry = yield* McpSessionRegistry.McpSessionRegistry;
       const eventSink = yield* EventSinkV2;
       const idAllocator = yield* IdAllocatorV2;
       const projectionStore = yield* ProjectionStoreV2;
@@ -251,20 +258,22 @@ export const layerWithOptions = (
       const openSemaphore = yield* Semaphore.make(1);
       const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
       const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
-        McpSessionRegistry.issueActiveMcpCredential({
-          threadId,
-          providerInstanceId,
-        }).pipe(
-          Effect.tap((credential) =>
-            credential === undefined
-              ? Effect.void
-              : Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config)),
-          ),
-        );
+        options.configureMcp === false
+          ? Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))
+          : mcpSessionRegistry.revokeThread(threadId).pipe(
+              Effect.andThen(mcpSessionRegistry.issue({ threadId, providerInstanceId })),
+              Effect.tap((credential) =>
+                Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config)),
+              ),
+            );
       const clearMcpSession = (threadId: ThreadId) =>
-        McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
-          Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
-        );
+        mcpSessionRegistry
+          .revokeThread(threadId)
+          .pipe(
+            Effect.tap(() =>
+              Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+            ),
+          );
 
       const publishToSubscribers = (
         subscribers: Ref.Ref<ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal>>>,

@@ -304,9 +304,16 @@ function makeTestLayer(input: {
     TestStoresLayer,
     TestEventSinkLayer,
     idAllocatorLayer,
+    TestMcpRegistryLayer,
     providerSessionManagerLayerWithOptions({ idleTimeoutMs: input.idleTimeoutMs }).pipe(
       Layer.provide(
-        Layer.mergeAll(registryLayer, TestEventSinkLayer, idAllocatorLayer, TestStoresLayer),
+        Layer.mergeAll(
+          registryLayer,
+          TestEventSinkLayer,
+          idAllocatorLayer,
+          TestMcpRegistryLayer,
+          TestStoresLayer,
+        ),
       ),
     ),
   );
@@ -322,7 +329,10 @@ const fakeEnvironment = ServerEnvironment.of({
   getDescriptor: Effect.die("unused"),
 });
 
-const TestMcpRegistryLayer = McpSessionRegistry.layer.pipe(
+const TestMcpRegistryLayer = Layer.effect(
+  McpSessionRegistry.McpSessionRegistry,
+  McpSessionRegistry.__testing.make(),
+).pipe(
   Layer.provide(Layer.succeed(HttpServer.HttpServer, fakeHttpServer)),
   Layer.provide(Layer.succeed(ServerEnvironment, fakeEnvironment)),
   Layer.provide(NodeServices.layer),
@@ -530,7 +540,7 @@ it.effect(
             state,
             idleTimeoutMs: 1_000,
             mcpConfigs,
-          }).pipe(Layer.provideMerge(TestMcpRegistryLayer)),
+          }),
         ),
       );
     }),
