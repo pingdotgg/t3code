@@ -9,7 +9,10 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
   type ProviderSessionId,
+  type ProviderThreadId,
+  type ProviderTurnId,
   type RunAttemptId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -31,6 +34,127 @@ import type {
   ProviderAdapterV2TurnMessage,
 } from "./ProviderAdapter.ts";
 import { ProviderEventIngestorV2 } from "./ProviderEventIngestor.ts";
+
+export interface ProviderEventRoutingState {
+  readonly ownedThreadIds: ReadonlySet<ThreadId>;
+  readonly ownedProviderThreadIds: ReadonlySet<ProviderThreadId>;
+  readonly ownedProviderTurnIds: ReadonlySet<ProviderTurnId>;
+  readonly rootProviderTurnId: ProviderTurnId | null;
+}
+
+export interface ProviderEventRouteIdentity {
+  readonly threadId: ThreadId;
+  readonly runId: OrchestrationV2Run["id"];
+  readonly attemptId: RunAttemptId;
+  readonly providerThreadId: ProviderThreadId;
+}
+
+export function makeProviderEventRoutingState(input: {
+  readonly identity: ProviderEventRouteIdentity;
+  readonly providerTurnId: ProviderTurnId | null;
+  readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
+  readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
+}): ProviderEventRoutingState {
+  return {
+    ownedThreadIds: new Set([input.identity.threadId, ...(input.relatedThreadIds ?? [])]),
+    ownedProviderThreadIds: new Set([
+      input.identity.providerThreadId,
+      ...(input.relatedProviderThreadIds ?? []),
+    ]),
+    ownedProviderTurnIds:
+      input.providerTurnId === null ? new Set() : new Set([input.providerTurnId]),
+    rootProviderTurnId: input.providerTurnId,
+  };
+}
+
+export function routeProviderEvent(
+  event: ProviderAdapterV2Event,
+  input: ProviderEventRouteIdentity,
+  state: ProviderEventRoutingState,
+): readonly [boolean, ProviderEventRoutingState] {
+  const ownsThread = (threadId: ThreadId): boolean => state.ownedThreadIds.has(threadId);
+  const ownsChildThread = (threadId: ThreadId): boolean =>
+    threadId !== input.threadId && ownsThread(threadId);
+  const ownsRun = (runId: string | null): boolean => runId === input.runId;
+  const addProviderThread = (providerThreadId: ProviderThreadId): ProviderEventRoutingState => ({
+    ...state,
+    ownedProviderThreadIds: new Set([...state.ownedProviderThreadIds, providerThreadId]),
+  });
+  const addProviderTurn = (
+    providerTurnId: ProviderTurnId,
+    root: boolean,
+  ): ProviderEventRoutingState => ({
+    ...state,
+    ownedProviderTurnIds: new Set([...state.ownedProviderTurnIds, providerTurnId]),
+    rootProviderTurnId: root ? providerTurnId : state.rootProviderTurnId,
+  });
+
+  switch (event.type) {
+    case "provider_session.updated":
+      // The session manager persists process-wide status once for every
+      // attached app thread before broadcasting the adapter event.
+      return [false, state];
+    case "app_thread.created": {
+      if (event.appThread.id === input.threadId) {
+        return [true, state];
+      }
+      const isOwnedSubagent =
+        event.appThread.lineage.relationshipToParent === "subagent" &&
+        event.appThread.lineage.parentThreadId !== null &&
+        ownsThread(event.appThread.lineage.parentThreadId);
+      if (!isOwnedSubagent) {
+        return [false, state];
+      }
+      return [
+        true,
+        {
+          ...state,
+          ownedThreadIds: new Set([...state.ownedThreadIds, event.appThread.id]),
+        },
+      ];
+    }
+    case "provider_thread.updated": {
+      const belongs =
+        state.ownedProviderThreadIds.has(event.providerThread.id) ||
+        (event.providerThread.appThreadId !== null && ownsThread(event.providerThread.appThreadId));
+      return belongs ? [true, addProviderThread(event.providerThread.id)] : [false, state];
+    }
+    case "provider_turn.updated": {
+      const isRoot = event.providerTurn.runAttemptId === input.attemptId;
+      const belongs =
+        isRoot ||
+        (event.providerTurn.providerThreadId !== input.providerThreadId &&
+          state.ownedProviderThreadIds.has(event.providerTurn.providerThreadId)) ||
+        state.ownedProviderTurnIds.has(event.providerTurn.id) ||
+        (event.threadId !== undefined && ownsChildThread(event.threadId));
+      return belongs ? [true, addProviderTurn(event.providerTurn.id, isRoot)] : [false, state];
+    }
+    case "node.updated": {
+      const belongs = ownsRun(event.node.runId) || ownsChildThread(event.node.threadId);
+      if (!belongs || event.node.providerThreadId === null) {
+        return [belongs, state];
+      }
+      return [true, addProviderThread(event.node.providerThreadId)];
+    }
+    case "subagent.updated":
+      return [ownsRun(event.subagent.runId) || ownsChildThread(event.subagent.threadId), state];
+    case "message.updated":
+      return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];
+    case "turn_item.updated":
+      return [ownsRun(event.turnItem.runId) || ownsChildThread(event.turnItem.threadId), state];
+    case "plan.updated":
+      return [ownsRun(event.plan.runId) || ownsChildThread(event.plan.threadId), state];
+    case "runtime_request.updated":
+      return [
+        (event.threadId !== undefined && ownsChildThread(event.threadId)) ||
+          (event.runtimeRequest.providerTurnId !== null &&
+            state.ownedProviderTurnIds.has(event.runtimeRequest.providerTurnId)),
+        state,
+      ];
+    case "turn.terminal":
+      return [event.providerTurnId === state.rootProviderTurnId, state];
+  }
+}
 
 /**
  * ERRORS
@@ -81,6 +205,8 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly attempt: OrchestrationV2RunAttempt;
   readonly attemptId: RunAttemptId;
   readonly providerTurnOrdinal: number;
+  readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
+  readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
@@ -309,12 +435,52 @@ export const layer: Layer.Layer<
                 }),
             ),
           );
+          yield* checkpointService
+            .captureBaseline({
+              scope: input.checkpointScope,
+              ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new RunExecutionStartError({
+                    commandId: input.commandId,
+                    runId: input.run.id,
+                    cause,
+                  }),
+              ),
+            );
           const terminalStatus = yield* Ref.make<Extract<
             OrchestrationV2Run["status"],
             "completed" | "interrupted" | "failed" | "cancelled"
           > | null>(null);
           const latestProviderThread = yield* Ref.make(input.providerThread);
-          const providerEventFiber = yield* input.session.events.pipe(
+          const routeIdentity: ProviderEventRouteIdentity = {
+            threadId: input.run.threadId,
+            runId: input.run.id,
+            attemptId: input.attempt.id,
+            providerThreadId: input.providerThread.id,
+          };
+          const eventRouting = yield* Ref.make<ProviderEventRoutingState>(
+            makeProviderEventRoutingState({
+              identity: routeIdentity,
+              providerTurnId: input.attempt.providerTurnId,
+              ...(input.relatedThreadIds === undefined
+                ? {}
+                : { relatedThreadIds: input.relatedThreadIds }),
+              ...(input.relatedProviderThreadIds === undefined
+                ? {}
+                : { relatedProviderThreadIds: input.relatedProviderThreadIds }),
+            }),
+          );
+          const eventSubscription =
+            input.session.subscribeEvents === undefined
+              ? { events: input.session.events, close: Effect.void }
+              : yield* input.session.subscribeEvents;
+          const providerEventFiber = yield* eventSubscription.events.pipe(
+            Stream.filterEffect((event) =>
+              Ref.modify(eventRouting, (state) => routeProviderEvent(event, routeIdentity, state)),
+            ),
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runForEach((event) =>
               Effect.gen(function* () {
@@ -391,24 +557,9 @@ export const layer: Layer.Layer<
                 ),
               ),
             ),
+            Effect.ensuring(eventSubscription.close),
             Effect.forkDetach,
           );
-
-          yield* checkpointService
-            .captureBaseline({
-              scope: input.checkpointScope,
-              ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new RunExecutionStartError({
-                    commandId: input.commandId,
-                    runId: input.run.id,
-                    cause,
-                  }),
-              ),
-            );
 
           yield* input.session
             .startTurn({
