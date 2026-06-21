@@ -620,6 +620,7 @@ export function materializeFixtureInput(input: {
             steps.push({ type: "await", key: `run:${step.targetRunIndex}` });
           }
           steps.push({ type: "advance_clock", duration: "1 millis" });
+          steps.push({ type: "await_thread_idle", threadId: ids.threadId });
           break;
         case "rollback":
           {
