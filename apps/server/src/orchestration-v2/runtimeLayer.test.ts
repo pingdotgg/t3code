@@ -17,6 +17,7 @@ import { ServerConfig } from "../config.ts";
 import { GitCoreLive } from "../git/Layers/GitCore.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { layer as mcpSessionRegistryTestLayer } from "../mcp/McpSessionRegistry.testkit.ts";
 import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -72,6 +73,7 @@ const TestProviderInstanceRegistry = Layer.succeed(ProviderInstanceRegistry, {
 });
 
 const TestLayer = OrchestrationV2LayerLive.pipe(
+  Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
   Layer.provide(ServerConfigLayer),

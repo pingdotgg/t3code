@@ -13,6 +13,7 @@ import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { layer as mcpSessionRegistryTestLayer } from "../../mcp/McpSessionRegistry.testkit.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { layer as checkpointCaptureServiceLayer } from "../CheckpointCaptureService.ts";
@@ -35,7 +36,7 @@ import { layer as projectionStoreLayer } from "../ProjectionStore.ts";
 import type { OrchestratorV2, OrchestratorV2Error } from "../Orchestrator.ts";
 import { ProviderAdapterRegistryV2 } from "../ProviderAdapterRegistry.ts";
 import { layer as providerEventIngestorLayer } from "../ProviderEventIngestor.ts";
-import { layer as providerSessionManagerLayer } from "../ProviderSessionManager.ts";
+import { layerWithOptions as providerSessionManagerLayerWithOptions } from "../ProviderSessionManager.ts";
 import { layer as providerSwitchServiceLayer } from "../ProviderSwitchService.ts";
 import { layer as providerTurnControlServiceLayer } from "../ProviderTurnControlService.ts";
 import { layer as providerTurnStartServiceLayer } from "../ProviderTurnStartService.ts";
@@ -262,8 +263,18 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     idAllocatorLayer,
     providerEventIngestorProvided,
   );
-  const providerSessionManagerProvided = providerSessionManagerLayer.pipe(
-    Layer.provide(Layer.mergeAll(registryLayer, eventSinkProvided, idAllocatorLayer, storesLayer)),
+  const providerSessionManagerProvided = providerSessionManagerLayerWithOptions({
+    configureMcp: false,
+  }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        registryLayer,
+        eventSinkProvided,
+        idAllocatorLayer,
+        mcpSessionRegistryTestLayer,
+        storesLayer,
+      ),
+    ),
   );
   const providerSwitchServiceProvided = providerSwitchServiceLayer.pipe(
     Layer.provide(registryLayer),
