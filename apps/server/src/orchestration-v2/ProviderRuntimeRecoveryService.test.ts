@@ -194,9 +194,10 @@ it.effect("drains durable effects before reporting recovery complete", () =>
         ),
       ),
     );
-    const summary = yield* Effect.gen(function* () {
-      return yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).recover;
-    }).pipe(Effect.provide(layer));
+    const summary = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService.pipe(
+      Effect.flatMap((service) => service.recover),
+      Effect.provide(layer),
+    );
     assert.deepEqual(summary, { resumedSessions: 0, terminalizedRuns: 0, executedEffects: 2 });
   }),
 );
