@@ -19,10 +19,7 @@ import {
   makeAcpRegistryResolver,
   type AcpRegistryResolverShape,
 } from "../../provider/acp/AcpRegistrySupport.ts";
-import {
-  AcpSessionRuntime,
-  type AcpSessionRuntimeShape,
-} from "../../provider/acp/AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { IdAllocatorV2 } from "../IdAllocator.ts";
 import {
@@ -55,14 +52,22 @@ export interface AcpRegistryAdapterV2Options {
   readonly serverConfig: ServerConfig["Service"];
   readonly makeRuntime?: (
     input: AcpAdapterV2RuntimeInput,
-  ) => Effect.Effect<AcpSessionRuntimeShape, EffectAcpErrors.AcpError, Scope.Scope>;
+  ) => Effect.Effect<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    EffectAcpErrors.AcpError,
+    Scope.Scope
+  >;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
 
 function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
   return (
     input: AcpAdapterV2RuntimeInput,
-  ): Effect.Effect<AcpSessionRuntimeShape, EffectAcpErrors.AcpError, Scope.Scope> =>
+  ): Effect.Effect<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    EffectAcpErrors.AcpError,
+    Scope.Scope
+  > =>
     Effect.gen(function* () {
       const resolved = yield* options.resolver
         .resolve(options.settings, input.cwd, options.environment)
@@ -86,7 +91,9 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
           ),
         ),
       );
-      return yield* Effect.service(AcpSessionRuntime).pipe(Effect.provide(context));
+      return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+        Effect.provide(context),
+      );
     });
 }
 

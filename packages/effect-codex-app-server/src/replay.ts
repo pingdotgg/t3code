@@ -319,7 +319,6 @@ function encodeInboundFrame(frame: unknown): Uint8Array {
 }
 
 function replayTransportError(
-  transcript: CodexAppServerReplayTranscript,
   error: CodexAppServerReplayError,
 ): CodexError.CodexAppServerTransportError {
   return new CodexError.CodexAppServerTransportError({
@@ -505,7 +504,7 @@ const makeReplayClientWithState = Effect.fn(
   const terminationError: Effect.Effect<CodexError.CodexAppServerError> = Ref.get(state).pipe(
     Effect.map((current) =>
       current.failure
-        ? replayTransportError(transcript, current.failure)
+        ? replayTransportError(current.failure)
         : new CodexError.CodexAppServerProcessExitedError({ code: 0 }),
     ),
   );

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off
-import { writeFileSync } from "node:fs";
-import { createInterface } from "node:readline";
+import * as NodeFS from "node:fs";
+import * as NodeReadline from "node:readline";
 
 interface ReplayEntry {
   readonly type: "emit_inbound" | "expect_outbound" | "runtime_exit";
@@ -54,7 +54,7 @@ const pendingClientRequestIds = new Map<string, string | number>();
 const pendingAgentRequestMethods = new Map<string, string>();
 
 function writeStatus(failure?: unknown): void {
-  writeFileSync(
+  NodeFS.writeFileSync(
     replayStatusPath,
     JSON.stringify({
       scenario: transcript.scenario,
@@ -268,7 +268,7 @@ function handleMessage(message: JsonRpcMessage): void {
 writeStatus();
 flushInbound();
 
-const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
+const input = NodeReadline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 input.on("line", (line) => {
   if (stopped || line.trim().length === 0) return;
   try {

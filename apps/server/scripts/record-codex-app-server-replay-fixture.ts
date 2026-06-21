@@ -1067,7 +1067,7 @@ function installReplayHandlers({
   startCommandExecution,
   beforeApprovalResponse,
 }: {
-  readonly client: CodexClient.CodexAppServerClientShape;
+  readonly client: CodexClient.CodexAppServerClient["Service"];
   readonly startTurn: (turnId: string) => Effect.Effect<void>;
   readonly completeTurn: (turnId: string) => Effect.Effect<void>;
   readonly startCommandExecution: (turnId: string) => Effect.Effect<void>;
@@ -1222,7 +1222,7 @@ function runReplaySession({
     });
 
     const runTurnStep = (
-      client: CodexClient.CodexAppServerClientShape,
+      client: CodexClient.CodexAppServerClient["Service"],
       threadId: string,
       step: TurnReplayStep,
     ) =>
