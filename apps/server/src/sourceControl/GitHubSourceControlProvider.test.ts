@@ -70,11 +70,9 @@ it.effect("maps GitHub PR summaries into provider-neutral change requests", () =
 
 it.effect("adds safe request context while retaining GitHub CLI causes", () =>
   Effect.gen(function* () {
-    const cause = new GitHubCli.GitHubCliError({
-      operation: "execute",
+    const cause = new GitHubCli.GitHubPullRequestNotFoundError({
       command: "gh",
       cwd: "/repo",
-      detail: "Pull request not found. Check the PR number or URL and try again.",
       cause: new Error("raw upstream detail that should remain in the cause"),
     });
     const provider = yield* makeProvider({

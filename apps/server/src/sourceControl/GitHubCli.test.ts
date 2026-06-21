@@ -1,8 +1,9 @@
 import { assert, it, afterEach, describe, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { VcsProcessExitError } from "@t3tools/contracts";
+import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubCli from "./GitHubCli.ts";
@@ -30,6 +31,27 @@ afterEach(() => {
 });
 
 describe("GitHubCli.layer", () => {
+  it("does not classify a missing cwd as an unavailable gh executable", () => {
+    const context = { command: "gh", cwd: "/repo" } as const;
+    const missingCwd = new VcsProcessSpawnError({
+      operation: "GitHubCli.execute",
+      command: "gh",
+      cwd: context.cwd,
+      cause: PlatformError.systemError({
+        _tag: "NotFound",
+        module: "FileSystem",
+        method: "access",
+        pathOrDescriptor: context.cwd,
+      }),
+    });
+
+    const commandFailure = GitHubCli.fromVcsError(context, missingCwd);
+
+    assert.equal(commandFailure._tag, "GitHubCliCommandError");
+    assert.strictEqual(commandFailure.cause, missingCwd);
+    assert.notProperty(commandFailure, "operation");
+  });
+
   it.effect("parses pull request view output", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
@@ -274,6 +296,7 @@ describe("GitHubCli.layer", () => {
         command: "gh pr view",
         cwd: "/repo",
         exitCode: 1,
+        failureKind: "not-found",
         detail:
           "GraphQL: Could not resolve to a PullRequest with the number of 4888. (repository.pullRequest)",
       });
@@ -288,6 +311,7 @@ describe("GitHubCli.layer", () => {
         .pipe(Effect.flip);
 
       assert.equal(error.message.includes("Pull request not found"), true);
+      assert.strictEqual(error._tag, "GitHubPullRequestNotFoundError");
       assert.strictEqual(error.command, "gh");
       assert.strictEqual(error.cwd, "/repo");
       assert.strictEqual(error.cause, cause);
