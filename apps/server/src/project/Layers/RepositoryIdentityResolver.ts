@@ -76,7 +76,14 @@ interface RepositoryIdentityResolverOptions {
   readonly negativeCacheTtl?: Duration.Input;
 }
 
-async function resolveRepositoryIdentityCacheKey(cwd: string): Promise<string> {
+interface RepositoryIdentityCacheKeyResolution {
+  readonly cacheKey: string;
+  readonly resolvedTopLevel: boolean;
+}
+
+async function resolveRepositoryIdentityCacheKey(
+  cwd: string,
+): Promise<RepositoryIdentityCacheKeyResolution> {
   let cacheKey = cwd;
 
   try {
@@ -84,7 +91,7 @@ async function resolveRepositoryIdentityCacheKey(cwd: string): Promise<string> {
       allowNonZeroExit: true,
     });
     if (topLevelResult.code !== 0) {
-      return cacheKey;
+      return { cacheKey, resolvedTopLevel: false };
     }
 
     const candidate = topLevelResult.stdout.trim();
@@ -92,10 +99,10 @@ async function resolveRepositoryIdentityCacheKey(cwd: string): Promise<string> {
       cacheKey = candidate;
     }
   } catch {
-    return cacheKey;
+    return { cacheKey, resolvedTopLevel: false };
   }
 
-  return cacheKey;
+  return { cacheKey, resolvedTopLevel: true };
 }
 
 async function resolveRepositoryIdentityFromCacheKey(
@@ -131,12 +138,25 @@ export const makeRepositoryIdentityResolver = Effect.fn("makeRepositoryIdentityR
         }),
       },
     );
+    const repositoryIdentityCacheKeyCache = yield* Cache.makeWith<
+      string,
+      RepositoryIdentityCacheKeyResolution
+    >((cwd) => Effect.promise(() => resolveRepositoryIdentityCacheKey(cwd)), {
+      capacity: options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY,
+      timeToLive: Exit.match({
+        onSuccess: (value) =>
+          value.resolvedTopLevel
+            ? (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL)
+            : (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL),
+        onFailure: () => Duration.zero,
+      }),
+    });
 
     const resolve: RepositoryIdentityResolverShape["resolve"] = Effect.fn(
       "RepositoryIdentityResolver.resolve",
     )(function* (cwd) {
-      const cacheKey = yield* Effect.promise(() => resolveRepositoryIdentityCacheKey(cwd));
-      return yield* Cache.get(repositoryIdentityCache, cacheKey);
+      const cacheKeyResolution = yield* Cache.get(repositoryIdentityCacheKeyCache, cwd);
+      return yield* Cache.get(repositoryIdentityCache, cacheKeyResolution.cacheKey);
     });
 
     return {

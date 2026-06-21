@@ -180,6 +180,49 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       ),
   );
 
+  it.effect(
+    "refreshes a failed cwd root lookup on the negative TTL when a folder becomes a git repo",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const repoRoot = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-repository-identity-late-git-root-test-",
+        });
+        const nestedWorkspace = `${repoRoot}/packages/web`;
+
+        yield* fileSystem.makeDirectory(nestedWorkspace, { recursive: true });
+
+        const resolver = yield* RepositoryIdentityResolver;
+        const initialIdentity = yield* resolver.resolve(nestedWorkspace);
+        expect(initialIdentity).toBeNull();
+
+        yield* git(repoRoot, ["init"]);
+        yield* git(repoRoot, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+
+        const cachedIdentity = yield* resolver.resolve(nestedWorkspace);
+        expect(cachedIdentity).toBeNull();
+
+        yield* TestClock.adjust(Duration.millis(120));
+
+        const refreshedIdentity = yield* resolver.resolve(nestedWorkspace);
+        expect(refreshedIdentity).not.toBeNull();
+        expect(refreshedIdentity?.canonicalKey).toBe("github.com/t3tools/t3code");
+        expect(normalizeResolvedPath(refreshedIdentity?.rootPath ?? "")).toBe(
+          normalizeResolvedPath(repoRoot),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            TestClock.layer(),
+            makeRepositoryIdentityResolverTestLayer({
+              negativeCacheTtl: Duration.millis(50),
+              positiveCacheTtl: Duration.seconds(1),
+            }),
+          ),
+        ),
+      ),
+  );
+
   it.effect("refreshes cached identities after the positive TTL when a remote changes", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
