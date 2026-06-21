@@ -1,9 +1,12 @@
 import * as Schema from "effect/Schema";
+import { RepositoryIdentity } from "./environment.ts";
+import { ModelSelection } from "./modelSelection.ts";
 import {
+  IsoDateTime,
   NonNegativeInt,
   PositiveInt,
+  ProjectId,
   TrimmedNonEmptyString,
-  TrimmedString,
 } from "./baseSchemas.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
@@ -11,8 +14,56 @@ const PROJECT_SEARCH_CONTENTS_MAX_LIMIT = 500;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 const PROJECT_READ_FILE_PATH_MAX_LENGTH = 512;
 
-export const ProjectEntryKind = Schema.Literals(["file", "directory"]);
-export type ProjectEntryKind = typeof ProjectEntryKind.Type;
+export const ProjectScriptIcon = Schema.Literals([
+  "play",
+  "test",
+  "lint",
+  "configure",
+  "build",
+  "debug",
+]);
+export type ProjectScriptIcon = typeof ProjectScriptIcon.Type;
+
+export const ProjectScript = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  command: TrimmedNonEmptyString,
+  icon: ProjectScriptIcon,
+  runOnWorktreeCreate: Schema.Boolean,
+  previewUrl: Schema.optional(TrimmedNonEmptyString),
+  autoOpenPreview: Schema.optional(Schema.Boolean),
+});
+export type ProjectScript = typeof ProjectScript.Type;
+
+export const Project = Schema.Struct({
+  id: ProjectId,
+  title: TrimmedNonEmptyString,
+  workspaceRoot: TrimmedNonEmptyString,
+  repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
+  faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  defaultModelSelection: Schema.NullOr(ModelSelection),
+  scripts: Schema.Array(ProjectScript),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  deletedAt: Schema.NullOr(IsoDateTime),
+});
+export type Project = typeof Project.Type;
+
+export const ProjectSnapshot = Schema.Struct({
+  projects: Schema.Array(Project),
+  updatedAt: IsoDateTime,
+});
+export type ProjectSnapshot = typeof ProjectSnapshot.Type;
+
+export const ProjectChange = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("project.upserted"), project: Project }),
+  Schema.Struct({
+    type: Schema.Literal("project.deleted"),
+    projectId: ProjectId,
+    deletedAt: IsoDateTime,
+  }),
+]);
+export type ProjectChange = typeof ProjectChange.Type;
 
 export const ProjectSearchEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
