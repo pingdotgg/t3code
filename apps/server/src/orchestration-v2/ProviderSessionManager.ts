@@ -460,9 +460,9 @@ export const layerWithOptions = (
         readonly detail?: string;
         readonly cancelIdleFiber?: boolean;
       }) =>
-        Effect.gen(function* () {
-          const key = sessionKey(input.providerSessionId);
-          const entry = yield* Ref.modify(sessions, (current) => {
+        Effect.acquireUseRelease(
+          Ref.modify(sessions, (current) => {
+            const key = sessionKey(input.providerSessionId);
             const existing = current.get(key);
             if (existing === undefined) {
               return [Option.none<LiveSessionEntry>(), current] as const;
@@ -470,33 +470,41 @@ export const layerWithOptions = (
             const updated = new Map(current);
             updated.delete(key);
             return [Option.some(existing), updated] as const;
-          });
-          if (Option.isNone(entry)) {
-            return;
-          }
-
-          if (input.cancelIdleFiber !== false) {
-            yield* cancelIdleFiber(entry.value.idleFiber);
-          }
-          yield* failSubscribers(
-            entry.value,
-            input.detail ?? `Provider session released: ${input.reason}.`,
-          );
-          const closeExit = yield* Effect.exit(Scope.close(entry.value.scope, Exit.void));
-          yield* writeReleasedSessionEvents({
-            entry: entry.value,
-            reason: input.reason,
-            ...(input.detail === undefined ? {} : { detail: input.detail }),
-          });
-          yield* writeReleasedRuntimeRequestEvents({
-            entry: entry.value,
-            reason: input.reason,
-          });
-          yield* Effect.forEach(entry.value.attachedThreadIds, clearMcpSession, { discard: true });
-          if (Exit.isFailure(closeExit)) {
-            return yield* Effect.failCause(closeExit.cause);
-          }
-        }).pipe(
+          }),
+          (entry) =>
+            Option.match(entry, {
+              onNone: () => Effect.void,
+              onSome: (entry) =>
+                Effect.gen(function* () {
+                  if (input.cancelIdleFiber !== false) {
+                    yield* cancelIdleFiber(entry.idleFiber);
+                  }
+                  yield* failSubscribers(
+                    entry,
+                    input.detail ?? `Provider session released: ${input.reason}.`,
+                  );
+                  const closeExit = yield* Effect.exit(Scope.close(entry.scope, Exit.void));
+                  yield* writeReleasedSessionEvents({
+                    entry,
+                    reason: input.reason,
+                    ...(input.detail === undefined ? {} : { detail: input.detail }),
+                  });
+                  yield* writeReleasedRuntimeRequestEvents({
+                    entry,
+                    reason: input.reason,
+                  });
+                  if (Exit.isFailure(closeExit)) {
+                    return yield* Effect.failCause(closeExit.cause);
+                  }
+                }),
+            }),
+          (entry) =>
+            Option.match(entry, {
+              onNone: () => Effect.void,
+              onSome: (entry) =>
+                Effect.forEach(entry.attachedThreadIds, clearMcpSession, { discard: true }),
+            }),
+        ).pipe(
           Effect.catchCause((cause) =>
             Effect.fail(
               new ProviderSessionReleaseError({

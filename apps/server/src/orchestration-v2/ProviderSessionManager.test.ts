@@ -28,7 +28,7 @@ import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { EventSinkV2, layer as eventSinkLayer } from "./EventSink.ts";
+import { EventSinkV2, EventSinkWriteError, layer as eventSinkLayer } from "./EventSink.ts";
 import { layer as eventStoreLayer } from "./EventStore.ts";
 import {
   IdAllocatorV2,
@@ -57,6 +57,23 @@ const TestStoresLayer = Layer.merge(eventStoreLayer, projectionStoreLayer).pipe(
 const TestEventSinkLayer = eventSinkLayer.pipe(
   Layer.provide(Layer.mergeAll(TestStoresLayer, TestDatabaseLayer)),
 );
+const FailingReleaseEventSinkLayer = Layer.effect(
+  EventSinkV2,
+  Effect.gen(function* () {
+    const delegate = yield* EventSinkV2;
+    return EventSinkV2.of({
+      ...delegate,
+      write: (input) =>
+        input.events.some(
+          (event) =>
+            event.type === "provider-session.updated" &&
+            (event.payload.status === "stopped" || event.payload.status === "error"),
+        )
+          ? Effect.fail(new EventSinkWriteError({ eventCount: input.events.length }))
+          : delegate.write(input),
+    });
+  }),
+).pipe(Layer.provide(TestEventSinkLayer));
 
 const CodexCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
 const ExclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
@@ -292,7 +309,11 @@ function makeTestLayer(input: {
   readonly mcpConfigs?: Ref.Ref<
     ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
   >;
+  readonly failReleaseEventWrites?: boolean;
 }) {
+  const configuredEventSinkLayer = input.failReleaseEventWrites
+    ? FailingReleaseEventSinkLayer
+    : TestEventSinkLayer;
   const registryLayer = makeProviderAdapterRegistryLayer(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
@@ -302,14 +323,14 @@ function makeTestLayer(input: {
   );
   return Layer.mergeAll(
     TestStoresLayer,
-    TestEventSinkLayer,
+    configuredEventSinkLayer,
     idAllocatorLayer,
     TestMcpRegistryLayer,
     providerSessionManagerLayerWithOptions({ idleTimeoutMs: input.idleTimeoutMs }).pipe(
       Layer.provide(
         Layer.mergeAll(
           registryLayer,
-          TestEventSinkLayer,
+          configuredEventSinkLayer,
           idAllocatorLayer,
           TestMcpRegistryLayer,
           TestStoresLayer,
@@ -544,6 +565,58 @@ it.effect(
         ),
       );
     }),
+);
+
+it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persistence fails", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-mcp-release-failure");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+
+      const captured = (yield* Ref.get(mcpConfigs))[0];
+      const token = captured?.authorizationHeader.replace(/^Bearer\s+/, "");
+      assert.isDefined(token);
+      assert.isDefined(yield* registry.resolve(token!));
+
+      const closeError = yield* manager.close(providerSessionId).pipe(Effect.flip);
+      assert.equal(closeError._tag, "ProviderSessionCloseError");
+      assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+      assert.isUndefined(yield* registry.resolve(token!));
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 1_000,
+          mcpConfigs,
+          failReleaseEventWrites: true,
+        }),
+      ),
+    );
+  }),
 );
 
 it.effect("ProviderSessionManagerV2 releases idle sessions without sweeping all sessions", () =>
