@@ -3,7 +3,7 @@ import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { AtomRegistry } from "effect/unstable/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { createDesktopUpdateStateAtom } from "./desktopUpdate";
+import { createDesktopUpdateStateAtom, DesktopUpdateStateReadError } from "./desktopUpdate";
 
 const baseState: DesktopUpdateState = {
   enabled: true,
@@ -117,8 +117,13 @@ describe("desktopUpdateStateAtom", () => {
       errorTag: "DesktopUpdateStateReadError",
       attemptCount: 3,
     });
-    expect(errorContext).not.toHaveProperty("error");
-    expect(errorContext).not.toHaveProperty("cause");
+    const loggedError = (errorContext as { readonly error: unknown }).error;
+    expect(loggedError).toBeInstanceOf(DesktopUpdateStateReadError);
+    expect(loggedError).toMatchObject({
+      _tag: "DesktopUpdateStateReadError",
+      attemptCount: 3,
+    });
+    expect((loggedError as DesktopUpdateStateReadError).cause).toBe(cause);
 
     listener?.(baseState);
     await vi.waitFor(() => {

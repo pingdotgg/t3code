@@ -59,9 +59,9 @@ export function createDesktopUpdateStateAtom(getBridge: () => DesktopUpdateBridg
         Effect.catchTags({
           DesktopUpdateStateReadError: (error) =>
             Effect.logError(error.message, {
+              error,
               errorTag: error._tag,
               attemptCount: error.attemptCount,
-              stack: error.stack,
             }).pipe(Effect.as(null)),
         }),
       );
