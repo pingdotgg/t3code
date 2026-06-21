@@ -27,8 +27,7 @@ beforeEach(() => {
   useRightPanelStore.setState({ byThreadKey: {} });
 });
 
-it("does not apply an older preview response after a newer request", async () => {
-  const firstController = new AbortController();
+it("does not apply an older preview response after another caller starts a newer request", async () => {
   const firstSnapshot = snapshot("tab-1", "https://assets.test/first.png");
   const secondSnapshot = snapshot("tab-2", "https://assets.test/second.png");
   let resolveFirst!: (result: AtomCommandResult<PreviewSessionSnapshot, never>) => void;
@@ -43,9 +42,7 @@ it("does not apply an older preview response after a newer request", async () =>
     threadRef,
     url: "https://assets.test/first.png",
     openPreview,
-    signal: firstController.signal,
   });
-  firstController.abort();
 
   await openUrlInPreview({
     threadRef,
