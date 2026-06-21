@@ -6,9 +6,9 @@ Make Orchestration V2 the only orchestration system used by the server, web app,
 
 In this plan, "Orchestration V2" means the agent orchestrator: provider sessions, runs, attempts, runtime requests, and external agent effects. It does not replace the application event-sourcing data plane. Projects and threads remain first-class application aggregates in one durable, globally ordered event source, and the shell remains a projection of that source.
 
-The work is split into four sequential architectural shapes. Finish and validate one shape before beginning the next. These shapes are implementation checkpoints only: they exist to keep the work reviewable and easier to reason about, not to define rollout stages or supported compatibility windows.
+The in-scope work is split into five sequential architectural shapes: 1, 2, 3, 4.0, and 4.5. The frontend cutover is intentionally divided into Shape 4.0 and Shape 4.5: first restore the existing product on V2, then expose the richer V2-native information. Finish and validate one shape before beginning the next. These shapes are implementation checkpoints only: they exist to keep the work reviewable and easier to reason about, not to define rollout stages or supported compatibility windows. Stage 5 is recorded only as an out-of-scope follow-up boundary.
 
-There will be no users until after Shape 4 is complete. No intermediate shape is released, deployed for users, or expected to provide a usable mixed-version application. The first user-facing build uses the completed V2-only server and V2-native clients.
+There will be no rollout while Shapes 1 through 4.5 are in progress. Shape 4.0 produces an internally usable V2 application, but Shape 4.5 is the completion boundary for the new frontend. Migrating installations that already contain V1 threads is a separate Stage 5 and is explicitly outside this plan.
 
 Execution rules:
 
@@ -18,16 +18,18 @@ Execution rules:
 - Preserve one application event cursor across project and thread shell changes.
 - Shapes 1 and 2 may keep V1 runnable as a development reference while V2 is completed through direct and replay-backed tests; this is not a supported user path or rollout strategy.
 - Shape 3 performs the backend hard cut and intentionally breaks the old client protocol.
-- Shape 4 updates web and mobile to the final protocol. No intermediate backend/client compatibility adapter is required because no users consume the intermediate shapes.
-- Only the completed Shape 4 system is eligible for the first user-facing release.
+- Shape 4.0 updates web and mobile to the final protocol while preserving the current product experience and component structure.
+- Shape 4.5 enriches that working application with V2-native graph, execution, tool, and context information.
+- Do not create a server-side V2-to-V1 compatibility projection. Client presentation adapters may generalize existing component props, but the source of truth remains the complete V2 projection.
+- Only the completed Shape 4.5 system is eligible for a fresh-state user-facing release. Shipping an upgrade to an installation with V1 threads additionally requires the separate Stage 5 migration decision.
 - Do not drop V1 tables, migrations, provider runtime rows, or attachment files during this plan.
 - V1 removal happens inside the shape that replaces it; there is no deferred general cleanup phase.
 
 ## Alignment With The Current Production Path
 
-The current application path is V1 at the orchestration boundary, but several provider and selection concepts beneath it are already provider-neutral and should be retained. Shapes 1 and 2 must not recreate functionality that already exists.
+At the start of this plan, the application path was V1 at the orchestration boundary. After the completed Shape 3, the server is V2-only while the ordinary web and mobile clients still call the removed V1 protocol. Several provider and selection concepts beneath that boundary were already provider-neutral and have been retained. Shapes 4.0 and 4.5 must continue reusing them rather than recreating the existing model, mode, and provider-instance UX.
 
-The current production flow is:
+The historical pre-cut flow was:
 
 ```text
 Web/mobile model and mode selection
@@ -37,6 +39,22 @@ Web/mobile model and mode selection
   -> ProviderInstanceRegistry
   -> driver-specific legacy adapter
 ```
+
+The current branch boundary is:
+
+```text
+ordinary web/mobile state and commands
+  -> orchestrationV1.* RPCs
+  -> no server handler after the Shape 3 hard cut
+
+V2 debug client, CLI, MCP, and backend consumers
+  -> final orchestration.* RPCs / V2 application services
+  -> shared application event transaction
+  -> Agent Orchestrator V2
+  -> provider execution
+```
+
+Shape 4.0 closes this intentional client/server gap. Shape 4.5 enriches the resulting working frontend.
 
 Current ownership and intended treatment:
 
@@ -48,7 +66,7 @@ Current ownership and intended treatment:
 | `ModelSelection` | Physically defined in V1 `packages/contracts/src/orchestration.ts`, but used by V1, V2, providers, web, and mobile | Move essentially unchanged to a neutral provider/model contract. Do not redesign the client-facing shape. |
 | `RuntimeMode` | Physically defined in V1 `packages/contracts/src/orchestration.ts` | Move unchanged to a neutral runtime contract. |
 | `ProviderInteractionMode` | Physically defined in V1 `packages/contracts/src/orchestration.ts` | Move unchanged to a neutral runtime contract. |
-| Model and mode UI | Existing web/mobile production code | Preserve the concepts and controls. Shape 4 rewires their commands and state source to V2. |
+| Model and mode UI | Existing web/mobile production code | Preserve the concepts and controls. Shape 4.0 rewires their commands and state source to V2; Shape 4.5 may enrich the surrounding runtime detail. |
 | Instance-aware provider routing | `ProviderService`, `ProviderCommandReactor`, and `ProviderInstanceRegistry` | Preserve the behavior as policy, but replace the V1 service/reactor implementations. |
 
 `ModelSelection` is already instance-based:
@@ -297,7 +315,7 @@ Add coverage for:
 
 ## Shape 2: Application Services Around V2
 
-Implementation status: complete. The production WebSocket/client cutover remains intentionally deferred to Shape 3.
+Implementation status: complete. Shape 3 completed the backend protocol cut; the production web/mobile cutover remains intentionally deferred to Shape 4.0.
 
 ### Goal
 
@@ -682,167 +700,319 @@ Add backend integration coverage for:
 - Old clients are expected to be incompatible at this boundary.
 - `vp check`, `vp run typecheck`, and `vp test` pass.
 
-## Shape 4: V2-Native Web And Mobile Clients
+## Shape 4.0: V2 Frontend Cutover And Product Parity
+
+Implementation status: pending.
 
 ### Goal
 
-Move all production clients to V2 projections and remove the remaining V1 contract and presentation model.
+Make the existing web and mobile application work end to end against the V2-only backend. Preserve the current product structure and the frontend pieces that already work well. This shape changes the source of truth and command path; it is not a broad visual redesign.
 
-### 1. New client-runtime state
+At the end of Shape 4.0, the ordinary application—not only the V2 debug route—must be usable for normal project and thread work on fresh V2 state.
 
-Replace the V1 stores with:
+### Shape 4.0 boundary
 
-- project snapshot state
-- thread shell state
-- archived-thread state
-- full V2 thread projection state
-- snapshot and cursor persistence
-- connection and reconnect state
-- optimistic command-receipt state where necessary
+- Treat the current V1 frontend as the behavioral and interaction reference, not as a data-model contract.
+- Reuse existing sidebar, chat, composer, approval, archive, diff, settings, and model-picker components where their behavior remains correct.
+- Generalize component props around V2-native view models instead of manufacturing V1 commands, events, activities, or thread projections.
+- Retain the complete V2 projection in client state even when the parity UI initially presents only a subset of it.
+- Provide a safe generic renderer for V2 turn-item types that do not yet have a rich presentation. Do not drop structured tool or execution data merely because Shape 4.5 owns the final renderer.
+- Defer graph visualization, rich execution inspection, and provider-native tool presentation to Shape 4.5.
+- Do not import V1 server rows or migrate existing V1 threads in this shape.
 
-Use the server's committed sequence as the reconnect boundary.
+### 1. Cut client-runtime state over to V2
 
-Bump web and mobile cache versions. Discard cached V1 orchestration state while preserving drafts, credentials, preferences, and environment configuration.
+Replace the production V1 shell and thread stores with V2-backed state for:
 
-### 2. Shared V2 presentation model
+- the unified project, active-thread, and archived-thread shell
+- full V2 thread projections
+- shell and thread committed cursors
+- snapshot-to-live catch-up
+- connection, synchronization, reconnect, and error state
+- optimistic command state only where the committed receipt is not fast enough for interaction feedback
 
-Create one shared timeline derivation module using:
+The server's committed application sequence is the shell reconnect boundary. A thread subscription uses its committed V2 event sequence. Connection readiness must not be reported until the initial snapshot and replay window have been applied.
 
-- `visibleTurnItems`
-- runs and attempts
-- execution nodes
-- runtime requests
-- plans
-- checkpoints
-- context handoffs
-- fork and subagent markers
+Bump web and mobile orchestration-cache versions. Discard cached V1 shell/thread projections while preserving drafts, credentials, environment configuration, preferences, and unrelated local state. Cache invalidation is not the Stage 5 server-state migration.
 
-Expose UI-oriented entries for:
+### 2. Add a parity-focused V2 presentation adapter
 
-- user and assistant messages
-- reasoning
-- tool and command execution
-- file changes
-- file and web search
-- approval and input requests
-- proposed plans
-- todo lists
-- checkpoints
-- interrupts
-- handoffs, forks, and subagents
-- errors and diagnostic status
+Create shared, V2-native client view models for the existing application surfaces, including:
 
-Both web and mobile consume this module. Delete the separate V1 transformations in web `session-logic.ts` and mobile `threadActivity.ts`.
+- project and thread shell rows
+- conversation messages
+- basic reasoning and work-log entries
+- generic tool/execution entries with status, summary, and retained structured payload
+- active-run and queued-run state
+- pending approval and user-input requests
+- plan and checkpoint summaries
+- thread capabilities and available actions
 
-### 3. Replace client commands
+Derive these models from the V2 thread projection, `visibleTurnItems`, runs, attempts, runtime requests, and checkpoints. Existing components may be adapted to consume these models, but the adapter must not recreate an `OrchestrationThread`, `OrchestrationThreadActivity`, V1 `latestTurn`, or a V1 event stream.
 
-Update client-runtime operations for:
+Web and mobile share the projection reducer and parity derivation rules. Platform-specific components may render the resulting view models differently.
 
-- project mutations
-- thread launch
-- send and start
-- queue, steer, restart, promote, and reorder
-- interrupt
-- approval and input response
-- archive, unarchive, and delete
-- metadata and mode changes
-- rollback
-- fork and merge-back
-- provider switching
-- provider-session detach
+### 3. Replace production client commands
 
-Commands use final V2 identifiers and receipt semantics directly.
+Move all ordinary app operations off `orchestrationV1.*`:
 
-### 4. Web integration
+- route project create, update, and delete through the existing event-sourced `ProjectService` transport
+- launch root-workspace and worktree threads through `ThreadLaunchService`
+- send messages with explicit auto, queue, steer, or restart behavior
+- interrupt active runs
+- respond to approvals and user-input requests
+- update title, branch/worktree metadata, model selection, runtime mode, and interaction mode
+- archive, unarchive, and delete threads
+- request checkpoint rollback
+- retain current project setup-script and new-thread behavior
 
-Update:
+Use V2 command IDs and receipt semantics directly. Retrying a client command must not duplicate messages, runs, external effects, or project mutations.
 
-- sidebar and project grouping
-- new-thread flow
-- chat timeline
-- composer behavior
-- active-run controls
-- approval and input controls
-- plan implementation
-- diff and rollback views
+Commands that only exist to expose new V2 capabilities—fork, merge-back, provider switch, provider-session detach, advanced queue reordering, and graph navigation—may remain debug-only until Shape 4.5 unless they are needed to preserve an existing production workflow.
+
+### 4. Restore web product behavior
+
+Rewire the existing web application for:
+
+- project grouping and thread navigation in the sidebar
+- project creation, editing, and deletion
+- new-thread creation for root workspaces and worktrees
+- opening and continuing a thread
+- message rendering and composer submission
+- queued-message state and active-run controls
+- approval and user-input controls
+- plan display and implementation entry points
+- diff, checkpoint, and rollback views
+- archive, unarchive, and deletion flows
+- provider, model, runtime-mode, and interaction-mode controls
+- reconnecting while a run is active
+
+Preserve the current layout and interaction patterns unless a V2 semantic makes the old behavior incorrect. Keep the V2 debug route available during this shape as an inspection oracle, but production behavior must not depend on it.
+
+### 5. Restore mobile product behavior
+
+Rewire the existing mobile application for:
+
+- project and thread lists
+- new-task creation
+- thread detail and message timeline
+- composer and queued-message behavior
+- run status and interruption
+- approval and user-input interactions
 - archive management
-- thread deletion
-- provider and model switching
-- context-window and token indicators
-
-Reuse UI widgets, but remove dependencies on `OrchestrationThreadActivity`, V1 `latestTurn`, and V1 pending-request shapes.
-
-Delete the V2 debug route after its useful inspection and reducer code has moved into production modules.
-
-### 5. Mobile integration
-
-Update:
-
-- home and thread lists
-- new-task flow
-- thread detail
-- composer
-- archive screens
-- approval and input interactions
-- run status
 - diff and Git actions
-- provider and model selectors
+- provider, model, runtime-mode, and interaction-mode selectors
+- reconnecting and restoring the selected thread
 
-Mobile must consume the same shared timeline derivation as web.
+Mobile consumes the same V2 state and parity derivation as web. Do not maintain a second V1-shaped mobile reducer.
 
-### 6. Remove remaining V1 contracts
+### 6. Remove production V1 client dependencies
 
-After all client imports are gone:
+After web and mobile are cut over:
 
-- delete V1 orchestration commands, events, and projections
-- rename V2 contracts to final unversioned orchestration names
-- delete V1 reducers, state models, persistence schemas, and client operations
-- delete compatibility exports
-- retain only the isolated legacy SQL decoder reserved for a future importer
+- remove production calls to `ORCHESTRATION_WS_METHODS` and every `orchestrationV1.*` method
+- remove V1 shell/thread subscriptions, command builders, reducers, and persistence writers
+- remove V1 types from production component props and application state
+- keep any still-needed legacy schemas isolated and read-only for the future Stage 5 analysis
+- do not delete retained application project/event contracts merely because their historical module name contains `orchestration`
 
-### Shape 4 tests
+### Shape 4.0 tests
 
-Add shared client-runtime tests for:
+Add shared client-runtime coverage for:
 
-- every V2 timeline item type
-- incremental projection updates
-- reconnect from persisted cursors
-- shell archive and removal deltas
-- queued, steering, restarted, and interrupted runs
-- runtime requests opening, responding, expiring, and reconnecting
-- plan and checkpoint presentation
-- fork and handoff presentation
+- unified shell snapshot and ordered project/thread deltas
+- incremental V2 thread projection updates
+- shell and thread reconnect from persisted cursors
+- cache-version invalidation from V1 to V2
+- duplicate command delivery and receipt handling
+- active, queued, steering, restarted, interrupted, and terminal run state
+- approval and user-input requests across reconnect
+- generic fallback presentation for every unrecognized or not-yet-enriched turn item
 
 Add web and mobile integration coverage for:
 
 - project and thread creation
-- opening and continuing a thread
-- active-run interaction
+- opening, sending to, and continuing a thread
+- root-workspace and worktree launch
+- active-run interaction and interrupt
 - archive, unarchive, and delete
-- provider and model selection
+- provider/model and mode selection
 - approvals and input requests
 - checkpoint diff and rollback
-- reconnect during a run
+- reconnect during a live run
 
-### Shape 4 exit gate
+### Shape 4.0 exit gate
 
-- Web and mobile open, create, run, reconnect, archive, and delete V2 threads.
-- Queue, steer, restart, and interrupt work during live runs.
-- Approvals and input requests survive reconnects.
-- Checkpoint diff and rollback work.
-- Provider resume and portable fallback work.
-- No production TypeScript import references a V1 orchestration type.
-- No V2-to-V1 compatibility projection exists.
+- The ordinary web and mobile applications use V2 shell, thread, and command APIs exclusively.
+- A user can create a project and thread, converse with an agent, reconnect, respond to requests, inspect diffs, archive, and delete.
+- Existing V1-era product behavior that remains supported by V2 is present without routing through V1 data shapes.
+- Full V2 projections and structured turn-item payloads are retained even when rendered generically.
+- No production code calls an `orchestrationV1.*` endpoint.
+- No V2-to-V1 server or persistence compatibility projection exists.
+- The V2 debug route is no longer the only functional V2 client.
 - `vp check`, `vp run typecheck`, and `vp test` pass.
 - `vp run lint:mobile` passes for mobile changes.
 
+## Shape 4.5: V2-Native Frontend Enrichment
+
+Implementation status: pending.
+
+### Goal
+
+Enrich the now-working application with information and workflows that V2 models explicitly but the V1 UI could not represent well. This shape builds on the Shape 4.0 state and command path; it must not introduce a second projection model or replace working frontend components without a concrete UX need.
+
+### 1. Build the complete shared V2 presentation model
+
+Extend the shared derivation layer to use:
+
+- `visibleTurnItems`
+- runs and attempts
+- execution nodes
+- provider sessions, threads, and turns
+- runtime requests
+- plans and todo steps
+- checkpoint scopes and captures
+- context handoffs and transfers
+- fork, merge-back, and subagent relationships
+
+Expose stable UI entries for:
+
+- user and assistant messages
+- reasoning
+- typed tool and command execution
+- file changes
+- file, code, and web search
+- approvals and user-input requests
+- plans and todo lists
+- checkpoints and rollback activity
+- interrupts, retries, and recovered attempts
+- handoffs, forks, merges, and subagents
+- errors and diagnostic status
+
+Preserve provider-native and dynamic tool payloads behind a structured fallback so adding a new tool type never makes information disappear.
+
+### 2. Expose thread and execution relationships
+
+Create a shared graph/lineage model from thread lineage, execution nodes, subagents, forks, and context transfers. It must support:
+
+- root, parent, child, fork, and subagent relationships
+- navigation between related threads
+- per-node run and terminal status
+- merge-back and context-transfer state
+- archived or deleted related threads
+- missing-parent, partial-replay, and cycle-safe fallback behavior
+
+Web should provide an efficient tree or graph surface without replacing the ordinary project/thread sidebar. Mobile should provide the same relationships through a form-factor-appropriate drill-down rather than attempting to copy the desktop visualization exactly.
+
+### 3. Enrich tool and work-log presentation
+
+Reuse the existing chat activity and work-log components, then add V2-aware renderers for:
+
+- command execution with command, working directory, lifecycle, output, duration, and exit state
+- file changes with affected paths and patch/diff navigation
+- file, code, and web search with query and result provenance
+- MCP and provider-native tool calls
+- dynamic tools with complete structured input/output fallback
+- nested tool work associated with execution nodes or subagents
+- failed, interrupted, retried, and superseded calls
+
+Rendering must preserve live updates without duplicating rows as attempts or provider items change. Large output should remain inspectable without overwhelming the conversation timeline.
+
+### 4. Expose runs, attempts, and recovery
+
+Add UI affordances for:
+
+- queued, steering, restarting, and active runs
+- attempt history and retry reasons
+- execution-node progress
+- provider session/thread identity where diagnostically useful
+- native resume versus portable context handoff
+- context-window and token indicators
+- recoverable versus terminal failure state
+
+Keep the primary chat status simple. Detailed runtime state belongs in expandable inspection surfaces rather than permanently crowding the composer or message list.
+
+### 5. Add V2-native workflows
+
+Integrate:
+
+- thread fork and merge-back
+- provider switching and provider-session detach
+- advanced queue reorder and promotion
+- subagent navigation and delegated-task state
+- plan/todo progress
+- checkpoint scopes, diff, and rollback
+- context handoff and transfer visibility
+
+Each action must be capability-gated from V2 projection/runtime policy rather than provider-name checks in the UI.
+
+### 6. Finish web/mobile reuse and cleanup
+
+- Use one shared presentation derivation for web and mobile.
+- Keep platform-specific visual components where appropriate, but do not duplicate event interpretation.
+- Remove obsolete V1 `session-logic.ts`, mobile `threadActivity.ts`, and equivalent transformations after their consumers are gone.
+- Remove unused V1 client RPC contracts and compatibility exports.
+- Split still-required project application contracts and frozen legacy thread decoders into clear ownership boundaries instead of deleting reusable application infrastructure.
+- Delete the V2 debug route after its inspection tools and useful renderers have production homes.
+- Rename V2 production-facing client types to unversioned names only if the rename reduces long-term ambiguity without obscuring the retained application event-source contracts.
+
+### Shape 4.5 tests
+
+Add shared presentation tests for:
+
+- every known V2 turn-item type and the dynamic fallback
+- graph construction for roots, forks, subagents, merges, archives, and missing nodes
+- incremental updates without duplicate graph nodes or timeline rows
+- run attempts, retry, recovery, and interruption presentation
+- provider-session transition and context-handoff presentation
+- plans, todos, checkpoints, and rollback
+- capability-gated action availability
+
+Add web and mobile integration coverage for:
+
+- related-thread navigation
+- rich tool-call expansion and live updates
+- fork and merge-back
+- subagent and delegated-task inspection
+- queue reorder and promotion
+- provider switch and detach
+- context handoff
+- reconnect while graph, tool, or attempt state is changing
+
+### Shape 4.5 exit gate
+
+- Web and mobile remain fully usable for every Shape 4.0 flow.
+- Thread lineage, forks, subagents, and merge relationships are navigable.
+- Typed tool calls and their structured results are visible without losing provider-native fallback data.
+- Runs, attempts, retries, recovery, plans, checkpoints, and handoffs have coherent presentation.
+- New V2 capabilities are capability-gated and do not rely on provider-name conditionals.
+- Web and mobile share event interpretation and presentation derivation.
+- No production TypeScript import references a V1 client orchestration type or endpoint.
+- `vp check`, `vp run typecheck`, and `vp test` pass.
+- `vp run lint:mobile` passes for mobile changes.
+
+## Stage 5: Existing-User State Migration (Out Of Scope)
+
+Stage 5 is deliberately not implemented or decided by this plan. Shapes 4.0 and 4.5 target a fully working V2 application on fresh V2 state while preserving legacy rows and files untouched.
+
+A later migration plan must separately decide:
+
+- which V1 thread, message, project, checkpoint, attachment, and provider-session state is imported
+- how provider continuation identifiers are validated and mapped for native resume
+- what fidelity is required for historical activities and tool calls that have no exact V2 representation
+- whether migration is eager, lazy-on-open, or an explicit user action
+- backup, rollback, idempotency, partial-failure, and retry behavior
+- how migrated state is verified before legacy storage becomes removable
+
+Nothing in Shape 4.0 or 4.5 may destroy, rewrite, or make assumptions that close off those options. Shipping an upgrade to an installation containing V1 threads requires a separate Stage 5 decision and validation gate.
+
 ## Final Outcome
 
-At the end of Shape 4:
+At the end of Shape 4.5:
 
-- V2 is the only orchestration system.
-- V1 runtime, server API, client state, and contracts are removed.
-- Reusable platform infrastructure remains.
-- Legacy database rows remain untouched and read-only.
-- State migration remains a separate, narrow future project and is not a release blocker for this plan because no users exist before Shape 4.
-- The first user-facing release happens only after the complete V2-only backend and V2-native clients pass the Shape 4 exit gate.
+- V2 is the only live agent orchestration system from provider process through web and mobile UI.
+- The existing product experience works on V2, and V2-native graph, execution, tool, and context information is available in the application.
+- V1 runtime, server endpoints, production client state, and production client operations are removed.
+- Reusable application event-sourcing and platform infrastructure remain.
+- Legacy database rows, provider continuation data, attachments, and other migration inputs remain untouched and read-only.
+- Fresh V2 state is fully supported; migration of existing V1 user state remains the explicitly separate Stage 5.
