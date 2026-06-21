@@ -40,6 +40,7 @@ import { layer as providerSwitchServiceLayer } from "../ProviderSwitchService.ts
 import { layer as providerTurnControlServiceLayer } from "../ProviderTurnControlService.ts";
 import { layer as providerTurnStartServiceLayer } from "../ProviderTurnStartService.ts";
 import { layer as runExecutionServiceLayer } from "../RunExecutionService.ts";
+import { layer as runFinalizationServiceLayer } from "../RunFinalizationService.ts";
 import {
   layer as runtimePolicyLayer,
   layerWithOverride as runtimePolicyLayerWithOverride,
@@ -264,6 +265,9 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const providerSessionManagerProvided = providerSessionManagerLayer.pipe(
     Layer.provide(Layer.mergeAll(registryLayer, eventSinkProvided, idAllocatorLayer, storesLayer)),
   );
+  const providerSwitchServiceProvided = providerSwitchServiceLayer.pipe(
+    Layer.provide(registryLayer),
+  );
   const runExecutionServiceProvided = runExecutionServiceLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -278,6 +282,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const providerTurnStartServiceProvided = providerTurnStartServiceLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        contextHandoffServiceProvided,
         eventSinkProvided,
         idAllocatorLayer,
         storesLayer,
@@ -310,10 +315,13 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       Layer.mergeAll(checkpointServiceProvided, eventSinkProvided, idAllocatorLayer, storesLayer),
     ),
   );
+  const runFinalizationServiceProvided = runFinalizationServiceLayer.pipe(
+    Layer.provide(Layer.merge(checkpointCaptureServiceProvided, storesLayer)),
+  );
   const effectExecutorProvided = effectExecutorLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        checkpointCaptureServiceProvided,
+        runFinalizationServiceProvided,
         checkpointRollbackServiceProvided,
         providerSessionManagerProvided,
         providerTurnControlServiceProvided,
@@ -339,7 +347,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         registryLayer,
         runtimeLayer,
         providerSessionManagerProvided,
-        providerSwitchServiceLayer,
+        providerSwitchServiceProvided,
         runExecutionServiceProvided,
         threadForkServiceLayer,
       ),

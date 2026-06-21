@@ -354,6 +354,44 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       );
       assert.equal(claims.filter(Option.isSome).length, 1);
       assert.equal(claims.filter(Option.isNone).length, 1);
+      const claimedByA = claims[0];
+      const claimedByB = claims[1];
+      if (Option.isSome(claimedByA)) {
+        yield* outbox.succeed({ effectId: claimedByA.value.id, workerId: "worker-a" });
+      }
+      if (Option.isSome(claimedByB)) {
+        yield* outbox.succeed({ effectId: claimedByB.value.id, workerId: "worker-b" });
+      }
+    }),
+  );
+
+  it.effect("reclaims running effects immediately during startup recovery", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutboxV2;
+      const commandId = CommandId.make("command:foundation-reclaim-running");
+      yield* outbox.enqueue([
+        {
+          id: "effect:foundation-reclaim-running",
+          commandId,
+          threadId: ThreadId.make("thread:foundation-reclaim-running"),
+          request: {
+            type: "provider-turn.start",
+            runId: RunId.make("run:foundation-reclaim-running"),
+          },
+        },
+      ]);
+      assert.isTrue(
+        Option.isSome(
+          yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
+        ),
+      );
+      assert.equal(yield* outbox.reclaimRunning, 1);
+      const reclaimed = yield* outbox.claimNext({
+        workerId: "recovery-worker",
+        leaseDurationMs: 30_000,
+      });
+      assert.isTrue(Option.isSome(reclaimed));
+      if (Option.isSome(reclaimed)) assert.equal(reclaimed.value.attemptCount, 2);
     }),
   );
 

@@ -67,6 +67,7 @@ function makeTestAdapter(input: {
   readonly responseByRunOrdinal: Readonly<Record<number, string>>;
   readonly responseByThreadId?: Readonly<Record<string, Readonly<Record<number, string>>>>;
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
+  readonly failResume?: boolean;
 }): ProviderAdapterV2Shape {
   return {
     instanceId: input.instanceId,
@@ -122,7 +123,10 @@ function makeTestAdapter(input: {
                 updatedAt: createdAt,
               } satisfies OrchestrationV2ProviderThread;
             }),
-          resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+          resumeThread: ({ providerThread }) =>
+            input.failResume
+              ? unimplemented(input.driver, "simulated native resume failure")
+              : Effect.succeed(providerThread),
           startTurn: (turnInput) =>
             Effect.gen(function* () {
               yield* Effect.yieldNow;
@@ -235,7 +239,7 @@ const waitForIdle = Effect.fn("ProviderSwitchTest.waitForIdle")(function* (
 });
 
 describe("orchestration v2 provider switching", () => {
-  it.live("switches Codex to Claude and returns to the original Codex thread with handoffs", () =>
+  it.live("uses portable fallback when native resume fails after a provider switch", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("provider-switch");
@@ -251,6 +255,7 @@ describe("orchestration v2 provider switching", () => {
               3: "codex after return",
             },
             capturedTurns,
+            failResume: true,
           }),
           makeTestAdapter({
             instanceId: ProviderInstanceId.make("claudeAgent"),
