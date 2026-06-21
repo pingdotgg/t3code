@@ -310,10 +310,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
         return handleResponse(message);
       }
       return Effect.fail(
-        new CodexError.CodexAppServerProtocolParseError({
-          detail: "Received protocol message in an unknown shape",
-          operation: "route-wire-message",
-        }),
+        CodexError.CodexAppServerProtocolParseError.fromUnroutableMessage(message),
       );
     };
 
