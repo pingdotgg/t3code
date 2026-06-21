@@ -88,3 +88,23 @@ it("uses portable handoff for incompatible continuation identities", () => {
     { type: "create_with_handoff" },
   );
 });
+
+it("uses portable handoff for cross-driver transitions", () => {
+  const claudeDriver = ProviderDriverKind.make("claude");
+  assert.deepEqual(
+    decideProviderSessionTransition({
+      current: base,
+      target: {
+        ...base,
+        driver: claudeDriver,
+        continuationIdentity: { driverKind: claudeDriver, continuationKey: "claude:account:one" },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claude"),
+          model: "claude-opus-4-1",
+        },
+        available: true,
+      },
+    }),
+    { type: "create_with_handoff" },
+  );
+});

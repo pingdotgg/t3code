@@ -292,6 +292,8 @@ Add coverage for:
 
 ## Shape 2: Application Services Around V2
 
+Implementation status: complete. The production WebSocket/client cutover remains intentionally deferred to Shape 3.
+
 ### Goal
 
 Recreate the application behavior currently hidden in V1 reactors and WebSocket handlers using explicit V2 services and durable workflows.

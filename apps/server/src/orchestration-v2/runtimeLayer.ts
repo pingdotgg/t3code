@@ -1,4 +1,5 @@
 import * as Layer from "effect/Layer";
+import * as Effect from "effect/Effect";
 import { layer as checkpointCaptureServiceLayer } from "./CheckpointCaptureService.ts";
 import { layer as checkpointServiceLayer } from "./CheckpointService.ts";
 import { layer as checkpointRollbackServiceLayer } from "./CheckpointRollbackService.ts";
@@ -20,10 +21,15 @@ import { layer as projectionMaintenanceLayer } from "./ProjectionMaintenance.ts"
 import { layerFromProviderInstanceRegistry as providerAdapterRegistryLayerFromProviderInstances } from "./ProviderAdapterRegistry.ts";
 import { layer as providerEventIngestorLayer } from "./ProviderEventIngestor.ts";
 import { layer as providerSessionManagerLayer } from "./ProviderSessionManager.ts";
+import {
+  layer as providerRuntimeRecoveryLayer,
+  ProviderRuntimeRecoveryService,
+} from "./ProviderRuntimeRecoveryService.ts";
 import { layer as providerSwitchServiceLayer } from "./ProviderSwitchService.ts";
 import { layer as providerTurnControlServiceLayer } from "./ProviderTurnControlService.ts";
 import { layer as providerTurnStartServiceLayer } from "./ProviderTurnStartService.ts";
 import { layer as runExecutionServiceLayer } from "./RunExecutionService.ts";
+import { layer as runFinalizationServiceLayer } from "./RunFinalizationService.ts";
 import { layer as runtimePolicyLayer } from "./RuntimePolicy.ts";
 import { layer as runtimeRequestServiceLayer } from "./RuntimeRequestService.ts";
 import { layer as threadManagementServiceLayer } from "./ThreadManagementService.ts";
@@ -53,6 +59,9 @@ const contextHandoffServiceProvided = contextHandoffServiceLayer.pipe(
 );
 
 const providerAdapterRegistryProvided = providerAdapterRegistryLayerFromProviderInstances;
+const providerSwitchServiceProvided = providerSwitchServiceLayer.pipe(
+  Layer.provide(providerAdapterRegistryProvided),
+);
 
 const providerAdapterRegistryProvided = providerAdapterRegistryLayerFromEffect(
   Effect.all([
@@ -86,6 +95,7 @@ const runExecutionServiceProvided = runExecutionServiceLayer.pipe(
 const providerTurnStartServiceProvided = providerTurnStartServiceLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      contextHandoffServiceProvided,
       eventSinkProvided,
       idAllocatorLayer,
       projectionStoreLayer,
@@ -124,11 +134,14 @@ const checkpointCaptureServiceProvided = checkpointCaptureServiceLayer.pipe(
     ),
   ),
 );
+const runFinalizationServiceProvided = runFinalizationServiceLayer.pipe(
+  Layer.provide(Layer.merge(checkpointCaptureServiceProvided, projectionStoreLayer)),
+);
 
 const effectExecutorProvided = effectExecutorLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      checkpointCaptureServiceProvided,
+      runFinalizationServiceProvided,
       checkpointRollbackServiceProvided,
       providerSessionManagerProvided,
       providerTurnControlServiceProvided,
@@ -143,6 +156,22 @@ const effectWorkerProvided = effectWorkerLayer.pipe(
 const effectWorkerDaemonProvided = effectWorkerDaemonLayer.pipe(
   Layer.provide(effectWorkerProvided),
 );
+
+const providerRuntimeRecoveryProvided = providerRuntimeRecoveryLayer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      effectWorkerProvided,
+      storesLayer,
+      eventSinkProvided,
+      idAllocatorLayer,
+      projectionStoreLayer,
+      providerSessionManagerProvided,
+    ),
+  ),
+);
+const providerRuntimeRecoveryStartupProvided = Layer.effectDiscard(
+  Effect.flatMap(ProviderRuntimeRecoveryService, (recovery) => recovery.recover),
+).pipe(Layer.provide(providerRuntimeRecoveryProvided));
 
 const orchestratorProvided = orchestratorLayer.pipe(
   Layer.provide(
@@ -159,16 +188,17 @@ const orchestratorProvided = orchestratorLayer.pipe(
       providerEventIngestorProvided,
       runtimePolicyLayer,
       providerSessionManagerProvided,
-      providerSwitchServiceLayer,
+      providerSwitchServiceProvided,
       runExecutionServiceProvided,
       threadForkServiceLayer,
     ),
   ),
 );
-
 export const OrchestrationV2LayerLive = Layer.mergeAll(
   orchestratorProvided,
   threadManagementServiceLayer.pipe(Layer.provide(orchestratorProvided)),
   effectWorkerDaemonProvided,
+  providerRuntimeRecoveryStartupProvided,
+  providerRuntimeRecoveryProvided,
   projectionMaintenanceProvided,
 );

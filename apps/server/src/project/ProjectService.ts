@@ -37,6 +37,8 @@ export interface ProjectUpdateInput {
   readonly scripts?: ReadonlyArray<ProjectScript>;
 }
 
+export interface ProjectBootstrapInput extends ProjectCreateInput {}
+
 export class ProjectNotFoundError extends Schema.TaggedErrorClass<ProjectNotFoundError>()(
   "ProjectNotFoundError",
   { projectId: ProjectId },
@@ -88,6 +90,12 @@ export class ProjectService extends Context.Service<
   ProjectService,
   {
     readonly create: (input: ProjectCreateInput) => Effect.Effect<Project, ProjectServiceError>;
+    readonly bootstrap: (
+      input: ProjectBootstrapInput,
+    ) => Effect.Effect<
+      { readonly project: Project; readonly created: boolean },
+      ProjectServiceError
+    >;
     readonly update: (input: ProjectUpdateInput) => Effect.Effect<Project, ProjectServiceError>;
     readonly delete: (projectId: ProjectId) => Effect.Effect<Project, ProjectServiceError>;
     readonly getById: (
@@ -309,6 +317,14 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const bootstrap: ProjectService["Service"]["bootstrap"] = Effect.fn("ProjectService.bootstrap")(
+    function* (input) {
+      const existing = yield* getByWorkspaceRoot(input.workspaceRoot);
+      if (Option.isSome(existing)) return { project: existing.value, created: false };
+      return { project: yield* create(input), created: true };
+    },
+  );
+
   const deleteProject: ProjectService["Service"]["delete"] = Effect.fn("ProjectService.delete")(
     function* (projectId) {
       const existing = yield* projects
@@ -351,6 +367,7 @@ export const make = Effect.gen(function* () {
 
   return ProjectService.of({
     create,
+    bootstrap,
     update,
     delete: deleteProject,
     getById,
