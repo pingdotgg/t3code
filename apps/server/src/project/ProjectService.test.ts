@@ -129,4 +129,24 @@ it.layer(TestLayer)("ProjectService", (it) => {
       assert.equal(error._tag, "ProjectConflictError");
     }),
   );
+
+  it.effect("auto-bootstraps a workspace exactly once", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      yield* TestClock.setTime(Date.parse("2026-06-20T10:00:00.000Z"));
+      const input = {
+        projectId: ProjectId.make("project:bootstrap"),
+        title: "Bootstrap",
+        workspaceRoot: "/work/bootstrap/",
+      };
+      const first = yield* service.bootstrap(input);
+      const second = yield* service.bootstrap({
+        ...input,
+        projectId: ProjectId.make("project:bootstrap:unused"),
+      });
+      assert.isTrue(first.created);
+      assert.isFalse(second.created);
+      assert.equal(second.project.id, first.project.id);
+    }),
+  );
 });

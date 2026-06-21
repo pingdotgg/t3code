@@ -1205,23 +1205,3 @@ it.effect(
       );
     }),
 );
-
-it.todo(
-  "ProviderRuntimeRecoveryService restarts process_exited or transport_unavailable sessions with a bounded retry policy and resumes the native provider thread",
-);
-
-it.todo(
-  "ProviderRuntimeRecoveryService waits for ConnectivityService online before recovering network_unavailable sessions",
-);
-
-it.todo(
-  "ProviderRuntimeRecoveryService does not auto-recover provider_quota_exceeded, auth_invalid, permission_denied, invalid_request, or unsupported_model failures",
-);
-
-it.todo(
-  "ProviderRuntimeRecoveryService retries provider_rate_limited failures only when retry-after, idempotency, and retry budget allow it",
-);
-
-it.todo(
-  "ProviderRuntimeRecoveryService marks pending approvals and user-input requests non-live when a provider session is released or crashes",
-);

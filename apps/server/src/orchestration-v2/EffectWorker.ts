@@ -7,7 +7,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { CheckpointCaptureServiceV2 } from "./CheckpointCaptureService.ts";
+import { RunFinalizationService } from "./RunFinalizationService.ts";
+import { ResourceCleanupService } from "./ResourceCleanupService.ts";
 import { EffectOutboxV2, type OrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { CheckpointRollbackServiceV2 } from "./CheckpointRollbackService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
@@ -39,7 +40,7 @@ export const executorLayer: Layer.Layer<
   OrchestrationEffectExecutorV2,
   never,
   | ProviderSessionManagerV2
-  | CheckpointCaptureServiceV2
+  | RunFinalizationService
   | CheckpointRollbackServiceV2
   | ProviderTurnControlServiceV2
   | ProviderTurnStartServiceV2
@@ -47,7 +48,8 @@ export const executorLayer: Layer.Layer<
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
   Effect.gen(function* () {
-    const checkpointCapture = yield* CheckpointCaptureServiceV2;
+    const runFinalization = yield* RunFinalizationService;
+    const resourceCleanup = yield* ResourceCleanupService;
     const checkpointRollback = yield* CheckpointRollbackServiceV2;
     const providerSessions = yield* ProviderSessionManagerV2;
     const providerTurnControl = yield* ProviderTurnControlServiceV2;
@@ -190,8 +192,8 @@ export const executorLayer: Layer.Layer<
                 ),
               );
           case "checkpoint.capture":
-            return checkpointCapture
-              .execute({
+            return runFinalization
+              .finalize({
                 threadId: effect.threadId,
                 runId: effect.request.runId,
                 scopeId: effect.request.scopeId,
@@ -206,15 +208,27 @@ export const executorLayer: Layer.Layer<
                     }),
                 ),
               );
-          case "provider-thread.fork":
           case "terminal.cleanup":
+            return resourceCleanup.cleanupTerminals(effect.threadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "attachment.cleanup":
-            return Effect.fail(
-              new OrchestrationEffectExecutionError({
-                effectId: effect.id,
-                effectType: effect.request.type,
-                cause: `No Shape 1 executor is registered for ${effect.request.type}.`,
-              }),
+            return resourceCleanup.cleanupAttachments(effect.request.attachmentIds).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
             );
         }
       },

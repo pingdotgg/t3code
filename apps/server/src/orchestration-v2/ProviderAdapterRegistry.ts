@@ -1,5 +1,6 @@
 import {
   ProviderInstanceId,
+  type OrchestrationV2ProviderCapabilities,
   type ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
@@ -29,8 +30,14 @@ export class ProviderAdapterRegistryLookupError extends Schema.TaggedErrorClass<
   }
 }
 
+export class ProviderAdapterRegistryMetadataError extends Schema.TaggedErrorClass<ProviderAdapterRegistryMetadataError>()(
+  "ProviderAdapterRegistryMetadataError",
+  { instanceId: ProviderInstanceId, cause: Schema.Defect() },
+) {}
+
 export const ProviderAdapterRegistryV2Error = Schema.Union([
   ProviderAdapterRegistryLookupError,
+  ProviderAdapterRegistryMetadataError,
   ProviderAdapterDriverCreateError,
 ]);
 export type ProviderAdapterRegistryV2Error = typeof ProviderAdapterRegistryV2Error.Type;
@@ -39,7 +46,16 @@ export interface ProviderAdapterRegistryV2Shape {
   readonly get: (
     provider: ProviderKind,
   ) => Effect.Effect<ProviderAdapterV2Shape, ProviderAdapterRegistryV2Error>;
-  readonly list: () => Effect.Effect<ReadonlyArray<ProviderKind>>;
+  readonly list: () => Effect.Effect<ReadonlyArray<ProviderInstanceId>>;
+  readonly getMetadata?: (instanceId: ProviderInstanceId) => Effect.Effect<
+    {
+      readonly driver: ProviderAdapterV2Shape["driver"];
+      readonly continuationKey: string;
+      readonly enabled: boolean;
+      readonly capabilities: OrchestrationV2ProviderCapabilities;
+    },
+    ProviderAdapterRegistryV2Error
+  >;
 }
 
 export class ProviderAdapterRegistryV2 extends Context.Service<
@@ -75,6 +91,26 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
         instances.listInstances.pipe(
           Effect.map((available) => available.map((instance) => instance.instanceId)),
         ),
+      getMetadata: (instanceId) =>
+        Effect.gen(function* () {
+          const instance = yield* instances.getInstance(instanceId);
+          if (instance === undefined) {
+            return yield* new ProviderAdapterRegistryLookupError({ instanceId });
+          }
+          const capabilities = yield* instance.orchestrationAdapter
+            .getCapabilities()
+            .pipe(
+              Effect.mapError(
+                (cause) => new ProviderAdapterRegistryMetadataError({ instanceId, cause }),
+              ),
+            );
+          return {
+            driver: instance.driverKind,
+            continuationKey: instance.continuationIdentity.continuationKey,
+            enabled: instance.enabled,
+            capabilities,
+          };
+        }),
     });
   }),
 );
