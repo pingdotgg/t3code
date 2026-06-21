@@ -12,7 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { CheckpointStoreLive } from "../checkpointing/Layers/CheckpointStore.ts";
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import { ServerConfig } from "../config.ts";
 import { GitCoreLive } from "../git/Layers/GitCore.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
@@ -35,9 +35,8 @@ const GitCoreTestLayer = GitCoreLive.pipe(
   Layer.provide(NodeServices.layer),
 );
 
-const CheckpointStoreTestLayer = CheckpointStoreLive.pipe(
-  Layer.provide(GitCoreTestLayer),
-  Layer.provide(NodeServices.layer),
+const CheckpointStoreTestLayer = CheckpointStore.layer.pipe(
+  Layer.provide(VcsDriverRegistryTestLayer),
 );
 
 const driver = ProviderDriverKind.make("codex");

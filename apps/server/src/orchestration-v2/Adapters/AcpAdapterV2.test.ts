@@ -24,7 +24,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../../config.ts";
-import { AcpSessionRuntime } from "../../provider/acp/AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
@@ -66,7 +66,9 @@ function makeMockRuntime(input: {
           ),
         ),
       );
-      return yield* Effect.service(AcpSessionRuntime).pipe(Effect.provide(context));
+      return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+        Effect.provide(context),
+      );
     });
 }
 

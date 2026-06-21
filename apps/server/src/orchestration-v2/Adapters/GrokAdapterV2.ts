@@ -26,7 +26,7 @@ import {
   XAiAskUserQuestionRequest,
 } from "../../provider/acp/XAiAcpExtension.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
-import type { AcpSessionRuntimeShape } from "../../provider/acp/AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { IdAllocatorV2 } from "../IdAllocator.ts";
 import { ProviderAdapterV2 } from "../ProviderAdapter.ts";
 import {
@@ -83,7 +83,11 @@ export interface GrokAdapterV2Options {
   readonly serverConfig: ServerConfig["Service"];
   readonly makeRuntime?: (
     input: AcpAdapterV2RuntimeInput,
-  ) => Effect.Effect<AcpSessionRuntimeShape, EffectAcpErrors.AcpError, Scope.Scope>;
+  ) => Effect.Effect<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    EffectAcpErrors.AcpError,
+    Scope.Scope
+  >;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
 
