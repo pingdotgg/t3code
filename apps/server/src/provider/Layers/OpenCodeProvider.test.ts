@@ -233,9 +233,9 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
 
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
 
-      assert.equal(snapshot.usageLimits?.source, "opencodeManaged");
-      assert.equal(snapshot.usageLimits?.available, true);
-      assert.deepEqual(
+      NodeAssert.equal(snapshot.usageLimits?.source, "opencodeManaged");
+      NodeAssert.equal(snapshot.usageLimits?.available, true);
+      NodeAssert.deepEqual(
         snapshot.usageLimits?.windows.map((window) => window.label),
         ["OpenCode Go", "OpenCode Zen"],
       );
@@ -262,8 +262,8 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
 
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
 
-      assert.equal(snapshot.usageLimits?.available, false);
-      assert.equal(
+      NodeAssert.equal(snapshot.usageLimits?.available, false);
+      NodeAssert.equal(
         snapshot.usageLimits?.reason,
         "Upstream providers did not report usage information",
       );

@@ -42,6 +42,8 @@ const LEGACY_BASELINE = new Map<string, number>([
   ["apps/server/src/provider/Layers/CursorProvider.test.ts", 4],
   ["apps/server/src/provider/Layers/ProviderService.test.ts", 2],
   ["apps/server/src/provider/Layers/ProviderSessionReaper.test.ts", 21],
+  ["apps/server/src/provider/Layers/ProviderUsageState.test.ts", 10],
+  ["apps/server/src/provider/claudeUsageProbe.test.ts", 6],
   ["apps/server/src/relay/AgentAwarenessRelay.test.ts", 4],
   ["apps/server/src/server.test.ts", 1],
   ["apps/web/src/cloud/dpop.test.ts", 2],
