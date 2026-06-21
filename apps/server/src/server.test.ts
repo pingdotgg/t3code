@@ -4440,10 +4440,78 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "Invalid Codex skills cwd '/definitely/not/a/real/workspace/path'.",
       );
       assert.notInclude(result.failure.message, "Workspace root does not exist");
+      assert.equal(
+        result.failure.detail,
+        "Workspace root does not exist: /definitely/not/a/real/workspace/path.",
+      );
       assert.property(result.failure, "cause");
       const failureCause = result.failure.cause;
       assert.instanceOf(failureCause, Error);
       assert.include(failureCause.message, "Workspace root does not exist");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc server.listProviderSkills reports Codex home details", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const instanceId = ProviderInstanceId.make("codex");
+      const driver = ProviderDriverKind.make("codex");
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-provider-skills-",
+      });
+      const sharedHomePath = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-codex-home-",
+      });
+      const providers = [
+        makeServerProviderSnapshot({
+          instanceId,
+          driver,
+        }),
+      ];
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerRegistry: {
+            getProviders: Effect.succeed(providers),
+          },
+          serverSettings: {
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              providerInstances: {
+                [instanceId]: {
+                  driver,
+                  enabled: true,
+                  config: {
+                    homePath: sharedHomePath,
+                    shadowHomePath: sharedHomePath,
+                  },
+                },
+              },
+            }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverListProviderSkills]({
+            instanceId,
+            cwd: workspaceDir,
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ServerProviderSkillsListError");
+      assert.equal(result.failure.reason, "home-prepare-failed");
+      assert.equal(result.failure.message, "Failed to prepare Codex home for 'codex'.");
+      assert.include(result.failure.detail ?? "", "Codex shadow home path");
+      assert.include(result.failure.detail ?? "", sharedHomePath);
+      assert.property(result.failure, "cause");
+      const failureCause = result.failure.cause;
+      assert.instanceOf(failureCause, Error);
+      assert.include(failureCause.message, "Codex shadow home path");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

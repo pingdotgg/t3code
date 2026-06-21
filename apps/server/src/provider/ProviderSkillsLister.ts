@@ -15,20 +15,43 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { materializeCodexShadowHome, resolveCodexHomeLayout } from "./Drivers/CodexHomeLayout.ts";
+import {
+  CodexShadowHomeEntryConflictError,
+  CodexShadowHomeFileSystemError,
+  CodexShadowHomePathConflictError,
+  CodexShadowHomePrivateEntrySymlinkError,
+  materializeCodexShadowHome,
+  resolveCodexHomeLayout,
+} from "./Drivers/CodexHomeLayout.ts";
 import { listCodexProviderSkills } from "./Layers/CodexProvider.ts";
 import { deriveProviderInstanceConfigMap } from "./Layers/ProviderInstanceRegistryHydration.ts";
 import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
 import { sanitizeErrorCause } from "../diagnostics/ErrorCause.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { WorkspacePaths } from "../workspace/WorkspacePaths.ts";
+import {
+  WorkspacePaths,
+  WorkspaceRootCreateFailedError,
+  WorkspaceRootNotDirectoryError,
+  WorkspaceRootNotExistsError,
+  WorkspaceRootStatFailedError,
+} from "../workspace/WorkspacePaths.ts";
 
 const CODEX_SKILL_LIST_TIMEOUT = Duration.seconds(15);
 const PROVIDER_SKILLS_CACHE_CAPACITY = 64;
 const PROVIDER_SKILLS_CACHE_TTL = Duration.seconds(1);
 const PROVIDER_SKILLS_MAX_CONCURRENCY = 4;
 const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
+const isWorkspaceRootNotExistsError = Schema.is(WorkspaceRootNotExistsError);
+const isWorkspaceRootNotDirectoryError = Schema.is(WorkspaceRootNotDirectoryError);
+const isWorkspaceRootCreateFailedError = Schema.is(WorkspaceRootCreateFailedError);
+const isWorkspaceRootStatFailedError = Schema.is(WorkspaceRootStatFailedError);
+const isCodexShadowHomePathConflictError = Schema.is(CodexShadowHomePathConflictError);
+const isCodexShadowHomeEntryConflictError = Schema.is(CodexShadowHomeEntryConflictError);
+const isCodexShadowHomePrivateEntrySymlinkError = Schema.is(
+  CodexShadowHomePrivateEntrySymlinkError,
+);
+const isCodexShadowHomeFileSystemError = Schema.is(CodexShadowHomeFileSystemError);
 
 export interface ProviderSkillsListInput {
   readonly instanceId: ProviderInstanceId;
@@ -70,6 +93,7 @@ function providerSkillsListError(input: {
   readonly reason: ServerProviderSkillsListFailureReason;
   readonly operation: string;
   readonly message: string;
+  readonly detail?: string | undefined;
   readonly instanceId?: ProviderInstanceId | undefined;
   readonly cwd?: string | undefined;
   readonly cause?: unknown;
@@ -79,10 +103,43 @@ function providerSkillsListError(input: {
     reason: input.reason,
     operation: input.operation,
     message: input.message,
+    ...(input.detail === undefined ? {} : { detail: input.detail }),
     ...(input.instanceId === undefined ? {} : { instanceId: input.instanceId }),
     ...(cwd === undefined ? {} : { cwd }),
     ...(input.cause === undefined ? {} : { cause: sanitizeErrorCause(input.cause) }),
   });
+}
+
+function workspaceCwdFailureDetail(cause: unknown): string {
+  if (isWorkspaceRootNotExistsError(cause)) {
+    return `Workspace root does not exist: ${cause.normalizedWorkspaceRoot}.`;
+  }
+  if (isWorkspaceRootNotDirectoryError(cause)) {
+    return `Workspace root is not a directory: ${cause.normalizedWorkspaceRoot}.`;
+  }
+  if (isWorkspaceRootCreateFailedError(cause)) {
+    return `Failed to create workspace root: ${cause.normalizedWorkspaceRoot}.`;
+  }
+  if (isWorkspaceRootStatFailedError(cause)) {
+    return `Failed to stat workspace root '${cause.normalizedWorkspaceRoot}' during '${cause.phase}'.`;
+  }
+  return "Check the requested workspace path and filesystem permissions.";
+}
+
+function codexHomePrepareFailureDetail(cause: unknown): string {
+  if (isCodexShadowHomePathConflictError(cause)) {
+    return `Codex shadow home path '${cause.effectiveHomePath}' must be different from shared home path '${cause.sharedHomePath}'.`;
+  }
+  if (isCodexShadowHomeEntryConflictError(cause)) {
+    return `Codex shadow home entry '${cause.entryName}' already exists and is not a symlink.`;
+  }
+  if (isCodexShadowHomePrivateEntrySymlinkError(cause)) {
+    return `Codex shadow home private entry '${cause.entryName}' must be a real file.`;
+  }
+  if (isCodexShadowHomeFileSystemError(cause)) {
+    return `Codex shadow home filesystem operation '${cause.operation}' failed for '${cause.path}'.`;
+  }
+  return "Check the configured Codex home paths and filesystem permissions.";
 }
 
 function codexSkillListFailure(input: {
@@ -223,6 +280,7 @@ export const makeProviderSkillsLister = Effect.fn("makeProviderSkillsLister")(fu
           instanceId: input.instanceId,
           cwd: input.cwd,
           message: `Invalid Codex skills cwd '${input.cwd}'.`,
+          detail: workspaceCwdFailureDetail(cause),
           cause,
         }),
       ),
@@ -240,6 +298,7 @@ export const makeProviderSkillsLister = Effect.fn("makeProviderSkillsLister")(fu
           instanceId: input.instanceId,
           cwd: input.cwd,
           message: `Failed to prepare Codex home for '${input.instanceId}'.`,
+          detail: codexHomePrepareFailureDetail(cause),
           cause,
         }),
       ),

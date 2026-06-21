@@ -1,4 +1,11 @@
-import type { EnvironmentId, ProviderInstanceId, ServerProviderSkill } from "@t3tools/contracts";
+import {
+  ServerProviderSkillsListError,
+  type EnvironmentId,
+  type ProviderInstanceId,
+  type ServerProviderSkill,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useRef } from "react";
 
 import { serverEnvironment } from "../state/server";
@@ -19,6 +26,7 @@ export interface ProviderWorkspaceSkillsState {
 }
 
 const EMPTY_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
+const isServerProviderSkillsListError = Schema.is(ServerProviderSkillsListError);
 
 export interface ProviderWorkspaceSkillsSnapshotInput {
   readonly currentKey: string | null;
@@ -47,6 +55,33 @@ function targetKey(target: Omit<ProviderWorkspaceSkillsTarget, "fallbackSkills">
     return null;
   }
   return `${target.environmentId}:${target.instanceId}:${target.cwd.trim()}`;
+}
+
+function providerSkillsListErrorDetail(error: unknown): {
+  readonly detail: string | null;
+} | null {
+  if (!isServerProviderSkillsListError(error)) return null;
+  return {
+    detail:
+      typeof error.detail === "string" && error.detail.trim().length > 0 ? error.detail : null,
+  };
+}
+
+export function formatProviderWorkspaceSkillsError(input: {
+  readonly error: string | null;
+  readonly cause: Cause.Cause<unknown> | null;
+}): string | null {
+  if (input.error === null) return null;
+  if (input.cause === null) return input.error;
+
+  const providerError = providerSkillsListErrorDetail(Cause.squash(input.cause));
+  if (providerError === null || providerError.detail === null) return input.error;
+  if (input.error.includes(providerError.detail)) return input.error;
+  return `${input.error} ${providerError.detail}`;
+}
+
+export function invalidateProviderWorkspaceSkills(): void {
+  // Workspace skill requests are now owned by the environment query cache.
 }
 
 export function resolvePendingProviderWorkspaceSkills(
@@ -135,6 +170,6 @@ export function useProviderWorkspaceSkills(
       currentSkills: previousWorkspaceSkills?.skills ?? EMPTY_SKILLS,
     }),
     isPending: query.isPending,
-    error: query.error,
+    error: formatProviderWorkspaceSkillsError({ error: query.error, cause: query.errorCause }),
   };
 }

@@ -1,7 +1,10 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
+import { ServerProviderSkillsListError } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  formatProviderWorkspaceSkillsError,
   resolveNextProviderWorkspaceSkillsSnapshot,
   resolvePendingProviderWorkspaceSkills,
   resolveProviderWorkspaceSkills,
@@ -36,6 +39,59 @@ describe("resolvePendingProviderWorkspaceSkills", () => {
     });
 
     expect(pendingSkills).toEqual([]);
+  });
+});
+
+describe("formatProviderWorkspaceSkillsError", () => {
+  it("appends structured provider skill diagnostics without putting cause text in the wrapper message", () => {
+    const error = new ServerProviderSkillsListError({
+      reason: "invalid-cwd",
+      operation: "ProviderSkillsLister.normalizeCwd",
+      message: "Invalid Codex skills cwd '/missing'.",
+      detail: "Workspace root does not exist: /missing.",
+      cause: new Error("raw platform detail"),
+    });
+
+    expect(
+      formatProviderWorkspaceSkillsError({
+        error: error.message,
+        cause: Cause.fail(error),
+      }),
+    ).toBe("Invalid Codex skills cwd '/missing'. Workspace root does not exist: /missing.");
+    expect(error.message).not.toContain("raw platform detail");
+  });
+
+  it("preserves the query wrapper message when structured detail is available", () => {
+    const error = new ServerProviderSkillsListError({
+      reason: "home-prepare-failed",
+      operation: "ProviderSkillsLister.prepareCodexHome",
+      message: "Failed to prepare Codex home for 'codex'.",
+      detail: "Check the configured Codex home paths and filesystem permissions.",
+    });
+
+    expect(
+      formatProviderWorkspaceSkillsError({
+        error: "Environment request failed: Failed to prepare Codex home for 'codex'.",
+        cause: Cause.fail(error),
+      }),
+    ).toBe(
+      "Environment request failed: Failed to prepare Codex home for 'codex'. Check the configured Codex home paths and filesystem permissions.",
+    );
+  });
+
+  it("leaves provider skill errors without detail unchanged", () => {
+    const error = new ServerProviderSkillsListError({
+      reason: "probe-failed",
+      operation: "ProviderSkillsLister.listCodexProviderSkills",
+      message: "Failed to list Codex skills.",
+    });
+
+    expect(
+      formatProviderWorkspaceSkillsError({
+        error: error.message,
+        cause: Cause.fail(error),
+      }),
+    ).toBe("Failed to list Codex skills.");
   });
 });
 
