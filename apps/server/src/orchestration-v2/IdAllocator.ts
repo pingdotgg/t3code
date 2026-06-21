@@ -127,6 +127,9 @@ export interface IdAllocatorV2AllocateShape {
 }
 
 export interface IdAllocatorV2DeriveShape {
+  readonly providerSession: (input: {
+    readonly providerInstanceId: ProviderInstanceId;
+  }) => ProviderSessionId;
   readonly delegatedTaskNode: (input: { readonly commandId: CommandId }) => NodeId;
   readonly delegatedTaskThread: (input: { readonly commandId: CommandId }) => ThreadId;
   readonly delegatedTaskMessage: (input: { readonly commandId: CommandId }) => MessageId;
@@ -343,6 +346,10 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
         })(input),
     },
     derive: {
+      providerSession: (input) =>
+        ProviderSessionId.make(
+          joinId("provider-session", "provider-instance", input.providerInstanceId, "shared"),
+        ),
       delegatedTaskNode: (input) => NodeId.make(joinId("node", "delegated-task", input.commandId)),
       delegatedTaskThread: (input) =>
         ThreadId.make(joinId("thread", "delegated-task", input.commandId)),
