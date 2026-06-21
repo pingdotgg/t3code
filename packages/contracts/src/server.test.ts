@@ -151,9 +151,10 @@ describe("ServerProvider", () => {
       models: [],
       usageLimits: {
         source: "cursorAcp",
-        available: true,
+        available: false,
+        reason: "Cursor does not expose subscription usage",
         checkedAt: "2026-04-10T00:00:00.000Z",
-        windows: [{ kind: "session", label: "Context window", usedPercent: 12 }],
+        windows: [],
       },
     });
     const openCodeParsed = decodeServerProvider({
@@ -178,7 +179,37 @@ describe("ServerProvider", () => {
     });
 
     expect(cursorParsed.usageLimits?.source).toBe("cursorAcp");
+    expect(cursorParsed.usageLimits?.available).toBe(false);
     expect(openCodeParsed.usageLimits?.source).toBe("opencodeManaged");
+  });
+
+  it("accepts grok usage limit sources", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "grok",
+      driver: "grok",
+      enabled: true,
+      installed: true,
+      version: "0.2.59",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+        email: "user@example.com",
+        type: "SuperGrok",
+        label: "SuperGrok",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      usageLimits: {
+        source: "grokAcp",
+        available: false,
+        reason: "Grok does not expose subscription usage",
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [],
+      },
+    });
+
+    expect(parsed.usageLimits?.source).toBe("grokAcp");
+    expect(parsed.usageLimits?.available).toBe(false);
   });
 
   it("rejects invalid usage percentages", () => {

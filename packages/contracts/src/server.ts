@@ -105,7 +105,13 @@ export const ServerProviderUsageWindow = Schema.Struct({
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 
 export const ServerProviderUsageLimits = Schema.Struct({
-  source: Schema.Literals(["codexAppServer", "claudeStatusProbe", "cursorAcp", "opencodeManaged"]),
+  source: Schema.Literals([
+    "codexAppServer",
+    "claudeStatusProbe",
+    "cursorAcp",
+    "grokAcp",
+    "opencodeManaged",
+  ]),
   available: Schema.Boolean,
   reason: Schema.optional(TrimmedNonEmptyString),
   windows: Schema.Array(ServerProviderUsageWindow),
