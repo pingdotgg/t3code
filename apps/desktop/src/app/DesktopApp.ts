@@ -9,6 +9,7 @@ import * as Crypto from "effect/Crypto";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
+import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
@@ -17,6 +18,7 @@ import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
+import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -206,17 +208,45 @@ const startup = Effect.gen(function* () {
   const clerk = yield* DesktopClerk.DesktopClerk;
   const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const preReadyElectronOptions = yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
+  const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
 
   yield* shellEnvironment.installIntoProcess;
+  const hasCommandLinePasswordStore =
+    preReadyElectronOptions.linuxPasswordStoreCommandLine !== null;
+  const linuxElectronOptions =
+    environment.platform === "linux" && !hasCommandLinePasswordStore
+      ? DesktopPreReadyPlatform.resolveEarlyLinuxElectronOptionsFromProcess()
+      : preReadyElectronOptions.linux;
+  if (linuxElectronOptions !== null && !hasCommandLinePasswordStore) {
+    if (
+      linuxElectronOptions.passwordStore !== null ||
+      preReadyElectronOptions.linux?.passwordStore !== null
+    ) {
+      yield* electronApp.removeCommandLineSwitch("password-store");
+    }
+    if (linuxElectronOptions.passwordStore !== null) {
+      yield* electronApp.appendCommandLineSwitch(
+        "password-store",
+        linuxElectronOptions.passwordStore,
+      );
+    }
+  }
   const userDataPath = yield* appIdentity.resolveUserDataPath;
   yield* electronApp.setPath("userData", userDataPath);
   yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
   yield* desktopSettings.load;
 
-  if (environment.platform === "linux") {
-    yield* electronApp.appendCommandLineSwitch("class", environment.linuxWmClass);
+  if (linuxElectronOptions !== null) {
+    yield* logStartupInfo("linux password store configured", {
+      passwordStore: hasCommandLinePasswordStore
+        ? "command-line"
+        : (linuxElectronOptions.passwordStore ?? "electron-default"),
+      xdgCurrentDesktop: process.env.XDG_CURRENT_DESKTOP ?? null,
+      xdgSessionDesktop: process.env.XDG_SESSION_DESKTOP ?? null,
+    });
   }
 
   yield* appIdentity.configure;
@@ -228,6 +258,12 @@ const startup = Effect.gen(function* () {
     Effect.catchCause((cause) => fatalStartupCause("whenReady", cause)),
   );
   yield* logStartupInfo("app ready");
+  if (environment.platform === "linux") {
+    const selectedBackend = yield* safeStorage.selectedStorageBackend;
+    yield* logStartupInfo("safe storage ready", {
+      backend: Option.getOrElse(selectedBackend, () => "unknown"),
+    });
+  }
   yield* appIdentity.configure;
   yield* applicationMenu.configure;
   yield* updates.configure;
