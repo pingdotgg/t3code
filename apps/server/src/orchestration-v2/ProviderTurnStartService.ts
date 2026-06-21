@@ -12,7 +12,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { EventSinkV2 } from "./EventSink.ts";
@@ -118,7 +117,6 @@ export const layer: Layer.Layer<
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
-      const activeSession = yield* providerSessions.get(providerSessionId);
       const session = yield* providerSessions.open({
         threadId: projection.thread.id,
         providerSessionId,
@@ -157,6 +155,8 @@ export const layer: Layer.Layer<
             sourceProviderThread,
             sourceProviderTurns: sourceProjection.providerTurns,
             targetThreadId: projection.thread.id,
+            modelSelection: run.modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
             ...(sourceProviderTurn === undefined ? {} : { providerTurnId: sourceProviderTurn.id }),
           });
         }
@@ -167,9 +167,12 @@ export const layer: Layer.Layer<
               runtimePolicy: resolvedRuntimePolicy,
               providerSessionId,
             })
-          : Option.isSome(activeSession)
-            ? providerThread
-            : yield* session.resumeThread({ providerThread });
+          : yield* session.resumeThread({
+              providerThread,
+              threadId: projection.thread.id,
+              modelSelection: run.modelSelection,
+              runtimePolicy: resolvedRuntimePolicy,
+            });
       });
       const now = yield* DateTime.now;
       const runningProviderThread: OrchestrationV2ProviderThread = {
@@ -294,6 +297,12 @@ export const layer: Layer.Layer<
         providerThread: runningProviderThread,
         attempt: runningAttempt,
         attemptId: attempt.id,
+        relatedThreadIds: projection.subagents.flatMap((subagent) =>
+          subagent.childThreadId === null ? [] : [subagent.childThreadId],
+        ),
+        relatedProviderThreadIds: projection.subagents.flatMap((subagent) =>
+          subagent.providerThreadId === null ? [] : [subagent.providerThreadId],
+        ),
         providerTurnOrdinal:
           Math.max(
             0,

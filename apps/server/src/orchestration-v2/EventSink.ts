@@ -25,7 +25,10 @@ import {
   layer as effectOutboxLayer,
 } from "./EffectOutbox.ts";
 import { EventStoreV2 } from "./EventStore.ts";
-import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import {
+  ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
+  ProjectionStoreV2,
+} from "./ProjectionStore.ts";
 import {
   TurnItemPositionStoreV2,
   layer as turnItemPositionStoreLayer,
@@ -177,7 +180,12 @@ const baseLayer: Layer.Layer<
               last_sequence,
               updated_at
             )
-            VALUES ('thread-projections', 1, ${sequence}, ${now})
+            VALUES (
+              'thread-projections',
+              ${ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION},
+              ${sequence},
+              ${now}
+            )
             ON CONFLICT(projection_name)
             DO UPDATE SET
               schema_version = excluded.schema_version,
