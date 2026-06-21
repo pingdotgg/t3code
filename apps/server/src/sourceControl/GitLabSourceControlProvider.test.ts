@@ -54,11 +54,10 @@ it.effect("maps GitLab MR summaries into provider-neutral change requests", () =
 
 it.effect("adds repository context while retaining GitLab CLI causes", () =>
   Effect.gen(function* () {
-    const cause = new GitLabCli.GitLabCliError({
+    const cause = new GitLabCli.GitLabCliCommandError({
       operation: "execute",
       command: "glab",
       cwd: "/repo",
-      detail: "GitLab CLI command failed.",
       cause: new Error("raw upstream detail that should remain in the cause"),
     });
     const provider = yield* makeProvider({
