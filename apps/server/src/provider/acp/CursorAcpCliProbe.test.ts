@@ -21,7 +21,7 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
       Effect.provide(
         AcpSessionRuntime.layer({
           spawn: {
-            command: "agent",
+            command: "cursor-agent",
             args: ["acp"],
             cwd: process.cwd(),
           },
@@ -77,7 +77,7 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
         AcpSessionRuntime.layer({
           authMethodId: "cursor_login",
           spawn: {
-            command: "agent",
+            command: "cursor-agent",
             args: ["acp"],
             cwd: process.cwd(),
           },
@@ -133,7 +133,7 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
         AcpSessionRuntime.layer({
           authMethodId: "cursor_login",
           spawn: {
-            command: "agent",
+            command: "cursor-agent",
             args: ["acp"],
             cwd: process.cwd(),
           },

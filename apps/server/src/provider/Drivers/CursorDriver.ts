@@ -58,7 +58,7 @@ const UPDATE = makeStaticProviderMaintenanceResolver(
   makeProviderMaintenanceCapabilities({
     provider: DRIVER_KIND,
     packageName: null,
-    updateExecutable: "agent",
+    updateExecutable: "cursor-agent",
     updateArgs: ["update"],
     updateLockKey: "cursor-agent",
   }),

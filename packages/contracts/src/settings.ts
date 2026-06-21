@@ -114,6 +114,25 @@ const makeBinaryPathSetting = (fallback: string) =>
     Schema.withDecodingDefault(Effect.succeed(fallback)),
   );
 
+export const LEGACY_CURSOR_BINARY_PATH = "agent";
+export const DEFAULT_CURSOR_BINARY_PATH = "cursor-agent";
+
+export const normalizeCursorBinaryPath = (value: string): string =>
+  value === LEGACY_CURSOR_BINARY_PATH ? DEFAULT_CURSOR_BINARY_PATH : value;
+
+const makeCursorBinaryPathSetting = () =>
+  TrimmedString.pipe(
+    Schema.decodeTo(
+      Schema.String,
+      SchemaTransformation.transformOrFail({
+        decode: (value) =>
+          Effect.succeed(normalizeCursorBinaryPath(value || DEFAULT_CURSOR_BINARY_PATH)),
+        encode: (value) => Effect.succeed(value),
+      }),
+    ),
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CURSOR_BINARY_PATH)),
+  );
+
 export type ProviderSettingsFormControl = "text" | "password" | "textarea" | "switch";
 
 export interface ProviderSettingsFormAnnotation {
@@ -252,11 +271,11 @@ export const CursorSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    binaryPath: makeBinaryPathSetting("agent").pipe(
+    binaryPath: makeCursorBinaryPathSetting().pipe(
       Schema.annotateKey({
         title: "Binary path",
         description: "Path to the Cursor agent binary.",
-        providerSettingsForm: { placeholder: "agent", clearWhenEmpty: "omit" },
+        providerSettingsForm: { placeholder: "cursor-agent", clearWhenEmpty: "omit" },
       }),
     ),
     apiEndpoint: TrimmedString.pipe(

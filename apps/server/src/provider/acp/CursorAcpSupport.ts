@@ -1,4 +1,8 @@
-import { type CursorSettings, type ProviderOptionSelection } from "@t3tools/contracts";
+import {
+  DEFAULT_CURSOR_BINARY_PATH,
+  type CursorSettings,
+  type ProviderOptionSelection,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
@@ -35,7 +39,7 @@ export function buildCursorAcpSpawnInput(
   environment?: NodeJS.ProcessEnv,
 ): AcpSessionRuntime.AcpSpawnInput {
   return {
-    command: cursorSettings?.binaryPath || "agent",
+    command: cursorSettings?.binaryPath || DEFAULT_CURSOR_BINARY_PATH,
     args: [
       ...(cursorSettings?.apiEndpoint ? (["-e", cursorSettings.apiEndpoint] as const) : []),
       "acp",

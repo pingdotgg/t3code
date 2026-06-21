@@ -289,7 +289,7 @@ const parameterizedClaudeModelOptionConfigOptions = [
 
 const baseCursorSettings: CursorSettings = {
   enabled: true,
-  binaryPath: "agent",
+  binaryPath: "cursor-agent",
   apiEndpoint: "",
   customModels: [],
 };
