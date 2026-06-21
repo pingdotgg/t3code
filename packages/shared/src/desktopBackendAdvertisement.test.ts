@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 
 import {
@@ -16,11 +16,13 @@ describe("desktop backend advertisements", () => {
   let t3Home: string;
 
   beforeEach(() => {
-    t3Home = fs.mkdtempSync(path.join(os.tmpdir(), "t3-desktop-backend-advertisements-"));
+    t3Home = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3-desktop-backend-advertisements-"),
+    );
   });
 
   afterEach(() => {
-    fs.rmSync(t3Home, { force: true, recursive: true });
+    NodeFS.rmSync(t3Home, { force: true, recursive: true });
   });
 
   it("writes and reads live desktop backend advertisements", () => {
@@ -54,7 +56,10 @@ describe("desktop backend advertisements", () => {
         ttlMs: 100,
       }),
     });
-    fs.writeFileSync(path.join(resolveDesktopBackendAdvertisementDir(t3Home), "bad.json"), "{");
+    NodeFS.writeFileSync(
+      NodePath.join(resolveDesktopBackendAdvertisementDir(t3Home), "bad.json"),
+      "{",
+    );
 
     expect(readDesktopBackendAdvertisements({ t3Home, nowMs: 2_000 })).toEqual({
       advertisements: [],

@@ -112,7 +112,7 @@ function RedactedAccount(props: { readonly account: string | null }) {
   return (
     <RedactedSensitiveText
       value={props.account}
-      ariaLabel="Toggle source control account visibility"
+      ariaLabel="Toggle version control account visibility"
       revealTooltip="Click to reveal account"
       hideTooltip="Click to hide account"
     />
@@ -328,8 +328,9 @@ function GitFetchIntervalSettings() {
             </span>
           </div>
           <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-            Refresh remote branch status in the background. Set this to 0 seconds if Git credentials
-            or security keys should only be prompted by explicit Git actions.
+            Refresh remote branch status in the background. Local file changes still update from the
+            workspace watcher. Set this to 0 seconds if Git credentials or security keys should only
+            be prompted by explicit Git actions.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -481,7 +482,7 @@ export function SourceControlSettingsPanel() {
       {isInitialScanPending ? (
         <>
           <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />
-          <SourceControlSectionSkeleton title="Source Control Providers" />
+          <SourceControlSectionSkeleton title="Version Control Providers" />
         </>
       ) : hasDiscoveryItems ? (
         <>
@@ -497,7 +498,7 @@ export function SourceControlSettingsPanel() {
 
           {result.sourceControlProviders.length > 0 ? (
             <SettingsSection
-              title="Source Control Providers"
+              title="Version Control Providers"
               headerAction={result.versionControlSystems.length === 0 ? scanButton : null}
             >
               {result.sourceControlProviders.map((item) => (

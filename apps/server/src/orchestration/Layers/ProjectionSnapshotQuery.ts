@@ -223,6 +223,44 @@ function mapSessionRow(
   };
 }
 
+function mapThreadParentRelation(
+  row: Schema.Schema.Type<typeof ProjectionThreadDbRowSchema>,
+): OrchestrationThread["parentRelation"] {
+  if (row.parentKind === "subagent") {
+    if (
+      row.parentThreadId === null ||
+      row.parentItemId === null ||
+      row.providerThreadId === null ||
+      row.subagentStartedAt === null ||
+      row.subagentStatus === null
+    ) {
+      return {
+        kind: "root",
+        rootThreadId: row.rootThreadId,
+      };
+    }
+    return {
+      kind: "subagent",
+      rootThreadId: row.rootThreadId,
+      parentThreadId: row.parentThreadId,
+      parentTurnId: row.parentTurnId,
+      parentItemId: row.parentItemId,
+      parentActivitySequence: row.parentActivitySequence,
+      providerThreadId: row.providerThreadId,
+      titleSeed: row.titleSeed,
+      depth: row.subagentDepth,
+      startedAt: row.subagentStartedAt,
+      completedAt: row.subagentCompletedAt,
+      status: row.subagentStatus,
+    };
+  }
+
+  return {
+    kind: "root",
+    rootThreadId: row.rootThreadId,
+  };
+}
+
 function mapProjectShellRow(
   row: Schema.Schema.Type<typeof ProjectionProjectDbRowSchema>,
   repositoryIdentity: OrchestrationProject["repositoryIdentity"],
@@ -329,6 +367,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          COALESCE(parent_kind, 'root') AS "parentKind",
+          COALESCE(NULLIF(TRIM(root_thread_id), ''), thread_id) AS "rootThreadId",
+          parent_thread_id AS "parentThreadId",
+          parent_turn_id AS "parentTurnId",
+          parent_item_id AS "parentItemId",
+          COALESCE(parent_activity_sequence, 0) AS "parentActivitySequence",
+          provider_thread_id AS "providerThreadId",
+          title_seed AS "titleSeed",
+          COALESCE(subagent_depth, 0) AS "subagentDepth",
+          subagent_started_at AS "subagentStartedAt",
+          subagent_completed_at AS "subagentCompletedAt",
+          subagent_status AS "subagentStatus",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -357,6 +407,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          COALESCE(parent_kind, 'root') AS "parentKind",
+          COALESCE(NULLIF(TRIM(root_thread_id), ''), thread_id) AS "rootThreadId",
+          parent_thread_id AS "parentThreadId",
+          parent_turn_id AS "parentTurnId",
+          parent_item_id AS "parentItemId",
+          COALESCE(parent_activity_sequence, 0) AS "parentActivitySequence",
+          provider_thread_id AS "providerThreadId",
+          title_seed AS "titleSeed",
+          COALESCE(subagent_depth, 0) AS "subagentDepth",
+          subagent_started_at AS "subagentStartedAt",
+          subagent_completed_at AS "subagentCompletedAt",
+          subagent_status AS "subagentStatus",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -387,6 +449,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          COALESCE(parent_kind, 'root') AS "parentKind",
+          COALESCE(NULLIF(TRIM(root_thread_id), ''), thread_id) AS "rootThreadId",
+          parent_thread_id AS "parentThreadId",
+          parent_turn_id AS "parentTurnId",
+          parent_item_id AS "parentItemId",
+          COALESCE(parent_activity_sequence, 0) AS "parentActivitySequence",
+          provider_thread_id AS "providerThreadId",
+          title_seed AS "titleSeed",
+          COALESCE(subagent_depth, 0) AS "subagentDepth",
+          subagent_started_at AS "subagentStartedAt",
+          subagent_completed_at AS "subagentCompletedAt",
+          subagent_status AS "subagentStatus",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -711,6 +785,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         WHERE project_id = ${projectId}
           AND deleted_at IS NULL
           AND archived_at IS NULL
+          AND COALESCE(parent_kind, 'root') = 'root'
         ORDER BY created_at ASC, thread_id ASC
         LIMIT 1
       `,
@@ -749,6 +824,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          COALESCE(parent_kind, 'root') AS "parentKind",
+          COALESCE(NULLIF(TRIM(root_thread_id), ''), thread_id) AS "rootThreadId",
+          parent_thread_id AS "parentThreadId",
+          parent_turn_id AS "parentTurnId",
+          parent_item_id AS "parentItemId",
+          COALESCE(parent_activity_sequence, 0) AS "parentActivitySequence",
+          provider_thread_id AS "providerThreadId",
+          title_seed AS "titleSeed",
+          COALESCE(subagent_depth, 0) AS "subagentDepth",
+          subagent_started_at AS "subagentStartedAt",
+          subagent_completed_at AS "subagentCompletedAt",
+          subagent_status AS "subagentStatus",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -1186,6 +1273,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 updatedAt: row.updatedAt,
                 archivedAt: row.archivedAt,
                 deletedAt: row.deletedAt,
+                parentRelation: mapThreadParentRelation(row),
                 messages: messagesByThread.get(row.threadId) ?? [],
                 proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                 activities: activitiesByThread.get(row.threadId) ?? [],
@@ -1384,6 +1472,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,
                   deletedAt: row.deletedAt,
+                  parentRelation: mapThreadParentRelation(row),
                   messages: [],
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                   activities: [],
@@ -1512,6 +1601,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                       createdAt: row.createdAt,
                       updatedAt: row.updatedAt,
                       archivedAt: row.archivedAt,
+                      parentRelation: mapThreadParentRelation(row),
                       session: sessionByThread.get(row.threadId) ?? null,
                       latestUserMessageAt: row.latestUserMessageAt,
                       hasPendingApprovals: row.pendingApprovalCount > 0,
@@ -1646,6 +1736,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,
+                  parentRelation: mapThreadParentRelation(row),
                   session: sessionByThread.get(row.threadId) ?? null,
                   latestUserMessageAt: row.latestUserMessageAt,
                   hasPendingApprovals: row.pendingApprovalCount > 0,
@@ -1886,6 +1977,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
+        parentRelation: mapThreadParentRelation(threadRow.value),
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
         latestUserMessageAt: threadRow.value.latestUserMessageAt,
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
@@ -1981,6 +2073,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
         deletedAt: null,
+        parentRelation: mapThreadParentRelation(threadRow.value),
         messages: messageRows.map((row) => {
           const message = {
             id: row.messageId,

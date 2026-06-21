@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   buildSidebarThreadRows,
   createThreadJumpHintVisibilityController,
+  filterProjectsForVscodeScope,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   isContextualSubagentSidebarThread,
@@ -19,9 +20,11 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveSidebarOptionsMenuVisibility,
   resolveSidebarStageBadgeLabel,
-  type SidebarThreadParentRelation,
   resolveThreadListClassName,
+  resolveVscodeProjectScope,
+  resolveVscodeInitialThreadRef,
   resolveThreadRowClassName,
+  resolveThreadRowIndentStyle,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
@@ -40,10 +43,12 @@ import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type Project,
+  type SidebarThreadSummary,
   type Thread,
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+const remoteEnvironmentId = EnvironmentId.make("environment-remote");
 
 describe("resolveSidebarStageBadgeLabel", () => {
   it("returns Nightly for nightly primary server versions", () => {
@@ -200,6 +205,269 @@ describe("getSidebarThreadIdsToPrewarm", () => {
 
   it("returns no thread ids when the limit is zero", () => {
     expect(getSidebarThreadIdsToPrewarm(["t1", "t2"], 0)).toEqual([]);
+  });
+});
+
+describe("filterProjectsForVscodeScope", () => {
+  it("keeps only the current VS Code project by environment and bootstrap project id", () => {
+    const project1 = {
+      id: ProjectId.make("project-1"),
+      environmentId: localEnvironmentId,
+      cwd: "/repo/current",
+    };
+    const project2 = {
+      id: ProjectId.make("project-2"),
+      environmentId: localEnvironmentId,
+      cwd: "/repo/other",
+    };
+    const remoteProject = {
+      id: ProjectId.make("project-1"),
+      environmentId: remoteEnvironmentId,
+      cwd: "/repo/current",
+    };
+
+    expect(
+      filterProjectsForVscodeScope([project1, project2, remoteProject], {
+        environmentId: localEnvironmentId,
+        projectId: ProjectId.make("project-1"),
+        cwd: "/repo/current",
+      }),
+    ).toEqual([project1]);
+  });
+
+  it("falls back to the current backend cwd before the bootstrap project id is known", () => {
+    const currentProject = {
+      id: ProjectId.make("project-current"),
+      environmentId: localEnvironmentId,
+      cwd: "/repo/current",
+    };
+    const otherProject = {
+      id: ProjectId.make("project-other"),
+      environmentId: localEnvironmentId,
+      cwd: "/repo/other",
+    };
+
+    expect(
+      filterProjectsForVscodeScope([otherProject, currentProject], {
+        environmentId: localEnvironmentId,
+        cwd: "/repo/current",
+      }),
+    ).toEqual([currentProject]);
+  });
+
+  it("keeps all bootstrapped VS Code projects in multi-root workspaces", () => {
+    const project1 = {
+      id: ProjectId.make("project-1"),
+      environmentId: localEnvironmentId,
+      cwd: "/repo/api",
+    };
+    const project2 = {
+      id: ProjectId.make("project-2"),
+      environmentId: localEnvironmentId,
+      cwd: "/repo/web",
+    };
+    const otherProject = {
+      id: ProjectId.make("project-3"),
+      environmentId: localEnvironmentId,
+      cwd: "/repo/other",
+    };
+
+    expect(
+      filterProjectsForVscodeScope([project1, otherProject, project2], {
+        environmentId: localEnvironmentId,
+        projectIds: [project1.id, project2.id],
+        activeProjectId: project2.id,
+      }),
+    ).toEqual([project1, project2]);
+  });
+
+  it("falls back to bootstrapped cwds before project ids are known", () => {
+    const project1 = {
+      id: ProjectId.make("project-1"),
+      environmentId: localEnvironmentId,
+      cwd: "/repo/api",
+    };
+    const project2 = {
+      id: ProjectId.make("project-2"),
+      environmentId: localEnvironmentId,
+      cwd: "/repo/web",
+    };
+    const otherProject = {
+      id: ProjectId.make("project-3"),
+      environmentId: localEnvironmentId,
+      cwd: "/repo/other",
+    };
+
+    expect(
+      filterProjectsForVscodeScope([project1, otherProject, project2], {
+        environmentId: localEnvironmentId,
+        cwds: ["/repo/api", "/repo/web"],
+      }),
+    ).toEqual([project1, project2]);
+  });
+});
+
+describe("resolveVscodeProjectScope", () => {
+  it("uses the VS Code host bridge workspace bootstrap when desktop welcome has no VS Code projects", () => {
+    expect(
+      resolveVscodeProjectScope({
+        serverWelcome: {
+          environment: { environmentId: localEnvironmentId },
+          cwd: "/desktop",
+        },
+        serverConfig: {
+          environment: { environmentId: localEnvironmentId },
+          cwd: "/desktop",
+        },
+        vscodeWorkspaceBootstrap: {
+          environmentId: localEnvironmentId,
+          workspaceFolders: [
+            {
+              key: "file::/workspace",
+              name: "workspace",
+              cwd: "/workspace",
+              uriScheme: "file",
+              uriAuthority: "",
+            },
+          ],
+          activeWorkspaceFolderKey: "file::/workspace",
+          bootstrapProjects: [
+            {
+              workspaceFolderKey: "file::/workspace",
+              workspaceFolderName: "workspace",
+              cwd: "/workspace",
+              projectId: ProjectId.make("project-workspace"),
+              bootstrapThreadId: ThreadId.make("thread-workspace"),
+              isActive: true,
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      environmentId: localEnvironmentId,
+      projectId: ProjectId.make("project-workspace"),
+      projectIds: [ProjectId.make("project-workspace")],
+      activeProjectId: ProjectId.make("project-workspace"),
+      cwd: "/desktop",
+      cwds: ["/workspace"],
+    });
+  });
+});
+
+function makeSidebarThread(
+  overrides: Partial<SidebarThreadSummary> & Pick<SidebarThreadSummary, "id" | "projectId">,
+): SidebarThreadSummary {
+  return {
+    environmentId: localEnvironmentId,
+    title: "Thread",
+    createdAt: "2026-03-09T10:00:00.000Z",
+    updatedAt: "2026-03-09T10:00:00.000Z",
+    archivedAt: null,
+    latestUserMessageAt: null,
+    latestTurn: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    interactionMode: DEFAULT_INTERACTION_MODE,
+    session: null,
+    branch: null,
+    worktreePath: null,
+    ...overrides,
+  } as SidebarThreadSummary;
+}
+
+describe("resolveVscodeInitialThreadRef", () => {
+  it("selects the most recently visited thread within the current VS Code project", () => {
+    const currentOlder = makeSidebarThread({
+      id: ThreadId.make("thread-current-older"),
+      projectId: ProjectId.make("project-current"),
+      updatedAt: "2026-03-09T10:10:00.000Z",
+    });
+    const currentLastOpen = makeSidebarThread({
+      id: ThreadId.make("thread-current-last-open"),
+      projectId: ProjectId.make("project-current"),
+      updatedAt: "2026-03-09T10:05:00.000Z",
+    });
+    const otherProjectRecent = makeSidebarThread({
+      id: ThreadId.make("thread-other-recent"),
+      projectId: ProjectId.make("project-other"),
+      updatedAt: "2026-03-09T10:20:00.000Z",
+    });
+
+    expect(
+      resolveVscodeInitialThreadRef({
+        threads: [otherProjectRecent, currentOlder, currentLastOpen],
+        threadLastVisitedAtById: {
+          [`${localEnvironmentId}:${currentOlder.id}`]: "2026-03-09T10:11:00.000Z",
+          [`${localEnvironmentId}:${currentLastOpen.id}`]: "2026-03-09T10:30:00.000Z",
+          [`${localEnvironmentId}:${otherProjectRecent.id}`]: "2026-03-09T10:40:00.000Z",
+        },
+        scope: {
+          environmentId: localEnvironmentId,
+          projectId: ProjectId.make("project-current"),
+        },
+      }),
+    ).toEqual({
+      environmentId: localEnvironmentId,
+      threadId: currentLastOpen.id,
+    });
+  });
+
+  it("falls back to the newest current-project thread when no visit state exists", () => {
+    const older = makeSidebarThread({
+      id: ThreadId.make("thread-older"),
+      projectId: ProjectId.make("project-current"),
+      updatedAt: "2026-03-09T10:00:00.000Z",
+    });
+    const newer = makeSidebarThread({
+      id: ThreadId.make("thread-newer"),
+      projectId: ProjectId.make("project-current"),
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    });
+
+    expect(
+      resolveVscodeInitialThreadRef({
+        threads: [older, newer],
+        threadLastVisitedAtById: {},
+        scope: {
+          environmentId: localEnvironmentId,
+          projectId: ProjectId.make("project-current"),
+        },
+      }),
+    ).toEqual({
+      environmentId: localEnvironmentId,
+      threadId: newer.id,
+    });
+  });
+
+  it("prefers the active VS Code project within visible multi-root candidates", () => {
+    const activeOlder = makeSidebarThread({
+      id: ThreadId.make("thread-active-older"),
+      projectId: ProjectId.make("project-active"),
+      updatedAt: "2026-03-09T10:00:00.000Z",
+    });
+    const inactiveNewer = makeSidebarThread({
+      id: ThreadId.make("thread-inactive-newer"),
+      projectId: ProjectId.make("project-inactive"),
+      updatedAt: "2026-03-09T12:00:00.000Z",
+    });
+
+    expect(
+      resolveVscodeInitialThreadRef({
+        threads: [inactiveNewer, activeOlder],
+        threadLastVisitedAtById: {
+          [`${localEnvironmentId}:${inactiveNewer.id}`]: "2026-03-09T13:00:00.000Z",
+        },
+        scope: {
+          environmentId: localEnvironmentId,
+          projectIds: [ProjectId.make("project-active"), ProjectId.make("project-inactive")],
+          activeProjectId: ProjectId.make("project-active"),
+        },
+      }),
+    ).toEqual({
+      environmentId: localEnvironmentId,
+      threadId: activeOlder.id,
+    });
   });
 });
 
@@ -667,6 +935,119 @@ describe("buildSidebarThreadRows", () => {
       { thread: runningChild, indentLevel: 1 },
     ]);
   });
+
+  it("keeps terminal active subagent ancestors visible in nested order", () => {
+    const root = makeThread({ id: ThreadId.make("thread-root") });
+    const terminalParent = makeThread({
+      id: ThreadId.make("thread-terminal-parent"),
+      parentRelation: {
+        kind: "subagent",
+        rootThreadId: root.id,
+        parentThreadId: root.id,
+        parentTurnId: TurnId.make("turn-root"),
+        parentItemId: ProviderItemId.make("item-parent"),
+        parentActivitySequence: 0,
+        providerThreadId: "provider-thread-terminal-parent",
+        titleSeed: "Inspect auth flow",
+        depth: 1,
+        startedAt: "2026-03-09T10:00:00.000Z",
+        completedAt: "2026-03-09T10:02:00.000Z",
+        status: "completed",
+      },
+    });
+    const activeGrandchild = makeThread({
+      id: ThreadId.make("thread-active-grandchild"),
+      parentRelation: {
+        kind: "subagent",
+        rootThreadId: root.id,
+        parentThreadId: terminalParent.id,
+        parentTurnId: TurnId.make("turn-child"),
+        parentItemId: ProviderItemId.make("item-grandchild"),
+        parentActivitySequence: 1,
+        providerThreadId: "provider-thread-active-grandchild",
+        titleSeed: "Check nested route",
+        depth: 2,
+        startedAt: "2026-03-09T10:03:00.000Z",
+        completedAt: "2026-03-09T10:04:00.000Z",
+        status: "completed",
+      },
+    });
+
+    expect(
+      buildSidebarThreadRows([root, terminalParent, activeGrandchild], activeGrandchild.id),
+    ).toEqual([
+      { thread: root, indentLevel: 0 },
+      { thread: terminalParent, indentLevel: 1 },
+      { thread: activeGrandchild, indentLevel: 2 },
+    ]);
+  });
+
+  it("keeps running descendants under hidden terminal ancestors before unrelated roots", () => {
+    const root = makeThread({ id: ThreadId.make("thread-root") });
+    const unrelatedRoot = makeThread({ id: ThreadId.make("thread-unrelated-root") });
+    const terminalParent = makeThread({
+      id: ThreadId.make("thread-terminal-parent"),
+      parentRelation: {
+        kind: "subagent",
+        rootThreadId: root.id,
+        parentThreadId: root.id,
+        parentTurnId: TurnId.make("turn-root"),
+        parentItemId: ProviderItemId.make("item-parent"),
+        parentActivitySequence: 0,
+        providerThreadId: "provider-thread-terminal-parent",
+        titleSeed: "Inspect auth flow",
+        depth: 1,
+        startedAt: "2026-03-09T10:00:00.000Z",
+        completedAt: "2026-03-09T10:02:00.000Z",
+        status: "completed",
+      },
+    });
+    const runningGrandchild = makeThread({
+      id: ThreadId.make("thread-running-grandchild"),
+      parentRelation: {
+        kind: "subagent",
+        rootThreadId: root.id,
+        parentThreadId: terminalParent.id,
+        parentTurnId: TurnId.make("turn-child"),
+        parentItemId: ProviderItemId.make("item-grandchild"),
+        parentActivitySequence: 1,
+        providerThreadId: "provider-thread-running-grandchild",
+        titleSeed: "Check nested route",
+        depth: 2,
+        startedAt: "2026-03-09T10:03:00.000Z",
+        completedAt: null,
+        status: "running",
+      },
+    });
+
+    expect(
+      buildSidebarThreadRows([root, unrelatedRoot, terminalParent, runningGrandchild], null),
+    ).toEqual([
+      { thread: root, indentLevel: 0 },
+      { thread: runningGrandchild, indentLevel: 2 },
+      { thread: unrelatedRoot, indentLevel: 0 },
+    ]);
+  });
+});
+
+describe("resolveThreadRowIndentStyle", () => {
+  it("increases row indentation for each visible subagent generation", () => {
+    expect(resolveThreadRowIndentStyle({ indentLevel: 0, flattenHierarchyChrome: false })).toBe(
+      undefined,
+    );
+    expect(resolveThreadRowIndentStyle({ indentLevel: 1, flattenHierarchyChrome: false })).toEqual({
+      paddingLeft: "1.25rem",
+    });
+    expect(resolveThreadRowIndentStyle({ indentLevel: 2, flattenHierarchyChrome: false })).toEqual({
+      paddingLeft: "2.125rem",
+    });
+  });
+
+  it("suppresses hierarchy indentation when chrome is flattened", () => {
+    expect(resolveThreadRowIndentStyle({ indentLevel: 2, flattenHierarchyChrome: true })).toBe(
+      undefined,
+    );
+  });
 });
 
 describe("isContextMenuPointerDown", () => {
@@ -985,9 +1366,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
   };
 }
 
-function makeThread(
-  overrides: Partial<Thread> & { readonly parentRelation?: SidebarThreadParentRelation } = {},
-): Thread & { readonly parentRelation?: SidebarThreadParentRelation } {
+function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
     id: ThreadId.make("thread-1"),
     environmentId: localEnvironmentId,

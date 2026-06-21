@@ -5,7 +5,7 @@
  * surface descriptors and the active surface, while each feature continues to
  * own its durable resource state. Browser surfaces point at preview tab ids,
  * terminal surfaces point at terminal session ids, file surfaces point at
- * workspace paths, and diff/plan/files remain singleton surfaces.
+ * workspace paths, and diff/plan/files/source-control remain singleton surfaces.
  */
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
@@ -14,12 +14,21 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
-export const RIGHT_PANEL_KINDS = ["plan", "diff", "files", "file", "preview", "terminal"] as const;
+export const RIGHT_PANEL_KINDS = [
+  "plan",
+  "diff",
+  "files",
+  "file",
+  "preview",
+  "terminal",
+  "source-control",
+] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
 export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
+  | { id: "source-control"; kind: "source-control" }
   | {
       id: `terminal:${string}`;
       kind: "terminal";
@@ -92,6 +101,8 @@ const singletonSurface = (
       return { id: "files", kind };
     case "plan":
       return { id: "plan", kind };
+    case "source-control":
+      return { id: "source-control", kind };
   }
 };
 
@@ -119,6 +130,82 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
   terminalIds: [terminalId],
   activeTerminalId: terminalId,
 });
+
+function isMigratedSingletonSurface(surface: RightPanelSurface): boolean {
+  return (
+    (surface.kind === "diff" && surface.id === "diff") ||
+    (surface.kind === "files" && surface.id === "files") ||
+    (surface.kind === "plan" && surface.id === "plan") ||
+    (surface.kind === "source-control" && surface.id === "source-control")
+  );
+}
+
+function migrateSurface(surface: RightPanelSurface): RightPanelSurface[] {
+  if (surface.kind === "preview") {
+    if (surface.id === "browser:new" && surface.resourceId === null) {
+      return [surface];
+    }
+    return typeof surface.resourceId === "string" && surface.id === `browser:${surface.resourceId}`
+      ? [surface]
+      : [];
+  }
+
+  if (isMigratedSingletonSurface(surface)) {
+    return [surface];
+  }
+
+  if (surface.kind === "file") {
+    if (typeof surface.relativePath !== "string" || surface.id !== `file:${surface.relativePath}`) {
+      return [];
+    }
+    const revealLine =
+      typeof surface.revealLine === "number" && Number.isFinite(surface.revealLine)
+        ? Math.max(1, Math.trunc(surface.revealLine))
+        : null;
+    const revealRequestId =
+      typeof surface.revealRequestId === "number" &&
+      Number.isSafeInteger(surface.revealRequestId) &&
+      surface.revealRequestId >= 0
+        ? surface.revealRequestId
+        : 0;
+    return [{ ...surface, revealLine, revealRequestId }];
+  }
+
+  if (surface.kind !== "terminal") {
+    return [];
+  }
+
+  if (
+    !("resourceId" in surface) ||
+    typeof surface.resourceId !== "string" ||
+    surface.id !== `terminal:${surface.resourceId}`
+  ) {
+    return [];
+  }
+  const terminalIds =
+    "terminalIds" in surface && Array.isArray(surface.terminalIds)
+      ? [
+          ...new Set(
+            surface.terminalIds.filter(
+              (terminalId): terminalId is string => typeof terminalId === "string",
+            ),
+          ),
+        ]
+      : [surface.resourceId];
+  const activeTerminalId =
+    "activeTerminalId" in surface &&
+    typeof surface.activeTerminalId === "string" &&
+    terminalIds.includes(surface.activeTerminalId)
+      ? surface.activeTerminalId
+      : (terminalIds[0] ?? surface.resourceId);
+  return [
+    {
+      ...surface,
+      terminalIds: terminalIds.length > 0 ? terminalIds : [surface.resourceId],
+      activeTerminalId,
+    },
+  ];
+}
 
 const upsertSurface = (
   current: ThreadRightPanelState,
@@ -169,54 +256,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
               const validThreadState =
                 threadState && typeof threadState === "object" ? threadState : null;
               const surfaces = Array.isArray(validThreadState?.surfaces)
-                ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
-                    if (surface.kind === "file") {
-                      const revealLine =
-                        typeof surface.revealLine === "number" &&
-                        Number.isFinite(surface.revealLine)
-                          ? Math.max(1, Math.trunc(surface.revealLine))
-                          : null;
-                      const revealRequestId =
-                        typeof surface.revealRequestId === "number" &&
-                        Number.isSafeInteger(surface.revealRequestId) &&
-                        surface.revealRequestId >= 0
-                          ? surface.revealRequestId
-                          : 0;
-                      return [{ ...surface, revealLine, revealRequestId }];
-                    }
-                    if (surface.kind !== "terminal") return [surface];
-                    if (
-                      !("resourceId" in surface) ||
-                      typeof surface.resourceId !== "string" ||
-                      surface.id !== `terminal:${surface.resourceId}`
-                    ) {
-                      return [];
-                    }
-                    const terminalIds =
-                      "terminalIds" in surface && Array.isArray(surface.terminalIds)
-                        ? [
-                            ...new Set(
-                              surface.terminalIds.filter(
-                                (terminalId): terminalId is string =>
-                                  typeof terminalId === "string",
-                              ),
-                            ),
-                          ]
-                        : [surface.resourceId];
-                    const activeTerminalId =
-                      "activeTerminalId" in surface &&
-                      typeof surface.activeTerminalId === "string" &&
-                      terminalIds.includes(surface.activeTerminalId)
-                        ? surface.activeTerminalId
-                        : (terminalIds[0] ?? surface.resourceId);
-                    return [
-                      {
-                        ...surface,
-                        terminalIds: terminalIds.length > 0 ? terminalIds : [surface.resourceId],
-                        activeTerminalId,
-                      },
-                    ];
-                  })
+                ? validThreadState.surfaces.flatMap<RightPanelSurface>(migrateSurface)
                 : [];
               const activeSurfaceId = surfaces.some(
                 (surface) => surface.id === validThreadState?.activeSurfaceId,

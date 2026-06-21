@@ -1,7 +1,8 @@
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
-import { SidebarInset, SidebarTrigger } from "./ui/sidebar";
+import { SidebarInset } from "./ui/sidebar";
 import { isElectron } from "../env";
 import { cn } from "~/lib/utils";
+import { MainSidebarTrigger } from "./sidebar/MainSidebarTrigger";
 
 export function NoActiveThreadState() {
   return (
@@ -18,8 +19,8 @@ export function NoActiveThreadState() {
               No active thread
             </span>
           ) : (
-            <div className="flex items-center gap-2">
-              <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+            <div className="flex min-h-7 items-center gap-2">
+              <MainSidebarTrigger />
               <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">
                 No active thread
               </span>

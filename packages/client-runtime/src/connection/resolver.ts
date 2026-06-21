@@ -61,26 +61,31 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
   return Effect.fn("clientRuntime.connection.broker.primary")(function* (
     target: PrimaryConnectionTarget,
   ) {
-    const bearerToken = yield* auth.bearerToken;
-    if (Option.isNone(bearerToken)) {
-      return {
-        environmentId: target.environmentId,
-        label: target.label,
+    const platformBearerToken = yield* auth.bearerToken;
+    const bearerToken = target.bearerToken ?? Option.getOrUndefined(platformBearerToken);
+    if (bearerToken) {
+      const authorized = yield* remote.authorizeBearer({
+        expectedEnvironmentId: target.environmentId,
         httpBaseUrl: target.httpBaseUrl,
-        socketUrl: primarySocketUrl(target),
-        httpAuthorization: null,
+        wsBaseUrl: target.wsBaseUrl,
+        bearerToken,
+      });
+      return {
+        environmentId: authorized.environmentId,
+        label: authorized.label,
+        httpBaseUrl: authorized.httpBaseUrl,
+        socketUrl: authorized.socketUrl,
+        httpAuthorization: authorized.httpAuthorization,
         target,
       } satisfies PreparedConnection;
     }
 
-    const authorized = yield* remote.authorizeBearer({
-      expectedEnvironmentId: target.environmentId,
-      httpBaseUrl: target.httpBaseUrl,
-      wsBaseUrl: target.wsBaseUrl,
-      bearerToken: bearerToken.value,
-    });
     return {
-      ...authorized,
+      environmentId: target.environmentId,
+      label: target.label,
+      httpBaseUrl: target.httpBaseUrl,
+      socketUrl: primarySocketUrl(target),
+      httpAuthorization: null,
       target,
     } satisfies PreparedConnection;
   });

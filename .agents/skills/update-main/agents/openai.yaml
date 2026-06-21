@@ -1,0 +1,6 @@
+interface:
+  display_name: "Update Main"
+  short_description: "Update current branch with changes from main, report on new features and altered behaviors."
+
+policy:
+  allow_implicit_invocation: false

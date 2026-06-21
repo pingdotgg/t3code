@@ -13,13 +13,13 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { environmentCatalog } from "./connection/catalog";
 import { connectionAtomRuntime } from "./connection/runtime";
 import {
-  getHostLocalEnvironmentBootstrap,
+  getDesktopManagedEnvironmentBootstrap,
   getHostVscodeWorkspaceBootstrap,
 } from "./environments/primary/hostBootstrap";
 import { readPrimaryEnvironmentTarget } from "./environments/primary/target";
 import { isHostedStaticApp } from "./hostedPairing";
 import { appAtomRegistry } from "./rpc/atomRegistry";
-import { primaryEnvironmentIdAtom } from "./state/environments";
+import { primaryEnvironmentIdAtom } from "./state/primaryEnvironment";
 import { useUiStateStore } from "./uiStateStore";
 import { environmentProjects } from "./state/projects";
 import { environmentSession } from "./state/session";
@@ -95,11 +95,11 @@ function formatUnknownError(error: unknown): string {
 export function installVscodeDiagnostics(): void {
   window.__T3_VSCODE_DIAGNOSTICS__ = () => {
     const workspace = getHostVscodeWorkspaceBootstrap();
-    const local = getHostLocalEnvironmentBootstrap();
+    const desktopManaged = getDesktopManagedEnvironmentBootstrap();
     const catalog = appAtomRegistry.get(environmentCatalog.catalogValueAtom);
     const primaryEnvironmentId = appAtomRegistry.get(primaryEnvironmentIdAtom);
     const targetEnvironmentId =
-      workspace?.environmentId ?? local?.environmentId ?? primaryEnvironmentId;
+      workspace?.environmentId ?? desktopManaged?.environmentId ?? primaryEnvironmentId;
     const primaryServerConfig = appAtomRegistry.get(primaryServerConfigAtom);
     const primaryServerWelcome = appAtomRegistry.get(primaryServerWelcomeAtom);
 
@@ -107,18 +107,28 @@ export function installVscodeDiagnostics(): void {
       href: window.location.href,
       bridge: {
         workspaceEnvironmentId: workspace?.environmentId ?? null,
-        localEnvironmentId: local?.environmentId ?? null,
-        httpBaseUrl: local?.httpBaseUrl ?? null,
-        wsBaseUrl: local?.wsBaseUrl ?? null,
-        hasBearerToken: typeof local?.bearerToken === "string" && local.bearerToken.length > 0,
+        desktopManagedEnvironmentId: desktopManaged?.environmentId ?? null,
+        // Deprecated compatibility alias for older VS Code diagnostic snippets.
+        localEnvironmentId: desktopManaged?.environmentId ?? null,
+        httpBaseUrl: desktopManaged?.httpBaseUrl ?? null,
+        wsBaseUrl: desktopManaged?.wsBaseUrl ?? null,
+        hasBearerToken:
+          typeof desktopManaged?.bearerToken === "string" && desktopManaged.bearerToken.length > 0,
         hasBootstrapToken:
-          typeof local?.bootstrapToken === "string" && local.bootstrapToken.length > 0,
+          typeof desktopManaged?.bootstrapToken === "string" &&
+          desktopManaged.bootstrapToken.length > 0,
         bootstrapProjects: workspace?.bootstrapProjects ?? [],
       },
       runtime: {
         isVscodeWebview: window.__T3_IS_VSCODE_WEBVIEW === true,
         isHostedStaticApp: isHostedStaticApp(new URL(window.location.href)),
-        hasHostPrimaryEnvironmentBootstrap: Boolean(local?.httpBaseUrl && local.wsBaseUrl),
+        hasDesktopManagedPrimaryEnvironmentBootstrap: Boolean(
+          desktopManaged?.httpBaseUrl && desktopManaged.wsBaseUrl,
+        ),
+        // Deprecated compatibility alias for older VS Code diagnostic snippets.
+        hasHostPrimaryEnvironmentBootstrap: Boolean(
+          desktopManaged?.httpBaseUrl && desktopManaged.wsBaseUrl,
+        ),
       },
       catalog: {
         isReady: catalog.isReady,
@@ -152,16 +162,25 @@ export function installVscodeDiagnostics(): void {
   };
 
   window.__T3_VSCODE_PROBE_PRIMARY__ = async () => {
-    const local = getHostLocalEnvironmentBootstrap();
+    const desktopManaged = getDesktopManagedEnvironmentBootstrap();
     const resolved = readPrimaryEnvironmentTarget();
     const runtimeResult = appAtomRegistry.get(connectionAtomRuntime);
     const runtimeContext = Option.getOrNull(AsyncResult.value(runtimeResult));
     const probe = {
+      desktopManaged: {
+        environmentId: desktopManaged?.environmentId ?? null,
+        httpBaseUrl: desktopManaged?.httpBaseUrl ?? null,
+        wsBaseUrl: desktopManaged?.wsBaseUrl ?? null,
+        hasBearerToken:
+          typeof desktopManaged?.bearerToken === "string" && desktopManaged.bearerToken.length > 0,
+      },
+      // Deprecated compatibility alias for older VS Code diagnostic snippets.
       local: {
-        environmentId: local?.environmentId ?? null,
-        httpBaseUrl: local?.httpBaseUrl ?? null,
-        wsBaseUrl: local?.wsBaseUrl ?? null,
-        hasBearerToken: typeof local?.bearerToken === "string" && local.bearerToken.length > 0,
+        environmentId: desktopManaged?.environmentId ?? null,
+        httpBaseUrl: desktopManaged?.httpBaseUrl ?? null,
+        wsBaseUrl: desktopManaged?.wsBaseUrl ?? null,
+        hasBearerToken:
+          typeof desktopManaged?.bearerToken === "string" && desktopManaged.bearerToken.length > 0,
       },
       resolved,
       runtime: {
@@ -227,11 +246,11 @@ export function installVscodeDiagnostics(): void {
 
     const registration = new PrimaryConnectionRegistration({
       target: new PrimaryConnectionTarget({
-        environmentId: (local?.environmentId ?? descriptor.environmentId) as EnvironmentId,
+        environmentId: (desktopManaged?.environmentId ?? descriptor.environmentId) as EnvironmentId,
         label: descriptor.label,
         httpBaseUrl: resolved.target.httpBaseUrl,
         wsBaseUrl: resolved.target.wsBaseUrl,
-        ...(local?.bearerToken ? { bearerToken: local.bearerToken } : {}),
+        ...(desktopManaged?.bearerToken ? { bearerToken: desktopManaged.bearerToken } : {}),
       }),
     });
 

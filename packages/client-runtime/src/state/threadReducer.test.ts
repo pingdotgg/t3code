@@ -5,6 +5,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  ProviderItemId,
   ProviderInstanceId,
   ThreadId,
   TurnId,
@@ -98,6 +99,49 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.branch).toBe("main");
         expect(result.thread.messages).toEqual([]);
         expect(result.thread.session).toBeNull();
+      }
+    });
+
+    it("preserves subagent parent relation on fresh threads", () => {
+      const parentRelation = {
+        kind: "subagent" as const,
+        rootThreadId: ThreadId.make("thread-root"),
+        parentThreadId: ThreadId.make("thread-parent"),
+        parentTurnId: TurnId.make("turn-parent"),
+        parentItemId: ProviderItemId.make("call-spawn"),
+        parentActivitySequence: 1,
+        providerThreadId: "provider-child-1",
+        titleSeed: "Inspect websocket handling",
+        depth: 1,
+        startedAt: "2026-04-01T01:00:00.000Z",
+        completedAt: null,
+        status: "running" as const,
+      };
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 1,
+        occurredAt: "2026-04-01T01:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-child"),
+        type: "thread.created",
+        payload: {
+          threadId: ThreadId.make("thread-child"),
+          projectId: ProjectId.make("project-1"),
+          title: "Subagent",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          parentRelation,
+          createdAt: "2026-04-01T01:00:00.000Z",
+          updatedAt: "2026-04-01T01:00:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.parentRelation).toEqual(parentRelation);
       }
     });
   });

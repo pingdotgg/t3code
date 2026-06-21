@@ -1,0 +1,6 @@
+interface:
+  display_name: "Comments From Worktrees"
+  short_description: "Address all PR comments from worktrees that are not yet merged into main."
+
+policy:
+  allow_implicit_invocation: false

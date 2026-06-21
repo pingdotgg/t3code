@@ -222,6 +222,48 @@ describe("ConnectionResolver", () => {
     }),
   );
 
+  it.effect("authorizes a primary environment when a host bearer token is present", () =>
+    Effect.gen(function* () {
+      const bearerInputs = yield* Ref.make<ReadonlyArray<string>>([]);
+      const brokerLayer = yield* makeDependencies({
+        authorizeBearer: (input) =>
+          Ref.update(bearerInputs, (values) => [...values, input.bearerToken]).pipe(
+            Effect.as({
+              environmentId: input.expectedEnvironmentId,
+              label: "Primary",
+              httpBaseUrl: input.httpBaseUrl,
+              socketUrl: "ws://127.0.0.1:3777/ws?wsTicket=primary-ticket",
+              httpAuthorization: {
+                _tag: "Bearer" as const,
+                token: input.bearerToken,
+              },
+            }),
+          ),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+      const target = new PrimaryConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Primary",
+        httpBaseUrl: "http://127.0.0.1:3777",
+        wsBaseUrl: "ws://127.0.0.1:3777",
+        bearerToken: "host-bearer",
+      });
+
+      expect(yield* broker.prepare(catalogEntry(target))).toEqual({
+        environmentId: ENVIRONMENT_ID,
+        label: "Primary",
+        httpBaseUrl: "http://127.0.0.1:3777",
+        socketUrl: "ws://127.0.0.1:3777/ws?wsTicket=primary-ticket",
+        httpAuthorization: {
+          _tag: "Bearer",
+          token: "host-bearer",
+        },
+        target,
+      });
+      expect(yield* Ref.get(bearerInputs)).toEqual(["host-bearer"]);
+    }),
+  );
+
   it.effect("authorizes a desktop primary environment with its platform bearer token", () =>
     Effect.gen(function* () {
       const bearerInputs = yield* Ref.make<ReadonlyArray<string>>([]);

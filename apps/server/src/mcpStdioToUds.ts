@@ -1,8 +1,8 @@
-import * as net from "node:net";
+import * as NodeNet from "node:net";
 
 export function runMcpStdioToUds(socketPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const socket = net.createConnection(socketPath);
+    const socket = NodeNet.createConnection(socketPath);
     let settled = false;
 
     const cleanup = () => {

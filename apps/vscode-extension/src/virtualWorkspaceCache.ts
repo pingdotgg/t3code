@@ -1,6 +1,6 @@
-import * as crypto from "node:crypto";
-import * as fs from "node:fs";
-import * as path from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import type * as vscode from "vscode";
 
 export const VIRTUAL_WORKSPACE_METADATA_FILE = ".t3-virtual-workspace.json";
@@ -22,7 +22,7 @@ export interface VirtualWorkspaceCacheResult {
 }
 
 export interface VirtualWorkspaceCommandDependencies {
-  readonly mkdirSync: typeof fs.mkdirSync;
+  readonly mkdirSync: typeof NodeFS.mkdirSync;
   readonly runCommand: (command: string, args: readonly string[]) => Promise<void>;
 }
 
@@ -79,7 +79,7 @@ export async function ensureGithubVirtualWorkspaceClone(input: {
 }): Promise<string> {
   const checkoutDir = resolveGithubVirtualWorkspaceCheckoutPath(input);
   const now = input.now ?? new Date();
-  if (fs.existsSync(path.join(checkoutDir, ".git"))) {
+  if (NodeFS.existsSync(NodePath.join(checkoutDir, ".git"))) {
     input.outputChannel.appendLine(
       `[backend] Refreshing GitHub virtual workspace checkout ${input.owner}/${input.repository}: ${checkoutDir}`,
     );
@@ -99,8 +99,8 @@ export async function ensureGithubVirtualWorkspaceClone(input: {
     return checkoutDir;
   }
 
-  input.dependencies.mkdirSync(path.dirname(checkoutDir), { recursive: true });
-  fs.rmSync(checkoutDir, { force: true, recursive: true });
+  input.dependencies.mkdirSync(NodePath.dirname(checkoutDir), { recursive: true });
+  NodeFS.rmSync(checkoutDir, { force: true, recursive: true });
   input.outputChannel.appendLine(
     `[backend] Cloning GitHub virtual workspace ${input.owner}/${input.repository} into ${checkoutDir}`,
   );
@@ -118,7 +118,7 @@ export async function ensureGithubVirtualWorkspaceClone(input: {
       now,
     });
   } catch (error) {
-    fs.rmSync(checkoutDir, { force: true, recursive: true });
+    NodeFS.rmSync(checkoutDir, { force: true, recursive: true });
     throw error;
   }
   return checkoutDir;
@@ -146,8 +146,8 @@ export function resolveGithubVirtualWorkspaceCheckoutPath(input: {
 }): string {
   const ownerSegment = sanitizePathSegment(input.owner);
   const repositorySegment = sanitizePathSegment(input.repository);
-  const keyHash = crypto.createHash("sha256").update(input.key).digest("hex").slice(0, 12);
-  return path.join(
+  const keyHash = NodeCrypto.createHash("sha256").update(input.key).digest("hex").slice(0, 12);
+  return NodePath.join(
     input.t3Home,
     "virtual-workspaces",
     "github",
@@ -169,13 +169,13 @@ export function pruneVirtualWorkspaceCache(input: {
     entries
       .toSorted((left, right) => right.lastUsedAtMs - left.lastUsedAtMs)
       .slice(0, VIRTUAL_WORKSPACE_MIN_RECENT_TO_KEEP)
-      .map((entry) => path.resolve(entry.path)),
+      .map((entry) => NodePath.resolve(entry.path)),
   );
   let deleted = 0;
   let errors = 0;
 
   for (const entry of entries) {
-    const entryPath = path.resolve(entry.path);
+    const entryPath = NodePath.resolve(entry.path);
     if (
       activePaths.has(entryPath) ||
       recentKeepPaths.has(entryPath) ||
@@ -185,7 +185,7 @@ export function pruneVirtualWorkspaceCache(input: {
     }
 
     try {
-      fs.rmSync(entry.path, { force: true, recursive: true });
+      NodeFS.rmSync(entry.path, { force: true, recursive: true });
       deleted += 1;
     } catch (error) {
       errors += 1;
@@ -209,12 +209,12 @@ export function cleanVirtualWorkspaceCache(input: {
   let errors = 0;
 
   for (const entry of entries) {
-    if (activePaths.has(path.resolve(entry.path))) {
+    if (activePaths.has(NodePath.resolve(entry.path))) {
       continue;
     }
 
     try {
-      fs.rmSync(entry.path, { force: true, recursive: true });
+      NodeFS.rmSync(entry.path, { force: true, recursive: true });
       deleted += 1;
     } catch (error) {
       errors += 1;
@@ -244,25 +244,25 @@ function touchVirtualWorkspaceMetadata(input: {
     lastUsedAt: timestamp,
     lastBackendStartedAt: timestamp,
   };
-  fs.writeFileSync(
-    path.join(input.checkoutDir, VIRTUAL_WORKSPACE_METADATA_FILE),
+  NodeFS.writeFileSync(
+    NodePath.join(input.checkoutDir, VIRTUAL_WORKSPACE_METADATA_FILE),
     `${JSON.stringify(metadata, null, 2)}\n`,
   );
 }
 
 function readGithubCacheEntries(t3Home: string): CacheEntry[] {
-  const parentDir = path.join(t3Home, "virtual-workspaces", "github");
-  if (!fs.existsSync(parentDir)) {
+  const parentDir = NodePath.join(t3Home, "virtual-workspaces", "github");
+  if (!NodeFS.existsSync(parentDir)) {
     return [];
   }
 
   const entries: CacheEntry[] = [];
-  for (const dirent of fs.readdirSync(parentDir, { withFileTypes: true })) {
+  for (const dirent of NodeFS.readdirSync(parentDir, { withFileTypes: true })) {
     if (!dirent.isDirectory()) {
       continue;
     }
 
-    const entryPath = path.join(parentDir, dirent.name);
+    const entryPath = NodePath.join(parentDir, dirent.name);
     const metadata = readMetadata(entryPath);
     if (!metadata) {
       continue;
@@ -280,7 +280,10 @@ function readGithubCacheEntries(t3Home: string): CacheEntry[] {
 
 function readMetadata(checkoutDir: string): VirtualWorkspaceMetadata | null {
   try {
-    const raw = fs.readFileSync(path.join(checkoutDir, VIRTUAL_WORKSPACE_METADATA_FILE), "utf8");
+    const raw = NodeFS.readFileSync(
+      NodePath.join(checkoutDir, VIRTUAL_WORKSPACE_METADATA_FILE),
+      "utf8",
+    );
     const parsed = JSON.parse(raw) as Partial<VirtualWorkspaceMetadata>;
     if (
       parsed.version === 1 &&
@@ -300,7 +303,7 @@ function readMetadata(checkoutDir: string): VirtualWorkspaceMetadata | null {
 }
 
 function normalizePathSet(paths: readonly string[]): Set<string> {
-  return new Set(paths.map((candidate) => path.resolve(candidate)));
+  return new Set(paths.map((candidate) => NodePath.resolve(candidate)));
 }
 
 function sanitizePathSegment(value: string): string {

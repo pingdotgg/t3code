@@ -15,6 +15,7 @@ export function useAtomQueryRunner<T, A, E>(
   const explicitLabel = typeof options === "string" ? options : options?.label;
   const reportFailure = typeof options === "string" ? true : (options?.reportFailure ?? true);
   const reportDefect = typeof options === "string" ? true : (options?.reportDefect ?? true);
+  const forceRefresh = typeof options === "string" ? false : (options?.forceRefresh ?? false);
 
   return useCallback(
     (target: T) => {
@@ -23,8 +24,9 @@ export function useAtomQueryRunner<T, A, E>(
         label: explicitLabel ?? atom.label?.[0] ?? "atom query",
         reportFailure,
         reportDefect,
+        forceRefresh,
       });
     },
-    [explicitLabel, family, registry, reportDefect, reportFailure],
+    [explicitLabel, family, forceRefresh, registry, reportDefect, reportFailure],
   );
 }

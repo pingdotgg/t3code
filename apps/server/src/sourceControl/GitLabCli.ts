@@ -255,6 +255,7 @@ export class GitLabCli extends Context.Service<
       readonly cwd: string;
       readonly headSelector: string;
       readonly source?: SourceControlProvider.SourceControlRefSelector;
+      readonly repository?: string;
       readonly state: "open" | "closed" | "merged" | "all";
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<GitLabMergeRequestSummary>, GitLabCliError>;
@@ -296,6 +297,7 @@ export class GitLabCli extends Context.Service<
     }) => Effect.Effect<void, GitLabCliError>;
   }
 >()("t3/sourceControl/GitLabCli") {}
+export type GitLabCliShape = GitLabCli["Service"];
 
 const RawGitLabRepositoryCloneUrlsSchema = Schema.Struct({
   path_with_namespace: TrimmedNonEmptyString,
@@ -437,6 +439,7 @@ export const make = Effect.gen(function* () {
         args: [
           "mr",
           "list",
+          ...(input.repository ? ["--repo", input.repository] : []),
           "--source-branch",
           sourceRefName(input),
           ...stateArgs(input.state),

@@ -5,6 +5,7 @@ import {
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
+  resolveBranchToolbarVisibility,
   resolveCurrentWorkspaceLabel,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
@@ -81,6 +82,62 @@ describe("resolveBranchToolbarValue", () => {
         currentGitBranch: "main",
       }),
     ).toBe("main");
+  });
+});
+
+describe("resolveBranchToolbarVisibility", () => {
+  it("hides the whole toolbar when the host hides checkout and branch controls", () => {
+    expect(
+      resolveBranchToolbarVisibility({
+        isMobile: false,
+        showEnvironmentPicker: false,
+        displayPreferences: {
+          showCheckoutModeIndicator: false,
+          showBranchSelector: false,
+        },
+      }),
+    ).toEqual({
+      showMobileRunContextSelector: false,
+      showDesktopRunContextSelector: false,
+      showBranchSelector: false,
+      showToolbar: false,
+    });
+  });
+
+  it("keeps the branch selector independently visible when enabled by the host", () => {
+    expect(
+      resolveBranchToolbarVisibility({
+        isMobile: false,
+        showEnvironmentPicker: false,
+        displayPreferences: {
+          showCheckoutModeIndicator: false,
+          showBranchSelector: true,
+        },
+      }),
+    ).toEqual({
+      showMobileRunContextSelector: false,
+      showDesktopRunContextSelector: false,
+      showBranchSelector: true,
+      showToolbar: true,
+    });
+  });
+
+  it("shows the run context selector when environment selection remains relevant", () => {
+    expect(
+      resolveBranchToolbarVisibility({
+        isMobile: true,
+        showEnvironmentPicker: true,
+        displayPreferences: {
+          showCheckoutModeIndicator: false,
+          showBranchSelector: false,
+        },
+      }),
+    ).toEqual({
+      showMobileRunContextSelector: true,
+      showDesktopRunContextSelector: false,
+      showBranchSelector: false,
+      showToolbar: true,
+    });
   });
 });
 

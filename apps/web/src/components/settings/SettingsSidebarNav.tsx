@@ -8,7 +8,7 @@ import {
   Link2Icon,
   Settings2Icon,
 } from "lucide-react";
-import { useCanGoBack, useNavigate } from "@tanstack/react-router";
+import { useCanGoBack, useNavigate, useRouter } from "@tanstack/react-router";
 
 import {
   SidebarContent,
@@ -21,6 +21,8 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
+import { isVscodeWebview } from "~/env";
+import { navigateToSettingsBackTarget } from "~/settingsNavigation";
 
 export type SettingsSectionPath =
   | "/settings/general"
@@ -38,13 +40,14 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { label: "General", to: "/settings/general", icon: Settings2Icon },
   { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
   { label: "Providers", to: "/settings/providers", icon: BotIcon },
-  { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
+  { label: "Version Control", to: "/settings/source-control", icon: GitBranchIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
 ];
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
+  const router = useRouter();
   const canGoBack = useCanGoBack();
   const { isMobile, setOpenMobile } = useSidebar();
   const handleSectionClick = useCallback(
@@ -60,12 +63,16 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     if (isMobile) {
       setOpenMobile(false);
     }
+    if (isVscodeWebview) {
+      navigateToSettingsBackTarget(router.history);
+      return;
+    }
     if (canGoBack) {
       window.history.back();
       return;
     }
     void navigate({ to: "/" });
-  }, [canGoBack, isMobile, navigate, setOpenMobile]);
+  }, [canGoBack, isMobile, navigate, router, setOpenMobile]);
 
   return (
     <>

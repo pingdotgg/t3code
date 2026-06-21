@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
+import type { ChangeRequest } from "@t3tools/contracts";
 
 import * as GitLabCli from "./GitLabCli.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
@@ -87,6 +87,20 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
   } as const;
 }
 
+function repositoryFromContext(
+  context: SourceControlProvider.SourceControlProviderContext | undefined,
+): string | undefined {
+  if (!context) return undefined;
+  const repository = SourceControlProvider.repositoryPathFromRemoteUrl(context.remoteUrl);
+  if (!repository) return undefined;
+  try {
+    const host = new URL(context.provider.baseUrl).host;
+    return host && host !== "gitlab.com" ? `${host}/${repository}` : repository;
+  } catch {
+    return repository;
+  }
+}
+
 export const discovery = {
   type: "cli",
   kind: "gitlab",
@@ -107,48 +121,40 @@ export const make = Effect.gen(function* () {
     kind: "gitlab",
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
+      const repository = repositoryFromContext(input.context);
       return gitlab
         .listMergeRequests({
           cwd: input.cwd,
           headSelector: input.headSelector,
           ...(source ? { source } : {}),
+          ...(repository ? { repository } : {}),
           state: input.state,
           ...(input.limit !== undefined ? { limit: input.limit } : {}),
         })
         .pipe(
           Effect.map((items) => items.map(toChangeRequest)),
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: "gitlab",
-                operation: "listChangeRequests",
-                command: error.command,
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.headSelector,
-                ),
-                detail: error.detail,
-                cause: error,
-              }),
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "gitlab",
+              operation: "listChangeRequests",
+              cwd: input.cwd,
+              reference: input.headSelector,
+              error,
+            }),
           ),
         );
     },
     getChangeRequest: (input) =>
       gitlab.getMergeRequest(input).pipe(
         Effect.map(toChangeRequest),
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "gitlab",
-              operation: "getChangeRequest",
-              command: error.command,
-              cwd: input.cwd,
-              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.reference,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
+        Effect.mapError((error) =>
+          SourceControlProvider.sourceControlProviderError({
+            provider: "gitlab",
+            operation: "getChangeRequest",
+            cwd: input.cwd,
+            reference: input.reference,
+            error,
+          }),
         ),
       ),
     createChangeRequest: (input) => {
@@ -164,85 +170,62 @@ export const make = Effect.gen(function* () {
           bodyFile: input.bodyFile,
         })
         .pipe(
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: "gitlab",
-                operation: "createChangeRequest",
-                command: error.command,
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.headSelector,
-                ),
-                detail: error.detail,
-                cause: error,
-              }),
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "gitlab",
+              operation: "createChangeRequest",
+              cwd: input.cwd,
+              reference: input.headSelector,
+              error,
+            }),
           ),
         );
     },
     getRepositoryCloneUrls: (input) =>
       gitlab.getRepositoryCloneUrls(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "gitlab",
-              operation: "getRepositoryCloneUrls",
-              command: error.command,
-              cwd: input.cwd,
-              repository: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.repository,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
+        Effect.mapError((error) =>
+          SourceControlProvider.sourceControlProviderError({
+            provider: "gitlab",
+            operation: "getRepositoryCloneUrls",
+            cwd: input.cwd,
+            repository: input.repository,
+            error,
+          }),
         ),
       ),
     createRepository: (input) =>
       gitlab.createRepository(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "gitlab",
-              operation: "createRepository",
-              command: error.command,
-              cwd: input.cwd,
-              repository: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.repository,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
+        Effect.mapError((error) =>
+          SourceControlProvider.sourceControlProviderError({
+            provider: "gitlab",
+            operation: "createRepository",
+            cwd: input.cwd,
+            repository: input.repository,
+            error,
+          }),
         ),
       ),
     getDefaultBranch: (input) =>
       gitlab.getDefaultBranch(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "gitlab",
-              operation: "getDefaultBranch",
-              command: error.command,
-              cwd: input.cwd,
-              detail: error.detail,
-              cause: error,
-            }),
+        Effect.mapError((error) =>
+          SourceControlProvider.sourceControlProviderError({
+            provider: "gitlab",
+            operation: "getDefaultBranch",
+            cwd: input.cwd,
+            error,
+          }),
         ),
       ),
     checkoutChangeRequest: (input) =>
       gitlab.checkoutMergeRequest(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "gitlab",
-              operation: "checkoutChangeRequest",
-              command: error.command,
-              cwd: input.cwd,
-              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.reference,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
+        Effect.mapError((error) =>
+          SourceControlProvider.sourceControlProviderError({
+            provider: "gitlab",
+            operation: "checkoutChangeRequest",
+            cwd: input.cwd,
+            reference: input.reference,
+            error,
+          }),
         ),
       ),
   });

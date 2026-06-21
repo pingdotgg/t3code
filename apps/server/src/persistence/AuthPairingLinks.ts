@@ -62,6 +62,12 @@ export const RevokeAuthPairingLinkInput = Schema.Struct({
 });
 export type RevokeAuthPairingLinkInput = typeof RevokeAuthPairingLinkInput.Type;
 
+export const DeleteExpiredAuthPairingLinksInput = Schema.Struct({
+  now: Schema.DateTimeUtcFromString,
+  subject: Schema.String,
+});
+export type DeleteExpiredAuthPairingLinksInput = typeof DeleteExpiredAuthPairingLinksInput.Type;
+
 export const GetAuthPairingLinkByCredentialInput = Schema.Struct({
   credential: Schema.String,
 });
@@ -98,6 +104,9 @@ export class AuthPairingLinkRepository extends Context.Service<
     readonly revoke: (
       input: RevokeAuthPairingLinkInput,
     ) => Effect.Effect<boolean, AuthPairingLinkRepositoryError>;
+    readonly deleteExpired: (
+      input: DeleteExpiredAuthPairingLinksInput,
+    ) => Effect.Effect<number, AuthPairingLinkRepositoryError>;
     readonly getByCredential: (
       input: GetAuthPairingLinkByCredentialInput,
     ) => Effect.Effect<Option.Option<AuthPairingLinkRecord>, AuthPairingLinkRepositoryError>;
@@ -224,6 +233,18 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const deleteExpiredPairingLinkRows = SqlSchema.findAll({
+    Request: DeleteExpiredAuthPairingLinksInput,
+    Result: Schema.Struct({ id: Schema.String }),
+    execute: ({ now, subject }) =>
+      sql`
+        DELETE FROM auth_pairing_links
+        WHERE subject = ${subject}
+          AND expires_at <= ${now}
+        RETURNING id AS "id"
+      `,
+  });
+
   const getPairingLinkRowByCredential = SqlSchema.findOneOption({
     Request: GetAuthPairingLinkByCredentialInput,
     Result: AuthPairingLinkRawDbRow,
@@ -318,6 +339,17 @@ export const make = Effect.gen(function* () {
       Effect.map((rows) => rows.length > 0),
     );
 
+  const deleteExpired: AuthPairingLinkRepository["Service"]["deleteExpired"] = (input) =>
+    deleteExpiredPairingLinkRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthPairingLinkRepository.deleteExpired:query",
+          "AuthPairingLinkRepository.deleteExpired:decodeRows",
+        ),
+      ),
+      Effect.map((rows) => rows.length),
+    );
+
   const getByCredential: AuthPairingLinkRepository["Service"]["getByCredential"] = (input) =>
     getPairingLinkRowByCredential(input).pipe(
       Effect.mapError(
@@ -349,6 +381,7 @@ export const make = Effect.gen(function* () {
     consumeAvailable,
     listActive,
     revoke,
+    deleteExpired,
     getByCredential,
   } satisfies AuthPairingLinkRepository["Service"];
 });

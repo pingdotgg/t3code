@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { normalizeModelSlug } from "@t3tools/shared/model";
+import * as NodeCrypto from "node:crypto";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -235,6 +236,20 @@ interface PendingUserInput {
   readonly itemId: ProviderItemId | undefined;
   readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
 }
+
+interface CollabReceiverInfo {
+  readonly parentThreadId: ThreadId;
+  readonly parentTurnId: TurnId | undefined;
+  readonly parentItemId: ProviderItemId | undefined;
+  readonly providerThreadId: string;
+  readonly childThreadId: ThreadId;
+  readonly rawPrompt: string | undefined;
+  readonly detail: string | undefined;
+}
+
+type CollabToolCallNotificationItem =
+  | CodexRpc.ServerNotificationParamsByMethod["item/started"]["item"]
+  | CodexRpc.ServerNotificationParamsByMethod["item/completed"]["item"];
 
 type CodexServerNotification = {
   readonly [M in CodexRpc.ServerNotificationMethod]: {
@@ -625,15 +640,55 @@ function readRouteFields(notification: CodexServerNotification): {
   }
 }
 
+function trimNotificationText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function deterministicSubagentThreadId(input: {
+  readonly parentThreadId: ThreadId;
+  readonly providerThreadId: string;
+}): ThreadId {
+  const hash = NodeCrypto.createHash("sha256")
+    .update(`${input.parentThreadId}\0${input.providerThreadId}`)
+    .digest("base64url")
+    .slice(0, 32);
+  return ThreadId.make(`subagent_${hash}`);
+}
+
+function collabToolCallDetail(item: CollabToolCallNotificationItem): string | undefined {
+  const candidates = [
+    "prompt" in item ? item.prompt : undefined,
+    "title" in item ? item.title : undefined,
+    "summary" in item ? item.summary : undefined,
+    "text" in item ? item.text : undefined,
+  ];
+  for (const candidate of candidates) {
+    const detail = trimNotificationText(candidate);
+    if (detail) {
+      return detail;
+    }
+  }
+  return undefined;
+}
+
+function collabToolCallPrompt(item: CollabToolCallNotificationItem): string | undefined {
+  const prompt = "prompt" in item ? item.prompt : undefined;
+  return typeof prompt === "string" ? trimNotificationText(prompt) : undefined;
+}
+
+function isPromptBearingCollabToolCall(item: CollabToolCallNotificationItem): boolean {
+  if (!("tool" in item)) {
+    return false;
+  }
+  return item.tool === "spawnAgent" || item.tool === "resumeAgent" || item.tool === "sendInput";
+}
+
 function rememberCollabReceiverTurns(
-  collabReceiverTurns: Map<string, TurnId>,
+  collabReceiverTurns: Map<string, CollabReceiverInfo>,
   notification: CodexServerNotification,
   parentTurnId: TurnId | undefined,
+  parentThreadId: ThreadId,
 ): void {
-  if (!parentTurnId) {
-    return;
-  }
-
   if (notification.method !== "item/started" && notification.method !== "item/completed") {
     return;
   }
@@ -642,28 +697,90 @@ function rememberCollabReceiverTurns(
     return;
   }
 
+  const rawPrompt = collabToolCallPrompt(notification.params.item);
+  const detail = collabToolCallDetail(notification.params.item);
+  const parentItemId = ProviderItemId.make(notification.params.item.id);
+  const startsNewParentActivity =
+    isPromptBearingCollabToolCall(notification.params.item) && Boolean(rawPrompt || detail);
   for (const receiverThreadId of notification.params.item.receiverThreadIds) {
-    collabReceiverTurns.set(receiverThreadId, parentTurnId);
+    const existing = collabReceiverTurns.get(receiverThreadId);
+    collabReceiverTurns.set(receiverThreadId, {
+      parentThreadId,
+      parentTurnId: startsNewParentActivity
+        ? parentTurnId
+        : (existing?.parentTurnId ?? parentTurnId),
+      parentItemId: startsNewParentActivity
+        ? parentItemId
+        : (existing?.parentItemId ?? parentItemId),
+      providerThreadId: receiverThreadId,
+      childThreadId:
+        existing?.childThreadId ??
+        deterministicSubagentThreadId({
+          parentThreadId,
+          providerThreadId: receiverThreadId,
+        }),
+      rawPrompt: startsNewParentActivity ? rawPrompt : (existing?.rawPrompt ?? rawPrompt),
+      detail: startsNewParentActivity ? detail : (existing?.detail ?? detail),
+    });
   }
 }
 
-function shouldSuppressChildConversationNotification(
-  method: CodexRpc.ServerNotificationMethod,
-): boolean {
-  return (
-    method === "thread/started" ||
-    method === "thread/status/changed" ||
-    method === "thread/archived" ||
-    method === "thread/unarchived" ||
-    method === "thread/closed" ||
-    method === "thread/compacted" ||
-    method === "thread/name/updated" ||
-    method === "thread/tokenUsage/updated" ||
-    method === "turn/started" ||
-    method === "turn/completed" ||
-    method === "turn/plan/updated" ||
-    method === "item/plan/delta"
-  );
+function resolveChildParentInfo(input: {
+  readonly collabReceiverTurns: Map<string, CollabReceiverInfo>;
+  readonly providerConversationId: string | undefined;
+  readonly currentProviderThreadId: string | undefined;
+}): CollabReceiverInfo | undefined {
+  if (!input.providerConversationId) {
+    return undefined;
+  }
+
+  const direct = input.collabReceiverTurns.get(input.providerConversationId);
+  if (direct) {
+    return direct;
+  }
+
+  if (
+    input.currentProviderThreadId &&
+    input.providerConversationId !== input.currentProviderThreadId &&
+    input.collabReceiverTurns.size === 1
+  ) {
+    return Array.from(input.collabReceiverTurns.values())[0];
+  }
+
+  return undefined;
+}
+
+function subagentChildrenFromNotification(
+  collabReceiverTurns: Map<string, CollabReceiverInfo>,
+  notification: CodexServerNotification,
+): ReadonlyArray<{
+  readonly providerThreadId: string;
+  readonly childThreadId: string;
+  readonly parentItemId?: string | undefined;
+  readonly rawPrompt?: string | undefined;
+  readonly titleSeed?: string | undefined;
+}> {
+  if (notification.method !== "item/started" && notification.method !== "item/completed") {
+    return [];
+  }
+  if (notification.params.item.type !== "collabAgentToolCall") {
+    return [];
+  }
+  return notification.params.item.receiverThreadIds.flatMap((providerThreadId) => {
+    const info = collabReceiverTurns.get(providerThreadId);
+    if (!info) {
+      return [];
+    }
+    return [
+      {
+        providerThreadId,
+        childThreadId: String(info.childThreadId),
+        ...(info.parentItemId ? { parentItemId: String(info.parentItemId) } : {}),
+        ...(info.rawPrompt ? { rawPrompt: info.rawPrompt } : {}),
+        ...(info.detail ? { titleSeed: info.detail } : {}),
+      },
+    ];
+  });
 }
 
 function toCodexUserInputAnswer(
@@ -747,12 +864,12 @@ export const makeCodexSessionRuntime = (
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
     const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
-    const collabReceiverTurnsRef = yield* Ref.make(new Map<string, TurnId>());
+    const collabReceiverTurnsRef = yield* Ref.make(new Map<string, CollabReceiverInfo>());
     const closedRef = yield* Ref.make(false);
 
     // `~` is not shell-expanded when env vars are set via
     // `child_process.spawn`; `expandHomePath` lets a configured
-    // `CODEX_HOME=~/.codex_work` reach codex as an absolute path.
+    // `CODEX_HOME=~/.codex_work` reach codex as an absolute NodePath.
     const resolvedHomePath = options.homePath ? expandHomePath(options.homePath) : undefined;
     const env = {
       ...options.environment,
@@ -869,22 +986,24 @@ export const makeCodexSessionRuntime = (
         const payload = notification.params;
         const route = readRouteFields(notification);
         const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
-        const childParentTurnId = (() => {
-          const providerConversationId = readNotificationThreadId(notification);
-          return providerConversationId
-            ? collabReceiverTurns.get(providerConversationId)
-            : undefined;
-        })();
+        const providerConversationId = readNotificationThreadId(notification);
+        const currentProviderThreadId = yield* currentSessionProviderThreadId;
+        const childParentInfo = resolveChildParentInfo({
+          collabReceiverTurns,
+          providerConversationId,
+          currentProviderThreadId,
+        });
 
-        rememberCollabReceiverTurns(collabReceiverTurns, notification, route.turnId);
-        if (childParentTurnId && shouldSuppressChildConversationNotification(notification.method)) {
-          yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
-          return;
-        }
+        rememberCollabReceiverTurns(
+          collabReceiverTurns,
+          notification,
+          route.turnId,
+          childParentInfo?.childThreadId ?? options.threadId,
+        );
 
         let requestId: ApprovalRequestId | undefined;
         let requestKind: ProviderRequestKind | undefined;
-        let turnId = childParentTurnId ?? route.turnId;
+        let turnId = route.turnId;
         let itemId = route.itemId;
 
         if (notification.method === "serverRequest/resolved") {
@@ -909,9 +1028,34 @@ export const makeCodexSessionRuntime = (
         }
 
         yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
+        const subagentChildren = subagentChildrenFromNotification(
+          collabReceiverTurns,
+          notification,
+        );
+        const parentCollab =
+          childParentInfo && childParentInfo.parentItemId
+            ? {
+                parentThreadId: String(childParentInfo.parentThreadId),
+                providerThreadId: childParentInfo.providerThreadId,
+                childThreadId: String(childParentInfo.childThreadId),
+                itemId: String(childParentInfo.parentItemId),
+                ...(childParentInfo.parentTurnId
+                  ? { parentTurnId: String(childParentInfo.parentTurnId) }
+                  : {}),
+                ...(childParentInfo.detail ? { detail: childParentInfo.detail } : {}),
+              }
+            : undefined;
+        const emittedPayload =
+          subagentChildren.length > 0 || parentCollab
+            ? {
+                ...payload,
+                ...(parentCollab ? { parentCollab } : {}),
+                ...(subagentChildren.length > 0 ? { subagentChildren } : {}),
+              }
+            : payload;
         yield* emitEvent({
           kind: "notification",
-          threadId: options.threadId,
+          threadId: childParentInfo?.childThreadId ?? options.threadId,
           method: notification.method,
           ...(turnId ? { turnId } : {}),
           ...(itemId ? { itemId } : {}),
@@ -920,7 +1064,7 @@ export const makeCodexSessionRuntime = (
           ...(notification.method === "item/agentMessage/delta"
             ? { textDelta: notification.params.delta }
             : {}),
-          ...(payload !== undefined ? { payload } : {}),
+          ...(emittedPayload !== undefined ? { payload: emittedPayload } : {}),
         });
       });
 

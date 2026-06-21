@@ -91,6 +91,46 @@ export const ServerProviderSkill = Schema.Struct({
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
+export const ServerProviderSkillsListInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  cwd: TrimmedNonEmptyString,
+});
+export type ServerProviderSkillsListInput = typeof ServerProviderSkillsListInput.Type;
+
+export const ServerProviderSkillsListResult = Schema.Struct({
+  skills: Schema.Array(ServerProviderSkill),
+});
+export type ServerProviderSkillsListResult = typeof ServerProviderSkillsListResult.Type;
+
+export const ServerProviderSkillsListFailureReason = Schema.Literals([
+  "provider-not-found",
+  "provider-not-configured",
+  "settings-read-failed",
+  "settings-decode-failed",
+  "invalid-cwd",
+  "home-prepare-failed",
+  "probe-timeout",
+  "probe-failed",
+]);
+export type ServerProviderSkillsListFailureReason =
+  typeof ServerProviderSkillsListFailureReason.Type;
+
+export class ServerProviderSkillsListError extends Schema.TaggedErrorClass<ServerProviderSkillsListError>()(
+  "ServerProviderSkillsListError",
+  {
+    message: TrimmedNonEmptyString,
+    // Optional for backward-compatible decoding of older failure payloads.
+    reason: Schema.optional(ServerProviderSkillsListFailureReason),
+    // Optional for backward-compatible decoding of older failure payloads.
+    operation: Schema.optional(TrimmedNonEmptyString),
+    instanceId: Schema.optional(ProviderInstanceId),
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    // Server producers should attach a bounded, plain diagnostic object here,
+    // not the raw thrown value.
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 /**
  * Availability of a configured provider instance from the runtime's POV.
  *

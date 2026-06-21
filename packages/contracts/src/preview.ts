@@ -8,7 +8,7 @@
  *
  * @module Preview
  */
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const Url = TrimmedNonEmptyString.check(Schema.isMaxLength(2048));

@@ -1,3 +1,5 @@
+import * as NodeAssert from "node:assert/strict";
+
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -8,7 +10,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import { assert, it } from "@effect/vitest";
+import { it } from "@effect/vitest";
 
 import * as AcpAgent from "./agent.ts";
 import * as AcpSchema from "./_generated/schema.gen.ts";
@@ -88,9 +90,9 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
         .pipe(Effect.forkScoped);
 
       const permissionRequest = yield* decodeRequestPermissionRequest(yield* Queue.take(output));
-      assert.equal(permissionRequest.jsonrpc, "2.0");
-      assert.equal(permissionRequest.method, "session/request_permission");
-      assert.deepEqual(permissionRequest.params, {
+      NodeAssert.equal(permissionRequest.jsonrpc, "2.0");
+      NodeAssert.equal(permissionRequest.method, "session/request_permission");
+      NodeAssert.deepEqual(permissionRequest.params, {
         sessionId: "session-1",
         toolCall: {
           toolCallId: "tool-1",
@@ -98,7 +100,7 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
         },
         options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
       });
-      assert.deepEqual(permissionRequest.headers, []);
+      NodeAssert.deepEqual(permissionRequest.headers, []);
 
       yield* Queue.offer(
         input,
@@ -115,7 +117,7 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
       );
 
       const permission = yield* Fiber.join(permissionFiber);
-      assert.equal(permission.outcome.outcome, "selected");
+      NodeAssert.equal(permission.outcome.outcome, "selected");
 
       yield* Queue.offer(
         input,
@@ -139,7 +141,7 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
       );
 
       const initResponse = yield* decodeInitializeResponse(yield* Queue.take(output));
-      assert.deepEqual(initResponse, {
+      NodeAssert.deepEqual(initResponse, {
         jsonrpc: "2.0",
         id: 2,
         result: {
@@ -173,8 +175,8 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
 
       yield* Deferred.await(cancelReceived);
       yield* Deferred.await(extReceived);
-      assert.deepEqual(yield* Ref.get(cancelNotifications), ["session-1"]);
-      assert.deepEqual(yield* Ref.get(extNotifications), [2]);
+      NodeAssert.deepEqual(yield* Ref.get(cancelNotifications), ["session-1"]);
+      NodeAssert.deepEqual(yield* Ref.get(extNotifications), [2]);
     }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
   }),
 );
@@ -223,7 +225,7 @@ it.effect("effect-acp agent uses distinct ids for RPC calls and extension reques
         ? yield* decodedExt(secondOutbound)
         : yield* decodedExt(firstOutbound);
 
-      assert.notEqual(permissionRequest.id, extRequest.id);
+      NodeAssert.notEqual(permissionRequest.id, extRequest.id);
 
       yield* Queue.offer(
         input,
@@ -248,8 +250,8 @@ it.effect("effect-acp agent uses distinct ids for RPC calls and extension reques
       );
 
       const permission = yield* Fiber.join(permissionFiber);
-      assert.equal(permission.outcome.outcome, "selected");
-      assert.deepEqual(yield* Fiber.join(extFiber), { ok: true });
+      NodeAssert.equal(permission.outcome.outcome, "selected");
+      NodeAssert.deepEqual(yield* Fiber.join(extFiber), { ok: true });
     }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
   }),
 );

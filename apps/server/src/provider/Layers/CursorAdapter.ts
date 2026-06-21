@@ -44,7 +44,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { hostMcpServersToStdioServers } from "../hostMcpServers.ts";
-import { resolveHostMcpServersForProviderStart } from "../hostMcpDiscovery.ts";
+import { resolveHostMcpServersForProviderStartEffect } from "../hostMcpDiscovery.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -562,9 +562,10 @@ export function makeCursorAdapter(
             ? yield* options.resolveSettings
             : cursorSettings;
 
-          const hostMcpServers = yield* Effect.promise(() =>
-            resolveHostMcpServersForProviderStart({ serverConfig, sessionInput: input }),
-          );
+          const hostMcpServers = yield* resolveHostMcpServersForProviderStartEffect({
+            serverConfig,
+            sessionInput: input,
+          });
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,

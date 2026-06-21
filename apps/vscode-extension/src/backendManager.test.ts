@@ -1,6 +1,6 @@
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 
@@ -102,7 +102,7 @@ const workspaceFolders = [
 
 function makeStoredBearerSecretKey() {
   return resolveStoredBearerTokenSecretKey({
-    t3Home: path.join(os.homedir(), ".t3"),
+    t3Home: NodePath.join(NodeOS.homedir(), ".t3"),
     httpBaseUrl: "http://127.0.0.1:3773/",
     workspaceFolders,
   });
@@ -203,7 +203,7 @@ describe("BackendManager", () => {
   let extensionRoot: string;
 
   beforeEach(() => {
-    extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-vscode-extension-"));
+    extensionRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-vscode-extension-"));
     vscodeState.settings = {};
     vscodeState.workspaceFolders = [
       {
@@ -221,7 +221,7 @@ describe("BackendManager", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(extensionRoot, { force: true, recursive: true });
+    NodeFS.rmSync(extensionRoot, { force: true, recursive: true });
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
@@ -288,7 +288,7 @@ describe("BackendManager", () => {
       wsBaseUrl: "ws://127.0.0.1:3773/",
       bearerToken: "desktop-bearer-token",
       cwd: "/workspace",
-      t3Home: path.join(os.homedir(), ".t3"),
+      t3Home: NodePath.join(NodeOS.homedir(), ".t3"),
       environmentId: "environment-desktop",
       workspaceFolders,
       activeWorkspaceFolderKey: "file::/workspace",
@@ -307,7 +307,7 @@ describe("BackendManager", () => {
 
     expect(promptForPairingToken).toHaveBeenCalledWith({
       httpBaseUrl: "http://127.0.0.1:3773/",
-      t3Home: path.join(os.homedir(), ".t3"),
+      t3Home: NodePath.join(NodeOS.homedir(), ".t3"),
       workspaceFolders,
     });
     expect(fetchMock).toHaveBeenCalledWith(
@@ -322,7 +322,7 @@ describe("BackendManager", () => {
       "desktop-bearer-token",
     );
     expect(writeHostMcpAdvertisementMock).toHaveBeenCalledWith({
-      t3Home: path.join(os.homedir(), ".t3"),
+      t3Home: NodePath.join(NodeOS.homedir(), ".t3"),
       advertisement: expect.objectContaining({
         hostKind: "vscode",
         mcpServer: {

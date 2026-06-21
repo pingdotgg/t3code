@@ -171,6 +171,10 @@
       "types": "./src/desktopBackendAdvertisement.ts",
       "import": "./src/desktopBackendAdvertisement.ts"
     },
+    "./localBackendAdvertisement": {
+      "types": "./src/localBackendAdvertisement.ts",
+      "import": "./src/localBackendAdvertisement.ts"
+    },
     "./relayClient": {
       "types": "./src/relayClient.ts",
       "import": "./src/relayClient.ts"

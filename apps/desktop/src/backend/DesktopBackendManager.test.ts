@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import {
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
@@ -620,7 +620,7 @@ describe("DesktopBackendManager", () => {
 
   it.effect("removes the backend advertisement after closing the run scope", () =>
     Effect.gen(function* () {
-      const t3Home = fs.mkdtempSync(path.join(os.tmpdir(), "t3-desktop-stop-order-"));
+      const t3Home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-stop-order-"));
       const closeObservedAdvertisement = yield* Deferred.make<void>();
       const ready = yield* Deferred.make<void>();
       const closed = yield* Deferred.make<void>();
@@ -673,7 +673,7 @@ describe("DesktopBackendManager", () => {
           assert.lengthOf(readDesktopBackendAdvertisements({ t3Home }).advertisements, 0);
         }).pipe(Effect.provide(managerLayer));
       } finally {
-        fs.rmSync(t3Home, { force: true, recursive: true });
+        NodeFS.rmSync(t3Home, { force: true, recursive: true });
       }
     }),
   );

@@ -30,7 +30,7 @@ The desktop backend writes a short-lived local advertisement under `<T3 home>/de
 
 The desktop process keeps the private startup desktop bootstrap token out of the advertisement and does not mint VS Code-specific advertised pairing tickets. The VS Code extension reads the advertisement, validates that the endpoint is loopback HTTP, waits briefly for `/.well-known/t3/environment`, and looks for a previously paired bearer token in VS Code `SecretStorage`. Stored bearer tokens are keyed by T3 home, loopback backend URL, and the resolved VS Code workspace folder identities. If the stored bearer token is still accepted by `/api/auth/session`, the extension reuses it and connects without asking the user to pair again. If no stored token exists, or the stored token is rejected, the extension prompts for a normal desktop pairing token, exchanges that one-time pairing token for a bearer session through `/api/auth/bootstrap/bearer`, stores only the resulting bearer token after workspace bootstrap succeeds, and injects that bearer token through `window.t3HostBridge`. Reconnects and stops abort in-flight readiness, bearer validation/exchange, and workspace-bootstrap work. Normal extension shutdown does not revoke the stored bearer token; desktop-side session revocation causes the next VS Code startup to delete the stale secret and prompt again. If no live desktop advertisement exists, the VS Code extension fails instead of starting a fallback backend and shows a fallback webview with a reconnect button; launching the desktop app remains a manual user action.
 
-The web app then treats the host-injected bootstrap as an already-established primary environment when it includes `environmentId`, `label`, `httpBaseUrl`, `wsBaseUrl`, and bearer token. The connection catalog installs that host-managed primary environment directly instead of waiting for the public `/.well-known/t3/environment` descriptor, so the VS Code sidebar can load workspace threads even if descriptor probing is delayed. Other authenticated HTTP requests use `Authorization: Bearer ...` with `credentials: "omit"`, and WebSocket connections request short-lived tickets before opening `/ws`. This avoids relying on cross-origin cookie behavior between the VS Code webview origin and the loopback backend.
+The web app then treats the host-injected bootstrap as an already-established primary environment when it includes `environmentId`, `label`, `httpBaseUrl`, `wsBaseUrl`, and bearer token. The connection catalog installs that desktop-managed primary environment directly instead of waiting for the public `/.well-known/t3/environment` descriptor, so the VS Code sidebar can load workspace threads even if descriptor probing is delayed. React-side helper names use the upstream-aligned desktop-managed terminology, while the neutral host bridge still exposes `getLocalEnvironmentBootstrap()` and the old host-named helper aliases remain available for VS Code compatibility. Other authenticated HTTP requests use `Authorization: Bearer ...` with `credentials: "omit"`, and WebSocket connections request short-lived tickets before opening `/ws`. This avoids relying on cross-origin cookie behavior between the VS Code webview origin and the loopback backend.
 
 ## VS Code MCP Bridge
 
@@ -54,10 +54,11 @@ The intended model is host-MCP discovery, not a VS Code-only provider special ca
 - A host process that owns editor-aware MCP tools advertises its MCP endpoint in shared local T3 state.
 - The VS Code extension is the first host implementation. It advertises its temporary socket endpoint as `{ name, socketPath, toolTimeoutSec }`.
 - Advertisements include the VS Code workspace folder metadata already used by the extension backend bootstrap: stable workspace folder key, display name, resolved local `cwd`, URI scheme, URI authority, and the active workspace folder key.
-- Provider session startup in the desktop backend looks up host MCP advertisements for the thread's project workspace root and injects the first matching endpoint into the provider's MCP config.
-- Matching follows the same project/workspace scoping rules the VS Code extension uses for sidebar visibility and startup selection. The extension resolves workspace folders into stable keys with `@t3tools/shared/workspaceFolders`, the server maps those folders to T3 projects in `bootstrapProjects[]`, and the VS Code webview filters by those project ids with a cwd fallback while the welcome payload is settling. Discovery reuses the shared workspace-folder identity helpers instead of maintaining independent active-folder matching.
+- Provider session startup in the desktop backend looks up host MCP advertisements for the thread's project workspace root through Effect-native server helpers and injects the first matching endpoint into the provider's MCP config. Compatibility Promise wrappers remain for focused tests and non-Effect call sites, but provider adapters call the Effect path directly.
+- Matching follows the same project/workspace scoping rules the VS Code extension uses for startup selection. The extension resolves workspace folders into stable keys and executable `cwd`s, the server maps those folders to T3 projects in `bootstrapProjects[]`, and discovery uses shared workspace-folder helpers from `@t3tools/shared/workspaceFolders` so VS Code bootstrap, host-MCP advertisements, and local-backend advertisements share active-folder and workspace-root matching semantics.
 - If multiple VS Code windows advertise the same project, use the first live match. This is an acceptable edge case and does not need special UI or selection semantics initially.
 - If no matching live advertisement exists, no VS Code MCP server is injected. The provider should fail normally if the user asks for a VS Code MCP tool that is unavailable.
+- Discovery remains best-effort, but skipped advertisements can be reported through structured diagnostics for duplicate server names, missing sockets, socket-check failures, failed probes, rejected probes, and advertisement-read failures. These diagnostics are collected through the server-side discovery `onDiagnostic` hook used by focused tests and any future operator-facing instrumentation; they are local troubleshooting metadata, are emitted best-effort without blocking startup, and must not turn stale VS Code host records into provider-start failures.
 - Discovery is local-machine only. A web client can use a VS Code MCP bridge only when the backend it is connected to can reach the advertised local socket. Remote browsers or remote saved environments cannot use a socket that exists only on the user's workstation.
 
 Advertisement storage:
@@ -126,18 +127,20 @@ Security boundaries:
 
 Remaining follow-up work:
 
-- Add desktop-local diagnostics or admin surfaces for VS Code MCP source labels if troubleshooting needs it. Remote clients should not require or depend on those labels.
+- Add desktop-local UI/admin surfaces for VS Code MCP source labels or host MCP discovery diagnostics if troubleshooting needs more than logs/tests. Remote clients should not require or depend on those labels.
 
 Implemented:
 
 - `HostMcpAdvertisement` is a versioned shared contract in `packages/contracts`, with runtime advertisement helpers in `packages/shared/hostMcp`.
+- `@t3tools/shared/workspaceFolders` owns stable workspace folder identity keys, active-folder fallback, and workspace-root matching used by VS Code bootstrap, host-MCP discovery, and local-backend advertisement discovery.
 - The desktop backend writes and heartbeats `DesktopBackendAdvertisement` records after HTTP readiness succeeds. The VS Code extension reads those records before rendering a webview and shows a manual-start fallback with a reconnect button when no live desktop backend is available.
 - The VS Code extension writes and heartbeats its per-instance host MCP advertisement after `VsCodeMcpBridge.ensureStarted()` succeeds. The advertised workspace folders come from the same `resolveBootstrapWorkspaceFolders(...)` output used for desktop connection scoping, with the same active workspace folder key selected by `resolveActiveWorkspaceFolder(...)`.
-- Provider startup receives the thread's project workspace root, scans live advertisements, matches the target against advertised workspace folders, probes the first live match, and merges it with bootstrap-provided `hostMcpServers`.
+- Provider startup receives the thread's project workspace root, scans live advertisements through the Effect-native host MCP discovery path, matches the target against advertised workspace folders, probes the first live match, and merges it with bootstrap-provided `hostMcpServers`.
+- Discovery diagnostics are emitted without changing fallback behavior, so duplicate names, missing sockets, failed probes, rejected probes, and unreadable advertisement state can be inspected while provider startup continues with the configured bootstrap MCP servers.
 - Producers and consumers run opportunistic advertisement garbage collection. Producers sweep after writing their own heartbeat, and consumers sweep during discovery scans. Both paths cap work per pass and treat deletion failures as non-fatal.
 - The existing per-window MCP server name is preserved. When merging bootstrap and discovered MCP servers, duplicate names are skipped.
 - Initial injection stays at session creation/resume and next-turn startup boundaries. Dynamic MCP registration remains deferred until a provider-specific reliability pass shows it is safe.
-- Tests cover concurrent per-window advertisement writes, stale and malformed advertisement filtering, expired-file cleanup, missing-socket and failed-probe handling, duplicate-name merging, and the no-match/provider-native failure path.
+- Tests cover concurrent per-window advertisement writes, stale and malformed advertisement filtering, expired-file cleanup, missing-socket and failed-probe handling, rejected-probe and socket-check diagnostics, duplicate-name merging, and the no-match/provider-native failure path.
 
 Provider mappings:
 
@@ -191,7 +194,7 @@ The VS Code webview can also customize chat width with:
 
 The first five settings default to `false`; `t3code.ui.threadConversationMaxWidth` defaults to an empty value, which applies no maximum width to the React app's conversation and prompt input surfaces. Values are passed to the React app through `window.t3HostBridge.getDisplayPreferences()` at startup and through `window.t3HostBridge.onDisplayPreferencesChanged(...)` while the webview is open, so changes apply without reopening the T3 Code view. When `t3code.ui.enableTerminal` is `false`, the embedded T3 terminal drawer is disabled, terminal keybindings are ignored, terminal-backed project actions are hidden, and any open terminal drawer is closed. When `t3code.ui.enableSourceControlPanel` is `false`, the Version Control right-panel surface is hidden inside VS Code webviews.
 
-Project management chrome is not configurable in the VS Code extension. The extension sends the full VS Code workspace folder list to the desktop backend through `POST /api/vscode/workspace-bootstrap`, and the backend ensures a T3 project/thread bootstrap for those folders. The backend validates `activeWorkspaceFolderKey` against the submitted folder keys and falls back to the first folder when the active key is missing or stale. For each bootstrapped project it reuses the latest active thread, creating a startup thread only when no active thread exists. The React app treats the VS Code surface as a workspace-scoped view: it filters the sidebar to the bootstrapped workspace projects, hides the add-project button, hides project sorting/grouping controls, omits project rows/labels, and renders the visible workspace threads directly. This avoids showing unrelated desktop-app projects inside an editor-scoped surface while still supporting multi-root workspaces.
+Project management chrome is not configurable in the VS Code extension. The extension sends the full VS Code workspace folder list to the desktop backend through `POST /api/vscode/workspace-bootstrap`, and the backend ensures a T3 project/thread bootstrap for those folders. The HTTP route owns authentication, request decoding, and response shaping, while `apps/server/src/vscodeWorkspaceBootstrap/bootstrap.ts` owns the project/thread bootstrap resolution. The backend validates `activeWorkspaceFolderKey` against the submitted folder keys and falls back to the first folder when the active key is missing or stale. For each bootstrapped project it reuses the latest active thread, creating a startup thread only when no active thread exists. The React app treats the VS Code surface as a workspace-scoped view: it filters the sidebar to the bootstrapped workspace projects, hides the add-project button, hides project sorting/grouping controls, omits project rows/labels, and renders the visible workspace threads directly. This avoids showing unrelated desktop-app projects inside an editor-scoped surface while still supporting multi-root workspaces.
 
 Because VS Code omits the project row that normally owns the thread list, thread rows also suppress project-style hierarchy chrome: no left rail, no extra child padding, and no child-dot marker. Active/running subagent threads and the actively opened terminal subagent path still follow the shared subagent visibility rules, but they are not visually indented as if they were inside an on-screen project row.
 
@@ -205,7 +208,7 @@ The thread-history sidebar open/closed state is stored in shared `ClientSettings
 
 The webview startup route is reset each time the extension renders the view. Sidebar and new-thread views start at the T3 chat home, intentionally ignoring any stale hash route VS Code may have retained from an earlier webview instance, then let the authenticated backend welcome event choose the current workspace's startup thread. Custom editor resources shaped like `t3-code://route/<environmentId>/<threadId>` initialize directly to that thread's hash route. In VS Code, automatic startup selection is constrained to bootstrapped workspace projects: the app prefers the active workspace folder's project, chooses the most recently visited thread within that project, falls back to that project's newest active thread, and otherwise falls back within the visible workspace project set.
 
-For troubleshooting, VS Code webviews expose development-only diagnostics on `window.__T3_VSCODE_DIAGNOSTICS__()` and an async primary-connection probe on `window.__T3_VSCODE_PROBE_PRIMARY__()`. These are console helpers for inspecting host bootstrap, connection catalog state, shell/project snapshots, and manual primary registration behavior; they are not user-facing extension UI.
+For troubleshooting, VS Code webviews expose development-only diagnostics on `window.__T3_VSCODE_DIAGNOSTICS__()` and an async primary-connection probe on `window.__T3_VSCODE_PROBE_PRIMARY__()`. These are console helpers for inspecting host bootstrap, desktop-managed primary bootstrap state, connection catalog state, shell/project snapshots, and manual primary registration behavior; they are not user-facing extension UI. Diagnostic payloads keep legacy `local*` fields beside the newer `desktopManaged*` fields so existing debugging snippets do not break while the implementation naming converges with upstream desktop-managed environment terminology.
 
 ## VS Code Theme and Font Propagation
 
@@ -292,6 +295,7 @@ Implemented so far:
 - Updated the web app to:
   - prefer `window.t3HostBridge.getLocalEnvironmentBootstrap()`
   - fall back to `window.desktopBridge.getLocalEnvironmentBootstrap()`
+  - name React-side host-bootstrap helpers around desktop-managed primary environments while preserving host-named compatibility exports and the existing bridge method names
   - use hash history in VS Code webviews
   - identify VS Code webviews only through the explicit `window.__T3_IS_VSCODE_WEBVIEW` marker
   - resolve host bootstrap data through shared helpers so desktop and VS Code bridge paths stay consistent
@@ -419,7 +423,7 @@ Implemented:
 - `VsCodeMcpBridge` starts a local socket MCP server from the VS Code extension host.
 - Each bridge instance uses a unique MCP server name so multiple VS Code windows do not advertise the same server key.
 - `BackendManager` writes enabled MCP server metadata into host MCP advertisements.
-- The desktop backend discovers matching advertisements at provider startup and merges them with `ServerConfig.hostMcpServers`.
+- The desktop backend discovers matching advertisements at provider startup through `apps/server/src/provider/hostMcpDiscovery.ts` and merges them with `ServerConfig.hostMcpServers`.
 - The backend exposes a generic `stdio-to-uds` relay so provider MCP clients can reach the VS Code extension-owned socket without depending on the Codex binary.
 - The Codex adapter converts host MCP metadata into Codex `mcp_servers` config using the Codex CLI relay.
 - The Claude adapter converts host MCP metadata into SDK `mcpServers` config.
@@ -461,7 +465,7 @@ Implemented behavior:
 
 - The VS Code extension advertises its MCP socket, timeout, unique MCP server name, active workspace folder key, and bootstrapped workspace folder metadata in `<T3 home>/host-mcp/advertisements/<host-id>.json`.
 - Each extension host writes only its own advertisement file by atomic replace, heartbeats it while alive, and best-effort removes it on shutdown. Consumers rely on expiry for crash and update flows.
-- Local backends scan advertisements at provider session creation/resume or next-turn startup, ignore expired, malformed, missing-socket, or failed-probe records, and inject the first live endpoint matching the target thread project.
+- Local backends scan advertisements at provider session creation/resume or next-turn startup, ignore expired, malformed, missing-socket, or failed-probe records, emit structured diagnostics for skipped live records where available, and inject the first live endpoint matching the target thread project.
 - Producers and consumers opportunistically delete expired advertisement files after a conservative grace period. Cleanup is bounded, best-effort, and not required for security because expired records are ignored before cleanup.
 - Duplicate matching VS Code windows are intentionally resolved by first live match for the first implementation.
 - If no matching endpoint exists, no VS Code MCP server is injected and provider-native failure behavior is allowed when the user asks for unavailable VS Code tools.
@@ -579,7 +583,7 @@ Implemented:
 
 - Host MCP and desktop bootstrap contracts share workspace folder metadata shaped as `workspaceFolders[]` and `activeWorkspaceFolderKey`.
 - Each workspace folder carries `key`, `name`, `cwd`, `uriScheme`, and `uriAuthority`.
-- The VS Code extension builds folder keys as `<scheme>:<authority>:<fsPath>` and advertises every supported workspace folder.
+- Workspace folder keys are built through `@t3tools/shared/workspaceFolders` as `<scheme>:<authority>:<fsPath>`, and the VS Code extension advertises every supported workspace folder.
 - `file:` and `vscode-remote:` workspace folders are treated as directly executable filesystem roots.
 - `vscode-vfs://github/<owner>/<repo>` workspace folders from GitHub RemoteHub are cloned with `git clone --filter=blob:none` into `<T3 home>/virtual-workspaces/github/<owner>-<repo>-<hash>` and bootstrapped from that local checkout.
 - Unsupported virtual workspace folders are skipped instead of passing their `Uri.fsPath` to the backend as a bogus cwd.
@@ -737,6 +741,7 @@ Implemented:
   - `t3code.ui.showCheckoutModeIndicator`
   - `t3code.ui.showBranchSelector`
   - `t3code.ui.enableTerminal`
+  - `t3code.ui.enableSourceControlPanel`
 - Added `T3HostDisplayPreferences` to the shared host bridge contract.
 - Injected the current VS Code setting values into each rendered webview.
 - Broadcast setting changes to open T3 Code webviews and subscribed to them from React.

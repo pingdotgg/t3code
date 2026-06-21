@@ -1,16 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalDate:off
 // @effect-diagnostics globalRandom:off
-import * as fs from "node:fs";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 
 import { HostProcessPlatform } from "./hostProcess.ts";
 
 export function readAdvertisementFilenames(dir: string): string[] {
   try {
-    return fs
-      .readdirSync(dir, { withFileTypes: true })
+    return NodeFS.readdirSync(dir, { withFileTypes: true })
       .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
       .map((entry) => entry.name)
       .toSorted();
@@ -28,16 +27,16 @@ export function writeAdvertisementJson(input: {
   readonly id: string;
   readonly value: unknown;
 }): void {
-  fs.mkdirSync(input.dir, { recursive: true });
-  const tempPath = path.join(
+  NodeFS.mkdirSync(input.dir, { recursive: true });
+  const tempPath = NodePath.join(
     input.dir,
     `.${input.id}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`,
   );
-  fs.writeFileSync(tempPath, `${JSON.stringify(input.value, null, 2)}\n`, {
+  NodeFS.writeFileSync(tempPath, `${JSON.stringify(input.value, null, 2)}\n`, {
     encoding: "utf8",
     mode: 0o600,
   });
-  fs.renameSync(tempPath, input.targetPath);
+  NodeFS.renameSync(tempPath, input.targetPath);
 }
 
 export function readAdvertisementJson<A>(
@@ -45,7 +44,7 @@ export function readAdvertisementJson<A>(
   decode: (value: unknown) => A,
 ): { readonly _tag: "ok"; readonly value: A } | { readonly _tag: "missing" | "invalid" } {
   try {
-    return { _tag: "ok", value: decode(JSON.parse(fs.readFileSync(filePath, "utf8"))) };
+    return { _tag: "ok", value: decode(JSON.parse(NodeFS.readFileSync(filePath, "utf8"))) };
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") {
       return { _tag: "missing" };
@@ -71,7 +70,7 @@ export function workspaceRootsMatch(left: string, right: string): boolean {
 }
 
 function normalizeWorkspaceRootForMatch(value: string): string {
-  const normalized = path.normalize(value.trim());
+  const normalized = NodePath.normalize(value.trim());
   return Effect.runSync(HostProcessPlatform) === "win32" ? normalized.toLowerCase() : normalized;
 }
 

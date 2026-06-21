@@ -29,6 +29,7 @@ const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
 
 type SidebarContextProps = {
+  forceDesktopLayout: boolean;
   state: "expanded" | "collapsed";
   open: boolean;
   setOpen: (open: boolean) => void;
@@ -87,6 +88,7 @@ function useSidebar() {
 
 function SidebarProvider({
   defaultOpen = true,
+  forceDesktopLayout = false,
   open: openProp,
   onOpenChange: setOpenProp,
   className,
@@ -95,10 +97,12 @@ function SidebarProvider({
   ...props
 }: React.ComponentProps<"div"> & {
   defaultOpen?: boolean;
+  forceDesktopLayout?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
-  const isMobile = useIsMobile();
+  const mediaIsMobile = useIsMobile();
+  const isMobile = forceDesktopLayout ? false : mediaIsMobile;
   const [openMobile, setOpenMobile] = React.useState(false);
 
   // This is the internal state of the sidebar.
@@ -136,6 +140,7 @@ function SidebarProvider({
 
   const contextValue = React.useMemo<SidebarContextProps>(
     () => ({
+      forceDesktopLayout,
       isMobile,
       open,
       openMobile,
@@ -144,7 +149,7 @@ function SidebarProvider({
       state,
       toggleSidebar,
     }),
-    [state, open, setOpen, isMobile, openMobile, toggleSidebar],
+    [forceDesktopLayout, state, open, setOpen, isMobile, openMobile, toggleSidebar],
   );
 
   return (
@@ -184,7 +189,7 @@ function Sidebar({
   collapsible?: "offcanvas" | "icon" | "none";
   resizable?: boolean | SidebarResizableOptions;
 }) {
-  const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
+  const { forceDesktopLayout, isMobile, state, openMobile, setOpenMobile } = useSidebar();
   const resolvedResizable = React.useMemo<SidebarResolvedResizableOptions | null>(() => {
     if (isMobile || collapsible === "none" || !resizable) {
       return null;
@@ -262,7 +267,10 @@ function Sidebar({
   return (
     <SidebarInstanceContext value={instanceContextValue}>
       <div
-        className="group peer hidden text-sidebar-foreground md:block"
+        className={cn(
+          "group peer text-sidebar-foreground",
+          forceDesktopLayout ? "block" : "hidden md:block",
+        )}
         data-collapsible={state === "collapsed" ? collapsible : ""}
         data-side={side}
         data-slot="sidebar"
@@ -283,7 +291,8 @@ function Sidebar({
         />
         <div
           className={cn(
-            "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex",
+            "fixed inset-y-0 z-10 h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear",
+            forceDesktopLayout ? "flex" : "hidden md:flex",
             side === "left"
               ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
               : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
@@ -310,10 +319,12 @@ function Sidebar({
 }
 
 function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar, openMobile } = useSidebar();
+  const { isMobile, open, openMobile, toggleSidebar } = useSidebar();
+  const sidebarOpen = isMobile ? openMobile : open;
 
   return (
     <Button
+      aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
       className={cn("size-7", className)}
       data-sidebar="trigger"
       data-slot="sidebar-trigger"
@@ -325,7 +336,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       variant="ghost"
       {...props}
     >
-      {openMobile ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
+      {sidebarOpen ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   );

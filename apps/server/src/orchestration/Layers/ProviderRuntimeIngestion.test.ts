@@ -49,6 +49,7 @@ import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeInge
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { TextGeneration, type TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 function makeTestServerSettingsLayer(overrides: Partial<ServerSettings> = {}) {
@@ -217,7 +218,10 @@ describe("ProviderRuntimeIngestion", () => {
     }
   });
 
-  async function createHarness(options?: { serverSettings?: Partial<ServerSettings> }) {
+  async function createHarness(options?: {
+    serverSettings?: Partial<ServerSettings>;
+    textGeneration?: Partial<TextGenerationShape>;
+  }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
@@ -239,6 +243,16 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
+      Layer.provideMerge(
+        Layer.succeed(TextGeneration, {
+          generateCommitMessage: () => Effect.die("generateCommitMessage should not be called"),
+          generatePrContent: () => Effect.die("generatePrContent should not be called"),
+          generateBranchName: () => Effect.die("generateBranchName should not be called"),
+          generateThreadTitle:
+            options?.textGeneration?.generateThreadTitle ??
+            (() => Effect.succeed({ title: "Generated subagent title" })),
+        }),
+      ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -2529,6 +2543,449 @@ describe("ProviderRuntimeIngestion", () => {
         (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.started",
       ),
     ).toBe(true);
+  });
+
+  it("generates a concise title for projected subagent child threads", async () => {
+    const rawPrompt =
+      "You are Child Alpha. Do not edit any files. Run exactly this harmless shell command.";
+    const harness = await createHarness({
+      textGeneration: {
+        generateThreadTitle: (input) => {
+          expect(input.message).toBe(rawPrompt);
+          return Effect.succeed({ title: "Run harmless command" });
+        },
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    const childThreadId = asThreadId("subagent-title-test");
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-subagent-title-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-9"),
+      itemId: asItemId("parent-item-title-test"),
+      payload: {
+        itemType: "collab_agent_tool_call",
+        status: "in_progress",
+        title: "Subagent",
+        detail: rawPrompt,
+        data: {
+          subagentChildren: [
+            {
+              providerThreadId: "provider-child-title-test",
+              childThreadId,
+              parentItemId: "parent-item-title-test",
+              titleSeed: rawPrompt,
+            },
+          ],
+        },
+      },
+    });
+
+    const childThread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.title === "Run harmless command",
+      2000,
+      childThreadId,
+    );
+
+    expect(childThread.title).toBe("Run harmless command");
+    expect(childThread.parentRelation).toMatchObject({
+      kind: "subagent",
+      titleSeed: rawPrompt,
+    });
+  });
+
+  it("creates a child shell before ingesting child events with parent collab metadata", async () => {
+    const harness = await createHarness({
+      textGeneration: {
+        generateThreadTitle: (input) => {
+          expect(input.message).toBe("Inspect early output");
+          return Effect.succeed({ title: "Inspect early output" });
+        },
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    const childThreadId = asThreadId("subagent-early-shell-test");
+
+    harness.emit({
+      type: "item.updated",
+      eventId: asEventId("evt-subagent-early-child-output"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: childThreadId,
+      turnId: asTurnId("child-turn-early"),
+      itemId: asItemId("child-command-early"),
+      payload: {
+        itemType: "command_execution",
+        status: "in_progress",
+        title: "Ran command",
+        detail: "echo child",
+        parentCollab: {
+          parentThreadId: "thread-1",
+          providerThreadId: "provider-child-early",
+          childThreadId,
+          parentTurnId: "turn-parent-early",
+          itemId: "parent-item-early",
+          detail: "Inspect early output",
+        },
+      },
+    });
+
+    const childThread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.title === "Inspect early output" &&
+        entry.parentRelation?.kind === "subagent" &&
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.updated",
+        ),
+      2000,
+      childThreadId,
+    );
+
+    expect(childThread.parentRelation).toMatchObject({
+      kind: "subagent",
+      parentThreadId: "thread-1",
+      providerThreadId: "provider-child-early",
+      parentItemId: "parent-item-early",
+      status: "running",
+    });
+    expect(childThread.activities.some((activity) => activity.summary === "Ran command")).toBe(
+      true,
+    );
+  });
+
+  it("projects the subagent launch prompt as the child thread's initial user message", async () => {
+    const rawPrompt =
+      "CHILD_INITIAL_PROMPT_MARKER_TEST: Do not edit files. Return CHILD_OUTPUT_MARKER_TEST.";
+    const harness = await createHarness({
+      textGeneration: {
+        generateThreadTitle: () => Effect.succeed({ title: "Marker test" }),
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    const childThreadId = asThreadId("subagent-prompt-test");
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-subagent-prompt-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-9"),
+      itemId: asItemId("parent-item-prompt-test"),
+      payload: {
+        itemType: "collab_agent_tool_call",
+        status: "in_progress",
+        title: "Subagent",
+        detail: rawPrompt,
+        data: {
+          subagentChildren: [
+            {
+              providerThreadId: "provider-child-prompt-test",
+              childThreadId,
+              parentItemId: "parent-item-prompt-test",
+              titleSeed: rawPrompt,
+            },
+          ],
+        },
+      },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) => entry.parentRelation?.kind === "subagent",
+      2000,
+      childThreadId,
+    );
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-subagent-prompt-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-9"),
+      itemId: asItemId("parent-item-prompt-test"),
+      payload: {
+        itemType: "collab_agent_tool_call",
+        status: "completed",
+        title: "Subagent",
+        detail: rawPrompt,
+        data: {
+          subagentChildren: [
+            {
+              providerThreadId: "provider-child-prompt-test",
+              childThreadId,
+              parentItemId: "parent-item-prompt-test",
+              rawPrompt,
+              titleSeed: rawPrompt,
+            },
+          ],
+        },
+      },
+    });
+
+    const childThread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.role === "user" && message.text === rawPrompt,
+        ),
+      2000,
+      childThreadId,
+    );
+
+    expect(childThread.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "subagent-prompt:subagent-prompt-test:parent-item-prompt-test",
+          role: "user",
+          text: rawPrompt,
+          turnId: null,
+          streaming: false,
+        }),
+      ]),
+    );
+  });
+
+  it("marks a completed subagent child as running again when it is resumed", async () => {
+    const harness = await createHarness({
+      textGeneration: {
+        generateThreadTitle: () => Effect.succeed({ title: "Reusable child" }),
+      },
+    });
+    const childThreadId = asThreadId("subagent-resume-test");
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-subagent-resume-initial-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-parent-initial"),
+      itemId: asItemId("parent-item-initial"),
+      payload: {
+        itemType: "collab_agent_tool_call",
+        status: "in_progress",
+        title: "Subagent",
+        detail: "Run initial check",
+        data: {
+          subagentChildren: [
+            {
+              providerThreadId: "provider-child-resume-test",
+              childThreadId,
+              parentItemId: "parent-item-initial",
+              rawPrompt: "Run initial check",
+              titleSeed: "Run initial check",
+            },
+          ],
+        },
+      },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) => entry.parentRelation?.kind === "subagent",
+      2000,
+      childThreadId,
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-subagent-resume-child-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: childThreadId,
+      turnId: asTurnId("turn-child-initial"),
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-subagent-resume-child-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId: childThreadId,
+      turnId: asTurnId("turn-child-initial"),
+      status: "completed",
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.parentRelation?.kind === "subagent" && entry.parentRelation.status === "completed",
+      2000,
+      childThreadId,
+    );
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-subagent-resume-followup-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:01:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-parent-followup"),
+      itemId: asItemId("parent-item-followup"),
+      payload: {
+        itemType: "collab_agent_tool_call",
+        status: "completed",
+        title: "Subagent",
+        detail: "Run follow-up check",
+        data: {
+          subagentChildren: [
+            {
+              providerThreadId: "provider-child-resume-test",
+              childThreadId,
+              parentItemId: "parent-item-followup",
+              rawPrompt: "Run follow-up check",
+              titleSeed: "Run follow-up check",
+            },
+          ],
+        },
+      },
+    });
+
+    const childThread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.parentRelation?.kind === "subagent" &&
+        entry.parentRelation.status === "running" &&
+        entry.parentRelation.completedAt === null &&
+        entry.parentRelation.parentItemId === "parent-item-followup" &&
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.role === "user" && message.text === "Run follow-up check",
+        ),
+      2000,
+      childThreadId,
+    );
+
+    expect(childThread.parentRelation).toMatchObject({
+      kind: "subagent",
+      parentItemId: "parent-item-followup",
+      status: "running",
+      startedAt: "2026-01-01T00:01:00.000Z",
+      completedAt: null,
+    });
+    expect(childThread.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "subagent-prompt:subagent-resume-test:parent-item-initial",
+          role: "user",
+          text: "Run initial check",
+        }),
+        expect.objectContaining({
+          id: "subagent-prompt:subagent-resume-test:parent-item-followup",
+          role: "user",
+          text: "Run follow-up check",
+        }),
+      ]),
+    );
+  });
+
+  it("does not project a whitespace-only subagent prompt", async () => {
+    const harness = await createHarness({
+      textGeneration: {
+        generateThreadTitle: () => Effect.succeed({ title: "Whitespace child task" }),
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    const childThreadId = asThreadId("subagent-whitespace-prompt-test");
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-subagent-whitespace-prompt-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-9"),
+      itemId: asItemId("parent-item-whitespace-prompt-test"),
+      payload: {
+        itemType: "collab_agent_tool_call",
+        status: "completed",
+        title: "Subagent",
+        detail: "Whitespace child task",
+        data: {
+          subagentChildren: [
+            {
+              providerThreadId: "provider-child-whitespace-prompt-test",
+              childThreadId,
+              parentItemId: "parent-item-whitespace-prompt-test",
+              rawPrompt: "\n  ",
+              titleSeed: "Whitespace child task",
+            },
+          ],
+        },
+      },
+    });
+
+    const childThread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.title === "Whitespace child task",
+      2000,
+      childThreadId,
+    );
+    expect(childThread.messages).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "subagent-prompt:subagent-whitespace-prompt-test:parent-item-whitespace-prompt-test",
+        }),
+      ]),
+    );
+  });
+
+  it("does not fabricate a child prompt from title metadata", async () => {
+    const harness = await createHarness({
+      textGeneration: {
+        generateThreadTitle: () => Effect.succeed({ title: "Summarized child task" }),
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    const childThreadId = asThreadId("subagent-title-only-prompt-test");
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-subagent-title-only-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-9"),
+      itemId: asItemId("parent-item-title-only-test"),
+      payload: {
+        itemType: "collab_agent_tool_call",
+        status: "completed",
+        title: "Subagent",
+        detail: "Summarized child task",
+        data: {
+          subagentChildren: [
+            {
+              providerThreadId: "provider-child-title-only-test",
+              childThreadId,
+              parentItemId: "parent-item-title-only-test",
+              titleSeed: "Summarized child task",
+            },
+          ],
+        },
+      },
+    });
+
+    const childThread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.title === "Summarized child task",
+      2000,
+      childThreadId,
+    );
+    expect(childThread.messages).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "subagent-prompt:subagent-title-only-prompt-test:parent-item-title-only-test",
+        }),
+      ]),
+    );
   });
 
   it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {

@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import {
@@ -34,13 +34,13 @@ describe("host MCP advertisements", () => {
 
   afterEach(() => {
     for (const dir of tempDirs) {
-      fs.rmSync(dir, { recursive: true, force: true });
+      NodeFS.rmSync(dir, { recursive: true, force: true });
     }
     tempDirs = [];
   });
 
   function makeT3Home(): string {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-host-mcp-"));
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-host-mcp-"));
     tempDirs.push(dir);
     return dir;
   }
@@ -68,7 +68,7 @@ describe("host MCP advertisements", () => {
       }),
     });
 
-    expect(fs.readdirSync(resolveHostMcpAdvertisementDir(t3Home)).toSorted()).toEqual([
+    expect(NodeFS.readdirSync(resolveHostMcpAdvertisementDir(t3Home)).toSorted()).toEqual([
       "host-a.json",
       "host-b.json",
     ]);
@@ -105,7 +105,11 @@ describe("host MCP advertisements", () => {
         workspaceFolders: [{ ...workspace, cwd: "/other" }],
       }),
     });
-    fs.writeFileSync(path.join(resolveHostMcpAdvertisementDir(t3Home), "bad.json"), "{", "utf8");
+    NodeFS.writeFileSync(
+      NodePath.join(resolveHostMcpAdvertisementDir(t3Home), "bad.json"),
+      "{",
+      "utf8",
+    );
 
     const result = readHostMcpAdvertisements({
       t3Home,
@@ -115,6 +119,33 @@ describe("host MCP advertisements", () => {
 
     expect(result.malformed).toBe(1);
     expect(result.advertisements.map((entry) => entry.hostId)).toEqual(["live"]);
+  });
+
+  it("orders active workspace hosts before inactive hosts", () => {
+    const t3Home = makeT3Home();
+    writeHostMcpAdvertisement({
+      t3Home,
+      advertisement: createHostMcpAdvertisement({
+        hostId: "host-a",
+        nowMs,
+        mcpServer: server,
+        workspaceFolders: [workspace],
+      }),
+    });
+    writeHostMcpAdvertisement({
+      t3Home,
+      advertisement: createHostMcpAdvertisement({
+        hostId: "host-b",
+        nowMs,
+        mcpServer: { ...server, name: "t3code-vscode-b" },
+        workspaceFolders: [workspace],
+        activeWorkspaceFolderKey: workspace.key,
+      }),
+    });
+
+    expect(
+      readHostMcpAdvertisements({ t3Home, nowMs }).advertisements.map((entry) => entry.hostId),
+    ).toEqual(["host-b", "host-a"]);
   });
 
   it("cleans expired files only after the grace period", () => {
@@ -145,7 +176,7 @@ describe("host MCP advertisements", () => {
     expect(
       cleanupHostMcpAdvertisements({ t3Home, nowMs: nowMs + 70_000, graceMs: 60_000 }),
     ).toEqual({ deleted: 1, errors: 0 });
-    expect(fs.readdirSync(resolveHostMcpAdvertisementDir(t3Home)).toSorted()).toEqual([
+    expect(NodeFS.readdirSync(resolveHostMcpAdvertisementDir(t3Home)).toSorted()).toEqual([
       "live.json",
     ]);
   });

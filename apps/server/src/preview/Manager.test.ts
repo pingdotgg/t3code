@@ -1,7 +1,8 @@
 import { it } from "@effect/vitest";
 import { type PreviewEvent, ThreadId } from "@t3tools/contracts";
 import { PreviewUrlNormalizationError } from "@t3tools/shared/preview";
-import { Effect, PubSub } from "effect";
+import * as Effect from "effect/Effect";
+import * as PubSub from "effect/PubSub";
 import { expect } from "vite-plus/test";
 
 import * as PreviewManager from "./Manager.ts";

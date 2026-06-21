@@ -128,6 +128,9 @@
 @utility pr-safe {
   padding-right: max(env(safe-area-inset-right), 0px);
 }
+@utility max-w-208 {
+  max-width: 52rem;
+}
 
 /* Suppress all transitions during theme changes */
 .no-transitions,
@@ -199,15 +202,86 @@
   }
 }
 
+:root[data-t3-host-theme="vscode"] {
+  color-scheme: light;
+  --background: var(--vscode-editor-background, var(--color-white));
+  --app-chrome-background: var(--vscode-sideBar-background, var(--background));
+  --foreground: var(--vscode-editor-foreground, var(--color-neutral-800));
+  --card: var(--vscode-sideBar-background, var(--background));
+  --card-foreground: var(--vscode-sideBar-foreground, var(--foreground));
+  --popover: var(--vscode-menu-background, var(--card));
+  --popover-foreground: var(--vscode-menu-foreground, var(--foreground));
+  --primary: var(--vscode-button-background, oklch(0.488 0.217 264));
+  --primary-foreground: var(--vscode-button-foreground, var(--color-white));
+  --secondary: var(--vscode-list-inactiveSelectionBackground, --alpha(var(--color-black) / 4%));
+  --secondary-foreground: var(--foreground);
+  --muted: var(--vscode-sideBarSectionHeader-background, --alpha(var(--color-black) / 4%));
+  --muted-foreground: var(
+    --vscode-descriptionForeground,
+    color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-black))
+  );
+  --accent: var(--vscode-list-hoverBackground, --alpha(var(--color-black) / 4%));
+  --accent-foreground: var(--vscode-list-hoverForeground, var(--foreground));
+  --destructive: var(--vscode-errorForeground, var(--color-red-500));
+  --border: var(
+    --vscode-widget-border,
+    var(--vscode-panel-border, --alpha(var(--color-black) / 8%))
+  );
+  --input: var(--vscode-input-border, var(--border));
+  --ring: var(--vscode-focusBorder, var(--primary));
+  --destructive-foreground: var(--vscode-errorForeground, var(--color-red-700));
+  --info: var(--vscode-charts-blue, var(--color-blue-500));
+  --info-foreground: var(--vscode-textLink-foreground, var(--color-blue-700));
+  --success: var(--vscode-testing-iconPassed, var(--color-emerald-500));
+  --success-foreground: var(--vscode-terminal-ansiGreen, var(--color-emerald-700));
+  --warning: var(--vscode-testing-iconQueued, var(--color-amber-500));
+  --warning-foreground: var(--vscode-terminal-ansiYellow, var(--color-amber-700));
+  --t3-font-family: var(--vscode-font-family);
+  --t3-font-size: var(--vscode-font-size);
+  --t3-font-weight: var(--vscode-font-weight);
+  --t3-editor-font-family: var(--vscode-editor-font-family);
+}
+
+:root[data-t3-host-theme="vscode"].dark {
+  color-scheme: dark;
+  --secondary: var(--vscode-list-inactiveSelectionBackground, --alpha(var(--color-white) / 4%));
+  --muted: var(--vscode-sideBarSectionHeader-background, --alpha(var(--color-white) / 4%));
+  --muted-foreground: var(
+    --vscode-descriptionForeground,
+    color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white))
+  );
+  --accent: var(--vscode-list-hoverBackground, --alpha(var(--color-white) / 4%));
+  --border: var(
+    --vscode-widget-border,
+    var(--vscode-panel-border, --alpha(var(--color-white) / 6%))
+  );
+  --destructive-foreground: var(--vscode-errorForeground, var(--color-red-400));
+  --info-foreground: var(--vscode-textLink-foreground, var(--color-blue-400));
+  --success-foreground: var(--vscode-terminal-ansiGreen, var(--color-emerald-400));
+  --warning-foreground: var(--vscode-terminal-ansiYellow, var(--color-amber-400));
+}
+
+.t3-thread-conversation-width {
+  transition: max-width 180ms ease-out;
+}
+
+:root[data-t3-thread-conversation-width="custom"] .t3-thread-conversation-width {
+  max-width: var(--t3-thread-conversation-max-width);
+}
+
 body {
-  font-family:
+  font-family: var(
+    --t3-font-family,
     "DM Sans Variable",
     "DM Sans",
     -apple-system,
     BlinkMacSystemFont,
     "Segoe UI",
     system-ui,
-    sans-serif;
+    sans-serif
+  );
+  font-size: var(--t3-font-size, initial);
+  font-weight: var(--t3-font-weight, initial);
   margin: 0;
   padding: 0;
 }
@@ -247,8 +321,16 @@ body::after {
 
 pre,
 code {
-  font-family:
-    "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  font-family: var(
+    --t3-editor-font-family,
+    "SF Mono",
+    "SFMono-Regular",
+    "JetBrains Mono",
+    Consolas,
+    "Liberation Mono",
+    Menlo,
+    monospace
+  );
 }
 
 /* Window drag region (frameless titlebar) */

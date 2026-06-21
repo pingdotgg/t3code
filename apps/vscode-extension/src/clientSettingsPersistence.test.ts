@@ -1,6 +1,6 @@
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 
 import {
@@ -13,17 +13,17 @@ describe("client settings persistence", () => {
   let t3Home: string;
 
   beforeEach(() => {
-    t3Home = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-vscode-settings-"));
+    t3Home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-vscode-settings-"));
   });
 
   afterEach(() => {
-    fs.rmSync(t3Home, { force: true, recursive: true });
+    NodeFS.rmSync(t3Home, { force: true, recursive: true });
     vi.restoreAllMocks();
   });
 
   it("resolves the desktop-compatible client settings path under T3 home userdata", () => {
     expect(resolveClientSettingsPath(t3Home)).toBe(
-      path.join(t3Home, "userdata", "client-settings.json"),
+      NodePath.join(t3Home, "userdata", "client-settings.json"),
     );
   });
 
@@ -36,15 +36,15 @@ describe("client settings persistence", () => {
 
     await persistence.set(settings);
 
-    expect(JSON.parse(fs.readFileSync(resolveClientSettingsPath(t3Home), "utf8"))).toEqual(
+    expect(JSON.parse(NodeFS.readFileSync(resolveClientSettingsPath(t3Home), "utf8"))).toEqual(
       settings,
     );
     await expect(persistence.get()).resolves.toEqual(settings);
   });
 
   it("reads the legacy wrapped client settings document", async () => {
-    fs.mkdirSync(path.join(t3Home, "userdata"), { recursive: true });
-    fs.writeFileSync(
+    NodeFS.mkdirSync(NodePath.join(t3Home, "userdata"), { recursive: true });
+    NodeFS.writeFileSync(
       resolveClientSettingsPath(t3Home),
       JSON.stringify({ settings: { timestampFormat: "12-hour" } }),
     );

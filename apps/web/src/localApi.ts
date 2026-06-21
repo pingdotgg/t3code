@@ -75,6 +75,7 @@ function createBrowserLocalApi(): LocalApi {
     server: {
       getConfig: () => Promise.reject(unavailableLocalBackendError()),
       refreshProviders: () => Promise.reject(unavailableLocalBackendError()),
+      listProviderSkills: () => Promise.reject(unavailableLocalBackendError()),
       updateProvider: () => Promise.reject(unavailableLocalBackendError()),
       upsertKeybinding: () => Promise.reject(unavailableLocalBackendError()),
       removeKeybinding: () => Promise.reject(unavailableLocalBackendError()),

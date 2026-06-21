@@ -3,6 +3,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type OrchestrationThread,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -22,6 +23,64 @@ import {
 import { projectEvent } from "./projector.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+type ThreadDeleteCommand = Extract<OrchestrationCommand, { type: "thread.delete" }>;
+type ThreadArchiveCommand = Extract<OrchestrationCommand, { type: "thread.archive" }>;
+
+function compareSubagentLifecycleOrder(left: OrchestrationThread, right: OrchestrationThread) {
+  const leftDepth = left.parentRelation?.kind === "subagent" ? left.parentRelation.depth : 0;
+  const rightDepth = right.parentRelation?.kind === "subagent" ? right.parentRelation.depth : 0;
+  if (leftDepth !== rightDepth) {
+    return rightDepth - leftDepth;
+  }
+  return left.id.localeCompare(right.id);
+}
+
+function listActiveSubagentDescendants(
+  readModel: OrchestrationReadModel,
+  parentThreadId: OrchestrationThread["id"],
+): readonly OrchestrationThread[] {
+  const descendants: OrchestrationThread[] = [];
+  const pendingParentThreadIds = new Set<OrchestrationThread["id"]>([parentThreadId]);
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+    for (const thread of readModel.threads) {
+      if (thread.deletedAt !== null || thread.parentRelation?.kind !== "subagent") {
+        continue;
+      }
+      if (!pendingParentThreadIds.has(thread.parentRelation.parentThreadId)) {
+        continue;
+      }
+      if (pendingParentThreadIds.has(thread.id)) {
+        continue;
+      }
+      descendants.push(thread);
+      pendingParentThreadIds.add(thread.id);
+      changed = true;
+    }
+  }
+
+  return descendants.toSorted(compareSubagentLifecycleOrder);
+}
+
+function listProjectLifecycleRootThreads(
+  readModel: OrchestrationReadModel,
+  projectId: OrchestrationThread["projectId"],
+): readonly OrchestrationThread[] {
+  const activeThreads = listThreadsByProjectId(readModel, projectId).filter(
+    (thread) => thread.deletedAt === null,
+  );
+  const activeThreadIds = new Set(activeThreads.map((thread) => thread.id));
+
+  return activeThreads.filter((thread) => {
+    if (thread.parentRelation?.kind !== "subagent") {
+      return true;
+    }
+    return !activeThreadIds.has(thread.parentRelation.parentThreadId);
+  });
+}
 
 function withEventBase(
   input: Pick<OrchestrationCommand, "commandId"> & {
@@ -176,11 +235,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
       if (activeThreads.length > 0) {
+        const lifecycleRootThreads = listProjectLifecycleRootThreads(readModel, command.projectId);
+        const threadsToDelete =
+          lifecycleRootThreads.length > 0
+            ? lifecycleRootThreads
+            : activeThreads.toSorted(compareSubagentLifecycleOrder);
         return yield* decideCommandSequence({
           readModel,
           commands: [
-            ...activeThreads.map(
-              (thread): Extract<OrchestrationCommand, { type: "thread.delete" }> => ({
+            ...threadsToDelete.map(
+              (thread): ThreadDeleteCommand => ({
                 type: "thread.delete",
                 commandId: command.commandId,
                 threadId: thread.id,
@@ -239,6 +303,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          ...(command.parentRelation !== undefined
+            ? { parentRelation: command.parentRelation }
+            : {}),
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -251,6 +318,22 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const descendantDeleteCommands = listActiveSubagentDescendants(
+        readModel,
+        command.threadId,
+      ).map(
+        (thread): ThreadDeleteCommand => ({
+          type: "thread.delete",
+          commandId: command.commandId,
+          threadId: thread.id,
+        }),
+      );
+      if (descendantDeleteCommands.length > 0) {
+        return yield* decideCommandSequence({
+          readModel,
+          commands: [...descendantDeleteCommands, command],
+        });
+      }
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -273,6 +356,21 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const descendantArchiveCommands = listActiveSubagentDescendants(readModel, command.threadId)
+        .filter((thread) => thread.archivedAt === null)
+        .map(
+          (thread): ThreadArchiveCommand => ({
+            type: "thread.archive",
+            commandId: command.commandId,
+            threadId: thread.id,
+          }),
+        );
+      if (descendantArchiveCommands.length > 0) {
+        return yield* decideCommandSequence({
+          readModel,
+          commands: [...descendantArchiveCommands, command],
+        });
+      }
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -335,6 +433,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(command.branch !== undefined ? { branch: command.branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.parentRelation !== undefined
+            ? { parentRelation: command.parentRelation }
+            : {}),
           updatedAt: occurredAt,
         },
       };
@@ -646,6 +747,33 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           messageId: command.messageId,
           role: "assistant",
           text: "",
+          turnId: command.turnId ?? null,
+          streaming: false,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.message.user.append": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          role: "user",
+          text: command.text,
           turnId: command.turnId ?? null,
           streaming: false,
           createdAt: command.createdAt,

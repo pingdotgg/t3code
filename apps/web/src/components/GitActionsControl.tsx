@@ -75,7 +75,7 @@ import {
   useSourceControlPublishRepositoryAction,
   useVcsInitAction,
   useVcsPullAction,
-} from "~/lib/sourceControlActions";
+} from "~/state/sourceControlActions";
 import { useThread } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -219,7 +219,7 @@ function getPublishProviderReadiness(input: {
   if (!discovered) {
     return {
       ready: false,
-      hint: "Provider status unavailable. Open Settings -> Source Control and rescan.",
+      hint: "Provider status unavailable. Open Settings -> Version Control and rescan.",
     };
   }
   if (discovered.status !== "available") {
@@ -230,7 +230,7 @@ function getPublishProviderReadiness(input: {
       ready: false,
       hint:
         Option.getOrNull(discovered.auth.detail) ??
-        `${discovered.label} is not authenticated. Open Settings -> Source Control for setup guidance.`,
+        `${discovered.label} is not authenticated. Open Settings -> Version Control for setup guidance.`,
     };
   }
   return { ready: true, hint: null };
@@ -654,7 +654,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                             />
                             <TooltipPopup side="top" align="end" className="max-w-72">
                               {readiness.hint ??
-                                "Open Settings -> Source Control to configure this provider."}
+                                "Open Settings -> Version Control to configure this provider."}
                             </TooltipPopup>
                           </Tooltip>
                         </div>

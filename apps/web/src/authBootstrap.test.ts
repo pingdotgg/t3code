@@ -4,6 +4,7 @@ import {
   type AuthCreatePairingCredentialInput,
   type AuthSessionState,
   type DesktopBridge,
+  type T3HostBridge,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -19,6 +20,7 @@ type TestWindow = {
     replaceState: (_data: unknown, _unused: string, url: string) => void;
   };
   desktopBridge?: DesktopBridge;
+  t3HostBridge?: T3HostBridge;
 };
 
 const LOOPBACK_AUTH = {
@@ -151,6 +153,61 @@ describe("resolveInitialServerAuthGateState", () => {
 
     expect(testApi.calls.session).toBe(2);
     expect(testApi.calls.browserSession).toEqual([{ credential: "desktop-bootstrap-token" }]);
+  });
+
+  it("uses a host bearer token as an already-authenticated VS Code session", async () => {
+    const testApi = await installAuthApi({
+      session: () => authenticatedSession(DESKTOP_AUTH),
+      browserSession: () => Effect.die("bootstrap token should not be consumed"),
+    });
+
+    const testWindow = installTestBrowser("http://localhost/");
+    testWindow.t3HostBridge = {
+      getLocalEnvironmentBootstrap: () => ({
+        label: "VS Code environment",
+        httpBaseUrl: "http://localhost:3773",
+        wsBaseUrl: "ws://localhost:3773",
+        bootstrapToken: "already-consumed-bootstrap-token",
+        bearerToken: "host-bearer-token",
+      }),
+    };
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "authenticated",
+    });
+    expect(testApi.calls.session).toBe(1);
+    expect(testApi.calls.browserSession).toEqual([]);
+  });
+
+  it("uses a t3 host bridge bootstrap credential when no host bearer token exists", async () => {
+    const nextSession = sequence(
+      unauthenticatedSession(DESKTOP_AUTH),
+      authenticatedSession(DESKTOP_AUTH),
+    );
+    const testApi = await installAuthApi({
+      session: nextSession,
+      browserSession: () => Effect.succeed(browserSession(["orchestration:read", "access:write"])),
+    });
+
+    const testWindow = installTestBrowser("http://localhost/");
+    testWindow.t3HostBridge = {
+      getLocalEnvironmentBootstrap: () => ({
+        label: "VS Code environment",
+        httpBaseUrl: "http://localhost:3773",
+        wsBaseUrl: "ws://localhost:3773",
+        bootstrapToken: "host-bootstrap-token",
+      }),
+    };
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "authenticated",
+    });
+    expect(testApi.calls.browserSession).toEqual([{ credential: "host-bootstrap-token" }]);
+    expect(testApi.calls.session).toBe(2);
   });
 
   it("uses https urls when the primary environment uses wss", async () => {

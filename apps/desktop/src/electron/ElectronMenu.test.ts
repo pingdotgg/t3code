@@ -103,6 +103,45 @@ describe("ElectronMenu", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
+  it.effect("suppresses leading duplicate and trailing separators", () =>
+    Effect.gen(function* () {
+      buildFromTemplateMock.mockImplementation(() => ({
+        popup: (options: Electron.PopupOptions) => {
+          options.callback?.();
+        },
+      }));
+
+      const electronMenu = yield* ElectronMenu.ElectronMenu;
+      yield* electronMenu.showContextMenu({
+        window: {} as Electron.BrowserWindow,
+        items: [
+          { id: "leading", label: "", separator: true },
+          { id: "copy", label: "Copy" },
+          { id: "separator-1", label: "", separator: true },
+          { id: "separator-2", label: "", separator: true },
+          { id: "paste", label: "Paste" },
+          { id: "trailing", label: "", separator: true },
+        ],
+        position: Option.none(),
+      });
+
+      const template = buildFromTemplateMock.mock.calls[0]?.[0] as
+        | Electron.MenuItemConstructorOptions[]
+        | undefined;
+      assert.deepEqual(
+        template?.map((item) => ({
+          label: item.label,
+          type: item.type,
+        })),
+        [
+          { label: "Copy", type: undefined },
+          { label: undefined, type: "separator" },
+          { label: "Paste", type: undefined },
+        ],
+      );
+    }).pipe(Effect.provide(ElectronMenu.layer)),
+  );
+
   it.effect("defers popupTemplate side effects until the returned Effect runs", () =>
     Effect.gen(function* () {
       const popupMock = vi.fn();

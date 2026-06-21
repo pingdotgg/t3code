@@ -207,6 +207,8 @@ export class AzureDevOpsCli extends Context.Service<
       readonly cwd: string;
       readonly headSelector: string;
       readonly source?: SourceControlProvider.SourceControlRefSelector;
+      readonly repository?: string;
+      readonly project?: string;
       readonly state: "open" | "closed" | "merged" | "all";
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<NormalizedAzureDevOpsPullRequestRecord>, AzureDevOpsCliError>;
@@ -248,6 +250,7 @@ export class AzureDevOpsCli extends Context.Service<
     }) => Effect.Effect<void, AzureDevOpsCliError>;
   }
 >()("t3/sourceControl/AzureDevOpsCli") {}
+export type AzureDevOpsCliShape = AzureDevOpsCli["Service"];
 
 function normalizeChangeRequestId(reference: string): string {
   const trimmed = reference.trim().replace(/^#/, "");
@@ -377,6 +380,8 @@ export const make = Effect.gen(function* () {
           "list",
           "--detect",
           "true",
+          ...(input.repository ? ["--repository", input.repository] : []),
+          ...(input.project ? ["--project", input.project] : []),
           "--source-branch",
           SourceControlProvider.sourceBranch(input),
           "--status",

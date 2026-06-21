@@ -93,6 +93,7 @@ export class GitWorkflowService extends Context.Service<
     }) => Effect.Effect<{ readonly branch: string }, GitManagerServiceError>;
   }
 >()("t3/git/GitWorkflowService") {}
+export type GitWorkflowServiceShape = GitWorkflowService["Service"];
 
 function nonRepositoryLocalStatus(): VcsStatusLocalResult {
   return {

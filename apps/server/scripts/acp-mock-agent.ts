@@ -13,6 +13,7 @@ import type * as AcpSchema from "effect-acp/schema";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
+const cwdLogPath = process.env.T3_ACP_CWD_LOG_PATH;
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -29,6 +30,10 @@ const permissionOptionIds = {
   rejectOnce: process.env.T3_ACP_REJECT_ONCE_OPTION_ID ?? "reject-once",
 };
 const sessionId = "mock-session-1";
+
+if (cwdLogPath) {
+  NodeFS.appendFileSync(cwdLogPath, `${process.cwd()}\n`, "utf8");
+}
 
 let currentModeId = "ask";
 let currentModelId = "default";

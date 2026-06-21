@@ -51,7 +51,7 @@ it.effect("maps Bitbucket PR summaries into provider-neutral change requests", (
   }),
 );
 
-it.effect("adds repository context while retaining Bitbucket API causes", () =>
+it.effect("adds repository context while bounding Bitbucket API causes", () =>
   Effect.gen(function* () {
     const upstreamCause = new Error("raw upstream failure");
     const cause = new BitbucketApi.BitbucketRequestError({
@@ -84,7 +84,12 @@ it.effect("adds repository context while retaining Bitbucket API causes", () =>
         detail: "Failed to get repository clone URLs.",
       },
     );
-    assert.strictEqual(error.cause, cause);
+    assert.deepStrictEqual(error.cause, {
+      _tag: "BitbucketRequestError",
+      name: "BitbucketRequestError",
+      operation: "getRepository",
+      message: "Bitbucket API failed in getRepository: Failed to send the Bitbucket request.",
+    });
     assert.equal(error.message.includes(upstreamCause.message), false);
   }),
 );

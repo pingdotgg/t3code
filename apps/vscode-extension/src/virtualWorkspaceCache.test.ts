@@ -1,6 +1,6 @@
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 
 import {
@@ -15,11 +15,11 @@ describe("virtual workspace cache", () => {
   let t3Home: string;
 
   beforeEach(() => {
-    t3Home = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-virtual-workspaces-"));
+    t3Home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-virtual-workspaces-"));
   });
 
   afterEach(() => {
-    fs.rmSync(t3Home, { force: true, recursive: true });
+    NodeFS.rmSync(t3Home, { force: true, recursive: true });
     vi.restoreAllMocks();
   });
 
@@ -30,7 +30,7 @@ describe("virtual workspace cache", () => {
       if (!checkoutDir) {
         throw new Error("missing checkout dir");
       }
-      fs.mkdirSync(path.join(checkoutDir, ".git"), { recursive: true });
+      NodeFS.mkdirSync(NodePath.join(checkoutDir, ".git"), { recursive: true });
     });
 
     const checkoutDir = await ensureGithubVirtualWorkspaceClone({
@@ -40,7 +40,7 @@ describe("virtual workspace cache", () => {
       cloneUrl: "https://github.com/microsoft/vscode.git",
       t3Home,
       dependencies: {
-        mkdirSync: fs.mkdirSync,
+        mkdirSync: NodeFS.mkdirSync,
         runCommand,
       },
       outputChannel: { appendLine: vi.fn() },
@@ -80,7 +80,7 @@ describe("virtual workspace cache", () => {
       repository: "vscode",
       t3Home,
     });
-    fs.mkdirSync(path.join(checkoutDir, ".git"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(checkoutDir, ".git"), { recursive: true });
     writeMetadata(checkoutDir, {
       createdAt: "2026-05-01T10:00:00.000Z",
       lastUsedAt: "2026-05-01T10:00:00.000Z",
@@ -97,7 +97,7 @@ describe("virtual workspace cache", () => {
         cloneUrl: "https://github.com/microsoft/vscode.git",
         t3Home,
         dependencies: {
-          mkdirSync: fs.mkdirSync,
+          mkdirSync: NodeFS.mkdirSync,
           runCommand,
         },
         outputChannel: { appendLine: vi.fn() },
@@ -146,8 +146,8 @@ describe("virtual workspace cache", () => {
         lastUsedAt: new Date(Date.UTC(2026, 3, 1, index)).toISOString(),
       }),
     );
-    const unownedDir = path.join(t3Home, "virtual-workspaces", "github", "manual-checkout");
-    fs.mkdirSync(unownedDir, { recursive: true });
+    const unownedDir = NodePath.join(t3Home, "virtual-workspaces", "github", "manual-checkout");
+    NodeFS.mkdirSync(unownedDir, { recursive: true });
 
     const result = pruneVirtualWorkspaceCache({
       t3Home,
@@ -156,12 +156,12 @@ describe("virtual workspace cache", () => {
     });
 
     expect(result).toEqual({ deleted: 2, kept: 11, errors: 0 });
-    expect(fs.existsSync(checkoutDirs[0] as string)).toBe(true);
-    expect(fs.existsSync(checkoutDirs[1] as string)).toBe(false);
-    expect(fs.existsSync(checkoutDirs[2] as string)).toBe(false);
-    expect(fs.existsSync(checkoutDirs[3] as string)).toBe(true);
-    expect(fs.existsSync(checkoutDirs[12] as string)).toBe(true);
-    expect(fs.existsSync(unownedDir)).toBe(true);
+    expect(NodeFS.existsSync(checkoutDirs[0] as string)).toBe(true);
+    expect(NodeFS.existsSync(checkoutDirs[1] as string)).toBe(false);
+    expect(NodeFS.existsSync(checkoutDirs[2] as string)).toBe(false);
+    expect(NodeFS.existsSync(checkoutDirs[3] as string)).toBe(true);
+    expect(NodeFS.existsSync(checkoutDirs[12] as string)).toBe(true);
+    expect(NodeFS.existsSync(unownedDir)).toBe(true);
   });
 
   it("does not prune inactive checkouts that were used inside the retention window", () => {
@@ -189,8 +189,8 @@ describe("virtual workspace cache", () => {
     });
 
     expect(result).toEqual({ deleted: 1, kept: 11, errors: 0 });
-    expect(fs.existsSync(staleCheckout)).toBe(false);
-    expect(fs.existsSync(freshCheckout)).toBe(true);
+    expect(NodeFS.existsSync(staleCheckout)).toBe(false);
+    expect(NodeFS.existsSync(freshCheckout)).toBe(true);
   });
 
   it("cleans all inactive cache-owned checkouts and keeps active or unowned directories", () => {
@@ -204,8 +204,8 @@ describe("virtual workspace cache", () => {
       name: "inactive",
       lastUsedAt: "2026-05-01T10:00:00.000Z",
     });
-    const unownedDir = path.join(t3Home, "virtual-workspaces", "github", "manual-checkout");
-    fs.mkdirSync(unownedDir, { recursive: true });
+    const unownedDir = NodePath.join(t3Home, "virtual-workspaces", "github", "manual-checkout");
+    NodeFS.mkdirSync(unownedDir, { recursive: true });
 
     const result = cleanVirtualWorkspaceCache({
       t3Home,
@@ -213,9 +213,9 @@ describe("virtual workspace cache", () => {
     });
 
     expect(result).toEqual({ deleted: 1, kept: 1, errors: 0 });
-    expect(fs.existsSync(activeCheckout)).toBe(true);
-    expect(fs.existsSync(inactiveCheckout)).toBe(false);
-    expect(fs.existsSync(unownedDir)).toBe(true);
+    expect(NodeFS.existsSync(activeCheckout)).toBe(true);
+    expect(NodeFS.existsSync(inactiveCheckout)).toBe(false);
+    expect(NodeFS.existsSync(unownedDir)).toBe(true);
   });
 });
 
@@ -224,8 +224,8 @@ function createCacheEntry(input: {
   readonly name: string;
   readonly lastUsedAt: string;
 }): string {
-  const checkoutDir = path.join(input.t3Home, "virtual-workspaces", "github", input.name);
-  fs.mkdirSync(path.join(checkoutDir, ".git"), { recursive: true });
+  const checkoutDir = NodePath.join(input.t3Home, "virtual-workspaces", "github", input.name);
+  NodeFS.mkdirSync(NodePath.join(checkoutDir, ".git"), { recursive: true });
   writeMetadata(checkoutDir, {
     createdAt: input.lastUsedAt,
     lastUsedAt: input.lastUsedAt,
@@ -244,9 +244,9 @@ function writeMetadata(
     readonly workspaceFolderKey: string;
   },
 ): void {
-  fs.mkdirSync(checkoutDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(checkoutDir, VIRTUAL_WORKSPACE_METADATA_FILE),
+  NodeFS.mkdirSync(checkoutDir, { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(checkoutDir, VIRTUAL_WORKSPACE_METADATA_FILE),
     `${JSON.stringify(
       {
         version: 1,
@@ -262,6 +262,6 @@ function writeMetadata(
 
 function readMetadata(checkoutDir: string): unknown {
   return JSON.parse(
-    fs.readFileSync(path.join(checkoutDir, VIRTUAL_WORKSPACE_METADATA_FILE), "utf8"),
+    NodeFS.readFileSync(NodePath.join(checkoutDir, VIRTUAL_WORKSPACE_METADATA_FILE), "utf8"),
   );
 }

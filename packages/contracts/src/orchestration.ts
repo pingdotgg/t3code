@@ -341,6 +341,28 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+export const OrchestrationThreadParentRelation = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("root"),
+    rootThreadId: ThreadId,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("subagent"),
+    rootThreadId: ThreadId,
+    parentThreadId: ThreadId,
+    parentTurnId: Schema.NullOr(TurnId),
+    parentItemId: ProviderItemId,
+    parentActivitySequence: NonNegativeInt,
+    providerThreadId: TrimmedNonEmptyString,
+    titleSeed: Schema.NullOr(TrimmedNonEmptyString),
+    depth: NonNegativeInt,
+    startedAt: IsoDateTime,
+    completedAt: Schema.NullOr(IsoDateTime),
+    status: Schema.Literals(["running", "completed", "errored", "interrupted", "stopped"]),
+  }),
+]);
+export type OrchestrationThreadParentRelation = typeof OrchestrationThreadParentRelation.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -357,6 +379,7 @@ export const OrchestrationThread = Schema.Struct({
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   deletedAt: Schema.NullOr(IsoDateTime),
+  parentRelation: Schema.optional(OrchestrationThreadParentRelation),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -402,6 +425,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  parentRelation: Schema.optional(OrchestrationThreadParentRelation),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -503,6 +527,7 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  parentRelation: Schema.optional(OrchestrationThreadParentRelation),
   createdAt: IsoDateTime,
 });
 
@@ -532,6 +557,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  parentRelation: Schema.optional(OrchestrationThreadParentRelation),
 });
 
 const ThreadRuntimeModeSetCommand = Schema.Struct({
@@ -657,7 +683,7 @@ const ThreadSessionStopCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-const DispatchableClientOrchestrationCommand = Schema.Union([
+export const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
@@ -725,6 +751,16 @@ const ThreadMessageAssistantCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadMessageUserAppendCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.user.append"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  text: TrimmedNonEmptyString,
+  turnId: Schema.optional(TurnId),
+  createdAt: IsoDateTime,
+});
+
 const ThreadProposedPlanUpsertCommand = Schema.Struct({
   type: Schema.Literal("thread.proposed-plan.upsert"),
   commandId: CommandId,
@@ -767,6 +803,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
+  ThreadMessageUserAppendCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
@@ -847,6 +884,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  parentRelation: Schema.optional(OrchestrationThreadParentRelation),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -873,6 +911,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  parentRelation: Schema.optional(OrchestrationThreadParentRelation),
   updatedAt: IsoDateTime,
 });
 

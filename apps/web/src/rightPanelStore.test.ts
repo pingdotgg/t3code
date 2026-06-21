@@ -117,6 +117,20 @@ describe("rightPanelStore", () => {
     ).toHaveLength(2);
   });
 
+  it("opens source control as a singleton surface", () => {
+    useRightPanelStore.getState().open(refA, "source-control");
+    useRightPanelStore.getState().open(refA, "source-control");
+
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      "source-control",
+    );
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "source-control",
+      surfaces: [{ id: "source-control", kind: "source-control" }],
+    });
+  });
+
   it("keeps files as a singleton surface", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().open(refA, "files");
@@ -251,6 +265,31 @@ describe("rightPanelStore", () => {
     useRightPanelStore.getState().toggle(refA, "preview");
     useRightPanelStore.getState().toggle(refA, "plan");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("plan");
+  });
+
+  it("keeps valid source control surfaces during migration", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "source-control",
+            surfaces: [
+              { id: "source-control", kind: "source-control" },
+              { id: "unexpected", kind: "source-control" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "source-control",
+          surfaces: [{ id: "source-control", kind: "source-control" }],
+        },
+      },
+    });
   });
 
   it("removeThread clears persisted state", () => {

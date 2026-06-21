@@ -1,4 +1,5 @@
 import type { EnvironmentId, VcsRef, ProjectId } from "@t3tools/contracts";
+import type { T3HostDisplayPreferences } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 export {
   dedupeRemoteBranchesWithLocalMatches,
@@ -67,6 +68,34 @@ export function resolveEffectiveEnvMode(input: {
     return draftThreadEnvMode === "worktree" ? "worktree" : "local";
   }
   return activeWorktreePath ? "worktree" : "local";
+}
+
+export function resolveBranchToolbarVisibility(input: {
+  readonly isMobile: boolean;
+  readonly showEnvironmentPicker: boolean;
+  readonly displayPreferences: Pick<
+    T3HostDisplayPreferences,
+    "showCheckoutModeIndicator" | "showBranchSelector"
+  >;
+}): {
+  readonly showMobileRunContextSelector: boolean;
+  readonly showDesktopRunContextSelector: boolean;
+  readonly showBranchSelector: boolean;
+  readonly showToolbar: boolean;
+} {
+  const showRunContextSelector =
+    input.showEnvironmentPicker || input.displayPreferences.showCheckoutModeIndicator;
+  const showMobileRunContextSelector = input.isMobile && showRunContextSelector;
+  const showDesktopRunContextSelector = !input.isMobile && showRunContextSelector;
+  const showBranchSelector = input.displayPreferences.showBranchSelector;
+
+  return {
+    showMobileRunContextSelector,
+    showDesktopRunContextSelector,
+    showBranchSelector,
+    showToolbar:
+      showMobileRunContextSelector || showDesktopRunContextSelector || showBranchSelector,
+  };
 }
 
 export function resolveDraftEnvModeAfterBranchChange(input: {

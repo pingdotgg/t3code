@@ -1,6 +1,8 @@
 import {
   type EnvironmentId,
   isProviderDriverKind,
+  type EnvironmentApi,
+  type KeybindingCommand,
   ProjectId,
   type ModelSelection,
   type ProviderDriverKind,
@@ -9,6 +11,7 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { type ChatMessage, type SessionPhase, type Thread } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
@@ -26,6 +29,69 @@ export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+
+const TERMINAL_KEYBINDING_COMMANDS = new Set<KeybindingCommand>([
+  "terminal.toggle",
+  "terminal.split",
+  "terminal.new",
+  "terminal.close",
+]);
+type CloseTerminalSessionApi = {
+  readonly terminal: Pick<EnvironmentApi["terminal"], "clear" | "write"> &
+    Partial<Pick<EnvironmentApi["terminal"], "close">>;
+};
+
+export function isTerminalKeybindingCommand(command: KeybindingCommand): boolean {
+  return TERMINAL_KEYBINDING_COMMANDS.has(command);
+}
+
+export function terminalThreadRefsToCloseWhenDisabled(input: {
+  readonly enableTerminal: boolean;
+  readonly openTerminalThreadKeys: readonly string[];
+}): ScopedThreadRef[] {
+  if (input.enableTerminal) {
+    return [];
+  }
+  return input.openTerminalThreadKeys.map(parseScopedThreadKey).filter(isScopedThreadRef);
+}
+
+export function closeTerminalSession(input: {
+  readonly api: CloseTerminalSessionApi;
+  readonly threadId: ThreadId;
+  readonly terminalId?: string;
+  readonly isFinalTerminal?: boolean;
+}): void {
+  const fallbackExitWrite = () => {
+    if (!input.terminalId) {
+      return Promise.resolve();
+    }
+    return input.api.terminal
+      .write({ threadId: input.threadId, terminalId: input.terminalId, data: "exit\n" })
+      .catch(() => undefined);
+  };
+  const terminalClose = input.api.terminal.close;
+
+  if (typeof terminalClose === "function") {
+    void (async () => {
+      if (input.terminalId && input.isFinalTerminal) {
+        await input.api.terminal
+          .clear({ threadId: input.threadId, terminalId: input.terminalId })
+          .catch(() => undefined);
+      }
+      await terminalClose({
+        threadId: input.threadId,
+        ...(input.terminalId ? { terminalId: input.terminalId } : {}),
+        deleteHistory: true,
+      });
+    })().catch(() => fallbackExitWrite());
+  } else {
+    void fallbackExitWrite();
+  }
+}
+
+function isScopedThreadRef(threadRef: ScopedThreadRef | null): threadRef is ScopedThreadRef {
+  return threadRef !== null;
+}
 
 export function buildLocalDraftThread(
   threadId: ThreadId,
@@ -288,6 +354,12 @@ export function deriveLockedProvider(input: {
       ? input.selectedProvider
       : null;
   return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
+}
+
+export function resolveComposerLockedProvider(input: {
+  lockedProvider: ProviderDriverKind | null;
+}): ProviderDriverKind | null {
+  return input.lockedProvider;
 }
 
 export function getStartedThreadModelChangeBlockReason(input: {

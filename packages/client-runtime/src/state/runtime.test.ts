@@ -140,18 +140,32 @@ describe("atom command result helpers", () => {
 });
 
 describe("environmentRpcKey", () => {
-  it("isolates subscription state by environment and cwd", () => {
+  it("isolates query state by environment and full rpc input", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const originalTarget = {
       environmentId,
-      input: { cwd: "/repo/original" },
+      input: {
+        instanceId: "codex",
+        cwd: "/repo/original",
+      },
     };
     const nextTarget = {
       environmentId,
-      input: { cwd: "/repo/next" },
+      input: {
+        instanceId: "codex",
+        cwd: "/repo/next",
+      },
+    };
+    const nextProviderTarget = {
+      environmentId,
+      input: {
+        instanceId: "claude",
+        cwd: "/repo/original",
+      },
     };
 
     expect(environmentRpcKey(originalTarget)).not.toBe(environmentRpcKey(nextTarget));
+    expect(environmentRpcKey(originalTarget)).not.toBe(environmentRpcKey(nextProviderTarget));
     expect(environmentRpcKey(originalTarget)).toBe(environmentRpcKey({ ...originalTarget }));
     expect(
       environmentRpcKey({
@@ -292,6 +306,43 @@ describe("executeAtomQuery", () => {
       expect(first.value).toBe("first");
       expect(second.value).toBe("second");
     }
+
+    registry.dispose();
+  });
+
+  it("forces cached swr queries to refresh before resolving", async () => {
+    let reads = 0;
+    const atom = Atom.make(Effect.sync(() => ++reads)).pipe(Atom.swr({ staleTime: 60_000 }));
+    const registry = AtomRegistry.make();
+
+    const first = await executeAtomQuery(registry, atom);
+    const cached = await executeAtomQuery(registry, atom);
+    const refreshed = await executeAtomQuery(registry, atom, { forceRefresh: true });
+
+    expect(first._tag).toBe("Success");
+    expect(cached._tag).toBe("Success");
+    expect(refreshed._tag).toBe("Success");
+    if (first._tag === "Success" && cached._tag === "Success" && refreshed._tag === "Success") {
+      expect(first.value).toBe(1);
+      expect(cached.value).toBe(1);
+      expect(refreshed.value).toBe(2);
+    }
+
+    registry.dispose();
+  });
+
+  it("does not duplicate an uncached first query when forcing refreshes", async () => {
+    let reads = 0;
+    const atom = Atom.make(Effect.sync(() => ++reads)).pipe(Atom.swr({ staleTime: 60_000 }));
+    const registry = AtomRegistry.make();
+
+    const first = await executeAtomQuery(registry, atom, { forceRefresh: true });
+
+    expect(first._tag).toBe("Success");
+    if (first._tag === "Success") {
+      expect(first.value).toBe(1);
+    }
+    expect(reads).toBe(1);
 
     registry.dispose();
   });

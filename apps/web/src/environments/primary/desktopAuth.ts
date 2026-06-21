@@ -1,14 +1,14 @@
-import { getHostBearerToken } from "./hostBootstrap";
+import { getDesktopManagedBearerToken } from "./hostBootstrap";
 
 let desktopBearerTokenPromise: Promise<string> | null = null;
 
 export function readDesktopPrimaryBearerToken(): Promise<string | null> {
-  if (typeof window === "undefined") {
-    return Promise.resolve(null);
-  }
-  const hostBearerToken = getHostBearerToken();
+  const hostBearerToken = getDesktopManagedBearerToken();
   if (hostBearerToken) {
     return Promise.resolve(hostBearerToken);
+  }
+  if (typeof window === "undefined") {
+    return Promise.resolve(null);
   }
   const bridge = window.desktopBridge;
   if (!bridge) {

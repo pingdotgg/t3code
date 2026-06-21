@@ -1,7 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { shouldShowOpenInPicker } from "./ChatHeader";
+import { shouldRenderOpenInPicker, shouldShowOpenInPicker } from "./ChatHeader";
 
 describe("shouldShowOpenInPicker", () => {
   const primaryEnvironmentId = EnvironmentId.make("environment-primary");
@@ -44,5 +44,31 @@ describe("shouldShowOpenInPicker", () => {
         primaryEnvironmentId,
       }),
     ).toBe(false);
+  });
+});
+
+describe("host display preferences", () => {
+  const primaryEnvironmentId = EnvironmentId.make("environment-primary");
+
+  it("hides the open picker when the host disables it even for eligible primary projects", () => {
+    expect(
+      shouldRenderOpenInPicker({
+        hostShowOpenInPicker: false,
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: primaryEnvironmentId,
+        primaryEnvironmentId,
+      }),
+    ).toBe(false);
+  });
+
+  it("shows the open picker when both host preference and project context allow it", () => {
+    expect(
+      shouldRenderOpenInPicker({
+        hostShowOpenInPicker: true,
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: primaryEnvironmentId,
+        primaryEnvironmentId,
+      }),
+    ).toBe(true);
   });
 });

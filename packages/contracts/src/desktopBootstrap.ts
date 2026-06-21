@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { PortSchema, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 
 export const MIN_MCP_TOOL_TIMEOUT_SEC = 5;
 
@@ -47,6 +48,41 @@ export const HostMcpAdvertisement = Schema.Struct({
   activeWorkspaceFolderKey: Schema.optional(TrimmedNonEmptyString),
 });
 export type HostMcpAdvertisement = typeof HostMcpAdvertisement.Type;
+
+export const LOCAL_BACKEND_ADVERTISEMENT_VERSION = 1;
+
+export const LocalBackendPeerCapabilities = Schema.Struct({
+  descriptor: Schema.Boolean,
+  health: Schema.Boolean,
+  shellSnapshot: Schema.Boolean,
+  orchestrationEvents: Schema.Boolean,
+  commandRouting: Schema.Boolean,
+});
+export type LocalBackendPeerCapabilities = typeof LocalBackendPeerCapabilities.Type;
+
+export const LocalBackendAdvertisement = Schema.Struct({
+  version: Schema.Literal(LOCAL_BACKEND_ADVERTISEMENT_VERSION),
+  backendId: TrimmedNonEmptyString,
+  hostKind: Schema.Literal("vscode"),
+  updatedAt: TrimmedNonEmptyString,
+  expiresAt: TrimmedNonEmptyString,
+  httpBaseUrl: TrimmedNonEmptyString,
+  bearerToken: TrimmedNonEmptyString,
+  workspaceFolders: Schema.Array(DesktopBootstrapWorkspaceFolder),
+  activeWorkspaceFolderKey: Schema.optional(TrimmedNonEmptyString),
+  capabilities: LocalBackendPeerCapabilities,
+});
+export type LocalBackendAdvertisement = typeof LocalBackendAdvertisement.Type;
+
+export const LocalBackendPeerDescriptor = Schema.Struct({
+  version: Schema.Literal(1),
+  hostKind: Schema.Literal("vscode"),
+  environment: ExecutionEnvironmentDescriptor,
+  workspaceFolders: Schema.Array(DesktopBootstrapWorkspaceFolder),
+  activeWorkspaceFolderKey: Schema.optional(TrimmedNonEmptyString),
+  capabilities: LocalBackendPeerCapabilities,
+});
+export type LocalBackendPeerDescriptor = typeof LocalBackendPeerDescriptor.Type;
 
 export const DesktopBackendBootstrap = Schema.Struct({
   mode: Schema.Literal("desktop"),

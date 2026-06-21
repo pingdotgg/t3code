@@ -100,6 +100,57 @@ function makeTestLayer(state: {
 }
 
 describe("VcsStatusBroadcaster", () => {
+  it("ignores Git internal watcher paths", () => {
+    assert.isTrue(VcsStatusBroadcaster.shouldIgnoreWatchEventPath(".git/FETCH_HEAD"));
+    assert.isTrue(VcsStatusBroadcaster.shouldIgnoreWatchEventPath(".git/logs/HEAD"));
+    assert.isFalse(VcsStatusBroadcaster.shouldIgnoreWatchEventPath("src/.gitkeep"));
+    assert.isFalse(VcsStatusBroadcaster.shouldIgnoreWatchEventPath("src/app.ts"));
+  });
+
+  it.effect("batches watcher refresh decisions after ignored roots are filtered", () =>
+    Effect.gen(function* () {
+      const checkedBatches: string[][] = [];
+      const refreshes = Array.from(
+        yield* Stream.runCollect(
+          VcsStatusBroadcaster.localWatchRefreshSignals(
+            Stream.make("src/app.ts", "dist/app.js"),
+            (relativePaths) =>
+              Effect.sync(() => {
+                checkedBatches.push([...relativePaths]);
+                return relativePaths.some((relativePath) => relativePath !== "dist/app.js");
+              }),
+            Duration.millis(1),
+          ),
+        ).pipe(Effect.timeout("2 seconds")),
+      );
+
+      assert.deepStrictEqual(checkedBatches, [["src/app.ts", "dist/app.js"]]);
+      assert.equal(refreshes.length, 1);
+    }),
+  );
+
+  it.effect("does not refresh when every debounced watcher path is ignored", () =>
+    Effect.gen(function* () {
+      const checkedBatches: string[][] = [];
+      const refreshes = Array.from(
+        yield* Stream.runCollect(
+          VcsStatusBroadcaster.localWatchRefreshSignals(
+            Stream.make(".git/FETCH_HEAD", "dist/app.js", "dist/app.css"),
+            (relativePaths) =>
+              Effect.sync(() => {
+                checkedBatches.push([...relativePaths]);
+                return false;
+              }),
+            Duration.millis(1),
+          ),
+        ).pipe(Effect.timeout("2 seconds")),
+      );
+
+      assert.deepStrictEqual(checkedBatches, [["dist/app.js", "dist/app.css"]]);
+      assert.deepStrictEqual(refreshes, []);
+    }),
+  );
+
   it.effect("reuses the cached VCS status across repeated reads", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,

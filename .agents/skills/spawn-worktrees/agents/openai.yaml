@@ -1,0 +1,6 @@
+interface:
+  display_name: "Spawn Worktrees"
+  short_description: "Information needed to spawn subagents for each active worktree."
+
+policy:
+  allow_implicit_invocation: false

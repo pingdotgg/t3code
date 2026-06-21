@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalDate:off
 // @effect-diagnostics globalRandom:off
-import * as fs from "node:fs";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 import {
   DESKTOP_BACKEND_ADVERTISEMENT_VERSION,
@@ -55,11 +55,11 @@ export interface CleanupDesktopBackendAdvertisementsResult {
 const decodeDesktopBackendAdvertisement = Schema.decodeUnknownSync(DesktopBackendAdvertisement);
 
 export function resolveDesktopBackendAdvertisementDir(t3Home: string): string {
-  return path.join(t3Home, ...ADVERTISEMENT_DIR_PARTS);
+  return NodePath.join(t3Home, ...ADVERTISEMENT_DIR_PARTS);
 }
 
 export function resolveDesktopBackendAdvertisementPath(t3Home: string, backendId: string): string {
-  return path.join(
+  return NodePath.join(
     resolveDesktopBackendAdvertisementDir(t3Home),
     `${sanitizeBackendId(backendId)}.json`,
   );
@@ -100,7 +100,7 @@ export function removeDesktopBackendAdvertisement(input: {
   readonly t3Home: string;
   readonly backendId: string;
 }): void {
-  fs.rmSync(resolveDesktopBackendAdvertisementPath(input.t3Home, input.backendId), {
+  NodeFS.rmSync(resolveDesktopBackendAdvertisementPath(input.t3Home, input.backendId), {
     force: true,
   });
 }
@@ -115,7 +115,7 @@ export function readDesktopBackendAdvertisements(
   let malformed = 0;
 
   for (const entry of entries) {
-    const filePath = path.join(dir, entry);
+    const filePath = NodePath.join(dir, entry);
     const readResult = readAdvertisementJson(filePath, decodeDesktopBackendAdvertisement);
     if (readResult._tag !== "ok") {
       if (readResult._tag === "invalid") {
@@ -151,7 +151,7 @@ export function cleanupDesktopBackendAdvertisements(
     if (deleted >= maxDeletes) {
       break;
     }
-    const filePath = path.join(dir, entry);
+    const filePath = NodePath.join(dir, entry);
     const readResult = readAdvertisementJson(filePath, decodeDesktopBackendAdvertisement);
     if (readResult._tag !== "ok") {
       continue;
@@ -162,7 +162,7 @@ export function cleanupDesktopBackendAdvertisements(
       continue;
     }
     try {
-      fs.rmSync(filePath, { force: true });
+      NodeFS.rmSync(filePath, { force: true });
       deleted += 1;
     } catch {
       errors += 1;

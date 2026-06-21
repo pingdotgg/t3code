@@ -13,9 +13,11 @@ import { memo, useMemo } from "react";
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useProject, useThread } from "../state/entities";
 import { useIsMobile } from "../hooks/useMediaQuery";
+import { useHostDisplayPreferences } from "../hostDisplayPreferences";
 import {
   type EnvMode,
   type EnvironmentOption,
+  resolveBranchToolbarVisibility,
   resolveCurrentWorkspaceLabel,
   resolveEnvModeLabel,
   resolveEffectiveEnvMode,
@@ -63,6 +65,7 @@ interface MobileRunContextSelectorProps {
   onEnvironmentChange: ((environmentId: EnvironmentId) => void) | undefined;
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
+  showCheckoutModeIndicator: boolean;
   onEnvModeChange: (mode: EnvMode) => void;
 }
 
@@ -75,35 +78,40 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   onEnvironmentChange,
   effectiveEnvMode,
   activeWorktreePath,
+  showCheckoutModeIndicator,
   onEnvModeChange,
 }: MobileRunContextSelectorProps) {
   const activeEnvironment = useMemo(
     () => availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null,
     [availableEnvironments, environmentId],
   );
-  const WorkspaceIcon =
-    effectiveEnvMode === "worktree"
-      ? FolderGit2Icon
-      : activeWorktreePath
-        ? FolderGitIcon
-        : FolderIcon;
+  const WorkspaceIcon = resolveMobileWorkspaceIcon({
+    activeWorktreePath,
+    effectiveEnvMode,
+    showCheckoutModeIndicator,
+  });
   const workspaceLabel = envModeLocked
     ? resolveLockedWorkspaceLabel(activeWorktreePath)
     : effectiveEnvMode === "worktree"
       ? resolveEnvModeLabel("worktree")
       : resolveCurrentWorkspaceLabel(activeWorktreePath);
-  const isLocked = envLocked || envModeLocked;
+  const isLocked =
+    (showEnvironmentPicker ? envLocked : false) ||
+    (showCheckoutModeIndicator ? envModeLocked : false);
   const EnvironmentIcon = activeEnvironment?.isPrimary ? MonitorIcon : CloudIcon;
-  const icon = showEnvironmentPicker ? (
-    // Button's base styles apply `-mx-0.5` to descendant SVGs, which eats 4px
-    // out of whatever gap we set. mx-0! cancels that so gap-0.5 reads as 2px.
-    <span className="inline-flex shrink-0 items-center gap-0.5">
-      <EnvironmentIcon className="size-3 shrink-0 mx-0!" />
-      <WorkspaceIcon className="size-3 shrink-0 mx-0!" />
-    </span>
-  ) : (
-    <WorkspaceIcon className="size-3 shrink-0" />
-  );
+  const icon =
+    showEnvironmentPicker && WorkspaceIcon ? (
+      // Button's base styles apply `-mx-0.5` to descendant SVGs, which eats 4px
+      // out of whatever gap we set. mx-0! cancels that so gap-0.5 reads as 2px.
+      <span className="inline-flex shrink-0 items-center gap-0.5">
+        <EnvironmentIcon className="size-3 shrink-0 mx-0!" />
+        <WorkspaceIcon className="size-3 shrink-0 mx-0!" />
+      </span>
+    ) : showEnvironmentPicker ? (
+      <EnvironmentIcon className="size-3 shrink-0" />
+    ) : WorkspaceIcon ? (
+      <WorkspaceIcon className="size-3 shrink-0" />
+    ) : null;
   const triggerContent = (
     <>
       {icon}
@@ -156,39 +164,55 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                 })}
               </MenuRadioGroup>
             </MenuGroup>
-            <MenuSeparator />
+            {showCheckoutModeIndicator ? <MenuSeparator /> : null}
           </>
         ) : null}
-        <MenuGroup>
-          <MenuGroupLabel>Workspace</MenuGroupLabel>
-          <MenuRadioGroup
-            value={effectiveEnvMode}
-            onValueChange={(value) => onEnvModeChange(value as EnvMode)}
-          >
-            <MenuRadioItem disabled={envModeLocked} value="local">
-              <span className="flex min-w-0 items-center gap-1.5">
-                {activeWorktreePath ? (
-                  <FolderGitIcon className="size-3" />
-                ) : (
-                  <FolderIcon className="size-3" />
-                )}
-                <span className="min-w-0 truncate">
-                  {resolveCurrentWorkspaceLabel(activeWorktreePath)}
+        {showCheckoutModeIndicator ? (
+          <MenuGroup>
+            <MenuGroupLabel>Workspace</MenuGroupLabel>
+            <MenuRadioGroup
+              value={effectiveEnvMode}
+              onValueChange={(value) => onEnvModeChange(value as EnvMode)}
+            >
+              <MenuRadioItem disabled={envModeLocked} value="local">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  {activeWorktreePath ? (
+                    <FolderGitIcon className="size-3" />
+                  ) : (
+                    <FolderIcon className="size-3" />
+                  )}
+                  <span className="min-w-0 truncate">
+                    {resolveCurrentWorkspaceLabel(activeWorktreePath)}
+                  </span>
                 </span>
-              </span>
-            </MenuRadioItem>
-            <MenuRadioItem disabled={envModeLocked} value="worktree">
-              <span className="flex min-w-0 items-center gap-1.5">
-                <FolderGit2Icon className="size-3" />
-                <span className="min-w-0 truncate">{resolveEnvModeLabel("worktree")}</span>
-              </span>
-            </MenuRadioItem>
-          </MenuRadioGroup>
-        </MenuGroup>
+              </MenuRadioItem>
+              <MenuRadioItem disabled={envModeLocked} value="worktree">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <FolderGit2Icon className="size-3" />
+                  <span className="min-w-0 truncate">{resolveEnvModeLabel("worktree")}</span>
+                </span>
+              </MenuRadioItem>
+            </MenuRadioGroup>
+          </MenuGroup>
+        ) : null}
       </MenuPopup>
     </Menu>
   );
 });
+
+function resolveMobileWorkspaceIcon(input: {
+  readonly activeWorktreePath: string | null;
+  readonly effectiveEnvMode: EnvMode;
+  readonly showCheckoutModeIndicator: boolean;
+}) {
+  if (!input.showCheckoutModeIndicator) {
+    return null;
+  }
+  if (input.effectiveEnvMode === "worktree") {
+    return FolderGit2Icon;
+  }
+  return input.activeWorktreePath ? FolderGitIcon : FolderIcon;
+}
 
 export const BranchToolbar = memo(function BranchToolbar({
   environmentId,
@@ -235,12 +259,27 @@ export const BranchToolbar = memo(function BranchToolbar({
     availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange,
   );
   const isMobile = useIsMobile();
+  const hostDisplayPreferences = useHostDisplayPreferences();
+  const showCheckoutModeIndicator = hostDisplayPreferences.showCheckoutModeIndicator;
+  const {
+    showMobileRunContextSelector,
+    showDesktopRunContextSelector,
+    showBranchSelector,
+    showToolbar,
+  } = resolveBranchToolbarVisibility({
+    isMobile,
+    showEnvironmentPicker,
+    displayPreferences: hostDisplayPreferences,
+  });
 
   if (!hasActiveThread || !activeProject) return null;
+  if (!showToolbar) {
+    return null;
+  }
 
   return (
-    <div className="mx-auto flex w-full max-w-208 items-center gap-2 px-2.5 pb-3 pt-1 sm:px-3">
-      {isMobile ? (
+    <div className="mx-auto flex w-full max-w-none items-center gap-2 px-2.5 pb-3 pt-1 sm:px-3">
+      {showMobileRunContextSelector ? (
         <MobileRunContextSelector
           envLocked={envLocked}
           envModeLocked={envModeLocked}
@@ -250,9 +289,10 @@ export const BranchToolbar = memo(function BranchToolbar({
           onEnvironmentChange={onEnvironmentChange}
           effectiveEnvMode={effectiveEnvMode}
           activeWorktreePath={activeWorktreePath}
+          showCheckoutModeIndicator={showCheckoutModeIndicator}
           onEnvModeChange={onEnvModeChange}
         />
-      ) : (
+      ) : showDesktopRunContextSelector ? (
         <div className="flex min-w-0 shrink-0 items-center gap-1">
           {showEnvironmentPicker && availableEnvironments && onEnvironmentChange && (
             <>
@@ -262,32 +302,38 @@ export const BranchToolbar = memo(function BranchToolbar({
                 availableEnvironments={availableEnvironments}
                 onEnvironmentChange={onEnvironmentChange}
               />
-              <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
+              {showCheckoutModeIndicator ? (
+                <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
+              ) : null}
             </>
           )}
-          <BranchToolbarEnvModeSelector
-            envLocked={envModeLocked}
-            effectiveEnvMode={effectiveEnvMode}
-            activeWorktreePath={activeWorktreePath}
-            onEnvModeChange={onEnvModeChange}
-          />
+          {showCheckoutModeIndicator ? (
+            <BranchToolbarEnvModeSelector
+              envLocked={envModeLocked}
+              effectiveEnvMode={effectiveEnvMode}
+              activeWorktreePath={activeWorktreePath}
+              onEnvModeChange={onEnvModeChange}
+            />
+          ) : null}
         </div>
-      )}
+      ) : null}
 
-      <BranchToolbarBranchSelector
-        className="min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
-        environmentId={environmentId}
-        threadId={threadId}
-        {...(draftId ? { draftId } : {})}
-        envLocked={envLocked}
-        {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
-        {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
-        {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
-        startFromOrigin={startFromOrigin}
-        onStartFromOriginChange={onStartFromOriginChange}
-        {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
-        {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
-      />
+      {showBranchSelector ? (
+        <BranchToolbarBranchSelector
+          className="min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
+          environmentId={environmentId}
+          threadId={threadId}
+          {...(draftId ? { draftId } : {})}
+          envLocked={envLocked}
+          {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
+          {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
+          {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
+          startFromOrigin={startFromOrigin}
+          onStartFromOriginChange={onStartFromOriginChange}
+          {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
+          {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+        />
+      ) : null}
     </div>
   );
 });

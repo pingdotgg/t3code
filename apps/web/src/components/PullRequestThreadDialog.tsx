@@ -6,8 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   readCachedPullRequestResolution,
   usePreparePullRequestThreadAction,
-  usePullRequestResolution,
-} from "~/lib/sourceControlActions";
+  usePullRequestResolutionState,
+} from "~/state/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { parsePullRequestReference } from "~/pullRequestReference";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
@@ -89,7 +89,7 @@ export function PullRequestThreadDialog({
     }),
     [cwd, environmentId],
   );
-  const pullRequestResolution = usePullRequestResolution({
+  const pullRequestResolution = usePullRequestResolutionState({
     ...sourceControlScope,
     reference: open ? parsedDebouncedReference : null,
   });

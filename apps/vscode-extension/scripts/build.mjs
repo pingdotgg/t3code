@@ -1,20 +1,24 @@
-import { cpSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
+import * as NodeChildProcess from "node:child_process";
 
 import { filterPackagedDependencies } from "./package-dependencies.mjs";
 
-const extensionDir = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
-const repoRoot = join(extensionDir, "../..");
-const packageJson = JSON.parse(readFileSync(join(extensionDir, "package.json"), "utf8"));
+const extensionDir = NodePath.dirname(
+  NodeURL.fileURLToPath(new URL("../package.json", import.meta.url)),
+);
+const repoRoot = NodePath.join(extensionDir, "../..");
+const packageJson = JSON.parse(
+  NodeFS.readFileSync(NodePath.join(extensionDir, "package.json"), "utf8"),
+);
 
 function isWindowsHost() {
   return process.env.OS === "Windows_NT";
 }
 
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, {
+  const result = NodeChildProcess.spawnSync(command, args, {
     cwd: options.cwd ?? repoRoot,
     env: { ...process.env, ...options.env },
     shell: isWindowsHost(),
@@ -27,9 +31,9 @@ function run(command, args, options = {}) {
 }
 
 function rewriteWebviewBundleAssetPaths(rootDir) {
-  for (const entry of readdirSync(rootDir)) {
-    const entryPath = join(rootDir, entry);
-    const stat = statSync(entryPath);
+  for (const entry of NodeFS.readdirSync(rootDir)) {
+    const entryPath = NodePath.join(rootDir, entry);
+    const stat = NodeFS.statSync(entryPath);
     if (stat.isDirectory()) {
       rewriteWebviewBundleAssetPaths(entryPath);
       continue;
@@ -38,7 +42,7 @@ function rewriteWebviewBundleAssetPaths(rootDir) {
       continue;
     }
 
-    const before = readFileSync(entryPath, "utf8");
+    const before = NodeFS.readFileSync(entryPath, "utf8");
     const after = before
       .replaceAll('"/apple-touch-icon.png"', '"./apple-touch-icon.png"')
       .replaceAll("'/apple-touch-icon.png'", "'./apple-touch-icon.png'")
@@ -50,28 +54,30 @@ function rewriteWebviewBundleAssetPaths(rootDir) {
       .replaceAll("'/assets/", "'./assets/")
       .replaceAll("`/assets/", "`./assets/");
     if (after !== before) {
-      writeFileSync(entryPath, after);
+      NodeFS.writeFileSync(entryPath, after);
     }
   }
 }
 
-const distDir = join(extensionDir, "dist");
-rmSync(join(distDir, "webview"), { force: true, recursive: true });
-rmSync(join(distDir, "server"), { force: true, recursive: true });
-rmSync(join(distDir, "node_modules"), { force: true, recursive: true });
+const distDir = NodePath.join(extensionDir, "dist");
+NodeFS.rmSync(NodePath.join(distDir, "webview"), { force: true, recursive: true });
+NodeFS.rmSync(NodePath.join(distDir, "server"), { force: true, recursive: true });
+NodeFS.rmSync(NodePath.join(distDir, "node_modules"), { force: true, recursive: true });
 
 run("pnpm", ["run", "build", "--", "--base", "./"], {
-  cwd: join(repoRoot, "apps/web"),
+  cwd: NodePath.join(repoRoot, "apps/web"),
 });
 run("pnpm", ["run", "build:extension"], {
   cwd: extensionDir,
 });
 
-cpSync(join(repoRoot, "apps/web/dist"), join(distDir, "webview"), { recursive: true });
-rewriteWebviewBundleAssetPaths(join(distDir, "webview"));
+NodeFS.cpSync(NodePath.join(repoRoot, "apps/web/dist"), NodePath.join(distDir, "webview"), {
+  recursive: true,
+});
+rewriteWebviewBundleAssetPaths(NodePath.join(distDir, "webview"));
 
-writeFileSync(
-  join(distDir, "package.json"),
+NodeFS.writeFileSync(
+  NodePath.join(distDir, "package.json"),
   `${JSON.stringify(
     {
       private: true,

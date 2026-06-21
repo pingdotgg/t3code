@@ -22,6 +22,7 @@ import { readLocalApi } from "../localApi";
 import { readEnvironmentThreadRefs, readProject, readThreadShell } from "../state/entities";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
+import type { Thread } from "../types";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
@@ -37,6 +38,22 @@ export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArc
   override get message(): string {
     return "Cannot archive a running thread.";
   }
+}
+
+function collectLifecycleThreadIds(
+  threads: readonly Pick<Thread, "id" | "parentRelation">[],
+  rootThreadIds: ReadonlySet<ThreadId>,
+): Set<ThreadId> {
+  const threadIds = new Set(rootThreadIds);
+  for (const thread of threads) {
+    if (
+      thread.parentRelation?.kind === "subagent" &&
+      rootThreadIds.has(thread.parentRelation.rootThreadId)
+    ) {
+      threadIds.add(thread.id);
+    }
+  }
+  return threadIds;
 }
 
 export function useThreadActions() {
@@ -170,7 +187,7 @@ export function useThreadActions() {
         environmentId: threadRef.environmentId,
         projectId: thread.projectId,
       });
-      const deletedIds =
+      const selectedDeleteRootIds =
         opts.deletedThreadKeys && opts.deletedThreadKeys.size > 0
           ? new Set<ThreadId>(
               [...opts.deletedThreadKeys].flatMap((threadKey) => {
@@ -179,6 +196,11 @@ export function useThreadActions() {
               }),
             )
           : undefined;
+      const targetThreadIds = collectLifecycleThreadIds(threads, new Set([threadRef.threadId]));
+      const deletedIds =
+        selectedDeleteRootIds && selectedDeleteRootIds.size > 0
+          ? collectLifecycleThreadIds(threads, selectedDeleteRootIds)
+          : targetThreadIds;
       const survivingThreads =
         deletedIds && deletedIds.size > 0
           ? threads.filter((entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id))
@@ -224,13 +246,17 @@ export function useThreadActions() {
 
       const deletedThreadIds = deletedIds ?? new Set<ThreadId>();
       const currentRouteThreadRef = getCurrentRouteThreadRef();
-      const shouldNavigateToFallback =
-        currentRouteThreadRef?.threadId === threadRef.threadId &&
-        currentRouteThreadRef.environmentId === threadRef.environmentId;
+      const activeDeletedThreadId =
+        currentRouteThreadRef?.environmentId === threadRef.environmentId &&
+        deletedThreadIds.has(currentRouteThreadRef.threadId)
+          ? currentRouteThreadRef.threadId
+          : null;
+      const shouldNavigateToFallback = activeDeletedThreadId !== null;
+      const deletedThreadIdForFallback = activeDeletedThreadId ?? threadRef.threadId;
       const fallbackThreadId = getFallbackThreadIdAfterDelete({
         threads,
-        deletedThreadId: threadRef.threadId,
-        deletedThreadIds,
+        deletedThreadId: deletedThreadIdForFallback,
+        deletedThreadIds: deletedIds,
         sortOrder: sidebarThreadSortOrder,
       });
       const deleteResult = await deleteThreadMutation({
@@ -241,12 +267,18 @@ export function useThreadActions() {
         return deleteResult;
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
-      clearComposerDraftForThread(threadRef);
-      clearProjectDraftThreadById(
-        scopeProjectRef(threadRef.environmentId, thread.projectId),
-        threadRef,
-      );
-      clearTerminalUiState(threadRef);
+      for (const deletedThreadId of targetThreadIds) {
+        const deletedThreadRef = scopeThreadRef(threadRef.environmentId, deletedThreadId);
+        const deletedThread = threads.find((entry) => entry.id === deletedThreadId);
+        clearComposerDraftForThread(deletedThreadRef);
+        if (deletedThread) {
+          clearProjectDraftThreadById(
+            scopeProjectRef(threadRef.environmentId, deletedThread.projectId),
+            deletedThreadRef,
+          );
+        }
+        clearTerminalUiState(deletedThreadRef);
+      }
 
       if (shouldNavigateToFallback) {
         if (fallbackThreadId) {

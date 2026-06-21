@@ -34,8 +34,8 @@ Long term maintainability is a core priority. If you add new functionality, firs
 
 ## Reference Repos
 
-- Open-source Codex repo: https://github.com/openai/codex
-- Codex-Monitor (Tauri, feature-complete, strong reference implementation): https://github.com/Dimillian/CodexMonitor
+- Open-source Codex repo: <https://github.com/openai/codex>
+- Codex-Monitor (Tauri, feature-complete, strong reference implementation): <https://github.com/Dimillian/CodexMonitor>
 
 Use these as implementation references when designing protocol handling, UX flows, and operational safeguards.
 
@@ -55,3 +55,7 @@ agents.
   examples of idiomatic usage, tests, module structure, and API design.
 - When writing relay infrastructure code with Alchemy, inspect `.repos/alchemy-effect/` for examples of
   idiomatic usage, tests, module structure, and API design.
+
+## Fork
+
+This branch is a fork of the original `upstream` branch. Study @CUSTOMIZED.md for details on all the added or modified behavior.

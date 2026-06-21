@@ -1,10 +1,36 @@
 import type { TerminalSummary } from "@t3tools/contracts";
 
 /** Human-readable label for a terminal tab; matches mobile and web sidebars. */
+function decodeTerminalLabelPart(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function humanizeActionScriptId(scriptId: string): string {
+  return decodeTerminalLabelPart(scriptId).replace(/[-:]+/g, " ").trim();
+}
+
+function formatActionTerminalLabel(actionId: string): string {
+  const instanceMatch = /^(.*):([1-9][0-9]*)$/.exec(actionId);
+  if (instanceMatch) {
+    const [, scriptId = "", instanceIndex = ""] = instanceMatch;
+    return `${humanizeActionScriptId(scriptId)} (${instanceIndex})`;
+  }
+  return humanizeActionScriptId(actionId);
+}
+
 export function getTerminalLabel(terminalId: string): string {
   const numericSuffix = /^term(?:inal)?-(\d+)$/i.exec(terminalId)?.[1];
   if (numericSuffix) {
     return `Terminal ${numericSuffix}`;
+  }
+
+  const actionId = /^action-(.+)$/i.exec(terminalId)?.[1]?.trim();
+  if (actionId) {
+    return `Action: ${formatActionTerminalLabel(actionId)}`;
   }
 
   return terminalId;

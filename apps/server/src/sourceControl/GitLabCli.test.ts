@@ -184,6 +184,84 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  it.effect("preserves structured process failures when normalizing CLI errors", () =>
+    Effect.gen(function* () {
+      const cause = {
+        _tag: "VcsProcessSpawnError",
+        detail: "Command not found: glab",
+      };
+      mockedRun.mockReturnValueOnce(Effect.fail(cause) as never);
+
+      const error = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab
+          .execute({
+            cwd: "/repo",
+            args: ["mr", "list"],
+          })
+          .pipe(Effect.flip);
+      });
+
+      expect(error.detail).toBe("GitLab CLI (`glab`) is required but not available on PATH.");
+      expect(error._tag).toBe("GitLabCliUnavailableError");
+      expect(error.cause).toEqual({
+        _tag: "VcsProcessSpawnError",
+        detail: "Command not found: glab",
+      });
+    }),
+  );
+
+  it.effect("classifies GitLab CLI errors from detail text without rendering tags", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "gitlab.execute",
+        command: "glab mr view 42",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "fatal: could not read from remote repository",
+      });
+      mockedRun.mockReturnValueOnce(Effect.fail(cause) as never);
+
+      const error = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab
+          .execute({
+            cwd: "/repo",
+            args: ["mr", "view", "42"],
+          })
+          .pipe(Effect.flip);
+      });
+
+      expect(error.detail).toBe("GitLab CLI command failed.");
+      expect(error.detail).not.toContain("VcsProcessExitError");
+      expect(error.cause).toBe(cause);
+    }),
+  );
+
+  it.effect("does not classify ambiguous token text as authentication failures", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.fail({
+          _tag: "VcsProcessExitError",
+          detail: "GraphQL parser found token near merge request query",
+        }) as never,
+      );
+
+      const error = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab
+          .execute({
+            cwd: "/repo",
+            args: ["mr", "list"],
+          })
+          .pipe(Effect.flip);
+      });
+
+      expect(error._tag).toBe("GitLabCliCommandError");
+      expect(error.detail).toBe("GitLab CLI command failed.");
+    }),
+  );
+
   it.effect("creates merge requests through the GitLab API without placing the body in argv", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));

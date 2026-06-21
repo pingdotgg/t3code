@@ -3,6 +3,8 @@ import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
+  getRenderableCommandOutputLines,
+  hasRenderableCommandOutput,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
 } from "./MessagesTimeline.logic";
@@ -257,6 +259,29 @@ describe("resolveAssistantMessageCopyState", () => {
       text: "Interim thought",
       visible: false,
     });
+  });
+});
+
+describe("hasRenderableCommandOutput", () => {
+  it("hides nullish and empty command output streams", () => {
+    expect(hasRenderableCommandOutput(undefined)).toBe(false);
+    expect(hasRenderableCommandOutput(null)).toBe(false);
+    expect(hasRenderableCommandOutput("")).toBe(false);
+  });
+
+  it("renders command output streams when the provider emitted content", () => {
+    expect(hasRenderableCommandOutput("stdout\n")).toBe(true);
+    expect(hasRenderableCommandOutput("   ")).toBe(false);
+    expect(hasRenderableCommandOutput("\n\t\n")).toBe(false);
+  });
+
+  it("preserves intentional blank command output lines", () => {
+    expect(getRenderableCommandOutputLines("\nstdout\n   \n\t\nstderr\n")).toEqual([
+      "stdout",
+      "   ",
+      "\t",
+      "stderr",
+    ]);
   });
 });
 

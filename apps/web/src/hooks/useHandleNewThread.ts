@@ -1,7 +1,9 @@
 import {
+  filterProjectsForVscodeScope,
   scopedProjectKey,
   scopeProjectRef,
   scopeThreadRef,
+  resolveVscodeProjectScope,
 } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_RUNTIME_MODE,
@@ -18,11 +20,7 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
-import {
-  filterProjectsForVscodeScope,
-  orderItemsByPreferredIds,
-  resolveVscodeProjectScope,
-} from "../components/Sidebar.logic";
+import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import { getHostVscodeWorkspaceBootstrap } from "../environments/primary/hostBootstrap";
 import { isVscodeWebview } from "../env";
 import {

@@ -49,6 +49,8 @@ import {
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   EnvironmentAuthorizationError,
+  ServerProviderSkillsListError,
+  type ServerProviderSkillsListResult,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -74,6 +76,10 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import {
+  makeProviderSkillsLister,
+  type ProviderSkillsListInput,
+} from "./provider/ProviderSkillsLister.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -98,6 +104,7 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
+import * as SourceControlPanelService from "./sourceControl/SourceControlPanelService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
@@ -284,6 +291,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.subscribeThread, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetConfig, AuthOrchestrationReadScope],
   [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverListProviderSkills, AuthOrchestrationReadScope],
   [WS_METHODS.serverUpdateProvider, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUpsertKeybinding, AuthOrchestrationOperateScope],
   [WS_METHODS.serverRemoveKeybinding, AuthOrchestrationOperateScope],
@@ -309,6 +317,35 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsPull, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelSnapshot, AuthOrchestrationReadScope],
+  [WS_METHODS.vcsPanelBranchDetails, AuthOrchestrationReadScope],
+  [WS_METHODS.vcsPanelBranchCommits, AuthOrchestrationReadScope],
+  [WS_METHODS.vcsPanelStashDetails, AuthOrchestrationReadScope],
+  [WS_METHODS.vcsPanelEnrichWorkingTreeFiles, AuthOrchestrationReadScope],
+  [WS_METHODS.vcsPanelReadFileDiff, AuthOrchestrationReadScope],
+  [WS_METHODS.vcsPanelCompare, AuthOrchestrationReadScope],
+  [WS_METHODS.vcsPanelCommitStaged, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelStageFiles, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelUnstageFiles, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelDiscardFiles, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelPullBranch, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelPushBranch, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelDeleteBranch, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelUndoLatestCommit, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelRevertCommit, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelCheckoutCommit, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelCreateBranchFromCommit, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelMergeBranchIntoCurrent, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelRebaseCurrentOnto, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelFetchBranch, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelFetchRemote, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelFetchAllRemotes, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelAddRemote, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelRemoveRemote, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelCreateStash, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelApplyStash, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelPopStash, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsPanelDropStash, AuthOrchestrationOperateScope],
   [WS_METHODS.gitRunStackedAction, AuthOrchestrationOperateScope],
   [WS_METHODS.gitResolvePullRequest, AuthOrchestrationOperateScope],
   [WS_METHODS.gitPreparePullRequestThread, AuthOrchestrationOperateScope],
@@ -385,7 +422,12 @@ function toAuthAccessStreamEvent(
   }
 }
 
-const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
+const makeWsRpcLayer = (
+  currentSession: EnvironmentAuth.AuthenticatedSession,
+  listProviderSkills: (
+    input: ProviderSkillsListInput,
+  ) => Effect.Effect<ServerProviderSkillsListResult, ServerProviderSkillsListError>,
+) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
@@ -427,6 +469,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const sourceControlPanel = yield* SourceControlPanelService.make();
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
@@ -609,6 +652,24 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
 
       const enrichOrchestrationEvents = (events: ReadonlyArray<OrchestrationEvent>) =>
         Effect.forEach(events, enrichProjectEvent, { concurrency: 4 });
+
+      const streamThreadDetailEventsAfterSnapshot = (
+        threadId: ThreadId,
+        snapshotSequence: number,
+      ) =>
+        orchestrationEngine.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.sequence > snapshotSequence &&
+              event.aggregateKind === "thread" &&
+              event.aggregateId === threadId &&
+              isThreadDetailEvent(event),
+          ),
+          Stream.map((event) => ({
+            kind: "event" as const,
+            event,
+          })),
+        );
 
       const toShellStreamEvent = (
         event: OrchestrationEvent,
@@ -1112,6 +1173,15 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
+              const liveEventQueue = yield* Queue.unbounded<{
+                readonly kind: "event";
+                readonly event: OrchestrationEvent;
+              }>();
+              yield* streamThreadDetailEventsAfterSnapshot(input.threadId, 0).pipe(
+                Stream.runForEach((item) => Queue.offer(liveEventQueue, item).pipe(Effect.asVoid)),
+                Effect.forkScoped,
+              );
+
               const [threadDetail, snapshotSequence] = yield* Effect.all([
                 projectionSnapshotQuery.getThreadDetailById(input.threadId).pipe(
                   Effect.mapError(
@@ -1141,17 +1211,8 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                 });
               }
 
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
-                Stream.filter(
-                  (event) =>
-                    event.aggregateKind === "thread" &&
-                    event.aggregateId === input.threadId &&
-                    isThreadDetailEvent(event),
-                ),
-                Stream.map((event) => ({
-                  kind: "event" as const,
-                  event,
-                })),
+              const liveStream = Stream.fromQueue(liveEventQueue).pipe(
+                Stream.filter((item) => item.event.sequence > snapshotSequence),
               );
 
               return Stream.concat(
@@ -1180,6 +1241,10 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
             ).pipe(Effect.map((providers) => ({ providers }))),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.serverListProviderSkills]: (input) =>
+          observeRpcEffect(WS_METHODS.serverListProviderSkills, listProviderSkills(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateProvider,
@@ -1477,6 +1542,224 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               }),
             ),
             { "rpc.aggregate": "git" },
+          ),
+        [WS_METHODS.vcsPanelSnapshot]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsPanelSnapshot, sourceControlPanel.snapshot(input), {
+            "rpc.aggregate": "vcs",
+          }),
+        [WS_METHODS.vcsPanelBranchDetails]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelBranchDetails,
+            sourceControlPanel.branchDetails(input),
+            {
+              "rpc.aggregate": "vcs",
+            },
+          ),
+        [WS_METHODS.vcsPanelBranchCommits]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelBranchCommits,
+            sourceControlPanel.branchCommits(input),
+            {
+              "rpc.aggregate": "vcs",
+            },
+          ),
+        [WS_METHODS.vcsPanelStashDetails]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelStashDetails,
+            sourceControlPanel.stashDetails(input),
+            {
+              "rpc.aggregate": "vcs",
+            },
+          ),
+        [WS_METHODS.vcsPanelEnrichWorkingTreeFiles]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelEnrichWorkingTreeFiles,
+            sourceControlPanel.enrichWorkingTreeFiles(input),
+            {
+              "rpc.aggregate": "vcs",
+            },
+          ),
+        [WS_METHODS.vcsPanelReadFileDiff]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelReadFileDiff,
+            sourceControlPanel.readFileDiff(input),
+            {
+              "rpc.aggregate": "vcs",
+            },
+          ),
+        [WS_METHODS.vcsPanelCompare]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsPanelCompare, sourceControlPanel.compare(input), {
+            "rpc.aggregate": "vcs",
+          }),
+        [WS_METHODS.vcsPanelCommitStaged]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelCommitStaged,
+            sourceControlPanel
+              .commitStaged(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelStageFiles]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelStageFiles,
+            sourceControlPanel
+              .stageFiles(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelUnstageFiles]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelUnstageFiles,
+            sourceControlPanel
+              .unstageFiles(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelDiscardFiles]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelDiscardFiles,
+            sourceControlPanel
+              .discardFiles(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelPullBranch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelPullBranch,
+            sourceControlPanel
+              .pullBranch(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelPushBranch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelPushBranch,
+            sourceControlPanel
+              .pushBranch(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelDeleteBranch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelDeleteBranch,
+            sourceControlPanel
+              .deleteBranch(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelUndoLatestCommit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelUndoLatestCommit,
+            sourceControlPanel
+              .undoLatestCommit(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelRevertCommit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelRevertCommit,
+            sourceControlPanel
+              .revertCommit(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelCheckoutCommit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelCheckoutCommit,
+            sourceControlPanel
+              .checkoutCommit(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelCreateBranchFromCommit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelCreateBranchFromCommit,
+            sourceControlPanel
+              .createBranchFromCommit(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelMergeBranchIntoCurrent]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelMergeBranchIntoCurrent,
+            sourceControlPanel
+              .mergeBranchIntoCurrent(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelRebaseCurrentOnto]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelRebaseCurrentOnto,
+            sourceControlPanel
+              .rebaseCurrentOnto(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelFetchBranch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelFetchBranch,
+            sourceControlPanel
+              .fetchBranch(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelFetchRemote]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelFetchRemote,
+            sourceControlPanel
+              .fetchRemote(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelFetchAllRemotes]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelFetchAllRemotes,
+            sourceControlPanel
+              .fetchAllRemotes(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelAddRemote]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelAddRemote,
+            sourceControlPanel.addRemote(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelRemoveRemote]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelRemoveRemote,
+            sourceControlPanel
+              .removeRemote(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelCreateStash]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelCreateStash,
+            sourceControlPanel
+              .createStash(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelApplyStash]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelApplyStash,
+            sourceControlPanel
+              .applyStash(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelPopStash]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelPopStash,
+            sourceControlPanel.popStash(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelDropStash]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelDropStash,
+            sourceControlPanel.dropStash(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.gitRunStackedAction]: (input) =>
           observeRpcStream(
@@ -1791,8 +2074,9 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
   );
 
 export const websocketRpcRouteLayer = Layer.unwrap(
-  Effect.succeed(
-    HttpRouter.add(
+  Effect.gen(function* () {
+    const listProviderSkills = yield* makeProviderSkillsLister();
+    return HttpRouter.add(
       "GET",
       "/ws",
       Effect.gen(function* () {
@@ -1811,7 +2095,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session).pipe(
+            makeWsRpcLayer(session, listProviderSkills).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(PreviewAutomationBroker.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
@@ -1850,6 +2134,6 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           EnvironmentInternalError: HttpServerRespondable.toResponse,
         }),
       ),
-    ),
-  ),
+    );
+  }),
 );

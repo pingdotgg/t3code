@@ -23,11 +23,13 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "./Manager.ts";
+import { __testing } from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
 class WaitForConditionError extends Data.TaggedError("WaitForConditionError")<{
@@ -274,6 +276,17 @@ const createManager = (
 
 const withHostPlatform = (platform: NodeJS.Platform) =>
   Layer.succeed(HostProcessPlatform, platform);
+
+function processOutput(stdout: string, code = 0): ProcessRunner.ProcessRunOutput {
+  return {
+    stdout,
+    stderr: "",
+    code: ChildProcessSpawner.ExitCode(code),
+    timedOut: false,
+    stdoutTruncated: false,
+    stderrTruncated: false,
+  };
+}
 
 it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
@@ -924,6 +937,95 @@ it.layer(
         ),
         "1200 millis",
       );
+    }),
+  );
+
+  it("treats an idle POSIX login shell child as no running subprocess", () => {
+    expect(
+      __testing.inspectPosixProcessTree({
+        terminalPid: 9000,
+        childPid: 9001,
+        childCommand: "bash",
+        platform: "darwin",
+        processTable: [
+          { pid: 9000, ppid: 1, command: "node-pty" },
+          { pid: 9001, ppid: 9000, command: "bash" },
+        ],
+      }),
+    ).toEqual({ hasRunningSubprocess: false, childCommand: null, processIds: [] });
+  });
+
+  it("reports the first non-shell POSIX descendant as the running subprocess", () => {
+    expect(
+      __testing.inspectPosixProcessTree({
+        terminalPid: 9000,
+        childPid: 9001,
+        childCommand: "bash",
+        platform: "darwin",
+        processTable: [
+          { pid: 9000, ppid: 1, command: "node-pty" },
+          { pid: 9001, ppid: 9000, command: "bash" },
+          { pid: 9002, ppid: 9001, command: "pnpm" },
+          { pid: 9003, ppid: 9002, command: "node" },
+        ],
+      }),
+    ).toEqual({
+      hasRunningSubprocess: true,
+      childCommand: "pnpm",
+      processIds: [9000, 9001, 9002, 9003],
+    });
+  });
+
+  it("keeps a non-shell direct POSIX child marked as running", () => {
+    expect(
+      __testing.inspectPosixProcessTree({
+        terminalPid: 9000,
+        childPid: 9001,
+        childCommand: "vim",
+        platform: "darwin",
+        processTable: [
+          { pid: 9000, ppid: 1, command: "node-pty" },
+          { pid: 9001, ppid: 9000, command: "vim" },
+        ],
+      }),
+    ).toEqual({
+      hasRunningSubprocess: true,
+      childCommand: "vim",
+      processIds: [9000, 9001],
+    });
+  });
+
+  it.effect("keeps a POSIX shell child marked busy when process tree inspection fails", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const processRunner = ProcessRunner.ProcessRunner.of({
+        run: (input) =>
+          Effect.sync(() => {
+            calls.push(`${input.command} ${input.args.join(" ")}`);
+            if (input.command === "pgrep") {
+              return processOutput("9001\n");
+            }
+            if (
+              input.command === "ps" &&
+              input.args.includes("-p") &&
+              input.args.includes("comm=")
+            ) {
+              return processOutput("bash\n");
+            }
+            return processOutput("", 1);
+          }),
+      });
+
+      const result = yield* __testing
+        .posixInspectSubprocess(9000, "darwin")
+        .pipe(Effect.provide(Layer.succeed(ProcessRunner.ProcessRunner, processRunner)));
+
+      expect(calls).toEqual(["pgrep -P 9000", "ps -p 9001 -o comm=", "ps -eo pid=,ppid=,comm="]);
+      expect(result).toEqual({
+        hasRunningSubprocess: true,
+        childCommand: "bash",
+        processIds: [9000, 9001],
+      });
     }),
   );
 

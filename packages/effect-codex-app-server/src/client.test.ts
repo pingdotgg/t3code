@@ -2,8 +2,8 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
-import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
+import * as Ref from "effect/Ref";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";

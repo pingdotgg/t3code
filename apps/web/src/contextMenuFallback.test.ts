@@ -150,6 +150,12 @@ function findButton(label: string): FakeElement | undefined {
     .find((button) => button.textContent.includes(label));
 }
 
+function separatorCount(): number {
+  return (document as unknown as FakeDocument)
+    .querySelectorAll("div")
+    .filter((element) => element.style.cssText?.includes("height:1px")).length;
+}
+
 beforeEach(() => {
   vi.stubGlobal("document", new FakeDocument());
   vi.stubGlobal("window", {
@@ -217,5 +223,22 @@ describe("showContextMenuFallback", () => {
     childButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     await expect(selectionPromise).resolves.toBe("rename:project-b");
+  });
+
+  it("suppresses leading duplicate and trailing separators", async () => {
+    const selectionPromise = showContextMenuFallback([
+      { id: "leading", label: "", separator: true },
+      { id: "header", label: "Actions", header: true },
+      { id: "middle", label: "", separator: true },
+      { id: "duplicate", label: "", separator: true },
+      { id: "rename", label: "Rename" },
+      { id: "trailing", label: "", separator: true },
+    ]);
+
+    expect(separatorCount()).toBe(1);
+
+    findButton("Rename")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await expect(selectionPromise).resolves.toBe("rename");
   });
 });

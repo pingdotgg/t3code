@@ -307,9 +307,14 @@ export const makeOrchestrationIntegrationHarness = (
       RuntimeReceiptBusTest,
     );
     const serverSettingsLayer = ServerSettingsService.layerTest();
+    const textGenerationLayer = Layer.succeed(TextGeneration, {
+      generateBranchName: () => Effect.succeed({ branch: "update" }),
+      generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
+    } as unknown as TextGenerationShape);
     const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(serverSettingsLayer),
+      Layer.provideMerge(textGenerationLayer),
     );
     const gitWorkflowLayer = Layer.mock(GitWorkflowService)({
       renameBranch: (input: {
@@ -318,10 +323,6 @@ export const makeOrchestrationIntegrationHarness = (
         readonly newBranch: string;
       }) => Effect.succeed({ branch: input.newBranch }),
     });
-    const textGenerationLayer = Layer.succeed(TextGeneration, {
-      generateBranchName: () => Effect.succeed({ branch: "update" }),
-      generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
-    } as unknown as TextGenerationShape);
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(gitWorkflowLayer),

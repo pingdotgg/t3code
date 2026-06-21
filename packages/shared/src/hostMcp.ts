@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalDate:off
 // @effect-diagnostics globalRandom:off
-import * as fs from "node:fs";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 import {
   HostMcpAdvertisement,
@@ -13,9 +13,9 @@ import {
   readAdvertisementFilenames,
   readAdvertisementJson,
   sanitizeAdvertisementId,
-  workspaceRootsMatch as workspaceRootsMatchShared,
   writeAdvertisementJson,
 } from "./advertisementFiles.ts";
+import { hasActiveWorkspaceFolder, workspaceFoldersIncludeRoot } from "./workspaceFolders.ts";
 
 export const HOST_MCP_ADVERTISEMENT_TTL_MS = 30_000;
 export const HOST_MCP_ADVERTISEMENT_HEARTBEAT_MS = 10_000;
@@ -60,11 +60,11 @@ export interface CleanupHostMcpAdvertisementsResult {
 const decodeHostMcpAdvertisement = Schema.decodeUnknownSync(HostMcpAdvertisement);
 
 export function resolveHostMcpAdvertisementDir(t3Home: string): string {
-  return path.join(t3Home, ...ADVERTISEMENT_DIR_PARTS);
+  return NodePath.join(t3Home, ...ADVERTISEMENT_DIR_PARTS);
 }
 
 export function resolveHostMcpAdvertisementPath(t3Home: string, hostId: string): string {
-  return path.join(resolveHostMcpAdvertisementDir(t3Home), `${sanitizeHostId(hostId)}.json`);
+  return NodePath.join(resolveHostMcpAdvertisementDir(t3Home), `${sanitizeHostId(hostId)}.json`);
 }
 
 export function createHostMcpAdvertisement(
@@ -104,7 +104,9 @@ export function removeHostMcpAdvertisement(input: {
   readonly t3Home: string;
   readonly hostId: string;
 }): void {
-  fs.rmSync(resolveHostMcpAdvertisementPath(input.t3Home, input.hostId), { force: true });
+  NodeFS.rmSync(resolveHostMcpAdvertisementPath(input.t3Home, input.hostId), {
+    force: true,
+  });
 }
 
 export function readHostMcpAdvertisements(
@@ -117,7 +119,7 @@ export function readHostMcpAdvertisements(
   let malformed = 0;
 
   for (const entry of entries) {
-    const filePath = path.join(dir, entry);
+    const filePath = NodePath.join(dir, entry);
     const readResult = readAdvertisementJson(filePath, decodeHostMcpAdvertisement);
     if (readResult._tag !== "ok") {
       if (readResult._tag === "invalid") {
@@ -132,10 +134,7 @@ export function readHostMcpAdvertisements(
     }
     const workspaceRoot = input.workspaceRoot;
     if (workspaceRoot) {
-      const matchesWorkspaceRoot = advertisement.workspaceFolders.some((folder) =>
-        workspaceRootsMatch(folder.cwd, workspaceRoot),
-      );
-      if (!matchesWorkspaceRoot) {
+      if (!workspaceFoldersIncludeRoot(advertisement.workspaceFolders, workspaceRoot)) {
         continue;
       }
     }
@@ -163,7 +162,7 @@ export function cleanupHostMcpAdvertisements(
     if (deleted >= maxDeletes) {
       break;
     }
-    const filePath = path.join(dir, entry);
+    const filePath = NodePath.join(dir, entry);
     const readResult = readAdvertisementJson(filePath, decodeHostMcpAdvertisement);
     if (readResult._tag !== "ok") {
       continue;
@@ -174,7 +173,7 @@ export function cleanupHostMcpAdvertisements(
       continue;
     }
     try {
-      fs.rmSync(filePath, { force: true });
+      NodeFS.rmSync(filePath, { force: true });
       deleted += 1;
     } catch {
       errors += 1;
@@ -201,7 +200,7 @@ export function mergeHostMcpServers(
 }
 
 export function workspaceRootsMatch(left: string, right: string): boolean {
-  return workspaceRootsMatchShared(left, right);
+  return workspaceFoldersIncludeRoot([{ cwd: left }], right);
 }
 
 function sanitizeHostId(hostId: string): string {
@@ -221,12 +220,8 @@ function compareHostMcpAdvertisements(
   left: HostMcpAdvertisement,
   right: HostMcpAdvertisement,
 ): number {
-  const activeLeft = left.workspaceFolders.some(
-    (folder) => folder.key === left.activeWorkspaceFolderKey,
-  );
-  const activeRight = right.workspaceFolders.some(
-    (folder) => folder.key === right.activeWorkspaceFolderKey,
-  );
+  const activeLeft = hasActiveWorkspaceFolder(left);
+  const activeRight = hasActiveWorkspaceFolder(right);
   if (activeLeft !== activeRight) {
     return activeLeft ? -1 : 1;
   }

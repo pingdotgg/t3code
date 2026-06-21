@@ -3,8 +3,8 @@ import {
   THREAD_CONVERSATION_MIN_WIDTH_PX,
   normalizeThreadConversationMaxWidth,
 } from "@t3tools/shared/displayPreferences";
-import * as crypto from "node:crypto";
-import * as fs from "node:fs/promises";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
 import * as vscode from "vscode";
 
 import type { BackendConnection } from "./backendManager.ts";
@@ -62,8 +62,8 @@ export interface WebviewRenderInput {
 export async function renderT3Webview(input: WebviewRenderInput): Promise<string> {
   const webRoot = vscode.Uri.joinPath(input.extensionUri, "dist", "webview");
   const indexUri = vscode.Uri.joinPath(webRoot, "index.html");
-  const indexHtml = await fs.readFile(indexUri.fsPath, "utf8");
-  const nonce = crypto.randomBytes(16).toString("base64");
+  const indexHtml = await NodeFSP.readFile(indexUri.fsPath, "utf8");
+  const nonce = NodeCrypto.randomBytes(16).toString("base64");
   const webRootUri = input.webview.asWebviewUri(webRoot).toString().replace(/\/?$/, "/");
   const connectSources = [
     input.webview.cspSource,
@@ -114,7 +114,7 @@ export async function renderT3Webview(input: WebviewRenderInput): Promise<string
 }
 
 export function renderDesktopBackendRequiredWebview(): string {
-  const nonce = crypto.randomBytes(16).toString("base64");
+  const nonce = NodeCrypto.randomBytes(16).toString("base64");
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -280,10 +280,7 @@ const DEFAULT_HOST_APPEARANCE: WebviewHostAppearance = {
 const HOST_BRIDGE_REQUEST_TIMEOUT_MS = 30_000;
 
 function makeBridgeScript(input: {
-  readonly bootstrap: WebviewBackendConnection & {
-    readonly environmentId: string;
-    readonly label: string;
-  };
+  readonly bootstrap: WebviewBackendConnection & { readonly label: string };
   readonly displayPreferences: WebviewDisplayPreferences;
   readonly hostAppearance: WebviewHostAppearance;
   readonly initialRoute: string;

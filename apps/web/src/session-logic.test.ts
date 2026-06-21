@@ -31,7 +31,7 @@ function makeActivity(overrides: {
   kind?: string;
   summary?: string;
   tone?: OrchestrationThreadActivity["tone"];
-  payload?: Record<string, unknown>;
+  payload?: OrchestrationThreadActivity["payload"];
   turnId?: string;
   sequence?: number;
 }): OrchestrationThreadActivity {
@@ -672,6 +672,20 @@ describe("workEntryIndicatesToolFailure", () => {
       workEntryIndicatesToolNeutralStatus({
         ...base,
         tone: "tool",
+        itemType: "collab_agent_tool_call",
+        toolLifecycleStatus: "inProgress",
+        subagentChildren: [
+          {
+            threadId: ThreadId.make("subagent-child-1"),
+            parentItemId: "call-child",
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      workEntryIndicatesToolNeutralStatus({
+        ...base,
+        tone: "tool",
         toolLifecycleStatus: "completed",
         detail: "ok",
       }),
@@ -1114,9 +1128,700 @@ describe("deriveWorkLogEntries", () => {
     expect(entry).toMatchObject({
       command: "bun run dev",
       detail: '{ "dev": "vite dev --port 3000" }',
+      output: '{ "dev": "vite dev --port 3000" }',
+      exitCode: 0,
       itemType: "command_execution",
       toolTitle: "bash",
     });
+  });
+
+  it("keeps command stdout, stderr, exit code, and duration for expanded command details", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\nline 2\n",
+              stderr: "warning\n",
+              exitCode: 1,
+              durationMs: 1250,
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      command: "vp test",
+      stdout: "line 1\nline 2\n",
+      stderr: "warning\n",
+      exitCode: 1,
+      durationMs: 1250,
+    });
+  });
+
+  it("uses completed cumulative command output instead of duplicating updated output", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\n",
+              stderr: "warning 1\n",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\nline 2\n",
+              stderr: "warning 1\nwarning 2\n",
+              exitCode: 0,
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.stdout).toBe("line 1\nline 2\n");
+    expect(entry?.stderr).toBe("warning 1\nwarning 2\n");
+  });
+
+  it("uses later longer cumulative command output from updated snapshots", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\n",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-update-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\nline 2\n",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.stdout).toBe("line 1\nline 2\n");
+  });
+
+  it("keeps previously merged command output when completed output is a shorter snapshot", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\nline 2\n",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\n",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.stdout).toBe("line 1\nline 2\n");
+  });
+
+  it("keeps previously merged command output when updated output is a shorter line snapshot", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\nline 2\n",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-update-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\n",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.stdout).toBe("line 1\nline 2\n");
+  });
+
+  it("keeps previously merged command output when updated output is a shorter repeated prefix", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "Hello World",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-update-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "Hello",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.stdout).toBe("Hello World");
+  });
+
+  it("concatenates non-matching incremental command output chunks", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "Error\n",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "retrying",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.stdout).toBe("Error\nretrying");
+  });
+
+  it("keeps previously merged command output when completed output is a shorter snapshot", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\nline 2\n",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\n",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.stdout).toBe("line 1\nline 2\n");
+  });
+
+  it("keeps previously merged command output when updated output is a shorter line snapshot", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\nline 2\n",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-update-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\n",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.stdout).toBe("line 1\nline 2\n");
+  });
+
+  it("concatenates split incremental command output without adding separators", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "printf Downloading",
+            rawOutput: {
+              stdout: "Down",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-update-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "printf Downloading",
+            rawOutput: {
+              stdout: "loading",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.stdout).toBe("Downloading");
+  });
+
+  it("keeps incremental command chunks that match the accumulated prefix", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "printf aba",
+            rawOutput: {
+              stdout: "a\nb",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-update-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "printf aba",
+            rawOutput: {
+              stdout: "a",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.stdout).toBe("a\nba");
+  });
+
+  it("preserves whitespace-only incremental command output chunks", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "printf hello",
+            rawOutput: {
+              stdout: "hello",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-update-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "printf hello",
+            rawOutput: {
+              stdout: " ",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-update-3",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "printf hello",
+            rawOutput: {
+              stdout: "world",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.stdout).toBe("hello world");
+  });
+
+  it("preserves whitespace-only incremental raw output content chunks", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "printf hello",
+            rawOutput: {
+              content: "hello",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-update-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "printf hello",
+            rawOutput: {
+              content: " ",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-update-3",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "printf hello",
+            rawOutput: {
+              content: "world",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.output).toBe("hello world");
+  });
+
+  it("strips fallback stdout exit-code metadata", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-result-stdout-exit-code",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command: "node script.js",
+              result: {
+                stdout: "done\n<exited with exit code 7>",
+              },
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      command: "node script.js",
+      stdout: "done",
+      exitCode: 7,
+    });
+  });
+
+  it("keeps Codex command execution item output, exit code, and duration", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-command-tool-output",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          detail: `/opt/homebrew/bin/bash -lc "printf 'stdout ui smoke test\\\\n'"`,
+          data: {
+            item: {
+              aggregatedOutput: "stdout ui smoke test\n",
+              command: `/opt/homebrew/bin/bash -lc "printf 'stdout ui smoke test\\\\n'"`,
+              commandActions: [{ command: "printf 'stdout ui smoke test\\n'", type: "unknown" }],
+              durationMs: 0,
+              exitCode: 0,
+              type: "commandExecution",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      command: "printf 'stdout ui smoke test\\\\n'",
+      rawCommand: `/opt/homebrew/bin/bash -lc "printf 'stdout ui smoke test\\\\n'"`,
+      output: "stdout ui smoke test\n",
+      exitCode: 0,
+      durationMs: 0,
+    });
+  });
+
+  it("does not overwrite subagent output with command result fallbacks", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-with-output",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          data: {
+            rawOutput: {
+              content: "Subagent result",
+            },
+            item: {
+              aggregatedOutput: "Command-like fallback",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.output).toBe("Subagent result");
+  });
+
+  it("falls back to aggregated command output when stdout is blank-only", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-command-tool-blank-stdout",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            command: "vp test",
+            rawOutput: {
+              stdout: " \n\t ",
+            },
+            item: {
+              aggregatedOutput: "tests passed\n",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      command: "vp test",
+      output: "tests passed\n",
+      itemType: "command_execution",
+    });
+    expect(entry?.stdout).toBeUndefined();
   });
 
   it("extracts changed file paths for file-change tool activities", () => {
@@ -1144,6 +1849,248 @@ describe("deriveWorkLogEntries", () => {
       "apps/web/src/components/ChatView.tsx",
       "apps/web/src/session-logic.ts",
     ]);
+  });
+
+  it("keeps file-change patches for inline expanded diff rendering", () => {
+    const patch =
+      "diff --git a/app.ts b/app.ts\n--- a/app.ts\n+++ b/app.ts\n@@ -1 +1 @@\n-old\n+new\n";
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "file-tool-patch",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              path: "app.ts",
+              patch,
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.changedFiles).toEqual(["app.ts"]);
+    expect(entry?.patch).toBe(patch);
+  });
+
+  it("normalizes Codex file-change content diffs into unified patches", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-file-tool-patch",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              changes: [
+                {
+                  path: "/Users/example/t3code/SMOKE_TEST_CHANGE.md",
+                  kind: { type: "add" },
+                  diff: "Smoke test file-change row.\n",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.changedFiles).toEqual(["/Users/example/t3code/SMOKE_TEST_CHANGE.md"]);
+    expect(entry?.patch).toContain(
+      "diff --git a//Users/example/t3code/SMOKE_TEST_CHANGE.md b//Users/example/t3code/SMOKE_TEST_CHANGE.md",
+    );
+    expect(entry?.patch).toContain("--- /dev/null");
+    expect(entry?.patch).toContain("+Smoke test file-change row.");
+  });
+
+  it("keeps nested result file-change patches within the traversal budget", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-file-tool-result-patch",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              result: {
+                changes: [
+                  {
+                    path: "apps/web/src/session-logic.ts",
+                    diff: "@@ -1 +1 @@\n-old\n+new",
+                  },
+                ],
+              },
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.changedFiles).toEqual(["apps/web/src/session-logic.ts"]);
+    expect(entry?.patch).toContain(
+      "diff --git a/apps/web/src/session-logic.ts b/apps/web/src/session-logic.ts",
+    );
+    expect(entry?.patch).toContain("+new");
+  });
+
+  it("extracts top-level tool patches", () => {
+    const patch =
+      "diff --git a/app.ts b/app.ts\n--- a/app.ts\n+++ b/app.ts\n@@ -1 +1 @@\n-old\n+new\n";
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "top-level-file-tool-patch",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          patch,
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.patch).toBe(patch);
+  });
+
+  it("does not traverse nested patch keys when extracting top-level array patches", () => {
+    const patch =
+      "diff --git a/app.ts b/app.ts\n--- a/app.ts\n+++ b/app.ts\n@@ -1 +1 @@\n-old\n+new\n";
+    const nestedPatch =
+      "diff --git a/nested.ts b/nested.ts\n--- a/nested.ts\n+++ b/nested.ts\n@@ -1 +1 @@\n-old\n+nested\n";
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "top-level-array-file-tool-patch",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: [
+          {
+            patch,
+            item: {
+              patch: nestedPatch,
+            },
+          },
+        ],
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.patch).toBe(patch);
+  });
+
+  it("normalizes top-level hunk-only diffs with sibling path metadata", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "top-level-file-tool-hunk",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          path: "apps/web/src/session-logic.ts",
+          diff: "@@ -1 +1 @@\n-old\n+new",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.patch).toContain(
+      "diff --git a/apps/web/src/session-logic.ts b/apps/web/src/session-logic.ts",
+    );
+    expect(entry?.patch).toContain("--- a/apps/web/src/session-logic.ts");
+    expect(entry?.patch).toContain("+++ b/apps/web/src/session-logic.ts");
+  });
+
+  it("keeps add hunk-only diffs rooted at dev null", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-file-tool-add-hunk",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              changes: [
+                {
+                  path: "SMOKE_TEST_ADD.md",
+                  kind: { type: "add" },
+                  diff: "@@ -0,0 +1 @@\n+Smoke test file-change row.",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.patch).toContain("--- /dev/null");
+    expect(entry?.patch).toContain("+++ b/SMOKE_TEST_ADD.md");
+  });
+
+  it("normalizes Codex file-change diffs for gitignored paths when the provider emits a patch", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-file-tool-ignored-patch",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              changes: [
+                {
+                  path: "apps/web/dist/ignored.txt",
+                  kind: { type: "add" },
+                  diff: "ignored file content\n",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.changedFiles).toEqual(["apps/web/dist/ignored.txt"]);
+    expect(entry?.patch).toContain(
+      "diff --git a/apps/web/dist/ignored.txt b/apps/web/dist/ignored.txt",
+    );
+    expect(entry?.patch).toContain("+ignored file content");
+  });
+
+  it("normalizes Codex hunk-only diffs into unified patches", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-file-tool-hunk",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              changes: [
+                {
+                  path: "SMOKE_TEST_CHANGE.md",
+                  diff: "@@ -1 +1,2 @@\n Smoke test file-change row.\n+Smoke test file-change row rerun.",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.patch).toContain("diff --git a/SMOKE_TEST_CHANGE.md b/SMOKE_TEST_CHANGE.md");
+    expect(entry?.patch).toContain("--- a/SMOKE_TEST_CHANGE.md");
+    expect(entry?.patch).toContain("+++ b/SMOKE_TEST_CHANGE.md");
   });
 
   it("drops duplicated tool detail when it only repeats the title", () => {
@@ -1212,6 +2159,623 @@ describe("deriveWorkLogEntries", () => {
       detail: "19 files",
       itemType: "web_search",
     });
+  });
+
+  it("collapses streamed subagent output under the parent collab tool id", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-output-a",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status: "inProgress",
+          title: "Subagent",
+          detail: "Inspect the auth flow",
+          data: {
+            toolCallId: "collab-1",
+            parentCollab: {
+              itemId: "collab-1",
+              detail: "Inspect the auth flow",
+            },
+            rawOutput: {
+              content: "Found the login path. ",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-output-b",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status: "inProgress",
+          title: "Subagent",
+          detail: "Inspect the auth flow",
+          data: {
+            toolCallId: "collab-1",
+            parentCollab: {
+              itemId: "collab-1",
+              detail: "Inspect the auth flow",
+            },
+            rawOutput: {
+              content: "No failures.",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Inspect the auth flow",
+          data: {
+            item: {
+              id: "collab-1",
+            },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "subagent-complete",
+      itemType: "collab_agent_tool_call",
+      subagentPrompt: "Inspect the auth flow",
+      output: "Found the login path. No failures.",
+    });
+  });
+
+  it("preserves same-timestamp subagent output chunk order", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-output-z",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Commit staged changes",
+          data: {
+            toolCallId: "collab-commit",
+            parentCollab: {
+              itemId: "collab-commit",
+              detail: "Commit staged changes",
+            },
+            rawOutput: {
+              content: "createdCommit: yes\n\n**hash:** `884f",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-output-a",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Commit staged changes",
+          data: {
+            toolCallId: "collab-commit",
+            parentCollab: {
+              itemId: "collab-commit",
+              detail: "Commit staged changes",
+            },
+            rawOutput: {
+              content: "619b`\n**subject:** `Fix overage reset display`",
+            },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.output).toBe(
+      "createdCommit: yes\n\n**hash:** `884f619b`\n**subject:** `Fix overage reset display`",
+    );
+  });
+
+  it("collapses late subagent output into an already completed subagent row", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-complete",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Create a haiku",
+          data: {
+            item: {
+              id: "collab-haiku",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-output-late",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status: "inProgress",
+          title: "Subagent",
+          detail: "below",
+          data: {
+            toolCallId: "collab-haiku",
+            parentCollab: {
+              itemId: "collab-haiku",
+              detail: "below",
+            },
+            rawOutput: {
+              content:
+                "Rain lifts from the wires\nA window gathers pale dawn\nFootsteps bloom below",
+            },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "subagent-output-late",
+      itemType: "collab_agent_tool_call",
+      subagentPrompt: "Create a haiku",
+      output: "Rain lifts from the wires\nA window gathers pale dawn\nFootsteps bloom below",
+    });
+  });
+
+  it("omits empty subagent placeholders around prompt and output rows", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-empty-before",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          status: "inProgress",
+        },
+      }),
+      makeActivity({
+        id: "subagent-prompt",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Create a haiku",
+          data: {
+            item: {
+              id: "collab-haiku",
+              prompt: "Create a haiku",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-empty-after",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+        },
+      }),
+      makeActivity({
+        id: "subagent-output",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          data: {
+            toolCallId: "collab-haiku",
+            rawOutput: {
+              content: "Rain lifts from wires",
+            },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "subagent-output",
+      itemType: "collab_agent_tool_call",
+      subagentPrompt: "Create a haiku",
+      output: "Rain lifts from wires",
+    });
+  });
+
+  it("collapses duplicate subagent control rows onto the latest child activity", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-spawn",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Run a harmless shell command",
+          data: {
+            item: {
+              id: "call-spawn",
+              prompt: "Run a harmless shell command",
+              tool: "spawnAgent",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                titleSeed: "Run a harmless shell command",
+              },
+            ],
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-wait",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          data: {
+            item: {
+              id: "call-wait",
+              prompt: null,
+              tool: "wait",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+              },
+            ],
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-close",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          data: {
+            item: {
+              id: "call-close",
+              prompt: null,
+              tool: "closeAgent",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "subagent-close",
+      itemType: "collab_agent_tool_call",
+      subagentChildren: [
+        {
+          threadId: "subagent-child-1",
+          titleSeed: "Run a harmless shell command",
+        },
+      ],
+    });
+  });
+
+  it("keeps a resumed subagent child block as a new parent work-log row", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-spawn",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Run initial check",
+          data: {
+            item: {
+              id: "call-spawn",
+              prompt: "Run initial check",
+              tool: "spawnAgent",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-spawn",
+                titleSeed: "Run initial check",
+              },
+            ],
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-wait",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          data: {
+            item: {
+              id: "call-wait",
+              prompt: null,
+              tool: "wait",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-spawn",
+              },
+            ],
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-resume",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        turnId: "turn-followup",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Run follow-up check",
+          data: {
+            item: {
+              id: "call-resume",
+              prompt: "Run follow-up check",
+              tool: "resumeAgent",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-resume",
+                titleSeed: "Run follow-up check",
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.id)).toEqual(["subagent-wait", "subagent-resume"]);
+    expect(entries[0]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-spawn",
+        titleSeed: "Run initial check",
+      },
+    ]);
+    expect(entries[1]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-resume",
+        titleSeed: "Run follow-up check",
+      },
+    ]);
+  });
+
+  it("keeps separate resumed subagent child blocks within the same parent turn", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-resume",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        turnId: "turn-followup",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Say hi in German",
+          data: {
+            item: {
+              id: "call-resume",
+              prompt: "Say hi in German",
+              tool: "resumeAgent",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-resume",
+                titleSeed: "Say hi in German",
+              },
+            ],
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-send-input",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        turnId: "turn-followup",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Say hi in German",
+          data: {
+            item: {
+              id: "call-send-input",
+              prompt: "Say hi in German",
+              tool: "sendInput",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-send-input",
+                titleSeed: "Say hi in German",
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.id).toBe("subagent-resume");
+    expect(entries[0]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-resume",
+        titleSeed: "Say hi in German",
+      },
+    ]);
+    expect(entries[1]?.id).toBe("subagent-send-input");
+    expect(entries[1]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-send-input",
+        titleSeed: "Say hi in German",
+      },
+    ]);
+  });
+
+  it("keeps a running duplicate subagent control row visible as the latest tool activity", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-spawn",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Start nested work",
+          data: {
+            item: {
+              id: "call-spawn",
+              prompt: "Start nested work",
+              tool: "spawnAgent",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-spawn",
+                titleSeed: "Start nested work",
+              },
+            ],
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-wait-running",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status: "inProgress",
+          title: "Subagent",
+          data: {
+            item: {
+              id: "call-wait",
+              prompt: null,
+              tool: "wait",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-spawn",
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.id).toBe("subagent-wait-running");
+    expect(entries[0]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-spawn",
+        titleSeed: "Start nested work",
+      },
+    ]);
+  });
+
+  it("keeps repeated child references with distinct parent activity ids in one row", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-batched-activities",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        turnId: "turn-followup",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          data: {
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-grandchild-start",
+                titleSeed: "Start nested work",
+              },
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-grandchild-resume",
+                titleSeed: "Resume nested work",
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-grandchild-start",
+        titleSeed: "Start nested work",
+      },
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-grandchild-resume",
+        titleSeed: "Resume nested work",
+      },
+    ]);
   });
 
   it("uses completed read-file output previews and still collapses the same tool call", () => {

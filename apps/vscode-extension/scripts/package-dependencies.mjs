@@ -1,10 +1,14 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
-const extensionDir = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
-const repoRoot = join(extensionDir, "../..");
-const rootPackageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+const extensionDir = NodePath.dirname(
+  NodeURL.fileURLToPath(new URL("../package.json", import.meta.url)),
+);
+const repoRoot = NodePath.join(extensionDir, "../..");
+const rootPackageJson = JSON.parse(
+  NodeFS.readFileSync(NodePath.join(repoRoot, "package.json"), "utf8"),
+);
 const catalog = {
   ...rootPackageJson.workspaces?.catalog,
   ...readPnpmWorkspaceCatalog(),
@@ -34,7 +38,7 @@ function resolvePackagedDependencyVersion(name, version) {
 function readPnpmWorkspaceCatalog() {
   let source;
   try {
-    source = readFileSync(join(repoRoot, "pnpm-workspace.yaml"), "utf8");
+    source = NodeFS.readFileSync(NodePath.join(repoRoot, "pnpm-workspace.yaml"), "utf8");
   } catch {
     return {};
   }

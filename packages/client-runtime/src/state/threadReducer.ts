@@ -68,6 +68,9 @@ export function applyThreadDetailEvent(
           interactionMode: event.payload.interactionMode,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
+          ...(event.payload.parentRelation !== undefined
+            ? { parentRelation: event.payload.parentRelation }
+            : {}),
           latestTurn: null,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
@@ -113,6 +116,9 @@ export function applyThreadDetailEvent(
           ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
           ...(event.payload.worktreePath !== undefined
             ? { worktreePath: event.payload.worktreePath }
+            : {}),
+          ...(event.payload.parentRelation !== undefined
+            ? { parentRelation: event.payload.parentRelation }
             : {}),
           updatedAt: event.payload.updatedAt,
         },

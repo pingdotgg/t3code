@@ -84,6 +84,8 @@ describe("theme failure handling", () => {
     vi.stubGlobal("document", {
       documentElement: {
         classList: { toggle: vi.fn() },
+        removeAttribute: vi.fn(),
+        setAttribute: vi.fn(),
       },
     });
 

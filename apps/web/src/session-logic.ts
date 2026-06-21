@@ -9,7 +9,7 @@ import {
   ProviderDriverKind,
   type ToolLifecycleItemType,
   type UserInputQuestion,
-  type ThreadId,
+  ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 
@@ -68,7 +68,15 @@ export interface WorkLogEntry {
   detail?: string;
   command?: string;
   rawCommand?: string;
+  output?: string;
+  stdout?: string;
+  stderr?: string;
+  exitCode?: number;
+  durationMs?: number;
+  patch?: string;
   changedFiles?: ReadonlyArray<string>;
+  subagentPrompt?: string;
+  subagentChildren?: ReadonlyArray<SubagentWorkLogChild>;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
   toolData?: unknown;
@@ -79,6 +87,17 @@ export interface WorkLogEntry {
   /** Originating orchestration activity kind (e.g. `user-input.requested`) for row chrome. */
   sourceActivityKind?: OrchestrationThreadActivity["kind"];
 }
+
+export interface SubagentWorkLogChild {
+  threadId: ThreadId;
+  parentItemId?: string;
+  titleSeed?: string;
+}
+
+const MAX_PATCH_SEARCH_DEPTH = 4;
+const MAX_PATCH_STRINGS = 4;
+const MAX_INLINE_PATCH_CHARS = 200_000;
+const PATCH_TOO_LARGE_MESSAGE = `[patch omitted: exceeds ${MAX_INLINE_PATCH_CHARS} characters]`;
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
@@ -251,6 +270,9 @@ export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
 /** Tool-like row with neither clear success nor failure (empty, incomplete, in progress, etc.). */
 export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolean {
   if (!workLogEntryIsToolLike(entry)) {
+    return false;
+  }
+  if (entry.itemType === "collab_agent_tool_call" && (entry.subagentChildren?.length ?? 0) > 0) {
     return false;
   }
   if (workEntryIndicatesToolFailure(entry)) {
@@ -637,7 +659,9 @@ export function deriveWorkLogEntries(
     if (isPlanBoundaryToolActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
   }
-  return collapseDerivedWorkLogEntries(entries).map((entry) => {
+  return dedupeSubagentChildWorkEntries(
+    collapseDerivedWorkLogEntries(entries.filter((entry) => !isEmptySubagentWorkLogEntry(entry))),
+  ).map((entry) => {
     const { activityKind, collapseKey: _collapseKey, ...rest } = entry;
     return Object.assign(rest, { sourceActivityKind: activityKind });
   });
@@ -680,7 +704,11 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? (activity.payload as Record<string, unknown>)
       : null;
   const commandPreview = extractToolCommand(payload);
+  const commandResult = extractCommandResult(payload, {
+    preserveBlankRawOutputStreams: activity.kind === "tool.updated",
+  });
   const changedFiles = extractChangedFiles(payload);
+  const patch = extractToolPatch(payload);
   const title = extractToolTitle(payload);
   const isTaskActivity = activity.kind === "task.progress" || activity.kind === "task.completed";
   const taskSummary =
@@ -719,6 +747,12 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   };
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
+  const subagentOutput =
+    itemType === "collab_agent_tool_call" ? extractSubagentOutput(payload) : null;
+  const subagentPrompt =
+    itemType === "collab_agent_tool_call" ? extractSubagentPrompt(payload, detail) : null;
+  const subagentChildren =
+    itemType === "collab_agent_tool_call" ? extractSubagentChildren(payload) : [];
   if (detail) {
     entry.detail = detail;
   }
@@ -728,8 +762,45 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (commandPreview.rawCommand) {
     entry.rawCommand = commandPreview.rawCommand;
   }
+  if (subagentOutput) {
+    entry.output = subagentOutput;
+  }
+  const isCommandEntry =
+    itemType === "command_execution" ||
+    requestKind === "command" ||
+    Boolean(commandPreview.command || commandPreview.rawCommand);
+  if (
+    commandResult.output &&
+    !commandResult.stdout &&
+    !commandResult.stderr &&
+    !entry.output &&
+    isCommandEntry
+  ) {
+    entry.output = commandResult.output;
+  }
+  if (commandResult.stdout) {
+    entry.stdout = commandResult.stdout;
+  }
+  if (commandResult.stderr) {
+    entry.stderr = commandResult.stderr;
+  }
+  if (commandResult.exitCode !== null) {
+    entry.exitCode = commandResult.exitCode;
+  }
+  if (commandResult.durationMs !== null) {
+    entry.durationMs = commandResult.durationMs;
+  }
+  if (patch) {
+    entry.patch = patch;
+  }
   if (changedFiles.length > 0) {
     entry.changedFiles = changedFiles;
+  }
+  if (subagentPrompt) {
+    entry.subagentPrompt = subagentPrompt;
+  }
+  if (subagentChildren.length > 0) {
+    entry.subagentChildren = subagentChildren;
   }
   if (title) {
     entry.toolTitle = title;
@@ -778,6 +849,68 @@ function collapseDerivedWorkLogEntries(
   return collapsed;
 }
 
+function dedupeSubagentChildWorkEntries(
+  entries: ReadonlyArray<DerivedWorkLogEntry>,
+): DerivedWorkLogEntry[] {
+  const lastIndexByChildActivityKey = new Map<string, number>();
+  const childByActivityKey = new Map<string, SubagentWorkLogChild>();
+
+  for (const [index, entry] of entries.entries()) {
+    if (entry.itemType !== "collab_agent_tool_call" || !entry.subagentChildren?.length) {
+      continue;
+    }
+    for (const child of entry.subagentChildren) {
+      const activityScope = child.parentItemId ?? entry.turnId ?? "";
+      const key = `${child.threadId}:${activityScope}`;
+      const existing = childByActivityKey.get(key);
+      childByActivityKey.set(key, {
+        threadId: child.threadId,
+        ...(child.parentItemId ? { parentItemId: child.parentItemId } : {}),
+        ...((existing?.titleSeed ?? child.titleSeed)
+          ? { titleSeed: existing?.titleSeed ?? child.titleSeed }
+          : {}),
+      });
+      lastIndexByChildActivityKey.set(key, index);
+    }
+  }
+
+  return entries.flatMap((entry, index) => {
+    if (entry.itemType !== "collab_agent_tool_call" || !entry.subagentChildren?.length) {
+      return [entry];
+    }
+    const retainedChildren: SubagentWorkLogChild[] = [];
+    const retainedKeys = new Set<string>();
+    for (const child of entry.subagentChildren) {
+      const activityScope = child.parentItemId ?? entry.turnId ?? "";
+      const key = `${child.threadId}:${activityScope}`;
+      if (retainedKeys.has(key) || lastIndexByChildActivityKey.get(key) !== index) {
+        continue;
+      }
+      retainedKeys.add(key);
+      retainedChildren.push(childByActivityKey.get(key) ?? child);
+    }
+    if (retainedChildren.length === 0) {
+      return [];
+    }
+    return [
+      {
+        ...entry,
+        subagentChildren: retainedChildren,
+      },
+    ];
+  });
+}
+
+function isEmptySubagentWorkLogEntry(entry: DerivedWorkLogEntry): boolean {
+  return (
+    entry.itemType === "collab_agent_tool_call" &&
+    !entry.detail &&
+    !entry.subagentPrompt &&
+    !entry.output &&
+    (entry.subagentChildren?.length ?? 0) === 0
+  );
+}
+
 function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
@@ -788,7 +921,14 @@ function shouldCollapseToolLifecycleEntries(
   if (next.activityKind !== "tool.updated" && next.activityKind !== "tool.completed") {
     return false;
   }
-  if (previous.activityKind === "tool.completed") {
+  if (
+    previous.activityKind === "tool.completed" &&
+    !(
+      next.activityKind === "tool.updated" &&
+      previous.toolCallId !== undefined &&
+      previous.toolCallId === next.toolCallId
+    )
+  ) {
     return false;
   }
   if (previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey) {
@@ -808,14 +948,36 @@ function mergeDerivedWorkLogEntries(
   next: DerivedWorkLogEntry,
 ): DerivedWorkLogEntry {
   const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
-  const detail = next.detail ?? previous.detail;
+  const itemType = next.itemType ?? previous.itemType;
+  const detail =
+    itemType === "collab_agent_tool_call"
+      ? (previous.detail ?? next.detail)
+      : (next.detail ?? previous.detail);
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
+  const output =
+    itemType === "collab_agent_tool_call"
+      ? mergeTextOutputChunk(previous.output, next.output)
+      : mergeTextOutput(previous.output, next.output, next);
+  const stdout = mergeTextOutput(previous.stdout, next.stdout, next);
+  const stderr = mergeTextOutput(previous.stderr, next.stderr, next);
+  const exitCode = next.exitCode ?? previous.exitCode;
+  const durationMs = next.durationMs ?? previous.durationMs;
+  const patch = next.patch ?? previous.patch;
+  const subagentPrompt =
+    itemType === "collab_agent_tool_call"
+      ? (previous.subagentPrompt ?? next.subagentPrompt)
+      : (next.subagentPrompt ?? previous.subagentPrompt);
+  const subagentChildren =
+    itemType === "collab_agent_tool_call"
+      ? mergeSubagentChildren(previous.subagentChildren, next.subagentChildren)
+      : (next.subagentChildren ?? previous.subagentChildren);
   const toolTitle = next.toolTitle ?? previous.toolTitle;
-  const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
-  const collapseKey = next.collapseKey ?? previous.collapseKey;
   const toolCallId = next.toolCallId ?? previous.toolCallId;
+  const collapseKey = toolCallId
+    ? `tool:${toolCallId}`
+    : (next.collapseKey ?? previous.collapseKey);
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
   return {
@@ -824,7 +986,15 @@ function mergeDerivedWorkLogEntries(
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
+    ...(output ? { output } : {}),
+    ...(stdout ? { stdout } : {}),
+    ...(stderr ? { stderr } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(patch ? { patch } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
+    ...(subagentPrompt ? { subagentPrompt } : {}),
+    ...(subagentChildren && subagentChildren.length > 0 ? { subagentChildren } : {}),
     ...(toolTitle ? { toolTitle } : {}),
     ...(itemType ? { itemType } : {}),
     ...(requestKind ? { requestKind } : {}),
@@ -833,6 +1003,88 @@ function mergeDerivedWorkLogEntries(
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
   };
+}
+
+function mergeSubagentChildren(
+  previous: ReadonlyArray<SubagentWorkLogChild> | undefined,
+  next: ReadonlyArray<SubagentWorkLogChild> | undefined,
+): ReadonlyArray<SubagentWorkLogChild> | undefined {
+  const merged = [...(previous ?? []), ...(next ?? [])];
+  if (merged.length === 0) {
+    return undefined;
+  }
+  const byChildActivity = new Map<string, SubagentWorkLogChild>();
+  for (const child of merged) {
+    const key = `${child.threadId}:${child.parentItemId ?? ""}`;
+    const existing = byChildActivity.get(key);
+    const titleSeed = existing?.titleSeed ?? child.titleSeed;
+    byChildActivity.set(key, {
+      threadId: child.threadId,
+      ...(child.parentItemId ? { parentItemId: child.parentItemId } : {}),
+      ...(titleSeed ? { titleSeed } : {}),
+    });
+  }
+  return [...byChildActivity.values()];
+}
+
+function mergeTextOutput(
+  previous: string | undefined,
+  next: string | undefined,
+  nextEntry: DerivedWorkLogEntry,
+): string | undefined {
+  if (!previous) {
+    return next;
+  }
+  if (!next) {
+    return previous;
+  }
+  if (previous === next) {
+    return next;
+  }
+  if (next.startsWith(previous)) {
+    return next;
+  }
+  if (previous.startsWith(next) && shouldKeepLongerOutputSnapshot(previous, next, nextEntry)) {
+    return previous;
+  }
+  return `${previous}${next}`;
+}
+
+function mergeTextOutputChunk(
+  previous: string | undefined,
+  next: string | undefined,
+): string | undefined {
+  if (!previous) {
+    return next;
+  }
+  if (!next) {
+    return previous;
+  }
+  return `${previous}${next}`;
+}
+
+function shouldKeepLongerOutputSnapshot(
+  previous: string,
+  next: string,
+  nextEntry: DerivedWorkLogEntry,
+): boolean {
+  return (
+    nextEntry.activityKind === "tool.completed" ||
+    next.endsWith("\n") ||
+    isLikelyShorterOutputSnapshot(previous, next)
+  );
+}
+
+function isLikelyShorterOutputSnapshot(previous: string, next: string): boolean {
+  if (next.length <= 1) {
+    return false;
+  }
+  // Multiline prefix matches are ambiguous; favor preserving incremental chunks over dropping output.
+  if (previous.includes("\n")) {
+    return false;
+  }
+  const following = previous[next.length];
+  return following === " " || following === "\t" || following === "\n" || following === "\r";
 }
 
 function mergeChangedFiles(
@@ -1077,13 +1329,122 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
   };
 }
 
+function firstNumberFromRecord(
+  record: Record<string, unknown> | null,
+  keys: ReadonlyArray<string>,
+): number | null {
+  if (!record) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = asNumber(record[key]);
+    if (value !== null) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function firstIntegerFromRecord(
+  record: Record<string, unknown> | null,
+  keys: ReadonlyArray<string>,
+): number | null {
+  const value = firstNumberFromRecord(record, keys);
+  return value !== null && Number.isInteger(value) ? value : null;
+}
+
+function extractCommandResult(
+  payload: Record<string, unknown> | null,
+  options: {
+    readonly preserveBlankRawOutputStreams?: boolean;
+  } = {},
+): {
+  output: string | null;
+  stdout: string | null;
+  stderr: string | null;
+  exitCode: number | null;
+  durationMs: number | null;
+} {
+  const data = asRecord(payload?.data);
+  const item = asRecord(data?.item);
+  const itemResult = asRecord(item?.result);
+  const rawOutput = asRecord(data?.rawOutput);
+  const rawOutputStdout = options.preserveBlankRawOutputStreams
+    ? firstRawStringFromRecord(rawOutput, ["stdout"])
+    : firstCommandOutputStringFromRecord(rawOutput, ["stdout"]);
+  const stdout =
+    rawOutputStdout ??
+    firstCommandOutputStringFromRecord(itemResult, ["stdout"]) ??
+    firstCommandOutputStringFromRecord(data, ["stdout"]) ??
+    firstCommandOutputStringFromRecord(payload, ["stdout"]);
+  const stderr =
+    (options.preserveBlankRawOutputStreams
+      ? firstRawStringFromRecord(rawOutput, ["stderr"])
+      : firstCommandOutputStringFromRecord(rawOutput, ["stderr"])) ??
+    firstCommandOutputStringFromRecord(itemResult, ["stderr"]) ??
+    firstCommandOutputStringFromRecord(data, ["stderr"]) ??
+    firstCommandOutputStringFromRecord(payload, ["stderr"]);
+  const rawOutputContent = options.preserveBlankRawOutputStreams
+    ? firstRawStringFromRecord(rawOutput, ["content", "output", "text", "result"])
+    : firstCommandOutputStringFromRecord(rawOutput, ["content", "output", "text", "result"]);
+  const content =
+    stdout ??
+    rawOutputContent ??
+    firstCommandOutputStringFromRecord(itemResult, ["content", "output", "text", "result"]) ??
+    firstCommandOutputStringFromRecord(item, ["aggregatedOutput", "output", "text", "result"]);
+  const strippedContent = content ? stripTrailingExitCode(content) : null;
+  const detailExit =
+    typeof payload?.detail === "string" ? stripTrailingExitCode(payload.detail) : null;
+  const exitCode =
+    firstIntegerFromRecord(rawOutput, ["exitCode", "code"]) ??
+    firstIntegerFromRecord(itemResult, ["exitCode", "code"]) ??
+    firstIntegerFromRecord(item, ["exitCode", "code"]) ??
+    firstIntegerFromRecord(data, ["exitCode", "code"]) ??
+    firstIntegerFromRecord(payload, ["exitCode", "code"]) ??
+    strippedContent?.exitCode ??
+    detailExit?.exitCode ??
+    null;
+  const elapsedSeconds =
+    firstNumberFromRecord(rawOutput, ["elapsedSeconds"]) ??
+    firstNumberFromRecord(itemResult, ["elapsedSeconds"]) ??
+    firstNumberFromRecord(item, ["elapsedSeconds"]) ??
+    firstNumberFromRecord(data, ["elapsedSeconds"]) ??
+    firstNumberFromRecord(payload, ["elapsedSeconds"]);
+  const durationMs =
+    firstNumberFromRecord(rawOutput, ["durationMs", "elapsedMs"]) ??
+    firstNumberFromRecord(itemResult, ["durationMs", "elapsedMs"]) ??
+    firstNumberFromRecord(item, ["durationMs", "elapsedMs"]) ??
+    firstNumberFromRecord(data, ["durationMs", "elapsedMs"]) ??
+    firstNumberFromRecord(payload, ["durationMs", "elapsedMs"]) ??
+    (elapsedSeconds !== null ? elapsedSeconds * 1000 : null);
+  const strippedStdout = stdout ? stripTrailingExitCode(stdout) : null;
+  const normalizedOutput =
+    strippedContent?.exitCode !== undefined ? strippedContent.output : (content ?? null);
+
+  return {
+    // `output` is the legacy fallback stream; callers should prefer stdout/stderr when present.
+    output: normalizedOutput,
+    stdout: strippedStdout?.exitCode !== undefined ? strippedStdout.output : stdout,
+    stderr,
+    exitCode,
+    durationMs,
+  };
+}
+
 function extractToolTitle(payload: Record<string, unknown> | null): string | null {
   return asTrimmedString(payload?.title);
 }
 
 function extractToolCallId(payload: Record<string, unknown> | null): string | null {
   const data = asRecord(payload?.data);
-  return asTrimmedString(data?.toolCallId);
+  const item = asRecord(data?.item);
+  const parentCollab = asRecord(data?.parentCollab);
+  return (
+    asTrimmedString(data?.toolCallId) ??
+    asTrimmedString(parentCollab?.itemId) ??
+    asTrimmedString(data?.itemId) ??
+    asTrimmedString(item?.id)
+  );
 }
 
 function normalizeInlinePreview(value: string): string {
@@ -1210,6 +1571,233 @@ function stripTrailingExitCode(value: string): {
   };
 }
 
+function firstStringFromRecord(
+  record: Record<string, unknown> | null,
+  keys: ReadonlyArray<string>,
+): string | null {
+  if (!record) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = asTrimmedString(record[key]);
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function firstRawStringFromRecord(
+  record: Record<string, unknown> | null,
+  keys: ReadonlyArray<string>,
+): string | null {
+  if (!record) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function firstCommandOutputStringFromRecord(
+  record: Record<string, unknown> | null,
+  keys: ReadonlyArray<string>,
+): string | null {
+  const value = firstRawStringFromRecord(record, keys);
+  return value !== null && /\S/u.test(value) ? value : null;
+}
+
+function looksLikeUnifiedDiff(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    trimmed.startsWith("diff --git ") ||
+    trimmed.startsWith("--- ") ||
+    trimmed.startsWith("@@ ") ||
+    /^@@\s+-\d+(?:,\d+)?\s+\+\d+(?:,\d+)?\s+@@/u.test(trimmed)
+  );
+}
+
+function codexChangeKindType(record: Record<string, unknown>): string | null {
+  const kind = record.kind;
+  if (typeof kind === "string") {
+    return kind;
+  }
+  const kindRecord = asRecord(kind);
+  return asTrimmedString(kindRecord?.type);
+}
+
+function patchPathFromRecord(record: Record<string, unknown>): string | null {
+  return (
+    asTrimmedString(record.path) ??
+    asTrimmedString(record.filePath) ??
+    asTrimmedString(record.relativePath) ??
+    asTrimmedString(record.filename) ??
+    asTrimmedString(record.newPath) ??
+    asTrimmedString(record.oldPath)
+  );
+}
+
+function normalizeDiffHeaderPath(path: string): string {
+  return path.replace(/\\/gu, "/");
+}
+
+function toUnifiedPatchFromRecordDiff(
+  record: Record<string, unknown>,
+  diff: string,
+): string | null {
+  if (diff.startsWith("diff --git ") || diff.startsWith("--- ")) {
+    return diff;
+  }
+  const trimmed = diff.trimEnd();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const rawPath = patchPathFromRecord(record);
+  if (!rawPath) {
+    return looksLikeUnifiedDiff(trimmed) ? trimmed : null;
+  }
+  const path = normalizeDiffHeaderPath(rawPath);
+
+  if (codexChangeKindType(record) === "add") {
+    if (trimmed.startsWith("@@ ")) {
+      return `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n${trimmed}`;
+    }
+    const lines = trimmed.length > 0 ? trimmed.split(/\r?\n/u) : [];
+    const addedLines = lines.map((line) => `+${line}`).join("\n");
+    return `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${lines.length} @@\n${addedLines}`;
+  }
+
+  if (trimmed.startsWith("@@ ")) {
+    return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n${trimmed}`;
+  }
+
+  return null;
+}
+
+function collectPatchStrings(
+  value: unknown,
+  patches: string[],
+  seen: Set<string>,
+  depth: number,
+  includeNested = true,
+): void {
+  if (depth > MAX_PATCH_SEARCH_DEPTH || patches.length >= MAX_PATCH_STRINGS) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectPatchStrings(entry, patches, seen, depth + 1, includeNested);
+      if (patches.length >= MAX_PATCH_STRINGS) {
+        return;
+      }
+    }
+    return;
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return;
+  }
+  for (const key of ["patch", "diff", "unifiedDiff"]) {
+    const rawCandidate = typeof record[key] === "string" ? record[key] : null;
+    const candidate = rawCandidate ? toUnifiedPatchFromRecordDiff(record, rawCandidate) : null;
+    if (!candidate || seen.has(candidate)) {
+      continue;
+    }
+    if (candidate.length > MAX_INLINE_PATCH_CHARS) {
+      seen.add(candidate);
+      patches.push(PATCH_TOO_LARGE_MESSAGE);
+      continue;
+    }
+    if (!looksLikeUnifiedDiff(candidate)) {
+      continue;
+    }
+    seen.add(candidate);
+    patches.push(candidate);
+  }
+  if (!includeNested) {
+    return;
+  }
+  for (const nestedKey of ["item", "result", "input", "data", "changes", "files", "edits"]) {
+    if (!(nestedKey in record)) {
+      continue;
+    }
+    collectPatchStrings(record[nestedKey], patches, seen, depth + 1, includeNested);
+    if (patches.length >= MAX_PATCH_STRINGS) {
+      return;
+    }
+  }
+}
+
+function extractToolPatch(payload: Record<string, unknown> | null): string | null {
+  const patches: string[] = [];
+  const seen = new Set<string>();
+  if (payload) {
+    collectPatchStrings(payload, patches, seen, 0, false);
+  }
+  const data = asRecord(payload?.data);
+  // Keep traversal bounded; provider payloads can nest raw tool data deeply.
+  collectPatchStrings(data, patches, seen, 0);
+  return patches.length > 0 ? patches.join("\n\n") : null;
+}
+
+function extractSubagentOutput(payload: Record<string, unknown> | null): string | null {
+  const data = asRecord(payload?.data);
+  const rawOutput = asRecord(data?.rawOutput);
+  return firstRawStringFromRecord(rawOutput, ["content", "output", "text", "stdout", "result"]);
+}
+
+function extractSubagentPrompt(
+  payload: Record<string, unknown> | null,
+  fallbackDetail: string | null,
+): string | null {
+  const data = asRecord(payload?.data);
+  const item = asRecord(data?.item);
+  const itemInput = asRecord(item?.input);
+  const rawInput = asRecord(data?.rawInput);
+  const parentCollab = asRecord(data?.parentCollab);
+  return (
+    asTrimmedString(parentCollab?.detail) ??
+    firstStringFromRecord(itemInput, ["prompt", "message", "description", "task"]) ??
+    firstStringFromRecord(rawInput, ["prompt", "message", "description", "task"]) ??
+    firstStringFromRecord(item, ["prompt", "message", "description", "task"]) ??
+    fallbackDetail
+  );
+}
+
+function extractSubagentChildren(
+  payload: Record<string, unknown> | null,
+): ReadonlyArray<SubagentWorkLogChild> {
+  const data = asRecord(payload?.data);
+  const children = Array.isArray(data?.subagentChildren) ? data.subagentChildren : [];
+  const result: SubagentWorkLogChild[] = [];
+  const seen = new Set<string>();
+  for (const value of children) {
+    const record = asRecord(value);
+    const rawThreadId = asTrimmedString(record?.childThreadId) ?? asTrimmedString(record?.threadId);
+    if (!rawThreadId) {
+      continue;
+    }
+    const titleSeed = asTrimmedString(record?.titleSeed);
+    const parentItemId = asTrimmedString(record?.parentItemId);
+    const key = `${rawThreadId}:${parentItemId ?? ""}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push({
+      threadId: ThreadId.make(rawThreadId),
+      ...(parentItemId ? { parentItemId } : {}),
+      ...(titleSeed ? { titleSeed } : {}),
+    });
+  }
+  return result;
+}
+
 function extractWorkLogItemType(
   payload: Record<string, unknown> | null,
 ): WorkLogEntry["itemType"] | undefined {
@@ -1321,7 +1909,10 @@ function compareActivitiesByOrder(
     return lifecycleRankComparison;
   }
 
-  return left.id.localeCompare(right.id);
+  // Stable sort preserves arrival order for unsequenced same-timestamp events.
+  // Streaming text chunks can share millisecond timestamps; sorting those by
+  // random event ids can scramble the reconstructed output.
+  return 0;
 }
 
 function compareActivityLifecycleRank(kind: string): number {

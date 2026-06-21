@@ -1,4 +1,4 @@
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge, T3HostBridge } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 
 import { __resetDesktopPrimaryAuthForTests, readDesktopPrimaryBearerToken } from "./desktopAuth";
@@ -27,17 +27,16 @@ describe("desktop primary auth", () => {
     expect(getLocalEnvironmentBearerToken).toHaveBeenCalledTimes(1);
   });
 
-  it("uses a host-injected bootstrap bearer token before asking the desktop bridge", async () => {
+  it("uses the host bootstrap bearer token before the desktop bridge", async () => {
     const getLocalEnvironmentBearerToken = vi.fn().mockResolvedValue("desktop-bearer-token");
     window.t3HostBridge = {
       getLocalEnvironmentBootstrap: () => ({
-        environmentId: "environment-local" as never,
-        label: "VS Code workspace",
+        label: "VS Code environment",
         httpBaseUrl: "http://127.0.0.1:3773",
         wsBaseUrl: "ws://127.0.0.1:3773",
         bearerToken: "host-bearer-token",
       }),
-    };
+    } as unknown as T3HostBridge;
     window.desktopBridge = {
       getLocalEnvironmentBearerToken,
     } as unknown as DesktopBridge;

@@ -1,8 +1,8 @@
-import * as crypto from "node:crypto";
-import * as fs from "node:fs/promises";
-import * as net from "node:net";
-import * as os from "node:os";
-import * as path from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as vscode from "vscode";
 
 const MCP_SETTING = "mcp.enabled";
@@ -64,11 +64,11 @@ type TransportFraming = "headers" | "newline";
 export class VsCodeMcpBridge implements vscode.Disposable {
   readonly #outputChannel: vscode.OutputChannel;
   readonly #serverName: string;
-  #server: net.Server | null = null;
+  #server: NodeNet.Server | null = null;
   #socketPath: string | null = null;
   #socketDir: string | null = null;
   #starting: Promise<VscodeMcpServerBootstrap | null> | null = null;
-  readonly #sockets = new Set<net.Socket>();
+  readonly #sockets = new Set<NodeNet.Socket>();
 
   constructor(outputChannel: vscode.OutputChannel, serverName = createMcpServerName()) {
     this.#outputChannel = outputChannel;
@@ -113,7 +113,7 @@ export class VsCodeMcpBridge implements vscode.Disposable {
 
   async #removeSocketDir(socketDir: string): Promise<void> {
     try {
-      await fs.rm(socketDir, { recursive: true, force: true });
+      await NodeFSP.rm(socketDir, { recursive: true, force: true });
     } catch (error) {
       this.#outputChannel.appendLine(
         `[mcp] Failed to remove MCP socket directory ${socketDir}: ${errorMessage(error)}`,
@@ -123,7 +123,7 @@ export class VsCodeMcpBridge implements vscode.Disposable {
 
   async #start(): Promise<VscodeMcpServerBootstrap> {
     const endpoint = await createMcpEndpoint();
-    const server = net.createServer((socket) => this.#handleConnection(socket));
+    const server = NodeNet.createServer((socket) => this.#handleConnection(socket));
 
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => {
@@ -146,7 +146,7 @@ export class VsCodeMcpBridge implements vscode.Disposable {
     return { name: this.#serverName, socketPath: endpoint.socketPath };
   }
 
-  #handleConnection(socket: net.Socket): void {
+  #handleConnection(socket: NodeNet.Socket): void {
     this.#sockets.add(socket);
     socket.once("close", () => {
       this.#sockets.delete(socket);
@@ -564,7 +564,7 @@ function isMcpEnabled(): boolean {
 }
 
 function createMcpServerName(): string {
-  return `${MCP_SERVER_NAME_PREFIX}-${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
+  return `${MCP_SERVER_NAME_PREFIX}-${process.pid}-${NodeCrypto.randomBytes(6).toString("hex")}`;
 }
 
 function isWindowsHost(): boolean {
@@ -576,16 +576,16 @@ async function createMcpEndpoint(): Promise<{
   readonly socketPath: string;
 }> {
   if (isWindowsHost()) {
-    const name = `t3code-vscode-mcp-${process.pid}-${crypto.randomBytes(8).toString("hex")}`;
+    const name = `t3code-vscode-mcp-${process.pid}-${NodeCrypto.randomBytes(8).toString("hex")}`;
     return {
       socketDir: "",
-      socketPath: path.join("\\\\.\\pipe", name),
+      socketPath: NodePath.join("\\\\.\\pipe", name),
     };
   }
-  const socketDir = await fs.mkdtemp(path.join(os.tmpdir(), "t3code-vscode-mcp-"));
+  const socketDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3code-vscode-mcp-"));
   return {
     socketDir,
-    socketPath: path.join(socketDir, "mcp.sock"),
+    socketPath: NodePath.join(socketDir, "mcp.sock"),
   };
 }
 
@@ -937,7 +937,7 @@ function serializeForJson(value: unknown, depth = 0, seen = new WeakSet<object>(
 
 function resolveVsCodeUri(input: string): vscode.Uri {
   const trimmed = input.trim();
-  if (path.win32.isAbsolute(trimmed) || path.isAbsolute(trimmed)) {
+  if (NodePath.win32.isAbsolute(trimmed) || NodePath.isAbsolute(trimmed)) {
     return vscode.Uri.file(trimmed);
   }
   if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(trimmed)) {
@@ -947,7 +947,7 @@ function resolveVsCodeUri(input: string): vscode.Uri {
   if (!workspaceFolder) {
     throw new Error(`Relative path requires an open VS Code workspace: ${input}`);
   }
-  return vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, trimmed));
+  return vscode.Uri.file(NodePath.join(workspaceFolder.uri.fsPath, trimmed));
 }
 
 function isUriInWorkspace(uri: vscode.Uri, workspaceFolderUris: readonly vscode.Uri[]): boolean {
@@ -963,7 +963,7 @@ function isUriInWorkspace(uri: vscode.Uri, workspaceFolderUris: readonly vscode.
     }
     const workspacePath = normalizeFsPath(workspaceUri.fsPath);
     const uriPath = normalizeFsPath(uri.fsPath);
-    return uriPath === workspacePath || uriPath.startsWith(`${workspacePath}${path.sep}`);
+    return uriPath === workspacePath || uriPath.startsWith(`${workspacePath}${NodePath.sep}`);
   });
 }
 
@@ -975,7 +975,7 @@ function sameUri(left: vscode.Uri, right: vscode.Uri): boolean {
 }
 
 function normalizeFsPath(value: string): string {
-  return path.resolve(value);
+  return NodePath.resolve(value);
 }
 
 function diagnosticSeverityFromInput(input: unknown): vscode.DiagnosticSeverity {
@@ -1116,7 +1116,7 @@ function encodeMessage(message: JsonRpcResponse, framing: TransportFraming): Buf
   return `${json}\n`;
 }
 
-function writeSocketMessage(socket: net.Socket, message: Buffer | string): Promise<void> {
+function writeSocketMessage(socket: NodeNet.Socket, message: Buffer | string): Promise<void> {
   if (socket.destroyed) {
     return Promise.resolve();
   }

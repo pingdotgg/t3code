@@ -1,7 +1,7 @@
 /* oxlint-disable unicorn/require-post-message-target-origin */
-import * as crypto from "node:crypto";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 import type * as vscode from "vscode";
 
 type ClientSettings = Record<string, unknown>;
@@ -23,7 +23,7 @@ export interface ClientSettingsPersistence {
 }
 
 export function resolveClientSettingsPath(t3Home: string): string {
-  return path.join(t3Home, "userdata", "client-settings.json");
+  return NodePath.join(t3Home, "userdata", "client-settings.json");
 }
 
 export function createClientSettingsPersistence(
@@ -33,7 +33,7 @@ export function createClientSettingsPersistence(
   return {
     get: async () => {
       try {
-        const raw = await fs.readFile(settingsPath, "utf8");
+        const raw = await NodeFSP.readFile(settingsPath, "utf8");
         const parsed = JSON.parse(raw) as unknown;
         if (!isObject(parsed)) {
           return null;
@@ -51,14 +51,14 @@ export function createClientSettingsPersistence(
       }
     },
     set: async (settings) => {
-      const directory = path.dirname(settingsPath);
-      const tempPath = `${settingsPath}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.tmp`;
+      const directory = NodePath.dirname(settingsPath);
+      const tempPath = `${settingsPath}.${process.pid}.${NodeCrypto.randomBytes(8).toString("hex")}.tmp`;
       try {
-        await fs.mkdir(directory, { recursive: true });
-        await fs.writeFile(tempPath, `${JSON.stringify(settings)}\n`, "utf8");
-        await fs.rename(tempPath, settingsPath);
+        await NodeFSP.mkdir(directory, { recursive: true });
+        await NodeFSP.writeFile(tempPath, `${JSON.stringify(settings)}\n`, "utf8");
+        await NodeFSP.rename(tempPath, settingsPath);
       } catch (error) {
-        await fs.rm(tempPath, { force: true }).catch(() => {});
+        await NodeFSP.rm(tempPath, { force: true }).catch(() => {});
         throw error;
       }
     },

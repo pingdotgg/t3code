@@ -6,9 +6,12 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { CornerLeftUpIcon } from "lucide-react";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
+import { cn } from "~/lib/utils";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
@@ -17,7 +20,7 @@ import ProjectScriptsControl, {
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
 import { usePrimaryEnvironmentId } from "../../state/environments";
-import { cn } from "~/lib/utils";
+import { useHostDisplayPreferences } from "../../hostDisplayPreferences";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -39,6 +42,7 @@ interface ChatHeaderProps {
     input: NewProjectScriptInput,
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
+  onOpenParentThread?: (() => void) | undefined;
 }
 
 export function shouldShowOpenInPicker(input: {
@@ -51,6 +55,15 @@ export function shouldShowOpenInPicker(input: {
     input.primaryEnvironmentId !== null &&
     input.activeThreadEnvironmentId === input.primaryEnvironmentId
   );
+}
+
+export function shouldRenderOpenInPicker(input: {
+  readonly hostShowOpenInPicker: boolean;
+  readonly activeProjectName: string | undefined;
+  readonly activeThreadEnvironmentId: EnvironmentId;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+}): boolean {
+  return input.hostShowOpenInPicker && shouldShowOpenInPicker(input);
 }
 
 export const ChatHeader = memo(function ChatHeader({
@@ -70,35 +83,55 @@ export const ChatHeader = memo(function ChatHeader({
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
+  onOpenParentThread,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const showOpenInPicker = shouldShowOpenInPicker({
-    activeProjectName,
-    activeThreadEnvironmentId,
-    primaryEnvironmentId,
-  });
+  const hostDisplayPreferences = useHostDisplayPreferences();
+
   return (
-    <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
+    <div className="@container/header-actions flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 overflow-hidden sm:flex-1 sm:flex-nowrap sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <h2
-                aria-label={activeThreadTitle}
-                className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
+        <div className="flex min-w-0 flex-1 basis-40 items-center gap-1.5">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <h2
+                  aria-label={activeThreadTitle}
+                  className="min-w-0 shrink truncate text-sm font-medium text-foreground"
+                >
+                  {activeThreadTitle}
+                </h2>
+              }
+            />
+            <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+          </Tooltip>
+          {onOpenParentThread && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="outline"
+                    className="shrink-0"
+                    aria-label="Open parent conversation"
+                    onClick={onOpenParentThread}
+                  />
+                }
               >
-                {activeThreadTitle}
-              </h2>
-            }
-          />
-          <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
-        </Tooltip>
+                <CornerLeftUpIcon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">Open parent conversation</TooltipPopup>
+            </Tooltip>
+          )}
+          <span className="min-w-0 flex-1" aria-hidden="true" />
+        </div>
       </div>
       <div
         data-chat-header-actions
         className={cn(
-          "flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3",
+          "flex min-w-0 flex-wrap items-center justify-start gap-2 sm:shrink-0 sm:justify-end @3xl/header-actions:gap-3",
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
@@ -113,7 +146,12 @@ export const ChatHeader = memo(function ChatHeader({
             onDeleteScript={onDeleteProjectScript}
           />
         )}
-        {showOpenInPicker && (
+        {shouldRenderOpenInPicker({
+          hostShowOpenInPicker: hostDisplayPreferences.showOpenInPicker,
+          activeProjectName,
+          activeThreadEnvironmentId,
+          primaryEnvironmentId,
+        }) && (
           <OpenInPicker
             environmentId={activeThreadEnvironmentId}
             keybindings={keybindings}

@@ -1,10 +1,10 @@
-import * as crypto from "node:crypto";
-import * as fs from "node:fs";
-import * as net from "node:net";
-import * as os from "node:os";
-import * as path from "node:path";
-import { spawn as spawnChildProcess } from "node:child_process";
-import { setTimeout as sleep } from "node:timers/promises";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeTimersPromises from "node:timers/promises";
 import { DEFAULT_MCP_TOOL_TIMEOUT_SEC, normalizeMcpToolTimeoutSec } from "@t3tools/shared/mcp";
 import {
   resolveActiveWorkspaceFolder as resolveActiveWorkspaceFolderByKey,
@@ -113,9 +113,9 @@ interface BackendStartupToken {
 
 export interface BackendManagerDependencies {
   readonly fetch: typeof fetch;
-  readonly mkdirSync: typeof fs.mkdirSync;
+  readonly mkdirSync: typeof NodeFS.mkdirSync;
   readonly pruneVirtualWorkspaceCache: typeof pruneVirtualWorkspaceCacheImpl;
-  readonly randomBytes: typeof crypto.randomBytes;
+  readonly randomBytes: typeof NodeCrypto.randomBytes;
   readonly runCommand: BackendRunCommand;
   readonly readDesktopBackendAdvertisements: typeof readDesktopBackendAdvertisements;
   readonly cleanupDesktopBackendAdvertisements: typeof cleanupDesktopBackendAdvertisements;
@@ -127,9 +127,9 @@ export interface BackendManagerDependencies {
 
 const defaultBackendManagerDependencies: BackendManagerDependencies = {
   fetch,
-  mkdirSync: fs.mkdirSync,
+  mkdirSync: NodeFS.mkdirSync,
   pruneVirtualWorkspaceCache: pruneVirtualWorkspaceCacheImpl,
-  randomBytes: crypto.randomBytes,
+  randomBytes: NodeCrypto.randomBytes,
   runCommand,
   readDesktopBackendAdvertisements,
   cleanupDesktopBackendAdvertisements,
@@ -220,7 +220,7 @@ export class BackendManager {
     });
     this.#assertStartupActive(startupToken);
     const activeWorkspaceFolder = resolveActiveWorkspaceFolder(workspaceFolders);
-    const cwd = activeWorkspaceFolder?.cwd ?? os.homedir();
+    const cwd = activeWorkspaceFolder?.cwd ?? NodeOS.homedir();
     const mcpServer = await this.#mcpBridge?.ensureStarted();
     this.#assertStartupActive(startupToken);
     const mcpToolTimeoutSec = resolveMcpToolTimeoutSec();
@@ -547,7 +547,7 @@ async function resolveBootstrapWorkspaceFolder(
   if (uriScheme === "file" || uriScheme === "vscode-remote") {
     return {
       key,
-      name: folder.name || path.basename(folder.uri.fsPath) || "workspace",
+      name: folder.name || NodePath.basename(folder.uri.fsPath) || "workspace",
       cwd: folder.uri.fsPath,
       uriScheme,
       uriAuthority,
@@ -589,9 +589,9 @@ function workspaceFolderKey(folder: vscode.WorkspaceFolder): string {
 export function resolveT3Home(): string {
   const configured = vscode.workspace.getConfiguration("t3code").get<string>("home")?.trim();
   if (configured) {
-    return configured.replace(/^~(?=$|[/\\])/, os.homedir());
+    return configured.replace(/^~(?=$|[/\\])/, NodeOS.homedir());
   }
-  return path.join(os.homedir(), ".t3");
+  return NodePath.join(NodeOS.homedir(), ".t3");
 }
 
 export function resolveMcpToolTimeoutSec(): number {
@@ -607,7 +607,7 @@ function runCommand(
   options?: BackendRunCommandOptions,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawnChildProcess(command, [...args], {
+    const child = NodeChildProcess.spawn(command, [...args], {
       cwd: options?.cwd,
       stdio: ["ignore", "ignore", "pipe"],
     });
@@ -645,8 +645,7 @@ export function resolveStoredBearerTokenSecretKey(input: {
   readonly httpBaseUrl: string;
   readonly workspaceFolders: readonly BootstrapWorkspaceFolder[];
 }): string {
-  const digest = crypto
-    .createHash("sha256")
+  const digest = NodeCrypto.createHash("sha256")
     .update(
       JSON.stringify({
         t3Home: input.t3Home,
@@ -691,7 +690,7 @@ async function waitForBackendReady(
     } finally {
       timeout.clear();
     }
-    await sleep(100, undefined, { signal }).catch(() => {
+    await NodeTimersPromises.setTimeout(100, undefined, { signal }).catch(() => {
       throwIfAborted(signal);
     });
   }
@@ -854,7 +853,7 @@ function isLoopbackHttpBaseUrl(value: string): boolean {
   if (hostname === "localhost" || hostname === "::1") {
     return true;
   }
-  return net.isIP(hostname) === 4 && hostname.startsWith("127.");
+  return NodeNet.isIP(hostname) === 4 && hostname.startsWith("127.");
 }
 
 function createAbortTimeout(

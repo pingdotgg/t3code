@@ -172,10 +172,10 @@ const config: ExpoConfig = {
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
     eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+      projectId: "c65ac46d-6488-49af-b61e-ab9bef78f96e",
     },
   },
-  owner: "pingdotgg",
+  owner: "quicksaver",
 };
 
 export default config;

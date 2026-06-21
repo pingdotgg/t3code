@@ -603,6 +603,48 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            parentKind: event.payload.parentRelation?.kind ?? "root",
+            rootThreadId: event.payload.parentRelation?.rootThreadId ?? event.payload.threadId,
+            parentThreadId:
+              event.payload.parentRelation?.kind === "subagent"
+                ? event.payload.parentRelation.parentThreadId
+                : null,
+            parentTurnId:
+              event.payload.parentRelation?.kind === "subagent"
+                ? event.payload.parentRelation.parentTurnId
+                : null,
+            parentItemId:
+              event.payload.parentRelation?.kind === "subagent"
+                ? event.payload.parentRelation.parentItemId
+                : null,
+            parentActivitySequence:
+              event.payload.parentRelation?.kind === "subagent"
+                ? event.payload.parentRelation.parentActivitySequence
+                : 0,
+            providerThreadId:
+              event.payload.parentRelation?.kind === "subagent"
+                ? event.payload.parentRelation.providerThreadId
+                : null,
+            titleSeed:
+              event.payload.parentRelation?.kind === "subagent"
+                ? event.payload.parentRelation.titleSeed
+                : null,
+            subagentDepth:
+              event.payload.parentRelation?.kind === "subagent"
+                ? event.payload.parentRelation.depth
+                : 0,
+            subagentStartedAt:
+              event.payload.parentRelation?.kind === "subagent"
+                ? event.payload.parentRelation.startedAt
+                : null,
+            subagentCompletedAt:
+              event.payload.parentRelation?.kind === "subagent"
+                ? event.payload.parentRelation.completedAt
+                : null,
+            subagentStatus:
+              event.payload.parentRelation?.kind === "subagent"
+                ? event.payload.parentRelation.status
+                : null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -661,6 +703,52 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
+              : {}),
+            ...(event.payload.parentRelation !== undefined
+              ? {
+                  parentKind: event.payload.parentRelation.kind,
+                  rootThreadId: event.payload.parentRelation.rootThreadId,
+                  parentThreadId:
+                    event.payload.parentRelation.kind === "subagent"
+                      ? event.payload.parentRelation.parentThreadId
+                      : null,
+                  parentTurnId:
+                    event.payload.parentRelation.kind === "subagent"
+                      ? event.payload.parentRelation.parentTurnId
+                      : null,
+                  parentItemId:
+                    event.payload.parentRelation.kind === "subagent"
+                      ? event.payload.parentRelation.parentItemId
+                      : null,
+                  parentActivitySequence:
+                    event.payload.parentRelation.kind === "subagent"
+                      ? event.payload.parentRelation.parentActivitySequence
+                      : 0,
+                  providerThreadId:
+                    event.payload.parentRelation.kind === "subagent"
+                      ? event.payload.parentRelation.providerThreadId
+                      : null,
+                  titleSeed:
+                    event.payload.parentRelation.kind === "subagent"
+                      ? event.payload.parentRelation.titleSeed
+                      : null,
+                  subagentDepth:
+                    event.payload.parentRelation.kind === "subagent"
+                      ? event.payload.parentRelation.depth
+                      : 0,
+                  subagentStartedAt:
+                    event.payload.parentRelation.kind === "subagent"
+                      ? event.payload.parentRelation.startedAt
+                      : null,
+                  subagentCompletedAt:
+                    event.payload.parentRelation.kind === "subagent"
+                      ? event.payload.parentRelation.completedAt
+                      : null,
+                  subagentStatus:
+                    event.payload.parentRelation.kind === "subagent"
+                      ? event.payload.parentRelation.status
+                      : null,
+                }
               : {}),
             updatedAt: event.payload.updatedAt,
           });

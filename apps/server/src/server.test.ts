@@ -17,6 +17,7 @@ import {
   MessageId,
   ExternalLauncherCommandNotFoundError,
   type OrchestrationThreadShell,
+  type OrchestrationThread,
   TerminalNotRunningError,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -26,6 +27,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ResolvedKeybindingRule,
+  type ServerProvider,
+  type ServerProviderSkill,
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
@@ -45,12 +48,14 @@ import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -385,6 +390,10 @@ const buildAppUnderTest = (options?: {
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
       ...options?.config,
+      autoBootstrapWorkspaceFolders: options?.config?.autoBootstrapWorkspaceFolders ?? [],
+      activeBootstrapWorkspaceFolderKey:
+        options?.config?.activeBootstrapWorkspaceFolderKey ?? undefined,
+      hostMcpServers: options?.config?.hostMcpServers ?? [],
     };
     const layerConfig = ServerConfig.layer(config);
     const defaultVcsDriver: VcsDriver.VcsDriver["Service"] = {
@@ -1125,6 +1134,24 @@ const responseJsonEffect = <A>(response: HttpClientResponse.HttpClientResponse) 
 
 const responseOk = (response: HttpClientResponse.HttpClientResponse) =>
   response.status >= 200 && response.status < 300;
+
+const makeServerProviderSnapshot = (
+  input: Partial<ServerProvider> & {
+    readonly instanceId: ProviderInstanceId;
+    readonly driver: ProviderDriverKind;
+  },
+): ServerProvider => ({
+  enabled: true,
+  installed: true,
+  version: "1.0.0",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-04-11T00:00:00.000Z",
+  models: [],
+  slashCommands: [],
+  skills: [],
+  ...input,
+});
 
 const getAuthenticatedSessionCookieHeader = (credential = defaultDesktopBootstrapToken) =>
   Effect.gen(function* () {
@@ -4262,6 +4289,173 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc server.listProviderSkills errors for missing provider", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverListProviderSkills]({
+            instanceId: ProviderInstanceId.make("codex"),
+            cwd: process.cwd(),
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ServerProviderSkillsListError");
+      assert.equal(result.failure.message, "Provider instance 'codex' was not found.");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "routes websocket rpc server.listProviderSkills returns non-Codex snapshot skills",
+    () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("claudeAgent");
+        const skill: ServerProviderSkill = {
+          name: "plan",
+          path: "/providers/claudeAgent/skills/plan/SKILL.md",
+          enabled: true,
+        };
+        const providers = [
+          makeServerProviderSnapshot({
+            instanceId,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            skills: [skill],
+          }),
+        ];
+
+        yield* buildAppUnderTest({
+          layers: {
+            providerRegistry: {
+              getProviders: Effect.succeed(providers),
+            },
+          },
+        });
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const response = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.serverListProviderSkills]({
+              instanceId,
+              cwd: "/definitely/not/a/real/workspace/path",
+            }),
+          ),
+        );
+
+        assert.deepEqual(response.skills, [skill]);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "routes websocket rpc server.listProviderSkills returns disabled Codex snapshot skills",
+    () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("codex");
+        const driver = ProviderDriverKind.make("codex");
+        const skill: ServerProviderSkill = {
+          name: "fallback",
+          path: "/providers/codex/skills/fallback/SKILL.md",
+          enabled: true,
+        };
+        const providers = [
+          makeServerProviderSnapshot({
+            instanceId,
+            driver,
+            skills: [skill],
+          }),
+        ];
+
+        yield* buildAppUnderTest({
+          layers: {
+            providerRegistry: {
+              getProviders: Effect.succeed(providers),
+            },
+            serverSettings: {
+              getSettings: Effect.succeed({
+                ...DEFAULT_SERVER_SETTINGS,
+                providerInstances: {
+                  [instanceId]: {
+                    driver,
+                    enabled: false,
+                    config: {},
+                  },
+                },
+              }),
+            },
+          },
+        });
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const response = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.serverListProviderSkills]({
+              instanceId,
+              cwd: "/definitely/not/a/real/workspace/path",
+            }),
+          ),
+        );
+
+        assert.deepEqual(response.skills, [skill]);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc server.listProviderSkills validates enabled Codex cwd", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex");
+      const driver = ProviderDriverKind.make("codex");
+      const providers = [
+        makeServerProviderSnapshot({
+          instanceId,
+          driver,
+        }),
+      ];
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerRegistry: {
+            getProviders: Effect.succeed(providers),
+          },
+          serverSettings: {
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              providerInstances: {
+                [instanceId]: {
+                  driver,
+                  enabled: true,
+                  config: {},
+                },
+              },
+            }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverListProviderSkills]({
+            instanceId,
+            cwd: "/definitely/not/a/real/workspace/path",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ServerProviderSkillsListError");
+      assertInclude(
+        result.failure.message,
+        "Invalid Codex skills cwd '/definitely/not/a/real/workspace/path'",
+      );
+      assertInclude(
+        result.failure.message,
+        "Workspace root does not exist: /definitely/not/a/real/workspace/path",
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect(
     "routes websocket rpc subscribeServerLifecycle replays snapshot and streams updates",
     () =>
@@ -5509,6 +5703,96 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       assert.deepEqual(replayResult, []);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("buffers thread detail events emitted while loading the initial thread snapshot", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const threadId = ThreadId.make("thread-racy-subscribe");
+      const messageId = MessageId.make("message-racy-first-user");
+      const snapshotGate = yield* Deferred.make<void>();
+      const events = yield* Queue.unbounded<OrchestrationEvent>();
+      const thread = {
+        id: threadId,
+        projectId: defaultProjectId,
+        title: "Racy Subscribe",
+        modelSelection: defaultModelSelection,
+        interactionMode: "default" as const,
+        runtimeMode: "full-access" as const,
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        latestTurn: null,
+        messages: [],
+        session: null,
+        activities: [],
+        proposedPlans: [],
+        checkpoints: [],
+        deletedAt: null,
+      } satisfies OrchestrationThread;
+      const userMessageEvent = {
+        sequence: 2,
+        eventId: EventId.make("event-racy-first-user"),
+        aggregateKind: "thread" as const,
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-racy-first-user"),
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.message-sent" as const,
+        payload: {
+          threadId,
+          messageId,
+          role: "user" as const,
+          text: "hi",
+          attachments: [],
+          turnId: null,
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      } satisfies OrchestrationEvent;
+
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getThreadDetailById: () =>
+              Deferred.await(snapshotGate).pipe(Effect.as(Option.some(thread))),
+            getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 1 }),
+          },
+          orchestrationEngine: {
+            streamDomainEvents: Stream.fromQueue(events),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const fiber = yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+              threadId,
+            }).pipe(Stream.take(2), Stream.runCollect, Effect.forkScoped);
+            yield* Queue.offer(events, userMessageEvent);
+            yield* Deferred.succeed(snapshotGate, undefined);
+            return Array.from(yield* Fiber.join(fiber));
+          }),
+        ),
+      );
+
+      assert.equal(items[0]?.kind, "snapshot");
+      assert.equal(items[1]?.kind, "event");
+      if (items[1]?.kind === "event") {
+        const event = items[1].event;
+        assert.equal(event.type, "thread.message-sent");
+        if (event.type === "thread.message-sent") {
+          assert.equal(event.payload.text, "hi");
+        }
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

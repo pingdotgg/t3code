@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -37,6 +39,49 @@ describe("buildInitialGrokProviderSnapshot", () => {
 });
 
 it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
+  it.effect("starts ACP model discovery in the configured cwd", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-grok-cwd-" });
+      const workspaceDirectory = yield* fileSystem.makeTempDirectory({
+        directory: NodeOS.tmpdir(),
+        prefix: "t3code-grok-workspace-",
+      });
+      const cwd = yield* fileSystem.realPath(workspaceDirectory);
+      const cwdLogPath = path.join(directory, "cwd.log");
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const grokPath = path.join(directory, "grok");
+      const command = [process.execPath, mockAgentPath]
+        .map((argument) => JSON.stringify(argument))
+        .join(" ");
+      yield* fileSystem.writeFileString(
+        grokPath,
+        [
+          "#!/bin/sh",
+          'if [ "$1" = "--version" ]; then',
+          '  printf "grok-cli 0.0.99\\n"',
+          "  exit 0",
+          "fi",
+          `exec ${command} "$@"`,
+          "",
+        ].join("\n"),
+      );
+      yield* fileSystem.chmod(grokPath, 0o755);
+
+      const snapshot = yield* checkGrokProviderStatus(
+        decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+        cwd,
+        { ...process.env, T3_ACP_CWD_LOG_PATH: cwdLogPath },
+      );
+
+      expect(snapshot.status).toBe("ready");
+      expect((yield* fileSystem.readFileString(cwdLogPath)).trim()).toBe(cwd);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("reports the binary as missing when the binary path does not resolve", () =>
     Effect.gen(function* () {
       const snapshot = yield* checkGrokProviderStatus(
@@ -44,6 +89,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           enabled: true,
           binaryPath: "/definitely/not/installed/grok-binary",
         }),
+        process.cwd(),
       );
       expect(snapshot.enabled).toBe(true);
       expect(snapshot.installed).toBe(false);
@@ -69,6 +115,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
           return yield* checkGrokProviderStatus(
             decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            process.cwd(),
           );
         }),
       );
@@ -97,6 +144,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
           return yield* checkGrokProviderStatus(
             decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            process.cwd(),
           );
         }),
       );

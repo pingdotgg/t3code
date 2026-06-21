@@ -3,9 +3,11 @@ import {
   type MessageId,
   type ScopedThreadRef,
   type ServerProviderSkill,
+  type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
-import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useNavigate } from "@tanstack/react-router";
 import {
   createContext,
   Fragment,
@@ -22,14 +24,23 @@ import {
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
+import type { FileDiffMetadata, Hunk } from "@pierre/diffs/types";
 import {
   deriveTimelineEntries,
+  formatDuration,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
+import {
+  formatSubagentDuration,
+  formatTerminalSubagentStatusDuration,
+  LiveSubagentDuration,
+  subagentStatusToneClass,
+  type SubagentThreadStatus,
+} from "../../subagentDisplay";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import {
   getRenderablePatch,
@@ -66,6 +77,8 @@ import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
+  getRenderableCommandOutputLines,
+  hasRenderableCommandOutput,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
@@ -91,6 +104,8 @@ import {
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
+import { buildThreadRouteParams } from "../../threadRoutes";
+import { useThreadShell } from "../../state/entities";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
 
 import {
@@ -106,6 +121,7 @@ import {
   parseReviewCommentMessageSegments,
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
+import { ThreadConversationWidthContainer } from "./ThreadConversationWidth";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -140,6 +156,7 @@ const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const COMMAND_OUTPUT_TAIL_LINES = 40;
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -352,9 +369,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // from TimelineRowCtx, which propagates through LegendList's memo.
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
-      <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip" data-timeline-root="true">
+      <ThreadConversationWidthContainer
+        className="w-full min-w-0 overflow-x-clip"
+        data-timeline-root="true"
+      >
         <TimelineRowContent row={item} />
-      </div>
+      </ThreadConversationWidthContainer>
     ),
     [],
   );
@@ -1439,10 +1459,25 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
 }
 
 function workEntryPreview(
-  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
+  workEntry: Pick<
+    TimelineWorkEntry,
+    | "detail"
+    | "command"
+    | "changedFiles"
+    | "itemType"
+    | "output"
+    | "subagentPrompt"
+    | "subagentChildren"
+  >,
   workspaceRoot: string | undefined,
 ) {
   if (workEntry.command) return workEntry.command;
+  if ((workEntry.subagentChildren?.length ?? 0) > 0) return null;
+  if (workEntry.itemType === "collab_agent_tool_call") {
+    const { prompt, output } = resolveSubagentDisplayParts(workEntry);
+    return prompt ?? output;
+  }
+  if (workEntry.subagentPrompt) return workEntry.subagentPrompt;
   if (workEntry.detail) return workEntry.detail;
   if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
   const [firstPath] = workEntry.changedFiles ?? [];
@@ -1537,6 +1572,419 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
   return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
 }
 
+function ToolDetailBlock(props: {
+  title: string;
+  children: ReactNode;
+  mono?: boolean;
+  tone?: "default" | "error";
+}) {
+  return (
+    <div className="space-y-1">
+      <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-muted-foreground/55">
+        {props.title}
+      </p>
+      <div
+        className={cn(
+          "max-h-80 overflow-auto rounded-md border border-border/55 bg-background/80 px-2 py-1.5 text-[11px] leading-5 text-foreground/78",
+          props.mono && "font-mono whitespace-pre-wrap wrap-break-word",
+          props.tone === "error" &&
+            "border-rose-500/20 bg-rose-500/5 text-rose-800 dark:text-rose-200",
+        )}
+      >
+        {props.children}
+      </div>
+    </div>
+  );
+}
+
+function normalizedSubagentText(value: string | undefined): string {
+  return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function resolveSubagentDisplayParts(
+  workEntry: Pick<TimelineWorkEntry, "output" | "subagentPrompt">,
+): {
+  prompt: string | null;
+  output: string | null;
+} {
+  const prompt = workEntry.subagentPrompt?.trim() ?? "";
+  const output = workEntry.output?.trim() ?? "";
+  if (!prompt) {
+    return { prompt: null, output: output || null };
+  }
+  if (!output) {
+    return { prompt, output: null };
+  }
+
+  const normalizedPrompt = normalizedSubagentText(prompt).toLowerCase();
+  const normalizedOutput = normalizedSubagentText(output).toLowerCase();
+  const redundantPrompt =
+    normalizedPrompt === normalizedOutput ||
+    normalizedPrompt.startsWith(normalizedOutput) ||
+    normalizedOutput.startsWith(normalizedPrompt);
+
+  return {
+    prompt: redundantPrompt ? null : prompt,
+    output,
+  };
+}
+
+function hasExpandableWorkEntryDetails(
+  workEntry: TimelineWorkEntry,
+  workspaceRoot: string | undefined,
+): boolean {
+  if (hasCommandWorkEntryDetails(workEntry) || hasFileChangeWorkEntryDetails(workEntry)) {
+    return true;
+  }
+  if (workEntry.itemType === "collab_agent_tool_call") {
+    if ((workEntry.subagentChildren?.length ?? 0) > 0) {
+      return false;
+    }
+    const { prompt, output } = resolveSubagentDisplayParts(workEntry);
+    return Boolean(prompt || output);
+  }
+  return buildToolCallExpandedBody(workEntry, workspaceRoot) !== null;
+}
+
+function ToolEntryDetails({
+  workEntry,
+  workspaceRoot,
+}: {
+  workEntry: TimelineWorkEntry;
+  workspaceRoot: string | undefined;
+}) {
+  const showCommandDetails = hasCommandWorkEntryDetails(workEntry);
+  const showFileChangeDetails = hasFileChangeWorkEntryDetails(workEntry);
+  const supplementalDetails =
+    showCommandDetails || showFileChangeDetails
+      ? buildSupplementalToolDetailBody(workEntry, {
+          dedupeRenderedCommandOutput: showCommandDetails,
+        })
+      : null;
+  if (showCommandDetails || showFileChangeDetails) {
+    return (
+      <>
+        {showCommandDetails && <CommandEntryDetails workEntry={workEntry} />}
+        {showFileChangeDetails && <FileChangeEntryDetails workEntry={workEntry} />}
+        {supplementalDetails ? <GenericToolEntryDetails value={supplementalDetails} /> : null}
+      </>
+    );
+  }
+
+  const { prompt, output } =
+    workEntry.itemType === "collab_agent_tool_call"
+      ? resolveSubagentDisplayParts(workEntry)
+      : { prompt: null, output: null };
+  if (!prompt && !output) {
+    const genericDetails = buildToolCallExpandedBody(workEntry, workspaceRoot);
+    return genericDetails ? <GenericToolEntryDetails value={genericDetails} /> : null;
+  }
+  return (
+    <div className="mt-2 ms-7 space-y-2 border-s border-border/45 ps-3 pt-0.5">
+      {prompt && (
+        <ToolDetailBlock title="Prompt" mono>
+          {prompt}
+        </ToolDetailBlock>
+      )}
+      {output && (
+        <ToolDetailBlock title="Output" mono>
+          {output}
+        </ToolDetailBlock>
+      )}
+    </div>
+  );
+}
+
+function buildSupplementalToolDetailBody(
+  workEntry: TimelineWorkEntry,
+  options: { dedupeRenderedCommandOutput: boolean },
+): string | null {
+  const detail = workEntry.detail?.trim();
+  if (!detail) {
+    return null;
+  }
+  const command = workEntry.command?.trim();
+  const rawCommand = workEntry.rawCommand?.trim();
+  const renderedOutputMatchesDetail =
+    options.dedupeRenderedCommandOutput && commandOutputMatchesDetail(workEntry, detail);
+  if (detail === command || detail === rawCommand || renderedOutputMatchesDetail) {
+    return null;
+  }
+  return detail;
+}
+
+function commandOutputMatchesDetail(workEntry: TimelineWorkEntry, detail: string): boolean {
+  const hasStreamOutput =
+    hasRenderableCommandOutput(workEntry.stdout) || hasRenderableCommandOutput(workEntry.stderr);
+  return [workEntry.stdout, workEntry.stderr, !hasStreamOutput ? workEntry.output : undefined].some(
+    (value) => getRenderableCommandOutputLines(value).join("\n") === detail,
+  );
+}
+
+function hasCommandWorkEntryDetails(workEntry: TimelineWorkEntry): boolean {
+  if (!hasCommandWorkEntryMetadata(workEntry)) {
+    return false;
+  }
+  if (workEntry.itemType === "command_execution" || workEntry.requestKind === "command") {
+    return true;
+  }
+  if (
+    workEntry.itemType === "file_change" ||
+    workEntry.itemType === "collab_agent_tool_call" ||
+    workEntry.requestKind === "file-change"
+  ) {
+    return false;
+  }
+  if (workEntry.itemType || workEntry.requestKind) {
+    return workEntry.itemType === "dynamic_tool_call" || workEntry.itemType === "mcp_tool_call";
+  }
+  return hasCommandWorkEntryCommand(workEntry);
+}
+
+function hasCommandWorkEntryMetadata(workEntry: TimelineWorkEntry): boolean {
+  return Boolean(
+    workEntry.command ||
+    workEntry.rawCommand ||
+    workEntry.output ||
+    workEntry.stdout ||
+    workEntry.stderr ||
+    workEntry.exitCode !== undefined ||
+    workEntry.durationMs !== undefined,
+  );
+}
+
+function hasCommandWorkEntryCommand(workEntry: TimelineWorkEntry): boolean {
+  return Boolean(workEntry.command || workEntry.rawCommand);
+}
+
+function hasFileChangeWorkEntryDetails(workEntry: TimelineWorkEntry): boolean {
+  if (workEntry.itemType === "file_change" || workEntry.requestKind === "file-change") {
+    return Boolean(workEntry.patch || (workEntry.changedFiles?.length ?? 0) > 0);
+  }
+  if (workEntry.itemType === "collab_agent_tool_call") {
+    return false;
+  }
+  return Boolean(workEntry.patch || (workEntry.changedFiles?.length ?? 0) > 0);
+}
+
+function CommandEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry }) {
+  const command = workEntry.command ?? workEntry.rawCommand ?? null;
+  const rawCommand =
+    workEntry.rawCommand && workEntry.rawCommand !== command ? workEntry.rawCommand : null;
+  const hasStreamOutput =
+    hasRenderableCommandOutput(workEntry.stdout) || hasRenderableCommandOutput(workEntry.stderr);
+
+  return (
+    <div className="mt-2 ms-2 space-y-2 border-s border-border/45 ps-3 pt-0.5">
+      {command && (
+        <ToolDetailBlock title="Command" mono>
+          {command}
+        </ToolDetailBlock>
+      )}
+      {rawCommand && (
+        <ToolDetailBlock title="Raw command" mono>
+          {rawCommand}
+        </ToolDetailBlock>
+      )}
+      <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground/70">
+        <span className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5">
+          Exit code {workEntry.exitCode ?? "unknown"}
+        </span>
+        <span className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5">
+          Duration{" "}
+          {workEntry.durationMs !== undefined ? formatDuration(workEntry.durationMs) : "unknown"}
+        </span>
+      </div>
+      {hasRenderableCommandOutput(workEntry.stdout) ? (
+        <CommandOutputBlock title="Stdout" value={workEntry.stdout} />
+      ) : null}
+      {hasRenderableCommandOutput(workEntry.stderr) ? (
+        <CommandOutputBlock title="Stderr" value={workEntry.stderr} tone="error" />
+      ) : null}
+      {!hasStreamOutput && hasRenderableCommandOutput(workEntry.output) ? (
+        <CommandOutputBlock title="Output" value={workEntry.output} />
+      ) : null}
+    </div>
+  );
+}
+
+function CommandOutputBlock(props: { title: string; value: string; tone?: "default" | "error" }) {
+  const [showFull, setShowFull] = useState(false);
+  const lines = useMemo(() => getRenderableCommandOutputLines(props.value), [props.value]);
+  const isTruncated = lines.length > COMMAND_OUTPUT_TAIL_LINES;
+  const toggleLabel = `${showFull ? "Collapse" : "Expand"} ${props.title}`;
+  const visibleValue =
+    showFull || !isTruncated
+      ? lines.join("\n")
+      : lines.slice(-COMMAND_OUTPUT_TAIL_LINES).join("\n");
+  const suffix = isTruncated
+    ? showFull
+      ? `${lines.length.toLocaleString()} lines`
+      : `last ${COMMAND_OUTPUT_TAIL_LINES} of ${lines.length.toLocaleString()} lines`
+    : `${lines.length.toLocaleString()} line${lines.length === 1 ? "" : "s"}`;
+
+  return (
+    <div className="space-y-1">
+      <button
+        type="button"
+        className={cn(
+          "flex items-center gap-1 text-[9px] font-medium uppercase tracking-[0.14em] text-muted-foreground/55 transition-colors focus-visible:outline-2 focus-visible:outline-ring",
+          isTruncated ? "cursor-pointer hover:text-foreground/75" : "cursor-default",
+        )}
+        disabled={!isTruncated}
+        aria-expanded={isTruncated ? showFull : undefined}
+        aria-label={isTruncated ? toggleLabel : `${props.title} output`}
+        onClick={() => {
+          if (isTruncated) {
+            setShowFull((value) => !value);
+          }
+        }}
+      >
+        <span>{props.title}</span>
+        <span className="normal-case tracking-normal">({suffix})</span>
+      </button>
+      <button
+        type="button"
+        className={cn(
+          "block max-h-80 w-full overflow-auto rounded-md border border-border/55 bg-background/80 px-2 py-1.5 text-left font-mono text-[11px] leading-5 whitespace-pre-wrap wrap-break-word text-foreground/78",
+          props.tone === "error" &&
+            "border-rose-500/20 bg-rose-500/5 text-rose-800 dark:text-rose-200",
+          isTruncated ? "cursor-pointer" : "cursor-default",
+        )}
+        disabled={!isTruncated}
+        aria-expanded={isTruncated ? showFull : undefined}
+        aria-label={isTruncated ? toggleLabel : `${props.title} output`}
+        onClick={() => {
+          if (isTruncated) {
+            setShowFull((value) => !value);
+          }
+        }}
+      >
+        {visibleValue}
+      </button>
+    </div>
+  );
+}
+
+function FileChangeEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry }) {
+  const ctx = use(TimelineRowCtx);
+  const renderablePatch = getRenderablePatch(
+    workEntry.patch,
+    `tool-file-change:${workEntry.id}:${ctx.resolvedTheme}`,
+  );
+  const hasInlineDiff = renderablePatch?.kind === "files";
+
+  return (
+    <div className="mt-2 ms-2 space-y-2 border-s border-border/45 ps-3 pt-0.5">
+      {!hasInlineDiff && (workEntry.changedFiles?.length ?? 0) > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {workEntry.changedFiles?.map((filePath) => {
+            const displayPath = formatWorkspaceRelativePath(filePath, ctx.workspaceRoot);
+            return (
+              <span
+                key={`${workEntry.id}:expanded-file:${filePath}`}
+                className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
+                title={displayPath}
+              >
+                {displayPath}
+              </span>
+            );
+          })}
+        </div>
+      )}
+      {hasInlineDiff &&
+        renderablePatch.files.map((fileDiff) => (
+          <FileDiff
+            key={resolveFileDiffPath(fileDiff)}
+            fileDiff={fileDiff}
+            renderCustomHeader={(renderedFileDiff) => (
+              <InlineFileDiffHeader
+                fileDiff={renderedFileDiff}
+                changedFiles={workEntry.changedFiles}
+                workspaceRoot={ctx.workspaceRoot}
+              />
+            )}
+            options={{
+              collapsed: false,
+              diffStyle: "unified",
+              theme: resolveDiffThemeName(ctx.resolvedTheme),
+            }}
+          />
+        ))}
+      {renderablePatch?.kind === "raw" && (
+        <ToolDetailBlock title={renderablePatch.reason} mono>
+          {renderablePatch.text}
+        </ToolDetailBlock>
+      )}
+    </div>
+  );
+}
+
+function GenericToolEntryDetails({ value }: { value: string }) {
+  return (
+    <div className="mt-2 ms-2 border-s border-border/45 ps-3 pt-0.5">
+      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground">
+        {value}
+      </pre>
+    </div>
+  );
+}
+
+function InlineFileDiffHeader({
+  fileDiff,
+  changedFiles,
+  workspaceRoot,
+}: {
+  fileDiff: FileDiffMetadata;
+  changedFiles: ReadonlyArray<string> | undefined;
+  workspaceRoot: string | undefined;
+}) {
+  const displayPath = resolveInlineFileDiffDisplayPath(fileDiff, changedFiles, workspaceRoot);
+  const additions = countDiffHunkChangedLines(fileDiff.hunks, "additionLines");
+  const deletions = countDiffHunkChangedLines(fileDiff.hunks, "deletionLines");
+
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-3 border-b border-border/55 bg-background/80 px-2 py-1 text-[11px]">
+      <span className="min-w-0 truncate font-mono text-foreground/85" title={displayPath}>
+        {displayPath}
+      </span>
+      <span className="shrink-0">
+        <DiffStatLabel additions={additions} deletions={deletions} />
+      </span>
+    </div>
+  );
+}
+
+function resolveInlineFileDiffDisplayPath(
+  fileDiff: FileDiffMetadata,
+  changedFiles: ReadonlyArray<string> | undefined,
+  workspaceRoot: string | undefined,
+): string {
+  const rawPath = resolveFileDiffPath(fileDiff);
+  const normalizedRawPath = rawPath.replace(/\\/gu, "/");
+  const matchedChangedFile = changedFiles?.find((filePath) => {
+    const normalizedChangedFile = filePath.replace(/\\/gu, "/");
+    return (
+      normalizedChangedFile === normalizedRawPath ||
+      normalizedChangedFile.endsWith(`/${normalizedRawPath}`) ||
+      normalizedRawPath.endsWith(`/${normalizedChangedFile.replace(/^\/+/u, "")}`)
+    );
+  });
+
+  return formatWorkspaceRelativePath(matchedChangedFile ?? rawPath, workspaceRoot);
+}
+
+function countDiffHunkChangedLines(
+  hunks: ReadonlyArray<Hunk>,
+  lineCountKey: "additionLines" | "deletionLines",
+): number {
+  let count = 0;
+  for (const hunk of hunks) {
+    count += hunk[lineCountKey];
+  }
+  return count;
+}
+
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
@@ -1546,6 +1994,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const { workEntry, workspaceRoot } = props;
   const activity = use(TimelineRowActivityCtx);
   const [expanded, setExpanded] = useState(false);
+  if (workEntry.itemType === "collab_agent_tool_call" && workEntry.subagentChildren?.length) {
+    return <SubagentWorkEntryRows workEntry={workEntry} />;
+  }
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
@@ -1558,8 +2009,15 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       ? null
       : rawPreview;
   const displayText = preview ? `${heading} - ${preview}` : heading;
-  const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
-  const canExpand = expandedBody !== null;
+  const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
+  const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
+  const canExpand = hasExpandableWorkEntryDetails(workEntry, workspaceRoot);
+  const toggleExpanded = useCallback(() => {
+    if (!canExpand) {
+      return;
+    }
+    setExpanded((value) => !value);
+  }, [canExpand]);
   const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle =
     showFailedIndicator &&
@@ -1588,12 +2046,13 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     ? {
         role: "button" as const,
         tabIndex: 0 as const,
-        "aria-label": displayText,
-        onClick: () => setExpanded((v) => !v),
+        "aria-expanded": expanded,
+        "aria-label": expanded ? `Collapse ${displayText}` : `Expand ${displayText}`,
+        onClick: toggleExpanded,
         onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            setExpanded((v) => !v);
+            toggleExpanded();
           }
         },
       }
@@ -1606,6 +2065,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
         canExpand &&
           "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
+      data-tool-entry-expanded={expanded ? "true" : "false"}
       {...rowToggleProps}
     >
       <div className="flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200">
@@ -1683,17 +2143,206 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           </div>
         </div>
       </div>
-      {expanded && canExpand && expandedBody ? (
+      {hasChangedFiles && !previewIsChangedFiles && (
         <div
-          className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
+          className="mt-1 flex flex-wrap gap-1"
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
-          <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground select-text">
-            {expandedBody}
-          </pre>
+          {workEntry.changedFiles?.slice(0, 4).map((filePath) => {
+            const displayPath = formatWorkspaceRelativePath(filePath, workspaceRoot);
+            return (
+              <Tooltip key={`${workEntry.id}:${filePath}`}>
+                <TooltipTrigger
+                  render={
+                    <span
+                      className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
+                      aria-label={displayPath}
+                    />
+                  }
+                >
+                  {displayPath}
+                </TooltipTrigger>
+                <TooltipPopup side="top" className="max-w-[min(40rem,calc(100vw-2rem))]">
+                  <span className="font-mono text-[11px] whitespace-nowrap">{displayPath}</span>
+                </TooltipPopup>
+              </Tooltip>
+            );
+          })}
+          {(workEntry.changedFiles?.length ?? 0) > 4 && (
+            <span className="px-1 text-[10px] text-muted-foreground/55">
+              +{(workEntry.changedFiles?.length ?? 0) - 4}
+            </span>
+          )}
+        </div>
+      )}
+      {canExpand && expanded ? (
+        <div onClick={stopRowToggle} onPointerDown={stopRowToggle}>
+          <ToolEntryDetails workEntry={workEntry} workspaceRoot={workspaceRoot} />
         </div>
       ) : null}
     </div>
+  );
+});
+
+const SubagentWorkEntryRows = memo(function SubagentWorkEntryRows({
+  workEntry,
+}: {
+  workEntry: TimelineWorkEntry;
+}) {
+  return (
+    <div className="space-y-1 py-0.5">
+      {workEntry.subagentChildren?.map((child) => (
+        <SubagentWorkEntryButton
+          key={`${workEntry.id}:subagent:${child.threadId}:${child.parentItemId ?? ""}`}
+          parentCreatedAt={workEntry.createdAt}
+          threadId={child.threadId}
+          {...(workEntry.turnId ? { parentTurnId: workEntry.turnId } : {})}
+          {...(child.parentItemId ? { parentItemId: child.parentItemId } : {})}
+          {...((child.titleSeed ?? workEntry.subagentPrompt ?? workEntry.detail)
+            ? { titleSeed: child.titleSeed ?? workEntry.subagentPrompt ?? workEntry.detail }
+            : {})}
+        />
+      ))}
+    </div>
+  );
+});
+
+export function subagentRelationMatchesBlock(input: {
+  parentItemId?: string | null;
+  parentTurnId?: TurnId | null;
+  relationParentItemId?: string | null;
+  relationParentTurnId?: TurnId | null;
+}): boolean {
+  const parentItemId = input.parentItemId ?? null;
+  const relationParentItemId = input.relationParentItemId ?? null;
+  const parentTurnId = input.parentTurnId ?? null;
+  const relationParentTurnId = input.relationParentTurnId ?? null;
+  const turnIdsConflict =
+    parentTurnId && relationParentTurnId && parentTurnId !== relationParentTurnId;
+
+  if (parentItemId && relationParentItemId) {
+    if (parentItemId !== relationParentItemId) {
+      return false;
+    }
+    // Provider item ids can repeat across turns, so a known turn mismatch must
+    // keep a stale relation from claiming a newer work-log block.
+    return !turnIdsConflict;
+  }
+
+  return !turnIdsConflict;
+}
+
+const SubagentWorkEntryButton = memo(function SubagentWorkEntryButton(props: {
+  parentCreatedAt: string;
+  parentItemId?: string;
+  parentTurnId?: TurnId;
+  threadId: ThreadId;
+  titleSeed?: string;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const navigate = useNavigate();
+  const childShell = useThreadShell(scopeThreadRef(ctx.activeThreadEnvironmentId, props.threadId));
+  const relation =
+    childShell?.parentRelation?.kind === "subagent" ? childShell.parentRelation : null;
+  const rawTitle = childShell?.title?.trim();
+  const title = rawTitle && rawTitle !== "Subagent" ? rawTitle : null;
+  const displayTitle = title ? `Subagent - ${title}` : "Subagent";
+  const terminalSnapshotRef = useRef<{
+    status: Exclude<SubagentThreadStatus, "running">;
+    startedAt: string;
+    completedAt: string | null;
+  } | null>(null);
+  const relationParentItemId = relation?.parentItemId ?? null;
+  const relationParentTurnId = relation?.parentTurnId ?? null;
+  const relationMatchesThisBlock = subagentRelationMatchesBlock({
+    parentItemId: props.parentItemId ?? null,
+    parentTurnId: props.parentTurnId ?? null,
+    relationParentItemId,
+    relationParentTurnId,
+  });
+  if (relation && relationMatchesThisBlock && relation.status !== "running") {
+    terminalSnapshotRef.current = {
+      status: relation.status,
+      startedAt: relation.startedAt,
+      completedAt: relation.completedAt,
+    };
+  }
+  const parentCreatedAfterRelationCompleted = Boolean(
+    props.parentItemId &&
+    relation &&
+    relation.status !== "running" &&
+    relation.completedAt &&
+    Date.parse(props.parentCreatedAt) > Date.parse(relation.completedAt),
+  );
+  const displayState =
+    relation && relationMatchesThisBlock
+      ? {
+          status: relation.status,
+          startedAt: relation.startedAt,
+          completedAt: relation.completedAt,
+        }
+      : parentCreatedAfterRelationCompleted
+        ? {
+            status: "running" as const,
+            startedAt: props.parentCreatedAt,
+            completedAt: null,
+          }
+        : terminalSnapshotRef.current
+          ? terminalSnapshotRef.current
+          : relation?.status === "running"
+            ? {
+                status: "completed" as const,
+                startedAt: props.parentCreatedAt,
+                completedAt: null,
+              }
+            : {
+                status: relation?.status ?? null,
+                startedAt: relation?.startedAt ?? props.parentCreatedAt,
+                completedAt: relation?.completedAt ?? null,
+              };
+  const status = displayState.status;
+  const startedAt = displayState.startedAt;
+  const completedAt = displayState.completedAt;
+  const statusDurationLabel =
+    status === "running" ? (
+      <LiveSubagentDuration startedAt={startedAt} />
+    ) : (
+      formatTerminalSubagentStatusDuration(status, formatSubagentDuration(startedAt, completedAt))
+    );
+
+  const openChildThread = useCallback(() => {
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(scopeThreadRef(ctx.activeThreadEnvironmentId, props.threadId)),
+    });
+  }, [ctx.activeThreadEnvironmentId, navigate, props.threadId]);
+
+  return (
+    <button
+      type="button"
+      className="group flex w-full items-center gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-background/55 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      onClick={openChildThread}
+      title={`Open ${displayTitle}`}
+    >
+      <span
+        className={cn(
+          "flex size-5 shrink-0 items-center justify-center rounded-full border",
+          subagentStatusToneClass(status),
+        )}
+        aria-hidden="true"
+      >
+        <BotIcon className="size-3" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-xs font-medium text-foreground/82">
+          {displayTitle}
+        </span>
+        <span className="block truncate text-[10px] text-muted-foreground/62">
+          {statusDurationLabel}
+        </span>
+      </span>
+      <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/45 transition-colors group-hover:text-foreground/75" />
+    </button>
   );
 });

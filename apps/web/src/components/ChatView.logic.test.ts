@@ -1,22 +1,34 @@
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  TurnId,
+  type EnvironmentApi,
+} from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { Thread } from "../types";
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
+  closeTerminalSession,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
+  isTerminalKeybindingCommand,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
+  terminalThreadRefsToCloseWhenDisabled,
 } from "./ChatView.logic";
 
 const environmentId = EnvironmentId.make("environment-local");
+const localEnvironmentId = environmentId;
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
@@ -255,6 +267,59 @@ describe("reconcileMountedTerminalThreadIds", () => {
         activeThreadTerminalOpen: false,
       }),
     ).toEqual(ids.slice(-MAX_HIDDEN_MOUNTED_TERMINAL_THREADS));
+  });
+});
+
+describe("terminal host preference behavior", () => {
+  it("recognizes terminal keybinding commands", () => {
+    expect(isTerminalKeybindingCommand("terminal.toggle")).toBe(true);
+    expect(isTerminalKeybindingCommand("terminal.split")).toBe(true);
+    expect(isTerminalKeybindingCommand("terminal.new")).toBe(true);
+    expect(isTerminalKeybindingCommand("terminal.close")).toBe(true);
+    expect(isTerminalKeybindingCommand("diff.toggle")).toBe(false);
+  });
+
+  it("resolves open terminal thread refs that must close when the host disables terminals", () => {
+    const threadRef = scopeThreadRef(localEnvironmentId, ThreadId.make("thread-open"));
+    const invalidThreadKey = "not-a-scoped-thread-key";
+
+    expect(
+      terminalThreadRefsToCloseWhenDisabled({
+        enableTerminal: false,
+        openTerminalThreadKeys: [
+          `${threadRef.environmentId}:${threadRef.threadId}`,
+          invalidThreadKey,
+        ],
+      }),
+    ).toEqual([threadRef]);
+  });
+
+  it("keeps open terminal thread refs alone when the host enables terminals", () => {
+    const threadRef = scopeThreadRef(localEnvironmentId, ThreadId.make("thread-open"));
+
+    expect(
+      terminalThreadRefsToCloseWhenDisabled({
+        enableTerminal: true,
+        openTerminalThreadKeys: [`${threadRef.environmentId}:${threadRef.threadId}`],
+      }),
+    ).toEqual([]);
+  });
+
+  it("closes all backend terminals for a thread without requiring a visible terminal id", async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    const api = {
+      terminal: {
+        close,
+        clear: vi.fn(),
+        write: vi.fn(),
+      },
+    } as unknown as EnvironmentApi;
+    const threadId = ThreadId.make("thread-open");
+
+    closeTerminalSession({ api, threadId });
+    await Promise.resolve();
+
+    expect(close).toHaveBeenCalledWith({ threadId, deleteHistory: true });
   });
 });
 

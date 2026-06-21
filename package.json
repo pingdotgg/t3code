@@ -21,6 +21,7 @@
     "lint": "vp lint --report-unused-disable-directives",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "test": "vp run -r test",
+    "test:source-control": "vp test run apps/server/src/sourceControl/SourceControlProvider.test.ts apps/server/src/sourceControl/GitHubSourceControlProvider.test.ts apps/server/src/sourceControl/GitLabSourceControlProvider.test.ts apps/server/src/sourceControl/AzureDevOpsSourceControlProvider.test.ts apps/server/src/sourceControl/BitbucketSourceControlProvider.test.ts apps/server/src/sourceControl/SourceControlPanelService.test.ts",
     "test:desktop-smoke": "vp run --filter @t3tools/desktop smoke-test",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",

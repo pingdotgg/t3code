@@ -208,6 +208,7 @@ export class GitHubCli extends Context.Service<
     readonly listOpenPullRequests: (input: {
       readonly cwd: string;
       readonly headSelector: string;
+      readonly repository?: string;
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
 
@@ -246,6 +247,7 @@ export class GitHubCli extends Context.Service<
     }) => Effect.Effect<void, GitHubCliError>;
   }
 >()("t3/sourceControl/GitHubCli") {}
+export type GitHubCliShape = GitHubCli["Service"];
 
 const RawGitHubRepositoryCloneUrlsSchema = Schema.Struct({
   nameWithOwner: TrimmedNonEmptyString,
@@ -325,6 +327,7 @@ export const make = Effect.gen(function* () {
         args: [
           "pr",
           "list",
+          ...(input.repository ? ["--repo", input.repository] : []),
           "--head",
           input.headSelector,
           "--state",

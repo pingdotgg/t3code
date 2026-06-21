@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
+import type { ChangeRequest } from "@t3tools/contracts";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
 import type { NormalizedBitbucketPullRequestRecord } from "./bitbucketPullRequests.ts";
@@ -48,36 +48,30 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.map((items) => items.map(toChangeRequest)),
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: "bitbucket",
-                operation: "listChangeRequests",
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.headSelector,
-                ),
-                detail: "Failed to list change requests.",
-                cause: error,
-              }),
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "bitbucket",
+              operation: "listChangeRequests",
+              cwd: input.cwd,
+              reference: input.headSelector,
+              detail: "Failed to list change requests.",
+              error,
+            }),
           ),
         );
     },
     getChangeRequest: (input) =>
       bitbucket.getPullRequest(input).pipe(
         Effect.map(toChangeRequest),
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "bitbucket",
-              operation: "getChangeRequest",
-              cwd: input.cwd,
-              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.reference,
-              ),
-              detail: "Failed to get change request.",
-              cause: error,
-            }),
+        Effect.mapError((error) =>
+          SourceControlProvider.sourceControlProviderError({
+            provider: "bitbucket",
+            operation: "getChangeRequest",
+            cwd: input.cwd,
+            reference: input.reference,
+            detail: "Failed to get change request.",
+            error,
+          }),
         ),
       ),
     createChangeRequest: (input) => {
@@ -94,51 +88,42 @@ export const make = Effect.gen(function* () {
           bodyFile: input.bodyFile,
         })
         .pipe(
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: "bitbucket",
-                operation: "createChangeRequest",
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.headSelector,
-                ),
-                detail: "Failed to create change request.",
-                cause: error,
-              }),
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "bitbucket",
+              operation: "createChangeRequest",
+              cwd: input.cwd,
+              reference: input.headSelector,
+              detail: "Failed to create change request.",
+              error,
+            }),
           ),
         );
     },
     getRepositoryCloneUrls: (input) =>
       bitbucket.getRepositoryCloneUrls(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "bitbucket",
-              operation: "getRepositoryCloneUrls",
-              cwd: input.cwd,
-              repository: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.repository,
-              ),
-              detail: "Failed to get repository clone URLs.",
-              cause: error,
-            }),
+        Effect.mapError((error) =>
+          SourceControlProvider.sourceControlProviderError({
+            provider: "bitbucket",
+            operation: "getRepositoryCloneUrls",
+            cwd: input.cwd,
+            repository: input.repository,
+            detail: "Failed to get repository clone URLs.",
+            error,
+          }),
         ),
       ),
     createRepository: (input) =>
       bitbucket.createRepository(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "bitbucket",
-              operation: "createRepository",
-              cwd: input.cwd,
-              repository: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.repository,
-              ),
-              detail: "Failed to create repository.",
-              cause: error,
-            }),
+        Effect.mapError((error) =>
+          SourceControlProvider.sourceControlProviderError({
+            provider: "bitbucket",
+            operation: "createRepository",
+            cwd: input.cwd,
+            repository: input.repository,
+            detail: "Failed to create repository.",
+            error,
+          }),
         ),
       ),
     getDefaultBranch: (input) =>
@@ -148,15 +133,14 @@ export const make = Effect.gen(function* () {
           ...(input.context ? { context: input.context } : {}),
         })
         .pipe(
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: "bitbucket",
-                operation: "getDefaultBranch",
-                cwd: input.cwd,
-                detail: "Failed to get default branch.",
-                cause: error,
-              }),
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "bitbucket",
+              operation: "getDefaultBranch",
+              cwd: input.cwd,
+              detail: "Failed to get default branch.",
+              error,
+            }),
           ),
         ),
     checkoutChangeRequest: (input) =>
@@ -168,18 +152,15 @@ export const make = Effect.gen(function* () {
           ...(input.force !== undefined ? { force: input.force } : {}),
         })
         .pipe(
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: "bitbucket",
-                operation: "checkoutChangeRequest",
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.reference,
-                ),
-                detail: "Failed to check out change request.",
-                cause: error,
-              }),
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "bitbucket",
+              operation: "checkoutChangeRequest",
+              cwd: input.cwd,
+              reference: input.reference,
+              detail: "Failed to check out change request.",
+              error,
+            }),
           ),
         ),
   });

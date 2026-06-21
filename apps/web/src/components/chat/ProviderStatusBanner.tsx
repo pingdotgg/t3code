@@ -4,6 +4,7 @@ import { InfoIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ThreadConversationWidthContainer } from "./ThreadConversationWidth";
 
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   status,
@@ -27,10 +28,10 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
         : `${providerName} provider has limited availability.`));
 
   return (
-    <div className="mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
+    <ThreadConversationWidthContainer className="pt-3">
       <div
         className={cn(
-          "inline-flex items-center gap-3 rounded-xl border px-3.5 py-3 text-card-foreground text-sm",
+          "flex items-center gap-3 rounded-xl border px-3.5 py-3 text-card-foreground text-sm",
           status.status === "warning"
             ? "border-warning/32 bg-warning/4 [&_svg]:text-warning"
             : "border-destructive/32 bg-destructive/4 text-destructive-foreground [&_svg]:text-destructive",
@@ -50,6 +51,6 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
           </Tooltip>
         </div>
       </div>
-    </div>
+    </ThreadConversationWidthContainer>
   );
 });

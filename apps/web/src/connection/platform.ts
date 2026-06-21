@@ -35,8 +35,8 @@ import * as Stream from "effect/Stream";
 import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 import {
-  getHostBearerToken,
-  getHostLocalEnvironmentBootstrap,
+  getDesktopManagedBearerToken,
+  getDesktopManagedEnvironmentBootstrap,
 } from "../environments/primary/hostBootstrap";
 import { readPrimaryEnvironmentTarget } from "../environments/primary/target";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
@@ -270,18 +270,19 @@ const capabilitiesLayer = Layer.effectContext(
 );
 
 function readHostPrimaryConnectionRegistration(): PrimaryConnectionRegistration | null {
-  const bootstrap = getHostLocalEnvironmentBootstrap();
-  const bearerToken = getHostBearerToken();
-  if (!bootstrap?.environmentId || !bootstrap.httpBaseUrl || !bootstrap.wsBaseUrl || !bearerToken) {
+  const bootstrap = getDesktopManagedEnvironmentBootstrap();
+  if (!bootstrap?.environmentId || !bootstrap.httpBaseUrl || !bootstrap.wsBaseUrl) {
     return null;
   }
 
+  const bearerToken = getDesktopManagedBearerToken();
   return new PrimaryConnectionRegistration({
     target: new PrimaryConnectionTarget({
       environmentId: bootstrap.environmentId,
       label: bootstrap.label,
       httpBaseUrl: bootstrap.httpBaseUrl,
       wsBaseUrl: bootstrap.wsBaseUrl,
+      ...(bearerToken ? { bearerToken } : {}),
     }),
   });
 }
@@ -301,32 +302,18 @@ const loadPrimaryConnectionRegistration = Effect.fn(
       detail: "Unable to resolve the primary environment endpoint.",
     });
   }
-  const hostBearerToken = getHostBearerToken();
-  if (
-    resolved.source === "desktop-managed" &&
-    resolved.environmentId &&
-    resolved.label &&
-    hostBearerToken
-  ) {
-    return new PrimaryConnectionRegistration({
-      target: new PrimaryConnectionTarget({
-        environmentId: resolved.environmentId,
-        label: resolved.label,
-        httpBaseUrl: resolved.target.httpBaseUrl,
-        wsBaseUrl: resolved.target.wsBaseUrl,
-      }),
-    });
-  }
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
     httpBaseUrl: resolved.target.httpBaseUrl,
   }).pipe(Effect.provide(primaryEnvironmentHttpLayer), Effect.mapError(mapRemoteEnvironmentError));
-  const hostEnvironmentId = getHostLocalEnvironmentBootstrap()?.environmentId;
+  const hostEnvironmentId = getDesktopManagedEnvironmentBootstrap()?.environmentId;
+  const hostBearerToken = getDesktopManagedBearerToken();
   return new PrimaryConnectionRegistration({
     target: new PrimaryConnectionTarget({
       environmentId: hostEnvironmentId ?? descriptor.environmentId,
       label: descriptor.label,
       httpBaseUrl: resolved.target.httpBaseUrl,
       wsBaseUrl: resolved.target.wsBaseUrl,
+      ...(hostBearerToken ? { bearerToken: hostBearerToken } : {}),
     }),
   });
 });
@@ -335,13 +322,8 @@ const primaryRegistrationRetrySchedule = Schedule.exponential("1 second").pipe(
   Schedule.either(Schedule.spaced("16 seconds")),
 );
 
-function hasHostPrimaryEnvironmentBootstrap(): boolean {
-  const bootstrap = getHostLocalEnvironmentBootstrap();
-  return Boolean(bootstrap?.httpBaseUrl && bootstrap.wsBaseUrl);
-}
-
 const platformConnectionSourceLayer = Layer.sync(PlatformConnectionSource, () => {
-  if (!hasHostPrimaryEnvironmentBootstrap() && isHostedStaticApp()) {
+  if (isHostedStaticApp()) {
     return PlatformConnectionSource.of({
       registrations: Stream.empty,
     });
