@@ -31,6 +31,7 @@ import {
   RuntimeMode,
 } from "./providerPolicy.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { Project, ProjectScript } from "./project.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
