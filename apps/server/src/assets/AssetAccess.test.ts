@@ -88,7 +88,7 @@ describe("AssetAccess", () => {
       }).pipe(Effect.flip);
       expect(error.message).toBe("Workspace file path must be relative to the project root.");
       expect(error).toMatchObject({
-        operation: "validate-workspace-path",
+        _tag: "AssetWorkspacePathValidationError",
         resource: {
           _tag: "workspace-file",
           threadId: "thread-1",
@@ -130,7 +130,7 @@ describe("AssetAccess", () => {
 
       expect(error.message).toBe("Failed to inspect the workspace asset.");
       expect(error).toMatchObject({
-        operation: "inspect-workspace-asset",
+        _tag: "AssetWorkspaceAssetInspectionError",
         resource: {
           _tag: "workspace-file",
           threadId: "thread-1",
@@ -268,6 +268,7 @@ describe("AssetAccess", () => {
       );
 
       expect(error.message).toBe("Failed to resolve project favicon.");
+      expect(error._tag).toBe("AssetProjectFaviconResolutionError");
       expect(error.cause).toBe(resolutionCause);
     }).pipe(Effect.provide(testLayer)),
   );

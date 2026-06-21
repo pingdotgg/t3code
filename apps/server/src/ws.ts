@@ -46,7 +46,8 @@ import {
   OrchestrationReplayEventsError,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
-  AssetAccessError,
+  AssetWorkspaceContextNotFoundError,
+  AssetWorkspaceContextResolutionError,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -1413,19 +1414,15 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                 .pipe(
                   Effect.mapError(
                     (cause) =>
-                      new AssetAccessError({
-                        operation: "resolve-workspace-context",
+                      new AssetWorkspaceContextResolutionError({
                         resource: input.resource,
-                        message: "Failed to resolve workspace context.",
                         cause,
                       }),
                   ),
                 );
               if (Option.isNone(thread)) {
-                return yield* new AssetAccessError({
-                  operation: "resolve-workspace-context",
+                return yield* new AssetWorkspaceContextNotFoundError({
                   resource: input.resource,
-                  message: "Workspace context was not found.",
                 });
               }
               const project = yield* projectionSnapshotQuery
@@ -1433,19 +1430,15 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                 .pipe(
                   Effect.mapError(
                     (cause) =>
-                      new AssetAccessError({
-                        operation: "resolve-workspace-context",
+                      new AssetWorkspaceContextResolutionError({
                         resource: input.resource,
-                        message: "Failed to resolve workspace context.",
                         cause,
                       }),
                   ),
                 );
               if (Option.isNone(project)) {
-                return yield* new AssetAccessError({
-                  operation: "resolve-workspace-context",
+                return yield* new AssetWorkspaceContextNotFoundError({
                   resource: input.resource,
-                  message: "Workspace context was not found.",
                 });
               }
               return yield* issueAssetUrl({
