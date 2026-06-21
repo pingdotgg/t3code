@@ -141,6 +141,29 @@ export function ChatView({
   // the web composer swapping its send button for a stop button while running).
   const working = !!detail && isWorking(detail);
 
+  // Copy-on-select: drag to highlight text anywhere in the conversation and it's
+  // copied to the clipboard (OSC 52) — the same primitive the terminal-drawer copy
+  // uses. OpenTUI's <text> is selectable and the renderer fires "selection" once on
+  // drag-end with the completed selection. Feedback is gated on the terminal's
+  // actual OSC52 capability, NOT copyToClipboardOSC52's return value — that native
+  // call can report false even when the copy succeeds.
+  React.useEffect(() => {
+    const onSelection = (selection: { getSelectedText: () => string } | null) => {
+      const text = selection?.getSelectedText() ?? "";
+      if (text.length === 0) return;
+      renderer.copyToClipboardOSC52(text);
+      const supported = renderer.isOsc52Supported();
+      store.setStatus(
+        supported ? "Copied selection to clipboard." : "Clipboard not supported by this terminal.",
+        supported ? "success" : "error",
+      );
+    };
+    renderer.on("selection", onSelection);
+    return () => {
+      renderer.off("selection", onSelection);
+    };
+  }, [renderer, store]);
+
   const actionablePlan = React.useMemo(
     () => (detail ? latestActionableProposedPlan(detail) : null),
     [detail],
@@ -609,10 +632,11 @@ export function ChatView({
         store.setStatus("Terminal is empty.", "info");
         return;
       }
-      const copied = renderer.copyToClipboardOSC52(text);
+      renderer.copyToClipboardOSC52(text);
+      const supported = renderer.isOsc52Supported();
       store.setStatus(
-        copied ? "Terminal copied to clipboard." : "Clipboard not supported by this terminal.",
-        copied ? "success" : "error",
+        supported ? "Terminal copied to clipboard." : "Clipboard not supported by this terminal.",
+        supported ? "success" : "error",
       );
     },
     onGrowPrompt: () => resizePrompt(2),
