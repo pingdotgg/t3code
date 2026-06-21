@@ -42,6 +42,7 @@ import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
 import * as DesktopClientSettings from "./settings/DesktopClientSettings.ts";
 import * as DesktopSavedEnvironments from "./settings/DesktopSavedEnvironments.ts";
 import * as DesktopAppSettings from "./settings/DesktopAppSettings.ts";
+import * as DesktopPreReadyPlatform from "./app/DesktopPreReadyPlatform.ts";
 import * as DesktopShellEnvironment from "./shell/DesktopShellEnvironment.ts";
 import * as DesktopSshEnvironment from "./ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./ssh/DesktopSshPasswordPrompts.ts";
@@ -52,6 +53,41 @@ import * as PreviewManager from "./preview/Manager.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
+
+const configureElectronBeforeReady = Effect.gen(function* () {
+  const platform = yield* HostProcessPlatform;
+  return yield* Effect.sync(
+    (): DesktopPreReadyPlatform.DesktopPreReadyElectronOptions["Service"] => {
+      const linuxPasswordStoreCommandLine =
+        platform === "linux"
+          ? DesktopPreReadyPlatform.readCommandLineSwitchValue(
+              Electron.app.commandLine,
+              "password-store",
+            )
+          : null;
+      const linux =
+        platform === "linux"
+          ? DesktopPreReadyPlatform.resolveEarlyLinuxElectronOptionsFromProcess()
+          : null;
+
+      if (linux !== null) {
+        Electron.app.commandLine.appendSwitch("class", linux.linuxWmClass);
+        if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
+          Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);
+        }
+      }
+
+      return { linux, linuxPasswordStoreCommandLine };
+    },
+  );
+}).pipe(Effect.withSpan("desktop.electron.configureBeforeReady"));
+
+// Keep Electron's strict pre-ready setup isolated so later runtime layers cannot
+// observe app readiness before scheme privileges and command-line switches exist.
+const desktopElectronPreReadyLayer = DesktopPreReadyPlatform.makeDesktopElectronPreReadyLayer({
+  schemePrivilegesLayer: ElectronProtocol.layerSchemePrivileges,
+  configureElectronBeforeReady,
+});
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -185,14 +221,18 @@ const desktopClerkLayer = DesktopClerk.layer.pipe(
   Layer.provideMerge(ElectronApp.layer),
 );
 
+const desktopApplicationRuntimeLayer = desktopApplicationLayer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeHttpClient.layerUndici),
+  Layer.provideMerge(NetService.layer),
+  Layer.provideMerge(electronLayer),
+);
+
 const desktopRuntimeLayer = desktopClerkLayer.pipe(
   Layer.flatMap((clerkContext) =>
-    desktopApplicationLayer.pipe(
+    desktopApplicationRuntimeLayer.pipe(
       Layer.provideMerge(Layer.succeedContext(clerkContext)),
-      Layer.provideMerge(NodeServices.layer),
-      Layer.provideMerge(NodeHttpClient.layerUndici),
-      Layer.provideMerge(NetService.layer),
-      Layer.provideMerge(electronLayer),
+      Layer.provideMerge(desktopElectronPreReadyLayer),
     ),
   ),
 );
