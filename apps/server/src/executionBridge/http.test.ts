@@ -1,5 +1,5 @@
 import { EventId, MessageId, ThreadId, TurnId, type OrchestrationEvent } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   cacheAssistantMessageForLifecycle,

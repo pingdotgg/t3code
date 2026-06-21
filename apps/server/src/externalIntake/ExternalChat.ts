@@ -43,6 +43,38 @@ export class ExternalChatError extends Data.TaggedError("ExternalChatError")<{
   readonly cause: unknown;
 }> {}
 
+type SlackConversationKind = "channel" | "dm" | "mpim";
+
+interface RawSlackFile {
+  readonly name?: string;
+  readonly title?: string;
+  readonly mimetype?: string;
+  readonly url_private?: string;
+  readonly url_private_download?: string;
+  readonly permalink?: string;
+}
+
+interface RawSlackMessageEvent {
+  readonly type?: string;
+  readonly subtype?: string;
+  readonly channel?: string;
+  readonly channel_type?: string;
+  readonly thread_ts?: string;
+  readonly ts?: string;
+  readonly text?: string;
+  readonly user?: string;
+  readonly bot_id?: string;
+  readonly team?: string;
+  readonly team_id?: string;
+  readonly files?: ReadonlyArray<RawSlackFile>;
+}
+
+interface RawSlackEventCallbackPayload {
+  readonly type?: string;
+  readonly team_id?: string;
+  readonly event?: RawSlackMessageEvent;
+}
+
 export interface ExternalChatShape {
   readonly handleSlackWebhook: (request: Request) => Effect.Effect<Response, ExternalChatError>;
   readonly postToThread: (input: {
@@ -113,6 +145,24 @@ function toExternalChatError(error: unknown) {
 
 function slackRaw(message: Message): SlackEvent {
   return (message.raw ?? {}) as SlackEvent;
+}
+
+function rawProperty(raw: SlackEvent, key: string) {
+  const value = (raw as unknown as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+export function slackConversationKind(input: {
+  readonly channelId: string;
+  readonly raw?: SlackEvent | RawSlackMessageEvent | undefined;
+}): SlackConversationKind {
+  const channelType =
+    input.raw === undefined ? undefined : (input.raw as Record<string, unknown>)["channel_type"];
+  if (channelType === "im") return "dm";
+  if (channelType === "mpim") return "mpim";
+  if (input.channelId.startsWith("D")) return "dm";
+  if (input.channelId.startsWith("G") && channelType === "mpim") return "mpim";
+  return "channel";
 }
 
 function attachmentLines(attachments: readonly Attachment[]) {
@@ -363,9 +413,12 @@ function messageTextWithAttachments(message: Message) {
 function slackMessageRef(thread: Thread, message: Message) {
   const raw = slackRaw(message);
   const [, channelFromThread, tsFromThread] = thread.id.split(":");
-  const channelId = raw.channel ?? channelFromThread ?? thread.channelId.replace(/^slack:/, "");
-  const threadTs = raw.thread_ts ?? tsFromThread ?? raw.ts ?? message.id;
-  const teamId = raw.team_id ?? raw.team;
+  const channelId =
+    rawProperty(raw, "channel") ?? channelFromThread ?? thread.channelId.replace(/^slack:/, "");
+  const threadTs =
+    rawProperty(raw, "thread_ts") ?? tsFromThread ?? rawProperty(raw, "ts") ?? message.id;
+  const teamId = rawProperty(raw, "team_id") ?? rawProperty(raw, "team");
+  const conversationKind = slackConversationKind({ channelId, raw });
   const externalThreadId = slackExternalThreadId({
     channelId,
     threadTs,
@@ -376,8 +429,94 @@ function slackMessageRef(thread: Thread, message: Message) {
     threadTs,
     externalThreadId,
     url: slackThreadUrl({ channelId, threadTs }),
+    conversationKind,
     raw,
   };
+}
+
+function rawSlackFileLines(files: ReadonlyArray<RawSlackFile> | undefined) {
+  return (files ?? []).flatMap((file, index) => {
+    const name = file.title?.trim() || file.name?.trim() || `Attachment ${index + 1}`;
+    const url =
+      file.permalink?.trim() || file.url_private_download?.trim() || file.url_private?.trim();
+    if (!url) return [];
+    const detail = file.mimetype?.trim() ? ` (${file.mimetype.trim()})` : "";
+    return [`- ${name}${detail}: ${url}`];
+  });
+}
+
+function rawSlackMessageText(event: RawSlackMessageEvent) {
+  const body = stripSlackClientAttribution(event.text ?? "");
+  const attachments = rawSlackFileLines(event.files);
+  return attachments.length === 0
+    ? body
+    : [body, "", "Attachments:", ...attachments].join("\n").trim();
+}
+
+function rawSlackDateSentIso(ts: string | undefined) {
+  const seconds = Number(ts);
+  return DateTime.formatIso(
+    Number.isFinite(seconds) ? DateTime.makeUnsafe(seconds * 1000) : DateTime.nowUnsafe(),
+  );
+}
+
+function postableMessageText(message: PostableMessage) {
+  const record = message as unknown as Record<string, unknown>;
+  const markdown = record.markdown;
+  if (typeof markdown === "string" && markdown.trim().length > 0) return markdown;
+  const fallbackText = record.fallbackText;
+  if (typeof fallbackText === "string" && fallbackText.trim().length > 0) return fallbackText;
+  return "T3 task update.";
+}
+
+async function slackPostMessage(input: {
+  readonly token: string;
+  readonly channelId: string;
+  readonly threadTs: string;
+  readonly message: PostableMessage;
+}) {
+  const response = await slackFormApi<{ readonly ts: string }>(input.token, "chat.postMessage", {
+    channel: input.channelId,
+    thread_ts: input.threadTs,
+    text: postableMessageText(input.message),
+    unfurl_links: "false",
+    unfurl_media: "false",
+  });
+  return { externalMessageId: response.ts };
+}
+
+async function slackAddReaction(input: {
+  readonly token: string;
+  readonly channelId: string;
+  readonly messageTs: string;
+  readonly name: string;
+}) {
+  await slackFormApi(input.token, "reactions.add", {
+    channel: input.channelId,
+    timestamp: input.messageTs,
+    name: input.name,
+  });
+}
+
+function parseRawSlackEventCallback(rawBody: string): RawSlackEventCallbackPayload | null {
+  try {
+    const payload = JSON.parse(rawBody) as RawSlackEventCallbackPayload;
+    return payload.type === "event_callback" ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function rawSlackDirectMessageEvent(
+  payload: RawSlackEventCallbackPayload | null,
+): RawSlackMessageEvent | null {
+  const event = payload?.event;
+  if (event?.type !== "message") return null;
+  if (event.channel_type !== "im") return null;
+  if (!event.channel || !event.ts) return null;
+  if (event.bot_id !== undefined) return null;
+  if (event.subtype !== undefined && event.subtype !== "file_share") return null;
+  return event;
 }
 
 function titleFromText(text: string, fallback: string) {
@@ -542,6 +681,7 @@ const makeExternalChat = Effect.gen(function* () {
         slack: {
           rawText: ref.raw.text ?? input.message.text,
           isMention: input.message.isMention,
+          conversationKind: ref.conversationKind,
           botUserId: process.env.SLACK_BOT_USER_ID,
           botUserName: process.env.SLACK_BOT_USERNAME,
         },
@@ -613,6 +753,148 @@ const makeExternalChat = Effect.gen(function* () {
       });
     });
 
+  const processRawSlackDirectMessage = (payload: RawSlackEventCallbackPayload | null) =>
+    Effect.gen(function* () {
+      const event = rawSlackDirectMessageEvent(payload);
+      if (event === null) return;
+
+      const token = process.env.SLACK_BOT_TOKEN?.trim();
+      if (!token) return;
+
+      const channelId = event.channel!;
+      const threadTs = event.thread_ts ?? event.ts!;
+      const teamId = event.team_id ?? event.team ?? payload?.team_id;
+      const externalThreadId = slackExternalThreadId({
+        channelId,
+        threadTs,
+        ...(teamId !== undefined ? { teamId } : {}),
+      });
+      const externalMessageId = event.ts!;
+      const eventId = `slack:${externalThreadId}:${externalMessageId}`;
+      const now = nowIso();
+      const existingReceipt = yield* repository.getEventReceipt({ source: "slack", eventId });
+      if (Option.isSome(existingReceipt) && existingReceipt.value.status === "completed") {
+        return;
+      }
+
+      yield* repository.upsertEventReceipt({
+        source: "slack",
+        eventId,
+        status: "processing",
+        metadata: {
+          channelId,
+          messageId: externalMessageId,
+          source: "message.im",
+        },
+        createdAt: optionCreatedAt(existingReceipt, now),
+        updatedAt: now,
+      });
+
+      const text = rawSlackMessageText(event);
+      const intakeMessage: ExternalIntakeMessage = {
+        source: "slack",
+        externalThreadId,
+        externalMessageId,
+        text,
+        title: titleFromText(text, "Slack DM request"),
+        url: slackThreadUrl({ channelId, threadTs }),
+        receivedAt: rawSlackDateSentIso(event.ts),
+        projectHintText: event.text ?? "",
+        slack: {
+          rawText: event.text ?? "",
+          isMention: false,
+          conversationKind: "dm",
+          botUserId: process.env.SLACK_BOT_USER_ID,
+          botUserName: process.env.SLACK_BOT_USERNAME,
+        },
+      };
+
+      const result = yield* intake.handleMessage(intakeMessage).pipe(
+        Effect.catch((error) =>
+          Effect.tryPromise(() =>
+            slackPostMessage({
+              token,
+              channelId,
+              threadTs,
+              message: postableReplyBody({
+                kind: "slack_thread",
+                body: [
+                  "I couldn't start a T3 task from this message.",
+                  "",
+                  `Reason: ${error.message}`,
+                ].join("\n"),
+              }),
+            }),
+          ).pipe(
+            Effect.ignoreCause({ log: true }),
+            Effect.as({
+              status: "ignored" as const,
+              reason: `intake_failed:${error.message}`,
+              reaction: undefined,
+            }),
+          ),
+        ),
+      );
+
+      if (result.status === "created") {
+        yield* Effect.tryPromise(() =>
+          slackAddReaction({
+            token,
+            channelId,
+            messageTs: externalMessageId,
+            name: "eyes",
+          }),
+        ).pipe(Effect.ignoreCause({ log: true }));
+        if (result.projectReaction !== undefined) {
+          yield* Effect.tryPromise(() =>
+            slackAddReaction({
+              token,
+              channelId,
+              messageTs: externalMessageId,
+              name: result.projectReaction!,
+            }),
+          ).pipe(Effect.ignoreCause({ log: true }));
+        }
+        const environment = yield* serverEnvironment.getDescriptor;
+        const threadUrl = t3ThreadUrl({
+          baseUrl: process.env.T3_WEB_APP_BASE_URL ?? process.env.T3CODE_PUBLIC_BASE_URL,
+          environmentId: result.environmentId ?? String(environment.environmentId),
+          t3ThreadId: String(result.t3ThreadId),
+        });
+        if (threadUrl !== undefined) {
+          yield* Effect.tryPromise(() =>
+            slackPostMessage({
+              token,
+              channelId,
+              threadTs,
+              message: postableTaskStartedStatus({
+                kind: "slack_thread",
+                t3ThreadUrl: threadUrl,
+              }),
+            }),
+          ).pipe(Effect.ignoreCause({ log: true }));
+        }
+      } else if (result.status === "ignored" && result.reaction !== undefined) {
+        yield* Effect.tryPromise(() =>
+          slackAddReaction({
+            token,
+            channelId,
+            messageTs: externalMessageId,
+            name: result.reaction!,
+          }),
+        ).pipe(Effect.ignoreCause({ log: true }));
+      }
+
+      yield* repository.upsertEventReceipt({
+        source: "slack",
+        eventId,
+        status: "completed",
+        metadata: result,
+        createdAt: optionCreatedAt(existingReceipt, now),
+        updatedAt: nowIso(),
+      });
+    });
+
   const bot = new Chat({
     userName: process.env.SLACK_BOT_USERNAME?.trim() || "vevin",
     adapters: createExternalChatSdkAdapters({ sources: new Set(["slack"]) }),
@@ -622,12 +904,15 @@ const makeExternalChat = Effect.gen(function* () {
     logger: "info",
   });
 
+  const runtimeContext = yield* Effect.context<never>();
+  const runPromise = Effect.runPromiseWith(runtimeContext);
+
   bot.onNewMention(async (thread, message, context) => {
-    await Effect.runPromise(processSlackMessage({ thread, message, context }));
+    await runPromise(processSlackMessage({ thread, message, context }));
   });
 
   bot.onSubscribedMessage(async (thread, message, context) => {
-    await Effect.runPromise(processSlackMessage({ thread, message, context }));
+    await runPromise(processSlackMessage({ thread, message, context }));
   });
 
   const slackChatThreadId = (externalThreadId: string) => {
@@ -638,6 +923,7 @@ const makeExternalChat = Effect.gen(function* () {
   const handleSlackWebhook: ExternalChatShape["handleSlackWebhook"] = (request) =>
     Effect.tryPromise({
       try: async () => {
+        const rawBody = await request.clone().text();
         const webhook = bot.webhooks.slack;
         if (webhook === undefined) {
           throw new ExternalChatError({
@@ -651,6 +937,10 @@ const makeExternalChat = Effect.gen(function* () {
             pendingTasks.push(task);
           },
         });
+        if (response.ok) {
+          const payload = parseRawSlackEventCallback(rawBody);
+          pendingTasks.push(runPromise(processRawSlackDirectMessage(payload)));
+        }
         void Promise.allSettled(pendingTasks);
         return response;
       },

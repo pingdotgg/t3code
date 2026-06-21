@@ -635,12 +635,10 @@ export const executionBridgeRunCreateRouteLayer = HttpRouter.add(
     const result = yield* startExecutionRun(request);
     return HttpServerResponse.jsonUnsafe(result, { status: 202 });
   }).pipe(
-    Effect.catchTag("ExecutionBridgeAuthError", (error) =>
-      Effect.succeed(respondToExecutionBridgeError(error)),
-    ),
-    Effect.catchTag("ExecutionBridgeRunStartError", (error) =>
-      Effect.succeed(respondToExecutionBridgeError(error)),
-    ),
+    Effect.catchTags({
+      ExecutionBridgeAuthError: (error) => Effect.succeed(respondToExecutionBridgeError(error)),
+      ExecutionBridgeRunStartError: (error) => Effect.succeed(respondToExecutionBridgeError(error)),
+    }),
   ),
 );
 
@@ -653,12 +651,10 @@ export const taskRuntimeMaterializeRouteLayer = HttpRouter.add(
     const result = yield* materializeTaskRuntime(request);
     return HttpServerResponse.jsonUnsafe(result, { status: 202 });
   }).pipe(
-    Effect.catchTag("ExecutionBridgeAuthError", (error) =>
-      Effect.succeed(respondToExecutionBridgeError(error)),
-    ),
-    Effect.catchTag("ExecutionBridgeRunStartError", (error) =>
-      Effect.succeed(respondToExecutionBridgeError(error)),
-    ),
+    Effect.catchTags({
+      ExecutionBridgeAuthError: (error) => Effect.succeed(respondToExecutionBridgeError(error)),
+      ExecutionBridgeRunStartError: (error) => Effect.succeed(respondToExecutionBridgeError(error)),
+    }),
   ),
 );
 
@@ -712,12 +708,10 @@ export const executionBridgeContinueRouteLayer = HttpRouter.add(
     const result = yield* continueExecutionRun(request);
     return HttpServerResponse.jsonUnsafe(result, { status: 202 });
   }).pipe(
-    Effect.catchTag("ExecutionBridgeAuthError", (error) =>
-      Effect.succeed(respondToExecutionBridgeError(error)),
-    ),
-    Effect.catchTag("ExecutionBridgeRunStartError", (error) =>
-      Effect.succeed(respondToExecutionBridgeError(error)),
-    ),
+    Effect.catchTags({
+      ExecutionBridgeAuthError: (error) => Effect.succeed(respondToExecutionBridgeError(error)),
+      ExecutionBridgeRunStartError: (error) => Effect.succeed(respondToExecutionBridgeError(error)),
+    }),
   ),
 );
 
@@ -730,12 +724,10 @@ export const executionBridgeInterruptRouteLayer = HttpRouter.add(
     const result = yield* interruptExecutionRun(request);
     return HttpServerResponse.jsonUnsafe(result, { status: 202 });
   }).pipe(
-    Effect.catchTag("ExecutionBridgeAuthError", (error) =>
-      Effect.succeed(respondToExecutionBridgeError(error)),
-    ),
-    Effect.catchTag("ExecutionBridgeRunStartError", (error) =>
-      Effect.succeed(respondToExecutionBridgeError(error)),
-    ),
+    Effect.catchTags({
+      ExecutionBridgeAuthError: (error) => Effect.succeed(respondToExecutionBridgeError(error)),
+      ExecutionBridgeRunStartError: (error) => Effect.succeed(respondToExecutionBridgeError(error)),
+    }),
   ),
 );
 
@@ -748,12 +740,10 @@ export const taskRuntimeUserInputRespondRouteLayer = HttpRouter.add(
     const result = yield* respondToTaskRuntimeUserInput(request);
     return HttpServerResponse.jsonUnsafe(result, { status: 202 });
   }).pipe(
-    Effect.catchTag("ExecutionBridgeAuthError", (error) =>
-      Effect.succeed(respondToExecutionBridgeError(error)),
-    ),
-    Effect.catchTag("ExecutionBridgeRunStartError", (error) =>
-      Effect.succeed(respondToExecutionBridgeError(error)),
-    ),
+    Effect.catchTags({
+      ExecutionBridgeAuthError: (error) => Effect.succeed(respondToExecutionBridgeError(error)),
+      ExecutionBridgeRunStartError: (error) => Effect.succeed(respondToExecutionBridgeError(error)),
+    }),
   ),
 );
 

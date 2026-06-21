@@ -92,6 +92,7 @@ export interface ExternalIntakeMessage {
     | {
         readonly rawText?: string | undefined;
         readonly isMention?: boolean | undefined;
+        readonly conversationKind?: "channel" | "dm" | "mpim" | undefined;
         readonly botUserId?: string | undefined;
         readonly botUserName?: string | undefined;
       }
@@ -796,6 +797,7 @@ const makeExternalIntake = Effect.gen(function* () {
           botUserName: input.message.slack?.botUserName ?? envValue("SLACK_BOT_USERNAME"),
         }) ||
         input.message.slack?.isMention === true ||
+        input.message.slack?.conversationKind === "dm" ||
         (input.message.slack?.rawText !== undefined &&
           mentionsTeamAppUser({
             body: input.message.slack.rawText,
@@ -836,15 +838,25 @@ const makeExternalIntake = Effect.gen(function* () {
       }
 
       if (
+        input.message.slack?.conversationKind !== "dm" &&
         mentionsNonTeamAppSlackUser({
           body,
           botUserId: input.message.slack?.botUserId ?? envValue("SLACK_BOT_USER_ID"),
-        }) ||
-        (input.message.slack?.rawText !== undefined &&
-          mentionsNonTeamAppSlackUser({
-            body: input.message.slack.rawText,
-            botUserId: input.message.slack?.botUserId ?? envValue("SLACK_BOT_USER_ID"),
-          }))
+        })
+      ) {
+        return {
+          status: "ignored" as const,
+          reason: "slack_thread_other_user_mention",
+        };
+      }
+
+      if (
+        input.message.slack?.conversationKind !== "dm" &&
+        input.message.slack?.rawText !== undefined &&
+        mentionsNonTeamAppSlackUser({
+          body: input.message.slack.rawText,
+          botUserId: input.message.slack?.botUserId ?? envValue("SLACK_BOT_USER_ID"),
+        })
       ) {
         return {
           status: "ignored" as const,

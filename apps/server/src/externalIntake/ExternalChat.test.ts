@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { uploadSlackFiles } from "./ExternalChat.ts";
+import { slackConversationKind, uploadSlackFiles } from "./ExternalChat.ts";
 
 const originalFetch = globalThis.fetch;
 
@@ -76,5 +76,39 @@ describe("uploadSlackFiles", () => {
       "https://files.slack.test/upload",
       "https://slack.com/api/files.completeUploadExternal",
     ]);
+  });
+});
+
+describe("slackConversationKind", () => {
+  it("detects one-to-one DMs from Slack channel_type", () => {
+    expect(
+      slackConversationKind({
+        channelId: "D123",
+        raw: { channel_type: "im" },
+      }),
+    ).toBe("dm");
+  });
+
+  it("falls back to D-prefixed Slack conversation ids for DMs", () => {
+    expect(slackConversationKind({ channelId: "D123" })).toBe("dm");
+  });
+
+  it("keeps public and private channel events as channel intake", () => {
+    expect(
+      slackConversationKind({
+        channelId: "C123",
+        raw: { channel_type: "channel" },
+      }),
+    ).toBe("channel");
+    expect(slackConversationKind({ channelId: "G123" })).toBe("channel");
+  });
+
+  it("detects multi-party DMs only when Slack identifies the event as mpim", () => {
+    expect(
+      slackConversationKind({
+        channelId: "G123",
+        raw: { channel_type: "mpim" },
+      }),
+    ).toBe("mpim");
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { prStatusIndicator, type ThreadPr } from "./ThreadStatusIndicators";
 
 function makePr(overrides: Partial<NonNullable<ThreadPr>> = {}): NonNullable<ThreadPr> {

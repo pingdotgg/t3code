@@ -474,7 +474,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           assert.equal(yield* git(worktreePath, ["rev-parse", "HEAD"]), remoteBaseSha);
           assert.equal(
             yield* git(worktreePath, ["config", "--get", "branch.feature/fresh-origin.merge"]).pipe(
-              Effect.catch(() => Effect.succeed("")),
+              Effect.orElseSucceed(() => ""),
             ),
             "",
           );

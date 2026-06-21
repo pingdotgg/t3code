@@ -78,9 +78,7 @@ const DeliveryReceiptLookupInput = Schema.Struct({
   deliveryKey: Schema.String,
 });
 
-const mapThreadLinkRow = (
-  row: typeof ExternalThreadLinkDbRow.Type,
-): typeof ExternalThreadLink.Type => ({
+const mapThreadLinkRow = (row: typeof ExternalThreadLinkDbRow.Type): ExternalThreadLink => ({
   ...row,
   muted: row.muted !== 0,
 });

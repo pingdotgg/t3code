@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 
 import { resolveExecutionBridgeModelSelection } from "./requestDefaults.ts";

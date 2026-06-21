@@ -91,7 +91,7 @@ it.layer(NodeServices.layer)("mock-update-server", (it) => {
       yield* fileSystem.makeDirectory(linksDir, { recursive: true });
       const symlinkCreated = yield* fileSystem.symlink(outsideFile, symlinkPath).pipe(
         Effect.map(() => true),
-        Effect.catch(() => Effect.succeed(false)),
+        Effect.orElseSucceed(() => false),
       );
       if (!symlinkCreated) {
         return;
