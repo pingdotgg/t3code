@@ -36,20 +36,159 @@ const BitbucketApiEnvConfig = Config.all({
   apiToken: Config.string("T3CODE_BITBUCKET_API_TOKEN").pipe(Config.option),
 });
 
-export class BitbucketApiError extends Schema.TaggedErrorClass<BitbucketApiError>()(
-  "BitbucketApiError",
+const BitbucketApiOperation = Schema.Literals([
+  "resolveRepository",
+  "getRepository",
+  "getBranchingModel",
+  "getPullRequest",
+  "listPullRequests",
+  "createRepository",
+  "createPullRequest",
+  "probeAuth",
+  "checkoutPullRequest",
+]);
+type BitbucketApiOperation = typeof BitbucketApiOperation.Type;
+
+export class BitbucketRepositoryLocatorError extends Schema.TaggedErrorClass<BitbucketRepositoryLocatorError>()(
+  "BitbucketRepositoryLocatorError",
   {
-    operation: Schema.String,
-    detail: Schema.String,
-    status: Schema.optional(Schema.Number),
-    cause: Schema.optional(Schema.Defect()),
+    repository: Schema.String,
   },
 ) {
   override get message(): string {
-    return `Bitbucket API failed in ${this.operation}: ${this.detail}`;
+    return "Bitbucket API failed in createRepository: Bitbucket repositories must be specified as workspace/repository.";
   }
 }
-const isBitbucketApiError = Schema.is(BitbucketApiError);
+
+export class BitbucketRequestError extends Schema.TaggedErrorClass<BitbucketRequestError>()(
+  "BitbucketRequestError",
+  {
+    operation: BitbucketApiOperation,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Bitbucket API failed in ${this.operation}: Failed to send the Bitbucket request.`;
+  }
+}
+
+export class BitbucketResponseError extends Schema.TaggedErrorClass<BitbucketResponseError>()(
+  "BitbucketResponseError",
+  {
+    operation: BitbucketApiOperation,
+    status: Schema.Int,
+    responseBody: Schema.String,
+  },
+) {
+  override get message(): string {
+    const body = this.responseBody.trim();
+    return body.length > 0
+      ? `Bitbucket API failed in ${this.operation}: Bitbucket returned HTTP ${this.status}: ${body}`
+      : `Bitbucket API failed in ${this.operation}: Bitbucket returned HTTP ${this.status}.`;
+  }
+}
+
+export class BitbucketResponseBodyReadError extends Schema.TaggedErrorClass<BitbucketResponseBodyReadError>()(
+  "BitbucketResponseBodyReadError",
+  {
+    operation: BitbucketApiOperation,
+    status: Schema.Int,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Bitbucket API failed in ${this.operation}: Bitbucket returned HTTP ${this.status}.`;
+  }
+}
+
+export class BitbucketResponseDecodeError extends Schema.TaggedErrorClass<BitbucketResponseDecodeError>()(
+  "BitbucketResponseDecodeError",
+  {
+    operation: BitbucketApiOperation,
+    status: Schema.Int,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Bitbucket API failed in ${this.operation}: Bitbucket returned invalid JSON for the requested resource.`;
+  }
+}
+
+export class BitbucketRepositoryVcsResolveError extends Schema.TaggedErrorClass<BitbucketRepositoryVcsResolveError>()(
+  "BitbucketRepositoryVcsResolveError",
+  {
+    cwd: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Bitbucket API failed in resolveRepository: Failed to resolve VCS repository for ${this.cwd}.`;
+  }
+}
+
+export class BitbucketRepositoryRemotesListError extends Schema.TaggedErrorClass<BitbucketRepositoryRemotesListError>()(
+  "BitbucketRepositoryRemotesListError",
+  {
+    cwd: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Bitbucket API failed in resolveRepository: Failed to list remotes for ${this.cwd}.`;
+  }
+}
+
+export class BitbucketRepositoryRemoteNotFoundError extends Schema.TaggedErrorClass<BitbucketRepositoryRemoteNotFoundError>()(
+  "BitbucketRepositoryRemoteNotFoundError",
+  {
+    cwd: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Bitbucket API failed in resolveRepository: No Bitbucket repository remote was detected for ${this.cwd}.`;
+  }
+}
+
+export class BitbucketPullRequestBodyReadError extends Schema.TaggedErrorClass<BitbucketPullRequestBodyReadError>()(
+  "BitbucketPullRequestBodyReadError",
+  {
+    cwd: Schema.String,
+    bodyFile: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Bitbucket API failed in createPullRequest: Failed to read pull request body file ${this.bodyFile}.`;
+  }
+}
+
+export class BitbucketCheckoutError extends Schema.TaggedErrorClass<BitbucketCheckoutError>()(
+  "BitbucketCheckoutError",
+  {
+    cwd: Schema.String,
+    reference: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Bitbucket API failed in checkoutPullRequest: Failed to check out the Bitbucket pull request.";
+  }
+}
+
+export const BitbucketApiError = Schema.Union([
+  BitbucketRepositoryLocatorError,
+  BitbucketRequestError,
+  BitbucketResponseError,
+  BitbucketResponseBodyReadError,
+  BitbucketResponseDecodeError,
+  BitbucketRepositoryVcsResolveError,
+  BitbucketRepositoryRemotesListError,
+  BitbucketRepositoryRemoteNotFoundError,
+  BitbucketPullRequestBodyReadError,
+  BitbucketCheckoutError,
+]);
+export type BitbucketApiError = typeof BitbucketApiError.Type;
+export const isBitbucketApiError = Schema.is(BitbucketApiError);
 
 const RawBitbucketRepositorySchema = Schema.Struct({
   full_name: TrimmedNonEmptyString,
@@ -209,16 +348,14 @@ function parseBitbucketRepositorySlug(value: string): BitbucketRepositoryLocator
 }
 
 function requireRepositoryLocator(
-  operation: string,
   repository: string,
 ): Effect.Effect<BitbucketRepositoryLocator, BitbucketApiError> {
   const locator = parseBitbucketRepositorySlug(repository);
   return locator
     ? Effect.succeed(locator)
     : Effect.fail(
-        new BitbucketApiError({
-          operation,
-          detail: "Bitbucket repositories must be specified as workspace/repository.",
+        new BitbucketRepositoryLocatorError({
+          repository,
         }),
       );
 }
@@ -339,20 +476,24 @@ function authFromConfig(
 }
 
 function responseError(
-  operation: string,
+  operation: BitbucketApiOperation,
   response: HttpClientResponse.HttpClientResponse,
 ): Effect.Effect<never, BitbucketApiError> {
   return response.text.pipe(
-    Effect.orElseSucceed(() => ""),
-    Effect.flatMap((body) =>
-      Effect.fail(
-        new BitbucketApiError({
+    Effect.mapError(
+      (cause) =>
+        new BitbucketResponseBodyReadError({
           operation,
           status: response.status,
-          detail:
-            body.trim().length > 0
-              ? `Bitbucket returned HTTP ${response.status}: ${body.trim()}`
-              : `Bitbucket returned HTTP ${response.status}.`,
+          cause,
+        }),
+    ),
+    Effect.flatMap((body) =>
+      Effect.fail(
+        new BitbucketResponseError({
+          operation,
+          status: response.status,
+          responseBody: body,
         }),
       ),
     ),
@@ -379,7 +520,7 @@ export const make = Effect.gen(function* () {
   };
 
   const decodeResponse = <S extends Schema.Top>(
-    operation: string,
+    operation: BitbucketApiOperation,
     schema: S,
     response: HttpClientResponse.HttpClientResponse,
   ): Effect.Effect<S["Type"], BitbucketApiError, S["DecodingServices"]> =>
@@ -388,9 +529,9 @@ export const make = Effect.gen(function* () {
         HttpClientResponse.schemaBodyJson(schema)(success).pipe(
           Effect.mapError(
             (cause) =>
-              new BitbucketApiError({
+              new BitbucketResponseDecodeError({
                 operation,
-                detail: "Bitbucket returned invalid JSON for the requested resource.",
+                status: success.status,
                 cause,
               }),
           ),
@@ -399,16 +540,15 @@ export const make = Effect.gen(function* () {
     })(response);
 
   const executeJson = <S extends Schema.Top>(
-    operation: string,
+    operation: BitbucketApiOperation,
     request: HttpClientRequest.HttpClientRequest,
     schema: S,
   ): Effect.Effect<S["Type"], BitbucketApiError, S["DecodingServices"]> =>
     httpClient.execute(withAuth(request.pipe(HttpClientRequest.acceptJson))).pipe(
       Effect.mapError(
         (cause) =>
-          new BitbucketApiError({
+          new BitbucketRequestError({
             operation,
-            detail: "Failed to send the Bitbucket request.",
             cause,
           }),
       ),
@@ -433,9 +573,8 @@ export const make = Effect.gen(function* () {
     const handle = yield* vcsRegistry.resolve({ cwd: input.cwd }).pipe(
       Effect.mapError(
         (cause) =>
-          new BitbucketApiError({
-            operation: "resolveRepository",
-            detail: `Failed to resolve VCS repository for ${input.cwd}.`,
+          new BitbucketRepositoryVcsResolveError({
+            cwd: input.cwd,
             cause,
           }),
       ),
@@ -443,9 +582,8 @@ export const make = Effect.gen(function* () {
     const remotes = yield* handle.driver.listRemotes(input.cwd).pipe(
       Effect.mapError(
         (cause) =>
-          new BitbucketApiError({
-            operation: "resolveRepository",
-            detail: `Failed to list remotes for ${input.cwd}.`,
+          new BitbucketRepositoryRemotesListError({
+            cwd: input.cwd,
             cause,
           }),
       ),
@@ -457,9 +595,8 @@ export const make = Effect.gen(function* () {
       if (parsed) return parsed;
     }
 
-    return yield* new BitbucketApiError({
-      operation: "resolveRepository",
-      detail: `No Bitbucket repository remote was detected for ${input.cwd}.`,
+    return yield* new BitbucketRepositoryRemoteNotFoundError({
+      cwd: input.cwd,
     });
   });
 
@@ -600,7 +737,7 @@ export const make = Effect.gen(function* () {
     getRepositoryCloneUrls: (input) =>
       getRepository(input).pipe(Effect.map(normalizeRepositoryCloneUrls)),
     createRepository: (input) =>
-      requireRepositoryLocator("createRepository", input.repository).pipe(
+      requireRepositoryLocator(input.repository).pipe(
         Effect.flatMap((repository) =>
           executeJson(
             "createRepository",
@@ -625,9 +762,9 @@ export const make = Effect.gen(function* () {
         const description = yield* fileSystem.readFileString(input.bodyFile).pipe(
           Effect.mapError(
             (cause) =>
-              new BitbucketApiError({
-                operation: "createPullRequest",
-                detail: `Failed to read pull request body file ${input.bodyFile}.`,
+              new BitbucketPullRequestBodyReadError({
+                cwd: input.cwd,
+                bodyFile: input.bodyFile,
                 cause,
               }),
           ),
@@ -743,9 +880,9 @@ export const make = Effect.gen(function* () {
         Effect.mapError((cause) =>
           isBitbucketApiError(cause)
             ? cause
-            : new BitbucketApiError({
-                operation: "checkoutPullRequest",
-                detail: "Failed to check out the Bitbucket pull request.",
+            : new BitbucketCheckoutError({
+                cwd: input.cwd,
+                reference: input.reference,
                 cause,
               }),
         ),

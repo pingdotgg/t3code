@@ -533,14 +533,67 @@ it.effect("preserves the HTTP client failure without deriving the domain message
       }),
     );
 
+    assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
     assert.strictEqual(error.operation, "getPullRequest");
-    assert.strictEqual(error.detail, "Failed to send the Bitbucket request.");
     assert.strictEqual(
       error.message,
       "Bitbucket API failed in getPullRequest: Failed to send the Bitbucket request.",
     );
     assert.strictEqual(error.cause, requestFailure);
     assert.strictEqual(requestFailure?.cause, transportCause);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("preserves structured Bitbucket HTTP failures through checkout", () => {
+  const responseBody = '{"error":{"message":"forbidden"}}';
+  const { layer } = makeLayer({
+    response: () => new Response(responseBody, { status: 403 }),
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const error = yield* bitbucket
+      .checkoutPullRequest({ cwd: "/repo", reference: "42" })
+      .pipe(Effect.flip);
+
+    assert.instanceOf(error, BitbucketApi.BitbucketResponseError);
+    assert.strictEqual(error.operation, "getPullRequest");
+    assert.strictEqual(error.status, 403);
+    assert.strictEqual(error.responseBody, responseBody);
+    assert.strictEqual(
+      error.message,
+      `Bitbucket API failed in getPullRequest: Bitbucket returned HTTP 403: ${responseBody}`,
+    );
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("preserves Bitbucket response body read failures as their immediate cause", () => {
+  const cause = new Error("response stream failed");
+  const { layer } = makeLayer({
+    response: () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start: (controller) => controller.error(cause),
+        }),
+        { status: 502 },
+      ),
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const error = yield* bitbucket
+      .getPullRequest({ cwd: "/repo", reference: "42" })
+      .pipe(Effect.flip);
+
+    assert.instanceOf(error, BitbucketApi.BitbucketResponseBodyReadError);
+    assert.strictEqual(error.operation, "getPullRequest");
+    assert.strictEqual(error.status, 502);
+    assert.instanceOf(error.cause, HttpClientError.HttpClientError);
+    assert.strictEqual(error.cause.cause, cause);
+    assert.strictEqual(
+      error.message,
+      "Bitbucket API failed in getPullRequest: Bitbucket returned HTTP 502.",
+    );
   }).pipe(Effect.provide(layer));
 });
 
@@ -630,8 +683,9 @@ it.effect("preserves Git checkout failures without deriving the domain message f
       }),
     );
 
-    assert.strictEqual(error.operation, "checkoutPullRequest");
-    assert.strictEqual(error.detail, "Failed to check out the Bitbucket pull request.");
+    assert.instanceOf(error, BitbucketApi.BitbucketCheckoutError);
+    assert.strictEqual(error.cwd, "/repo");
+    assert.strictEqual(error.reference, "42");
     assert.strictEqual(
       error.message,
       "Bitbucket API failed in checkoutPullRequest: Failed to check out the Bitbucket pull request.",

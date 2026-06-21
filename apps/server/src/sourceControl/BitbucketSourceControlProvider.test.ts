@@ -53,11 +53,10 @@ it.effect("maps Bitbucket PR summaries into provider-neutral change requests", (
 
 it.effect("adds repository context while retaining Bitbucket API causes", () =>
   Effect.gen(function* () {
-    const cause = new BitbucketApi.BitbucketApiError({
+    const upstreamCause = new Error("raw upstream failure");
+    const cause = new BitbucketApi.BitbucketRequestError({
       operation: "getRepository",
-      detail: "upstream detail that should remain in the cause",
-      status: 503,
-      cause: new Error("raw upstream failure"),
+      cause: upstreamCause,
     });
     const provider = yield* makeProvider({
       getRepositoryCloneUrls: () => Effect.fail(cause),
@@ -86,7 +85,7 @@ it.effect("adds repository context while retaining Bitbucket API causes", () =>
       },
     );
     assert.strictEqual(error.cause, cause);
-    assert.equal(error.message.includes(cause.detail), false);
+    assert.equal(error.message.includes(upstreamCause.message), false);
   }),
 );
 
