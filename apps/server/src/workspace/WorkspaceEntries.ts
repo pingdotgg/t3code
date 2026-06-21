@@ -151,20 +151,29 @@ export const make = Effect.gen(function* () {
       if (!(yield* RcMap.has(workspaceSearchIndexes.rcMap, normalizedCwd))) {
         return;
       }
+      const recoverRefreshFailure = (
+        cause:
+          | WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed
+          | WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut
+          | WorkspaceSearchIndex.WorkspaceSearchIndexRefreshFailed,
+      ) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning("Failed to refresh workspace search index", {
+            cwd,
+            cause,
+          });
+          yield* workspaceSearchIndexes.invalidate(normalizedCwd);
+        });
       yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         yield* searchIndex.refresh();
       }).pipe(
         Effect.provide(workspaceSearchIndexes.get(normalizedCwd)),
-        Effect.catch((cause) =>
-          Effect.gen(function* () {
-            yield* Effect.logWarning("Failed to refresh workspace search index", {
-              cwd,
-              cause,
-            });
-            yield* workspaceSearchIndexes.invalidate(normalizedCwd);
-          }),
-        ),
+        Effect.catchTags({
+          WorkspaceSearchIndexCreateFailed: recoverRefreshFailure,
+          WorkspaceSearchIndexScanTimedOut: recoverRefreshFailure,
+          WorkspaceSearchIndexRefreshFailed: recoverRefreshFailure,
+        }),
       );
     },
   );

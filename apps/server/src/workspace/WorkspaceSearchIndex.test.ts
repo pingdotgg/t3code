@@ -1,6 +1,8 @@
 import { FileFinder } from "@ff-labs/fff-node";
 import { afterEach, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import { vi } from "vite-plus/test";
 
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
@@ -46,6 +48,35 @@ it.effect("keeps returned FileFinder creation diagnostics out of the cause chain
       reason: "native index rejected the directory",
     });
     expect(error.cause).toBeUndefined();
+  }),
+);
+
+it.effect("preserves FileFinder destroy failures as structured defects", () =>
+  Effect.gen(function* () {
+    const cause = new Error("native destroy failed");
+    const finder = {
+      destroy: vi.fn(() => {
+        throw cause;
+      }),
+      isScanning: vi.fn(() => false),
+    } as unknown as FileFinder;
+    vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+    const exit = yield* Effect.scoped(WorkspaceSearchIndex.make("/workspace/project")).pipe(
+      Effect.exit,
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(Cause.hasDies(exit.cause)).toBe(true);
+      const error = Cause.squash(exit.cause);
+      expect(error).toBeInstanceOf(WorkspaceSearchIndex.WorkspaceSearchIndexDestroyFailed);
+      expect(error).toMatchObject({
+        _tag: "WorkspaceSearchIndexDestroyFailed",
+        cwd: "/workspace/project",
+        cause,
+      });
+    }
   }),
 );
 

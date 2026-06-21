@@ -71,6 +71,18 @@ export class WorkspaceSearchIndexRefreshFailed extends Schema.TaggedErrorClass<W
   }
 }
 
+export class WorkspaceSearchIndexDestroyFailed extends Schema.TaggedErrorClass<WorkspaceSearchIndexDestroyFailed>()(
+  "WorkspaceSearchIndexDestroyFailed",
+  {
+    cwd: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to destroy the workspace search index for '${this.cwd}'.`;
+  }
+}
+
 export type WorkspaceSearchIndexError =
   | WorkspaceSearchIndexCreateFailed
   | WorkspaceSearchIndexScanTimedOut
@@ -201,7 +213,10 @@ const waitForScan = <E>(cwd: string, finder: FileFinder, onFailure: (cause: unkn
 
 export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (cwd: string) {
   const finder = yield* Effect.acquireRelease(createFinder(cwd), (finder) =>
-    Effect.sync(() => finder.destroy()),
+    Effect.try({
+      try: () => finder.destroy(),
+      catch: (cause) => new WorkspaceSearchIndexDestroyFailed({ cwd, cause }),
+    }).pipe(Effect.orDie),
   );
   yield* waitForScan(
     cwd,
