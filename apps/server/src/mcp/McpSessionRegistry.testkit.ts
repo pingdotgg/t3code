@@ -21,6 +21,6 @@ export const layer = Layer.succeed(
     resolve: () => Effect.succeed(undefined),
     revokeProviderSession: () => Effect.void,
     revokeThread: () => Effect.void,
-    revokeAll: Effect.succeed(undefined),
+    revokeAll: Effect.void,
   }),
 );
