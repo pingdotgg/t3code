@@ -108,10 +108,15 @@ describe("tailscale", () => {
 
   it.effect("preserves status decoding failures without exposing cause text", () =>
     Effect.gen(function* () {
-      const error = yield* parseTailscaleStatus("{not-json").pipe(Effect.flip);
+      const malformedStatus = "{not-json";
+      const error = yield* parseTailscaleStatus(malformedStatus).pipe(Effect.flip);
 
       assert.instanceOf(error, TailscaleStatusParseError);
-      assert.equal(error.message, "Failed to decode tailscale status JSON.");
+      assert.equal(error.inputLength, malformedStatus.length);
+      assert.equal(
+        error.message,
+        `Failed to decode ${malformedStatus.length}-character tailscale status JSON.`,
+      );
       assert.isDefined(error.cause);
       assert.notInclude(error.message, String(error.cause));
     }),

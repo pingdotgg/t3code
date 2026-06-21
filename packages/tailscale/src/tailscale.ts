@@ -84,10 +84,13 @@ export type TailscaleCommandError = typeof TailscaleCommandError.Type;
 
 export class TailscaleStatusParseError extends Schema.TaggedErrorClass<TailscaleStatusParseError>()(
   "TailscaleStatusParseError",
-  { cause: Schema.Defect() },
+  {
+    inputLength: Schema.Number,
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return "Failed to decode tailscale status JSON.";
+    return `Failed to decode ${this.inputLength}-character tailscale status JSON.`;
   }
 }
 
@@ -135,7 +138,9 @@ export const parseTailscaleMagicDnsName = (
   rawStatusJson: string,
 ): Effect.Effect<string | null, TailscaleStatusParseError> =>
   decodeTailscaleStatusJson(rawStatusJson).pipe(
-    Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
+    Effect.mapError(
+      (cause) => new TailscaleStatusParseError({ inputLength: rawStatusJson.length, cause }),
+    ),
     Effect.map(normalizeMagicDnsName),
   );
 
@@ -161,7 +166,9 @@ export const parseTailscaleStatus = (
   rawStatusJson: string,
 ): Effect.Effect<TailscaleStatus, TailscaleStatusParseError> =>
   decodeTailscaleStatusJson(rawStatusJson).pipe(
-    Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
+    Effect.mapError(
+      (cause) => new TailscaleStatusParseError({ inputLength: rawStatusJson.length, cause }),
+    ),
     Effect.map((parsed) => {
       const rawIps = parsed.Self?.TailscaleIPs;
       const tailnetIpv4Addresses: Array<string> = [];
