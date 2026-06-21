@@ -20,6 +20,7 @@ function createStorage(overrides: Partial<Storage> = {}): Storage {
 }
 
 afterEach(() => {
+  vi.doUnmock("react");
   vi.resetModules();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -99,6 +100,57 @@ describe("theme failure handling", () => {
     const attributes = errorLog.mock.calls[0]?.[1];
     expect(attributes).not.toHaveProperty("cause");
     expect(JSON.stringify(attributes)).not.toContain(cause.message);
+  });
+
+  it("retries a failed storage read only after a relevant storage event", async () => {
+    const cause = new Error("persistent storage failure");
+    const getItem = vi.fn(() => {
+      throw cause;
+    });
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    let readSnapshot: (() => unknown) | undefined;
+    let subscribeToTheme: ((listener: () => void) => () => void) | undefined;
+    let storageHandler: ((event: StorageEvent) => void) | undefined;
+    vi.doMock("react", () => ({
+      useCallback: <A>(callback: A) => callback,
+      useEffect: () => undefined,
+      useSyncExternalStore: (
+        subscribe: (listener: () => void) => () => void,
+        getSnapshot: () => unknown,
+      ) => {
+        subscribeToTheme = subscribe;
+        readSnapshot = getSnapshot;
+        return getSnapshot();
+      },
+    }));
+    vi.stubGlobal("window", {
+      addEventListener: (type: string, listener: (event: StorageEvent) => void) => {
+        if (type === "storage") storageHandler = listener;
+      },
+      localStorage: createStorage({ getItem }),
+      matchMedia: () => ({
+        matches: false,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+      removeEventListener: () => undefined,
+    });
+
+    const { useTheme } = await import("./useTheme");
+    useTheme();
+    readSnapshot?.();
+    readSnapshot?.();
+
+    expect(getItem).toHaveBeenCalledTimes(1);
+    expect(errorLog).toHaveBeenCalledTimes(1);
+
+    const unsubscribe = subscribeToTheme?.(() => undefined);
+    storageHandler?.({ key: "t3code:theme" } as StorageEvent);
+    readSnapshot?.();
+
+    expect(getItem).toHaveBeenCalledTimes(2);
+    expect(errorLog).toHaveBeenCalledTimes(2);
+    unsubscribe?.();
   });
 
   it("preserves desktop sync causes and retries after a failed cosmetic sync", async () => {

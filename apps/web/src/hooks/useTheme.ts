@@ -55,6 +55,7 @@ let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
 let lastDesktopTheme: Theme | null = null;
 let lastAppliedTheme: ThemeSnapshot | null = null;
+let themeStorageReadFailure: ThemeStorageError | null = null;
 
 function emitChange() {
   for (const listener of listeners) listener();
@@ -88,6 +89,7 @@ export function writeThemePreference(theme: Theme): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(STORAGE_KEY, theme);
+    themeStorageReadFailure = null;
   } catch (cause) {
     throw new ThemeStorageError({
       operation: "write",
@@ -99,6 +101,9 @@ export function writeThemePreference(theme: Theme): void {
 }
 
 function getStored(): Theme {
+  if (themeStorageReadFailure !== null) {
+    return DEFAULT_THEME_SNAPSHOT.theme;
+  }
   try {
     return readThemePreference();
   } catch (cause) {
@@ -109,6 +114,7 @@ function getStored(): Theme {
           storageKey: STORAGE_KEY,
           cause,
         });
+    themeStorageReadFailure = error;
     console.error(error.message, {
       operation: error.operation,
       storageKey: error.storageKey,
@@ -263,6 +269,7 @@ function subscribe(listener: () => void): () => void {
   // Listen for storage changes from other tabs
   const handleStorage = (e: StorageEvent) => {
     if (e.key === STORAGE_KEY) {
+      themeStorageReadFailure = null;
       applyTheme(getStored(), true);
       emitChange();
     }
