@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  type ApplicationStoredEvent,
   CommandId,
   type ModelSelection,
   ProjectId,
@@ -10,12 +11,18 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import { ServerConfig } from "../config.ts";
-import { GitCoreLive } from "../git/Layers/GitCore.ts";
+import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestrationLayerLive } from "../orchestration/runtimeLayer.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { OrchestrationEventStore } from "../persistence/Services/OrchestrationEventStore.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { layer as mcpSessionRegistryTestLayer } from "../mcp/McpSessionRegistry.testkit.ts";
 import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
@@ -58,7 +65,6 @@ const providerInstance = {
   displayName: "Codex test",
   enabled: true,
   snapshot: {} as ProviderInstance["snapshot"],
-  adapter: {} as ProviderInstance["adapter"],
   orchestrationAdapter,
   textGeneration: {} as ProviderInstance["textGeneration"],
 } satisfies ProviderInstance;
@@ -75,6 +81,24 @@ const TestProviderInstanceRegistry = Layer.succeed(ProviderInstanceRegistry, {
 const TestLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provide(SqlitePersistenceMemory),
+  Layer.provide(CheckpointStoreTestLayer),
+  Layer.provide(ServerConfigLayer),
+  Layer.provide(ServerSettingsService.layerTest()),
+  Layer.provide(TestProviderInstanceRegistry),
+  Layer.provide(NodeServices.layer),
+);
+
+const SharedApplicationDataPlaneTestLayer = Layer.merge(
+  OrchestrationLayerLive,
+  OrchestrationV2LayerLive,
+).pipe(
+  Layer.provide(
+    Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+      resolve: () => Effect.succeed(null),
+    }),
+  ),
+  Layer.provide(mcpSessionRegistryTestLayer),
+  Layer.provideMerge(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
   Layer.provide(ServerConfigLayer),
   Layer.provide(ServerSettingsService.layerTest()),
@@ -245,6 +269,86 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
 
       assert.equal(first._tag, "OrchestratorProjectionError");
       assert.equal(retry._tag, "OrchestratorCommandPreviouslyRejectedError");
+    }),
+  );
+});
+
+it.layer(SharedApplicationDataPlaneTestLayer)("shared application data plane", (it) => {
+  it.effect("orders retained project transactions and V2 thread transactions in one source", () =>
+    Effect.gen(function* () {
+      const applicationEngine = yield* OrchestrationEngineService;
+      const applicationEvents = yield* OrchestrationEventStore;
+      const orchestrator = yield* OrchestratorV2;
+      const projectionSnapshot = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const projectId = ProjectId.make("runtime-layer-shared-project");
+      const threadId = ThreadId.make("runtime-layer-shared-thread");
+      const projectCommand = {
+        type: "project.create" as const,
+        commandId: CommandId.make("runtime-layer-shared-project-create"),
+        projectId,
+        title: "Shared application source",
+        workspaceRoot: "/tmp/runtime-layer-shared-project",
+        defaultModelSelection: modelSelection,
+        scripts: [],
+        createdAt: "2026-06-20T00:00:00.000Z",
+      };
+
+      const projectResult = yield* applicationEngine.dispatch(projectCommand);
+      const projectRetry = yield* applicationEngine.dispatch(projectCommand);
+      assert.equal(projectRetry.sequence, projectResult.sequence);
+
+      const delivered = yield* Queue.unbounded<ApplicationStoredEvent>();
+      yield* applicationEvents.streamApplicationEvents().pipe(
+        Stream.take(2),
+        Stream.runForEach((event) => Queue.offer(delivered, event)),
+        Effect.forkScoped,
+      );
+
+      const projectEvent = yield* Queue.take(delivered);
+      assert.equal(projectEvent.sequence, projectResult.sequence);
+
+      const threadResult = yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-shared-thread-create"),
+        threadId,
+        projectId,
+        title: "Shared thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const threadEvent = yield* Queue.take(delivered);
+
+      assert.equal(threadEvent.sequence, threadResult.sequence);
+      assert.isAbove(threadEvent.sequence, projectEvent.sequence);
+      assert.isTrue("aggregateKind" in projectEvent);
+      assert.isTrue("event" in threadEvent);
+      assert.equal((yield* projectionSnapshot.getProjectShellById(projectId))._tag, "Some");
+
+      const retainedReceipts = yield* sql<{
+        readonly aggregate_kind: string;
+        readonly aggregate_id: string;
+      }>`
+        SELECT aggregate_kind, aggregate_id
+        FROM orchestration_command_receipts
+        ORDER BY result_sequence ASC
+      `;
+      assert.deepEqual(retainedReceipts, [
+        { aggregate_kind: "project", aggregate_id: projectId },
+        { aggregate_kind: "thread", aggregate_id: threadId },
+      ]);
+
+      const retiredWrites = yield* sql<{ readonly count: number }>`
+        SELECT
+          (SELECT COUNT(*) FROM orchestration_v2_events) +
+          (SELECT COUNT(*) FROM orchestration_v2_command_receipts) AS count
+      `;
+      assert.equal(retiredWrites[0]?.count, 0);
     }),
   );
 });

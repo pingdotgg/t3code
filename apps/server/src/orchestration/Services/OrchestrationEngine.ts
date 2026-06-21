@@ -1,21 +1,16 @@
 /**
- * OrchestrationEngineService - Service interface for orchestration command handling.
+ * Historical name for the application event-sourcing engine.
  *
- * Owns command validation/dispatch and in-memory read-model updates backed by
- * `OrchestrationEventStore` persistence. It does not own provider process
- * management or transport concerns (e.g. websocket request parsing).
+ * This is not the agent orchestrator. It retains serialized project-command
+ * validation, append, receipt, and projection transactions. Agent execution is
+ * owned by orchestration V2, whose thread events use the same event store.
  *
  * Uses Effect `Context.Service` for dependency injection. Command dispatch,
  * replay, and unknown-input decoding all return typed domain errors.
  *
  * @module OrchestrationEngineService
  */
-import type {
-  OrchestrationClientOrigin,
-  OrchestrationCommand,
-  OrchestrationEvent,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { OrchestrationEvent, ProjectOrchestrationCommand } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
@@ -63,16 +58,13 @@ export interface OrchestrationEngineShape {
    * Dispatch a validated orchestration command.
    *
    * @param command - Valid orchestration command.
-   * @param options - Optional client origin (surface/app version) stamped into
-   *   the metadata of every event the command produces.
    * @returns Effect containing the sequence of the persisted event.
    *
    * Dispatch is serialized through an internal queue and deduplicated via
    * command receipts.
    */
   readonly dispatch: (
-    command: OrchestrationCommand,
-    options?: { readonly origin?: OrchestrationClientOrigin },
+    command: ProjectOrchestrationCommand,
   ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
 
   /**
