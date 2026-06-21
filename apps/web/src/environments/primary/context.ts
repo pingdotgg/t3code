@@ -46,7 +46,6 @@ async function fetchPrimaryEnvironmentDescriptor(): Promise<ExecutionEnvironment
       throw PrimaryEnvironmentRequestError.fromCause({
         operation: "fetch-environment-descriptor",
         cause: error,
-        fallbackMessage: (status) => `Failed to load server environment descriptor (${status}).`,
       });
     }
 
