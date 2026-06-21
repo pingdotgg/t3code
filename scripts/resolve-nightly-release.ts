@@ -40,6 +40,19 @@ export class InvalidDesktopPackageVersionError extends Schema.TaggedErrorClass<I
   }
 }
 
+export class NightlyReleaseDesktopPackageError extends Schema.TaggedErrorClass<NightlyReleaseDesktopPackageError>()(
+  "NightlyReleaseDesktopPackageError",
+  {
+    operation: Schema.Literals(["read", "decode"]),
+    packageJsonPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to ${this.operation} desktop package metadata at ${this.packageJsonPath}.`;
+  }
+}
+
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
@@ -77,16 +90,33 @@ export const resolveNightlyReleaseMetadata = (
   };
 };
 
-const readDesktopBaseVersion = Effect.fn("readDesktopBaseVersion")(function* (
+export const readDesktopBaseVersion = Effect.fn("readDesktopBaseVersion")(function* (
   rootDir: string | undefined,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const workspaceRoot = rootDir ? path.resolve(rootDir) : yield* RepoRoot;
   const packageJsonPath = path.join(workspaceRoot, "apps/desktop/package.json");
-  const packageJson = yield* fs
-    .readFileString(packageJsonPath)
-    .pipe(Effect.flatMap(decodeDesktopPackageJson));
+  const packageJsonSource = yield* fs.readFileString(packageJsonPath).pipe(
+    Effect.mapError(
+      (cause) =>
+        new NightlyReleaseDesktopPackageError({
+          operation: "read",
+          packageJsonPath,
+          cause,
+        }),
+    ),
+  );
+  const packageJson = yield* decodeDesktopPackageJson(packageJsonSource).pipe(
+    Effect.mapError(
+      (cause) =>
+        new NightlyReleaseDesktopPackageError({
+          operation: "decode",
+          packageJsonPath,
+          cause,
+        }),
+    ),
+  );
   return yield* resolveNightlyTargetVersion(packageJson.version);
 });
 
