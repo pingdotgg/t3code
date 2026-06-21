@@ -51,62 +51,148 @@ type ProjectCliDispatchCommand = Extract<
 >;
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
-const ProjectCommandOperation = Schema.Literals([
-  "generateProjectCommandId",
-  "callLiveServer",
-  "validateProjectTitle",
-  "resolveProjectTarget",
-  "addProject",
-]);
 
-export class ProjectCommandError extends Schema.TaggedErrorClass<ProjectCommandError>()(
-  "ProjectCommandError",
+export class ProjectCommandIdGenerationError extends Schema.TaggedErrorClass<ProjectCommandIdGenerationError>()(
+  "ProjectCommandIdGenerationError",
   {
-    operation: ProjectCommandOperation,
-    detail: Schema.String,
-    code: Schema.optional(Schema.String),
-    traceId: Schema.optional(Schema.String),
-    status: Schema.optional(Schema.Number),
+    operation: Schema.Literal("generateProjectCommandId"),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to generate a project command identifier.";
+  }
+}
+
+export class ProjectLiveServerDeclaredResponseError extends Schema.TaggedErrorClass<ProjectLiveServerDeclaredResponseError>()(
+  "ProjectLiveServerDeclaredResponseError",
+  {
+    operation: Schema.Literal("callLiveServer"),
+    code: Schema.String,
+    traceId: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Server request failed (${this.code}, trace ${this.traceId}).`;
+  }
+}
+
+export class ProjectLiveServerUndeclaredStatusError extends Schema.TaggedErrorClass<ProjectLiveServerUndeclaredStatusError>()(
+  "ProjectLiveServerUndeclaredStatusError",
+  {
+    operation: Schema.Literal("callLiveServer"),
+    status: Schema.Int,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Server request failed with undeclared status ${this.status}.`;
+  }
+}
+
+export class ProjectLiveServerRequestError extends Schema.TaggedErrorClass<ProjectLiveServerRequestError>()(
+  "ProjectLiveServerRequestError",
+  {
+    operation: Schema.Literal("callLiveServer"),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to call the running server.";
+  }
+}
+
+export class ProjectTitleEmptyError extends Schema.TaggedErrorClass<ProjectTitleEmptyError>()(
+  "ProjectTitleEmptyError",
+  {
+    operation: Schema.Literal("validateProjectTitle"),
+    title: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "Project title cannot be empty.";
+  }
+}
+
+export class ProjectIdentifierEmptyError extends Schema.TaggedErrorClass<ProjectIdentifierEmptyError>()(
+  "ProjectIdentifierEmptyError",
+  {
+    operation: Schema.Literal("resolveProjectTarget"),
+    identifier: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "Project identifier cannot be empty.";
+  }
+}
+
+export class ProjectNotFoundError extends Schema.TaggedErrorClass<ProjectNotFoundError>()(
+  "ProjectNotFoundError",
+  {
+    operation: Schema.Literal("resolveProjectTarget"),
+    identifier: Schema.String,
+    normalizedWorkspaceRoot: Schema.optional(Schema.String),
+    activeProjectCount: Schema.Number,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
-  static fromLiveServerRequest(cause: unknown): ProjectCommandError {
-    if (isEnvironmentHttpCommonError(cause)) {
-      return new ProjectCommandError({
-        operation: "callLiveServer",
-        detail: `Server request failed (${cause.code}, trace ${cause.traceId}).`,
-        code: cause.code,
-        traceId: cause.traceId,
-        cause,
-      });
-    }
-    if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
-      return new ProjectCommandError({
-        operation: "callLiveServer",
-        detail: `Server request failed with undeclared status ${cause.response.status}.`,
-        status: cause.response.status,
-        cause,
-      });
-    }
-    return new ProjectCommandError({
+  override get message(): string {
+    return `No active project found for '${this.identifier}'.`;
+  }
+}
+
+export class ProjectAlreadyExistsError extends Schema.TaggedErrorClass<ProjectAlreadyExistsError>()(
+  "ProjectAlreadyExistsError",
+  {
+    operation: Schema.Literal("addProject"),
+    projectId: ProjectId,
+    workspaceRoot: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `An active project already exists for '${this.workspaceRoot}'.`;
+  }
+}
+
+export const ProjectCommandError = Schema.Union([
+  ProjectCommandIdGenerationError,
+  ProjectLiveServerDeclaredResponseError,
+  ProjectLiveServerUndeclaredStatusError,
+  ProjectLiveServerRequestError,
+  ProjectTitleEmptyError,
+  ProjectIdentifierEmptyError,
+  ProjectNotFoundError,
+  ProjectAlreadyExistsError,
+]);
+export type ProjectCommandError = typeof ProjectCommandError.Type;
+
+export function projectCommandErrorFromLiveServerRequest(cause: unknown): ProjectCommandError {
+  if (isEnvironmentHttpCommonError(cause)) {
+    return new ProjectLiveServerDeclaredResponseError({
       operation: "callLiveServer",
-      detail: "Failed to call the running server.",
+      code: cause.code,
+      traceId: cause.traceId,
+      cause,
+    });
+  }
+  if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
+    return new ProjectLiveServerUndeclaredStatusError({
+      operation: "callLiveServer",
+      status: cause.response.status,
       cause,
     });
   }
 
-  override get message(): string {
-    return this.detail;
-  }
+  return new ProjectLiveServerRequestError({ operation: "callLiveServer", cause });
 }
 
 const projectCommandUuid = Crypto.Crypto.pipe(
   Effect.flatMap((crypto) => crypto.randomUUIDv4),
   Effect.mapError(
     (cause) =>
-      new ProjectCommandError({
+      new ProjectCommandIdGenerationError({
         operation: "generateProjectCommandId",
-        detail: "Failed to generate a project command identifier.",
         cause,
       }),
   ),
@@ -158,9 +244,9 @@ const resolveProjectTitle = Effect.fn("resolveProjectTitle")(function* (
     if (trimmed.length > 0) {
       return trimmed;
     }
-    return yield* new ProjectCommandError({
+    return yield* new ProjectTitleEmptyError({
       operation: "validateProjectTitle",
-      detail: "Project title cannot be empty.",
+      title: explicitTitle,
     });
   }
 
@@ -175,9 +261,9 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
 }) {
   const trimmedIdentifier = input.identifier.trim();
   if (trimmedIdentifier.length === 0) {
-    return yield* new ProjectCommandError({
+    return yield* new ProjectIdentifierEmptyError({
       operation: "resolveProjectTarget",
-      detail: "Project identifier cannot be empty.",
+      identifier: input.identifier,
     });
   }
 
@@ -204,9 +290,11 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
 
   const resolved = exactWorkspaceMatch;
   if (!resolved) {
-    return yield* new ProjectCommandError({
+    return yield* new ProjectNotFoundError({
       operation: "resolveProjectTarget",
-      detail: `No active project found for '${trimmedIdentifier}'.`,
+      identifier: trimmedIdentifier,
+      activeProjectCount: activeProjects.length,
+      ...(normalizedWorkspaceRoot === null ? {} : { normalizedWorkspaceRoot }),
       ...(normalizedWorkspaceRootResult._tag === "Failure"
         ? { cause: normalizedWorkspaceRootResult.failure }
         : {}),
@@ -228,7 +316,7 @@ const fetchLiveOrchestrationSnapshot = (origin: string, bearerToken: string) =>
     });
   }).pipe(
     withProjectCliLiveServerTimeout,
-    Effect.mapError(ProjectCommandError.fromLiveServerRequest),
+    Effect.mapError(projectCommandErrorFromLiveServerRequest),
   );
 
 const dispatchLiveOrchestrationCommand = (
@@ -244,7 +332,7 @@ const dispatchLiveOrchestrationCommand = (
     } as Parameters<typeof client.orchestration.dispatch>[0]);
   }).pipe(
     withProjectCliLiveServerTimeout,
-    Effect.mapError(ProjectCommandError.fromLiveServerRequest),
+    Effect.mapError(projectCommandErrorFromLiveServerRequest),
   );
 
 const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
@@ -376,9 +464,10 @@ const projectAddCommand = Command.make("add", {
           (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
         );
         if (existingProject) {
-          return yield* new ProjectCommandError({
+          return yield* new ProjectAlreadyExistsError({
             operation: "addProject",
-            detail: `An active project already exists for '${workspaceRoot}'.`,
+            projectId: existingProject.id,
+            workspaceRoot,
           });
         }
 

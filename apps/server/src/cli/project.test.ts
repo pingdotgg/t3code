@@ -2,7 +2,11 @@ import { assert, it } from "@effect/vitest";
 
 import { EnvironmentInternalError } from "@t3tools/contracts";
 
-import { ProjectCommandError } from "./project.ts";
+import {
+  ProjectLiveServerDeclaredResponseError,
+  ProjectLiveServerRequestError,
+  projectCommandErrorFromLiveServerRequest,
+} from "./project.ts";
 
 it("maps declared server failures into structural project command errors", () => {
   const cause = new EnvironmentInternalError({
@@ -11,8 +15,9 @@ it("maps declared server failures into structural project command errors", () =>
     traceId: "trace-123",
   });
 
-  const error = ProjectCommandError.fromLiveServerRequest(cause);
+  const error = projectCommandErrorFromLiveServerRequest(cause);
 
+  assert.instanceOf(error, ProjectLiveServerDeclaredResponseError);
   assert.strictEqual(error.operation, "callLiveServer");
   assert.strictEqual(error.code, "internal_error");
   assert.strictEqual(error.traceId, "trace-123");
@@ -23,10 +28,10 @@ it("maps declared server failures into structural project command errors", () =>
 it("preserves unexpected server failures without deriving the message from them", () => {
   const cause = new Error("credential abc123 was rejected");
 
-  const error = ProjectCommandError.fromLiveServerRequest(cause);
+  const error = projectCommandErrorFromLiveServerRequest(cause);
 
+  assert.instanceOf(error, ProjectLiveServerRequestError);
   assert.strictEqual(error.operation, "callLiveServer");
-  assert.strictEqual(error.detail, "Failed to call the running server.");
   assert.strictEqual(error.message, "Failed to call the running server.");
   assert.strictEqual(error.cause, cause);
 });
