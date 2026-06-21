@@ -13,7 +13,7 @@ import * as Layer from "effect/Layer";
 import { FetchHttpClient } from "effect/unstable/http";
 import { describe } from "vite-plus/test";
 
-import { CheckpointStoreLive } from "../checkpointing/Layers/CheckpointStore.ts";
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import { ServerConfig } from "../config.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { ProviderInstanceRegistryHydrationLive } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
@@ -39,7 +39,7 @@ const vcsDriverRegistryLayer = VcsDriverRegistry.layer.pipe(
   Layer.provide(NodeServices.layer),
 );
 
-const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(vcsDriverRegistryLayer));
+const checkpointStoreLayer = CheckpointStore.layer.pipe(Layer.provide(vcsDriverRegistryLayer));
 
 const serverSettingsLayer = ServerSettingsService.layerTest({
   providers: {
