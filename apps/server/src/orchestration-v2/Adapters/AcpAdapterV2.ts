@@ -35,7 +35,7 @@ import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import { type ServerConfigShape } from "../../config.ts";
+import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   mergeToolCallState,
@@ -46,9 +46,9 @@ import {
 } from "../../provider/acp/AcpRuntimeModel.ts";
 import type {
   AcpSessionRuntimeOptions,
-  AcpSessionRuntimeShape,
   AcpSessionRuntimeStartResult,
 } from "../../provider/acp/AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import {
   ProviderAdapterEnsureThreadError,
@@ -90,7 +90,7 @@ export interface AcpAdapterV2UserInputRequest {
 }
 
 export interface AcpAdapterV2ExtensionContext {
-  readonly runtime: AcpSessionRuntimeShape;
+  readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
   readonly requestUserInput: (
     input: AcpAdapterV2UserInputRequest,
   ) => Effect.Effect<ProviderUserInputAnswers | null, EffectAcpErrors.AcpError>;
@@ -101,7 +101,11 @@ export interface AcpAdapterV2Flavor {
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly makeRuntime: (
     input: AcpAdapterV2RuntimeInput,
-  ) => Effect.Effect<AcpSessionRuntimeShape, EffectAcpErrors.AcpError, Scope.Scope>;
+  ) => Effect.Effect<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    EffectAcpErrors.AcpError,
+    Scope.Scope
+  >;
   readonly resolveModelId?: (selection: ModelSelection) => string | undefined;
   readonly registerExtensions?: (
     context: AcpAdapterV2ExtensionContext,
@@ -114,7 +118,7 @@ export interface AcpAdapterV2Options {
   readonly flavor: AcpAdapterV2Flavor;
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2Shape;
-  readonly serverConfig: ServerConfigShape;
+  readonly serverConfig: ServerConfig["Service"];
 }
 
 export const AcpProviderCapabilitiesV2 = {
