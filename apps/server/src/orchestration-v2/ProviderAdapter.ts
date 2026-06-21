@@ -432,6 +432,13 @@ export interface ProviderAdapterV2ForkThreadInput {
   readonly providerTurnId?: ProviderTurnId;
   readonly targetThreadId: ThreadId;
   readonly ownerNodeId?: NodeId;
+  readonly modelSelection?: ModelSelection;
+  readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
+}
+
+export interface ProviderAdapterV2EventSubscription {
+  readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
+  readonly close: Effect.Effect<void>;
 }
 
 export interface ProviderAdapterV2SessionRuntime {
@@ -441,11 +448,20 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly providerSession: OrchestrationV2ProviderSession;
   readonly rawEvents: Stream.Stream<OrchestrationV2RawProviderEvent, ProviderAdapterV2Error>;
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
+  /**
+   * Manager-owned runtimes expose a synchronous subscription so concurrent
+   * provider threads receive independent copies of the process event stream.
+   * Adapter runtimes may omit this and expose only their raw single-consumer stream.
+   */
+  readonly subscribeEvents?: Effect.Effect<ProviderAdapterV2EventSubscription>;
   readonly ensureThread: (
     input: ProviderAdapterV2EnsureThreadInput,
   ) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;
   readonly resumeThread: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
+    readonly threadId?: ThreadId;
+    readonly modelSelection?: ModelSelection;
+    readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
   }) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;
   readonly startTurn: (
     input: ProviderAdapterV2TurnInput,

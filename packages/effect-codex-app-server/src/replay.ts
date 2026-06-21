@@ -240,6 +240,23 @@ function normalizeReplayFrame(value: unknown): unknown {
     normalized.params = params;
   }
 
+  if (
+    (normalized.method === "thread/start" ||
+      normalized.method === "thread/resume" ||
+      normalized.method === "thread/fork") &&
+    typeof normalized.params === "object" &&
+    normalized.params !== null
+  ) {
+    // Runtime-scoped thread settings are supplied by the host and commonly
+    // contain machine-local cwd and short-lived MCP authorization headers.
+    // They are orthogonal to the recorded provider protocol behavior.
+    const params = { ...(normalized.params as Record<string, unknown>) };
+    delete params.cwd;
+    delete params.model;
+    delete params.config;
+    normalized.params = params;
+  }
+
   return normalized;
 }
 

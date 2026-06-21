@@ -24,14 +24,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
-    type: Schema.Literal("provider-session.release"),
+    type: Schema.Literal("provider-session.detach"),
     providerSessionId: ProviderSessionId,
-    reason: Schema.Literals([
-      "idle_timeout",
-      "runtime_error",
-      "manual_shutdown",
-      "server_shutdown",
-    ]),
     detail: Schema.optional(Schema.String),
   }),
   Schema.Struct({
