@@ -1736,9 +1736,18 @@ function ChatViewContent(props: ChatViewProps) {
           </ul>
         ) : undefined;
       const description =
-        activity.kind === "provider.fallback.succeeded" && detail
-          ? `Switched after “${from}” reported: ${detail}`
-          : detail;
+        activity.kind === "provider.fallback.succeeded" && detail ? (
+          <div className="grid gap-2">
+            <p>
+              Switched after <span className="font-medium text-foreground">“{from}”</span> reported:
+            </p>
+            <div className="whitespace-pre-wrap wrap-break-word rounded-md border border-border/70 bg-muted/40 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-foreground/85 shadow-inner">
+              {detail}
+            </div>
+          </div>
+        ) : (
+          detail
+        );
 
       toastManager.add(
         stackedThreadToast({

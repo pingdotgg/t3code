@@ -9,6 +9,7 @@ import {
   type OrchestrationSession,
   ThreadId,
   type ProviderSession,
+  type ProviderSendTurnInput,
   type RuntimeMode,
   type TurnId,
 } from "@t3tools/contracts";
@@ -829,26 +830,31 @@ const make = Effect.gen(function* () {
 
     const attemptFallbackBeforeReporting = Effect.fnUntraced(function* (
       cause: Cause.Cause<unknown>,
+      attemptedSendTurnInput?: ProviderSendTurnInput,
     ) {
       const failure = classifyProviderServiceFailure(cause);
       if (!failure) return false;
-      const modelSelection = event.payload.modelSelection ?? thread.modelSelection;
+      const modelSelection =
+        attemptedSendTurnInput?.modelSelection ??
+        event.payload.modelSelection ??
+        thread.modelSelection;
+      const sendTurnInput: ProviderSendTurnInput = attemptedSendTurnInput ?? {
+        threadId: event.payload.threadId,
+        ...(toNonEmptyProviderInput(message.text)
+          ? { input: toNonEmptyProviderInput(message.text) }
+          : {}),
+        ...(message.attachments && message.attachments.length > 0
+          ? { attachments: message.attachments }
+          : {}),
+        modelSelection,
+        interactionMode: event.payload.interactionMode,
+      };
       const fallback = yield* attemptProviderFallback({
         threadId: event.payload.threadId,
-        currentInstanceId: modelSelection.instanceId,
+        failedInstanceId: modelSelection.instanceId,
         modelSelection,
         runtimeMode: event.payload.runtimeMode,
-        sendTurnInput: {
-          threadId: event.payload.threadId,
-          ...(toNonEmptyProviderInput(message.text)
-            ? { input: toNonEmptyProviderInput(message.text) }
-            : {}),
-          ...(message.attachments && message.attachments.length > 0
-            ? { attachments: message.attachments }
-            : {}),
-          modelSelection,
-          interactionMode: event.payload.interactionMode,
-        },
+        sendTurnInput,
         failure,
         requireCompatibleContinuation: !isFirstUserMessageTurn,
         createdAt: event.payload.createdAt,
@@ -856,8 +862,11 @@ const make = Effect.gen(function* () {
       return fallback.switched;
     });
 
-    const recoverTurnStartFailure = (cause: Cause.Cause<unknown>) =>
-      attemptFallbackBeforeReporting(cause).pipe(
+    const recoverTurnStartFailure = (
+      cause: Cause.Cause<unknown>,
+      attemptedSendTurnInput?: ProviderSendTurnInput,
+    ) =>
+      attemptFallbackBeforeReporting(cause, attemptedSendTurnInput).pipe(
         Effect.catchCause((fallbackCause) =>
           Effect.logWarning("provider command reactor fallback attempt failed", {
             eventType: event.type,
@@ -895,9 +904,10 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+    yield* providerService.sendTurn(sendTurnRequest.value).pipe(
+      Effect.catchCause((cause) => recoverTurnStartFailure(cause, sendTurnRequest.value)),
+      Effect.forkScoped,
+    );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (

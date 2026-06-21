@@ -39,7 +39,10 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { attemptProviderFallback } from "../providerFallbackWorkflow.ts";
+import {
+  attemptProviderFallback,
+  isProviderFallbackTrialInstance,
+} from "../providerFallbackWorkflow.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 
@@ -1224,7 +1227,8 @@ const make = Effect.gen(function* () {
       if (
         event.providerInstanceId !== undefined &&
         thread.session?.providerInstanceId !== undefined &&
-        event.providerInstanceId !== thread.session.providerInstanceId
+        event.providerInstanceId !== thread.session.providerInstanceId &&
+        !isProviderFallbackTrialInstance(thread.id, event.providerInstanceId)
       ) {
         return;
       }
@@ -1256,7 +1260,7 @@ const make = Effect.gen(function* () {
           yield* Cache.set(handledFallbackEvents, fallbackKey, true);
           const fallback = yield* attemptProviderFallback({
             threadId: thread.id,
-            currentInstanceId: fallbackInstanceId,
+            failedInstanceId: fallbackInstanceId,
             modelSelection: thread.modelSelection,
             runtimeMode: thread.runtimeMode,
             sendTurnInput: {
