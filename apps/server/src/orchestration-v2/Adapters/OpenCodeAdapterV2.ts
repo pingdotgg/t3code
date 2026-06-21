@@ -105,7 +105,9 @@ const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettingsSchema)({});
  */
 export const OpenCodeProviderCapabilitiesV2 = {
   sessions: {
-    supportsMultipleProviderThreadsPerSession: true,
+    // The current adapter owns one directory-bound client/server per session.
+    // Keep it isolated until its runtime is made safe for cross-thread pooling.
+    supportsMultipleProviderThreadsPerSession: false,
     supportsModelSwitchInSession: true,
     supportsProviderSwitchingViaHandoff: true,
     supportsRuntimeModeSwitchInSession: false,

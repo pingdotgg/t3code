@@ -470,6 +470,14 @@ export const OrchestrationV2ProviderSession = Schema.Struct({
 });
 export type OrchestrationV2ProviderSession = typeof OrchestrationV2ProviderSession.Type;
 
+export const OrchestrationV2ProviderSessionDetached = Schema.Struct({
+  providerSessionId: ProviderSessionId,
+  detachedAt: Schema.DateTimeUtc,
+  reason: Schema.optional(Schema.String),
+});
+export type OrchestrationV2ProviderSessionDetached =
+  typeof OrchestrationV2ProviderSessionDetached.Type;
+
 export const OrchestrationV2ProviderThread = Schema.Struct({
   id: ProviderThreadId,
   driver: ProviderDriverKind,
@@ -947,8 +955,13 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
-    type: Schema.Literal("provider-session.updated"),
+    type: Schema.Literals(["provider-session.attached", "provider-session.updated"]),
     payload: OrchestrationV2ProviderSession,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("provider-session.detached"),
+    payload: OrchestrationV2ProviderSessionDetached,
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
@@ -1178,6 +1191,14 @@ export const OrchestrationV2ProviderSessionJson = OrchestrationV2ProviderSession
   }),
 );
 export type OrchestrationV2ProviderSessionJson = typeof OrchestrationV2ProviderSessionJson.Type;
+
+export const OrchestrationV2ProviderSessionDetachedJson =
+  OrchestrationV2ProviderSessionDetached.mapFields((fields) => ({
+    ...fields,
+    detachedAt: Schema.DateTimeUtcFromString,
+  }));
+export type OrchestrationV2ProviderSessionDetachedJson =
+  typeof OrchestrationV2ProviderSessionDetachedJson.Type;
 
 export const OrchestrationV2ProviderThreadJson = OrchestrationV2ProviderThread.mapFields(
   (fields) => ({
@@ -1474,8 +1495,13 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
-    type: Schema.Literal("provider-session.updated"),
+    type: Schema.Literals(["provider-session.attached", "provider-session.updated"]),
     payload: OrchestrationV2ProviderSessionJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("provider-session.detached"),
+    payload: OrchestrationV2ProviderSessionDetachedJson,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
@@ -1603,7 +1629,7 @@ export const OrchestrationV2Command = Schema.Union([
     modelSelection: ModelSelection,
   }),
   Schema.Struct({
-    type: Schema.Literal("provider-session.release"),
+    type: Schema.Literal("provider-session.detach"),
     commandId: CommandId,
     threadId: ThreadId,
     providerSessionId: ProviderSessionId,
