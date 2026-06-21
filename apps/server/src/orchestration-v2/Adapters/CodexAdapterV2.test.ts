@@ -23,7 +23,7 @@ import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.
 import {
   buildCodexTurnStartParams,
   CODEX_DRIVER_KIND,
-  codexAppServerMcpLaunchConfig,
+  codexThreadRuntimeParams,
   makeCodexAppServerProtocolLogger,
   makeCodexAppServerSpawnCommand,
   projectCodexDynamicToolItem,
@@ -82,7 +82,7 @@ describe("CodexAdapterV2 runtime policy", () => {
 });
 
 describe("CodexAdapterV2 process spawning", () => {
-  it("injects the thread-scoped MCP endpoint and bearer token", () => {
+  it("injects cwd, model, and MCP authorization into thread-scoped params", () => {
     const threadId = ThreadId.make("thread-codex-mcp");
     McpProviderSession.setMcpProviderSession({
       environmentId: EnvironmentId.make("environment-codex-mcp"),
@@ -94,17 +94,31 @@ describe("CodexAdapterV2 process spawning", () => {
     });
 
     try {
-      assert.deepEqual(codexAppServerMcpLaunchConfig(threadId), {
-        args: [
-          "-c",
-          "mcp_servers.t3-code.url=http://127.0.0.1:43123/mcp",
-          "-c",
-          'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
-        ],
-        environment: {
-          T3_MCP_BEARER_TOKEN: "secret-codex-token",
+      assert.deepEqual(
+        codexThreadRuntimeParams({
+          threadId,
+          modelSelection: { model: "gpt-5.4" },
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: "/workspace/thread-codex-mcp",
+          },
+        }),
+        {
+          cwd: "/workspace/thread-codex-mcp",
+          model: "gpt-5.4",
+          config: {
+            mcp_servers: {
+              "t3-code": {
+                url: "http://127.0.0.1:43123/mcp",
+                http_headers: {
+                  Authorization: "Bearer secret-codex-token",
+                },
+              },
+            },
+          },
         },
-      });
+      );
     } finally {
       McpProviderSession.clearMcpProviderSession(threadId);
     }
@@ -248,7 +262,14 @@ describe("CodexAdapterV2 native protocol logging", () => {
       yield* protocolLogger({
         direction: "incoming",
         stage: "decoded",
-        payload: { method: "thread/event", params: { id: "evt-1" } },
+        payload: {
+          method: "thread/event",
+          params: {
+            id: "evt-1",
+            http_headers: { Authorization: "Bearer secret-codex-token" },
+            usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
+          },
+        },
       });
 
       assert.equal(writes.length, 1);
@@ -261,7 +282,14 @@ describe("CodexAdapterV2 native protocol logging", () => {
         event: {
           direction: "incoming",
           stage: "decoded",
-          payload: { method: "thread/event", params: { id: "evt-1" } },
+          payload: {
+            method: "thread/event",
+            params: {
+              id: "evt-1",
+              http_headers: { Authorization: "[REDACTED]" },
+              usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
+            },
+          },
         },
       });
     }),

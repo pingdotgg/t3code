@@ -120,7 +120,7 @@ export class ProjectionStoreV2 extends Context.Service<ProjectionStoreV2, Projec
   "t3/orchestration-v2/ProjectionStore/ProjectionStoreV2",
 ) {}
 
-export const ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION = 1;
+export const ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION = 2;
 
 function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, next: T): Array<T> {
   const index = items.findIndex((item) => item.id === next.id);
@@ -207,10 +207,18 @@ export function applyToProjection(
         ...base,
         subagents: upsertById(base.subagents, event.payload),
       };
+    case "provider-session.attached":
     case "provider-session.updated":
       return {
         ...base,
         providerSessions: upsertById(base.providerSessions, event.payload),
+      };
+    case "provider-session.detached":
+      return {
+        ...base,
+        providerSessions: base.providerSessions.filter(
+          (session) => session.id !== event.payload.providerSessionId,
+        ),
       };
     case "provider-thread.updated":
       return {
@@ -1086,6 +1094,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `;
             break;
           }
+          case "provider-session.attached":
           case "provider-session.updated": {
             const payloadJson = yield* encodeProviderSessionPayload(event.payload);
             const payload = parseEncodedPayload(payloadJson);
@@ -1122,6 +1131,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 model = excluded.model,
                 updated_at = excluded.updated_at,
                 payload_json = excluded.payload_json
+            `;
+            if (event.type === "provider-session.attached") {
+              yield* sql`
+                INSERT OR IGNORE INTO orchestration_v2_projection_provider_session_bindings (
+                  provider_session_id,
+                  thread_id
+                )
+                VALUES (${event.payload.id}, ${event.threadId})
+              `;
+            }
+            break;
+          }
+          case "provider-session.detached": {
+            yield* sql`
+              DELETE FROM orchestration_v2_projection_provider_session_bindings
+              WHERE provider_session_id = ${event.payload.providerSessionId}
+                AND thread_id = ${event.threadId}
             `;
             break;
           }
@@ -1676,10 +1702,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY COALESCE(started_at, ''), subagent_id ASC
           `,
           sql<PayloadRow>`
-            SELECT payload_json
-            FROM orchestration_v2_projection_provider_sessions
-            WHERE thread_id = ${threadId}
-            ORDER BY updated_at ASC, provider_session_id ASC
+            SELECT sessions.payload_json
+            FROM orchestration_v2_projection_provider_sessions AS sessions
+            INNER JOIN orchestration_v2_projection_provider_session_bindings AS bindings
+              ON bindings.provider_session_id = sessions.provider_session_id
+            WHERE bindings.thread_id = ${threadId}
+            ORDER BY sessions.updated_at ASC, sessions.provider_session_id ASC
           `,
           sql<PayloadRow>`
             SELECT payload_json
