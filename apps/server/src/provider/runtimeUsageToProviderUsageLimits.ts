@@ -3,7 +3,7 @@ import type { ServerProviderUsageLimits } from "@t3tools/contracts";
 import { clampPercent } from "./providerUsageLimits.ts";
 
 export function runtimeUsageToProviderUsageLimits(input: {
-  readonly source: "cursorAcp" | "opencodeManaged";
+  readonly source: "cursorAcp" | "grokAcp" | "opencodeManaged";
   readonly checkedAt: string;
   readonly usedTokens: number;
   readonly maxTokens: number;
