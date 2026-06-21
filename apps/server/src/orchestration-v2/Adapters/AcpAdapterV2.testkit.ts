@@ -11,10 +11,7 @@ import type * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import {
-  AcpSessionRuntime,
-  type AcpSessionRuntimeShape,
-} from "../../provider/acp/AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { ACP_PROTOCOL, type AcpAdapterV2RuntimeInput } from "./AcpAdapterV2.ts";
 
 export const AcpReplayTranscript = Schema.Struct({
@@ -155,7 +152,11 @@ export function makeAcpReplayRuntime(input: {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
 }): (
   runtimeInput: AcpAdapterV2RuntimeInput,
-) => Effect.Effect<AcpSessionRuntimeShape, EffectAcpErrors.AcpError, Scope.Scope> {
+) => Effect.Effect<
+  AcpSessionRuntime.AcpSessionRuntime["Service"],
+  EffectAcpErrors.AcpError,
+  Scope.Scope
+> {
   const encodedTranscript = Buffer.from(JSON.stringify(input.transcript), "utf8").toString(
     "base64",
   );
@@ -182,6 +183,8 @@ export function makeAcpReplayRuntime(input: {
           ),
         ),
       );
-      return yield* Effect.service(AcpSessionRuntime).pipe(Effect.provide(context));
+      return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+        Effect.provide(context),
+      );
     });
 }

@@ -28,8 +28,7 @@ import type { CSSProperties, DragEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ProviderModelPicker } from "../components/chat/ProviderModelPicker";
-import { getPrimaryEnvironmentConnection } from "../environments/runtime";
-import { useSettings } from "../hooks/useSettings";
+import { usePrimarySettings } from "../hooks/useSettings";
 import {
   removeAndRenumberTimelineItem,
   upsertTimelineItemAtStablePosition,
@@ -1627,9 +1626,28 @@ function OrchestrationV2DebugRoute() {
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const shellUnsubscribeRef = useRef<(() => void) | null>(null);
 
-  const serverProviders = useServerProviders();
-  const settings = useSettings();
-  const keybindings = useServerKeybindings();
+  const environmentId = usePrimaryEnvironmentId();
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const settings = usePrimarySettings();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const dispatchCommandMutation = useAtomCommand(orchestrationEnvironment.v2.dispatchCommand, {
+    reportFailure: false,
+  });
+  const getThreadProjectionQuery = useAtomQueryRunner(
+    orchestrationEnvironment.v2.threadProjection,
+    { reportFailure: false },
+  );
+  const shellSubscription = useEnvironmentQuery(
+    environmentId === null ? null : orchestrationEnvironment.v2.shell({ environmentId, input: {} }),
+  );
+  const threadSubscription = useEnvironmentQuery(
+    environmentId === null || threadId === null
+      ? null
+      : orchestrationEnvironment.v2.thread({
+          environmentId,
+          input: { threadId },
+        }),
+  );
   const providerSnapshots = useMemo(
     () =>
       deriveOrchestrationV2DebugProviderSnapshots({
