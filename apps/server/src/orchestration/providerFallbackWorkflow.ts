@@ -26,6 +26,17 @@ import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+import {
+  beginProviderFallbackChain,
+  completeProviderFallbackChain,
+  markProviderFallbackInstanceAttempted,
+} from "./providerFallbackChain.ts";
+import {
+  beginProviderFallbackTrial,
+  completeProviderFallbackTrial,
+  rejectPendingProviderFallbackTrials,
+  type ProviderFallbackTrialToken,
+} from "./providerFallbackTrialGate.ts";
 
 export interface ProviderFallbackAttemptInput {
   readonly threadId: ThreadId;
@@ -51,22 +62,6 @@ interface ProviderFallbackLockEntry {
 }
 
 const fallbackLocks = new Map<ThreadId, ProviderFallbackLockEntry>();
-const fallbackTrialInstanceByThread = new Map<ThreadId, ProviderInstanceId>();
-
-export function isProviderFallbackTrialInstance(
-  threadId: ThreadId,
-  instanceId: ProviderInstanceId,
-): boolean {
-  return fallbackTrialInstanceByThread.get(threadId) === instanceId;
-}
-
-function clearFallbackTrialInstance(threadId: ThreadId, instanceId?: ProviderInstanceId) {
-  return Effect.sync(() => {
-    if (instanceId === undefined || fallbackTrialInstanceByThread.get(threadId) === instanceId) {
-      fallbackTrialInstanceByThread.delete(threadId);
-    }
-  });
-}
 
 function withProviderFallbackLock<E, R>(
   threadId: ThreadId,
@@ -156,12 +151,15 @@ const attemptProviderFallbackUnlocked = Effect.fn("attemptProviderFallbackUnlock
     return { switched: false, skipped: [] } satisfies ProviderFallbackAttemptResult;
   }
 
+  const attemptedInstanceIds = beginProviderFallbackChain(input.threadId, input.failedInstanceId);
+
   const plan = planProviderFallback({
     settings,
     providers,
     currentInstanceId: input.failedInstanceId,
     modelSelection: input.modelSelection,
     requireCompatibleContinuation: input.requireCompatibleContinuation,
+    excludedInstanceIds: attemptedInstanceIds,
   });
   const skipped: ProviderFallbackSkip[] = [...plan.skipped];
   const originalSession = (yield* providerService.listSessions()).find(
@@ -169,6 +167,7 @@ const attemptProviderFallbackUnlocked = Effect.fn("attemptProviderFallbackUnlock
   );
   let bindingChanged = false;
   let boundFallbackInstance: ProviderFallbackCandidate | undefined;
+  let currentTrialToken: ProviderFallbackTrialToken | undefined;
 
   const nextCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((id) => CommandId.make(`server:${tag}:${id}`)));
@@ -228,9 +227,8 @@ const attemptProviderFallbackUnlocked = Effect.fn("attemptProviderFallbackUnlock
   });
 
   for (const candidate of plan.candidates) {
-    yield* Effect.sync(() => {
-      fallbackTrialInstanceByThread.set(input.threadId, candidate.instanceId);
-    });
+    markProviderFallbackInstanceAttempted(input.threadId, candidate.instanceId);
+    currentTrialToken = yield* beginProviderFallbackTrial(input.threadId, candidate.instanceId);
     const attempt = yield* Effect.gen(function* () {
       const started = yield* providerService.startSession(input.threadId, {
         threadId: input.threadId,
@@ -253,7 +251,8 @@ const attemptProviderFallbackUnlocked = Effect.fn("attemptProviderFallbackUnlock
     }).pipe(Effect.result);
 
     if (attempt._tag === "Failure") {
-      yield* clearFallbackTrialInstance(input.threadId, candidate.instanceId);
+      yield* completeProviderFallbackTrial(currentTrialToken, "reject");
+      currentTrialToken = undefined;
       skipped.push({
         instanceId: candidate.instanceId,
         displayName: candidate.displayName,
@@ -286,6 +285,8 @@ const attemptProviderFallbackUnlocked = Effect.fn("attemptProviderFallbackUnlock
       session,
       createdAt: input.createdAt,
     });
+    yield* completeProviderFallbackTrial(currentTrialToken, "accept");
+    currentTrialToken = undefined;
     yield* appendOutcomeActivity({
       kind: "provider.fallback.succeeded",
       summary: `Switched to ${candidate.displayName}`,
@@ -361,6 +362,7 @@ const attemptProviderFallbackUnlocked = Effect.fn("attemptProviderFallbackUnlock
     summary: "Automatic provider fallback failed",
     tone: "error",
   });
+  completeProviderFallbackChain(input.threadId);
   return { switched: false, skipped } satisfies ProviderFallbackAttemptResult;
 });
 
@@ -370,7 +372,12 @@ export const attemptProviderFallback = Effect.fn("attemptProviderFallback")(func
   return yield* withProviderFallbackLock(
     input.threadId,
     attemptProviderFallbackUnlocked(input).pipe(
-      Effect.ensuring(clearFallbackTrialInstance(input.threadId)),
+      Effect.onError(() =>
+        Effect.sync(() => {
+          completeProviderFallbackChain(input.threadId);
+        }),
+      ),
+      Effect.ensuring(rejectPendingProviderFallbackTrials(input.threadId)),
     ),
   );
 });

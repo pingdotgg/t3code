@@ -112,6 +112,7 @@ export function planProviderFallback(input: {
   readonly currentInstanceId: ProviderInstanceId;
   readonly modelSelection: ModelSelection;
   readonly requireCompatibleContinuation: boolean;
+  readonly excludedInstanceIds?: ReadonlySet<ProviderInstanceId>;
 }): ProviderFallbackPlan {
   const current = input.providers.find(
     (provider) => provider.instanceId === input.currentInstanceId,
@@ -126,6 +127,11 @@ export function planProviderFallback(input: {
     const skip = (reason: string) =>
       skipped.push({ instanceId: provider.instanceId, displayName, reason });
     const config = input.settings.providerInstances[provider.instanceId];
+
+    if (input.excludedInstanceIds?.has(provider.instanceId)) {
+      skip("This instance was already attempted during the current fallback chain.");
+      continue;
+    }
 
     if (config?.allowFallback === false) {
       skip("Automatic fallback is disabled for this instance.");

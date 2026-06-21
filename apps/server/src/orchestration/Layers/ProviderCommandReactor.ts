@@ -44,6 +44,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { attemptProviderFallback } from "../providerFallbackWorkflow.ts";
+import { completeProviderFallbackChain } from "../providerFallbackChain.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -772,6 +773,10 @@ const make = Effect.gen(function* () {
       });
       return;
     }
+
+    // A visible user turn starts a new fallback chain. Mid-task fallback turns
+    // bypass this reactor, so their attempted-instance history remains intact.
+    completeProviderFallbackChain(thread.id);
 
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;

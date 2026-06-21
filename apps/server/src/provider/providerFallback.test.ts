@@ -92,6 +92,49 @@ describe("planProviderFallback", () => {
     expect(plan.candidates.map((entry) => entry.instanceId)).toEqual(["codex_enabled"]);
     expect(plan.skipped[0]?.reason).toBe("Automatic fallback is disabled for this instance.");
   });
+
+  it("never retries instances already attempted by the current fallback chain", () => {
+    const plan = planProviderFallback({
+      settings,
+      providers: [
+        provider({ id: "codex_first" }),
+        provider({ id: "codex_second" }),
+        provider({ id: "codex_third" }),
+      ],
+      currentInstanceId: ProviderInstanceId.make("codex_second"),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex_second"), model: "gpt-5" },
+      requireCompatibleContinuation: false,
+      excludedInstanceIds: new Set([
+        ProviderInstanceId.make("codex_first"),
+        ProviderInstanceId.make("codex_second"),
+      ]),
+    });
+
+    expect(plan.candidates.map((entry) => entry.instanceId)).toEqual(["codex_third"]);
+    expect(plan.skipped).toEqual([
+      {
+        instanceId: "codex_first",
+        displayName: "codex_first",
+        reason: "This instance was already attempted during the current fallback chain.",
+      },
+    ]);
+  });
+
+  it("does not loop back to the first instance when both available instances fail", () => {
+    const first = ProviderInstanceId.make("codex_first");
+    const second = ProviderInstanceId.make("codex_second");
+    const plan = planProviderFallback({
+      settings,
+      providers: [provider({ id: first }), provider({ id: second })],
+      currentInstanceId: second,
+      modelSelection: { instanceId: second, model: "gpt-5" },
+      requireCompatibleContinuation: false,
+      excludedInstanceIds: new Set([first, second]),
+    });
+
+    expect(plan.candidates).toEqual([]);
+    expect(plan.skipped.map((entry) => entry.instanceId)).toEqual([first]);
+  });
 });
 
 describe("provider fallback failure classification", () => {

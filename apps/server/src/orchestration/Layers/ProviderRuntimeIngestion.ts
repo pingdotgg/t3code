@@ -39,10 +39,9 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import {
-  attemptProviderFallback,
-  isProviderFallbackTrialInstance,
-} from "../providerFallbackWorkflow.ts";
+import { attemptProviderFallback } from "../providerFallbackWorkflow.ts";
+import { decideProviderFallbackTrialEvent } from "../providerFallbackTrialGate.ts";
+import { completeProviderFallbackChain } from "../providerFallbackChain.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 
@@ -1221,14 +1220,28 @@ const make = Effect.gen(function* () {
       const thread = yield* resolveThreadShell(event.threadId);
       if (!thread) return;
 
-      // Trial sessions can emit before a fallback handoff commits or after it
-      // rolls back. Ignore events from an instance that no longer owns the
-      // thread so stale trial output cannot overwrite the restored binding.
+      // A fallback candidate can emit before sendTurn confirms the handoff.
+      // Hold those events until the trial commits, or discard them if it rolls
+      // back, so provisional output never leaks into the thread projection.
+      const fallbackTrialDecision =
+        event.providerInstanceId === undefined
+          ? "not-trial"
+          : yield* decideProviderFallbackTrialEvent(
+              thread.id,
+              event.providerInstanceId,
+              event.createdAt,
+            );
+      if (fallbackTrialDecision === "reject") {
+        return;
+      }
+
+      // Ignore events from an instance that no longer owns the thread. A
+      // committed trial is accepted during the narrow projection handoff.
       if (
         event.providerInstanceId !== undefined &&
         thread.session?.providerInstanceId !== undefined &&
         event.providerInstanceId !== thread.session.providerInstanceId &&
-        !isProviderFallbackTrialInstance(thread.id, event.providerInstanceId)
+        fallbackTrialDecision !== "accept"
       ) {
         return;
       }
@@ -1284,6 +1297,14 @@ const make = Effect.gen(function* () {
           );
           if (fallback.switched) return;
         }
+      }
+
+      if (
+        !fallbackFailure &&
+        fallbackInstanceId !== undefined &&
+        (event.type === "turn.completed" || event.type === "session.exited")
+      ) {
+        completeProviderFallbackChain(thread.id, fallbackInstanceId);
       }
 
       const conflictsWithActiveTurn =
