@@ -453,8 +453,18 @@ export type PreviewAutomationResponse = typeof PreviewAutomationResponse.Type;
 
 export class PreviewAutomationUnavailableError extends Schema.TaggedErrorClass<PreviewAutomationUnavailableError>()(
   "PreviewAutomationUnavailableError",
-  { message: Schema.String },
-) {}
+  {
+    capability: Schema.Literal("preview"),
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    providerSessionId: TrimmedNonEmptyString,
+    providerInstanceId: ProviderInstanceId,
+  },
+) {
+  override get message(): string {
+    return `MCP credential does not grant the ${this.capability} capability.`;
+  }
+}
 
 const PreviewAutomationScopeErrorFields = {
   operation: PreviewAutomationOperation,
