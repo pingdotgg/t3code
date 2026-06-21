@@ -45,10 +45,15 @@ export class ProcessDiagnostics extends Context.Service<
 
 class ProcessDiagnosticsQueryTimeoutError extends Schema.TaggedErrorClass<ProcessDiagnosticsQueryTimeoutError>()(
   "ProcessDiagnosticsQueryTimeoutError",
-  { command: Schema.String },
+  {
+    command: Schema.String,
+    argCount: Schema.Number,
+    cwd: Schema.String,
+    timeoutMillis: Schema.Number,
+  },
 ) {
   override get message(): string {
-    return `Process diagnostics query '${this.command}' timed out.`;
+    return `Process diagnostics query '${this.command}' timed out after ${this.timeoutMillis}ms in '${this.cwd}'.`;
   }
 }
 
@@ -56,12 +61,19 @@ class ProcessDiagnosticsQueryFailedError extends Schema.TaggedErrorClass<Process
   "ProcessDiagnosticsQueryFailedError",
   {
     command: Schema.String,
-    stderr: Schema.optional(Schema.String),
+    argCount: Schema.Number,
+    cwd: Schema.String,
+    exitCode: Schema.optional(Schema.Number),
+    stdoutBytes: Schema.optional(Schema.Number),
+    stderrBytes: Schema.optional(Schema.Number),
+    stdoutTruncated: Schema.optional(Schema.Boolean),
+    stderrTruncated: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return this.stderr?.trim() || `Failed to query process diagnostics with '${this.command}'.`;
+    const exitCode = this.exitCode === undefined ? "" : ` with exit code ${this.exitCode}`;
+    return `Process diagnostics query '${this.command}' failed${exitCode} in '${this.cwd}'.`;
   }
 }
 
@@ -76,7 +88,10 @@ class ProcessDiagnosticsServerProcessSignalError extends Schema.TaggedErrorClass
 
 class ProcessDiagnosticsNotDescendantError extends Schema.TaggedErrorClass<ProcessDiagnosticsNotDescendantError>()(
   "ProcessDiagnosticsNotDescendantError",
-  { pid: Schema.Number },
+  {
+    pid: Schema.Number,
+    serverPid: Schema.Number,
+  },
 ) {
   override get message(): string {
     return `Process ${this.pid} is not a live descendant of the T3 server.`;
@@ -312,20 +327,29 @@ function makeResult(input: {
 }
 
 interface ProcessOutput {
+  readonly cwd: string;
   readonly exitCode: number;
   readonly stdout: string;
+  readonly stdoutBytes: number;
+  readonly stdoutTruncated: boolean;
   readonly stderr: string;
+  readonly stderrBytes: number;
+  readonly stderrTruncated: boolean;
 }
 
-const runProcess = Effect.fn("runProcess")(
-  function* (input: { readonly command: string; readonly args: ReadonlyArray<string> }) {
+const runProcess = Effect.fn("runProcess")(function* (input: {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+}) {
+  const cwd = process.cwd();
+  return yield* Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     // `ps` and `powershell.exe` are real executables; spawning through cmd.exe
     // shell mode would re-tokenize the PowerShell `-Command` payload (which
     // contains pipes) before PowerShell ever sees it.
     const child = yield* spawner.spawn(
       ChildProcess.make(input.command, input.args, {
-        cwd: process.cwd(),
+        cwd,
       }),
     );
     const [stdout, stderr, exitCode] = yield* Effect.all(
@@ -346,36 +370,44 @@ const runProcess = Effect.fn("runProcess")(
     );
 
     return {
+      cwd,
       exitCode,
       stdout: stdout.text,
+      stdoutBytes: stdout.bytes,
+      stdoutTruncated: stdout.truncated,
       stderr: stderr.text,
+      stderrBytes: stderr.bytes,
+      stderrTruncated: stderr.truncated,
     } satisfies ProcessOutput;
-  },
-  (effect, input) =>
-    effect.pipe(
-      Effect.scoped,
-      Effect.timeoutOption(Duration.millis(PROCESS_QUERY_TIMEOUT_MS)),
-      Effect.flatMap((result) =>
-        Option.match(result, {
-          onNone: () =>
-            Effect.fail(
-              new ProcessDiagnosticsQueryTimeoutError({
-                command: input.command,
-              }),
-            ),
-          onSome: Effect.succeed,
-        }),
-      ),
-      Effect.mapError((cause) =>
-        isProcessDiagnosticsError(cause)
-          ? cause
-          : new ProcessDiagnosticsQueryFailedError({
+  }).pipe(
+    Effect.scoped,
+    Effect.timeoutOption(Duration.millis(PROCESS_QUERY_TIMEOUT_MS)),
+    Effect.flatMap((result) =>
+      Option.match(result, {
+        onNone: () =>
+          Effect.fail(
+            new ProcessDiagnosticsQueryTimeoutError({
               command: input.command,
-              cause,
+              argCount: input.args.length,
+              cwd,
+              timeoutMillis: PROCESS_QUERY_TIMEOUT_MS,
             }),
-      ),
+          ),
+        onSome: Effect.succeed,
+      }),
     ),
-);
+    Effect.mapError((cause) =>
+      isProcessDiagnosticsError(cause)
+        ? cause
+        : new ProcessDiagnosticsQueryFailedError({
+            command: input.command,
+            argCount: input.args.length,
+            cwd,
+            cause,
+          }),
+    ),
+  );
+});
 
 function readPosixProcessRows(): Effect.Effect<
   ReadonlyArray<ProcessRow>,
@@ -391,7 +423,13 @@ function readPosixProcessRows(): Effect.Effect<
         ? Effect.fail(
             new ProcessDiagnosticsQueryFailedError({
               command: "ps",
-              stderr: result.stderr.trim() || "ps failed.",
+              argCount: 2,
+              cwd: result.cwd,
+              exitCode: result.exitCode,
+              stdoutBytes: result.stdoutBytes,
+              stderrBytes: result.stderrBytes,
+              stdoutTruncated: result.stdoutTruncated,
+              stderrTruncated: result.stderrTruncated,
             }),
           )
         : Effect.succeed(parsePosixProcessRows(result.stdout)),
@@ -421,7 +459,13 @@ function readWindowsProcessRows(): Effect.Effect<
         ? Effect.fail(
             new ProcessDiagnosticsQueryFailedError({
               command: "powershell.exe",
-              stderr: result.stderr.trim() || "PowerShell process query failed.",
+              argCount: 4,
+              cwd: result.cwd,
+              exitCode: result.exitCode,
+              stdoutBytes: result.stdoutBytes,
+              stderrBytes: result.stderrBytes,
+              stdoutTruncated: result.stdoutTruncated,
+              stderrTruncated: result.stderrTruncated,
             }),
           )
         : Effect.succeed(parseWindowsProcessRows(result.stdout)),
@@ -464,6 +508,7 @@ function assertDescendantPid(
         : Effect.fail(
             new ProcessDiagnosticsNotDescendantError({
               pid,
+              serverPid: process.pid,
             }),
           );
     }),

@@ -2,6 +2,7 @@ import { addPushToStartTokenListener, type LiveActivity } from "expo-widgets";
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { Platform } from "react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
@@ -28,6 +29,33 @@ import { resolveCloudPublicConfig } from "../cloud/publicConfig";
 import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
 
 const REMOTE_ACTIVITY_REGISTRATION_RETRY_MS = 15_000;
+
+const AgentAwarenessOperation = Schema.Literals([
+  "read-notification-permissions",
+  "read-native-push-token",
+  "read-device-registration-relay-token",
+  "read-device-unregistration-relay-token",
+  "read-live-activity-registration-relay-token",
+  "load-device-registration-identifier",
+  "load-device-registration-preferences",
+  "load-device-unregistration-identifier",
+  "read-live-activity-push-token",
+  "load-live-activity-registration-identifier",
+  "list-active-live-activities",
+]);
+
+export class AgentAwarenessOperationError extends Schema.TaggedErrorClass<AgentAwarenessOperationError>()(
+  "AgentAwarenessOperationError",
+  {
+    operation: AgentAwarenessOperation,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Agent awareness operation ${this.operation} failed.`;
+  }
+}
+
 const environmentConnections = new Map<EnvironmentId, SavedRemoteConnection>();
 const activityPushTokenListeners = new WeakSet<LiveActivity<AgentActivityProps>>();
 let pushToStartSubscription: { remove: () => void } | null = null;
@@ -137,14 +165,22 @@ function nativePushTokenRegistration(observedPushToken?: string) {
     }
     const permissions = yield* Effect.tryPromise({
       try: () => Notifications.getPermissionsAsync(),
-      catch: (error) => error,
+      catch: (cause) =>
+        new AgentAwarenessOperationError({
+          operation: "read-notification-permissions",
+          cause,
+        }),
     });
     if (!permissions.granted) {
       return { notificationsEnabled: false, pushToken: null };
     }
     const token = yield* Effect.tryPromise({
       try: () => Notifications.getDevicePushTokenAsync(),
-      catch: (error) => error,
+      catch: (cause) =>
+        new AgentAwarenessOperationError({
+          operation: "read-native-push-token",
+          cause,
+        }),
     }).pipe(
       Effect.tapError((error) =>
         Effect.sync(() => {
@@ -161,16 +197,19 @@ function nativePushTokenRegistration(observedPushToken?: string) {
   });
 }
 
-const relayToken = Effect.gen(function* () {
-  const provider = relayTokenProvider;
-  if (!provider) {
-    return null;
-  }
-  return yield* Effect.tryPromise({
-    try: provider,
-    catch: (error) => error,
+const relayToken = (
+  operation: "read-device-registration-relay-token" | "read-live-activity-registration-relay-token",
+) =>
+  Effect.gen(function* () {
+    const provider = relayTokenProvider;
+    if (!provider) {
+      return null;
+    }
+    return yield* Effect.tryPromise({
+      try: provider,
+      catch: (cause) => new AgentAwarenessOperationError({ operation, cause }),
+    });
   });
-});
 
 function registerDeviceWithRelay(
   body: RelayDeviceRegistrationRequest,
@@ -185,7 +224,7 @@ function registerDeviceWithRelay(
       return;
     }
     if (!readRelayConfig()) return;
-    const token = yield* relayToken;
+    const token = yield* relayToken("read-device-registration-relay-token");
     if (expectedGeneration !== deviceRegistrationGeneration) {
       logRegistrationDebug("device registration cancelled after auth lookup", {
         expectedGeneration,
@@ -220,7 +259,11 @@ function unregisterDeviceWithRelay(input: {
     if (!readRelayConfig()) return;
     const token = yield* Effect.tryPromise({
       try: input.tokenProvider,
-      catch: (error) => error,
+      catch: (cause) =>
+        new AgentAwarenessOperationError({
+          operation: "read-device-unregistration-relay-token",
+          cause,
+        }),
     });
     if (!token) {
       logRegistrationDebug("relay device unregistration skipped; user is not signed in");
@@ -240,7 +283,7 @@ function registerLiveActivityWithRelay(
 ): Effect.Effect<boolean, unknown, ManagedRelay.ManagedRelayClient> {
   return Effect.gen(function* () {
     if (!readRelayConfig()) return false;
-    const token = yield* relayToken;
+    const token = yield* relayToken("read-live-activity-registration-relay-token");
     if (!token) {
       logRegistrationDebug("relay live activity registration skipped; user is not signed in");
       return false;
@@ -381,11 +424,19 @@ function registerDevice(
     const [deviceId, preferences] = yield* Effect.all([
       Effect.tryPromise({
         try: () => loadOrCreateAgentAwarenessDeviceId(),
-        catch: (error) => error,
+        catch: (cause) =>
+          new AgentAwarenessOperationError({
+            operation: "load-device-registration-identifier",
+            cause,
+          }),
       }),
       Effect.tryPromise({
         try: () => loadPreferences(),
-        catch: (error) => error,
+        catch: (cause) =>
+          new AgentAwarenessOperationError({
+            operation: "load-device-registration-preferences",
+            cause,
+          }),
       }),
     ]);
     const pushTokenRegistration = yield* nativePushTokenRegistration(input?.observedPushToken);
@@ -519,7 +570,11 @@ export function unregisterAgentAwarenessDeviceForCurrentUser(
   return Effect.gen(function* () {
     const deviceId = yield* Effect.tryPromise({
       try: () => loadAgentAwarenessDeviceId(),
-      catch: (error) => error,
+      catch: (cause) =>
+        new AgentAwarenessOperationError({
+          operation: "load-device-unregistration-identifier",
+          cause,
+        }),
     });
     if (!deviceId) {
       return;
@@ -544,7 +599,11 @@ export function registerLiveActivityPushToken(input: {
 
     const activityPushToken = yield* Effect.tryPromise({
       try: () => input.activity.getPushToken(),
-      catch: (error) => error,
+      catch: (cause) =>
+        new AgentAwarenessOperationError({
+          operation: "read-live-activity-push-token",
+          cause,
+        }),
     });
     if (!activityPushToken) {
       if (activityPushTokenListeners.has(input.activity)) {
@@ -592,7 +651,11 @@ function registerLiveActivityPushTokenValue(input: {
   return Effect.gen(function* () {
     const deviceId = yield* Effect.tryPromise({
       try: () => loadOrCreateAgentAwarenessDeviceId(),
-      catch: (error) => error,
+      catch: (cause) =>
+        new AgentAwarenessOperationError({
+          operation: "load-live-activity-registration-identifier",
+          cause,
+        }),
     });
     const registered = yield* registerLiveActivityWithRelay({
       deviceId,
@@ -633,7 +696,11 @@ export function refreshActiveLiveActivityRemoteRegistration(): Effect.Effect<
 
     const activities = yield* Effect.try({
       try: () => AgentActivity.getInstances(),
-      catch: (error) => error,
+      catch: (cause) =>
+        new AgentAwarenessOperationError({
+          operation: "list-active-live-activities",
+          cause,
+        }),
     }).pipe(
       Effect.catch((error) =>
         Effect.sync(() => {

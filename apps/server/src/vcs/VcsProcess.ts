@@ -5,10 +5,14 @@ import * as Match from "effect/Match";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
-  VcsOutputDecodeError,
   type VcsError,
   VcsProcessExitError,
+  type VcsProcessExitFailureKind,
+  VcsProcessMissingExitCodeError,
+  VcsProcessOutputLimitError,
+  VcsProcessOutputReadError,
   VcsProcessSpawnError,
+  VcsProcessStdinWriteError,
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -46,19 +50,51 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 
-function commandLabel(command: string, args: ReadonlyArray<string>): string {
-  return [command, ...args].join(" ");
-}
+const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
+  const normalized = stderr.toLowerCase();
+
+  if (
+    normalized.includes("authentication failed") ||
+    normalized.includes("not logged in") ||
+    normalized.includes("gh auth login") ||
+    normalized.includes("glab auth login") ||
+    normalized.includes("az devops login") ||
+    normalized.includes("please run az login") ||
+    normalized.includes("no oauth token") ||
+    normalized.includes("unauthorized")
+  ) {
+    return "authentication";
+  }
+
+  if (
+    (command === "gh" &&
+      (normalized.includes("could not resolve to a pullrequest") ||
+        normalized.includes("repository.pullrequest") ||
+        normalized.includes("no pull requests found for branch") ||
+        normalized.includes("pull request not found"))) ||
+    (command === "glab" &&
+      (normalized.includes("merge request not found") ||
+        normalized.includes("not found") ||
+        normalized.includes("404"))) ||
+    (command === "az" &&
+      normalized.includes("pull request") &&
+      (normalized.includes("not found") || normalized.includes("does not exist")))
+  ) {
+    return "not-found";
+  }
+
+  return "command-failed";
+};
 
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
 
   const run = Effect.fn("VcsProcess.run")(function* (input: VcsProcessInput) {
-    const label = commandLabel(input.command, input.args);
     const baseError = {
       operation: input.operation,
-      command: label,
+      command: input.command,
       cwd: input.cwd,
+      argumentCount: input.args.length,
     };
 
     const result = yield* processRunner
@@ -81,29 +117,44 @@ export const make = Effect.gen(function* () {
             ProcessSpawnError: (error) =>
               VcsProcessSpawnError.fromProcessSpawnError(baseError, error),
             ProcessOutputLimitError: (error) =>
-              VcsOutputDecodeError.fromProcessOutputLimitError(baseError, error),
+              new VcsProcessOutputLimitError({
+                ...baseError,
+                stream: error.stream,
+                maxBytes: error.maxBytes,
+                observedBytes: error.observedBytes,
+              }),
             ProcessTimeoutError: (error) =>
               VcsProcessTimeoutError.fromProcessTimeoutError(baseError, error),
             ProcessStdinError: (error) =>
-              VcsOutputDecodeError.fromProcessStdinError(baseError, error),
+              new VcsProcessStdinWriteError({
+                ...baseError,
+                stdinBytes: error.stdinBytes,
+                cause: error.cause,
+              }),
             ProcessReadError: (error) =>
-              VcsOutputDecodeError.fromProcessReadError(baseError, error),
+              new VcsProcessOutputReadError({
+                ...baseError,
+                stream: error.stream,
+                cause: error.cause,
+              }),
           }),
         ),
       );
 
     if (result.code === null) {
-      return yield* VcsOutputDecodeError.missingExitCode(baseError);
+      return yield* new VcsProcessMissingExitCodeError(baseError);
     }
 
     if (!input.allowNonZeroExit && result.code !== 0) {
-      return yield* new VcsProcessExitError({
-        operation: input.operation,
-        command: label,
-        cwd: input.cwd,
-        exitCode: result.code,
-        detail: result.stderr.trim() || `${label} exited with code ${result.code}.`,
-      });
+      return yield* VcsProcessExitError.fromProcessExit(
+        baseError,
+        {
+          exitCode: result.code,
+          stderr: result.stderr,
+          stderrTruncated: result.stderrTruncated,
+        },
+        classifyNonZeroExit(input.command, result.stderr),
+      );
     }
 
     return {

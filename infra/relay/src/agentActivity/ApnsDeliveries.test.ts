@@ -7,7 +7,9 @@ import { describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Redacted from "effect/Redacted";
+import * as References from "effect/References";
 import {
   FetchHttpClient,
   HttpClient,
@@ -611,8 +613,35 @@ describe("ApnsDeliveries", () => {
     }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
   });
 
+  it.effect("preserves the schema cause for invalid queue payloads", () => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const error = yield* Effect.flip(deliveries.processSignedJob({ invalid: true }));
+
+      expect(error).toMatchObject({
+        _tag: "ApnsDeliveryJobQueuePayloadInvalid",
+        receivedType: "object",
+        message: "Invalid APNs delivery queue job with object payload.",
+      });
+      expect(error.cause).toMatchObject({ _tag: "SchemaError" });
+    }).pipe(Effect.provide(makeLayer({ attempts })));
+  });
+
   it.effect("processes signed jobs through APNs and records attempts", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    const transportErrors: Array<ApnsDeliveries.ApnsDeliveryTransportError> = [];
+    const logger = Logger.make(({ fiber }) => {
+      const annotation = fiber.getRef(References.CurrentLogAnnotations).error;
+      if (!Redacted.isRedacted(annotation)) {
+        return;
+      }
+      const error = Redacted.value(annotation);
+      if (ApnsDeliveries.isApnsDeliveryTransportError(error)) {
+        transportErrors.push(error);
+      }
+    });
     const payload = makeApnsDeliveryJobPayload({
       kind: "live_activity_update",
       userId: target.user_id,
@@ -641,7 +670,29 @@ describe("ApnsDeliveries", () => {
           token: "activity-token",
         },
       ]);
-    }).pipe(Effect.provide(makeLayer({ attempts })));
+      expect(transportErrors).toHaveLength(1);
+      const error = transportErrors[0]!;
+      expect(error).toMatchObject({
+        deviceId: target.device_id,
+        kind: "live_activity_update",
+        sourceJobId: "job-1",
+        apnsErrorTag: "ApnsJwtSigningError",
+        requestStage: null,
+      });
+      expect(error.cause).toBeInstanceOf(ApnsClient.ApnsJwtSigningError);
+      expect(error.cause).toMatchObject({
+        teamId: "team-id",
+        keyId: "key-id",
+      });
+      expect((error.cause as ApnsClient.ApnsJwtSigningError).cause).toBeDefined();
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          makeLayer({ attempts }),
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+    );
   });
 
   it.effect("processes signed push notification jobs through APNs and records attempts", () => {

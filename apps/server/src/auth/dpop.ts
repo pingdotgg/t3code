@@ -5,7 +5,12 @@ import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 
-import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import {
+  ServerAuthDpopReplayKeyCalculationError,
+  ServerAuthDpopReplayStateRecordError,
+  ServerAuthInvalidCredentialError,
+  type ServerAuthInternalError,
+} from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 
 function firstHeaderValue(value: string | undefined): string | undefined {
@@ -26,14 +31,13 @@ export function requestAbsoluteUrl(request: HttpServerRequest.HttpServerRequest)
 
 export const mapDpopReplayStoreError = (
   error: ServerSecretStore.SecretStoreError,
-): EnvironmentAuth.ServerAuthInvalidCredentialError | EnvironmentAuth.ServerAuthInternalError =>
+): ServerAuthInvalidCredentialError | ServerAuthInternalError =>
   ServerSecretStore.isSecretAlreadyExistsError(error)
-    ? new EnvironmentAuth.ServerAuthInvalidCredentialError({
-        reason: "invalid_credential",
-        cause: "DPoP proof replayed.",
+    ? new ServerAuthInvalidCredentialError({
+        diagnostic: "DPoP proof replayed.",
+        cause: error,
       })
-    : new EnvironmentAuth.ServerAuthInternalError({
-        message: "Failed to record DPoP proof replay state.",
+    : new ServerAuthDpopReplayStateRecordError({
         cause: error,
       });
 
@@ -54,9 +58,8 @@ export const verifyRequestDpopProof = (input: {
       ...(input.expectedAccessToken ? { expectedAccessToken: input.expectedAccessToken } : {}),
     });
     if (!result.ok) {
-      return yield* new EnvironmentAuth.ServerAuthInvalidCredentialError({
-        reason: "invalid_credential",
-        cause: result.reason,
+      return yield* new ServerAuthInvalidCredentialError({
+        diagnostic: result.reason,
       });
     }
     const secretStore = yield* ServerSecretStore.ServerSecretStore;
@@ -67,8 +70,7 @@ export const verifyRequestDpopProof = (input: {
       Effect.map(Encoding.encodeBase64Url),
       Effect.mapError(
         (cause) =>
-          new EnvironmentAuth.ServerAuthInternalError({
-            message: "Failed to calculate DPoP replay key.",
+          new ServerAuthDpopReplayKeyCalculationError({
             cause,
           }),
       ),
@@ -86,7 +88,9 @@ export const verifyRequestDpopProof = (input: {
         ),
       )
       .pipe(
-        Effect.catchTag("SecretStoreError", (error) => Effect.fail(mapDpopReplayStoreError(error))),
+        Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
+          Effect.fail(mapDpopReplayStoreError(error)),
+        ),
       );
     return result.thumbprint;
   });

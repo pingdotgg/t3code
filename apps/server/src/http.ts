@@ -81,10 +81,12 @@ const authenticateRawRouteWithScope = (
     const request = yield* HttpServerRequest.HttpServerRequest;
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
-      Effect.catchTags({
-        ServerAuthInvalidCredentialError: (error) => failEnvironmentAuthInvalid(error.reason),
-        ServerAuthInternalError: (error) => failEnvironmentInternal("internal_error", error),
-      }),
+      Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+        failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
+      ),
+      Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ),
     );
     if (!session.scopes.includes(scope)) {
       return yield* failEnvironmentScopeRequired(scope);

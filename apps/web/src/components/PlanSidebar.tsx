@@ -83,7 +83,7 @@ const PlanSidebar = memo(function PlanSidebar({
   const writeProjectFile = useAtomCommand(projectEnvironment.writeFile, {
     reportFailure: false,
   });
-  const { copyToClipboard, isCopied } = useCopyToClipboard();
+  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "plan" });
 
   const planMarkdown = activeProposedPlan?.planMarkdown ?? null;
   const displayedPlanMarkdown = planMarkdown ? stripDisplayedPlanMarkdown(planMarkdown) : null;

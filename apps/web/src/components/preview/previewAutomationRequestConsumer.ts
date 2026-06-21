@@ -1,5 +1,15 @@
-import type { PreviewAutomationRequest, PreviewAutomationResponse } from "@t3tools/contracts";
+import type {
+  PreviewAutomationOwner,
+  PreviewAutomationRequest,
+  PreviewAutomationResponse,
+} from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
+
+import {
+  PreviewAutomationOperationError,
+  type PreviewAutomationOperationContext,
+  serializePreviewAutomationOwnerError,
+} from "./previewAutomationErrors";
 
 type AutomationRequestResult<E> = AsyncResult.AsyncResult<PreviewAutomationRequest, E>;
 type AutomationRequestHandler = (request: PreviewAutomationRequest) => Promise<unknown>;
@@ -19,28 +29,16 @@ export function createLatestPreviewAutomationRequestHandler(initial: AutomationR
 
 export function serializePreviewAutomationError(
   error: unknown,
+  context: PreviewAutomationOperationContext,
 ): NonNullable<PreviewAutomationResponse["error"]> {
-  if (error instanceof Error) {
-    const detail =
-      "detail" in error && (error as { detail?: unknown }).detail !== undefined
-        ? (error as { detail?: unknown }).detail
-        : undefined;
-    return {
-      _tag: error.name.startsWith("PreviewAutomation")
-        ? error.name
-        : "PreviewAutomationExecutionError",
-      message: error.message,
-      ...(detail === undefined ? {} : { detail }),
-    };
-  }
-  return {
-    _tag: "PreviewAutomationExecutionError",
-    message: String(error),
-  };
+  return serializePreviewAutomationOwnerError(
+    PreviewAutomationOperationError.fromCause({ ...context, cause: error }),
+  );
 }
 
 export function createPreviewAutomationRequestConsumerAtom<E>(options: {
   readonly requestsAtom: Atom.Atom<AutomationRequestResult<E>>;
+  readonly environmentId: PreviewAutomationOwner["environmentId"];
   readonly handleRequest: (request: PreviewAutomationRequest) => Promise<unknown>;
   readonly respond: (response: PreviewAutomationResponse) => Promise<unknown>;
   readonly label: string;
@@ -63,7 +61,13 @@ export function createPreviewAutomationRequestConsumerAtom<E>(options: {
           options.respond({
             requestId: request.requestId,
             ok: false,
-            error: serializePreviewAutomationError(error),
+            error: serializePreviewAutomationError(error, {
+              requestId: request.requestId,
+              operation: request.operation,
+              environmentId: options.environmentId,
+              threadId: request.threadId,
+              tabId: request.tabId ?? null,
+            }),
           }),
       );
     };

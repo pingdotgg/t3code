@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as path from "node:path";
-import * as os from "node:os";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -26,13 +26,13 @@ import { ServerConfig } from "../../config.ts";
 import { makeGrokAdapter } from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const mockAgentPath = path.join(__dirname, "../../../scripts/acp-mock-agent.ts");
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 const mockAgentCommand = process.execPath;
 
 async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "grok-acp-mock-"));
-  const wrapperPath = path.join(dir, "fake-grok.sh");
+  const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-mock-"));
+  const wrapperPath = NodePath.join(dir, "fake-grok.sh");
   const envExports = Object.entries(extraEnv ?? {})
     .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
     .join("\n");
@@ -40,8 +40,8 @@ async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
 ${envExports}
 exec ${JSON.stringify(mockAgentCommand)} ${JSON.stringify(mockAgentPath)} "$@"
 `;
-  await writeFile(wrapperPath, script, "utf8");
-  await chmod(wrapperPath, 0o755);
+  await NodeFSP.writeFile(wrapperPath, script, "utf8");
+  await NodeFSP.chmod(wrapperPath, 0o755);
   return wrapperPath;
 }
 
@@ -51,7 +51,7 @@ function waitForFileContent(filePath: string, attempts = 40): Effect.Effect<stri
       if (remainingAttempts <= 0) {
         return yield* Effect.die(new Error(`Timed out waiting for file content at ${filePath}`));
       }
-      const raw = yield* Effect.tryPromise(() => readFile(filePath, "utf8")).pipe(
+      const raw = yield* Effect.tryPromise(() => NodeFSP.readFile(filePath, "utf8")).pipe(
         Effect.orElseSucceed(() => ""),
       );
       if (raw.trim().length > 0) {
@@ -64,7 +64,7 @@ function waitForFileContent(filePath: string, attempts = 40): Effect.Effect<stri
 }
 
 async function readJsonLines(filePath: string) {
-  const raw = await readFile(filePath, "utf8");
+  const raw = await NodeFSP.readFile(filePath, "utf8");
   return raw
     .split("\n")
     .map((line) => line.trim())
@@ -149,9 +149,9 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-session-close");
       const tempDir = yield* Effect.promise(() =>
-        mkdtemp(path.join(os.tmpdir(), "grok-adapter-exit-log-")),
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-adapter-exit-log-")),
       );
-      const exitLogPath = path.join(tempDir, "exit.log");
+      const exitLogPath = NodePath.join(tempDir, "exit.log");
 
       const wrapperPath = yield* Effect.promise(() =>
         makeMockGrokWrapper({
@@ -227,8 +227,10 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("responds to ACP approvals using provider-supplied option ids", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-custom-approval-option-id");
-      const tempDir = yield* Effect.promise(() => mkdtemp(path.join(os.tmpdir(), "grok-acp-")));
-      const requestLogPath = path.join(tempDir, "requests.ndjson");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
       const wrapperPath = yield* Effect.promise(() =>
         makeMockGrokWrapper({
           T3_ACP_REQUEST_LOG_PATH: requestLogPath,

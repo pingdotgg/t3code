@@ -327,7 +327,9 @@ export const make = Effect.gen(function* () {
         Effect.catch((error) =>
           Effect.logWarning("failed to start server settings runtime", {
             path: error.settingsPath,
-            detail: error.detail,
+            operation: error.operation,
+            providerInstanceId: error.providerInstanceId,
+            environmentVariable: error.environmentVariable,
             cause: error.cause,
           }),
         ),

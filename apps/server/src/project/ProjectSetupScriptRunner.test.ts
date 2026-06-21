@@ -3,10 +3,15 @@ import { type OrchestrationProject, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectSetupScriptRunner from "./ProjectSetupScriptRunner.ts";
+
+const isProjectSetupScriptOperationError = Schema.is(
+  ProjectSetupScriptRunner.ProjectSetupScriptOperationError,
+);
 
 const makeProject = (scripts: OrchestrationProject["scripts"]): OrchestrationProject => ({
   id: ProjectId.make("project-1"),
@@ -145,4 +150,49 @@ describe("ProjectSetupScriptRunner", () => {
       }).pipe(Effect.provide(testLayer(project, { open, write })));
     },
   );
+
+  it.effect("keeps terminal failures as the exact cause of a structured operation error", () => {
+    const rootCause = new Error("stat failed");
+    const terminalError = new TerminalManager.TerminalCwdStatError({
+      cwd: "/repo/worktrees/a",
+      cause: rootCause,
+    });
+    const project = makeProject([
+      {
+        id: "setup",
+        name: "Setup",
+        command: "bun install",
+        icon: "configure",
+        runOnWorktreeCreate: true,
+      },
+    ]);
+
+    return Effect.gen(function* () {
+      const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+      const error = yield* runner
+        .runForThread({
+          threadId: "thread-1",
+          projectId: "project-1",
+          worktreePath: "/repo/worktrees/a",
+        })
+        .pipe(Effect.flip);
+
+      expect(isProjectSetupScriptOperationError(error)).toBe(true);
+      if (isProjectSetupScriptOperationError(error)) {
+        expect(error.operation).toBe("openTerminal");
+        expect(error.threadId).toBe("thread-1");
+        expect(error.projectId).toBe("project-1");
+        expect(error.worktreePath).toBe("/repo/worktrees/a");
+        expect(error.cause).toBe(terminalError);
+        expect(terminalError.cause).toBe(rootCause);
+      }
+    }).pipe(
+      Effect.provide(
+        testLayer(project, {
+          open: () => Effect.fail(terminalError),
+          write: () => Effect.die("unexpected write"),
+        }),
+      ),
+    );
+  });
 });

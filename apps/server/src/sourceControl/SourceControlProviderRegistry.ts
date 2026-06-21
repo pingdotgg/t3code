@@ -64,33 +64,62 @@ export class SourceControlProviderRegistry extends Context.Service<
 function unsupportedProvider(
   kind: SourceControlProviderKind,
 ): SourceControlProvider.SourceControlProvider["Service"] {
-  const unsupported = (operation: string) =>
-    Effect.fail(
-      new SourceControlProviderError({
-        provider: kind,
-        operation,
-        detail: `No ${kind} source control provider is registered.`,
-      }),
-    );
-
   return SourceControlProvider.SourceControlProvider.of({
     kind,
-    listChangeRequests: () => unsupported("listChangeRequests"),
-    getChangeRequest: () => unsupported("getChangeRequest"),
-    createChangeRequest: () => unsupported("createChangeRequest"),
-    getRepositoryCloneUrls: () => unsupported("getRepositoryCloneUrls"),
-    createRepository: () => unsupported("createRepository"),
-    getDefaultBranch: () => unsupported("getDefaultBranch"),
-    checkoutChangeRequest: () => unsupported("checkoutChangeRequest"),
-  });
-}
-
-function providerDetectionError(operation: string, cwd: string, cause: unknown) {
-  return new SourceControlProviderError({
-    provider: "unknown",
-    operation,
-    detail: `Failed to detect source control provider for ${cwd}.`,
-    cause,
+    listChangeRequests: (input) =>
+      new SourceControlProviderError({
+        provider: kind,
+        operation: "listChangeRequests",
+        cwd: input.cwd,
+        detail: `No ${kind} source control provider is registered.`,
+      }),
+    getChangeRequest: (input) =>
+      new SourceControlProviderError({
+        provider: kind,
+        operation: "getChangeRequest",
+        cwd: input.cwd,
+        reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.reference),
+        detail: `No ${kind} source control provider is registered.`,
+      }),
+    createChangeRequest: (input) =>
+      new SourceControlProviderError({
+        provider: kind,
+        operation: "createChangeRequest",
+        cwd: input.cwd,
+        reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.headSelector),
+        detail: `No ${kind} source control provider is registered.`,
+      }),
+    getRepositoryCloneUrls: (input) =>
+      new SourceControlProviderError({
+        provider: kind,
+        operation: "getRepositoryCloneUrls",
+        cwd: input.cwd,
+        repository: SourceControlProvider.transportSafeSourceControlErrorValue(input.repository),
+        detail: `No ${kind} source control provider is registered.`,
+      }),
+    createRepository: (input) =>
+      new SourceControlProviderError({
+        provider: kind,
+        operation: "createRepository",
+        cwd: input.cwd,
+        repository: SourceControlProvider.transportSafeSourceControlErrorValue(input.repository),
+        detail: `No ${kind} source control provider is registered.`,
+      }),
+    getDefaultBranch: (input) =>
+      new SourceControlProviderError({
+        provider: kind,
+        operation: "getDefaultBranch",
+        cwd: input.cwd,
+        detail: `No ${kind} source control provider is registered.`,
+      }),
+    checkoutChangeRequest: (input) =>
+      new SourceControlProviderError({
+        provider: kind,
+        operation: "checkoutChangeRequest",
+        cwd: input.cwd,
+        reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.reference),
+        detail: `No ${kind} source control provider is registered.`,
+      }),
   });
 }
 
@@ -180,12 +209,30 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
 
     const detectProviderContext = Effect.fn("SourceControlProviderRegistry.detectProviderContext")(
       function* (cwd: string) {
-        const handle = yield* vcsRegistry
-          .resolve({ cwd })
-          .pipe(Effect.mapError((error) => providerDetectionError("detectProvider", cwd, error)));
-        const remotes = yield* handle.driver
-          .listRemotes(cwd)
-          .pipe(Effect.mapError((error) => providerDetectionError("detectProvider", cwd, error)));
+        const handle = yield* vcsRegistry.resolve({ cwd }).pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "unknown",
+                operation: "detectProvider",
+                cwd,
+                detail: "Failed to detect source control provider.",
+                cause: error,
+              }),
+          ),
+        );
+        const remotes = yield* handle.driver.listRemotes(cwd).pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "unknown",
+                operation: "detectProvider",
+                cwd,
+                detail: "Failed to detect source control provider.",
+                cause: error,
+              }),
+          ),
+        );
         const context = selectProviderContext(remotes.remotes);
 
         return yield* refineUnknownRemoteProvider({

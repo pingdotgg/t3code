@@ -16,9 +16,13 @@ export {
 export {
   createServerPairingCredential,
   fetchSessionState,
+  isPrimaryEnvironmentPairingCredentialRejectedError,
+  isPrimaryEnvironmentRequestError,
   listServerClientSessions,
   listServerPairingLinks,
   peekPairingTokenFromUrl,
+  PrimaryEnvironmentPairingCredentialRejectedError,
+  PrimaryEnvironmentRequestError,
   resolveInitialServerAuthGateState,
   revokeOtherServerClientSessions,
   revokeServerClientSession,
@@ -36,7 +40,14 @@ export { refreshPrimarySessionState, usePrimarySessionState } from "./sessionSta
 export { PrimaryEnvironmentHttpClient } from "./httpClient";
 
 export {
+  DesktopEnvironmentBootstrapIncompleteError,
+  isDesktopEnvironmentBootstrapIncompleteError,
+  isPrimaryEnvironmentProtocolUnsupportedError,
+  isPrimaryEnvironmentUrlInvalidError,
+  PrimaryEnvironmentProtocolUnsupportedError,
+  PrimaryEnvironmentUrlInvalidError,
   readPrimaryEnvironmentTarget,
   resolvePrimaryEnvironmentHttpUrl,
   isLoopbackHostname,
+  type PrimaryEnvironmentTarget,
 } from "./target";

@@ -16,9 +16,10 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  PersistenceDecodeError,
+  type PersistenceErrorCorrelation,
+  PersistenceSqlError,
   type ProviderSessionRuntimeRepositoryError,
-  toPersistenceDecodeError,
-  toPersistenceSqlError,
 } from "./Errors.ts";
 
 /**
@@ -106,7 +107,19 @@ const ProviderSessionRuntimeDbRowSchema = ProviderSessionRuntime.mapFields(
   }),
 );
 
-const decodeRuntime = Schema.decodeUnknownEffect(ProviderSessionRuntime);
+const ProviderSessionRuntimeRawDbRowSchema = Schema.Struct({
+  threadId: Schema.String,
+  providerName: Schema.Unknown,
+  providerInstanceId: Schema.Unknown,
+  adapterKey: Schema.Unknown,
+  runtimeMode: Schema.Unknown,
+  status: Schema.Unknown,
+  lastSeenAt: Schema.Unknown,
+  resumeCursor: Schema.Unknown,
+  runtimePayload: Schema.Unknown,
+});
+
+const decodeRuntimeRow = Schema.decodeUnknownEffect(ProviderSessionRuntimeDbRowSchema);
 
 const GetRuntimeRequestSchema = Schema.Struct({
   threadId: ThreadId,
@@ -114,11 +127,19 @@ const GetRuntimeRequestSchema = Schema.Struct({
 
 const DeleteRuntimeRequestSchema = GetRuntimeRequestSchema;
 
-function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
+function toPersistenceSqlOrDecodeError(
+  sqlOperation: string,
+  decodeOperation: string,
+  correlation?: PersistenceErrorCorrelation,
+) {
   return (cause: unknown): ProviderSessionRuntimeRepositoryError =>
     Schema.isSchemaError(cause)
-      ? toPersistenceDecodeError(decodeOperation)(cause)
-      : toPersistenceSqlError(sqlOperation)(cause);
+      ? PersistenceDecodeError.fromSchemaError(decodeOperation, cause, correlation)
+      : new PersistenceSqlError({
+          operation: sqlOperation,
+          ...(correlation === undefined ? {} : { correlation }),
+          cause,
+        });
 }
 
 export const make = Effect.gen(function* () {
@@ -165,7 +186,7 @@ export const make = Effect.gen(function* () {
 
   const getRuntimeRowByThreadId = SqlSchema.findOneOption({
     Request: GetRuntimeRequestSchema,
-    Result: ProviderSessionRuntimeDbRowSchema,
+    Result: ProviderSessionRuntimeRawDbRowSchema,
     execute: ({ threadId }) =>
       sql`
         SELECT
@@ -185,7 +206,7 @@ export const make = Effect.gen(function* () {
 
   const listRuntimeRows = SqlSchema.findAll({
     Request: Schema.Void,
-    Result: ProviderSessionRuntimeDbRowSchema,
+    Result: ProviderSessionRuntimeRawDbRowSchema,
     execute: () =>
       sql`
         SELECT
@@ -218,6 +239,7 @@ export const make = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.upsert:query",
           "ProviderSessionRuntimeRepository.upsert:encodeRequest",
+          { threadId: runtime.threadId },
         ),
       ),
     );
@@ -228,16 +250,19 @@ export const make = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.getByThreadId:query",
           "ProviderSessionRuntimeRepository.getByThreadId:decodeRow",
+          { threadId: input.threadId },
         ),
       ),
       Effect.flatMap((runtimeRowOption) =>
         Option.match(runtimeRowOption, {
           onNone: () => Effect.succeed(Option.none()),
           onSome: (row) =>
-            decodeRuntime(row).pipe(
-              Effect.mapError(
-                toPersistenceDecodeError(
-                  "ProviderSessionRuntimeRepository.getByThreadId:rowToRuntime",
+            decodeRuntimeRow(row).pipe(
+              Effect.mapError((cause) =>
+                PersistenceDecodeError.fromSchemaError(
+                  "ProviderSessionRuntimeRepository.getByThreadId:decodeRow",
+                  cause,
+                  { threadId: input.threadId },
                 ),
               ),
               Effect.map((runtime) => Option.some(runtime)),
@@ -255,15 +280,16 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((rows) =>
-        Effect.forEach(
-          rows,
-          (row) =>
-            decodeRuntime(row).pipe(
-              Effect.mapError(
-                toPersistenceDecodeError("ProviderSessionRuntimeRepository.list:rowToRuntime"),
+        Effect.forEach(rows, (row) =>
+          decodeRuntimeRow(row).pipe(
+            Effect.mapError((cause) =>
+              PersistenceDecodeError.fromSchemaError(
+                "ProviderSessionRuntimeRepository.list:decodeRows",
+                cause,
+                { threadId: row.threadId },
               ),
             ),
-          { concurrency: "unbounded" },
+          ),
         ),
       ),
     );
@@ -273,7 +299,12 @@ export const make = Effect.gen(function* () {
   ) =>
     deleteRuntimeByThreadId(input).pipe(
       Effect.mapError(
-        toPersistenceSqlError("ProviderSessionRuntimeRepository.deleteByThreadId:query"),
+        (cause) =>
+          new PersistenceSqlError({
+            operation: "ProviderSessionRuntimeRepository.deleteByThreadId:query",
+            correlation: { threadId: input.threadId },
+            cause,
+          }),
       ),
     );
 

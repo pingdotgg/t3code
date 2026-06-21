@@ -24,9 +24,9 @@ import {
   type PreviewSessionSnapshot,
 } from "@t3tools/contracts";
 import {
+  isPreviewUrlNormalizationError,
   newPreviewTabId,
   normalizePreviewUrl,
-  PreviewUrlNormalizationError,
 } from "@t3tools/shared/preview";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -82,16 +82,22 @@ const sessionsForThread = (
 const normalizeUrl = (rawUrl: string): Effect.Effect<string, PreviewInvalidUrlError> =>
   Effect.try({
     try: () => normalizePreviewUrl(rawUrl),
-    catch: (cause) =>
-      new PreviewInvalidUrlError({
-        rawUrl,
-        detail:
-          cause instanceof PreviewUrlNormalizationError
-            ? cause.detail
-            : cause instanceof Error
-              ? cause.message
-              : String(cause),
-      }),
+    catch: (cause) => {
+      if (isPreviewUrlNormalizationError(cause)) {
+        return new PreviewInvalidUrlError({
+          inputLength: cause.inputLength,
+          reason: cause.reason,
+          protocol: cause.protocol,
+          cause,
+        });
+      }
+
+      return new PreviewInvalidUrlError({
+        inputLength: rawUrl.length,
+        reason: "unexpected",
+        cause,
+      });
+    },
   });
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));

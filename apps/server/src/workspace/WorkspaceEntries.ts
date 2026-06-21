@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { readdir } from "node:fs/promises";
-import { homedir } from "node:os";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -73,6 +73,7 @@ export type WorkspaceEntriesBrowseError = typeof WorkspaceEntriesBrowseError.Typ
 export const WorkspaceEntriesError = Schema.Union([
   WorkspacePaths.WorkspaceRootNotExistsError,
   WorkspacePaths.WorkspaceRootCreateFailedError,
+  WorkspacePaths.WorkspaceRootStatFailedError,
   WorkspacePaths.WorkspaceRootNotDirectoryError,
   WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed,
   WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut,
@@ -98,10 +99,10 @@ export class WorkspaceEntries extends Context.Service<
 
 function expandHomePath(input: string, path: Path.Path): string {
   if (input === "~") {
-    return homedir();
+    return NodeOS.homedir();
   }
   if (input.startsWith("~/") || input.startsWith("~\\")) {
-    return path.join(homedir(), input.slice(2));
+    return path.join(NodeOS.homedir(), input.slice(2));
   }
   return input;
 }
@@ -150,20 +151,29 @@ export const make = Effect.gen(function* () {
       if (!(yield* RcMap.has(workspaceSearchIndexes.rcMap, normalizedCwd))) {
         return;
       }
+      const recoverRefreshFailure = (
+        cause:
+          | WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed
+          | WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut
+          | WorkspaceSearchIndex.WorkspaceSearchIndexRefreshFailed,
+      ) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning("Failed to refresh workspace search index", {
+            cwd,
+            cause,
+          });
+          yield* workspaceSearchIndexes.invalidate(normalizedCwd);
+        });
       yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         yield* searchIndex.refresh();
       }).pipe(
         Effect.provide(workspaceSearchIndexes.get(normalizedCwd)),
-        Effect.catch((cause) =>
-          Effect.gen(function* () {
-            yield* Effect.logWarning("Failed to refresh workspace search index", {
-              cwd,
-              cause,
-            });
-            yield* workspaceSearchIndexes.invalidate(normalizedCwd);
-          }),
-        ),
+        Effect.catchTags({
+          WorkspaceSearchIndexCreateFailed: recoverRefreshFailure,
+          WorkspaceSearchIndexScanTimedOut: recoverRefreshFailure,
+          WorkspaceSearchIndexRefreshFailed: recoverRefreshFailure,
+        }),
       );
     },
   );
@@ -176,7 +186,7 @@ export const make = Effect.gen(function* () {
       const prefix = endsWithSeparator ? "" : path.basename(resolvedInputPath);
 
       const dirents = yield* Effect.tryPromise({
-        try: () => readdir(parentPath, { withFileTypes: true }),
+        try: () => NodeFSP.readdir(parentPath, { withFileTypes: true }),
         catch: (cause) =>
           new WorkspaceEntriesReadDirectoryError({
             cwd: input.cwd,

@@ -1,11 +1,12 @@
 import * as Haptics from "expo-haptics";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useRef } from "react";
-import { ActivityIndicator, Linking, Pressable, View } from "react-native";
+import { ActivityIndicator, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
 
@@ -30,7 +31,7 @@ export function GitActionProgressOverlay(props: {
 
   const handlePress = useCallback(() => {
     if (progress.prUrl) {
-      void Linking.openURL(progress.prUrl);
+      void tryOpenExternalUrl(progress.prUrl, "pull-request");
       return;
     }
     if (progress.phase === "success" || progress.phase === "error") {

@@ -32,7 +32,6 @@ import {
   buildSelectOptionDescriptor,
   buildServerProvider,
   DEFAULT_TIMEOUT_MS,
-  detailFromResult,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
@@ -669,6 +668,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 
   if (Result.isFailure(versionProbe)) {
     const error = versionProbe.failure;
+    yield* Effect.logWarning("Claude Agent CLI health check failed.", {
+      errorTag: error._tag,
+    });
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
@@ -681,7 +683,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         auth: { status: "unknown" },
         message: isCommandMissingCause(error)
           ? "Claude Agent CLI (`claude`) is not installed or not on PATH."
-          : `Failed to execute Claude Agent CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
+          : "Failed to execute Claude Agent CLI health check.",
       },
     });
   }
@@ -706,7 +708,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const version = versionProbe.success.value;
   const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
   if (version.code !== 0) {
-    const detail = detailFromResult(version);
+    yield* Effect.logWarning("Claude Agent CLI version probe exited with a non-zero status.", {
+      exitCode: version.code,
+      stdoutLength: version.stdout.length,
+      stderrLength: version.stderr.length,
+    });
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
@@ -717,9 +723,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: parsedVersion,
         status: "error",
         auth: { status: "unknown" },
-        message: detail
-          ? `Claude Agent CLI is installed but failed to run. ${detail}`
-          : "Claude Agent CLI is installed but failed to run.",
+        message: "Claude Agent CLI is installed but failed to run.",
       },
     });
   }

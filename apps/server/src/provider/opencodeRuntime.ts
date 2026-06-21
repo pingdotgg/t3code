@@ -1,4 +1,4 @@
-import { pathToFileURL } from "node:url";
+import * as NodeURL from "node:url";
 
 import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@t3tools/contracts";
 import {
@@ -233,7 +233,7 @@ export function toOpenCodeFileParts(input: {
       type: "file",
       mime: attachment.mimeType,
       filename: attachment.name,
-      url: pathToFileURL(attachmentPath).href,
+      url: NodeURL.pathToFileURL(attachmentPath).href,
     });
   }
 

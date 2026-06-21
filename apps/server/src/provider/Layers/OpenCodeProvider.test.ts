@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import * as NodeAssert from "node:assert/strict";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -122,9 +122,12 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       runtimeMock.state.runVersionError = new Error("spawn opencode ENOENT");
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
 
-      assert.equal(snapshot.status, "error");
-      assert.equal(snapshot.installed, false);
-      assert.equal(snapshot.message, "OpenCode CLI (`opencode`) is not installed or not on PATH.");
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.installed, false);
+      NodeAssert.equal(
+        snapshot.message,
+        "OpenCode CLI (`opencode`) is not installed or not on PATH.",
+      );
     }),
   );
 
@@ -133,9 +136,9 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       runtimeMock.state.runVersionError = new Error("An error occurred in Effect.tryPromise");
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
 
-      assert.equal(snapshot.status, "error");
-      assert.equal(snapshot.installed, true);
-      assert.equal(snapshot.message, "Failed to execute OpenCode CLI health check.");
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(snapshot.message, "Failed to execute OpenCode CLI health check.");
     }),
   );
 
@@ -174,20 +177,20 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
       const model = snapshot.models.find((entry) => entry.slug === "openai/gpt-5.4");
 
-      assert.ok(model);
+      NodeAssert.ok(model);
       const variantDescriptor = model.capabilities?.optionDescriptors?.find(
         (descriptor) => descriptor.id === "variant" && descriptor.type === "select",
       );
-      assert.ok(variantDescriptor && variantDescriptor.type === "select");
-      assert.equal(
+      NodeAssert.ok(variantDescriptor && variantDescriptor.type === "select");
+      NodeAssert.equal(
         variantDescriptor.options.find((option) => option.isDefault === true)?.id,
         "medium",
       );
       const agentDescriptor = model.capabilities?.optionDescriptors?.find(
         (descriptor) => descriptor.id === "agent" && descriptor.type === "select",
       );
-      assert.ok(agentDescriptor && agentDescriptor.type === "select");
-      assert.equal(
+      NodeAssert.ok(agentDescriptor && agentDescriptor.type === "select");
+      NodeAssert.equal(
         agentDescriptor.options.find((option) => option.isDefault === true)?.id,
         "build",
       );
@@ -198,7 +201,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     Effect.gen(function* () {
       yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
 
-      assert.equal(runtimeMock.state.closeCalls, 1);
+      NodeAssert.equal(runtimeMock.state.closeCalls, 1);
     }),
   );
 
@@ -280,9 +283,9 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
         process.cwd(),
       );
 
-      assert.equal(snapshot.status, "error");
-      assert.equal(snapshot.installed, true);
-      assert.equal(
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(
         snapshot.message,
         "OpenCode server rejected authentication. Check the server URL and password.",
       );
@@ -302,9 +305,9 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
         process.cwd(),
       );
 
-      assert.equal(snapshot.status, "error");
-      assert.equal(snapshot.installed, true);
-      assert.equal(
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(
         snapshot.message,
         "Couldn't reach the configured OpenCode server at http://127.0.0.1:9999. Check that the server is running and the URL is correct.",
       );

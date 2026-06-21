@@ -2,6 +2,7 @@ import { Schema } from "effect";
 
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { PreviewTabId } from "./preview.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 const BoundedUrl = Schema.String.check(Schema.isTrimmed())
   .check(
@@ -452,48 +453,218 @@ export type PreviewAutomationResponse = typeof PreviewAutomationResponse.Type;
 
 export class PreviewAutomationUnavailableError extends Schema.TaggedErrorClass<PreviewAutomationUnavailableError>()(
   "PreviewAutomationUnavailableError",
-  { message: Schema.String },
-) {}
+  {
+    capability: Schema.Literal("preview"),
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    providerSessionId: TrimmedNonEmptyString,
+    providerInstanceId: ProviderInstanceId,
+  },
+) {
+  override get message(): string {
+    return `MCP credential does not grant the ${this.capability} capability.`;
+  }
+}
+
+const PreviewAutomationScopeErrorFields = {
+  operation: PreviewAutomationOperation,
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  providerSessionId: TrimmedNonEmptyString,
+  providerInstanceId: ProviderInstanceId,
+};
+
+const PreviewAutomationRequestErrorFields = {
+  ...PreviewAutomationScopeErrorFields,
+  clientId: TrimmedNonEmptyString,
+  requestId: TrimmedNonEmptyString,
+  tabId: Schema.optional(PreviewTabId),
+  timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)),
+};
+
+const PreviewAutomationRemoteDiagnosticFields = {
+  remoteTag: TrimmedNonEmptyString,
+  remoteMessageLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  remoteDetailKind: Schema.optional(
+    Schema.Literals(["null", "array", "object", "string", "number", "boolean"]),
+  ),
+  cause: Schema.Defect(),
+};
+
+const PreviewAutomationOptionalRemoteDiagnosticFields = {
+  remoteTag: Schema.optional(TrimmedNonEmptyString),
+  remoteMessageLength: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  remoteDetailKind: Schema.optional(
+    Schema.Literals(["null", "array", "object", "string", "number", "boolean"]),
+  ),
+  cause: Schema.optional(Schema.Defect()),
+};
 
 export class PreviewAutomationNoFocusedOwnerError extends Schema.TaggedErrorClass<PreviewAutomationNoFocusedOwnerError>()(
   "PreviewAutomationNoFocusedOwnerError",
-  { message: Schema.String },
-) {}
+  {
+    ...PreviewAutomationScopeErrorFields,
+    clientId: Schema.optional(TrimmedNonEmptyString),
+    requestId: Schema.optional(TrimmedNonEmptyString),
+    tabId: Schema.optional(PreviewTabId),
+    timeoutMs: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+    ...PreviewAutomationOptionalRemoteDiagnosticFields,
+  },
+) {
+  override get message(): string {
+    const summary = `No focused preview automation owner is available for ${this.operation} in thread ${this.threadId}.`;
+    return summary;
+  }
+}
 
 export class PreviewAutomationUnsupportedClientError extends Schema.TaggedErrorClass<PreviewAutomationUnsupportedClientError>()(
   "PreviewAutomationUnsupportedClientError",
-  { message: Schema.String },
-) {}
+  {
+    ...PreviewAutomationRequestErrorFields,
+    ...PreviewAutomationRemoteDiagnosticFields,
+  },
+) {
+  override get message(): string {
+    return `Preview automation client ${this.clientId} does not support ${this.operation}.`;
+  }
+}
 
 export class PreviewAutomationTabNotFoundError extends Schema.TaggedErrorClass<PreviewAutomationTabNotFoundError>()(
   "PreviewAutomationTabNotFoundError",
-  { message: Schema.String },
-) {}
+  {
+    ...PreviewAutomationRequestErrorFields,
+    ...PreviewAutomationRemoteDiagnosticFields,
+  },
+) {
+  override get message(): string {
+    const summary = this.tabId
+      ? `Preview tab ${this.tabId} was not found for ${this.operation}.`
+      : `No active preview tab was found for ${this.operation}.`;
+    return summary;
+  }
+}
 
 export class PreviewAutomationTimeoutError extends Schema.TaggedErrorClass<PreviewAutomationTimeoutError>()(
   "PreviewAutomationTimeoutError",
-  { message: Schema.String },
-) {}
+  {
+    ...PreviewAutomationRequestErrorFields,
+    ...PreviewAutomationOptionalRemoteDiagnosticFields,
+  },
+) {
+  override get message(): string {
+    const summary = `Preview automation ${this.operation} timed out after ${this.timeoutMs}ms.`;
+    return summary;
+  }
+}
 
 export class PreviewAutomationControlInterruptedError extends Schema.TaggedErrorClass<PreviewAutomationControlInterruptedError>()(
   "PreviewAutomationControlInterruptedError",
-  { message: Schema.String },
-) {}
+  {
+    ...PreviewAutomationRequestErrorFields,
+    ...PreviewAutomationRemoteDiagnosticFields,
+  },
+) {
+  override get message(): string {
+    return `Preview automation ${this.operation} was interrupted on client ${this.clientId}.`;
+  }
+}
 
 export class PreviewAutomationExecutionError extends Schema.TaggedErrorClass<PreviewAutomationExecutionError>()(
   "PreviewAutomationExecutionError",
-  { message: Schema.String, detail: Schema.optional(Schema.Unknown) },
-) {}
+  {
+    ...PreviewAutomationRequestErrorFields,
+    ...PreviewAutomationRemoteDiagnosticFields,
+  },
+) {
+  override get message(): string {
+    return `Preview automation ${this.operation} failed on client ${this.clientId}.`;
+  }
+}
 
 export class PreviewAutomationInvalidSelectorError extends Schema.TaggedErrorClass<PreviewAutomationInvalidSelectorError>()(
   "PreviewAutomationInvalidSelectorError",
-  { message: Schema.String, selector: Schema.String },
-) {}
+  {
+    ...PreviewAutomationRequestErrorFields,
+    ...PreviewAutomationRemoteDiagnosticFields,
+    selectorKind: Schema.optional(Schema.Literals(["locator", "selector"])),
+    selectorLength: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  },
+) {
+  override get message(): string {
+    if (this.selectorKind !== undefined && this.selectorLength !== undefined) {
+      return `Preview automation ${this.operation} received an invalid ${this.selectorKind} (${this.selectorLength} characters).`;
+    }
+    return `Preview automation ${this.operation} received an invalid selector.`;
+  }
+}
 
 export class PreviewAutomationResultTooLargeError extends Schema.TaggedErrorClass<PreviewAutomationResultTooLargeError>()(
   "PreviewAutomationResultTooLargeError",
-  { message: Schema.String, maximumBytes: Schema.Int },
-) {}
+  {
+    ...PreviewAutomationRequestErrorFields,
+    ...PreviewAutomationRemoteDiagnosticFields,
+    maximumBytes: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+  },
+) {
+  override get message(): string {
+    const summary =
+      this.maximumBytes === undefined
+        ? `Preview automation ${this.operation} produced a result that is too large.`
+        : `Preview automation ${this.operation} produced a result larger than ${this.maximumBytes} bytes.`;
+    return summary;
+  }
+}
+
+export class PreviewAutomationHostNotConnectedError extends Schema.TaggedErrorClass<PreviewAutomationHostNotConnectedError>()(
+  "PreviewAutomationHostNotConnectedError",
+  {
+    ...PreviewAutomationScopeErrorFields,
+    clientId: TrimmedNonEmptyString,
+  },
+) {
+  override get message(): string {
+    return `Preview automation host ${this.clientId} is not connected for ${this.operation}.`;
+  }
+}
+
+export class PreviewAutomationClientDisconnectedError extends Schema.TaggedErrorClass<PreviewAutomationClientDisconnectedError>()(
+  "PreviewAutomationClientDisconnectedError",
+  PreviewAutomationRequestErrorFields,
+) {
+  override get message(): string {
+    return `Preview automation client ${this.clientId} disconnected during ${this.operation}.`;
+  }
+}
+
+export class PreviewAutomationRequestQueueClosedError extends Schema.TaggedErrorClass<PreviewAutomationRequestQueueClosedError>()(
+  "PreviewAutomationRequestQueueClosedError",
+  PreviewAutomationRequestErrorFields,
+) {
+  override get message(): string {
+    return `Preview automation client ${this.clientId} stopped accepting ${this.operation} requests.`;
+  }
+}
+
+export class PreviewAutomationRemoteUnavailableError extends Schema.TaggedErrorClass<PreviewAutomationRemoteUnavailableError>()(
+  "PreviewAutomationRemoteUnavailableError",
+  {
+    ...PreviewAutomationRequestErrorFields,
+    ...PreviewAutomationRemoteDiagnosticFields,
+  },
+) {
+  override get message(): string {
+    return `Preview automation ${this.operation} is unavailable on client ${this.clientId}.`;
+  }
+}
+
+export class PreviewAutomationMalformedResponseError extends Schema.TaggedErrorClass<PreviewAutomationMalformedResponseError>()(
+  "PreviewAutomationMalformedResponseError",
+  PreviewAutomationRequestErrorFields,
+) {
+  override get message(): string {
+    return `Preview automation client ${this.clientId} returned a malformed response for ${this.operation}.`;
+  }
+}
 
 export const PreviewAutomationError = Schema.Union([
   PreviewAutomationUnavailableError,
@@ -505,6 +676,11 @@ export const PreviewAutomationError = Schema.Union([
   PreviewAutomationExecutionError,
   PreviewAutomationInvalidSelectorError,
   PreviewAutomationResultTooLargeError,
+  PreviewAutomationHostNotConnectedError,
+  PreviewAutomationClientDisconnectedError,
+  PreviewAutomationRequestQueueClosedError,
+  PreviewAutomationRemoteUnavailableError,
+  PreviewAutomationMalformedResponseError,
 ]);
 export type PreviewAutomationError = typeof PreviewAutomationError.Type;
 

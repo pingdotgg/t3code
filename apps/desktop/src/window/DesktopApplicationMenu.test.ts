@@ -46,14 +46,14 @@ const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
   setDockIcon: () => Effect.void,
   appendCommandLineSwitch: () => Effect.void,
   on: () => Effect.void,
-} satisfies ElectronApp.ElectronAppShape);
+} satisfies ElectronApp.ElectronApp["Service"]);
 
 const electronDialogLayer = Layer.succeed(ElectronDialog.ElectronDialog, {
   pickFolder: () => Effect.succeed(Option.none()),
   confirm: () => Effect.succeed(false),
   showMessageBox: () => Effect.succeed({ response: 0, checkboxChecked: false }),
   showErrorBox: () => Effect.void,
-} satisfies ElectronDialog.ElectronDialogShape);
+} satisfies ElectronDialog.ElectronDialog["Service"]);
 
 const desktopUpdatesLayer = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   getState: Effect.die("unexpected getState"),
@@ -86,7 +86,7 @@ const makeElectronMenuLayer = (
       Deferred.succeed(applicationMenuTemplate, template).pipe(Effect.asVoid),
     popupTemplate: () => Effect.void,
     showContextMenu: () => Effect.succeed(Option.none()),
-  } satisfies ElectronMenu.ElectronMenuShape);
+  } satisfies ElectronMenu.ElectronMenu["Service"]);
 
 describe("DesktopApplicationMenu", () => {
   it.effect("installs the native menu and routes Settings through DesktopWindow", () =>

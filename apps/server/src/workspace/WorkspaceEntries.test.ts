@@ -1,19 +1,25 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import fsPromises from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { FileFinder } from "@ff-labs/fff-node";
-import { it, afterEach, describe, expect, vi } from "@effect/vitest";
+import { it, afterEach, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, readdir: vi.fn(actual.readdir) };
+});
 
 const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
@@ -376,7 +382,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-eacces-" });
 
         const denied = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
-        vi.spyOn(fsPromises, "readdir").mockRejectedValueOnce(denied);
+        vi.mocked(NodeFSP.readdir).mockRejectedValueOnce(denied);
 
         const result = yield* workspaceEntries.browse({
           partialPath: yield* appendSeparator(cwd),

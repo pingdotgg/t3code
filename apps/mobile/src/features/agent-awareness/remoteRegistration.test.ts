@@ -18,6 +18,7 @@ import { cryptoLayer } from "../cloud/dpop";
 import { managedRelayClientLayer } from "../cloud/managedRelayLayer";
 import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
 import {
+  AgentAwarenessOperationError,
   __resetAgentAwarenessRemoteRegistrationForTest,
   refreshActiveLiveActivityRemoteRegistration,
   refreshAgentAwarenessRegistration,
@@ -264,6 +265,28 @@ describe("makeRelayDeviceRegistrationRequest", () => {
 
       expect(activity.getPushToken).toHaveBeenCalledTimes(2);
       expect(addPushTokenListener).toHaveBeenCalledTimes(1);
+    }).pipe(Effect.provide(relayTestLayer));
+  });
+
+  it.effect("preserves Live Activity push-token lookup failures", () => {
+    const cause = new Error("native token lookup failed");
+    const activity = {
+      getPushToken: vi.fn(() => Promise.reject(cause)),
+      addPushTokenListener: vi.fn(),
+    };
+
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        registerLiveActivityPushToken({ activity: activity as never }),
+      );
+
+      expect(error).toBeInstanceOf(AgentAwarenessOperationError);
+      expect(error).toMatchObject({
+        _tag: "AgentAwarenessOperationError",
+        operation: "read-live-activity-push-token",
+        cause,
+        message: "Agent awareness operation read-live-activity-push-token failed.",
+      });
     }).pipe(Effect.provide(relayTestLayer));
   });
 

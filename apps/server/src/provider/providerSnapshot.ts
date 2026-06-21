@@ -10,7 +10,8 @@ import type {
   ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Data from "effect/Data";
+import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { normalizeModelSlug } from "@t3tools/shared/model";
@@ -28,11 +29,21 @@ export interface CommandResult {
   readonly code: number;
 }
 
-export class ProviderCommandExecutionError extends Data.TaggedError(
-  "ProviderCommandExecutionError",
-)<{
-  readonly message: string;
-}> {}
+export class ProviderCommandNotFoundError extends Schema.TaggedErrorClass<ProviderCommandNotFoundError>()(
+  "ProviderCommandNotFoundError",
+  {
+    binaryPath: Schema.String,
+    exitCode: Schema.Number,
+    stdoutLength: Schema.Number,
+    stderrLength: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Provider command ${this.binaryPath} was not found (exit code ${this.exitCode}).`;
+  }
+}
+
+const isProviderCommandNotFoundError = Schema.is(ProviderCommandNotFoundError);
 
 export interface ProviderProbeResult {
   readonly installed: boolean;
@@ -58,9 +69,9 @@ export function nonEmptyTrimmed(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function isCommandMissingCause(error: { readonly message: string }): boolean {
-  const lower = error.message.toLowerCase();
-  return lower.includes("enoent") || lower.includes("notfound");
+export function isCommandMissingCause(error: unknown): boolean {
+  if (isProviderCommandNotFoundError(error)) return true;
+  return error instanceof PlatformError.PlatformError && error.reason._tag === "NotFound";
 }
 
 export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Command) =>
@@ -78,7 +89,12 @@ export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Comman
 
     const result: CommandResult = { stdout, stderr, code: exitCode };
     if (yield* isWindowsCommandNotFound(exitCode, stderr)) {
-      return yield* new ProviderCommandExecutionError({ message: `spawn ${binaryPath} ENOENT` });
+      return yield* new ProviderCommandNotFoundError({
+        binaryPath,
+        exitCode,
+        stdoutLength: stdout.length,
+        stderrLength: stderr.length,
+      });
     }
     return result;
   }).pipe(Effect.scoped);

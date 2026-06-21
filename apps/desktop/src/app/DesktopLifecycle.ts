@@ -1,19 +1,31 @@
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import type * as Electron from "electron";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
-import * as DesktopObservability from "./DesktopObservability.ts";
+import { makeComponentLogger } from "./DesktopObservability.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+
+export class DesktopLifecycleRelaunchError extends Schema.TaggedErrorClass<DesktopLifecycleRelaunchError>()(
+  "DesktopLifecycleRelaunchError",
+  {
+    reason: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Desktop relaunch failed for reason "${this.reason}".`;
+  }
+}
 
 export type DesktopLifecycleRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
@@ -37,7 +49,7 @@ export class DesktopLifecycle extends Context.Service<
 >()("@t3tools/desktop/app/DesktopLifecycle") {}
 
 const { logInfo: logLifecycleInfo, logError: logLifecycleError } =
-  DesktopObservability.makeComponentLogger("desktop-lifecycle");
+  makeComponentLogger("desktop-lifecycle");
 
 function addScopedListener<Args extends ReadonlyArray<unknown>>(
   target: unknown,
@@ -122,7 +134,7 @@ function quitFromSignal(
   );
 }
 
-const make = DesktopLifecycle.of({
+export const make = DesktopLifecycle.of({
   relaunch: Effect.fn("desktop.lifecycle.relaunch")(function* (reason) {
     const electronApp = yield* ElectronApp.ElectronApp;
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -142,11 +154,10 @@ const make = DesktopLifecycle.of({
       });
       yield* electronApp.exit(0);
     }).pipe(
-      Effect.catchCause((cause) =>
-        logLifecycleError("desktop relaunch failed", {
-          cause: Cause.pretty(cause),
-        }),
-      ),
+      Effect.catchCause((cause) => {
+        const error = new DesktopLifecycleRelaunchError({ reason, cause });
+        return logLifecycleError(error.message, { error });
+      }),
       Effect.forkDetach,
       Effect.asVoid,
     );

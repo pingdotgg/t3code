@@ -1,14 +1,22 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopShellEnvironment from "./DesktopShellEnvironment.ts";
 
 const textEncoder = new TextEncoder();
+
+const isDesktopShellEnvironmentCommandError = Schema.is(
+  DesktopShellEnvironment.DesktopShellEnvironmentCommandError,
+);
 
 function envOutput(values: Readonly<Record<string, string>>): string {
   return Object.entries(values)
@@ -59,6 +67,7 @@ function runShellEnvironment(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly platform: NodeJS.Platform;
   readonly handler: (command: ChildProcess.Command) => string;
+  readonly failure?: PlatformError.PlatformError;
 }) {
   const environmentLayer = Layer.succeed(
     DesktopEnvironment.DesktopEnvironment,
@@ -68,7 +77,11 @@ function runShellEnvironment(input: {
   );
   const spawnerLayer = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) => Effect.succeed(makeProcess(input.handler(command)))),
+    ChildProcessSpawner.make((command) =>
+      input.failure === undefined
+        ? Effect.succeed(makeProcess(input.handler(command)))
+        : Effect.fail(input.failure),
+    ),
   );
 
   const program = Effect.gen(function* () {
@@ -229,4 +242,44 @@ describe("DesktopShellEnvironment", () => {
       );
     }),
   );
+
+  it.effect("logs command failures with safe probe context and the exact cause", () => {
+    const env: NodeJS.ProcessEnv = {
+      SHELL: "/bin/bash",
+      PATH: "/usr/bin",
+    };
+    const cause = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "ChildProcess",
+      method: "spawn",
+      pathOrDescriptor: "/bin/bash",
+    });
+    const messages: Array<unknown> = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(message);
+    });
+
+    return runShellEnvironment({
+      env,
+      platform: "linux",
+      handler: () => "",
+      failure: cause,
+    }).pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          const errors = messages
+            .flatMap((message) => (Array.isArray(message) ? message : [message]))
+            .filter(isDesktopShellEnvironmentCommandError);
+          assert.lengthOf(errors, 1);
+          assert.equal(errors[0]?.probe, "login-shell");
+          assert.equal(errors[0]?.executable, "bash");
+          assert.equal(errors[0]?.argumentCount, 2);
+          assert.notProperty(errors[0] ?? {}, "args");
+          assert.equal(errors[0]?.cause, cause);
+          assert.notInclude(errors[0]?.message ?? "", cause.message);
+        }),
+      ),
+      Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+    );
+  });
 });

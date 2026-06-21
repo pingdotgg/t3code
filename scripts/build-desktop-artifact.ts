@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createRequire } from "node:module";
+import * as NodeModule from "node:module";
 
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -18,7 +18,6 @@ import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Config from "effect/Config";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -126,10 +125,255 @@ const getDefaultArch = Effect.fn("getDefaultArch")(function* (platform: typeof B
   return yield* getDefaultBuildArch(platform, config);
 });
 
-class BuildScriptError extends Data.TaggedError("BuildScriptError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class MacPasskeySigningConfigurationResolutionError extends Schema.TaggedErrorClass<MacPasskeySigningConfigurationResolutionError>()(
+  "MacPasskeySigningConfigurationResolutionError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  static fromCause(
+    cause: unknown,
+  ): MacPasskeySigningConfigurationError | MacPasskeySigningConfigurationResolutionError {
+    return isMacPasskeySigningConfigurationError(cause)
+      ? cause
+      : new MacPasskeySigningConfigurationResolutionError({ cause });
+  }
+
+  override get message(): string {
+    return "Failed to resolve macOS passkey signing configuration.";
+  }
+}
+
+export class ClerkPasskeyNativePackageMissingError extends Schema.TaggedErrorClass<ClerkPasskeyNativePackageMissingError>()(
+  "ClerkPasskeyNativePackageMissingError",
+  {
+    packageName: Schema.String,
+    binaryFileName: Schema.String,
+    packageEntryPath: Schema.String,
+    platform: BuildPlatform,
+    arch: BuildArch,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Clerk passkey native package is missing: ${this.packageName}`;
+  }
+}
+
+export class UnsupportedHostBuildPlatformError extends Schema.TaggedErrorClass<UnsupportedHostBuildPlatformError>()(
+  "UnsupportedHostBuildPlatformError",
+  {
+    hostPlatform: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Unsupported host platform '${this.hostPlatform}'.`;
+  }
+}
+
+const InvalidMockUpdateServerPortReason = Schema.Literals([
+  "not-numeric",
+  "not-integer",
+  "out-of-range",
+]);
+
+export class InvalidMockUpdateServerPortError extends Schema.TaggedErrorClass<InvalidMockUpdateServerPortError>()(
+  "InvalidMockUpdateServerPortError",
+  {
+    reason: InvalidMockUpdateServerPortReason,
+    inputLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Invalid mock update server port.";
+  }
+
+  static fromConfigValue(configuredPort: string, cause: unknown) {
+    return new InvalidMockUpdateServerPortError({
+      reason: invalidMockUpdateServerPortReason(configuredPort),
+      inputLength: configuredPort.length,
+      cause,
+    });
+  }
+}
+
+export class BuildCommandFailedError extends Schema.TaggedErrorClass<BuildCommandFailedError>()(
+  "BuildCommandFailedError",
+  {
+    command: Schema.String,
+    exitCode: Schema.Int,
+    stdoutTail: Schema.optionalKey(Schema.String),
+    stderrTail: Schema.optionalKey(Schema.String),
+  },
+) {
+  override get message(): string {
+    const outputSections = [
+      `Command: ${this.command}`,
+      formatOutputSection("stdout", this.stdoutTail ?? ""),
+      formatOutputSection("stderr", this.stderrTail ?? ""),
+    ].filter((section): section is string => section !== undefined);
+    const outputSuffix = outputSections.length > 0 ? `\n\n${outputSections.join("\n\n")}` : "";
+    return `Command exited with non-zero exit code (${this.exitCode})${outputSuffix}`;
+  }
+}
+
+const desktopIconPlatformNames = {
+  mac: "macOS",
+  linux: "Linux",
+  win: "Windows",
+} satisfies Record<typeof BuildPlatform.Type, string>;
+
+export class DesktopIconSourceMissingError extends Schema.TaggedErrorClass<DesktopIconSourceMissingError>()(
+  "DesktopIconSourceMissingError",
+  {
+    platform: BuildPlatform,
+    sourcePath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Desktop ${desktopIconPlatformNames[this.platform]} icon source is missing at ${this.sourcePath}`;
+  }
+}
+
+export class BundledClientAssetsMissingError extends Schema.TaggedErrorClass<BundledClientAssetsMissingError>()(
+  "BundledClientAssetsMissingError",
+  {
+    indexPath: Schema.String,
+    missingFiles: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
+    const preview = this.missingFiles.slice(0, 6).join(", ");
+    const suffix = this.missingFiles.length > 6 ? ` (+${this.missingFiles.length - 6} more)` : "";
+    return `Bundled client references missing files in ${this.indexPath}: ${preview}${suffix}. Rebuild web/server artifacts.`;
+  }
+}
+
+export class UnsupportedDesktopBuildPlatformError extends Schema.TaggedErrorClass<UnsupportedDesktopBuildPlatformError>()(
+  "UnsupportedDesktopBuildPlatformError",
+  {
+    platform: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Unsupported platform '${this.platform}'.`;
+  }
+}
+
+const dependencyResolutionDescriptions = {
+  "server-production": "production dependencies",
+  "workspace-overrides": "overrides",
+  "desktop-runtime": "desktop runtime dependencies",
+} as const;
+const DependencyResolutionKind = Schema.Literals([
+  "server-production",
+  "workspace-overrides",
+  "desktop-runtime",
+]);
+
+export class DesktopBuildDependencyResolutionError extends Schema.TaggedErrorClass<DesktopBuildDependencyResolutionError>()(
+  "DesktopBuildDependencyResolutionError",
+  {
+    kind: DependencyResolutionKind,
+    manifestPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not resolve ${dependencyResolutionDescriptions[this.kind]} from ${this.manifestPath}.`;
+  }
+}
+
+export class MissingServerProductionDependenciesError extends Schema.TaggedErrorClass<MissingServerProductionDependenciesError>()(
+  "MissingServerProductionDependenciesError",
+  {
+    manifestPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Could not resolve production dependencies from ${this.manifestPath}.`;
+  }
+}
+
+const DesktopBuildInputArtifact = Schema.Literals([
+  "desktop-dist",
+  "desktop-resources",
+  "server-dist",
+  "bundled-server-client",
+]);
+type DesktopBuildInputArtifact = typeof DesktopBuildInputArtifact.Type;
+const desktopBuildInputArtifactNames = {
+  "desktop-dist": "desktopDist",
+  "desktop-resources": "desktopResources",
+  "server-dist": "serverDist",
+  "bundled-server-client": "bundled server client",
+} satisfies Record<DesktopBuildInputArtifact, string>;
+
+export class MissingDesktopBuildInputError extends Schema.TaggedErrorClass<MissingDesktopBuildInputError>()(
+  "MissingDesktopBuildInputError",
+  {
+    artifact: DesktopBuildInputArtifact,
+    artifactPath: Schema.String,
+    buildCommand: Schema.Literal("vp run build:desktop"),
+  },
+) {
+  override get message(): string {
+    return `Missing ${desktopBuildInputArtifactNames[this.artifact]} at ${this.artifactPath}. Run '${this.buildCommand}' first.`;
+  }
+}
+
+export class MacProvisioningProfileNotFoundError extends Schema.TaggedErrorClass<MacProvisioningProfileNotFoundError>()(
+  "MacProvisioningProfileNotFoundError",
+  {
+    provisioningProfilePath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `macOS provisioning profile not found: ${this.provisioningProfilePath}`;
+  }
+}
+
+export class DesktopBuildDistDirectoryMissingError extends Schema.TaggedErrorClass<DesktopBuildDistDirectoryMissingError>()(
+  "DesktopBuildDistDirectoryMissingError",
+  {
+    distPath: Schema.String,
+    platform: BuildPlatform,
+    arch: BuildArch,
+  },
+) {
+  override get message(): string {
+    return `Build completed but dist directory was not found at ${this.distPath}`;
+  }
+}
+
+export class DesktopBuildNoArtifactsProducedError extends Schema.TaggedErrorClass<DesktopBuildNoArtifactsProducedError>()(
+  "DesktopBuildNoArtifactsProducedError",
+  {
+    distPath: Schema.String,
+    platform: BuildPlatform,
+    arch: BuildArch,
+  },
+) {
+  override get message(): string {
+    return `Build completed but no files were produced in ${this.distPath}`;
+  }
+}
+
+export class LinuxIconResizeError extends Schema.TaggedErrorClass<LinuxIconResizeError>()(
+  "LinuxIconResizeError",
+  {
+    operation: Schema.Literal("resize"),
+    iconSize: Schema.Int,
+    primaryTool: Schema.Literal("magick"),
+    fallbackTool: Schema.Literal("convert"),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to ${this.operation} the Linux desktop icon to ${this.iconSize}x${this.iconSize} with \`${this.primaryTool}\` or \`${this.fallbackTool}\`. Install ImageMagick so either tool is available.`;
+  }
+}
 
 const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   stream.pipe(
@@ -306,26 +550,128 @@ export interface MacPasskeySigningConfiguration {
   readonly provisioningProfilePath: string;
 }
 
+export const InvalidMacPasskeyRpDomainReason = Schema.Literals([
+  "empty",
+  "scheme-not-allowed",
+  "parse-failed",
+  "credentials-not-allowed",
+  "port-not-allowed",
+  "path-not-allowed",
+  "query-not-allowed",
+  "fragment-not-allowed",
+  "hostname-mismatch",
+]);
+export type InvalidMacPasskeyRpDomainReason = typeof InvalidMacPasskeyRpDomainReason.Type;
+
+export class InvalidMacPasskeyRpDomainError extends Schema.TaggedErrorClass<InvalidMacPasskeyRpDomainError>()(
+  "InvalidMacPasskeyRpDomainError",
+  {
+    reason: InvalidMacPasskeyRpDomainReason,
+    inputLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Invalid passkey RP domain (${this.reason}).`;
+  }
+}
+
+export class InvalidAppleTeamIdError extends Schema.TaggedErrorClass<InvalidAppleTeamIdError>()(
+  "InvalidAppleTeamIdError",
+  {
+    teamId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `T3CODE_APPLE_TEAM_ID '${this.teamId}' must be a 10-character Apple Developer Team ID.`;
+  }
+}
+
+export class MissingMacPasskeyProvisioningProfileError extends Schema.TaggedErrorClass<MissingMacPasskeyProvisioningProfileError>()(
+  "MissingMacPasskeyProvisioningProfileError",
+  {},
+) {
+  override get message(): string {
+    return "T3CODE_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.";
+  }
+}
+
+export class MissingMacPasskeyDomainConfigurationError extends Schema.TaggedErrorClass<MissingMacPasskeyDomainConfigurationError>()(
+  "MissingMacPasskeyDomainConfigurationError",
+  {},
+) {
+  override get message(): string {
+    return "T3CODE_CLERK_PUBLISHABLE_KEY or T3CODE_CLERK_PASSKEY_RP_DOMAINS is required for signed macOS passkey builds.";
+  }
+}
+
+export class InvalidMacPasskeyPublishableKeyError extends Schema.TaggedErrorClass<InvalidMacPasskeyPublishableKeyError>()(
+  "InvalidMacPasskeyPublishableKeyError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "T3CODE_CLERK_PUBLISHABLE_KEY is invalid.";
+  }
+}
+
+export class MissingMacPasskeyRpDomainError extends Schema.TaggedErrorClass<MissingMacPasskeyRpDomainError>()(
+  "MissingMacPasskeyRpDomainError",
+  {},
+) {
+  override get message(): string {
+    return "At least one Clerk passkey RP domain is required.";
+  }
+}
+
+export const MacPasskeySigningConfigurationError = Schema.Union([
+  InvalidMacPasskeyRpDomainError,
+  InvalidAppleTeamIdError,
+  MissingMacPasskeyProvisioningProfileError,
+  MissingMacPasskeyDomainConfigurationError,
+  InvalidMacPasskeyPublishableKeyError,
+  MissingMacPasskeyRpDomainError,
+]);
+export type MacPasskeySigningConfigurationError = typeof MacPasskeySigningConfigurationError.Type;
+export const isMacPasskeySigningConfigurationError = Schema.is(MacPasskeySigningConfigurationError);
+
 function normalizePasskeyRpDomain(value: string): string {
   const normalized = value.trim().toLowerCase();
+  const inputLength = value.length;
+  if (normalized.length === 0) {
+    throw new InvalidMacPasskeyRpDomainError({ reason: "empty", inputLength });
+  }
+  if (/^[a-z][a-z\d+.-]*:\/\//u.test(normalized)) {
+    throw new InvalidMacPasskeyRpDomainError({
+      reason: "scheme-not-allowed",
+      inputLength,
+    });
+  }
+
   let parsed: URL;
   try {
     parsed = new URL(`https://${normalized}`);
-  } catch {
-    throw new Error(`Invalid passkey RP domain: ${value}`);
+  } catch (cause) {
+    throw new InvalidMacPasskeyRpDomainError({ reason: "parse-failed", inputLength, cause });
   }
 
-  if (
-    normalized.length === 0 ||
-    parsed.host !== normalized ||
-    parsed.username.length > 0 ||
-    parsed.password.length > 0 ||
-    parsed.port.length > 0 ||
-    parsed.pathname !== "/" ||
-    parsed.search.length > 0 ||
-    parsed.hash.length > 0
-  ) {
-    throw new Error(`Invalid passkey RP domain: ${value}`);
+  let reason: InvalidMacPasskeyRpDomainReason | undefined;
+  if (parsed.username.length > 0 || parsed.password.length > 0) {
+    reason = "credentials-not-allowed";
+  } else if (parsed.port.length > 0) {
+    reason = "port-not-allowed";
+  } else if (parsed.pathname !== "/") {
+    reason = "path-not-allowed";
+  } else if (parsed.search.length > 0) {
+    reason = "query-not-allowed";
+  } else if (parsed.hash.length > 0) {
+    reason = "fragment-not-allowed";
+  } else if (parsed.host !== normalized) {
+    reason = "hostname-mismatch";
+  }
+  if (reason) {
+    throw new InvalidMacPasskeyRpDomainError({ reason, inputLength });
   }
 
   return parsed.hostname;
@@ -336,14 +682,12 @@ export function resolveMacPasskeySigningConfiguration(
 ): MacPasskeySigningConfiguration {
   const teamId = env.T3CODE_APPLE_TEAM_ID?.trim().toUpperCase() ?? "";
   if (!APPLE_TEAM_ID_PATTERN.test(teamId)) {
-    throw new Error("T3CODE_APPLE_TEAM_ID must be a 10-character Apple Developer Team ID.");
+    throw new InvalidAppleTeamIdError({ teamId });
   }
 
   const provisioningProfilePath = env.T3CODE_MACOS_PROVISIONING_PROFILE?.trim() ?? "";
   if (provisioningProfilePath.length === 0) {
-    throw new Error(
-      "T3CODE_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.",
-    );
+    throw new MissingMacPasskeyProvisioningProfileError();
   }
 
   const configuredRpDomains = env.T3CODE_CLERK_PASSKEY_RP_DOMAINS?.trim();
@@ -353,18 +697,20 @@ export function resolveMacPasskeySigningConfiguration(
   } else {
     const publishableKey = env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim();
     if (!publishableKey) {
-      throw new Error(
-        "T3CODE_CLERK_PUBLISHABLE_KEY or T3CODE_CLERK_PASSKEY_RP_DOMAINS is required for signed macOS passkey builds.",
-      );
+      throw new MissingMacPasskeyDomainConfigurationError();
     }
-    rpDomains = [
-      normalizePasskeyRpDomain(clerkFrontendApiHostnameFromPublishableKey(publishableKey)),
-    ];
+    let hostname: string;
+    try {
+      hostname = clerkFrontendApiHostnameFromPublishableKey(publishableKey);
+    } catch (cause) {
+      throw new InvalidMacPasskeyPublishableKeyError({ cause });
+    }
+    rpDomains = [normalizePasskeyRpDomain(hostname)];
   }
 
   const uniqueRpDomains = [...new Set(rpDomains)];
   if (uniqueRpDomains.length === 0) {
-    throw new Error("At least one Clerk passkey RP domain is required.");
+    throw new MissingMacPasskeyRpDomainError();
   }
 
   return {
@@ -482,14 +828,18 @@ const stageClerkPasskeyNativeBinaries = Effect.fn("stageClerkPasskeyNativeBinari
     path.join(stageAppDir, "node_modules", "@clerk", "electron-passkeys", "index.js"),
   );
   const packageDir = path.dirname(packageEntryPath);
-  const packageRequire = createRequire(packageEntryPath);
+  const packageRequire = NodeModule.createRequire(packageEntryPath);
 
   for (const artifact of resolveClerkPasskeyNativeArtifacts(platform, arch)) {
     const sourcePath = yield* Effect.try({
       try: () => packageRequire.resolve(artifact.packageName),
       catch: (cause) =>
-        new BuildScriptError({
-          message: `Clerk passkey native package is missing: ${artifact.packageName}`,
+        new ClerkPasskeyNativePackageMissingError({
+          packageName: artifact.packageName,
+          binaryFileName: artifact.binaryFileName,
+          packageEntryPath,
+          platform,
+          arch,
           cause,
         }),
     });
@@ -563,6 +913,18 @@ const MockUpdateServerPortSchema = Schema.NumberFromString.check(
 );
 const decodeMockUpdateServerPort = Schema.decodeUnknownEffect(MockUpdateServerPortSchema);
 
+function invalidMockUpdateServerPortReason(
+  configuredPort: string,
+): typeof InvalidMockUpdateServerPortReason.Type {
+  const parsed = Number(configuredPort);
+  if (!Number.isFinite(parsed)) return "not-numeric";
+  if (!Number.isInteger(parsed)) return "not-integer";
+  if (parsed < 1 || parsed > 65535) return "out-of-range";
+  // This mapper is only called after schema decoding failed. An otherwise
+  // valid integer therefore used a representation the decoder did not accept.
+  return "not-numeric";
+}
+
 const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
   Option.getOrElse(flag, () => envValue);
 const mergeOptions = <A>(a: Option.Option<A>, b: Option.Option<A>, defaultValue: A) =>
@@ -594,9 +956,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   );
 
   if (!platform) {
-    return yield* new BuildScriptError({
-      message: `Unsupported host platform '${hostPlatform}'.`,
-    });
+    return yield* new UnsupportedHostBuildPlatformError({ hostPlatform });
   }
 
   const target = mergeOptions(input.target, env.target, PLATFORM_CONFIG[platform].defaultTarget);
@@ -617,17 +977,16 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   const verbose = resolveBooleanFlag(input.verbose, env.verbose);
 
   const mockUpdates = resolveBooleanFlag(input.mockUpdates, env.mockUpdates);
+  const configuredMockUpdateServerPort = Option.getOrUndefined(env.mockUpdateServerPort);
   const mockUpdateServerPort =
     Option.getOrUndefined(input.mockUpdateServerPort) ??
-    (yield* resolveMockUpdateServerPort(Option.getOrUndefined(env.mockUpdateServerPort)).pipe(
-      Effect.mapError(
-        (cause) =>
-          new BuildScriptError({
-            message: "Invalid mock update server port.",
-            cause,
-          }),
-      ),
-    ));
+    (configuredMockUpdateServerPort === undefined
+      ? undefined
+      : yield* resolveMockUpdateServerPort(configuredMockUpdateServerPort).pipe(
+          Effect.mapError((cause) =>
+            InvalidMockUpdateServerPortError.fromConfigValue(configuredMockUpdateServerPort, cause),
+          ),
+        ));
 
   return {
     platform,
@@ -647,7 +1006,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
 const runCommand = Effect.fn("runCommand")(function* (
   command: ChildProcess.Command,
   options: {
-    readonly label?: string;
+    readonly label: string;
     readonly verbose: boolean;
   },
 ) {
@@ -663,14 +1022,11 @@ const runCommand = Effect.fn("runCommand")(function* (
   );
 
   if (exitCode !== 0) {
-    const outputSections = [
-      options.label ? `Command: ${options.label}` : undefined,
-      formatOutputSection("stdout", stdout),
-      formatOutputSection("stderr", stderr),
-    ].filter((section): section is string => section !== undefined);
-    const outputSuffix = outputSections.length > 0 ? `\n\n${outputSections.join("\n\n")}` : "";
-    return yield* new BuildScriptError({
-      message: `Command exited with non-zero exit code (${exitCode})${outputSuffix}`,
+    return yield* new BuildCommandFailedError({
+      command: options.label,
+      exitCode,
+      ...(stdout.trim() ? { stdoutTail: stdout } : {}),
+      ...(stderr.trim() ? { stderrTail: stderr } : {}),
     });
   }
 });
@@ -717,8 +1073,9 @@ function stageMacIcons(stageResourcesDir: string, sourcePng: string, verbose: bo
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     if (!(yield* fs.exists(sourcePng))) {
-      return yield* new BuildScriptError({
-        message: `Desktop macOS icon source is missing at ${sourcePng}`,
+      return yield* new DesktopIconSourceMissingError({
+        platform: "mac",
+        sourcePath: sourcePng,
       });
     }
 
@@ -743,8 +1100,9 @@ function stageLinuxIcons(stageResourcesDir: string, sourcePng: string, verbose: 
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     if (!(yield* fs.exists(sourcePng))) {
-      return yield* new BuildScriptError({
-        message: `Desktop Linux icon source is missing at ${sourcePng}`,
+      return yield* new DesktopIconSourceMissingError({
+        platform: "linux",
+        sourcePath: sourcePng,
       });
     }
 
@@ -764,7 +1122,7 @@ function stageLinuxIcons(stageResourcesDir: string, sourcePng: string, verbose: 
   });
 }
 
-function stageLinuxIconSize(
+export function stageLinuxIconSize(
   sourcePng: string,
   targetPng: string,
   iconSize: number,
@@ -777,13 +1135,20 @@ function stageLinuxIconSize(
     );
 
   return resize("magick").pipe(
-    Effect.catch(() =>
+    Effect.catch((primaryCause) =>
       resize("convert").pipe(
         Effect.mapError(
-          () =>
-            new BuildScriptError({
-              message:
-                "ImageMagick is required to generate Linux desktop icon sizes. Install ImageMagick so either `magick` or `convert` is available.",
+          (fallbackCause) =>
+            new LinuxIconResizeError({
+              operation: "resize",
+              iconSize,
+              primaryTool: "magick",
+              fallbackTool: "convert",
+              cause: new AggregateError(
+                [primaryCause, fallbackCause],
+                "Both Linux icon resize tool attempts failed.",
+                { cause: primaryCause },
+              ),
             }),
         ),
       ),
@@ -796,8 +1161,9 @@ function stageWindowsIcons(stageResourcesDir: string, sourceIco: string) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     if (!(yield* fs.exists(sourceIco))) {
-      return yield* new BuildScriptError({
-        message: `Desktop Windows icon source is missing at ${sourceIco}`,
+      return yield* new DesktopIconSourceMissingError({
+        platform: "win",
+        sourcePath: sourceIco,
       });
     }
 
@@ -834,10 +1200,9 @@ function validateBundledClientAssets(clientDir: string) {
     }
 
     if (missing.length > 0) {
-      const preview = missing.slice(0, 6).join(", ");
-      const suffix = missing.length > 6 ? ` (+${missing.length - 6} more)` : "";
-      return yield* new BuildScriptError({
-        message: `Bundled client references missing files in ${indexPath}: ${preview}${suffix}. Rebuild web/server artifacts.`,
+      return yield* new BundledClientAssetsMissingError({
+        indexPath,
+        missingFiles: missing,
       });
     }
   });
@@ -1039,8 +1404,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   const platformConfig = PLATFORM_CONFIG[options.platform];
   if (!platformConfig) {
-    return yield* new BuildScriptError({
-      message: `Unsupported platform '${options.platform}'.`,
+    return yield* new UnsupportedDesktopBuildPlatformError({
+      platform: options.platform,
     });
   }
 
@@ -1048,16 +1413,17 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   const serverDependencies = serverPackageJson.dependencies;
   if (!serverDependencies || Object.keys(serverDependencies).length === 0) {
-    return yield* new BuildScriptError({
-      message: "Could not resolve production dependencies from apps/server/package.json.",
+    return yield* new MissingServerProductionDependenciesError({
+      manifestPath: "apps/server/package.json",
     });
   }
 
   const resolvedOverrides = yield* Effect.try({
     try: () => resolveCatalogDependencies(workspaceOverrides, workspaceCatalog, "apps/desktop"),
     catch: (cause) =>
-      new BuildScriptError({
-        message: "Could not resolve overrides from pnpm-workspace.yaml.",
+      new DesktopBuildDependencyResolutionError({
+        kind: "workspace-overrides",
+        manifestPath: "pnpm-workspace.yaml",
         cause,
       }),
   });
@@ -1065,16 +1431,18 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const resolvedServerDependencies = yield* Effect.try({
     try: () => resolveCatalogDependencies(serverDependencies, workspaceCatalog, "apps/server"),
     catch: (cause) =>
-      new BuildScriptError({
-        message: "Could not resolve production dependencies from apps/server/package.json.",
+      new DesktopBuildDependencyResolutionError({
+        kind: "server-production",
+        manifestPath: "apps/server/package.json",
         cause,
       }),
   });
   const resolvedDesktopRuntimeDependencies = yield* Effect.try({
     try: () => resolveDesktopRuntimeDependencies(desktopPackageJson.dependencies, workspaceCatalog),
     catch: (cause) =>
-      new BuildScriptError({
-        message: "Could not resolve desktop runtime dependencies from apps/desktop/package.json.",
+      new DesktopBuildDependencyResolutionError({
+        kind: "desktop-runtime",
+        manifestPath: "apps/desktop/package.json",
         cause,
       }),
   });
@@ -1108,17 +1476,25 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     );
   }
 
-  for (const [label, dir] of Object.entries(distDirs)) {
-    if (!(yield* fs.exists(dir))) {
-      return yield* new BuildScriptError({
-        message: `Missing ${label} at ${dir}. Run 'vp run build:desktop' first.`,
+  const requiredBuildInputs = [
+    { artifact: "desktop-dist", artifactPath: distDirs.desktopDist },
+    { artifact: "desktop-resources", artifactPath: distDirs.desktopResources },
+    { artifact: "server-dist", artifactPath: distDirs.serverDist },
+  ] as const;
+  for (const input of requiredBuildInputs) {
+    if (!(yield* fs.exists(input.artifactPath))) {
+      return yield* new MissingDesktopBuildInputError({
+        ...input,
+        buildCommand: "vp run build:desktop",
       });
     }
   }
 
   if (!(yield* fs.exists(bundledClientEntry))) {
-    return yield* new BuildScriptError({
-      message: `Missing bundled server client at ${bundledClientEntry}. Run 'vp run build:desktop' first.`,
+    return yield* new MissingDesktopBuildInputError({
+      artifact: "bundled-server-client",
+      artifactPath: bundledClientEntry,
+      buildCommand: "vp run build:desktop",
     });
   }
 
@@ -1150,11 +1526,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     options.platform === "mac" && options.signed
       ? yield* Effect.try({
           try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
-          catch: (cause) =>
-            new BuildScriptError({
-              message: cause instanceof Error ? cause.message : String(cause),
-              cause,
-            }),
+          catch: MacPasskeySigningConfigurationResolutionError.fromCause,
         })
       : undefined;
   const macPasskeySigning = configuredMacPasskeySigning
@@ -1171,8 +1543,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     : undefined;
   if (macPasskeySigning && macEntitlementsPath) {
     if (!(yield* fs.exists(macPasskeySigning.provisioningProfilePath))) {
-      return yield* new BuildScriptError({
-        message: `macOS provisioning profile not found: ${macPasskeySigning.provisioningProfilePath}`,
+      return yield* new MacProvisioningProfileNotFoundError({
+        provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
       });
     }
     yield* fs.writeFileString(macEntitlementsPath, renderMacPasskeyEntitlements(macPasskeySigning));
@@ -1311,8 +1683,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   const stageDistDir = path.join(stageAppDir, "dist");
   if (!(yield* fs.exists(stageDistDir))) {
-    return yield* new BuildScriptError({
-      message: `Build completed but dist directory was not found at ${stageDistDir}`,
+    return yield* new DesktopBuildDistDirectoryMissingError({
+      distPath: stageDistDir,
+      platform: options.platform,
+      arch: options.arch,
     });
   }
 
@@ -1331,8 +1705,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   if (copiedArtifacts.length === 0) {
-    return yield* new BuildScriptError({
-      message: `Build completed but no files were produced in ${stageDistDir}`,
+    return yield* new DesktopBuildNoArtifactsProducedError({
+      distPath: stageDistDir,
+      platform: options.platform,
+      arch: options.arch,
     });
   }
 

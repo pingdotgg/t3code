@@ -1,8 +1,10 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  PreviewAutomationClientDisconnectedError,
+  PreviewAutomationInvalidSelectorError,
+  PreviewAutomationMalformedResponseError,
   PreviewAutomationNoFocusedOwnerError,
-  PreviewAutomationUnavailableError,
   ProviderInstanceId,
   ThreadId,
   type PreviewAutomationOwner,
@@ -59,6 +61,95 @@ it.effect("atomically registers a connected owner and correlates its response", 
   ),
 );
 
+it.effect("preserves bounded request and remote selector diagnostics", () => {
+  const locator = "role=button[name='request-secret']";
+  const remoteMessage = "Unexpected token near remote-secret.";
+  const remoteError = {
+    _tag: "PreviewAutomationInvalidSelectorError",
+    message: remoteMessage,
+    detail: { selector: "role=button[name='remote-secret']" },
+  } as const;
+
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* PreviewAutomationBroker.make;
+      const requests = yield* broker.connect(makeOwner({ tabId: "tab-1" }));
+      yield* Stream.runForEach(requests, (request) =>
+        broker.respond({
+          requestId: request.requestId,
+          ok: false,
+          error: remoteError,
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const error = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "click",
+          input: { locator },
+          timeoutMs: 1_234,
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(PreviewAutomationInvalidSelectorError);
+      expect(error).toMatchObject({
+        operation: "click",
+        environmentId: scope.environmentId,
+        threadId: scope.threadId,
+        providerSessionId: scope.providerSessionId,
+        providerInstanceId: scope.providerInstanceId,
+        clientId: "client-1",
+        requestId: "preview-0",
+        tabId: "tab-1",
+        timeoutMs: 1_234,
+        selectorKind: "locator",
+        selectorLength: locator.length,
+        remoteTag: "PreviewAutomationInvalidSelectorError",
+        remoteMessageLength: remoteMessage.length,
+        remoteDetailKind: "object",
+      });
+      expect(error.message).toBe(
+        `Preview automation click received an invalid locator (${locator.length} characters).`,
+      );
+      expect(error.message).not.toContain("secret");
+      expect(error.cause).toBe(remoteError);
+      expect("selector" in error).toBe(false);
+      expect("remoteMessage" in error).toBe(false);
+      expect("remoteDetail" in error).toBe(false);
+    }),
+  );
+});
+
+it.effect("distinguishes malformed remote failures", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* PreviewAutomationBroker.make;
+      const requests = yield* broker.connect(makeOwner());
+      yield* Stream.runForEach(requests, (request) =>
+        broker.respond({ requestId: request.requestId, ok: false }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const error = yield* broker
+        .invoke<void>({ scope, operation: "status", input: {}, timeoutMs: 2_000 })
+        .pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(PreviewAutomationMalformedResponseError);
+      expect(error).toMatchObject({
+        operation: "status",
+        environmentId: scope.environmentId,
+        threadId: scope.threadId,
+        providerSessionId: scope.providerSessionId,
+        providerInstanceId: scope.providerInstanceId,
+        clientId: "client-1",
+        requestId: "preview-0",
+        timeoutMs: 2_000,
+      });
+    }),
+  ),
+);
+
 it.effect("rejects calls when no focused owner exists", () =>
   Effect.gen(function* () {
     const broker = yield* PreviewAutomationBroker.make;
@@ -66,6 +157,13 @@ it.effect("rejects calls when no focused owner exists", () =>
       .invoke<void>({ scope, operation: "status", input: {} })
       .pipe(Effect.flip);
     expect(error).toBeInstanceOf(PreviewAutomationNoFocusedOwnerError);
+    expect(error).toMatchObject({
+      operation: "status",
+      environmentId: scope.environmentId,
+      threadId: scope.threadId,
+      providerSessionId: scope.providerSessionId,
+      providerInstanceId: scope.providerInstanceId,
+    });
   }),
 );
 
@@ -162,7 +260,17 @@ it.effect("fails requests assigned to a browser stream when that stream reconnec
       const _replacementRequests = yield* broker.connect(makeOwner());
 
       const error = yield* Fiber.join(pending);
-      expect(error).toBeInstanceOf(PreviewAutomationUnavailableError);
+      expect(error).toBeInstanceOf(PreviewAutomationClientDisconnectedError);
+      expect(error).toMatchObject({
+        operation: "status",
+        environmentId: scope.environmentId,
+        threadId: scope.threadId,
+        providerSessionId: scope.providerSessionId,
+        providerInstanceId: scope.providerInstanceId,
+        clientId: "client-1",
+        requestId: "preview-0",
+        timeoutMs: 15_000,
+      });
     }),
   ),
 );

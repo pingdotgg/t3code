@@ -241,7 +241,6 @@ describe("DesktopSavedEnvironments", () => {
           .getSecret(savedRegistryRecord.environmentId)
           .pipe(Effect.flip);
         assert.instanceOf(error, DesktopSavedEnvironments.DesktopSavedEnvironmentSecretDecodeError);
-        assert.equal(error.operation, "decode-secret");
         assert.equal(error.environmentId, savedRegistryRecord.environmentId);
         assert.equal(error.registryPath, environment.savedEnvironmentRegistryPath);
         assert.equal(error.field, "encryptedBearerToken");
@@ -272,10 +271,11 @@ describe("DesktopSavedEnvironments", () => {
     ),
   );
 
-  it.effect("surfaces typed safe storage availability failures", () => {
+  it.effect("adds saved-environment context to safe storage availability failures", () => {
     const cause = new Error("safe storage unavailable");
     return withSavedEnvironments(
       Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
         yield* savedEnvironments.setRegistry([savedRegistryRecord]);
 
@@ -286,8 +286,22 @@ describe("DesktopSavedEnvironments", () => {
           })
           .pipe(Effect.flip);
 
-        assert.instanceOf(error, ElectronSafeStorage.ElectronSafeStorageAvailabilityError);
-        assert.equal(error.cause, cause);
+        assert.instanceOf(
+          error,
+          DesktopSavedEnvironments.DesktopSavedEnvironmentSecretProtectionError,
+        );
+        assert.equal(error.operation, "check-encryption-availability");
+        assert.equal(error.environmentId, savedRegistryRecord.environmentId);
+        assert.equal(error.registryPath, environment.savedEnvironmentRegistryPath);
+        assert.instanceOf(error.cause, ElectronSafeStorage.ElectronSafeStorageAvailabilityError);
+        const availabilityError =
+          error.cause as ElectronSafeStorage.ElectronSafeStorageAvailabilityError;
+        assert.strictEqual(availabilityError.cause, cause);
+        assert.equal(
+          error.message,
+          `Desktop saved-environment secret protection failed during check-encryption-availability for environment ${savedRegistryRecord.environmentId} at ${environment.savedEnvironmentRegistryPath}.`,
+        );
+        assert.notEqual(error.message, availabilityError.message);
       }),
       { availabilityError: cause },
     );
@@ -363,7 +377,6 @@ describe("DesktopSavedEnvironments", () => {
           registryError,
           DesktopSavedEnvironments.DesktopSavedEnvironmentsDocumentDecodeError,
         );
-        assert.equal(registryError.operation, "decode-registry");
         assert.equal(registryError.registryPath, environment.savedEnvironmentRegistryPath);
         assert.exists(registryError.cause);
         const secretError = yield* savedEnvironments
@@ -409,7 +422,6 @@ describe("DesktopSavedEnvironments", () => {
 
       const error = yield* savedEnvironments.getRegistry.pipe(Effect.flip);
       assert.instanceOf(error, DesktopSavedEnvironments.DesktopSavedEnvironmentsReadError);
-      assert.equal(error.operation, "read-registry");
       assert.equal(error.registryPath, registryPath);
       assert.strictEqual(error.cause, permissionError);
       assert.equal(error.message, `Failed to read desktop saved environments at ${registryPath}.`);

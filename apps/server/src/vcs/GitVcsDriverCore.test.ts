@@ -78,6 +78,114 @@ const initRepoWithCommit = (
   });
 
 it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
+  describe("structured errors", () => {
+    it.effect("preserves structured spawn context and the platform cause", () =>
+      Effect.gen(function* () {
+        const parent = yield* makeTmpDir();
+        const pathService = yield* Path.Path;
+        const cwd = pathService.join(parent, "missing");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver
+          .execute({
+            operation: "GitVcsDriver.test.missingCwd",
+            cwd,
+            args: ["status", "--short"],
+          })
+          .pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.test.missingCwd",
+          command: "git",
+          argumentCount: 2,
+          cwd,
+          detail: "Failed to spawn Git process.",
+        });
+        if (!(error.cause instanceof PlatformError.PlatformError)) {
+          return assert.fail("expected the original platform error cause");
+        }
+        assert.equal(error.cause.reason._tag, "NotFound");
+        assert.notInclude(error.detail, error.cause.message);
+      }),
+    );
+
+    it.effect("does not retain git arguments or stderr in command failures", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+
+        const secret = "secret-token-value";
+        const error = yield* driver
+          .execute({
+            operation: "GitVcsDriver.test.redactedFailure",
+            cwd,
+            args: ["status", `--unknown-option=${secret}`],
+          })
+          .pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.test.redactedFailure",
+          command: "git",
+          argumentCount: 2,
+          cwd,
+        });
+        assert.isNumber(error.exitCode);
+        assert.isAbove(error.stderrLength ?? 0, 0);
+        assert.notInclude(error.detail, secret);
+        assert.notInclude(error.message, secret);
+        assert.notProperty(error, "args");
+        assert.notProperty(error, "stderr");
+      }),
+    );
+
+    it.effect("recovers a structurally identified missing cwd as a non-repository", () =>
+      Effect.gen(function* () {
+        const parent = yield* makeTmpDir();
+        const pathService = yield* Path.Path;
+        const cwd = pathService.join(parent, "missing");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const [localStatus, remoteStatus, refs] = yield* Effect.all([
+          driver.statusDetails(cwd),
+          driver.statusDetailsRemote(cwd, { refreshUpstream: false }),
+          driver.listRefs({ cwd }),
+        ]);
+
+        assert.equal(localStatus.isRepo, false);
+        assert.equal(remoteStatus.isRepo, false);
+        assert.equal(refs.isRepo, false);
+        assert.deepStrictEqual(refs.refs, []);
+      }),
+    );
+
+    it.effect("does not wrap a remove-worktree command failure in a synthetic error", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const pathService = yield* Path.Path;
+        const missingWorktree = pathService.join(cwd, "missing-worktree");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+
+        const error = yield* driver
+          .removeWorktree({ cwd, path: missingWorktree })
+          .pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.removeWorktree",
+          command: "git",
+          argumentCount: 3,
+          cwd,
+        });
+        assert.notProperty(error, "cause");
+        assert.notInclude(error.detail, "Git command failed in");
+      }),
+    );
+  });
+
   describe("review diff previews", () => {
     it.effect("drops an unterminated path from truncated NUL-separated git output", () =>
       Effect.sync(() => {

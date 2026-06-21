@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import path from "node:path";
+import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -80,7 +80,7 @@ function initRepoWithCommit(
     yield* git(cwd, ["init"]);
     yield* git(cwd, ["config", "user.email", "test@test.com"]);
     yield* git(cwd, ["config", "user.name", "Test"]);
-    yield* writeTextFile(path.join(cwd, "README.md"), "# test\n");
+    yield* writeTextFile(NodePath.join(cwd, "README.md"), "# test\n");
     yield* git(cwd, ["add", "."]);
     yield* git(cwd, ["commit", "-m", "initial commit"]);
   });
@@ -93,6 +93,27 @@ function buildLargeText(lineCount = 5_000): string {
 }
 
 it.layer(TestLayer)("CheckpointStore.layer", (it) => {
+  describe("isGitRepository", () => {
+    it.effect("returns false when no Git repository is detected", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(false);
+      }),
+    );
+
+    it.effect("returns true when a Git repository is detected", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(true);
+      }),
+    );
+  });
+
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {
@@ -107,7 +128,7 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
           cwd: tmp,
           checkpointRef: fromCheckpointRef,
         });
-        yield* writeTextFile(path.join(tmp, "README.md"), buildLargeText());
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), buildLargeText());
         yield* checkpointStore.captureCheckpoint({
           cwd: tmp,
           checkpointRef: toCheckpointRef,
@@ -135,7 +156,7 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
         const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
 
-        const componentPath = path.join(tmp, "Component.tsx");
+        const componentPath = NodePath.join(tmp, "Component.tsx");
         yield* writeTextFile(
           componentPath,
           [

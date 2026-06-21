@@ -1993,14 +1993,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }).pipe(Effect.provide(failingSpawnerLayer("spawn claude ENOENT"))),
       );
 
-      it.effect("returns error when version check fails with non-zero exit code", () =>
-        Effect.gen(function* () {
+      it.effect("returns error when version check fails with non-zero exit code", () => {
+        const secretStderr = "Something went wrong: secret-token-value";
+        return Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
             claudeCapabilities(),
           );
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.installed, true);
+          assert.strictEqual(status.message, "Claude Agent CLI is installed but failed to run.");
+          assert.ok(!(status.message ?? "").includes(secretStderr));
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
@@ -2008,14 +2011,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               if (joined === "--version")
                 return {
                   stdout: "",
-                  stderr: "Something went wrong",
+                  stderr: secretStderr,
                   code: 1,
                 };
               throw new Error(`Unexpected args: ${joined}`);
             }),
           ),
-        ),
-      );
+        );
+      });
 
       it.effect("returns warning when the Claude initialization result is unavailable", () =>
         Effect.gen(function* () {

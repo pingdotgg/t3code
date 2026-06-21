@@ -1,17 +1,33 @@
-import { createRequire } from "node:module";
+import * as NodeModule from "node:module";
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as PtyAdapter from "./PtyAdapter.ts";
 
+export class NodePtyModuleLoadError extends Schema.TaggedErrorClass<NodePtyModuleLoadError>()(
+  "NodePtyModuleLoadError",
+  {
+    platform: Schema.String,
+    architecture: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to load node-pty for ${this.platform}-${this.architecture}.`;
+  }
+}
+
+type NodePtyModuleLoader = () => Promise<typeof import("node-pty")>;
+
 let didEnsureSpawnHelperExecutable = false;
 
 const resolveNodePtySpawnHelperPath = Effect.gen(function* () {
-  const requireForNodePty = createRequire(import.meta.url);
+  const requireForNodePty = NodeModule.createRequire(import.meta.url);
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcessPlatform;
@@ -94,13 +110,23 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   }
 }
 
-export const make = Effect.fn("NodePtyAdapter.make")(function* () {
+export const make = Effect.fn("NodePtyAdapter.make")(function* (
+  loadNodePtyModule: NodePtyModuleLoader = () => import("node-pty"),
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
 
-  const nodePty = yield* Effect.promise(() => import("node-pty"));
+  const nodePty = yield* Effect.tryPromise({
+    try: loadNodePtyModule,
+    catch: (cause) =>
+      new NodePtyModuleLoadError({
+        platform,
+        architecture,
+        cause,
+      }),
+  }).pipe(Effect.orDie);
 
   const ensureNodePtySpawnHelperExecutableCached = yield* Effect.cached(
     ensureNodePtySpawnHelperExecutable().pipe(

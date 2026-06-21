@@ -1,56 +1,69 @@
-import * as Electron from "electron";
-
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Context from "effect/Context";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 
-export class ElectronSafeStorageAvailabilityError extends Data.TaggedError(
+import * as Electron from "electron";
+
+const electronSafeStorageErrorFields = {
+  cause: Schema.Defect(),
+};
+
+export class ElectronSafeStorageAvailabilityError extends Schema.TaggedErrorClass<ElectronSafeStorageAvailabilityError>()(
   "ElectronSafeStorageAvailabilityError",
-)<{
-  readonly cause: unknown;
-}> {
-  override get message() {
+  {
+    ...electronSafeStorageErrorFields,
+  },
+) {
+  override get message(): string {
     return "Electron safe storage failed to check encryption availability.";
   }
 }
 
-export class ElectronSafeStorageEncryptError extends Data.TaggedError(
+export class ElectronSafeStorageEncryptError extends Schema.TaggedErrorClass<ElectronSafeStorageEncryptError>()(
   "ElectronSafeStorageEncryptError",
-)<{
-  readonly cause: unknown;
-}> {
-  override get message() {
+  {
+    ...electronSafeStorageErrorFields,
+  },
+) {
+  override get message(): string {
     return "Electron safe storage failed to encrypt a string.";
   }
 }
 
-export class ElectronSafeStorageDecryptError extends Data.TaggedError(
+export class ElectronSafeStorageDecryptError extends Schema.TaggedErrorClass<ElectronSafeStorageDecryptError>()(
   "ElectronSafeStorageDecryptError",
-)<{
-  readonly cause: unknown;
-}> {
-  override get message() {
+  {
+    ...electronSafeStorageErrorFields,
+  },
+) {
+  override get message(): string {
     return "Electron safe storage failed to decrypt a string.";
   }
 }
 
-export interface ElectronSafeStorageShape {
-  readonly isEncryptionAvailable: Effect.Effect<boolean, ElectronSafeStorageAvailabilityError>;
-  readonly encryptString: (
-    value: string,
-  ) => Effect.Effect<Uint8Array, ElectronSafeStorageEncryptError>;
-  readonly decryptString: (
-    value: Uint8Array,
-  ) => Effect.Effect<string, ElectronSafeStorageDecryptError>;
-}
+export const ElectronSafeStorageError = Schema.Union([
+  ElectronSafeStorageAvailabilityError,
+  ElectronSafeStorageEncryptError,
+  ElectronSafeStorageDecryptError,
+]);
+export type ElectronSafeStorageError = typeof ElectronSafeStorageError.Type;
+export const isElectronSafeStorageError = Schema.is(ElectronSafeStorageError);
 
 export class ElectronSafeStorage extends Context.Service<
   ElectronSafeStorage,
-  ElectronSafeStorageShape
+  {
+    readonly isEncryptionAvailable: Effect.Effect<boolean, ElectronSafeStorageAvailabilityError>;
+    readonly encryptString: (
+      value: string,
+    ) => Effect.Effect<Uint8Array, ElectronSafeStorageEncryptError>;
+    readonly decryptString: (
+      value: Uint8Array,
+    ) => Effect.Effect<string, ElectronSafeStorageDecryptError>;
+  }
 >()("@t3tools/desktop/electron/ElectronSafeStorage") {}
 
-const make = ElectronSafeStorage.of({
+export const make = ElectronSafeStorage.of({
   isEncryptionAvailable: Effect.try({
     try: () => Electron.safeStorage.isEncryptionAvailable(),
     catch: (cause) => new ElectronSafeStorageAvailabilityError({ cause }),

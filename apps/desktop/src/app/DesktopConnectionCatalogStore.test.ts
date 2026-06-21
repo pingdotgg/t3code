@@ -237,7 +237,6 @@ describe("DesktopConnectionCatalogStore", () => {
           error,
           DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreDocumentDecodeError,
         );
-        assert.equal(error.operation, "decode-catalog-document");
         assert.equal(error.catalogPath, catalogPath);
         assert.exists(error.cause);
         assert.equal(yield* fileSystem.readFileString(catalogPath), "{not-json");
@@ -272,7 +271,6 @@ describe("DesktopConnectionCatalogStore", () => {
         error,
         DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreReadError,
       );
-      assert.equal(error.operation, "read-catalog");
       assert.equal(error.catalogPath, `${baseDir}/userdata/connection-catalog.json`);
       assert.strictEqual(error.cause, permissionError);
       assert.equal(
@@ -368,7 +366,6 @@ describe("DesktopConnectionCatalogStore", () => {
           error,
           DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreDecodeError,
         );
-        assert.equal(error.operation, "decode-encrypted-catalog");
         assert.equal(error.resource, "encryptedCatalog");
         assert.equal(error.catalogPath, catalogPath);
         assert.exists(error.cause);
@@ -396,7 +393,21 @@ describe("DesktopConnectionCatalogStore", () => {
       assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":[]}'));
       yield* Ref.set(failDecrypt, true);
       const error = yield* store.get.pipe(Effect.flip);
-      assert.instanceOf(error, ElectronSafeStorage.ElectronSafeStorageDecryptError);
+      assert.instanceOf(
+        error,
+        DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreProtectionError,
+      );
+      assert.equal(error.operation, "decrypt-catalog");
+      assert.equal(error.catalogPath, `${baseDir}/userdata/connection-catalog.json`);
+      assert.instanceOf(error.cause, ElectronSafeStorage.ElectronSafeStorageDecryptError);
+      const decryptError = error.cause as ElectronSafeStorage.ElectronSafeStorageDecryptError;
+      assert.instanceOf(decryptError.cause, Error);
+      assert.equal(decryptError.cause.message, "invalid encrypted catalog");
+      assert.equal(
+        error.message,
+        `Desktop connection catalog protection failed during decrypt-catalog at ${baseDir}/userdata/connection-catalog.json.`,
+      );
+      assert.notEqual(error.message, decryptError.message);
       yield* Ref.set(failDecrypt, false);
       assert.deepStrictEqual(yield* store.get, Option.some('{"schemaVersion":1,"targets":[]}'));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
