@@ -8,15 +8,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+
 import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
 
-import {
-  RelayClientInstallError,
-  CLOUDFLARED_VERSION,
-  makeCloudflaredRelayClient,
-} from "./relayClient.ts";
+import * as RelayClient from "./relayClient.ts";
 
 const hostRuntimeLayer = (env: Record<string, string> = {}) =>
   Layer.mergeAll(
@@ -41,12 +40,12 @@ function makeHandle(exitCode = 0) {
   });
 }
 
-const makeHttpClientLayer = (bytes: Uint8Array) =>
+const makeHttpClientLayer = (bytes: Uint8Array, status = 200) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
       Effect.succeed(
-        HttpClientResponse.fromWeb(request, new Response(bytes.buffer as ArrayBuffer)),
+        HttpClientResponse.fromWeb(request, new Response(bytes.buffer as ArrayBuffer, { status })),
       ),
     ),
   );
@@ -72,7 +71,7 @@ describe("RelayClient", () => {
       const overridePath = `${baseDir}/override-cloudflared`;
       yield* fileSystem.writeFileString(overridePath, "override");
       yield* fileSystem.chmod(overridePath, 0o755);
-      const manager = yield* makeCloudflaredRelayClient({
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({
         baseDir,
       });
 
@@ -89,7 +88,7 @@ describe("RelayClient", () => {
         status: "available",
         executablePath: overridePath,
         source: "override",
-        version: CLOUDFLARED_VERSION,
+        version: RelayClient.CLOUDFLARED_VERSION,
       });
     }).pipe(
       Effect.scoped,
@@ -111,7 +110,7 @@ describe("RelayClient", () => {
         prefix: "t3-cloudflared-test-",
       });
       const bytes = new TextEncoder().encode("test-cloudflared-binary");
-      const manager = yield* makeCloudflaredRelayClient({
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({
         baseDir,
         releaseAsset: {
           url: "https://example.test/cloudflared",
@@ -128,12 +127,12 @@ describe("RelayClient", () => {
           }
         }),
       );
-      const managedPath = `${baseDir}/tools/cloudflared/${CLOUDFLARED_VERSION}/linux-x64/cloudflared`;
+      const managedPath = `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/linux-x64/cloudflared`;
       expect(installed).toEqual({
         status: "available",
         executablePath: managedPath,
         source: "managed",
-        version: CLOUDFLARED_VERSION,
+        version: RelayClient.CLOUDFLARED_VERSION,
       });
       expect(new TextDecoder().decode(yield* fileSystem.readFile(managedPath))).toBe(
         "test-cloudflared-binary",
@@ -167,7 +166,7 @@ describe("RelayClient", () => {
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-cloudflared-test-",
       });
-      const manager = yield* makeCloudflaredRelayClient({
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({
         baseDir,
         releaseAsset: {
           url: "https://example.test/cloudflared",
@@ -177,14 +176,64 @@ describe("RelayClient", () => {
       });
 
       const error = yield* manager.install.pipe(Effect.flip);
-      expect(error).toBeInstanceOf(RelayClientInstallError);
-      expect(error.reason).toBe("invalid_checksum");
+      expect(error).toBeInstanceOf(RelayClient.RelayClientChecksumMismatchError);
+      expect(error).toMatchObject({
+        expectedChecksum: Encoding.encodeHex(sha256(new TextEncoder().encode("expected"))),
+        actualChecksum: Encoding.encodeHex(sha256(new TextEncoder().encode("tampered"))),
+      });
+      expect(error.message).toBe(
+        "Downloaded relay client checksum did not match the pinned release.",
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
           makeHttpClientLayer(new TextEncoder().encode("tampered")),
+          makeSpawnerLayer([]),
+          hostRuntimeLayer(),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps sensitive release URL components out of install diagnostics", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-cloudflared-test-",
+      });
+      const releaseUrl =
+        "https://download-user:download-password@example.test/private/cloudflared?signature=secret#fragment";
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({
+        baseDir,
+        releaseAsset: {
+          url: releaseUrl,
+          sha256: "00",
+          archive: "binary",
+        },
+      });
+
+      const error = yield* manager.install.pipe(Effect.flip);
+      expect(error).toBeInstanceOf(RelayClient.RelayClientDownloadError);
+      expect(error).toMatchObject({
+        urlInputLength: releaseUrl.length,
+        urlProtocol: "https:",
+        urlHostname: "example.test",
+      });
+      expect("url" in error).toBe(false);
+      expect(error.cause).toBeDefined();
+      expect(error.message).not.toContain("download-user");
+      expect(error.message).not.toContain("download-password");
+      expect(error.message).not.toContain("/private/cloudflared");
+      expect(error.message).not.toContain("signature=secret");
+      expect(error.message).not.toContain("fragment");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          makeHttpClientLayer(new Uint8Array(), 500),
           makeSpawnerLayer([]),
           hostRuntimeLayer(),
         ),
@@ -200,7 +249,7 @@ describe("RelayClient", () => {
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-cloudflared-test-",
       });
-      const manager = yield* makeCloudflaredRelayClient({
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({
         baseDir,
         releaseAsset: {
           url: "https://example.test/cloudflared",
@@ -236,13 +285,13 @@ describe("RelayClient", () => {
       });
       const binDir = `${baseDir}/bin`;
       const executablePath = `${binDir}/cloudflared`;
-      const manager = yield* makeCloudflaredRelayClient({
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({
         baseDir,
       });
 
       expect(yield* manager.resolve).toEqual({
         status: "missing",
-        version: CLOUDFLARED_VERSION,
+        version: RelayClient.CLOUDFLARED_VERSION,
       });
 
       yield* fileSystem.makeDirectory(binDir);
@@ -254,7 +303,7 @@ describe("RelayClient", () => {
         status: "available",
         executablePath,
         source: "path",
-        version: CLOUDFLARED_VERSION,
+        version: RelayClient.CLOUDFLARED_VERSION,
       });
     }).pipe(
       Effect.scoped,

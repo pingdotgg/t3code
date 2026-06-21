@@ -7,8 +7,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 
-import { SshPasswordPromptError } from "./errors.ts";
+import * as SshErrors from "./errors.ts";
 
 export interface SshPasswordRequest {
   readonly destination: string;
@@ -34,24 +35,25 @@ export interface SshAuthOptions {
   readonly interactiveAuth?: boolean;
 }
 
-export interface SshPasswordPromptShape {
-  readonly isAvailable: boolean;
-  readonly request: (
-    request: SshPasswordRequest,
-  ) => Effect.Effect<string | null, SshPasswordPromptError>;
-}
+export class SshPasswordPrompt extends Context.Service<
+  SshPasswordPrompt,
+  {
+    readonly isAvailable: boolean;
+    readonly request: (
+      request: SshPasswordRequest,
+    ) => Effect.Effect<string | null, SshErrors.SshPasswordPromptError>;
+  }
+>()("@t3tools/ssh/auth/SshPasswordPrompt") {}
 
-export class SshPasswordPrompt extends Context.Service<SshPasswordPrompt, SshPasswordPromptShape>()(
-  "@t3tools/ssh/auth/SshPasswordPrompt",
-) {
-  static readonly disabledLayer = Layer.succeed(
-    SshPasswordPrompt,
-    SshPasswordPrompt.of({
-      isAvailable: false,
-      request: () => Effect.succeed(null),
-    }),
-  );
-}
+export const make = (service: SshPasswordPrompt["Service"]) => SshPasswordPrompt.of(service);
+
+export const layer = (service: SshPasswordPrompt["Service"]) =>
+  Layer.succeed(SshPasswordPrompt, make(service));
+
+export const disabledLayer = layer({
+  isAvailable: false,
+  request: () => Effect.succeed(null),
+});
 
 export interface SshChildEnvironmentOptions {
   readonly interactiveAuth?: boolean;
@@ -204,8 +206,7 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
   };
 });
 
-export function isSshAuthFailure(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
+function isSshAuthFailureMessage(message: string): boolean {
   const normalized = message.toLowerCase();
   return (
     /permission denied \((?:publickey|password|keyboard-interactive|hostbased|gssapi-with-mic)[^)]*\)/u.test(
@@ -214,4 +215,48 @@ export function isSshAuthFailure(error: unknown): boolean {
     /authentication failed/u.test(normalized) ||
     /too many authentication failures/u.test(normalized)
   );
+}
+
+export function classifySshProcessExit(input: {
+  readonly stdout: string;
+  readonly stderr: string;
+}): SshErrors.SshProcessExitReason {
+  return isSshAuthFailureMessage(`${input.stderr}\n${input.stdout}`)
+    ? "authentication-failed"
+    : "process-exited";
+}
+
+const isSshAuthFailureExit = Schema.is(
+  Schema.Union([SshErrors.SshCommandExitError, SshErrors.SshTunnelExitError]),
+);
+
+const isSshAuthFailureCauseWrapper = Schema.is(
+  Schema.Union([
+    SshErrors.SshCommandSpawnError,
+    SshErrors.SshCommandExecutionError,
+    SshErrors.SshTunnelSpawnError,
+    SshErrors.SshTunnelMonitorError,
+  ]),
+);
+
+export function isSshAuthFailure(error: unknown): boolean {
+  const visited = new Set<unknown>();
+  let current = error;
+
+  while (!visited.has(current)) {
+    visited.add(current);
+    if (isSshAuthFailureExit(current)) {
+      return current.reason === "authentication-failed";
+    }
+    const message = current instanceof Error ? current.message : String(current);
+    if (isSshAuthFailureMessage(message)) {
+      return true;
+    }
+    if (!isSshAuthFailureCauseWrapper(current)) {
+      return false;
+    }
+    current = current.cause;
+  }
+
+  return false;
 }

@@ -1,12 +1,4 @@
-import {
-  EnvironmentHttpApi,
-  EnvironmentHttpCommonError,
-  type EnvironmentAuthInvalidError,
-  type EnvironmentInternalError,
-  type EnvironmentOperationForbiddenError,
-  type EnvironmentRequestInvalidError,
-  type EnvironmentScopeRequiredError,
-} from "@t3tools/contracts";
+import { EnvironmentHttpApi, EnvironmentHttpCommonError } from "@t3tools/contracts";
 import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
 import { getUrlDiagnostics } from "@t3tools/shared/urlDiagnostics";
 import * as Duration from "effect/Duration";
@@ -133,16 +125,14 @@ export class RemoteEnvironmentAuthTimeoutError extends Schema.TaggedErrorClass<R
 
 const isRemoteEnvironmentAuthTimeoutError = Schema.is(RemoteEnvironmentAuthTimeoutError);
 
-export type RemoteEnvironmentRequestError =
-  | EnvironmentRequestInvalidError
-  | EnvironmentAuthInvalidError
-  | EnvironmentScopeRequiredError
-  | EnvironmentOperationForbiddenError
-  | EnvironmentInternalError
-  | RemoteEnvironmentAuthFetchError
-  | RemoteEnvironmentAuthInvalidJsonError
-  | RemoteEnvironmentAuthUndeclaredStatusError
-  | RemoteEnvironmentAuthTimeoutError;
+export const RemoteEnvironmentRequestError = Schema.Union([
+  EnvironmentHttpCommonError,
+  RemoteEnvironmentAuthFetchError,
+  RemoteEnvironmentAuthInvalidJsonError,
+  RemoteEnvironmentAuthUndeclaredStatusError,
+  RemoteEnvironmentAuthTimeoutError,
+]);
+export type RemoteEnvironmentRequestError = typeof RemoteEnvironmentRequestError.Type;
 
 export const remoteHttpClientLayer = (
   fetchFn: typeof globalThis.fetch,

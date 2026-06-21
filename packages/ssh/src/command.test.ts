@@ -8,7 +8,7 @@ import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import {
   baseSshArgs,
@@ -17,7 +17,7 @@ import {
   resolveRemoteT3CliPackageSpec,
   runSshCommand,
 } from "./command.ts";
-import { SshCommandError } from "./errors.ts";
+import { SshCommandExitError, SshCommandSpawnError } from "./errors.ts";
 
 const encoder = new TextEncoder();
 
@@ -145,7 +145,7 @@ describe("ssh command", () => {
     }),
   );
 
-  it.effect("includes stdout in non-zero command failures when stderr is empty", () => {
+  it.effect("records bounded output diagnostics for non-zero command failures", () => {
     const spawner = ChildProcessSpawner.make(() =>
       Effect.succeed(makeFailedProcess({ stdout: "Pairing token creation failed\n" })),
     );
@@ -167,15 +167,33 @@ describe("ssh command", () => {
 
       assert.isTrue(Result.isFailure(result));
       if (Result.isFailure(result)) {
-        assert.instanceOf(result.failure, SshCommandError);
-        assert.equal(result.failure.message, "Pairing token creation failed");
-        assert.equal(result.failure.stdout, "Pairing token creation failed\n");
-        assert.equal(result.failure.stderr, "");
+        assert.instanceOf(result.failure, SshCommandExitError);
+        assert.equal(result.failure.message, "SSH command failed for julius@devbox (exit 1).");
+        assert.equal(result.failure.command, "ssh");
+        assert.equal(result.failure.argumentCount, 9);
+        assert.equal(
+          result.failure.stdoutBytes,
+          encoder.encode("Pairing token creation failed\n").length,
+        );
+        assert.equal(result.failure.stderrBytes, 0);
+        assert.isFalse("stdout" in result.failure);
+        assert.isFalse("stderr" in result.failure);
       }
+
+      const spawnCause = new Error("ssh executable was not found");
+      const spawnError = new SshCommandSpawnError({
+        command: "ssh",
+        argumentCount: 0,
+        target: "devbox",
+        cause: spawnCause,
+      });
+      assert.strictEqual(spawnError.cause, spawnCause);
+      assert.equal(spawnError.message, "Failed to spawn SSH command for devbox.");
+      assert.notInclude(spawnError.message, spawnCause.message);
     }).pipe(Effect.provide(processLayer));
   });
 
-  it.effect("redacts credentials from stdout in non-zero command failures", () => {
+  it.effect("does not expose credentials from non-zero command output", () => {
     const spawner = ChildProcessSpawner.make(() =>
       Effect.succeed(makeFailedProcess({ stdout: '{"credential":"pairing-secret"}\n' })),
     );
@@ -197,9 +215,13 @@ describe("ssh command", () => {
 
       assert.isTrue(Result.isFailure(result));
       if (Result.isFailure(result)) {
-        assert.instanceOf(result.failure, SshCommandError);
-        assert.equal(result.failure.message, '{"credential":"[redacted]"}');
-        assert.equal(result.failure.stdout, '{"credential":"[redacted]"}\n');
+        assert.instanceOf(result.failure, SshCommandExitError);
+        assert.notInclude(result.failure.message, "pairing-secret");
+        assert.equal(
+          result.failure.stdoutBytes,
+          encoder.encode('{"credential":"pairing-secret"}\n').length,
+        );
+        assert.isFalse("stdout" in result.failure);
       }
     }).pipe(Effect.provide(processLayer));
   });
@@ -214,7 +236,7 @@ describe("ssh command", () => {
         Effect.result(
           runSshCommand(
             {
-              alias: "devbox",
+              alias: "  ",
               hostname: "devbox.example.com",
               username: "julius",
               port: 2222,
@@ -230,7 +252,10 @@ describe("ssh command", () => {
 
       assert.isTrue(Result.isFailure(result));
       if (Result.isFailure(result)) {
-        assert.include(result.failure.message, "SSH command timed out after 1ms.");
+        assert.equal(
+          result.failure.message,
+          "SSH command timed out after 1ms for devbox.example.com.",
+        );
       }
     }).pipe(Effect.provide(processLayer));
   });

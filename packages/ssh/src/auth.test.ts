@@ -12,6 +12,7 @@ import {
   buildSshChildEnvironment,
   isSshAuthFailure,
 } from "./auth.ts";
+import * as SshErrors from "./errors.ts";
 
 describe("ssh auth", () => {
   it.effect("detects ssh auth failures from common permission denied messages", () =>
@@ -29,6 +30,59 @@ describe("ssh auth", () => {
       assert.equal(isSshAuthFailure(new Error("mkdir: Permission denied")), false);
     }),
   );
+
+  it("only follows causes from SSH process wrappers", () => {
+    const authFailure = new Error("Permission denied (publickey,password).");
+    const commandFailure = new SshErrors.SshCommandSpawnError({
+      command: "ssh",
+      argumentCount: 1,
+      target: "devbox",
+      cause: authFailure,
+    });
+    assert.equal(isSshAuthFailure(commandFailure), true);
+
+    const helperFailure = new SshErrors.SshAuthenticationHelperError({
+      target: "devbox",
+      cause: authFailure,
+    });
+    assert.equal(isSshAuthFailure(helperFailure), false);
+
+    const readinessFailure = new SshErrors.SshReadinessTimeoutError({
+      base: {
+        protocol: "http:",
+        hostname: "127.0.0.1",
+        port: "41773",
+        urlLength: 23,
+        pathnameLength: 1,
+        hasQuery: false,
+        hasFragment: false,
+      },
+      request: {
+        protocol: "http:",
+        hostname: "127.0.0.1",
+        port: "41773",
+        urlLength: 28,
+        pathnameLength: 6,
+        hasQuery: false,
+        hasFragment: false,
+      },
+      timeoutMs: 1_000,
+      attempts: 1,
+      cause: new SshErrors.SshReadinessProbeError({
+        request: {
+          protocol: "http:",
+          hostname: "127.0.0.1",
+          port: "41773",
+          urlLength: 28,
+          pathnameLength: 6,
+          hasQuery: false,
+          hasFragment: false,
+        },
+        cause: new Error("HTTP authentication failed."),
+      }),
+    });
+    assert.equal(isSshAuthFailure(readinessFailure), false);
+  });
 
   it.effect("creates askpass env for cached password prompts", () =>
     Effect.gen(function* () {

@@ -9,6 +9,7 @@ import {
   parseKnownHostsHostnames,
   resolveSshConfigIncludePattern,
 } from "./config.ts";
+import { SshHostDiscoveryError } from "./errors.ts";
 
 function makeTempHomeDir() {
   return Effect.gen(function* () {
@@ -18,6 +19,15 @@ function makeTempHomeDir() {
 }
 
 describe("ssh config", () => {
+  it("keeps host discovery causes separate from stable operation messages", () => {
+    const cause = new Error("home directory included sensitive diagnostics");
+    const error = new SshHostDiscoveryError({ homeDir: "/home/test", cause });
+
+    assert.strictEqual(error.cause, cause);
+    assert.equal(error.message, "Failed to discover SSH hosts.");
+    assert.notInclude(error.message, cause.message);
+  });
+
   it.effect("discovers ssh config hosts across included files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -18,22 +18,10 @@ const AppPackageMetadata = Schema.Struct({
 });
 const decodeAppPackageMetadata = Schema.decodeEffect(Schema.fromJsonString(AppPackageMetadata));
 
-export class DesktopUserDataPathResolutionError extends Schema.TaggedErrorClass<DesktopUserDataPathResolutionError>()(
-  "DesktopUserDataPathResolutionError",
-  {
-    legacyPath: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Failed to inspect legacy desktop user-data path at "${this.legacyPath}".`;
-  }
-}
-
 export class DesktopAppIdentity extends Context.Service<
   DesktopAppIdentity,
   {
-    readonly resolveUserDataPath: Effect.Effect<string, DesktopUserDataPathResolutionError>;
+    readonly resolveUserDataPath: Effect.Effect<string>;
     readonly configure: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopAppIdentity") {}
@@ -95,18 +83,21 @@ export const make = Effect.gen(function* () {
       environment.appDataDirectory,
       environment.legacyUserDataDirName,
     );
-    const legacyPathExists = yield* fileSystem.exists(legacyPath).pipe(
-      Effect.mapError(
-        (cause) =>
-          new DesktopUserDataPathResolutionError({
-            legacyPath,
-            cause,
-          }),
-      ),
+    const fallbackPath = environment.path.join(
+      environment.appDataDirectory,
+      environment.userDataDirName,
     );
-    return legacyPathExists
-      ? legacyPath
-      : environment.path.join(environment.appDataDirectory, environment.userDataDirName);
+    const legacyPathExists = yield* fileSystem.exists(legacyPath).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("desktop.appIdentity.legacyUserDataProbe.failed", {
+          legacyPath,
+          fallbackPath,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+    return legacyPathExists ? legacyPath : fallbackPath;
   }).pipe(Effect.withSpan("desktop.appIdentity.resolveUserDataPath"));
 
   const configure = Effect.gen(function* () {

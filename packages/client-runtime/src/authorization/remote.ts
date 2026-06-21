@@ -11,7 +11,7 @@ import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import {
   executeEnvironmentHttpRequest,
   makeEnvironmentHttpApiClient,
-  type RemoteEnvironmentRequestError,
+  RemoteEnvironmentRequestError,
 } from "../rpc/http.ts";
 
 export {
@@ -21,7 +21,8 @@ export {
   RemoteEnvironmentAuthTimeoutError,
   RemoteEnvironmentAuthUndeclaredStatusError,
 } from "../rpc/http.ts";
-export type RemoteEnvironmentAuthError = RemoteEnvironmentRequestError;
+export const RemoteEnvironmentAuthError = RemoteEnvironmentRequestError;
+export type RemoteEnvironmentAuthError = typeof RemoteEnvironmentAuthError.Type;
 
 const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 10_000;
 

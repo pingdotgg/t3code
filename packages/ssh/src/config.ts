@@ -207,22 +207,30 @@ const readKnownHostsHostnames = Effect.fnUntraced(function* (filePath: string) {
   return parseKnownHostsHostnames(yield* fs.readFileString(filePath));
 });
 
-export const discoverSshHosts = Effect.fnUntraced(
-  function* (input: { readonly homeDir?: string }) {
-    const path = yield* Path.Path;
-    const env = yield* Config.all({
-      home: Config.string("HOME").pipe(Config.option),
-      userProfile: Config.string("USERPROFILE").pipe(Config.option),
-    });
-    const homeDir =
-      input?.homeDir ??
-      Option.getOrUndefined(env.home) ??
-      Option.getOrUndefined(env.userProfile) ??
-      "";
-    if (homeDir.trim().length === 0) {
-      return [];
-    }
+export const discoverSshHosts = Effect.fnUntraced(function* (input: { readonly homeDir?: string }) {
+  const path = yield* Path.Path;
+  const env = yield* Config.all({
+    home: Config.string("HOME").pipe(Config.option),
+    userProfile: Config.string("USERPROFILE").pipe(Config.option),
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new SshHostDiscoveryError({
+          homeDir: input.homeDir ?? null,
+          cause,
+        }),
+    ),
+  );
+  const homeDir =
+    input?.homeDir ??
+    Option.getOrUndefined(env.home) ??
+    Option.getOrUndefined(env.userProfile) ??
+    "";
+  if (homeDir.trim().length === 0) {
+    return [];
+  }
 
+  return yield* Effect.gen(function* () {
     const sshDirectory = path.join(homeDir, ".ssh");
     const configAliases = yield* collectSshConfigAliasesFromFile(
       path.join(sshDirectory, "config"),
@@ -258,12 +266,13 @@ export const discoverSshHosts = Effect.fnUntraced(
     return [...discovered.values()].toSorted((left, right) =>
       left.alias.localeCompare(right.alias),
     );
-  },
-  Effect.mapError(
-    (cause) =>
-      new SshHostDiscoveryError({
-        message: "Failed to discover SSH hosts.",
-        cause,
-      }),
-  ),
-);
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new SshHostDiscoveryError({
+          homeDir,
+          cause,
+        }),
+    ),
+  );
+});

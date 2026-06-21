@@ -7,13 +7,19 @@ import * as NetService from "@t3tools/shared/Net";
 import * as SshAuth from "@t3tools/ssh/auth";
 import { discoverSshHosts } from "@t3tools/ssh/config";
 import {
-  SshCommandError,
-  SshHostDiscoveryError,
-  SshInvalidTargetError,
-  SshLaunchError,
-  SshPairingError,
+  type SshCommandError,
+  type SshHostDiscoveryError,
+  type SshInvalidTargetError,
+  type SshLaunchError,
+  type SshPairingError,
+  SshPasswordPromptCancelledError,
   SshPasswordPromptError,
-  SshReadinessError,
+  SshPasswordPromptSecureRandomnessError,
+  SshPasswordPromptServiceStoppedError,
+  SshPasswordPromptTimedOutError,
+  SshPasswordPromptWindowClosedError,
+  SshPasswordPromptWindowUnavailableError,
+  type SshReadinessError,
 } from "@t3tools/ssh/errors";
 import * as SshTunnel from "@t3tools/ssh/tunnel";
 import * as Context from "effect/Context";
@@ -21,10 +27,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
+
+const isSshPasswordPromptError = Schema.is(SshPasswordPromptError);
 
 export type DesktopSshEnvironmentRuntimeServices =
   | ChildProcessSpawner.ChildProcessSpawner
@@ -69,17 +78,20 @@ export interface DesktopSshEnvironmentLayerOptions {
   readonly resolveCliRunner?: Effect.Effect<SshTunnel.RemoteT3RunnerOptions>;
 }
 
+type DesktopSshPasswordPromptCancellationError = SshPasswordPromptError & {
+  readonly cause: DesktopSshPasswordPrompts.DesktopSshPasswordPromptCancellation;
+};
+
 function discoverDesktopSshHostsEffect(input?: { readonly homeDir?: string }) {
   return discoverSshHosts(input ?? {});
 }
 
 export function isDesktopSshPasswordPromptCancellation(
   error: unknown,
-): error is SshPasswordPromptError & {
-  readonly cause: DesktopSshPasswordPrompts.DesktopSshPasswordPromptCancellation;
-} {
+): error is DesktopSshPasswordPromptCancellationError {
   return (
-    error instanceof SshPasswordPromptError &&
+    isSshPasswordPromptError(error) &&
+    "cause" in error &&
     DesktopSshPasswordPrompts.isDesktopSshPasswordPromptCancellation(error.cause)
   );
 }
@@ -91,31 +103,41 @@ function unexpectedPasswordPromptError(error: never): never {
 export function toSshPasswordPromptError(
   cause: DesktopSshPasswordPrompts.DesktopSshPasswordPromptRequestError,
 ): SshPasswordPromptError {
-  let message: string;
   switch (cause._tag) {
     case "DesktopSshPromptRequestIdGenerationError":
-      message = "Secure randomness is unavailable.";
-      break;
+      return new SshPasswordPromptSecureRandomnessError({
+        destination: cause.destination,
+        cause,
+      });
     case "DesktopSshPromptWindowUnavailableError":
     case "DesktopSshPromptPresentationError":
-      message = "T3 Code window is not available for SSH authentication.";
-      break;
+      return new SshPasswordPromptWindowUnavailableError({
+        destination: cause.destination,
+        cause,
+      });
     case "DesktopSshPromptTimedOutError":
-      message = `SSH authentication timed out for ${cause.destination}.`;
-      break;
+      return new SshPasswordPromptTimedOutError({
+        destination: cause.destination,
+        cause,
+      });
     case "DesktopSshPromptCancelledError":
-      message = `SSH authentication cancelled for ${cause.destination}.`;
-      break;
+      return new SshPasswordPromptCancelledError({
+        destination: cause.destination,
+        cause,
+      });
     case "DesktopSshPromptWindowClosedError":
-      message = "SSH authentication was cancelled because the app window closed.";
-      break;
+      return new SshPasswordPromptWindowClosedError({
+        destination: cause.destination,
+        cause,
+      });
     case "DesktopSshPromptServiceStoppedError":
-      message = "SSH password prompt service stopped.";
-      break;
+      return new SshPasswordPromptServiceStoppedError({
+        destination: cause.destination,
+        cause,
+      });
     default:
       return unexpectedPasswordPromptError(cause);
   }
-  return new SshPasswordPromptError({ message, cause });
 }
 
 const makePasswordPrompt = (
@@ -130,7 +152,7 @@ export const make = Effect.gen(function* () {
   const manager = yield* SshTunnel.SshEnvironmentManager;
   const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
   const runtimeContext = yield* Effect.context<DesktopSshEnvironmentRuntimeServices>();
-  const passwordPrompt = SshAuth.SshPasswordPrompt.of(makePasswordPrompt(prompts));
+  const passwordPrompt = SshAuth.make(makePasswordPrompt(prompts));
 
   return DesktopSshEnvironment.of({
     discoverHosts: (input) =>
@@ -160,7 +182,7 @@ export const make = Effect.gen(function* () {
 export const layer = (options: DesktopSshEnvironmentLayerOptions = {}) =>
   Layer.effect(DesktopSshEnvironment, make).pipe(
     Layer.provide(
-      SshTunnel.SshEnvironmentManager.layer({
+      SshTunnel.layer({
         ...(options.resolveCliPackageSpec === undefined
           ? {}
           : { resolveCliPackageSpec: options.resolveCliPackageSpec }),

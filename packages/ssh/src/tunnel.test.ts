@@ -5,26 +5,30 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as TestClock from "effect/testing/TestClock";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
-import { SshPasswordPrompt } from "./auth.ts";
+import * as SshAuth from "./auth.ts";
 import {
-  buildRemoteLaunchScript,
-  buildRemotePairingScript,
-  buildRemoteStopScript,
-  buildRemoteT3RunnerScript,
-  describeReadinessCause,
-  issueRemotePairingToken,
-  launchOrReuseRemoteServer,
-  REMOTE_PICK_PORT_SCRIPT,
-  SshEnvironmentManager,
-  waitForHttpReady,
-} from "./tunnel.ts";
+  SshHttpBridgeInvalidUrlError,
+  SshHttpBridgeMissingUrlError,
+  SshHttpBridgeNonLoopbackUrlError,
+  SshPairingOutputParseError,
+  SshReadinessProbeError,
+  SshReadinessProbeTimeoutError,
+  SshReadinessTimeoutError,
+  SshTunnelSpawnError,
+} from "./errors.ts";
+import * as SshTunnel from "./tunnel.ts";
 
 const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
 
@@ -36,6 +40,26 @@ const makeSuccessfulProcess = (stdout: string) => {
     stderr: Stream.empty,
     all: stdoutStream,
     exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    stdin: Sink.drain,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+};
+
+const makeFailedProcess = (input: { readonly stdout?: string; readonly stderr?: string }) => {
+  const stdout = input.stdout ?? "";
+  const stderr = input.stderr ?? "";
+  const stdoutStream = stdout === "" ? Stream.empty : Stream.make(new TextEncoder().encode(stdout));
+  const stderrStream = stderr === "" ? Stream.empty : Stream.make(new TextEncoder().encode(stderr));
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(123),
+    stdout: stdoutStream,
+    stderr: stderrStream,
+    all: Stream.empty,
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
     stdin: Sink.drain,
@@ -88,9 +112,17 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
   return command._tag === "StandardCommand" ? command.args : [];
 }
 
+function flattenedLogText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value !== "object" || value === null) return String(value);
+  return Object.entries(value)
+    .flatMap(([key, nested]) => [key, flattenedLogText(nested)])
+    .join("\n");
+}
+
 describe("ssh tunnel scripts", () => {
   it("builds the remote t3 runner with npx and npm fallbacks", () => {
-    const script = buildRemoteT3RunnerScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE });
+    const script = SshTunnel.buildRemoteT3RunnerScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE });
 
     assert.include(script, "T3_NODE_SCRIPT_PATH=''");
     assert.include(script, 'exec t3 "$@"');
@@ -116,14 +148,14 @@ describe("ssh tunnel scripts", () => {
   });
 
   it("does not hard-code a remote node engine range", () => {
-    const script = buildRemoteT3RunnerScript();
+    const script = SshTunnel.buildRemoteT3RunnerScript();
 
     assert.include(script, "T3_NODE_ENGINE_RANGE=''");
     assert.notInclude(script, TEST_NODE_ENGINE_RANGE);
   });
 
   it("shell-quotes package specs in the remote t3 runner", () => {
-    const script = buildRemoteT3RunnerScript({
+    const script = SshTunnel.buildRemoteT3RunnerScript({
       packageSpec: "t3@nightly; touch /tmp/t3-owned",
     });
 
@@ -133,7 +165,7 @@ describe("ssh tunnel scripts", () => {
   });
 
   it("builds the remote t3 runner with a node script override", () => {
-    const script = buildRemoteT3RunnerScript({
+    const script = SshTunnel.buildRemoteT3RunnerScript({
       nodeScriptPath: "/Users/julius/Development/Work/codething-mvp/apps/server/dist/bin.mjs",
     });
 
@@ -153,65 +185,82 @@ describe("ssh tunnel scripts", () => {
     } as const;
 
     assert.include(
-      buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
+      SshTunnel.buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
       '[ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null',
     );
-    assert.include(buildRemoteLaunchScript(), "RUNNER_CHANGED=1");
-    assert.include(buildRemoteLaunchScript(), "ensure_remote_node_path()");
-    assert.include(buildRemoteLaunchScript(), "if ! ensure_remote_node_path; then");
+    assert.include(SshTunnel.buildRemoteLaunchScript(), "RUNNER_CHANGED=1");
+    assert.include(SshTunnel.buildRemoteLaunchScript(), "ensure_remote_node_path()");
+    assert.include(SshTunnel.buildRemoteLaunchScript(), "if ! ensure_remote_node_path; then");
     assert.include(
-      buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
+      SshTunnel.buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
       `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`,
     );
     assert.include(
-      buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
+      SshTunnel.buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
       "does not satisfy required range ",
     );
-    assert.include(buildRemoteLaunchScript(), 'kill "$REMOTE_PID" 2>/dev/null || true');
-    assert.include(buildRemoteLaunchScript(), "wait_ready");
-    assert.include(buildRemoteLaunchScript(), '"$RUNNER_FILE" serve --host 127.0.0.1');
-    assert.include(buildRemoteLaunchScript(), '--base-dir "$DEFAULT_SERVER_HOME"');
-    assert.notInclude(buildRemoteLaunchScript(), "server-home");
-    assert.include(buildRemoteLaunchScript(), "Remote T3 server did not become ready");
-    assert.include(buildRemoteLaunchScript({ packageSpec: "t3@nightly" }), "t3@nightly");
+    assert.include(SshTunnel.buildRemoteLaunchScript(), 'kill "$REMOTE_PID" 2>/dev/null || true');
+    assert.include(SshTunnel.buildRemoteLaunchScript(), "wait_ready");
+    assert.include(SshTunnel.buildRemoteLaunchScript(), '"$RUNNER_FILE" serve --host 127.0.0.1');
+    assert.include(SshTunnel.buildRemoteLaunchScript(), '--base-dir "$DEFAULT_SERVER_HOME"');
+    assert.notInclude(SshTunnel.buildRemoteLaunchScript(), "server-home");
+    assert.include(SshTunnel.buildRemoteLaunchScript(), "Remote T3 server did not become ready");
+    assert.include(SshTunnel.buildRemoteLaunchScript({ packageSpec: "t3@nightly" }), "t3@nightly");
     assert.include(
-      buildRemotePairingScript(target),
+      SshTunnel.buildRemotePairingScript(target),
       '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
     );
-    assert.include(buildRemotePairingScript(target), 'PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"');
-    assert.notInclude(buildRemotePairingScript(target), "server-home");
-    assert.include(buildRemotePairingScript(target, { packageSpec: "t3@nightly" }), "t3@nightly");
     assert.include(
-      buildRemoteStopScript(target),
+      SshTunnel.buildRemotePairingScript(target),
+      'PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"',
+    );
+    assert.notInclude(SshTunnel.buildRemotePairingScript(target), "server-home");
+    assert.include(
+      SshTunnel.buildRemotePairingScript(target, { packageSpec: "t3@nightly" }),
+      "t3@nightly",
+    );
+    assert.include(
+      SshTunnel.buildRemoteStopScript(target),
       'if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ]',
     );
-    assert.include(buildRemoteStopScript(target), 'kill "$REMOTE_PID" 2>/dev/null || true');
-    assert.include(buildRemoteStopScript(target), 'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"');
     assert.include(
-      buildRemoteLaunchScript(),
+      SshTunnel.buildRemoteStopScript(target),
+      'kill "$REMOTE_PID" 2>/dev/null || true',
+    );
+    assert.include(
+      SshTunnel.buildRemoteStopScript(target),
+      'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"',
+    );
+    assert.include(
+      SshTunnel.buildRemoteLaunchScript(),
       'DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"',
     );
-    assert.include(buildRemoteLaunchScript(), "resolve_default_runtime_port()");
+    assert.include(SshTunnel.buildRemoteLaunchScript(), "resolve_default_runtime_port()");
     assert.include(
-      buildRemoteLaunchScript(),
+      SshTunnel.buildRemoteLaunchScript(),
       'DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port',
     );
     assert.include(
-      buildRemoteLaunchScript(),
+      SshTunnel.buildRemoteLaunchScript(),
       "if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port))",
     );
-    assert.include(buildRemoteLaunchScript(), 'PID_TO_STOP="${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"');
-    assert.include(buildRemoteLaunchScript(), 'REMOTE_PORT="$DEFAULT_REMOTE_PORT"');
-    assert.include(buildRemoteLaunchScript(), 'rm -f "$PID_FILE"');
-    assert.include(buildRemoteLaunchScript(), "printf 'external\\n' >\"$MANAGED_FILE\"");
-    assert.include(buildRemoteLaunchScript(), 'if [ -z "$REMOTE_PORT" ]; then');
+    assert.include(
+      SshTunnel.buildRemoteLaunchScript(),
+      'PID_TO_STOP="${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"',
+    );
+    assert.include(SshTunnel.buildRemoteLaunchScript(), 'REMOTE_PORT="$DEFAULT_REMOTE_PORT"');
+    assert.include(SshTunnel.buildRemoteLaunchScript(), 'rm -f "$PID_FILE"');
+    assert.include(SshTunnel.buildRemoteLaunchScript(), "printf 'external\\n' >\"$MANAGED_FILE\"");
+    assert.include(SshTunnel.buildRemoteLaunchScript(), 'if [ -z "$REMOTE_PORT" ]; then');
     assert.isBelow(
-      buildRemoteLaunchScript().indexOf('if [ "$REMOTE_MANAGED" = "managed" ]'),
-      buildRemoteLaunchScript().indexOf("printf 'external\\n' >\"$MANAGED_FILE\""),
+      SshTunnel.buildRemoteLaunchScript().indexOf('if [ "$REMOTE_MANAGED" = "managed" ]'),
+      SshTunnel.buildRemoteLaunchScript().indexOf("printf 'external\\n' >\"$MANAGED_FILE\""),
     );
     assert.isBelow(
-      buildRemoteLaunchScript().indexOf('DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port'),
-      buildRemoteLaunchScript().indexOf('elif [ -n "$REMOTE_PID" ]'),
+      SshTunnel.buildRemoteLaunchScript().indexOf(
+        'DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port',
+      ),
+      SshTunnel.buildRemoteLaunchScript().indexOf('elif [ -n "$REMOTE_PID" ]'),
     );
   });
 
@@ -229,21 +278,31 @@ describe("ssh tunnel scripts", () => {
     const processLayer = Layer.merge(NodeServices.layer, spawnerLayer);
 
     return Effect.gen(function* () {
-      const result = yield* launchOrReuseRemoteServer(target);
+      const result = yield* SshTunnel.launchOrReuseRemoteServer(target);
       assert.equal(result.remotePort, 3774);
     }).pipe(Effect.provide(processLayer));
   });
 
   it("allows the remote port picker to run without a state file path", () => {
-    assert.include(REMOTE_PICK_PORT_SCRIPT, 'const filePath = process.argv[2] ?? "";');
+    assert.include(SshTunnel.REMOTE_PICK_PORT_SCRIPT, 'const filePath = process.argv[2] ?? "";');
   });
 
-  it.effect("bounds each HTTP readiness probe so retries cannot hang on one request", () =>
-    Effect.gen(function* () {
+  it.effect("bounds each HTTP readiness probe so retries cannot hang on one request", () => {
+    const baseUrl =
+      "http://ssh-user:ssh-password@127.0.0.1:41773/private/base?token=base-secret#base-fragment";
+    const path = "/ready/private?credential=request-secret#request-fragment";
+    const requestUrl = new URL(path, baseUrl).toString();
+    const capturedLogs: Array<ReadonlyArray<unknown>> = [];
+    const logger = Logger.make(({ message }) => {
+      capturedLogs.push(Array.isArray(message) ? message : [message]);
+    });
+
+    return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(
         Effect.result(
-          waitForHttpReady({
-            baseUrl: "http://127.0.0.1:41773/",
+          SshTunnel.waitForHttpReady({
+            baseUrl,
+            path,
             timeoutMs: 1_000,
             intervalMs: 100,
             probeTimeoutMs: 250,
@@ -257,18 +316,161 @@ describe("ssh tunnel scripts", () => {
 
       assert.isTrue(Result.isFailure(result));
       if (Result.isFailure(result)) {
-        assert.include(result.failure.message, "Timed out waiting 1000ms");
+        assert.instanceOf(result.failure, SshReadinessTimeoutError);
+        const timeoutError = result.failure as SshReadinessTimeoutError;
+        assert.deepEqual(timeoutError.base, {
+          protocol: "http:",
+          hostname: "127.0.0.1",
+          port: "41773",
+          urlLength: baseUrl.length,
+          pathnameLength: new TextEncoder().encode(new URL(baseUrl).pathname).length,
+          hasQuery: true,
+          hasFragment: true,
+        });
+        assert.deepEqual(timeoutError.request, {
+          protocol: "http:",
+          hostname: "127.0.0.1",
+          port: "41773",
+          urlLength: requestUrl.length,
+          pathnameLength: new TextEncoder().encode(new URL(requestUrl).pathname).length,
+          hasQuery: true,
+          hasFragment: true,
+        });
+        assert.isFalse("baseUrl" in timeoutError);
+        assert.isFalse("requestUrl" in timeoutError);
+        assert.isFalse("baseTarget" in timeoutError);
+        assert.isFalse("requestTarget" in timeoutError);
+        assert.notInclude(timeoutError.message, "secret");
+        assert.notInclude(timeoutError.message, "/ready");
+        assert.notInclude(timeoutError.message, "request-secret");
+        assert.equal(
+          timeoutError.message,
+          "Timed out waiting 1000ms for backend readiness at http://127.0.0.1:41773.",
+        );
+        assert.isAbove(timeoutError.attempts, 0);
+        assert.instanceOf(timeoutError.cause, SshReadinessProbeTimeoutError);
+        const probeTimeout = timeoutError.cause as SshReadinessProbeTimeoutError;
+        assert.equal(probeTimeout.attempt, timeoutError.attempts);
+        assert.isFalse("cause" in probeTimeout);
+
+        const logText = flattenedLogText(capturedLogs);
+        assert.include(logText, "127.0.0.1");
+        assert.notInclude(logText, "ssh-user");
+        assert.notInclude(logText, "ssh-password");
+        assert.notInclude(logText, "/private/base");
+        assert.notInclude(logText, "base-secret");
+        assert.notInclude(logText, "/ready/private");
+        assert.notInclude(logText, "request-secret");
+        assert.notInclude(logText, "base-fragment");
+        assert.notInclude(logText, "request-fragment");
       }
     }).pipe(
       Effect.provide(
-        Layer.merge(TestClock.layer(), Layer.succeed(HttpClient.HttpClient, hangingHttpClient)),
+        Layer.mergeAll(
+          TestClock.layer(),
+          Layer.succeed(HttpClient.HttpClient, hangingHttpClient),
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
       ),
-    ),
+    );
+  });
+
+  it.effect("preserves the exact HTTP transport cause without logging request secrets", () => {
+    const baseUrl =
+      "http://transport-user:transport-password@127.0.0.1:41773/private?token=transport-secret#fragment";
+    const transportCause = new Error("socket closed");
+    const clientErrors: Array<HttpClientError.HttpClientError> = [];
+    const failingHttpClient = HttpClient.make((request) => {
+      const error = new HttpClientError.HttpClientError({
+        reason: new HttpClientError.TransportError({ request, cause: transportCause }),
+      });
+      clientErrors.push(error);
+      return Effect.fail(error);
+    });
+    const capturedLogs: Array<ReadonlyArray<unknown>> = [];
+    const logger = Logger.make(({ message }) => {
+      capturedLogs.push(Array.isArray(message) ? message : [message]);
+    });
+
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(
+        Effect.result(
+          SshTunnel.waitForHttpReady({
+            baseUrl,
+            timeoutMs: 300,
+            intervalMs: 100,
+            probeTimeoutMs: 250,
+          }),
+        ),
+      );
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.millis(300));
+
+      const result = yield* Fiber.join(fiber);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.instanceOf(result.failure, SshReadinessTimeoutError);
+        const timeoutError = result.failure as SshReadinessTimeoutError;
+        assert.instanceOf(timeoutError.cause, SshReadinessProbeError);
+        const probeError = timeoutError.cause as SshReadinessProbeError;
+        assert.strictEqual(probeError.cause, clientErrors.at(-1));
+        assert.strictEqual(
+          (probeError.cause as HttpClientError.HttpClientError).reason.cause,
+          transportCause,
+        );
+
+        const logText = flattenedLogText(capturedLogs);
+        assert.include(logText, "HttpClientError");
+        assert.include(logText, "TransportError");
+        assert.notInclude(logText, "transport-user");
+        assert.notInclude(logText, "transport-password");
+        assert.notInclude(logText, "/private");
+        assert.notInclude(logText, "transport-secret");
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          TestClock.layer(),
+          Layer.succeed(HttpClient.HttpClient, failingHttpClient),
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("preserves forwarded HTTP URL error messages", () =>
+    Effect.gen(function* () {
+      const missing = yield* Effect.result(SshTunnel.resolveLoopbackSshHttpBaseUrl(""));
+      assert.isTrue(Result.isFailure(missing));
+      if (Result.isFailure(missing)) {
+        assert.instanceOf(missing.failure, SshHttpBridgeMissingUrlError);
+        assert.equal(missing.failure.message, "Invalid SSH forwarded http base URL.");
+      }
+
+      const invalid = yield* Effect.result(SshTunnel.resolveLoopbackSshHttpBaseUrl("not-a-url"));
+      assert.isTrue(Result.isFailure(invalid));
+      if (Result.isFailure(invalid)) {
+        assert.instanceOf(invalid.failure, SshHttpBridgeInvalidUrlError);
+        assert.equal(invalid.failure.message, "Invalid SSH forwarded http base URL.");
+      }
+
+      const nonLoopback = yield* Effect.result(
+        SshTunnel.resolveLoopbackSshHttpBaseUrl("https://example.com"),
+      );
+      assert.isTrue(Result.isFailure(nonLoopback));
+      if (Result.isFailure(nonLoopback)) {
+        assert.instanceOf(nonLoopback.failure, SshHttpBridgeNonLoopbackUrlError);
+        assert.equal(
+          nonLoopback.failure.message,
+          "SSH desktop bridge only supports loopback forwarded URLs.",
+        );
+      }
+    }),
   );
 
-  it("preserves primitive readiness reason values in diagnostic output", () => {
+  it("describes readiness causes without copying arbitrary messages", () => {
     assert.deepEqual(
-      describeReadinessCause({
+      SshTunnel.describeReadinessCause({
         _tag: "HttpClientError",
         message: "Backend readiness probe failed.",
         reason: "authentication failed",
@@ -276,9 +478,47 @@ describe("ssh tunnel scripts", () => {
       }),
       {
         _tag: "HttpClientError",
-        message: "Backend readiness probe failed.",
-        reason: "authentication failed",
-        cause: "upstream closed",
+        reason: { type: "string" },
+        cause: { type: "string" },
+      },
+    );
+
+    const cyclicCause: { readonly _tag: string; cause?: unknown } = { _tag: "CyclicCause" };
+    cyclicCause.cause = cyclicCause;
+    assert.include(flattenedLogText(SshTunnel.describeReadinessCause(cyclicCause)), "truncated");
+  });
+
+  it("preserves structured readiness attributes in diagnostic output", () => {
+    assert.deepEqual(
+      SshTunnel.describeReadinessCause(
+        new SshReadinessProbeTimeoutError({
+          request: {
+            protocol: "http:",
+            hostname: "127.0.0.1",
+            port: "41773",
+            urlLength: 28,
+            pathnameLength: 6,
+            hasQuery: false,
+            hasFragment: false,
+          },
+          timeoutMs: 250,
+          attempt: 3,
+        }),
+      ),
+      {
+        _tag: "SshReadinessProbeTimeoutError",
+        request: {
+          protocol: "http:",
+          hostname: "127.0.0.1",
+          port: "41773",
+          urlLength: 28,
+          pathnameLength: 6,
+          hasQuery: false,
+          hasFragment: false,
+        },
+        timeoutMs: 250,
+        attempt: 3,
+        message: "Backend readiness probe exceeded 250ms at http://127.0.0.1:41773.",
       },
     );
   });
@@ -305,7 +545,7 @@ describe("ssh tunnel scripts", () => {
     const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
     const processLayer = Layer.merge(NodeServices.layer, spawnerLayer);
     return Effect.gen(function* () {
-      const result = yield* issueRemotePairingToken(target);
+      const result = yield* SshTunnel.issueRemotePairingToken(target);
       assert.equal(result.credential, "LCL4R2TPHDKQ");
     }).pipe(Effect.provide(processLayer));
   });
@@ -333,15 +573,201 @@ describe("ssh tunnel scripts", () => {
     const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
     const processLayer = Layer.merge(NodeServices.layer, spawnerLayer);
     return Effect.gen(function* () {
-      const result = yield* issueRemotePairingToken(target);
+      const result = yield* SshTunnel.issueRemotePairingToken(target);
       assert.equal(result.credential, "LCL4R2TPHDKQ");
     }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("does not copy pairing command output into parse errors", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+    const output = '{"credential":"pairing-secret"';
+    const spawner = ChildProcessSpawner.make(() => Effect.succeed(makeSuccessfulProcess(output)));
+    const processLayer = Layer.merge(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      const result = yield* Effect.result(SshTunnel.issueRemotePairingToken(target));
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.instanceOf(result.failure, SshPairingOutputParseError);
+        assert.equal(result.failure.target, "devbox");
+        assert.equal(result.failure.stdoutBytes, new TextEncoder().encode(output).length);
+        assert.isFalse("stdout" in result.failure);
+        assert.notInclude(result.failure.message, "pairing-secret");
+        assert.exists(result.failure.cause);
+      }
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("retries authentication when a spawn error wraps an SSH auth failure", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+    const authFailure = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "ChildProcess",
+      method: "spawn",
+      pathOrDescriptor: "ssh",
+      description: "Permission denied (publickey,password).",
+    });
+    const promptAttempts: number[] = [];
+    let launchAttempts = 0;
+    const spawner = ChildProcessSpawner.make((command) => {
+      const args = commandArgs(command);
+      if (args.includes("sh") && args.includes("--")) {
+        launchAttempts += 1;
+        if (launchAttempts === 1) {
+          return Effect.fail(authFailure);
+        }
+        return Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n'));
+      }
+      if (args.includes("-N")) {
+        return Effect.succeed(makeRunningProcess(() => {}));
+      }
+      return Effect.succeed(makeSuccessfulProcess("\n"));
+    });
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshAuth.layer({
+        isAvailable: true,
+        request: (request) =>
+          Effect.sync(() => {
+            promptAttempts.push(request.attempt);
+            return "secret";
+          }),
+      }),
+      SshTunnel.layer(),
+    );
+
+    return Effect.gen(function* () {
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      const environment = yield* manager.ensureEnvironment(target);
+
+      assert.equal(environment.remotePort, 3773);
+      assert.equal(launchAttempts, 2);
+      assert.deepEqual(promptAttempts, [1]);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("retries authentication after a permission-denied SSH exit", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+    const promptAttempts: number[] = [];
+    let launchAttempts = 0;
+    const spawner = ChildProcessSpawner.make((command) => {
+      const args = commandArgs(command);
+      if (args.includes("sh") && args.includes("--")) {
+        launchAttempts += 1;
+        if (launchAttempts === 1) {
+          return Effect.succeed(
+            makeFailedProcess({
+              stderr: "julius@devbox: Permission denied (publickey,password).\n",
+            }),
+          );
+        }
+        return Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n'));
+      }
+      if (args.includes("-N")) {
+        return Effect.succeed(makeRunningProcess(() => {}));
+      }
+      return Effect.succeed(makeSuccessfulProcess("\n"));
+    });
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshAuth.layer({
+        isAvailable: true,
+        request: (request) =>
+          Effect.sync(() => {
+            promptAttempts.push(request.attempt);
+            return "secret";
+          }),
+      }),
+      SshTunnel.layer(),
+    );
+
+    return Effect.gen(function* () {
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      const environment = yield* manager.ensureEnvironment(target);
+
+      assert.equal(environment.remotePort, 3773);
+      assert.equal(launchAttempts, 2);
+      assert.deepEqual(promptAttempts, [1]);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("uses the hostname to identify tunnel failures when the alias is empty", () => {
+    const target = {
+      alias: "",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+    const spawnFailure = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "ChildProcess",
+      method: "spawn",
+      pathOrDescriptor: "ssh",
+    });
+    const spawner = ChildProcessSpawner.make((command) => {
+      const args = commandArgs(command);
+      if (args.includes("sh") && args.includes("--")) {
+        return Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n'));
+      }
+      if (args.includes("-N")) {
+        return Effect.fail(spawnFailure);
+      }
+      return Effect.succeed(makeSuccessfulProcess("\n"));
+    });
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshAuth.disabledLayer,
+      SshTunnel.layer(),
+    );
+
+    return Effect.gen(function* () {
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      const result = yield* Effect.result(manager.ensureEnvironment(target));
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.instanceOf(result.failure, SshTunnelSpawnError);
+        assert.equal(result.failure.target, "devbox.example.com");
+        assert.strictEqual(result.failure.cause, spawnFailure);
+      }
+    }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
   it.effect("closes the tunnel scope and starts fresh after disconnect", () => {
     const spawnedCommands: Array<ReadonlyArray<string>> = [];
     let tunnelKillCount = 0;
     let stopCommandCount = 0;
+    const capturedLogs: Array<ReadonlyArray<unknown>> = [];
+    const logger = Logger.make(({ message }) => {
+      capturedLogs.push(Array.isArray(message) ? message : [message]);
+    });
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.sync(() => {
         const args = commandArgs(command);
@@ -366,8 +792,9 @@ describe("ssh tunnel scripts", () => {
       Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Layer.succeed(HttpClient.HttpClient, testHttpClient),
       Layer.succeed(NetService.NetService, testNetService),
-      SshPasswordPrompt.disabledLayer,
-      SshEnvironmentManager.layer(),
+      SshAuth.disabledLayer,
+      SshTunnel.layer(),
+      Logger.layer([logger], { mergeWithExisting: false }),
     );
     const target = {
       alias: "devbox",
@@ -377,7 +804,7 @@ describe("ssh tunnel scripts", () => {
     } as const;
 
     return Effect.gen(function* () {
-      const manager = yield* SshEnvironmentManager;
+      const manager = yield* SshTunnel.SshEnvironmentManager;
 
       const first = yield* manager.ensureEnvironment(target);
       assert.equal(first.httpBaseUrl, "http://127.0.0.1:41773/");
@@ -390,6 +817,10 @@ describe("ssh tunnel scripts", () => {
 
       assert.equal(spawnedCommands.filter((args) => args.includes("-N")).length, 2);
       assert.equal(tunnelKillCount, 1);
+
+      const logText = flattenedLogText(capturedLogs);
+      assert.include(logText, "httpBaseUrlDiagnostics");
+      assert.notInclude(logText, "httpBaseUrl\nhttp://");
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 });

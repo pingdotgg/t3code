@@ -6,7 +6,6 @@ import type {
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
@@ -14,10 +13,16 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+
 import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
+import { getUrlDiagnostics } from "./urlDiagnostics.ts";
 
 export const CLOUDFLARED_VERSION = "2026.5.2";
 export const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
@@ -44,23 +49,248 @@ export type RelayClientStatus =
 
 export type AvailableRelayClient = Extract<RelayClientStatus, { readonly status: "available" }>;
 
-export class RelayClientInstallError extends Data.TaggedError("RelayClientInstallError")<{
-  readonly reason:
-    | "download_failed"
-    | "invalid_checksum"
-    | "install_locked"
-    | "override_missing"
-    | "unsupported_platform"
-    | "validation_failed"
-    | "write_failed";
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+const RelayClientUrlDiagnosticFields = {
+  urlInputLength: Schema.Number,
+  urlProtocol: Schema.optional(Schema.String),
+  urlHostname: Schema.optional(Schema.String),
+};
 
-class CloudflaredCommandError extends Data.TaggedError("CloudflaredCommandError")<{
-  readonly command: string;
-  readonly exitCode: number;
-}> {}
+function relayClientUrlDiagnostics(input: string) {
+  const diagnostics = getUrlDiagnostics(input);
+  return {
+    urlInputLength: diagnostics.inputLength,
+    ...(diagnostics.protocol === undefined ? {} : { urlProtocol: diagnostics.protocol }),
+    ...(diagnostics.hostname === undefined ? {} : { urlHostname: diagnostics.hostname }),
+  };
+}
+
+export class RelayClientDownloadError extends Schema.TaggedErrorClass<RelayClientDownloadError>()(
+  "RelayClientDownloadError",
+  {
+    ...RelayClientUrlDiagnosticFields,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Could not download the relay client.";
+  }
+}
+
+export class RelayClientDownloadReadError extends Schema.TaggedErrorClass<RelayClientDownloadReadError>()(
+  "RelayClientDownloadReadError",
+  {
+    ...RelayClientUrlDiagnosticFields,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Could not read the downloaded relay client binary.";
+  }
+}
+
+export class RelayClientChecksumMismatchError extends Schema.TaggedErrorClass<RelayClientChecksumMismatchError>()(
+  "RelayClientChecksumMismatchError",
+  {
+    expectedChecksum: Schema.String,
+    actualChecksum: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "Downloaded relay client checksum did not match the pinned release.";
+  }
+}
+
+export class RelayClientInstallLockedError extends Schema.TaggedErrorClass<RelayClientInstallLockedError>()(
+  "RelayClientInstallLockedError",
+  {
+    lockPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "Another relay client installation is still in progress.";
+  }
+}
+
+export class RelayClientOverrideMissingError extends Schema.TaggedErrorClass<RelayClientOverrideMissingError>()(
+  "RelayClientOverrideMissingError",
+  {
+    executablePath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `${CLOUDFLARED_PATH_ENV_NAME} does not point to an executable file.`;
+  }
+}
+
+export class RelayClientUnsupportedPlatformError extends Schema.TaggedErrorClass<RelayClientUnsupportedPlatformError>()(
+  "RelayClientUnsupportedPlatformError",
+  {
+    platform: Schema.String,
+    arch: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `T3 Code does not provide a managed relay client binary for ${this.platform}-${this.arch}.`;
+  }
+}
+
+export class RelayClientChecksumVerificationError extends Schema.TaggedErrorClass<RelayClientChecksumVerificationError>()(
+  "RelayClientChecksumVerificationError",
+  {
+    ...RelayClientUrlDiagnosticFields,
+    expectedChecksum: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Could not verify the downloaded relay client checksum.";
+  }
+}
+
+export class RelayClientExecutableValidationError extends Schema.TaggedErrorClass<RelayClientExecutableValidationError>()(
+  "RelayClientExecutableValidationError",
+  {
+    executablePath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "The downloaded relay client binary did not run.";
+  }
+}
+
+export class RelayClientDirectoryCreateError extends Schema.TaggedErrorClass<RelayClientDirectoryCreateError>()(
+  "RelayClientDirectoryCreateError",
+  {
+    directoryPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Could not create the relay client tool directory.";
+  }
+}
+
+export class RelayClientInstallLockAcquireError extends Schema.TaggedErrorClass<RelayClientInstallLockAcquireError>()(
+  "RelayClientInstallLockAcquireError",
+  {
+    lockPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Could not acquire the relay client installation lock.";
+  }
+}
+
+export class RelayClientDownloadWriteError extends Schema.TaggedErrorClass<RelayClientDownloadWriteError>()(
+  "RelayClientDownloadWriteError",
+  {
+    archivePath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Could not write the relay client download.";
+  }
+}
+
+export class RelayClientArchiveExtractError extends Schema.TaggedErrorClass<RelayClientArchiveExtractError>()(
+  "RelayClientArchiveExtractError",
+  {
+    archivePath: Schema.String,
+    destinationDirectory: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Could not extract the relay client.";
+  }
+}
+
+export class RelayClientExecutablePermissionError extends Schema.TaggedErrorClass<RelayClientExecutablePermissionError>()(
+  "RelayClientExecutablePermissionError",
+  {
+    executablePath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Could not make the relay client executable.";
+  }
+}
+
+export class RelayClientStageError extends Schema.TaggedErrorClass<RelayClientStageError>()(
+  "RelayClientStageError",
+  {
+    sourcePath: Schema.String,
+    destinationPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Could not stage the relay client.";
+  }
+}
+
+export class RelayClientActivationError extends Schema.TaggedErrorClass<RelayClientActivationError>()(
+  "RelayClientActivationError",
+  {
+    sourcePath: Schema.String,
+    destinationPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Could not activate the relay client.";
+  }
+}
+
+export class RelayClientInstallWriteError extends Schema.TaggedErrorClass<RelayClientInstallWriteError>()(
+  "RelayClientInstallWriteError",
+  {
+    managedPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Could not install the relay client.";
+  }
+}
+
+export const RelayClientInstallError = Schema.Union([
+  RelayClientDownloadError,
+  RelayClientDownloadReadError,
+  RelayClientChecksumMismatchError,
+  RelayClientInstallLockedError,
+  RelayClientOverrideMissingError,
+  RelayClientUnsupportedPlatformError,
+  RelayClientChecksumVerificationError,
+  RelayClientExecutableValidationError,
+  RelayClientDirectoryCreateError,
+  RelayClientInstallLockAcquireError,
+  RelayClientDownloadWriteError,
+  RelayClientArchiveExtractError,
+  RelayClientExecutablePermissionError,
+  RelayClientStageError,
+  RelayClientActivationError,
+  RelayClientInstallWriteError,
+]);
+export type RelayClientInstallError = typeof RelayClientInstallError.Type;
+
+class CloudflaredCommandError extends Schema.TaggedErrorClass<CloudflaredCommandError>()(
+  "CloudflaredCommandError",
+  {
+    command: Schema.String,
+    exitCode: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `${this.command} exited with code ${this.exitCode}.`;
+  }
+}
+
+export const isRelayClientInstallError = Schema.is(RelayClientInstallError);
 
 export interface CloudflaredReleaseAsset {
   readonly url: string;
@@ -123,17 +353,16 @@ export interface CloudflaredRelayClientOptions {
   readonly releaseAsset?: CloudflaredReleaseAsset;
 }
 
-export interface RelayClientShape {
-  readonly resolve: Effect.Effect<RelayClientStatus>;
-  readonly install: Effect.Effect<AvailableRelayClient, RelayClientInstallError>;
-  readonly installWithProgress: (
-    report: (event: RelayClientInstallProgressEvent) => Effect.Effect<void>,
-  ) => Effect.Effect<AvailableRelayClient, RelayClientInstallError>;
-}
-
-export class RelayClient extends Context.Service<RelayClient, RelayClientShape>()(
-  "@t3tools/shared/relayClient",
-) {}
+export class RelayClient extends Context.Service<
+  RelayClient,
+  {
+    readonly resolve: Effect.Effect<RelayClientStatus>;
+    readonly install: Effect.Effect<AvailableRelayClient, RelayClientInstallError>;
+    readonly installWithProgress: (
+      report: (event: RelayClientInstallProgressEvent) => Effect.Effect<void>,
+    ) => Effect.Effect<AvailableRelayClient, RelayClientInstallError>;
+  }
+>()("@t3tools/shared/relayClient") {}
 
 function executableFileName(platform: NodeJS.Platform): string {
   return platform === "win32" ? "cloudflared.exe" : "cloudflared";
@@ -150,29 +379,10 @@ function isAlreadyExists(error: PlatformError.PlatformError): boolean {
   return error.reason._tag === "AlreadyExists";
 }
 
-const wrapInstallFailure =
-  (
-    reason: RelayClientInstallError["reason"],
-    message: string,
-  ): (<E, R>(
-    effect: Effect.Effect<void, E, R>,
-  ) => Effect.Effect<void, RelayClientInstallError, R>) =>
-  (effect) =>
-    effect.pipe(
-      Effect.mapError(
-        (cause) =>
-          new RelayClientInstallError({
-            reason,
-            message,
-            cause,
-          }),
-      ),
-    );
-
 export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function* (
   options: CloudflaredRelayClientOptions,
 ): Effect.fn.Return<
-  RelayClientShape,
+  RelayClient["Service"],
   never,
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -221,7 +431,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     return null;
   });
 
-  const resolve: RelayClientShape["resolve"] = Effect.gen(function* () {
+  const resolve: RelayClient["Service"]["resolve"] = Effect.gen(function* () {
     const config = yield* loadCloudflaredConfig;
     if (Option.isSome(config.executableOverride)) {
       return (yield* isExecutableFile(config.executableOverride.value))
@@ -286,9 +496,8 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.mapError(
         (cause) =>
-          new RelayClientInstallError({
-            reason: "download_failed",
-            message: "Could not download the relay client.",
+          new RelayClientDownloadError({
+            ...relayClientUrlDiagnostics(asset.url),
             cause,
           }),
       ),
@@ -297,9 +506,8 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       yield* response.arrayBuffer.pipe(
         Effect.mapError(
           (cause) =>
-            new RelayClientInstallError({
-              reason: "download_failed",
-              message: "Could not read the downloaded relay client binary.",
+            new RelayClientDownloadReadError({
+              ...relayClientUrlDiagnostics(asset.url),
               cause,
             }),
         ),
@@ -309,17 +517,18 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     const checksum = yield* crypto.digest("SHA-256", bytes).pipe(
       Effect.mapError(
         (cause) =>
-          new RelayClientInstallError({
-            reason: "validation_failed",
-            message: "Could not verify the downloaded relay client checksum.",
+          new RelayClientChecksumVerificationError({
+            ...relayClientUrlDiagnostics(asset.url),
+            expectedChecksum: asset.sha256,
             cause,
           }),
       ),
     );
-    if (Encoding.encodeHex(checksum) !== asset.sha256) {
-      return yield* new RelayClientInstallError({
-        reason: "invalid_checksum",
-        message: "Downloaded relay client checksum did not match the pinned release.",
+    const actualChecksum = Encoding.encodeHex(checksum);
+    if (actualChecksum !== asset.sha256) {
+      return yield* new RelayClientChecksumMismatchError({
+        expectedChecksum: asset.sha256,
+        actualChecksum,
       });
     }
     return bytes;
@@ -346,9 +555,8 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       }
       yield* Effect.sleep(INSTALL_LOCK_RETRY_DELAY);
     }
-    return yield* new RelayClientInstallError({
-      reason: "install_locked",
-      message: "Another relay client installation is still in progress.",
+    return yield* new RelayClientInstallLockedError({
+      lockPath,
     });
   });
 
@@ -360,36 +568,39 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     if (existing.status === "available") return existing;
     const config = yield* loadCloudflaredConfig;
     if (Option.isSome(config.executableOverride)) {
-      return yield* new RelayClientInstallError({
-        reason: "override_missing",
-        message: `${CLOUDFLARED_PATH_ENV_NAME} does not point to an executable file.`,
+      return yield* new RelayClientOverrideMissingError({
+        executablePath: config.executableOverride.value,
       });
     }
     if (!releaseAsset) {
-      return yield* new RelayClientInstallError({
-        reason: "unsupported_platform",
-        message: `T3 Code does not provide a managed relay client binary for ${platform}-${arch}.`,
+      return yield* new RelayClientUnsupportedPlatformError({
+        platform,
+        arch,
       });
     }
 
     const managedDirectory = path.dirname(managedPath);
     const lockPath = `${managedPath}.lock`;
-    yield* fileSystem
-      .makeDirectory(managedDirectory, { recursive: true })
-      .pipe(
-        wrapInstallFailure("write_failed", "Could not create the relay client tool directory."),
-      );
-    yield* report("waiting_for_lock");
-    yield* acquireInstallLock(lockPath).pipe(
-      Effect.catchTag("PlatformError", (cause) =>
-        Effect.fail(
-          new RelayClientInstallError({
-            reason: "write_failed",
-            message: "Could not acquire the relay client installation lock.",
+    yield* fileSystem.makeDirectory(managedDirectory, { recursive: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new RelayClientDirectoryCreateError({
+            directoryPath: managedDirectory,
             cause,
           }),
-        ),
       ),
+    );
+    yield* report("waiting_for_lock");
+    yield* acquireInstallLock(lockPath).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          Effect.fail(
+            new RelayClientInstallLockAcquireError({
+              lockPath,
+              cause,
+            }),
+          ),
+      }),
     );
     return yield* Effect.gen(function* () {
       const afterLock = yield* resolve;
@@ -405,37 +616,74 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       );
       const download = yield* downloadAsset(releaseAsset, report);
       yield* report("installing");
-      yield* fileSystem
-        .writeFile(archivePath, download)
-        .pipe(wrapInstallFailure("write_failed", "Could not write the relay client download."));
+      yield* fileSystem.writeFile(archivePath, download).pipe(
+        Effect.mapError(
+          (cause) =>
+            new RelayClientDownloadWriteError({
+              archivePath,
+              cause,
+            }),
+        ),
+      );
 
       const executablePath = path.join(tempDirectory, executableFileName(platform));
       if (releaseAsset.archive === "tgz") {
         yield* runCommand("tar", ["-xzf", archivePath, "-C", tempDirectory]).pipe(
-          wrapInstallFailure("write_failed", "Could not extract the relay client."),
+          Effect.mapError(
+            (cause) =>
+              new RelayClientArchiveExtractError({
+                archivePath,
+                destinationDirectory: tempDirectory,
+                cause,
+              }),
+          ),
         );
       }
       if (platform !== "win32") {
-        yield* fileSystem
-          .chmod(executablePath, 0o755)
-          .pipe(wrapInstallFailure("write_failed", "Could not make the relay client executable."));
+        yield* fileSystem.chmod(executablePath, 0o755).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RelayClientExecutablePermissionError({
+                executablePath,
+                cause,
+              }),
+          ),
+        );
       }
       yield* report("validating");
       yield* runCommand(executablePath, ["--version"]).pipe(
-        wrapInstallFailure("validation_failed", "The downloaded relay client binary did not run."),
+        Effect.mapError(
+          (cause) =>
+            new RelayClientExecutableValidationError({
+              executablePath,
+              cause,
+            }),
+        ),
       );
 
       const stagedPath = `${managedPath}.${yield* crypto.randomUUIDv4}.tmp`;
       yield* report("activating");
-      yield* fileSystem
-        .rename(executablePath, stagedPath)
-        .pipe(wrapInstallFailure("write_failed", "Could not stage the relay client."));
-      yield* fileSystem
-        .rename(stagedPath, managedPath)
-        .pipe(
-          wrapInstallFailure("write_failed", "Could not activate the relay client."),
-          Effect.ensuring(fileSystem.remove(stagedPath, { force: true }).pipe(Effect.ignore)),
-        );
+      yield* fileSystem.rename(executablePath, stagedPath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new RelayClientStageError({
+              sourcePath: executablePath,
+              destinationPath: stagedPath,
+              cause,
+            }),
+        ),
+      );
+      yield* fileSystem.rename(stagedPath, managedPath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new RelayClientActivationError({
+              sourcePath: stagedPath,
+              destinationPath: managedPath,
+              cause,
+            }),
+        ),
+        Effect.ensuring(fileSystem.remove(stagedPath, { force: true }).pipe(Effect.ignore)),
+      );
       return {
         status: "available",
         executablePath: managedPath,
@@ -445,20 +693,20 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     }).pipe(
       Effect.scoped,
       Effect.ensuring(fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore)),
-      Effect.catch((cause) =>
-        cause instanceof RelayClientInstallError
-          ? Effect.fail(cause)
-          : Effect.fail(
-              new RelayClientInstallError({
-                reason: "write_failed",
-                message: "Could not install the relay client.",
-                cause,
-              }),
-            ),
+      Effect.catch(
+        (cause): Effect.Effect<never, RelayClientInstallError> =>
+          isRelayClientInstallError(cause)
+            ? Effect.fail(cause)
+            : Effect.fail(
+                new RelayClientInstallWriteError({
+                  managedPath,
+                  cause,
+                }),
+              ),
       ),
     );
   });
-  const installWithProgress: RelayClientShape["installWithProgress"] = (report) =>
+  const installWithProgress: RelayClient["Service"]["installWithProgress"] = (report) =>
     installSemaphore.withPermit(
       installUnlocked((stage) =>
         report({

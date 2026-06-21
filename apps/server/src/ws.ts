@@ -42,6 +42,7 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   RelayClientInstallFailedError,
+  type RelayClientInstallFailureReason,
   type RelayClientInstallProgressEvent,
   OrchestrationReplayEventsError,
   type FilesystemBrowseFailure,
@@ -113,6 +114,36 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { catchEnvironmentAuthenticationErrors } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+
+function relayClientInstallFailureReason(
+  error: RelayClient.RelayClientInstallError,
+): RelayClientInstallFailureReason {
+  switch (error._tag) {
+    case "RelayClientDownloadError":
+    case "RelayClientDownloadReadError":
+      return "download_failed";
+    case "RelayClientChecksumMismatchError":
+      return "invalid_checksum";
+    case "RelayClientInstallLockedError":
+      return "install_locked";
+    case "RelayClientOverrideMissingError":
+      return "override_missing";
+    case "RelayClientUnsupportedPlatformError":
+      return "unsupported_platform";
+    case "RelayClientChecksumVerificationError":
+    case "RelayClientExecutableValidationError":
+      return "validation_failed";
+    case "RelayClientDirectoryCreateError":
+    case "RelayClientInstallLockAcquireError":
+    case "RelayClientDownloadWriteError":
+    case "RelayClientArchiveExtractError":
+    case "RelayClientExecutablePermissionError":
+    case "RelayClientStageError":
+    case "RelayClientActivationError":
+    case "RelayClientInstallWriteError":
+      return "write_failed";
+  }
+}
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -432,25 +463,20 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const relayClient = yield* RelayClient.RelayClient;
-      const authorizationError = (requiredScope: AuthEnvironmentScope) =>
-        new EnvironmentAuthorizationError({
-          message: `The authenticated token is missing required scope: ${requiredScope}.`,
-          requiredScope,
-        });
       const authorizeEffect = <A, E, R>(
         requiredScope: AuthEnvironmentScope,
         effect: Effect.Effect<A, E, R>,
       ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
         currentSession.scopes.includes(requiredScope)
           ? effect
-          : Effect.fail(authorizationError(requiredScope));
+          : Effect.fail(new EnvironmentAuthorizationError({ requiredScope }));
       const authorizeStream = <A, E, R>(
         requiredScope: AuthEnvironmentScope,
         stream: Stream.Stream<A, E, R>,
       ): Stream.Stream<A, E | EnvironmentAuthorizationError, R> =>
         currentSession.scopes.includes(requiredScope)
           ? stream
-          : Stream.fail(authorizationError(requiredScope));
+          : Stream.fail(new EnvironmentAuthorizationError({ requiredScope }));
       const requiredScopeForMethod = (method: string): AuthEnvironmentScope => {
         const requiredScope = RPC_REQUIRED_SCOPE.get(method);
         if (requiredScope === undefined) {
@@ -1283,6 +1309,13 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                 relayClient
                   .installWithProgress((event) => Queue.offer(queue, event).pipe(Effect.asVoid))
                   .pipe(
+                    Effect.mapError(
+                      (error) =>
+                        new RelayClientInstallFailedError({
+                          reason: relayClientInstallFailureReason(error),
+                          cause: error,
+                        }),
+                    ),
                     Effect.flatMap((status) =>
                       Queue.offer(queue, {
                         type: "complete",
@@ -1290,14 +1323,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                       }),
                     ),
                     Effect.catchTags({
-                      RelayClientInstallError: (error) =>
-                        Queue.fail(
-                          queue,
-                          new RelayClientInstallFailedError({
-                            reason: error.reason,
-                            message: error.message,
-                          }),
-                        ),
+                      RelayClientInstallFailedError: (error) => Queue.fail(queue, error),
                     }),
                     Effect.andThen(Queue.end(queue)),
                     Effect.forkScoped,

@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 
@@ -34,6 +35,14 @@ interface ElectronAppCalls {
   readonly setAboutPanelOptions: Array<Electron.AboutPanelOptionsOptions>;
   readonly setDockIcon: string[];
   readonly setName: string[];
+}
+
+function flattenedLogText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value !== "object" || value === null) return String(value);
+  return Object.entries(value)
+    .flatMap(([key, nested]) => [key, flattenedLogText(nested)])
+    .join("\n");
 }
 
 const makeElectronAppLayer = (calls: ElectronAppCalls) =>
@@ -123,7 +132,7 @@ const withIdentity = <A, E, R>(
         Layer.provideMerge(
           FileSystem.layerNoop({
             exists: (path) =>
-              input.legacyPathProbeError
+              path.includes("T3 Code (Alpha)") && input.legacyPathProbeError !== undefined
                 ? Effect.fail(input.legacyPathProbeError)
                 : Effect.succeed(
                     input.legacyPathExists === true && path.includes("T3 Code (Alpha)"),
@@ -153,31 +162,32 @@ describe("DesktopAppIdentity", () => {
     ),
   );
 
-  it.effect("preserves failures while inspecting the legacy userData path", () => {
-    const legacyPath = "/Users/alice/Library/Application Support/T3 Code (Alpha)";
-    const cause = PlatformError.systemError({
+  it.effect("falls back and reports a failed legacy userData path probe", () => {
+    const probeError = PlatformError.systemError({
       _tag: "PermissionDenied",
       module: "FileSystem",
       method: "exists",
-      description: "permission denied",
-      pathOrDescriptor: legacyPath,
+      pathOrDescriptor: "/Users/alice/Library/Application Support/T3 Code (Alpha)",
+    });
+    const capturedLogs: Array<ReadonlyArray<unknown>> = [];
+    const logger = Logger.make(({ message }) => {
+      capturedLogs.push(Array.isArray(message) ? message : [message]);
     });
 
     return withIdentity(
       Effect.gen(function* () {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
-        const error = yield* identity.resolveUserDataPath.pipe(Effect.flip);
+        const userDataPath = yield* identity.resolveUserDataPath;
 
-        assert.instanceOf(error, DesktopAppIdentity.DesktopUserDataPathResolutionError);
-        assert.equal(error.legacyPath, legacyPath);
-        assert.strictEqual(error.cause, cause);
-        assert.equal(
-          error.message,
-          `Failed to inspect legacy desktop user-data path at "${legacyPath}".`,
-        );
+        assert.equal(userDataPath, "/Users/alice/Library/Application Support/t3code");
+        const logText = flattenedLogText(capturedLogs);
+        assert.include(logText, "desktop.appIdentity.legacyUserDataProbe.failed");
+        assert.include(logText, "/Users/alice/Library/Application Support/T3 Code (Alpha)");
+        assert.include(logText, "/Users/alice/Library/Application Support/t3code");
+        assert.include(logText, "PermissionDenied");
       }),
-      { legacyPathProbeError: cause },
-    );
+      { legacyPathProbeError: probeError },
+    ).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
   });
 
   it.effect("configures app identity from the environment commit override", () => {

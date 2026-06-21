@@ -3,7 +3,7 @@ import {
   fetchRemoteSessionState,
   issueRemoteWebSocketTicket,
   isRemoteEnvironmentAuthUndeclaredStatusError,
-  type RemoteEnvironmentAuthError,
+  RemoteEnvironmentAuthError,
 } from "@t3tools/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import {
@@ -26,9 +26,8 @@ import {
   AuthSessionState,
   AuthWebSocketTicketResult,
 } from "@t3tools/contracts";
-import { SshHttpBridgeError } from "@t3tools/ssh/errors";
+import { SshHttpBridgeError, type SshPasswordPromptError } from "@t3tools/ssh/errors";
 import { resolveLoopbackSshHttpBaseUrl } from "@t3tools/ssh/tunnel";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -37,13 +36,19 @@ import * as DesktopIpc from "../DesktopIpc.ts";
 import * as DesktopSshEnvironment from "../../ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "../../ssh/DesktopSshPasswordPrompts.ts";
 
-type DesktopSshEnvironmentRequestOperation =
-  | "fetch-environment-descriptor"
-  | "bootstrap-bearer-session"
-  | "fetch-session-state"
-  | "issue-websocket-ticket";
+const DesktopSshEnvironmentRequestOperation = Schema.Literals([
+  "fetch-environment-descriptor",
+  "bootstrap-bearer-session",
+  "fetch-session-state",
+  "issue-websocket-ticket",
+]);
+type DesktopSshEnvironmentRequestOperation = typeof DesktopSshEnvironmentRequestOperation.Type;
 
-type DesktopSshEnvironmentRequestCause = RemoteEnvironmentAuthError | SshHttpBridgeError;
+const DesktopSshEnvironmentRequestCause = Schema.Union([
+  RemoteEnvironmentAuthError,
+  SshHttpBridgeError,
+]);
+type DesktopSshEnvironmentRequestCause = typeof DesktopSshEnvironmentRequestCause.Type;
 
 const desktopSshPasswordPromptCancellationReasons = {
   DesktopSshPromptCancelledError: "user-cancelled",
@@ -52,16 +57,31 @@ const desktopSshPasswordPromptCancellationReasons = {
   DesktopSshPromptTimedOutError: "timed-out",
 } as const;
 
+function handleDesktopSshPasswordPromptCancellation(error: SshPasswordPromptError) {
+  return DesktopSshEnvironment.isDesktopSshPasswordPromptCancellation(error)
+    ? Effect.succeed(
+        new DesktopSshPasswordPromptCancellationError({
+          reason: desktopSshPasswordPromptCancellationReasons[error.cause._tag],
+          requestId: error.cause.requestId,
+          destination: error.cause.destination,
+          cause: error,
+        }),
+      )
+    : Effect.fail(error);
+}
+
 const isEnvironmentAuthInvalidError = Schema.is(EnvironmentAuthInvalidError);
 const isEnvironmentInternalError = Schema.is(EnvironmentInternalError);
 const isEnvironmentOperationForbiddenError = Schema.is(EnvironmentOperationForbiddenError);
 const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidError);
 const isEnvironmentScopeRequiredError = Schema.is(EnvironmentScopeRequiredError);
+const isSshHttpBridgeError = Schema.is(SshHttpBridgeError);
 
 function readSshHttpStatus(cause: DesktopSshEnvironmentRequestCause): number | null {
-  if (isRemoteEnvironmentAuthUndeclaredStatusError(cause) || cause instanceof SshHttpBridgeError) {
+  if (isRemoteEnvironmentAuthUndeclaredStatusError(cause)) {
     return cause.status ?? null;
   }
+  if (isSshHttpBridgeError(cause)) return null;
   if (isEnvironmentRequestInvalidError(cause)) {
     return 400;
   }
@@ -80,14 +100,15 @@ function readSshHttpStatus(cause: DesktopSshEnvironmentRequestCause): number | n
   return null;
 }
 
-export class DesktopSshEnvironmentRequestError extends Data.TaggedError(
+export class DesktopSshEnvironmentRequestError extends Schema.TaggedErrorClass<DesktopSshEnvironmentRequestError>()(
   "DesktopSshEnvironmentRequestError",
-)<{
-  readonly operation: DesktopSshEnvironmentRequestOperation;
-  readonly cause: DesktopSshEnvironmentRequestCause;
-  readonly sshHttpStatus: number | null;
-}> {
-  override get message() {
+  {
+    operation: DesktopSshEnvironmentRequestOperation,
+    cause: DesktopSshEnvironmentRequestCause,
+    sshHttpStatus: Schema.NullOr(Schema.Number),
+  },
+) {
+  override get message(): string {
     const prefix = this.sshHttpStatus === null ? "" : `[ssh_http:${this.sshHttpStatus}] `;
     return `${prefix}SSH remote API request failed during ${this.operation}.`;
   }
@@ -121,6 +142,9 @@ export const discoverSshHosts = DesktopIpc.makeIpcMethod({
   }),
 });
 
+// Electron forwards only the message from a rejected ipcRenderer.invoke promise to the renderer.
+// Preserve typed SSH errors at this boundary so that message stays structural while main-process
+// diagnostics retain the exact cause and error fields.
 export const ensureSshEnvironment = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.ENSURE_SSH_ENVIRONMENT_CHANNEL,
   payload: DesktopSshEnvironmentEnsureInputSchema,
@@ -132,17 +156,10 @@ export const ensureSshEnvironment = DesktopIpc.makeIpcMethod({
     const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
     return yield* sshEnvironment.ensureEnvironment(target, options).pipe(
       Effect.catchTags({
-        SshPasswordPromptError: (error) =>
-          DesktopSshEnvironment.isDesktopSshPasswordPromptCancellation(error)
-            ? Effect.succeed(
-                new DesktopSshPasswordPromptCancellationError({
-                  reason: desktopSshPasswordPromptCancellationReasons[error.cause._tag],
-                  requestId: error.cause.requestId,
-                  destination: error.cause.destination,
-                  cause: error,
-                }),
-              )
-            : Effect.fail(error),
+        SshPasswordPromptCancelledError: handleDesktopSshPasswordPromptCancellation,
+        SshPasswordPromptTimedOutError: handleDesktopSshPasswordPromptCancellation,
+        SshPasswordPromptWindowClosedError: handleDesktopSshPasswordPromptCancellation,
+        SshPasswordPromptServiceStoppedError: handleDesktopSshPasswordPromptCancellation,
       }),
     );
   }),

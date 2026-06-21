@@ -58,6 +58,26 @@ export class RelayClientInstallFailedError extends Schema.TaggedErrorClass<Relay
   "RelayClientInstallFailedError",
   {
     reason: RelayClientInstallFailureReasonSchema,
-    message: Schema.String,
   },
-) {}
+) {
+  // `cause` is intentionally retained only on the server-side error instance. It is not part of
+  // the RPC schema, so internal installation details cannot cross the transport boundary.
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: {
+    readonly reason: RelayClientInstallFailureReason;
+    readonly cause?: unknown;
+  }) {
+    super({ reason: props.reason });
+    if (props.cause !== undefined) {
+      Object.defineProperty(this, "cause", {
+        value: props.cause,
+        configurable: true,
+        writable: true,
+      });
+    }
+  }
+
+  override get message(): string {
+    return `Relay client installation failed (${this.reason}).`;
+  }
+}

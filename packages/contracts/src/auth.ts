@@ -300,10 +300,13 @@ export class AuthAccessStreamError extends Schema.TaggedErrorClass<AuthAccessStr
 export class EnvironmentAuthorizationError extends Schema.TaggedErrorClass<EnvironmentAuthorizationError>()(
   "EnvironmentAuthorizationError",
   {
-    message: Schema.String,
     requiredScope: AuthEnvironmentScope,
   },
-) {}
+) {
+  override get message(): string {
+    return `The authenticated token is missing required scope: ${this.requiredScope}.`;
+  }
+}
 
 export const AuthAccessStreamClientUpsertedEvent = Schema.Struct({
   version: Schema.Literal(1),

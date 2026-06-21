@@ -3,13 +3,14 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
-import * as Data from "effect/Data";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 
 import { HostProcessEnvironment, HostProcessPlatform } from "./hostProcess.ts";
-import * as Context from "effect/Context";
 
 const PATH_CAPTURE_START = "__T3CODE_PATH_START__";
 const PATH_CAPTURE_END = "__T3CODE_PATH_END__";
@@ -17,6 +18,19 @@ const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
+const ProcessPlatform = Schema.Literals([
+  "aix",
+  "android",
+  "darwin",
+  "freebsd",
+  "haiku",
+  "linux",
+  "openbsd",
+  "sunos",
+  "win32",
+  "cygwin",
+  "netbsd",
+]);
 
 type ExecFileSyncLike = (
   file: string,
@@ -43,10 +57,18 @@ export type CommandAvailabilityChecker = (
   options?: CommandAvailabilityOptions,
 ) => Effect.Effect<boolean, never, FileSystem.FileSystem | Path.Path>;
 
-export class CommandResolutionError extends Data.TaggedError("CommandResolutionError")<{
-  readonly command: string;
-  readonly reason: "not-found";
-}> {}
+export class CommandResolutionError extends Schema.TaggedErrorClass<CommandResolutionError>()(
+  "CommandResolutionError",
+  {
+    command: Schema.String,
+    platform: ProcessPlatform,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Could not resolve command ${JSON.stringify(this.command)} on ${this.platform}.`;
+  }
+}
 
 const WINDOWS_SHELL_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
 
@@ -495,10 +517,15 @@ const isExecutableFile = Effect.fn("shell.isExecutableFile")(function* (
   filePath: string,
   platform: NodeJS.Platform,
   windowsPathExtensions: ReadonlyArray<string>,
-): Effect.fn.Return<boolean, never, FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<boolean, PlatformError.PlatformError, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const stat = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
+  const stat = yield* fileSystem.stat(filePath).pipe(
+    Effect.catchIf(
+      (error) => error.reason._tag === "NotFound",
+      () => Effect.succeed(null),
+    ),
+  );
   if (stat === null || stat.type !== "File") return false;
 
   if (platform === "win32") {
@@ -524,19 +551,31 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     windowsPathExtensions,
     path.extname,
   );
+  let firstProbeFailure: PlatformError.PlatformError | undefined;
+  const probeCandidate = (candidatePath: string) =>
+    isExecutableFile(candidatePath, platform, windowsPathExtensions).pipe(
+      Effect.catch((cause) => {
+        firstProbeFailure ??= cause;
+        return Effect.succeed(false);
+      }),
+    );
 
   if (command.includes("/") || command.includes("\\")) {
     for (const candidate of commandCandidates) {
-      if (yield* isExecutableFile(candidate, platform, windowsPathExtensions)) {
+      if (yield* probeCandidate(candidate)) {
         return candidate;
       }
     }
-    return yield* new CommandResolutionError({ command, reason: "not-found" });
+    return yield* new CommandResolutionError({
+      command,
+      platform,
+      ...(firstProbeFailure === undefined ? {} : { cause: firstProbeFailure }),
+    });
   }
 
   const pathValue = resolvePathEnvironmentVariable(env);
   if (pathValue.length === 0) {
-    return yield* new CommandResolutionError({ command, reason: "not-found" });
+    return yield* new CommandResolutionError({ command, platform });
   }
   const pathEntries: string[] = [];
   for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
@@ -549,12 +588,16 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   for (const pathEntry of pathEntries) {
     for (const candidate of commandCandidates) {
       const candidatePath = path.join(pathEntry, candidate);
-      if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
+      if (yield* probeCandidate(candidatePath)) {
         return candidatePath;
       }
     }
   }
-  return yield* new CommandResolutionError({ command, reason: "not-found" });
+  return yield* new CommandResolutionError({
+    command,
+    platform,
+    ...(firstProbeFailure === undefined ? {} : { cause: firstProbeFailure }),
+  });
 });
 
 export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function* (
@@ -604,7 +647,9 @@ export const isCommandAvailable = Effect.fn("shell.isCommandAvailable")(function
 ) {
   return yield* resolveCommandPath(command, options).pipe(
     Effect.as(true),
-    Effect.catchTag("CommandResolutionError", () => Effect.succeed(false)),
+    Effect.catchTags({
+      CommandResolutionError: () => Effect.succeed(false),
+    }),
   );
 });
 

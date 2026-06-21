@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
@@ -13,26 +12,11 @@ export interface DesktopIconPaths {
   readonly png: Option.Option<string>;
 }
 
-export class DesktopAssetProbeError extends Schema.TaggedErrorClass<DesktopAssetProbeError>()(
-  "DesktopAssetProbeError",
-  {
-    fileName: Schema.String,
-    candidatePath: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Failed to probe desktop asset "${this.fileName}" at ${this.candidatePath}.`;
-  }
-}
-
 export class DesktopAssets extends Context.Service<
   DesktopAssets,
   {
     readonly iconPaths: Effect.Effect<DesktopIconPaths>;
-    readonly resolveResourcePath: (
-      fileName: string,
-    ) => Effect.Effect<Option.Option<string>, DesktopAssetProbeError>;
+    readonly resolveResourcePath: (fileName: string) => Effect.Effect<Option.Option<string>>;
   }
 >()("@t3tools/desktop/app/DesktopAssets") {}
 
@@ -40,20 +24,23 @@ const resolveResourcePath = Effect.fn("desktop.assets.resolveResourcePath")(func
   fileName: string,
 ): Effect.fn.Return<
   Option.Option<string>,
-  DesktopAssetProbeError,
+  never,
   FileSystem.FileSystem | DesktopEnvironment.DesktopEnvironment
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const candidates = environment.resolveResourcePathCandidates(fileName);
   for (const candidate of candidates) {
-    const exists = yield* fileSystem
-      .exists(candidate)
-      .pipe(
-        Effect.mapError(
-          (cause) => new DesktopAssetProbeError({ fileName, candidatePath: candidate, cause }),
-        ),
-      );
+    const exists = yield* fileSystem.exists(candidate).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("desktop.assets.resourceProbe.failed", {
+          fileName,
+          candidatePath: candidate,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
     if (exists) {
       return Option.some(candidate);
     }
@@ -65,7 +52,7 @@ const resolveIconPath = Effect.fn("desktop.assets.resolveIconPath")(function* (
   ext: keyof DesktopIconPaths,
 ): Effect.fn.Return<
   Option.Option<string>,
-  DesktopAssetProbeError,
+  never,
   FileSystem.FileSystem | DesktopEnvironment.DesktopEnvironment
 > {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -73,14 +60,14 @@ const resolveIconPath = Effect.fn("desktop.assets.resolveIconPath")(function* (
   if (environment.isDevelopment && environment.platform === "darwin" && ext === "png") {
     const developmentDockIconPath = environment.developmentDockIconPath;
     const developmentDockIconExists = yield* fileSystem.exists(developmentDockIconPath).pipe(
-      Effect.mapError(
-        (cause) =>
-          new DesktopAssetProbeError({
-            fileName: "icon.png",
-            candidatePath: developmentDockIconPath,
-            cause,
-          }),
+      Effect.tapError((cause) =>
+        Effect.logWarning("desktop.assets.resourceProbe.failed", {
+          fileName: "development-dock-icon",
+          candidatePath: developmentDockIconPath,
+          cause,
+        }),
       ),
+      Effect.orElseSucceed(() => false),
     );
     if (developmentDockIconExists) {
       return Option.some(developmentDockIconPath);

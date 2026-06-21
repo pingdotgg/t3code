@@ -3132,6 +3132,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(rpcError._tag, "EnvironmentAuthorizationError");
       if (rpcError._tag === "EnvironmentAuthorizationError") {
         assert.equal(rpcError.requiredScope, "orchestration:read");
+        assert.equal(
+          rpcError.message,
+          "The authenticated token is missing required scope: orchestration:read.",
+        );
       }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

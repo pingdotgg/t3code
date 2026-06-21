@@ -5,6 +5,8 @@ import type {
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
+import { getUrlDiagnostics } from "@t3tools/shared/urlDiagnostics";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -19,15 +21,12 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
-import {
-  buildSshChildEnvironment,
-  type SshAuthOptions,
-  SshPasswordPrompt,
-  isSshAuthFailure,
-} from "./auth.ts";
+import * as SshAuth from "./auth.ts";
 import {
   baseSshArgs,
   buildSshHostSpecEffect,
@@ -38,16 +37,38 @@ import {
   resolveSshTarget,
   runSshCommand,
   targetConnectionKey,
+  utf8ByteLength,
 } from "./command.ts";
 import {
+  SshAuthenticationHelperError,
+  SshCommandCancelledError,
   SshCommandError,
+  SshHttpBridgeInvalidUrlError,
+  SshHttpBridgeMissingUrlError,
+  SshHttpBridgeNonLoopbackUrlError,
   SshHttpBridgeError,
   SshInvalidTargetError,
+  SshLaunchInvalidPortError,
+  SshLaunchOutputParseError,
+  SshLaunchPortMissingError,
   SshLaunchError,
+  SshPairingCredentialMissingError,
+  SshPairingInvalidCredentialError,
+  SshPairingOutputParseError,
   SshPairingError,
+  SshPasswordPromptCancelledError,
+  SshPasswordPromptUnavailableError,
   SshPasswordPromptError,
+  SshReadinessProbeError,
+  SshReadinessProbeTimeoutError,
+  SshReadinessTimeoutError,
   SshReadinessError,
+  SshTunnelExitError,
+  SshTunnelMonitorError,
+  SshTunnelSpawnError,
 } from "./errors.ts";
+
+const isSshReadinessError = Schema.is(SshReadinessError);
 
 export const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
@@ -86,7 +107,7 @@ type SshEnvironmentEffectContext =
   | Path.Path
   | HttpClient.HttpClient
   | NetService.NetService
-  | SshPasswordPrompt;
+  | SshAuth.SshPasswordPrompt;
 
 type SshEnvironmentEffectError =
   | SshCommandError
@@ -96,15 +117,6 @@ type SshEnvironmentEffectError =
   | SshReadinessError
   | SshPasswordPromptError
   | NetService.NetError;
-
-function makeSshTunnelCancelledError(target: DesktopSshEnvironmentTarget): SshCommandError {
-  return new SshCommandError({
-    command: ["ssh"],
-    exitCode: null,
-    stderr: "",
-    message: `SSH environment connection was cancelled for ${target.alias || target.hostname}.`,
-  });
-}
 
 function sshTargetLogFields(target: DesktopSshEnvironmentTarget) {
   return {
@@ -129,7 +141,7 @@ interface SshAuthOperationInput<T> {
   readonly key: string;
   readonly target: DesktopSshEnvironmentTarget;
   readonly operation: (
-    authOptions: SshAuthOptions,
+    authOptions: SshAuth.SshAuthOptions,
   ) => Effect.Effect<T, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
 }
 
@@ -138,19 +150,25 @@ interface SshAuthAttemptInput<T> extends SshAuthOperationInput<T> {
   readonly authSecret: string | null;
 }
 
-export interface SshEnvironmentManagerShape {
-  readonly ensureEnvironment: (
-    target: DesktopSshEnvironmentTarget,
-    options?: { readonly issuePairingToken?: boolean },
-  ) => Effect.Effect<
-    DesktopSshEnvironmentBootstrap,
-    SshEnvironmentEffectError,
-    SshEnvironmentEffectContext
-  >;
-  readonly disconnectEnvironment: (
-    target: DesktopSshEnvironmentTarget,
-  ) => Effect.Effect<void, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
-}
+/**
+ * @effect-expect-leaking ChildProcessSpawner | FileSystem | HttpClient | NetService | Path | SshAuth.SshPasswordPrompt
+ */
+export class SshEnvironmentManager extends Context.Service<
+  SshEnvironmentManager,
+  {
+    readonly ensureEnvironment: (
+      target: DesktopSshEnvironmentTarget,
+      options?: { readonly issuePairingToken?: boolean },
+    ) => Effect.Effect<
+      DesktopSshEnvironmentBootstrap,
+      SshEnvironmentEffectError,
+      SshEnvironmentEffectContext
+    >;
+    readonly disconnectEnvironment: (
+      target: DesktopSshEnvironmentTarget,
+    ) => Effect.Effect<void, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
+  }
+>()("@t3tools/ssh/tunnel/SshEnvironmentManager") {}
 
 const RemoteLaunchResult = Schema.Struct({
   remotePort: Schema.Number,
@@ -208,11 +226,6 @@ function buildRemoteNodeEngineCheckScript(): string {
 (${remoteNodeEngineCheckMain.toString()})();`;
 }
 
-export function normalizeSshErrorMessage(stderr: string, fallbackMessage: string): string {
-  const cleaned = stderr.trim();
-  return cleaned.length > 0 ? cleaned : fallbackMessage;
-}
-
 function stripTrailingNewlines(value: string): string {
   return value.replace(/\n+$/u, "");
 }
@@ -232,31 +245,69 @@ function applyScriptPlaceholders(
   return result;
 }
 
-export function describeReadinessCause(cause: unknown): unknown {
-  if (cause instanceof SshReadinessError) {
+const SSH_FAILURE_DIAGNOSTIC_DEPTH = 6;
+
+function describeReadinessCauseAtDepth(cause: unknown, depth: number): unknown {
+  if (depth >= SSH_FAILURE_DIAGNOSTIC_DEPTH) return { truncated: true };
+  const describeNested = (nested: unknown) => describeReadinessCauseAtDepth(nested, depth + 1);
+  if (Cause.isCause(cause)) {
     return {
-      _tag: cause._tag,
+      reasons: cause.reasons.map((reason) => {
+        if (Cause.isFailReason(reason)) {
+          return { _tag: reason._tag, error: describeNested(reason.error) };
+        }
+        if (Cause.isDieReason(reason)) {
+          return { _tag: reason._tag, defect: describeNested(reason.defect) };
+        }
+        return { _tag: reason._tag, fiberId: reason.fiberId };
+      }),
+    };
+  }
+  if (isSshReadinessError(cause)) {
+    const { cause: nestedCause, ...attributes } = cause as SshReadinessError & {
+      readonly cause?: unknown;
+    };
+    return {
+      ...attributes,
       message: cause.message,
-      ...(cause.cause === undefined ? {} : { cause: describeReadinessCause(cause.cause) }),
+      ...(nestedCause === undefined ? {} : { cause: describeNested(nestedCause) }),
     };
   }
   if (cause instanceof Error) {
+    const tagged = cause as Error & { readonly _tag?: unknown; readonly reason?: unknown };
     return {
-      name: cause.name,
-      message: cause.message,
-      ...(cause.cause === undefined ? {} : { cause: describeReadinessCause(cause.cause) }),
+      ...(typeof tagged._tag === "string" ? { _tag: tagged._tag } : { name: cause.name }),
+      ...(tagged.reason === undefined ? {} : { reason: describeNested(tagged.reason) }),
+      ...(cause.cause === undefined ? {} : { cause: describeNested(cause.cause) }),
     };
   }
   if (typeof cause !== "object" || cause === null) {
-    return cause;
+    return { type: cause === null ? "null" : typeof cause };
   }
 
   const record = cause as Readonly<Record<string, unknown>>;
   return {
     ...(typeof record._tag === "string" ? { _tag: record._tag } : {}),
-    ...(typeof record.message === "string" ? { message: record.message } : {}),
-    ...(record.reason === undefined ? {} : { reason: describeReadinessCause(record.reason) }),
-    ...(record.cause === undefined ? {} : { cause: describeReadinessCause(record.cause) }),
+    ...(record.reason === undefined ? {} : { reason: describeNested(record.reason) }),
+    ...(record.cause === undefined ? {} : { cause: describeNested(record.cause) }),
+  };
+}
+
+export function describeReadinessCause(cause: unknown): unknown {
+  return describeReadinessCauseAtDepth(cause, 0);
+}
+
+function readinessUrlDiagnostics(input: string) {
+  const url = new URL(input);
+  const diagnostics = getUrlDiagnostics(input);
+  return {
+    protocol: diagnostics.protocol ?? url.protocol,
+    hostname: diagnostics.hostname ?? url.hostname,
+    ...(url.port === "" ? {} : { port: url.port }),
+    urlLength: diagnostics.inputLength,
+    pathnameLength: utf8ByteLength(url.pathname),
+    hasQuery: url.search !== "",
+    hasFragment: url.hash !== "",
   };
 }
 
@@ -714,13 +765,14 @@ function buildRemoteLogTailScript(target: DesktopSshEnvironmentTarget): string {
 export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemoteServer")(
   function* (
     target: DesktopSshEnvironmentTarget,
-    input?: SshAuthOptions,
+    input?: SshAuth.SshAuthOptions,
     runner?: RemoteT3RunnerOptions,
   ): Effect.fn.Return<
     { readonly remotePort: number; readonly remoteServerKind: "external" | "managed" | null },
     SshCommandError | SshInvalidTargetError | SshLaunchError,
     ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
   > {
+    const destination = target.alias.trim() || target.hostname.trim();
     yield* Effect.logInfo("ssh.remoteServer.launch.start", {
       ...sshTargetLogFields(target),
       ...sshRunnerLogFields(runner),
@@ -734,25 +786,26 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
     });
     if (!getLastNonEmptyOutputLine(result.stdout)) {
-      return yield* new SshLaunchError({
-        message: "SSH launch did not return a remote port.",
-        stdout: result.stdout,
+      return yield* new SshLaunchPortMissingError({
+        target: destination,
+        stdoutBytes: utf8ByteLength(result.stdout),
       });
     }
     const parsed = yield* decodeRemoteLaunchOutput(result.stdout).pipe(
       Effect.mapError(
         (cause) =>
-          new SshLaunchError({
-            message: "SSH launch returned unparseable output.",
-            stdout: result.stdout,
+          new SshLaunchOutputParseError({
+            target: destination,
+            stdoutBytes: utf8ByteLength(result.stdout),
             cause,
           }),
       ),
     );
     if (!Number.isInteger(parsed.remotePort)) {
-      return yield* new SshLaunchError({
-        message: `SSH launch returned an invalid remote port: ${String(parsed.remotePort)}.`,
-        stdout: result.stdout,
+      return yield* new SshLaunchInvalidPortError({
+        target: destination,
+        stdoutBytes: utf8ByteLength(result.stdout),
+        remotePort: parsed.remotePort,
       });
     }
     yield* Effect.logInfo("ssh.remoteServer.launch.ready", {
@@ -770,7 +823,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
 
 export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingToken")(function* (
   target: DesktopSshEnvironmentTarget,
-  input?: SshAuthOptions,
+  input?: SshAuth.SshAuthOptions,
   runner?: RemoteT3RunnerOptions,
 ): Effect.fn.Return<
   {
@@ -779,6 +832,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   SshCommandError | SshInvalidTargetError | SshPairingError,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
+  const destination = target.alias.trim() || target.hostname.trim();
   yield* Effect.logDebug("ssh.remoteServer.pairingToken.start", {
     ...sshTargetLogFields(target),
     stateKey: remoteStateKey(target),
@@ -791,25 +845,25 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
   });
   if (!getLastNonEmptyOutputLine(result.stdout)) {
-    return yield* new SshPairingError({
-      message: "SSH pairing did not return a credential.",
-      stdout: result.stdout,
+    return yield* new SshPairingCredentialMissingError({
+      target: destination,
+      stdoutBytes: utf8ByteLength(result.stdout),
     });
   }
   const parsed = yield* decodeRemotePairingOutput(result.stdout).pipe(
     Effect.mapError(
       (cause) =>
-        new SshPairingError({
-          message: "SSH pairing returned unparseable output.",
-          stdout: result.stdout,
+        new SshPairingOutputParseError({
+          target: destination,
+          stdoutBytes: utf8ByteLength(result.stdout),
           cause,
         }),
     ),
   );
   if (parsed.credential.trim().length === 0) {
-    return yield* new SshPairingError({
-      message: "SSH pairing command returned an invalid credential.",
-      stdout: result.stdout,
+    return yield* new SshPairingInvalidCredentialError({
+      target: destination,
+      stdoutBytes: utf8ByteLength(result.stdout),
     });
   }
   yield* Effect.logDebug("ssh.remoteServer.pairingToken.created", {
@@ -823,7 +877,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
 
 export const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
   target: DesktopSshEnvironmentTarget,
-  input?: SshAuthOptions,
+  input?: SshAuth.SshAuthOptions,
 ): Effect.fn.Return<
   void,
   SshCommandError | SshInvalidTargetError,
@@ -848,7 +902,7 @@ export const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(functio
 
 const readRemoteServerLogTail = Effect.fn("ssh/tunnel.readRemoteServerLogTail")(function* (
   target: DesktopSshEnvironmentTarget,
-  input?: SshAuthOptions,
+  input?: SshAuth.SshAuthOptions,
 ): Effect.fn.Return<
   string,
   SshCommandError | SshInvalidTargetError,
@@ -878,14 +932,18 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
   const retryPolicy = Schedule.spaced(Duration.millis(intervalMs)).pipe(
     Schedule.take(Math.max(0, Math.ceil(timeoutMs / intervalMs))),
   );
-  const requestUrl = new URL(input.path ?? "/", input.baseUrl).toString();
+  const baseUrl = new URL(input.baseUrl);
+  const request = new URL(input.path ?? "/", baseUrl);
+  const requestUrl = request.toString();
+  const base = readinessUrlDiagnostics(input.baseUrl);
+  const requestDiagnostics = readinessUrlDiagnostics(requestUrl);
   const client = yield* HttpClient.HttpClient;
   const lastProbeFailure = yield* Ref.make<unknown>(null);
   let attempt = 0;
 
   yield* Effect.logDebug("ssh.tunnel.httpReady.start", {
-    baseUrl: input.baseUrl,
-    requestUrl,
+    base,
+    request: requestDiagnostics,
     timeoutMs,
     intervalMs,
     probeTimeoutMs,
@@ -900,8 +958,8 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
           Effect.timeoutOption(Duration.millis(probeTimeoutMs)),
           Effect.mapError(
             (cause) =>
-              new SshReadinessError({
-                message: `Backend readiness probe failed at ${requestUrl}.`,
+              new SshReadinessProbeError({
+                request: requestDiagnostics,
                 cause,
               }),
           ),
@@ -910,31 +968,23 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
           onSome: Effect.succeed,
           onNone: () =>
             Effect.fail(
-              new SshReadinessError({
-                message: `Backend readiness probe exceeded ${probeTimeoutMs}ms at ${requestUrl}.`,
-                cause: {
-                  kind: "probe-timeout",
-                  attempt,
-                  probeTimeoutMs,
-                },
+              new SshReadinessProbeTimeoutError({
+                request: requestDiagnostics,
+                timeoutMs: probeTimeoutMs,
+                attempt,
               }),
             ),
         });
       }).pipe(
         Effect.mapError((cause) =>
-          cause instanceof SshReadinessError
+          isSshReadinessError(cause)
             ? cause
-            : new SshReadinessError({
-                message: `Backend readiness probe failed at ${requestUrl}.`,
+            : new SshReadinessProbeError({
+                request: requestDiagnostics,
                 cause,
               }),
         ),
-        Effect.tapError((cause) =>
-          Ref.set(lastProbeFailure, {
-            attempt,
-            cause: describeReadinessCause(cause),
-          }),
-        ),
+        Effect.tapError((cause) => Ref.set(lastProbeFailure, cause)),
       ),
     ),
     HttpClient.tap((response) => response.text.pipe(Effect.ignore)),
@@ -943,10 +993,10 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
 
   const result = yield* readinessClient.execute(HttpClientRequest.get(requestUrl)).pipe(
     Effect.mapError((cause) =>
-      cause instanceof SshReadinessError
+      isSshReadinessError(cause)
         ? cause
-        : new SshReadinessError({
-            message: `Backend readiness probe failed at ${requestUrl}.`,
+        : new SshReadinessProbeError({
+            request: requestDiagnostics,
             cause,
           }),
     ),
@@ -956,25 +1006,28 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
   return yield* Option.match(result, {
     onSome: () =>
       Effect.logDebug("ssh.tunnel.httpReady.succeeded", {
-        baseUrl: input.baseUrl,
-        requestUrl,
+        base,
+        request: requestDiagnostics,
         attempts: attempt,
       }),
     onNone: () =>
       Effect.gen(function* () {
         const lastFailure = yield* Ref.get(lastProbeFailure);
         yield* Effect.logWarning("ssh.tunnel.httpReady.timedOut", {
-          baseUrl: input.baseUrl,
-          requestUrl,
+          base,
+          request: requestDiagnostics,
           timeoutMs,
           intervalMs,
           probeTimeoutMs,
           attempts: attempt,
-          lastFailure,
+          lastFailure: describeReadinessCause(lastFailure),
         });
-        return yield* new SshReadinessError({
-          message: `Timed out waiting ${timeoutMs}ms for backend readiness at ${input.baseUrl}.`,
-          cause: lastFailure,
+        return yield* new SshReadinessTimeoutError({
+          base,
+          request: requestDiagnostics,
+          timeoutMs,
+          attempts: attempt,
+          ...(lastFailure === null ? {} : { cause: lastFailure }),
         });
       }),
   });
@@ -990,23 +1043,19 @@ function isLoopbackHostname(hostname: string): boolean {
 
 export const resolveLoopbackSshHttpBaseUrl = Effect.fn("ssh/tunnel.resolveLoopbackSshHttpBaseUrl")(
   function* (rawHttpBaseUrl: unknown): Effect.fn.Return<string, SshHttpBridgeError> {
-    return yield* Effect.try({
-      try: () => {
-        if (typeof rawHttpBaseUrl !== "string" || rawHttpBaseUrl.trim().length === 0) {
-          throw new Error("Invalid SSH forwarded http base URL.");
-        }
-        const baseUrl = new URL(rawHttpBaseUrl);
-        if (!isLoopbackHostname(baseUrl.hostname)) {
-          throw new Error("SSH desktop bridge only supports loopback forwarded URLs.");
-        }
-        return baseUrl.toString();
-      },
-      catch: (cause) =>
-        new SshHttpBridgeError({
-          message: cause instanceof Error ? cause.message : "Invalid SSH forwarded http base URL.",
-          cause,
-        }),
+    if (typeof rawHttpBaseUrl !== "string" || rawHttpBaseUrl.trim().length === 0) {
+      return yield* new SshHttpBridgeMissingUrlError();
+    }
+    const baseUrl = yield* Effect.try({
+      try: () => new URL(rawHttpBaseUrl),
+      catch: (cause) => new SshHttpBridgeInvalidUrlError({ cause }),
     });
+    if (!isLoopbackHostname(baseUrl.hostname)) {
+      return yield* new SshHttpBridgeNonLoopbackUrlError({
+        hostname: baseUrl.hostname,
+      });
+    }
+    return baseUrl.toString();
   },
 );
 
@@ -1022,7 +1071,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   readonly localPort: number;
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
-  readonly authOptions: SshAuthOptions;
+  readonly authOptions: SshAuth.SshAuthOptions;
   readonly remoteServerKind: "external" | "managed" | null;
 }): Effect.fn.Return<
   SshTunnelEntry,
@@ -1035,7 +1084,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   | Scope.Scope
 > {
   const hostSpec = yield* buildSshHostSpecEffect(input.resolvedTarget);
-  const childEnvironment = yield* buildSshChildEnvironment({
+  const destination = input.resolvedTarget.alias.trim() || input.resolvedTarget.hostname.trim();
+  const childEnvironment = yield* SshAuth.buildSshChildEnvironment({
     ...(input.authOptions.authSecret === undefined
       ? {}
       : { authSecret: input.authOptions.authSecret }),
@@ -1045,11 +1095,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   }).pipe(
     Effect.mapError(
       (cause) =>
-        new SshCommandError({
-          command: ["ssh"],
-          exitCode: null,
-          stderr: "",
-          message: "Failed to prepare SSH authentication helpers.",
+        new SshAuthenticationHelperError({
+          target: hostSpec,
           cause,
         }),
     ),
@@ -1071,16 +1118,17 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     hostSpec,
   ];
   const sshCommand = yield* resolveSshCommand;
-  const tunnelCommand = [sshCommand, ...args];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scope = yield* Scope.Scope;
+  const httpBaseUrlDiagnostics = getUrlDiagnostics(input.httpBaseUrl);
   yield* Effect.logDebug("ssh.tunnel.spawn.start", {
     ...sshTargetLogFields(input.resolvedTarget),
-    command: tunnelCommand,
+    command: sshCommand,
+    argumentCount: args.length,
     localPort: input.localPort,
     remotePort: input.remotePort,
     remoteServerKind: input.remoteServerKind,
-    httpBaseUrl: input.httpBaseUrl,
+    httpBaseUrlDiagnostics,
   });
   const child = yield* spawner
     .spawn(
@@ -1096,25 +1144,22 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     .pipe(
       Effect.mapError(
         (cause) =>
-          new SshCommandError({
-            command: tunnelCommand,
-            exitCode: null,
-            stderr: "",
-            message:
-              cause instanceof Error
-                ? cause.message
-                : `Failed to spawn SSH tunnel for ${input.resolvedTarget.alias}.`,
+          new SshTunnelSpawnError({
+            command: sshCommand,
+            argumentCount: args.length,
+            target: destination,
             cause,
           }),
       ),
     );
   yield* Effect.logDebug("ssh.tunnel.spawn.succeeded", {
     ...sshTargetLogFields(input.resolvedTarget),
-    command: tunnelCommand,
+    command: sshCommand,
+    argumentCount: args.length,
     pid: child.pid,
     localPort: input.localPort,
     remotePort: input.remotePort,
-    httpBaseUrl: input.httpBaseUrl,
+    httpBaseUrlDiagnostics,
   });
   const tunnelEntry: SshTunnelEntry = {
     key: input.key,
@@ -1133,36 +1178,32 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   ).pipe(
     Effect.mapError(
       (cause) =>
-        new SshCommandError({
-          command: tunnelCommand,
-          exitCode: null,
-          stderr: "",
-          message:
-            cause instanceof Error
-              ? cause.message
-              : `Failed to monitor SSH tunnel for ${input.resolvedTarget.alias}.`,
+        new SshTunnelMonitorError({
+          command: sshCommand,
+          argumentCount: args.length,
+          target: destination,
           cause,
         }),
     ),
     Effect.flatMap(([stderr, exitCode]) => {
-      const error = new SshCommandError({
-        command: tunnelCommand,
+      const error = new SshTunnelExitError({
+        command: sshCommand,
+        argumentCount: args.length,
         exitCode,
-        stderr,
-        message: normalizeSshErrorMessage(
-          stderr,
-          `SSH tunnel exited unexpectedly for ${input.resolvedTarget.alias} (exit ${exitCode}).`,
-        ),
+        stderrBytes: utf8ByteLength(stderr),
+        target: destination,
+        reason: SshAuth.classifySshProcessExit({ stdout: "", stderr }),
       });
       return Effect.logWarning("ssh.tunnel.process.exited", {
         ...sshTargetLogFields(input.resolvedTarget),
-        command: tunnelCommand,
+        command: sshCommand,
+        argumentCount: args.length,
         pid: child.pid,
         localPort: input.localPort,
         remotePort: input.remotePort,
-        httpBaseUrl: input.httpBaseUrl,
+        httpBaseUrlDiagnostics,
         exitCode,
-        stderr,
+        stderrBytes: utf8ByteLength(stderr),
       }).pipe(Effect.andThen(Effect.fail(error)));
     }),
   );
@@ -1176,11 +1217,12 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     Effect.tap(() =>
       Effect.logInfo("ssh.tunnel.ready", {
         ...sshTargetLogFields(input.resolvedTarget),
-        command: tunnelCommand,
+        command: sshCommand,
+        argumentCount: args.length,
         pid: child.pid,
         localPort: input.localPort,
         remotePort: input.remotePort,
-        httpBaseUrl: input.httpBaseUrl,
+        httpBaseUrlDiagnostics,
       }),
     ),
     Effect.tapError((cause) =>
@@ -1202,24 +1244,25 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
           : null;
         yield* Effect.logWarning("ssh.tunnel.ready.failed", {
           ...sshTargetLogFields(input.resolvedTarget),
-          command: tunnelCommand,
+          command: sshCommand,
+          argumentCount: args.length,
           pid: child.pid,
           processRunning,
           ...(Exit.isSuccess(processRunningExit)
             ? {}
-            : { processRunningError: processRunningExit.cause }),
+            : { processRunningFailure: describeReadinessCause(processRunningExit.cause) }),
           localPort: input.localPort,
           localPortListening: localPortAvailable === null ? null : !localPortAvailable,
           remotePort: input.remotePort,
-          httpBaseUrl: input.httpBaseUrl,
+          httpBaseUrlDiagnostics,
           ...(Exit.isSuccess(localPortAvailableExit)
             ? {}
-            : { localPortProbeError: localPortAvailableExit.cause }),
-          ...(remoteLogTail === null ? {} : { remoteLogTail }),
+            : { localPortProbeFailure: describeReadinessCause(localPortAvailableExit.cause) }),
+          ...(remoteLogTail === null ? {} : { remoteLogTailBytes: utf8ByteLength(remoteLogTail) }),
           ...(Exit.isSuccess(remoteLogTailExit)
             ? {}
-            : { remoteLogTailError: remoteLogTailExit.cause }),
-          cause,
+            : { remoteLogTailFailure: describeReadinessCause(remoteLogTailExit.cause) }),
+          failure: describeReadinessCause(cause),
         });
       }),
     ),
@@ -1237,9 +1280,9 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   return tunnelEntry;
 });
 
-const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.make")(function* (
+export const make = Effect.fn("ssh/tunnel.SshEnvironmentManager.make")(function* (
   options: SshEnvironmentManagerOptions = {},
-): Effect.fn.Return<SshEnvironmentManagerShape, never, Scope.Scope> {
+): Effect.fn.Return<SshEnvironmentManager["Service"], never, Scope.Scope> {
   const managerScope = yield* Scope.Scope;
   const tunnels = new Map<string, SshTunnelEntry>();
   const pendingTunnelEntries = new Map<
@@ -1275,7 +1318,12 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       return;
     }
     pendingTunnelEntries.delete(key);
-    yield* Deferred.fail(pending, makeSshTunnelCancelledError(target)).pipe(Effect.ignore);
+    yield* Deferred.fail(
+      pending,
+      new SshCommandCancelledError({
+        target: target.alias || target.hostname,
+      }),
+    ).pipe(Effect.ignore);
   });
 
   yield* Scope.addFinalizer(
@@ -1291,16 +1339,20 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const promptForPassword = Effect.fn("ssh/tunnel.promptForPassword")(function* (
     target: DesktopSshEnvironmentTarget,
     attempt: number,
-  ): Effect.fn.Return<string, SshInvalidTargetError | SshPasswordPromptError, SshPasswordPrompt> {
-    const promptService = yield* SshPasswordPrompt;
+  ): Effect.fn.Return<
+    string,
+    SshInvalidTargetError | SshPasswordPromptError,
+    SshAuth.SshPasswordPrompt
+  > {
+    const promptService = yield* SshAuth.SshPasswordPrompt;
     const hostSpec = yield* buildSshHostSpecEffect(target);
     if (!promptService.isAvailable) {
       yield* Effect.logWarning("ssh.auth.passwordPrompt.unavailable", {
         ...sshTargetLogFields(target),
         attempt,
       });
-      return yield* new SshPasswordPromptError({
-        message: `SSH authentication failed for ${hostSpec}.`,
+      return yield* new SshPasswordPromptUnavailableError({
+        destination: hostSpec,
       });
     }
 
@@ -1319,8 +1371,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         ...sshTargetLogFields(target),
         attempt,
       });
-      return yield* new SshPasswordPromptError({
-        message: `SSH authentication cancelled for ${hostSpec}.`,
+      return yield* new SshPasswordPromptCancelledError({
+        destination: hostSpec,
       });
     }
     yield* Effect.logInfo("ssh.auth.passwordPrompt.received", {
@@ -1336,7 +1388,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         readonly error: SshEnvironmentEffectError;
       },
     ): Effect.fn.Return<T, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
-      if (!isSshAuthFailure(input.error)) {
+      if (!SshAuth.isSshAuthFailure(input.error)) {
         return yield* input.error;
       }
 
@@ -1344,9 +1396,9 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         ...sshTargetLogFields(input.target),
         key: input.key,
         promptCount: input.promptCount,
-        cause: input.error,
+        failure: describeReadinessCause(input.error),
       });
-      const promptService = yield* SshPasswordPrompt;
+      const promptService = yield* SshAuth.SshPasswordPrompt;
       if (!promptService.isAvailable) {
         return yield* input.error;
       }
@@ -1371,7 +1423,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const runWithSshAuthAttempt = Effect.fn("ssh/tunnel.runWithSshAuthAttempt")(function* <T>(
     input: SshAuthAttemptInput<T>,
   ): Effect.fn.Return<T, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
-    const promptService = yield* SshPasswordPrompt;
+    const promptService = yield* SshAuth.SshPasswordPrompt;
     const authOptions =
       input.authSecret === null
         ? {
@@ -1543,7 +1595,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         key,
         localPort: entry.localPort,
         remotePort: entry.remotePort,
-        cause: readinessExit.cause,
+        failure: describeReadinessCause(readinessExit.cause),
       });
       yield* closeTunnelEntry(entry);
       yield* cancelPendingTunnelEntry(key, resolvedTarget);
@@ -1571,7 +1623,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         Effect.logWarning("ssh.environment.tunnel.create.failed", {
           ...sshTargetLogFields(resolvedTarget),
           key,
-          cause,
+          failure: describeReadinessCause(cause),
         }),
       ),
       Effect.onExit((exit) =>
@@ -1686,13 +1738,5 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
 });
 
-/**
- * @effect-expect-leaking ChildProcessSpawner | FileSystem | HttpClient | NetService | Path | SshPasswordPrompt
- */
-export class SshEnvironmentManager extends Context.Service<
-  SshEnvironmentManager,
-  SshEnvironmentManagerShape
->()("@t3tools/ssh/tunnel/SshEnvironmentManager") {
-  static readonly layer = (options: SshEnvironmentManagerOptions = {}) =>
-    Layer.effect(SshEnvironmentManager, makeSshEnvironmentManager(options));
-}
+export const layer = (options: SshEnvironmentManagerOptions = {}) =>
+  Layer.effect(SshEnvironmentManager, make(options));

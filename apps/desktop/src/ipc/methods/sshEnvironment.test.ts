@@ -3,17 +3,24 @@ import {
   DesktopSshEnvironmentEnsureResultSchema,
   DesktopSshPasswordPromptCancellationError,
 } from "@t3tools/contracts";
-import { SshHttpBridgeError, SshPasswordPromptError } from "@t3tools/ssh/errors";
+import {
+  SshCommandSpawnError,
+  SshHttpBridgeError,
+  SshPasswordPromptWindowClosedError,
+} from "@t3tools/ssh/errors";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import {
   DesktopSshEnvironmentRequestError,
+  disconnectSshEnvironment,
   ensureSshEnvironment,
   fetchSshEnvironmentDescriptor,
 } from "./sshEnvironment.ts";
@@ -23,6 +30,9 @@ import * as DesktopSshPasswordPrompts from "../../ssh/DesktopSshPasswordPrompts.
 const decodeDesktopSshEnvironmentEnsureResult = Schema.decodeUnknownEffect(
   DesktopSshEnvironmentEnsureResultSchema,
 );
+
+const isSshHttpBridgeError = Schema.is(SshHttpBridgeError);
+const isDesktopSshEnvironmentRequestError = Schema.is(DesktopSshEnvironmentRequestError);
 
 function jsonResponse(request: HttpClientRequest.HttpClientRequest, body: unknown, status = 200) {
   return HttpClientResponse.fromWeb(
@@ -51,8 +61,8 @@ describe("SSH environment IPC", () => {
       requestId: "prompt-1",
       destination: "developer@devbox.example.test",
     });
-    const cause = new SshPasswordPromptError({
-      message: promptCause.message,
+    const cause = new SshPasswordPromptWindowClosedError({
+      destination: promptCause.destination,
       cause: promptCause,
     });
     const layer = Layer.succeed(
@@ -81,6 +91,45 @@ describe("SSH environment IPC", () => {
       assert.equal(error.destination, "developer@devbox.example.test");
       assert.instanceOf(error.cause, Error);
       assert.instanceOf(error.cause.cause, Error);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("preserves structural SSH errors and exact causes at the IPC boundary", () => {
+    const cause = new Error("ssh executable was not found");
+    const structured = new SshCommandSpawnError({
+      command: "ssh",
+      argumentCount: 0,
+      target: "devbox",
+      cause,
+    });
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.test",
+      username: "developer",
+      port: 22,
+    };
+    const layer = Layer.succeed(
+      DesktopSshEnvironment.DesktopSshEnvironment,
+      DesktopSshEnvironment.DesktopSshEnvironment.of({
+        discoverHosts: () => Effect.die("unexpected host discovery"),
+        ensureEnvironment: () => Effect.fail(structured),
+        disconnectEnvironment: () => Effect.fail(structured),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const exits = yield* Effect.all([
+        Effect.exit(ensureSshEnvironment.handler({ target })),
+        Effect.exit(disconnectSshEnvironment.handler(target)),
+      ]);
+      for (const exit of exits) {
+        assert(Exit.isFailure(exit));
+        const failure = Cause.findErrorOption(exit.cause);
+        assert(Option.isSome(failure));
+        assert.strictEqual(failure.value, structured);
+      }
+      assert.equal(structured.message, "Failed to spawn SSH command for devbox.");
+      assert.strictEqual(structured.cause, cause);
     }).pipe(Effect.provide(layer));
   });
 
@@ -131,9 +180,10 @@ describe("SSH environment IPC", () => {
       assert(Option.isSome(failure));
       const error = failure.value;
 
-      assert.instanceOf(error, DesktopSshEnvironmentRequestError);
+      assert.isTrue(isDesktopSshEnvironmentRequestError(error));
+      if (!isDesktopSshEnvironmentRequestError(error)) return;
       assert.equal(error.operation, "fetch-environment-descriptor");
-      assert.equal(error.cause instanceof SshHttpBridgeError, false);
+      assert.equal(isSshHttpBridgeError(error.cause), false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -157,8 +207,9 @@ describe("SSH environment IPC", () => {
       assert(Option.isSome(failure));
       const error = failure.value;
 
-      assert.instanceOf(error, DesktopSshEnvironmentRequestError);
-      assert.instanceOf(error.cause, SshHttpBridgeError);
+      assert.isTrue(isDesktopSshEnvironmentRequestError(error));
+      if (!isDesktopSshEnvironmentRequestError(error)) return;
+      assert.equal(isSshHttpBridgeError(error.cause), true);
       assert.equal(requestCount, 0);
     }).pipe(Effect.provide(layer));
   });
