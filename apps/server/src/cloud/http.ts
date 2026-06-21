@@ -48,7 +48,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
-import { HttpServerRequest, HttpServerResponse, HttpTraceContext } from "effect/unstable/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
@@ -77,6 +77,7 @@ import { relayUrlConfig } from "./publicConfig.ts";
 import * as CliState from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
+import { traceRelayRequest } from "./traceRelayRequest.ts";
 
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
@@ -110,19 +111,6 @@ const requireRelayUrl = relayUrlConfig.pipe(
       }),
   ),
 );
-
-export const traceRelayBrokerHandler = <A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R | HttpServerRequest.HttpServerRequest> =>
-  HttpServerRequest.HttpServerRequest.pipe(
-    Effect.flatMap((request) =>
-      Option.match(HttpTraceContext.fromHeaders(request.headers), {
-        onNone: () => effect,
-        onSome: (parent) => effect.pipe(Effect.withParentSpan(parent)),
-      }),
-    ),
-    withRelayClientTracing,
-  );
 
 function bytesToString(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
@@ -232,10 +220,10 @@ function validateLinkedCloudUser(input: {
         }),
     ),
     Effect.flatMap((existing) => {
-      if (!existing) {
+      if (Option.isNone(existing)) {
         return Effect.void;
       }
-      const existingCloudUserId = bytesToString(existing);
+      const existingCloudUserId = bytesToString(existing.value);
       return existingCloudUserId === input.cloudUserId
         ? Effect.void
         : Effect.fail(
@@ -260,8 +248,8 @@ function readInstalledCloudUserId(
         }),
     ),
     Effect.flatMap((bytes) =>
-      bytes
-        ? Effect.succeed(bytesToString(bytes))
+      Option.isSome(bytes)
+        ? Effect.succeed(bytesToString(bytes.value))
         : Effect.fail(
             new EnvironmentAuth.ServerAuthInternalError({
               message: "Cloud linked user is not installed for this environment.",
@@ -634,12 +622,12 @@ const readCloudLinkState = Effect.fn("environment.cloud.readLinkState")(function
     { concurrency: 4 },
   );
   return {
-    linked: cloudUserId !== null,
-    cloudUserId: cloudUserId ? bytesToString(cloudUserId) : null,
-    relayUrl: relayUrl ? bytesToString(relayUrl) : null,
-    relayIssuer: relayIssuer ? bytesToString(relayIssuer) : null,
-    publishAgentActivity: publishAgentActivity
-      ? bytesToString(publishAgentActivity) === "true"
+    linked: Option.isSome(cloudUserId),
+    cloudUserId: Option.isSome(cloudUserId) ? bytesToString(cloudUserId.value) : null,
+    relayUrl: Option.isSome(relayUrl) ? bytesToString(relayUrl.value) : null,
+    relayIssuer: Option.isSome(relayIssuer) ? bytesToString(relayIssuer.value) : null,
+    publishAgentActivity: Option.isSome(publishAgentActivity)
+      ? bytesToString(publishAgentActivity.value) === "true"
       : false,
   } satisfies EnvironmentCloudLinkStateResult;
 });
@@ -702,8 +690,8 @@ const cloudEnvironmentHealthHandler = Effect.fn("environment.cloud.health")(
   function* (dependencies: CloudHttpDependencies, request: RelayCloudEnvironmentHealthRequest) {
     const cloudMintPublicKey = yield* dependencies.secrets.get(CLOUD_MINT_PUBLIC_KEY).pipe(
       Effect.flatMap((bytes) =>
-        bytes
-          ? Effect.succeed(bytesToString(bytes))
+        Option.isSome(bytes)
+          ? Effect.succeed(bytesToString(bytes.value))
           : Effect.fail(
               new EnvironmentAuth.ServerAuthInternalError({
                 message: "Cloud mint public key is not installed for this environment.",
@@ -713,12 +701,12 @@ const cloudEnvironmentHealthHandler = Effect.fn("environment.cloud.health")(
     );
     const relayIssuer = yield* dependencies.secrets.get(RELAY_ISSUER_SECRET).pipe(
       Effect.flatMap((bytes) =>
-        bytes
-          ? Effect.succeed(bytesToString(bytes))
+        Option.isSome(bytes)
+          ? Effect.succeed(bytesToString(bytes.value))
           : dependencies.secrets.get(RELAY_URL_SECRET).pipe(
               Effect.flatMap((fallbackBytes) =>
-                fallbackBytes
-                  ? Effect.succeed(bytesToString(fallbackBytes))
+                Option.isSome(fallbackBytes)
+                  ? Effect.succeed(bytesToString(fallbackBytes.value))
                   : Effect.fail(
                       new EnvironmentAuth.ServerAuthInternalError({
                         message: "Cloud relay issuer is not installed for this environment.",
@@ -819,8 +807,8 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
   function* (dependencies: CloudHttpDependencies, request: RelayCloudMintCredentialRequest) {
     const cloudMintPublicKey = yield* dependencies.secrets.get(CLOUD_MINT_PUBLIC_KEY).pipe(
       Effect.flatMap((bytes) =>
-        bytes
-          ? Effect.succeed(bytesToString(bytes))
+        Option.isSome(bytes)
+          ? Effect.succeed(bytesToString(bytes.value))
           : Effect.fail(
               new EnvironmentAuth.ServerAuthInternalError({
                 message: "Cloud mint public key is not installed for this environment.",
@@ -830,12 +818,12 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
     );
     const relayIssuer = yield* dependencies.secrets.get(RELAY_ISSUER_SECRET).pipe(
       Effect.flatMap((bytes) =>
-        bytes
-          ? Effect.succeed(bytesToString(bytes))
+        Option.isSome(bytes)
+          ? Effect.succeed(bytesToString(bytes.value))
           : dependencies.secrets.get(RELAY_URL_SECRET).pipe(
               Effect.flatMap((fallbackBytes) =>
-                fallbackBytes
-                  ? Effect.succeed(bytesToString(fallbackBytes))
+                Option.isSome(fallbackBytes)
+                  ? Effect.succeed(bytesToString(fallbackBytes.value))
                   : Effect.fail(
                       new EnvironmentAuth.ServerAuthInternalError({
                         message: "Cloud relay issuer is not installed for this environment.",
@@ -953,7 +941,7 @@ export const connectHttpApiLayer = HttpApiBuilder.group(
       .handle("health", ({ payload }) => cloudEnvironmentHealthHandler(dependencies, payload))
       .handle("mintCredential", ({ payload }) => cloudMintCredentialHandler(dependencies, payload))
       .handle("t3MintCredential", ({ payload }) =>
-        traceRelayBrokerHandler(cloudMintCredentialHandler(dependencies, payload)),
+        traceRelayRequest(cloudMintCredentialHandler(dependencies, payload)),
       );
   }),
 );

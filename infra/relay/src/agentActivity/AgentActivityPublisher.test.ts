@@ -66,8 +66,8 @@ function makeAgentActivityRows(
 }
 
 function makeEnvironmentLinks(
-  overrides: Partial<EnvironmentLinks.EnvironmentLinksShape> = {},
-): EnvironmentLinks.EnvironmentLinksShape {
+  overrides: Partial<EnvironmentLinks.EnvironmentLinks["Service"]> = {},
+): EnvironmentLinks.EnvironmentLinks["Service"] {
   return {
     upsert: () => Effect.void,
     listUsersForEnvironment: () => Effect.succeed(["dev:julius"]),

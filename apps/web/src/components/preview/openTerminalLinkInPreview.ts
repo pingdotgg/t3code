@@ -1,31 +1,21 @@
-import type { EnvironmentApi, LocalApi, ScopedThreadRef } from "@t3tools/contracts";
+import type { LocalApi, ScopedThreadRef } from "@t3tools/contracts";
 import { isPreviewableUrl } from "@t3tools/shared/preview";
 
-import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
+import { applyPreviewServerSnapshot, isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
-interface OpenTerminalLinkInPreviewInput {
+interface OpenTerminalLinkInPreviewInput<E> {
   readonly url: string;
   readonly position: { x: number; y: number };
   readonly threadRef: ScopedThreadRef;
-  readonly api: EnvironmentApi;
+  readonly openPreview: OpenPreviewMutation<E>;
   readonly localApi: LocalApi;
-  /** Called whenever the URL ultimately needs to open in the system browser. */
   readonly fallbackToBrowser: () => void;
 }
 
-/**
- * Handles a terminal-link click that resolves to a URL.
- *
- * - For non-loopback / unsupported runtimes, defers to the system browser.
- * - For previewable URLs in the desktop build, presents a context menu to
- *   choose between the in-app preview and the system browser.
- *
- * Failures fall back to the system browser so a stuck context-menu doesn't
- * leave the user without a way to open the link.
- */
-export async function openTerminalLinkInPreview(
-  input: OpenTerminalLinkInPreviewInput,
+export async function openTerminalLinkInPreview<E>(
+  input: OpenTerminalLinkInPreviewInput<E>,
 ): Promise<void> {
   const supportsPreview =
     isPreviewableUrl(input.url) &&
@@ -52,15 +42,16 @@ export async function openTerminalLinkInPreview(
   }
 
   if (choice === "open-in-preview") {
-    try {
-      await input.api.preview.open({
-        threadId: input.threadRef.threadId,
-        url: input.url,
-      });
-      useRightPanelStore.getState().open(input.threadRef, "preview");
-    } catch {
+    const result = await input.openPreview({
+      environmentId: input.threadRef.environmentId,
+      input: { threadId: input.threadRef.threadId, url: input.url },
+    });
+    if (result._tag === "Failure") {
       input.fallbackToBrowser();
+      return;
     }
+    applyPreviewServerSnapshot(input.threadRef, result.value);
+    useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
     return;
   }
 

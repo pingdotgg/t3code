@@ -18,6 +18,10 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
+import {
+  connectionStatusText,
+  type EnvironmentConnectionPresentation,
+} from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
@@ -101,6 +105,7 @@ import {
 import { proposedPlanTitle } from "../../proposedPlan";
 import { getProviderDisplayName, getProviderInteractionModeToggle } from "../../providerModels";
 import {
+  applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   resolveProviderDriverKindForInstanceSelection,
   sortProviderInstanceEntries,
@@ -443,7 +448,7 @@ export interface ChatComposerProps {
   isPreparingWorktree: boolean;
   environmentUnavailable: {
     readonly label: string;
-    readonly connectionState: "connecting" | "disconnected" | "error";
+    readonly connection: EnvironmentConnectionPresentation;
   } | null;
 
   // Pending approvals / inputs
@@ -509,7 +514,7 @@ export interface ChatComposerProps {
   onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
-  ) => Promise<void>;
+  ) => Promise<unknown>;
   onSelectActivePendingUserInputOption: (questionId: string, optionLabel: string) => void;
   onAdvanceActivePendingUserInput: () => void;
   onPreviousActivePendingUserInputQuestion: () => void;
@@ -658,8 +663,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // configured instance (default built-in + any custom `providerInstances.*`),
   // sorted default-first per driver kind for a stable picker order.
   const providerInstanceEntries = useMemo<ReadonlyArray<ProviderInstanceEntry>>(
-    () => sortProviderInstanceEntries(deriveProviderInstanceEntries(providerStatuses)),
-    [providerStatuses],
+    () =>
+      sortProviderInstanceEntries(
+        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+      ),
+    [providerStatuses, settings],
   );
   const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
   const threadProvider =
@@ -2419,11 +2427,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       : showPlanFollowUpPrompt && activeProposedPlan
                         ? "Add feedback to refine the plan, or leave this blank to implement it"
                         : environmentUnavailable
-                          ? `${environmentUnavailable.label} is ${
-                              environmentUnavailable.connectionState === "connecting"
-                                ? "connecting"
-                                : "disconnected"
-                            }`
+                          ? `${environmentUnavailable.label}: ${connectionStatusText(
+                              environmentUnavailable.connection,
+                            )}`
                           : phase === "disconnected"
                             ? "Ask for follow-up changes or attach images"
                             : "Ask anything, @tag files/folders, $use skills, or / for commands"

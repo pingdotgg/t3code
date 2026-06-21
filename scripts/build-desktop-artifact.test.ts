@@ -8,7 +8,11 @@ import * as Option from "effect/Option";
 import {
   createStageWorkspaceConfig,
   createStagePnpmConfig,
+  createBuildConfig,
   DESKTOP_ASAR_UNPACK,
+  renderMacPasskeyEntitlements,
+  resolveClerkPasskeyNativeArtifacts,
+  resolveMacPasskeySigningConfiguration,
   resolveDesktopRuntimeDependencies,
   resolveFffNativeDependencies,
   resolveBuildOptions,
@@ -175,6 +179,86 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepStrictEqual(DESKTOP_ASAR_UNPACK, ["node_modules/@ff-labs/fff-bin-*/**/*"]);
   });
 
+  it("derives macOS passkey signing configuration from the Clerk publishable key", () => {
+    const configuration = resolveMacPasskeySigningConfiguration({
+      T3CODE_APPLE_TEAM_ID: "abc1234567",
+      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
+      T3CODE_CLERK_PUBLISHABLE_KEY: `pk_test_${btoa("example.clerk.accounts.dev$")}`,
+    });
+
+    assert.deepStrictEqual(configuration, {
+      appId: "com.t3tools.t3code",
+      teamId: "ABC1234567",
+      rpDomains: ["example.clerk.accounts.dev"],
+      provisioningProfilePath: "/tmp/t3code.provisionprofile",
+    });
+  });
+
+  it("normalizes explicit macOS passkey RP domains and renders required entitlements", () => {
+    const configuration = resolveMacPasskeySigningConfiguration({
+      T3CODE_APPLE_TEAM_ID: "ABC1234567",
+      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
+      T3CODE_CLERK_PASSKEY_RP_DOMAINS:
+        " Clerk.Example.com,example.clerk.accounts.dev,clerk.example.com ",
+    });
+    const entitlements = renderMacPasskeyEntitlements(configuration);
+
+    assert.deepStrictEqual(configuration.rpDomains, [
+      "clerk.example.com",
+      "example.clerk.accounts.dev",
+    ]);
+    assert.include(entitlements, "<string>ABC1234567.com.t3tools.t3code</string>");
+    assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
+    assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
+    assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
+  });
+
+  it("rejects incomplete macOS passkey signing configuration", () => {
+    assert.throws(
+      () =>
+        resolveMacPasskeySigningConfiguration({
+          T3CODE_APPLE_TEAM_ID: "ABC1234567",
+          T3CODE_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev",
+        }),
+      /T3CODE_MACOS_PROVISIONING_PROFILE/u,
+    );
+    assert.throws(
+      () =>
+        resolveMacPasskeySigningConfiguration({
+          T3CODE_APPLE_TEAM_ID: "ABC1234567",
+          T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
+          T3CODE_CLERK_PASSKEY_RP_DOMAINS: "https://example.clerk.accounts.dev/path",
+        }),
+      /Invalid passkey RP domain/u,
+    );
+    assert.throws(
+      () =>
+        resolveMacPasskeySigningConfiguration({
+          T3CODE_APPLE_TEAM_ID: "ABC1234567",
+          T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
+          T3CODE_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev:8443",
+        }),
+      /Invalid passkey RP domain/u,
+    );
+  });
+
+  it.effect("adds passkey entitlements and both renderer protocols to signed macOS builds", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig("mac", "dmg", "1.2.3", true, false, undefined, {
+        entitlementsPath: "/tmp/entitlements.mac.plist",
+        provisioningProfilePath: "/tmp/t3code.provisionprofile",
+      });
+
+      const mac = config.mac as Record<string, unknown>;
+      assert.equal(config.appId, "com.t3tools.t3code");
+      assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
+      assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
+      assert.deepStrictEqual(mac.protocols, [
+        { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
+      ]);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
   it("promotes target fff binaries to direct staged dependencies", () => {
     assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.9.4"), {
       "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
@@ -190,6 +274,26 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "@ff-labs/fff-bin-linux-arm64-gnu": "0.9.4",
       "@ff-labs/fff-bin-linux-arm64-musl": "0.9.4",
     });
+  });
+
+  it("resolves target Clerk passkey native artifacts", () => {
+    assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("mac", "universal"), [
+      {
+        packageName: "@clerk/electron-passkeys-darwin-arm64",
+        binaryFileName: "electron-passkeys.darwin-arm64.node",
+      },
+      {
+        packageName: "@clerk/electron-passkeys-darwin-x64",
+        binaryFileName: "electron-passkeys.darwin-x64.node",
+      },
+    ]);
+    assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("win", "x64"), [
+      {
+        packageName: "@clerk/electron-passkeys-win32-x64-msvc",
+        binaryFileName: "electron-passkeys.win32-x64-msvc.node",
+      },
+    ]);
+    assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("linux", "x64"), []);
   });
 
   it("falls back to the default mock update port when the configured port is blank", () => {

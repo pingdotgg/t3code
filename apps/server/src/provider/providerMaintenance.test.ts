@@ -4,13 +4,14 @@ import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import path from "node:path";
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import { HttpClient } from "effect/unstable/http";
 import {
   createProviderVersionAdvisory,
+  enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
   makeStaticProviderMaintenanceResolver,
@@ -67,6 +68,19 @@ const staticToolUpdate = makeStaticProviderMaintenanceResolver(
     updateLockKey: "static-tool",
   }),
 );
+const installedPackageToolProvider: ServerProvider = {
+  instanceId: ProviderInstanceId.make("packageTool"),
+  driver: driver("packageTool"),
+  enabled: true,
+  installed: true,
+  version: "1.0.0",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-04-10T00:00:00.000Z",
+  models: [],
+  slashCommands: [],
+  skills: [],
+};
 
 it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   it.effect("reads cached versions through the injectable cache reference", () =>
@@ -91,6 +105,32 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       ),
       Effect.map((version) => {
         expect(version).toBe("9.9.9");
+      }),
+    ),
+  );
+
+  it.effect("does not fetch latest provider versions when update checks are disabled", () =>
+    enrichProviderSnapshotWithVersionAdvisory(
+      installedPackageToolProvider,
+      packageToolUpdate.resolve(),
+      {
+        enableProviderUpdateChecks: false,
+      },
+    ).pipe(
+      Effect.provideService(ProviderVersionCache, new Map()),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() =>
+          Effect.die("disabled provider update checks should not make an HTTP request"),
+        ),
+      ),
+      Effect.map((provider) => {
+        expect(provider.versionAdvisory).toMatchObject({
+          status: "unknown",
+          currentVersion: "1.0.0",
+          latestVersion: null,
+          checkedAt: "2026-04-10T00:00:00.000Z",
+        });
       }),
     ),
   );

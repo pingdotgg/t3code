@@ -4,27 +4,26 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import type { ServerConfigShape } from "../config.ts";
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 
-const makeServerConfigLayer = (overrides?: Partial<ServerConfigShape>) =>
+const makeServerConfigLayer = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
   Layer.effect(
-    ServerConfig,
+    ServerConfig.ServerConfig,
     Effect.gen(function* () {
-      const config = yield* ServerConfig;
+      const config = yield* ServerConfig.ServerConfig;
       return {
         ...config,
         ...overrides,
-      } satisfies ServerConfigShape;
+      } satisfies ServerConfig.ServerConfig["Service"];
     }),
   ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-server-test-" })));
 
-const makeEnvironmentAuthLayer = (overrides?: Partial<ServerConfigShape>) =>
+const makeEnvironmentAuthLayer = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
   EnvironmentAuth.layer.pipe(
     Layer.provide(SqlitePersistenceMemory),
     Layer.provide(ServerSecretStore.layer),
@@ -33,13 +32,15 @@ const makeEnvironmentAuthLayer = (overrides?: Partial<ServerConfigShape>) =>
 
 const makeCookieRequest = (
   sessionToken: string,
-): Parameters<EnvironmentAuth.EnvironmentAuthShape["authenticateHttpRequest"]>[0] =>
+): Parameters<EnvironmentAuth.EnvironmentAuth["Service"]["authenticateHttpRequest"]>[0] =>
   ({
     cookies: {
       t3_session: sessionToken,
     },
     headers: {},
-  }) as unknown as Parameters<EnvironmentAuth.EnvironmentAuthShape["authenticateHttpRequest"]>[0];
+  }) as unknown as Parameters<
+    EnvironmentAuth.EnvironmentAuth["Service"]["authenticateHttpRequest"]
+  >[0];
 
 const requestMetadata = {
   deviceType: "desktop" as const,

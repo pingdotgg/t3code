@@ -10,13 +10,13 @@ export interface PendingApprovalCardProps {
   readonly onRespond: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
-  ) => Promise<void>;
+  ) => Promise<unknown>;
 }
 
 export function PendingApprovalCard(props: PendingApprovalCardProps) {
   return (
     <View className="gap-2.5 rounded-[20px] border border-neutral-200 bg-neutral-100/80 p-4 dark:border-white/6 dark:bg-neutral-900/80">
-      <Text className="font-t3-bold text-[11px] uppercase tracking-[1.1px] text-sky-700 dark:text-sky-300">
+      <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-sky-700 dark:text-sky-300">
         Approval needed
       </Text>
       <Text className="font-t3-bold text-lg text-neutral-950 dark:text-neutral-50">

@@ -7,9 +7,9 @@ import { useCallback, useEffect, useRef } from "react";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 
-import { useBrowserRecordingStore } from "./browserRecording";
+import { useActiveBrowserRecordingTabId } from "./browserRecording";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
-import { acquireDesktopTab } from "./desktopTabLifetime";
+import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 
 interface ElectronWebview extends HTMLElement {
@@ -34,13 +34,21 @@ export function HostedBrowserWebview(props: {
   const { threadRef, tabId, initialUrl } = props;
   const config = usePreviewWebviewConfig(threadRef.environmentId);
   const initialSrcRef = useRef(initialUrl ?? "about:blank");
+  const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
   const webviewRef = useRef<ElectronWebview | null>(null);
   const presentation = useBrowserSurfaceStore(useShallow((state) => state.byTabId[tabId] ?? null));
-  const recording = useBrowserRecordingStore((state) => state.activeTabId === tabId);
+  const recording = useActiveBrowserRecordingTabId() === tabId;
 
   usePreviewBridge({ threadRef, tabId });
 
-  useEffect(() => acquireDesktopTab(tabId), [tabId]);
+  useEffect(() => {
+    const lease = acquireDesktopTab(tabId);
+    tabLeaseRef.current = lease;
+    return () => {
+      if (tabLeaseRef.current === lease) tabLeaseRef.current = null;
+      lease.release();
+    };
+  }, [tabId]);
 
   const setWebviewRef = useCallback((node: HTMLElement | null) => {
     webviewRef.current = node as ElectronWebview | null;
@@ -51,19 +59,34 @@ export function HostedBrowserWebview(props: {
     const webview = webviewRef.current;
     const bridge = previewBridge;
     if (!webview || !config || !bridge) return;
+    let disposed = false;
     const register = () => {
-      try {
-        const webContentsId = webview.getWebContentsId();
-        if (Number.isInteger(webContentsId) && webContentsId > 0) {
-          void bridge.registerWebview(tabId, webContentsId);
+      const lease = tabLeaseRef.current;
+      if (!lease) return;
+      void (async () => {
+        try {
+          // The main-process tab and the DOM webview are created by separate
+          // effects. Wait for the former so registration cannot race and fail
+          // with PreviewTabNotFoundError on a fast about:blank attachment.
+          await lease.ready;
+          if (disposed || webviewRef.current !== webview) return;
+          const webContentsId = webview.getWebContentsId();
+          if (Number.isInteger(webContentsId) && webContentsId > 0) {
+            await bridge.registerWebview(tabId, webContentsId);
+          }
+        } catch {
+          // did-attach/dom-ready will retry if the guest was not ready yet.
         }
-      } catch {
-        // A later dom-ready will retry registration.
-      }
+      })();
     };
+    webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
     register();
-    return () => webview.removeEventListener("dom-ready", register);
+    return () => {
+      disposed = true;
+      webview.removeEventListener("did-attach", register);
+      webview.removeEventListener("dom-ready", register);
+    };
   }, [config, tabId]);
 
   if (!config) return null;

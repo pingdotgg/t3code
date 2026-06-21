@@ -66,10 +66,9 @@ import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllo
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
 import { withSpanAttributes } from "../observability.ts";
-import { RelayDb } from "../db.ts";
+import * as RelayDb from "../db.ts";
 
 const relayCorsAllowedMethods = ["GET", "POST", "DELETE", "OPTIONS"] as const;
-const RELAY_DPOP_ACCESS_TOKEN_TTL = "30 minutes";
 const relayCorsAllowedHeaders = [
   "authorization",
   "b3",
@@ -348,7 +347,7 @@ export const healthApi = HttpApiBuilder.group(
   RelayApi,
   "health",
   Effect.fnUntraced(function* (handlers) {
-    const db = yield* RelayDb;
+    const db = yield* RelayDb.RelayDb;
     return handlers.handle(
       "health",
       Effect.fn("relay.api.health")(
@@ -599,7 +598,7 @@ export const tokenApi = HttpApiBuilder.group(
           Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs),
         );
         const now = yield* DateTime.now;
-        const expiresAt = DateTime.addDuration(now, RELAY_DPOP_ACCESS_TOKEN_TTL);
+        const expiresAt = DateTime.addDuration(now, RelayTokens.RELAY_DPOP_ACCESS_TOKEN_TTL);
         const jti = yield* crypto.randomUUIDv4.pipe(
           Effect.catch(() => relayInternalErrorResponse("internal_error")),
         );
@@ -617,7 +616,7 @@ export const tokenApi = HttpApiBuilder.group(
             .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error"))),
           issued_token_type: RelayAccessTokenType,
           token_type: "DPoP" as const,
-          expires_in: Duration.toSeconds(RELAY_DPOP_ACCESS_TOKEN_TTL),
+          expires_in: Duration.toSeconds(RelayTokens.RELAY_DPOP_ACCESS_TOKEN_TTL),
           scope: encodeOAuthScope(requestedScopes),
         };
       }, mapRelayCommonApiErrors("invalid_dpop")),
@@ -986,7 +985,10 @@ function hasExpectedClerkAudience(audience: unknown, expectedAudience: string): 
         audience.some((entry) => typeof entry === "string" && entry === expectedAudience);
 }
 
-function verifyClerkBearerToken(config: RelayConfiguration.RelayConfigurationShape, token: string) {
+function verifyClerkBearerToken(
+  config: RelayConfiguration.RelayConfiguration["Service"],
+  token: string,
+) {
   return Effect.tryPromise({
     try: () =>
       verifyToken(token, {
@@ -1002,7 +1004,7 @@ function verifyClerkBearerToken(config: RelayConfiguration.RelayConfigurationSha
 }
 
 function verifyClerkOAuthBearerToken(
-  config: RelayConfiguration.RelayConfigurationShape,
+  config: RelayConfiguration.RelayConfiguration["Service"],
   token: string,
 ) {
   return Effect.tryPromise({
@@ -1028,7 +1030,7 @@ function verifyClerkOAuthBearerToken(
 }
 
 export function verifyRelayClientBearerToken(
-  config: RelayConfiguration.RelayConfigurationShape,
+  config: RelayConfiguration.RelayConfiguration["Service"],
   token: string,
 ) {
   return verifyClerkBearerToken(config, token).pipe(

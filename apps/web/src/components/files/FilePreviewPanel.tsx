@@ -7,14 +7,16 @@ import type {
 import { VirtualizedFile, type SelectedLineRange } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/editor";
 import { EditorProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { ChevronRight, Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
-import { ensureEnvironmentApi } from "~/environmentApi";
-import { usePrimaryEnvironmentId } from "~/environments/primary/context";
 import { useTheme } from "~/hooks/useTheme";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
@@ -26,6 +28,12 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
+import { assetEnvironment } from "~/state/assets";
+import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
+import { previewEnvironment } from "~/state/preview";
+import { projectEnvironment } from "~/state/projects";
+import { useAtomCommand } from "~/state/use-atom-command";
+import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 import {
@@ -256,23 +264,22 @@ function useFileSaveCoordinator({
   EditableFileSurfaceProps,
   "environmentId" | "cwd" | "relativePath" | "onPendingChange"
 >): FileSaveCoordinator {
+  const writeFile = useAtomCommand(projectEnvironment.writeFile);
   const coordinator = useMemo(
     () =>
       new FileSaveCoordinator({
         debounceMs: FILE_SAVE_DEBOUNCE_MS,
         onPendingChange: (pending) => onPendingChange(relativePath, pending),
-        persist: async (nextContents) => {
-          await ensureEnvironmentApi(environmentId).projects.writeFile({
-            cwd,
-            relativePath,
-            contents: nextContents,
-          });
-        },
+        persist: (nextContents) =>
+          writeFile({
+            environmentId,
+            input: { cwd, relativePath, contents: nextContents },
+          }),
         onConfirmed: (confirmedContents) => {
           confirmProjectFileQueryData(environmentId, cwd, relativePath, confirmedContents);
         },
       }),
-    [cwd, environmentId, onPendingChange, relativePath],
+    [cwd, environmentId, onPendingChange, relativePath, writeFile],
   );
 
   useEffect(() => () => coordinator.dispose(), [coordinator]);
@@ -604,6 +611,13 @@ export default function FilePreviewPanel({
 }: FilePreviewPanelProps) {
   const { resolvedTheme } = useTheme();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
+  const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
+    reportFailure: false,
+  });
+  const openPreview = useAtomCommand(previewEnvironment.open, {
+    reportFailure: false,
+  });
   const file = useProjectFileQuery(environmentId, cwd, relativePath);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const [markdownView, setMarkdownView] = useState<{
@@ -642,9 +656,20 @@ export default function FilePreviewPanel({
     });
   };
 
-  const handleOpenInBrowser = () => {
-    if (!absolutePath) return;
-    void openFileInPreview(threadRef, absolutePath).catch((error) => {
+  const handleOpenInBrowser = useCallback(() => {
+    if (!absolutePath || !environmentHttpBaseUrl) return;
+    void (async () => {
+      const result = await openFileInPreview({
+        threadRef,
+        filePath: absolutePath,
+        httpBaseUrl: environmentHttpBaseUrl,
+        createAssetUrl,
+        openPreview,
+      });
+      if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+        return;
+      }
+      const error = squashAtomCommandFailure(result);
       toastManager.add(
         stackedThreadToast({
           type: "error",
@@ -652,8 +677,8 @@ export default function FilePreviewPanel({
           description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
-    });
-  };
+    })();
+  }, [absolutePath, createAssetUrl, environmentHttpBaseUrl, openPreview, threadRef]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
@@ -693,6 +718,7 @@ export default function FilePreviewPanel({
           </ScrollArea>
           {absolutePath && environmentId === primaryEnvironmentId ? (
             <OpenInPicker
+              environmentId={environmentId}
               keybindings={keybindings}
               availableEditors={availableEditors}
               openInCwd={absolutePath}

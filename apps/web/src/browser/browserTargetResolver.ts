@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import { isLoopbackHost, normalizePreviewUrl } from "@t3tools/shared/preview";
 
-import { readEnvironmentConnection } from "~/environments/runtime";
+import { readPreparedConnection } from "~/state/session";
 
 const isPrivateNetworkHost = (host: string): boolean => {
   const normalized = host.toLowerCase().replace(/^\[|\]$/g, "");
@@ -36,9 +36,9 @@ export function resolveBrowserNavigationTarget(
       environmentId,
     };
   }
-  const connection = readEnvironmentConnection(environmentId);
+  const connection = readPreparedConnection(environmentId);
   if (!connection) throw new Error(`Environment ${environmentId} is not connected.`);
-  const environmentUrl = new URL(connection.knownEnvironment.target.httpBaseUrl);
+  const environmentUrl = new URL(connection.httpBaseUrl);
   if (!isPrivateNetworkHost(environmentUrl.hostname)) {
     throw new Error(
       "This environment port needs the planned authenticated preview gateway; its server address is not directly private-network reachable.",

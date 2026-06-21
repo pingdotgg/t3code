@@ -1,19 +1,23 @@
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 
 import { ServerConfig } from "../config.ts";
 
-export class SecretStoreError extends Data.TaggedError("SecretStoreError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class SecretStoreError extends Schema.TaggedErrorClass<SecretStoreError>()(
+  "SecretStoreError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
 const isPlatformError = (value: unknown): value is PlatformError.PlatformError =>
   Predicate.isTagged(value, "PlatformError");
@@ -22,7 +26,7 @@ export const isSecretAlreadyExistsError = (error: SecretStoreError): boolean =>
   isPlatformError(error.cause) && error.cause.reason._tag === "AlreadyExists";
 
 export interface ServerSecretStoreShape {
-  readonly get: (name: string) => Effect.Effect<Uint8Array | null, SecretStoreError>;
+  readonly get: (name: string) => Effect.Effect<Option.Option<Uint8Array>, SecretStoreError>;
   readonly set: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
   readonly create: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
   readonly getOrCreateRandom: (
@@ -57,10 +61,10 @@ export const make = Effect.fn("makeServerSecretStore")(function* () {
 
   const get: ServerSecretStoreShape["get"] = (name) =>
     fileSystem.readFile(resolveSecretPath(name)).pipe(
-      Effect.map((bytes) => Uint8Array.from(bytes)),
+      Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
       Effect.catch((cause) =>
         cause.reason._tag === "NotFound"
-          ? Effect.succeed(null)
+          ? Effect.succeed(Option.none())
           : Effect.fail(
               new SecretStoreError({
                 message: `Failed to read secret ${name}.`,
@@ -133,41 +137,43 @@ export const make = Effect.fn("makeServerSecretStore")(function* () {
 
   const getOrCreateRandom: ServerSecretStoreShape["getOrCreateRandom"] = (name, bytes) =>
     get(name).pipe(
-      Effect.flatMap((existing) => {
-        if (existing) {
-          return Effect.succeed(existing);
-        }
-
-        return crypto.randomBytes(bytes).pipe(
-          Effect.mapError(
-            (cause) =>
-              new SecretStoreError({
-                message: `Failed to generate random bytes for secret ${name}.`,
-                cause,
-              }),
-          ),
-          Effect.flatMap((generated) =>
-            create(name, generated).pipe(
-              Effect.as(Uint8Array.from(generated)),
-              Effect.catchTag("SecretStoreError", (error) =>
-                isSecretAlreadyExistsError(error)
-                  ? get(name).pipe(
-                      Effect.flatMap((created) =>
-                        created !== null
-                          ? Effect.succeed(created)
-                          : Effect.fail(
-                              new SecretStoreError({
-                                message: `Failed to read secret ${name} after concurrent creation.`,
-                              }),
-                            ),
-                      ),
-                    )
-                  : Effect.fail(error),
+      Effect.flatMap(
+        Option.match({
+          onSome: Effect.succeed,
+          onNone: () =>
+            crypto.randomBytes(bytes).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new SecretStoreError({
+                    message: `Failed to generate random bytes for secret ${name}.`,
+                    cause,
+                  }),
+              ),
+              Effect.flatMap((generated) =>
+                create(name, generated).pipe(
+                  Effect.as(Uint8Array.from(generated)),
+                  Effect.catchTag("SecretStoreError", (error) =>
+                    isSecretAlreadyExistsError(error)
+                      ? get(name).pipe(
+                          Effect.flatMap(
+                            Option.match({
+                              onSome: Effect.succeed,
+                              onNone: () =>
+                                Effect.fail(
+                                  new SecretStoreError({
+                                    message: `Failed to read secret ${name} after concurrent creation.`,
+                                  }),
+                                ),
+                            }),
+                          ),
+                        )
+                      : Effect.fail(error),
+                  ),
+                ),
               ),
             ),
-          ),
-        );
-      }),
+        }),
+      ),
       Effect.withSpan("ServerSecretStore.getOrCreateRandom"),
     );
 

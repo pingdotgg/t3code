@@ -107,7 +107,15 @@ it.effect("registers annotated tools and preserves authenticated request context
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
       const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-      const requests = yield* broker.connect("mcp-test-client");
+      const requests = yield* broker.connect({
+        clientId: "mcp-test-client",
+        environmentId,
+        threadId,
+        tabId,
+        visible: true,
+        supportsAutomation: true,
+        focusedAt: "2026-06-11T00:00:00.000Z",
+      });
       yield* Stream.runForEach(requests, (request) =>
         broker.respond({
           requestId: request.requestId,
