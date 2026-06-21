@@ -6,10 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
-import {
-  WorkspacePaths,
-  WorkspaceRootStatFailedError,
-} from "../Services/WorkspacePaths.ts";
+import { WorkspacePaths, WorkspaceRootStatFailedError } from "../Services/WorkspacePaths.ts";
 import { makeWorkspacePaths, WorkspacePathsLive } from "./WorkspacePaths.ts";
 
 const TestLayer = Layer.empty.pipe(

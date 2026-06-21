@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 
 import {
   WorkspaceSearchIndexCreateFailed,
+  WorkspaceSearchIndexDestroyFailed,
   WorkspaceSearchIndexRefreshFailed,
   WorkspaceSearchIndexSearchFailed,
 } from "./WorkspaceEntries.ts";
@@ -20,7 +21,26 @@ it("preserves unexpected workspace search index creation failures", () => {
     reason: "FileFinder.create threw unexpectedly.",
     cause,
   });
-  expect(error.message).toBe("Failed to create the workspace search index for '/workspace/project'.");
+  expect(error.message).toBe(
+    "Failed to create the workspace search index for '/workspace/project'.",
+  );
+});
+
+it("preserves workspace search index destroy failures as structured defects", () => {
+  const cause = new Error("native destroy failed");
+  const error = new WorkspaceSearchIndexDestroyFailed({
+    cwd: "/workspace/project",
+    cause,
+  });
+
+  expect(error).toMatchObject({
+    _tag: "WorkspaceSearchIndexDestroyFailed",
+    cwd: "/workspace/project",
+    cause,
+  });
+  expect(error.message).toBe(
+    "Failed to destroy the workspace search index for '/workspace/project'.",
+  );
 });
 
 it("keeps returned workspace search index creation diagnostics out of the cause chain", () => {

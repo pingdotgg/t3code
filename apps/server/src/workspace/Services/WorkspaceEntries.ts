@@ -124,6 +124,18 @@ export class WorkspaceSearchIndexRefreshFailed extends Schema.TaggedErrorClass<W
   }
 }
 
+export class WorkspaceSearchIndexDestroyFailed extends Schema.TaggedErrorClass<WorkspaceSearchIndexDestroyFailed>()(
+  "WorkspaceSearchIndexDestroyFailed",
+  {
+    cwd: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to destroy the workspace search index for '${this.cwd}'.`;
+  }
+}
+
 export const WorkspaceEntriesError = Schema.Union([
   WorkspaceRootNotExistsError,
   WorkspaceRootCreateFailedError,
