@@ -88,7 +88,16 @@ async function main(): Promise<void> {
 
   // Render on a transparent background so the user's terminal theme (and its own
   // background colour) shows through instead of OpenTUI's opaque default.
-  const renderer = await createCliRenderer({ exitOnCtrlC: false, backgroundColor: "transparent" });
+  // `enableMouseMovement: false` requests basic mouse reporting (clicks + wheel)
+  // without motion tracking. That leaves the terminal's own drag-selection (and
+  // copy-on-select, e.g. Ghostty's) working on the rendered text — the same way
+  // the prompt copies — instead of OpenTUI capturing the drag for its own
+  // selection. Our UI only needs clicks and wheel scroll, so nothing is lost.
+  const renderer = await createCliRenderer({
+    exitOnCtrlC: false,
+    backgroundColor: "transparent",
+    enableMouseMovement: false,
+  });
 
   try {
     // Detect the terminal's actual palette + default fg/bg up front and feed it into
