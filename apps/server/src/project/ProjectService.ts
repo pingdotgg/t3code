@@ -1,6 +1,6 @@
 import {
+  type CommandId,
   ModelSelection,
-  ProjectChange,
   ProjectId,
   type Project,
   type ProjectScript,
@@ -11,16 +11,16 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 
+import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionProjects from "../persistence/Services/ProjectionProjects.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export interface ProjectCreateInput {
+  readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly title: string;
   readonly workspaceRoot: string;
@@ -30,6 +30,7 @@ export interface ProjectCreateInput {
 }
 
 export interface ProjectUpdateInput {
+  readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly title?: string;
   readonly workspaceRoot?: string;
@@ -38,6 +39,11 @@ export interface ProjectUpdateInput {
 }
 
 export interface ProjectBootstrapInput extends ProjectCreateInput {}
+
+export interface ProjectDeleteInput {
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+}
 
 export class ProjectNotFoundError extends Schema.TaggedErrorClass<ProjectNotFoundError>()(
   "ProjectNotFoundError",
@@ -68,7 +74,7 @@ export class ProjectOperationError extends Schema.TaggedErrorClass<ProjectOperat
       "normalize-workspace",
       "read-project",
       "list-projects",
-      "persist-project",
+      "dispatch-project-command",
       "resolve-favicon",
     ]),
     projectId: Schema.optional(ProjectId),
@@ -97,7 +103,7 @@ export class ProjectService extends Context.Service<
       ProjectServiceError
     >;
     readonly update: (input: ProjectUpdateInput) => Effect.Effect<Project, ProjectServiceError>;
-    readonly delete: (projectId: ProjectId) => Effect.Effect<Project, ProjectServiceError>;
+    readonly delete: (input: ProjectDeleteInput) => Effect.Effect<Project, ProjectServiceError>;
     readonly getById: (
       projectId: ProjectId,
       options?: { readonly includeDeleted?: boolean },
@@ -107,16 +113,15 @@ export class ProjectService extends Context.Service<
       options?: { readonly includeDeleted?: boolean },
     ) => Effect.Effect<Option.Option<Project>, ProjectOperationError>;
     readonly snapshot: Effect.Effect<ProjectSnapshot, ProjectOperationError>;
-    readonly changes: Stream.Stream<ProjectChange>;
   }
 >()("t3/project/ProjectService") {}
 
 export const make = Effect.gen(function* () {
+  const engine = yield* OrchestrationEngineService;
   const projects = yield* ProjectionProjects.ProjectionProjectRepository;
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
-  const changesPubSub = yield* PubSub.unbounded<ProjectChange>();
 
   const hydrate = Effect.fn("ProjectService.hydrate")(function* (
     row: ProjectionProjects.ProjectionProject,
@@ -194,24 +199,40 @@ export const make = Effect.gen(function* () {
     return row === undefined ? Option.none() : Option.some(yield* hydrate(row));
   });
 
-  const persist = Effect.fn("ProjectService.persist")(function* (
-    row: ProjectionProjects.ProjectionProject,
-  ) {
-    yield* projects.upsert(row).pipe(
+  const readCommitted = Effect.fn("ProjectService.readCommitted")(function* (projectId: ProjectId) {
+    const row = yield* projects
+      .getById({ projectId })
+      .pipe(
+        Effect.mapError(
+          (cause) => new ProjectOperationError({ operation: "read-project", projectId, cause }),
+        ),
+      );
+    if (Option.isNone(row)) {
+      return yield* new ProjectOperationError({
+        operation: "read-project",
+        projectId,
+        cause: "The accepted project command did not produce a project projection.",
+      });
+    }
+    return yield* hydrate(row.value);
+  });
+
+  const dispatch = <A>(
+    projectId: ProjectId,
+    command: Parameters<OrchestrationEngineService["Service"]["dispatch"]>[0],
+    onCommitted: Effect.Effect<A, ProjectOperationError>,
+  ) =>
+    engine.dispatch(command).pipe(
       Effect.mapError(
         (cause) =>
           new ProjectOperationError({
-            operation: "persist-project",
-            projectId: row.projectId,
-            workspaceRoot: row.workspaceRoot,
+            operation: "dispatch-project-command",
+            projectId,
             cause,
           }),
       ),
+      Effect.andThen(onCommitted),
     );
-    const project = yield* hydrate(row);
-    yield* PubSub.publish(changesPubSub, { type: "project.upserted", project });
-    return project;
-  });
 
   const assertWorkspaceAvailable = Effect.fn("ProjectService.assertWorkspaceAvailable")(function* (
     projectId: ProjectId,
@@ -250,27 +271,21 @@ export const make = Effect.gen(function* () {
           ),
         );
       yield* assertWorkspaceAvailable(input.projectId, workspaceRoot);
-      const existing = yield* projects.getById({ projectId: input.projectId }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProjectOperationError({
-              operation: "read-project",
-              projectId: input.projectId,
-              cause,
-            }),
-        ),
-      );
       const now = DateTime.formatIso(yield* DateTime.now);
-      return yield* persist({
-        projectId: input.projectId,
-        title: input.title,
-        workspaceRoot,
-        defaultModelSelection: input.defaultModelSelection ?? null,
-        scripts: [...(input.scripts ?? [])],
-        createdAt: Option.isSome(existing) ? existing.value.createdAt : now,
-        updatedAt: now,
-        deletedAt: null,
-      });
+      return yield* dispatch(
+        input.projectId,
+        {
+          type: "project.create",
+          commandId: input.commandId,
+          projectId: input.projectId,
+          title: input.title,
+          workspaceRoot,
+          defaultModelSelection: input.defaultModelSelection ?? null,
+          scripts: [...(input.scripts ?? [])],
+          createdAt: now,
+        },
+        readCommitted(input.projectId),
+      );
     },
   );
 
@@ -304,16 +319,21 @@ export const make = Effect.gen(function* () {
               ),
             );
       yield* assertWorkspaceAvailable(input.projectId, workspaceRoot);
-      return yield* persist({
-        ...existing.value,
-        ...(input.title === undefined ? {} : { title: input.title }),
-        workspaceRoot,
-        ...(input.defaultModelSelection === undefined
-          ? {}
-          : { defaultModelSelection: input.defaultModelSelection }),
-        ...(input.scripts === undefined ? {} : { scripts: [...input.scripts] }),
-        updatedAt: DateTime.formatIso(yield* DateTime.now),
-      });
+      return yield* dispatch(
+        input.projectId,
+        {
+          type: "project.meta.update",
+          commandId: input.commandId,
+          projectId: input.projectId,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(workspaceRoot === existing.value.workspaceRoot ? {} : { workspaceRoot }),
+          ...(input.defaultModelSelection === undefined
+            ? {}
+            : { defaultModelSelection: input.defaultModelSelection }),
+          ...(input.scripts === undefined ? {} : { scripts: [...input.scripts] }),
+        },
+        readCommitted(input.projectId),
+      );
     },
   );
 
@@ -326,7 +346,8 @@ export const make = Effect.gen(function* () {
   );
 
   const deleteProject: ProjectService["Service"]["delete"] = Effect.fn("ProjectService.delete")(
-    function* (projectId) {
+    function* (input) {
+      const { projectId } = input;
       const existing = yield* projects
         .getById({ projectId })
         .pipe(
@@ -337,22 +358,15 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(existing) || existing.value.deletedAt !== null) {
         return yield* new ProjectNotFoundError({ projectId });
       }
-      const deletedAt = DateTime.formatIso(yield* DateTime.now);
-      const row = { ...existing.value, updatedAt: deletedAt, deletedAt };
-      yield* projects.upsert(row).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProjectOperationError({
-              operation: "persist-project",
-              projectId,
-              workspaceRoot: row.workspaceRoot,
-              cause,
-            }),
-        ),
+      return yield* dispatch(
+        projectId,
+        {
+          type: "project.delete",
+          commandId: input.commandId,
+          projectId,
+        },
+        readCommitted(projectId),
       );
-      const project = yield* hydrate(row);
-      yield* PubSub.publish(changesPubSub, { type: "project.deleted", projectId, deletedAt });
-      return project;
     },
   );
 
@@ -373,7 +387,6 @@ export const make = Effect.gen(function* () {
     getById,
     getByWorkspaceRoot,
     snapshot,
-    changes: Stream.fromPubSub(changesPubSub),
   });
 });
 

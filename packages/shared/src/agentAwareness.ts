@@ -1,9 +1,12 @@
 import type {
   EnvironmentId,
+  OrchestrationV2ThreadShell,
   OrchestrationProjectShell,
   OrchestrationThreadShell,
+  Project,
   ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 export type AgentAwarenessPhase =
   | "starting"
@@ -72,6 +75,72 @@ export function projectThreadAwareness(
     updatedAt: thread.updatedAt,
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),
   };
+}
+
+export interface ProjectThreadAwarenessV2Input {
+  readonly environmentId: EnvironmentId;
+  readonly project: Pick<Project, "title">;
+  readonly thread: Pick<
+    OrchestrationV2ThreadShell,
+    "id" | "title" | "modelSelection" | "status" | "pendingRuntimeRequest" | "updatedAt"
+  >;
+}
+
+/** Build relay activity directly from the V2 shell projection. */
+export function projectThreadAwarenessV2(
+  input: ProjectThreadAwarenessV2Input,
+): AgentAwarenessState | null {
+  const { environmentId, project, thread } = input;
+  const phase = resolveThreadAwarenessPhaseV2(thread);
+  if (phase === null) {
+    return null;
+  }
+  const detail =
+    phase === "completed"
+      ? "Review the completed task."
+      : phase === "failed"
+        ? "The agent run failed."
+        : undefined;
+  return {
+    environmentId,
+    threadId: thread.id,
+    projectTitle: project.title,
+    threadTitle: thread.title,
+    phase,
+    headline: headlineForPhase(phase),
+    ...(detail === undefined ? {} : { detail }),
+    modelTitle: thread.modelSelection.model,
+    updatedAt: DateTime.formatIso(thread.updatedAt),
+    deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),
+  };
+}
+
+function resolveThreadAwarenessPhaseV2(
+  thread: ProjectThreadAwarenessV2Input["thread"],
+): AgentAwarenessPhase | null {
+  if (thread.pendingRuntimeRequest?.kind === "user_input") {
+    return "waiting_for_input";
+  }
+  if (thread.pendingRuntimeRequest !== null) {
+    return "waiting_for_approval";
+  }
+  switch (thread.status) {
+    case "starting":
+      return "starting";
+    case "running":
+    case "waiting":
+      return "running";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "idle":
+    case "queued":
+    case "interrupted":
+    case "cancelled":
+    case "rolled_back":
+      return null;
+  }
 }
 
 function resolveThreadAwarenessPhase(

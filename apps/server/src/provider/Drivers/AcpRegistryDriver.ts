@@ -14,7 +14,7 @@ import {
   type AcpRegistryAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/AcpRegistryAdapterV2.ts";
 import type { TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
-import { ProviderAdapterRequestError, ProviderDriverError } from "../Errors.ts";
+import { ProviderDriverError } from "../Errors.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -24,32 +24,6 @@ import {
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
-
-const unsupportedLegacyCall = (operation: string) =>
-  Effect.fail(
-    new ProviderAdapterRequestError({
-      provider: DRIVER_KIND,
-      method: operation,
-      detail: "ACP Registry instances are available through orchestration V2 only.",
-    }),
-  );
-
-const makeLegacyAdapter = (): ProviderInstance["adapter"] => ({
-  provider: DRIVER_KIND,
-  capabilities: { sessionModelSwitch: "unsupported" },
-  startSession: () => unsupportedLegacyCall("startSession"),
-  sendTurn: () => unsupportedLegacyCall("sendTurn"),
-  interruptTurn: () => unsupportedLegacyCall("interruptTurn"),
-  respondToRequest: () => unsupportedLegacyCall("respondToRequest"),
-  respondToUserInput: () => unsupportedLegacyCall("respondToUserInput"),
-  stopSession: () => Effect.void,
-  listSessions: () => Effect.succeed([]),
-  hasSession: () => Effect.succeed(false),
-  readThread: () => unsupportedLegacyCall("readThread"),
-  rollbackThread: () => unsupportedLegacyCall("rollbackThread"),
-  stopAll: () => Effect.void,
-  streamEvents: Stream.empty,
-});
 
 const makeUnsupportedTextGeneration = (): TextGenerationShape => {
   const unsupported = (operation: string) =>
@@ -163,7 +137,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           refresh: Effect.sync(currentSnapshot),
           streamChanges: Stream.empty,
         },
-        adapter: makeLegacyAdapter(),
         orchestrationAdapter,
         textGeneration: makeUnsupportedTextGeneration(),
       } satisfies ProviderInstance;

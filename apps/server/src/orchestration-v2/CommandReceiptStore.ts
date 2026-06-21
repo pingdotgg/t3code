@@ -5,7 +5,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
+import {
+  OrchestrationCommandReceiptRepository,
+  type OrchestrationCommandReceipt,
+} from "../persistence/Services/OrchestrationCommandReceipts.ts";
 
 /**
  * ERRORS
@@ -75,16 +80,6 @@ export class CommandReceiptStoreV2 extends Context.Service<
 /**
  * IMPLEMENTATIONS
  */
-type CommandReceiptRow = {
-  readonly command_id: string;
-  readonly thread_id: string;
-  readonly command_type: string;
-  readonly accepted_at: string;
-  readonly result_sequence: number;
-  readonly status: string;
-  readonly error: string | null;
-};
-
 const decodeReceipt = Schema.decodeUnknownEffect(
   CommandReceiptV2.mapFields((fields) => ({
     ...fields,
@@ -92,121 +87,81 @@ const decodeReceipt = Schema.decodeUnknownEffect(
   })),
 );
 
-function rowToReceipt(row: CommandReceiptRow) {
+function fromApplicationReceipt(receipt: OrchestrationCommandReceipt) {
   return decodeReceipt({
-    commandId: row.command_id,
-    threadId: row.thread_id,
-    commandType: row.command_type,
-    acceptedAt: row.accepted_at,
-    resultSequence: row.result_sequence,
-    status: row.status,
-    error: row.error,
+    commandId: receipt.commandId,
+    threadId: receipt.aggregateId,
+    commandType: receipt.commandType,
+    acceptedAt: receipt.acceptedAt,
+    resultSequence: receipt.resultSequence,
+    status: receipt.status,
+    error: receipt.error,
   });
 }
 
-export const layer: Layer.Layer<CommandReceiptStoreV2, never, SqlClient.SqlClient> = Layer.effect(
-  CommandReceiptStoreV2,
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+function toApplicationReceipt(receipt: CommandReceiptV2): OrchestrationCommandReceipt {
+  return {
+    commandId: receipt.commandId,
+    aggregateKind: "thread",
+    aggregateId: receipt.threadId,
+    commandType: receipt.commandType,
+    acceptedAt: DateTime.formatIso(receipt.acceptedAt),
+    resultSequence: receipt.resultSequence,
+    status: receipt.status,
+    error: receipt.error,
+  };
+}
 
-    return CommandReceiptStoreV2.of({
-      insertIfAbsent: (receipt) =>
-        sql<{ readonly command_id: string }>`
-          INSERT INTO orchestration_v2_command_receipts (
-            command_id,
-            thread_id,
-            command_type,
-            accepted_at,
-            result_sequence,
-            status,
-            error
-          )
-          VALUES (
-            ${receipt.commandId},
-            ${receipt.threadId},
-            ${receipt.commandType},
-            ${DateTime.formatIso(receipt.acceptedAt)},
-            ${receipt.resultSequence},
-            ${receipt.status},
-            ${receipt.error}
-          )
-          ON CONFLICT(command_id) DO NOTHING
-          RETURNING command_id
-        `.pipe(
-          Effect.map((rows) => rows.length === 1),
-          Effect.mapError(
-            (cause) =>
-              new CommandReceiptStoreWriteError({
-                commandId: receipt.commandId,
-                cause,
-              }),
+const baseLayer: Layer.Layer<CommandReceiptStoreV2, never, OrchestrationCommandReceiptRepository> =
+  Layer.effect(
+    CommandReceiptStoreV2,
+    Effect.gen(function* () {
+      const receipts = yield* OrchestrationCommandReceiptRepository;
+
+      return CommandReceiptStoreV2.of({
+        insertIfAbsent: (receipt) =>
+          receipts.insertIfAbsent(toApplicationReceipt(receipt)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new CommandReceiptStoreWriteError({
+                  commandId: receipt.commandId,
+                  cause,
+                }),
+            ),
           ),
-        ),
-      upsert: (receipt) =>
-        sql`
-          INSERT INTO orchestration_v2_command_receipts (
-            command_id,
-            thread_id,
-            command_type,
-            accepted_at,
-            result_sequence,
-            status,
-            error
-          )
-          VALUES (
-            ${receipt.commandId},
-            ${receipt.threadId},
-            ${receipt.commandType},
-            ${DateTime.formatIso(receipt.acceptedAt)},
-            ${receipt.resultSequence},
-            ${receipt.status},
-            ${receipt.error}
-          )
-          ON CONFLICT(command_id)
-          DO UPDATE SET
-            thread_id = excluded.thread_id,
-            command_type = excluded.command_type,
-            accepted_at = excluded.accepted_at,
-            result_sequence = excluded.result_sequence,
-            status = excluded.status,
-            error = excluded.error
-        `.pipe(
-          Effect.asVoid,
-          Effect.mapError(
-            (cause) =>
-              new CommandReceiptStoreWriteError({
-                commandId: receipt.commandId,
-                cause,
-              }),
+        upsert: (receipt) =>
+          receipts.upsert(toApplicationReceipt(receipt)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new CommandReceiptStoreWriteError({
+                  commandId: receipt.commandId,
+                  cause,
+                }),
+            ),
           ),
-        ),
-      getByCommandId: (commandId) =>
-        sql<CommandReceiptRow>`
-          SELECT
-            command_id,
-            thread_id,
-            command_type,
-            accepted_at,
-            result_sequence,
-            status,
-            error
-          FROM orchestration_v2_command_receipts
-          WHERE command_id = ${commandId}
-        `.pipe(
-          Effect.flatMap((rows) => {
-            const row = rows[0];
-            return row === undefined
-              ? Effect.succeed(Option.none())
-              : rowToReceipt(row).pipe(Effect.map(Option.some));
-          }),
-          Effect.mapError(
-            (cause) =>
-              new CommandReceiptStoreReadError({
-                commandId,
-                cause,
+        getByCommandId: (commandId) =>
+          receipts.getByCommandId({ commandId }).pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () => Effect.succeed(Option.none()),
+                onSome: (receipt) =>
+                  receipt.aggregateKind !== "thread"
+                    ? Effect.succeed(Option.none())
+                    : fromApplicationReceipt(receipt).pipe(Effect.map(Option.some)),
               }),
+            ),
+            Effect.mapError(
+              (cause) =>
+                new CommandReceiptStoreReadError({
+                  commandId,
+                  cause,
+                }),
+            ),
           ),
-        ),
-    } satisfies CommandReceiptStoreV2Shape);
-  }),
-);
+      } satisfies CommandReceiptStoreV2Shape);
+    }),
+  );
+
+export const layer = baseLayer.pipe(Layer.provide(OrchestrationCommandReceiptRepositoryLive));
+
+export const layerFromApplicationReceipts = baseLayer;
