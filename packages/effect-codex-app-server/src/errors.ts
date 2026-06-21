@@ -82,6 +82,11 @@ const payloadKind = (payload: unknown): CodexAppServerPayloadKind => {
   return typeof payload;
 };
 
+const protocolMessageFields = ["id", "method", "params", "result", "error"] as const;
+
+export const CodexAppServerProtocolMessageField = Schema.Literals(protocolMessageFields);
+export type CodexAppServerProtocolMessageField = typeof CodexAppServerProtocolMessageField.Type;
+
 export interface CodexAppServerRequestDiagnostics {
   readonly method?: string;
   readonly requestId?: string;
@@ -157,7 +162,8 @@ export class CodexAppServerProtocolParseError extends Schema.TaggedErrorClass<Co
     operation: CodexAppServerProtocolParseOperation,
     method: Schema.optionalKey(Schema.String),
     requestId: Schema.optionalKey(Schema.String),
-    detail: Schema.optionalKey(Schema.String),
+    payloadKind: Schema.optionalKey(CodexAppServerPayloadKind),
+    presentFields: Schema.optionalKey(Schema.Array(CodexAppServerProtocolMessageField)),
     issueCount: Schema.optionalKey(Schema.Number),
     issueKinds: Schema.optionalKey(Schema.Array(CodexAppServerSchemaIssueKind)),
     maximumPathDepth: Schema.optionalKey(Schema.Number),
@@ -194,6 +200,31 @@ export class CodexAppServerProtocolParseError extends Schema.TaggedErrorClass<Co
       ...(cause.issueKinds === undefined ? {} : { issueKinds: cause.issueKinds }),
       ...(cause.maximumPathDepth === undefined ? {} : { maximumPathDepth: cause.maximumPathDepth }),
       cause,
+    });
+  }
+
+  static fromUnroutableMessage(message: unknown) {
+    const diagnostics = { payloadKind: payloadKind(message) };
+    if (typeof message !== "object" || message === null || Array.isArray(message)) {
+      return new CodexAppServerProtocolParseError({
+        operation: "route-wire-message",
+        ...diagnostics,
+      });
+    }
+
+    const presentFields = protocolMessageFields.filter((field) => field in message);
+    const method =
+      "method" in message && typeof message.method === "string" ? message.method : undefined;
+    const requestId =
+      "id" in message && (typeof message.id === "string" || typeof message.id === "number")
+        ? String(message.id)
+        : undefined;
+    return new CodexAppServerProtocolParseError({
+      operation: "route-wire-message",
+      ...diagnostics,
+      presentFields,
+      ...(method === undefined ? {} : { method }),
+      ...(requestId === undefined ? {} : { requestId }),
     });
   }
 }

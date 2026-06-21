@@ -311,6 +311,36 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 
+  it.effect("describes unroutable messages with safe structural diagnostics", () =>
+    Effect.gen(function* () {
+      const secret = "codex-unroutable-secret-sentinel";
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      yield* Queue.offer(
+        input,
+        encodeJsonl({ id: true, method: "thread/start", params: { token: secret } }),
+      );
+
+      const error = yield* Deferred.await(termination);
+      assert.instanceOf(error, CodexError.CodexAppServerProtocolParseError);
+      assert.deepInclude(error, {
+        operation: "route-wire-message",
+        method: "thread/start",
+        payloadKind: "object",
+        presentFields: ["id", "method", "params"],
+      });
+      assert.isUndefined(error.requestId);
+      assert.notProperty(error, "detail");
+      assert.notProperty(error, "cause");
+      assert.notInclude(error.message, secret);
+    }),
+  );
+
   it.effect("classifies an input stream ending without inventing a cause", () =>
     Effect.gen(function* () {
       const { stdio, input } = yield* makeInMemoryStdio();
