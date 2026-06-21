@@ -1,5 +1,9 @@
-import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { PreviewAutomationUnavailableError } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  PreviewAutomationUnavailableError,
+  type ProviderInstanceId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
@@ -26,7 +30,11 @@ export const requireMcpCapability = Effect.fn("mcp.requireCapability")(function*
   const invocation = yield* McpInvocationContext;
   if (!invocation.capabilities.has(capability)) {
     return yield* new PreviewAutomationUnavailableError({
-      message: `MCP credential does not grant the ${capability} capability.`,
+      capability,
+      environmentId: invocation.environmentId,
+      threadId: invocation.threadId,
+      providerSessionId: invocation.providerSessionId,
+      providerInstanceId: invocation.providerInstanceId,
     });
   }
   return invocation;
