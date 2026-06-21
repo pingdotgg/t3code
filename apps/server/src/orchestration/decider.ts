@@ -224,13 +224,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           workspaceRoot: command.workspaceRoot,
-          // Project creation has no user model choice. Older clients sent an
-          // automatic seed here, but only a metadata update records an
-          // explicit project default.
-          defaultModelSelection: null,
+          defaultModelSelection: command.defaultModelSelection ?? null,
+<<<<<<< HEAD
           faviconPath: null,
           projectIcon: null,
           scripts: [],
+=======
+          scripts: command.scripts ?? [],
+>>>>>>> f38dbfd84c (Integrate orchestration v2 with the application runtime)
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },

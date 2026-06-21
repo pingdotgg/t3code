@@ -4,6 +4,8 @@
 
 Make Orchestration V2 the only orchestration system used by the server, web app, and mobile app. Preserve reusable platform infrastructure, remove V1 orchestration as each replacement becomes authoritative, and leave legacy persistence untouched until a separate state-migration plan is chosen.
 
+In this plan, "Orchestration V2" means the agent orchestrator: provider sessions, runs, attempts, runtime requests, and external agent effects. It does not replace the application event-sourcing data plane. Projects and threads remain first-class application aggregates in one durable, globally ordered event source, and the shell remains a projection of that source.
+
 The work is split into four sequential architectural shapes. Finish and validate one shape before beginning the next. These shapes are implementation checkpoints only: they exist to keep the work reviewable and easier to reason about, not to define rollout stages or supported compatibility windows.
 
 There will be no users until after Shape 4 is complete. No intermediate shape is released, deployed for users, or expected to provide a usable mixed-version application. The first user-facing build uses the completed V2-only server and V2-native clients.
@@ -12,6 +14,8 @@ Execution rules:
 
 - Do not dual-write V1 and V2 state.
 - Do not mirror production commands into both runtimes.
+- Do not write core entity projection tables directly. Project and thread mutations commit application events first; projections are derived transactionally and remain replayable.
+- Preserve one application event cursor across project and thread shell changes.
 - Shapes 1 and 2 may keep V1 runnable as a development reference while V2 is completed through direct and replay-backed tests; this is not a supported user path or rollout strategy.
 - Shape 3 performs the backend hard cut and intentionally breaks the old client protocol.
 - Shape 4 updates web and mobile to the final protocol. No intermediate backend/client compatibility adapter is required because no users consume the intermediate shapes.
@@ -299,20 +303,20 @@ Implementation status: complete. The production WebSocket/client cutover remains
 
 Recreate the application behavior currently hidden in V1 reactors and WebSocket handlers using explicit V2 services and durable workflows.
 
-### 1. Standalone project domain
+### 1. Project domain service
 
-Create a `ProjectService` outside orchestration that owns:
+Create a `ProjectService` outside the agent orchestrator that owns project validation and application commands for:
 
 - create, update, and delete
 - lookup by ID and workspace root
-- project list and snapshot
+- project lookup and snapshot queries over the event-derived projection
 - repository identity
 - setup-script configuration
 - favicon metadata
 - startup auto-bootstrap
-- project change subscriptions
+- project event planning
 
-Reuse `projection_projects` initially instead of migrating project data. Stop treating project commands as orchestration commands.
+Reuse `projection_projects` initially instead of migrating project data. Project commands are application-domain commands, not agent-orchestrator commands, but they still commit to the shared application event source. `ProjectService` must not mutate `projection_projects` directly or own a standalone in-memory change stream.
 
 Reuse existing project infrastructure:
 
@@ -519,9 +523,11 @@ Direct service-level integration tests must cover:
 
 ## Shape 3: V2-Only Backend Ownership
 
+Implementation status: complete. The revision removes the V1 agent runtime, restores the existing application event-sourcing data plane, and installs V2 behind it instead of replacing it.
+
 ### Goal
 
-Make V2 the only live orchestration runtime and remove V1 from the server.
+Make V2 the only live agent orchestration runtime while preserving the event-sourced application backend.
 
 This shape intentionally breaks the old client protocol. That is acceptable because the shapes are implementation chunks and there are no users or releases between them.
 
@@ -529,8 +535,7 @@ This shape intentionally breaks the old client protocol. That is acceptable beca
 
 Replace V1 and debug V2 endpoints with one production API containing:
 
-- project snapshot and subscription
-- thread shell snapshot and subscription
+- one shell snapshot and subscription containing projects, active threads, and archived threads
 - archived-thread query and subscription
 - full thread projection snapshot and subscription
 - thread launch
@@ -547,14 +552,21 @@ Replace V1 and debug V2 endpoints with one production API containing:
 
 Use final unversioned method names. Do not retain compatibility aliases.
 
+The shell stream uses one durable application-event cursor. Project and thread deltas cannot be split into independently ordered streams.
+
+The project HTTP API may remain as a CLI command/query transport, but it must call the same event-sourced `ProjectService`. It is not a second project state source, and the WebSocket protocol must not expose a separate project snapshot or subscription.
+
 Move the debug route's projection reducer into a shared pure client-runtime module. Backend behavior must not depend on debugger state.
 
 ### 2. Replace server runtime composition
 
 In `apps/server/src/server.ts`:
 
-- remove `OrchestrationLayerLive`
-- remove V1 reactor composition
+- remove the V1 agent reactors and provider runtime from the composition, but retain the existing `OrchestrationLayerLive` application event/projection infrastructure
+- retain `orchestration_events` and `orchestration_command_receipts` as the generic application event log and receipt store; their historical names do not make them V1-only tables
+- migrate the isolated `orchestration_v2_events` and `orchestration_v2_command_receipts` rows into that shared log, then treat the V2-specific tables as read-only legacy storage
+- preserve or rename the generic projection, replay, and shell-query infrastructure
+- remove only V1 agent/provider reactor composition
 - remove the V1 provider runtime layer
 - install V2 application services
 - install the durable effect worker
@@ -573,6 +585,29 @@ In `apps/server/src/serverRuntimeStartup.ts`, establish this startup order:
 
 No V1 reactor or provider-session reaper starts.
 
+The resulting ownership boundary is:
+
+```text
+application commands
+  -> application event transaction
+  -> project/shell/thread projections
+  -> Agent Orchestrator V2 durable effects
+  -> provider execution
+  -> additional application events
+```
+
+The event transaction remains responsible for ordered append, command idempotency, projection updates, effect-outbox enqueue, and the committed sequence.
+
+This is an integration, not a replacement data plane. Restore and adapt the existing components:
+
+- `OrchestrationEventStore` remains the one durable event source and gains V2 thread-event codecs; V2 `EventStore` is an adapter over it, not a second SQL implementation.
+- `OrchestrationCommandReceiptRepository` remains the command-idempotency store; the V2 receipt service adapts to it.
+- `OrchestrationEngine` retains its serialized project-command transaction, decider, and projector path. Its production command surface is narrowed to project commands instead of restoring V1 agent execution.
+- `OrchestrationProjectionPipeline` remains responsible for project projection replay and cursor advancement.
+- `ProjectionSnapshotQuery` remains the source of project shell rows and is composed with V2 thread projections for the unified shell.
+
+Do not introduce parallel `ApplicationEventStore`, `ProjectProjection`, or `ApplicationShellService` replacements for these components.
+
 ### 3. Update backend consumers
 
 Rewrite or redirect:
@@ -589,7 +624,7 @@ Rewrite or redirect:
 
 Delete:
 
-- `apps/server/src/orchestration/**`
+- V1-only files under `apps/server/src/orchestration/**`, while keeping the existing event transaction, project decider/projector, projection pipeline, and snapshot query
 - V1 orchestration HTTP routes
 - V1 WebSocket handlers
 - V1 reactor and startup wiring
@@ -599,9 +634,11 @@ Delete:
 - V1 high-level provider adapters and services after import analysis confirms no remaining consumers
 - corresponding tests and duplicate service interfaces
 
+Do not delete infrastructure merely because it lived under the old `orchestration` namespace. Retain or relocate code whose responsibility is generic application event append/replay, command receipts, project/shell projection, cursor catch-up, or projection rebuild.
+
 Retain low-level provider infrastructure imported by V2, including provider instance configuration, SDK and ACP transports, environment setup, logging, and runtime utilities.
 
-Add an import-boundary test preventing production code from importing the deleted V1 namespace.
+Add an import-boundary test preventing production code from importing the deleted V1 agent reactors and provider services. Imports of the retained application event/projection services are expected.
 
 ### 5. Preserve legacy storage
 
@@ -621,6 +658,9 @@ Add backend integration coverage for:
 - startup ordering and command readiness
 - V2-only provider session creation
 - shell and thread snapshot reconnects
+- project and thread changes sharing one ordered shell cursor
+- project command idempotency and projection replay
+- proof that project commands cannot bypass the application event store
 - CLI project operations
 - MCP send, wait, interrupt, fork, and merge flows
 - agent-awareness output
@@ -633,9 +673,11 @@ Add backend integration coverage for:
 
 - Server startup does not construct any V1 orchestration or provider runtime.
 - Every production orchestration endpoint targets V2.
+- Projects and threads are committed through one application event source and exposed through one shell stream.
+- `projection_projects` and core thread projections are only changed by event projection/rebuild code.
 - CLI, MCP, checkpoints, awareness, startup, and telemetry use V2.
-- No production import references `apps/server/src/orchestration`.
-- No writes occur to legacy orchestration tables.
+- No production import references the deleted V1 agent reactors, provider runtime ingestion, provider command handling, or session-reaper services.
+- New writes go only to the retained application event/receipt tables and event-derived projections; the retired V1-only projection/runtime tables and isolated `orchestration_v2_*` event/receipt tables remain untouched.
 - Backend integration and restart tests pass.
 - Old clients are expected to be incompatible at this boundary.
 - `vp check`, `vp run typecheck`, and `vp test` pass.

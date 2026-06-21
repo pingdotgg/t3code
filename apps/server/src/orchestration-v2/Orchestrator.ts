@@ -15,7 +15,7 @@ import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
-  type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
@@ -145,7 +145,10 @@ export interface OrchestratorV2Shape {
     },
     OrchestratorV2Error
   >;
-  readonly getShellSnapshot: () => Effect.Effect<OrchestrationV2ShellSnapshot, OrchestratorV2Error>;
+  readonly getShellSnapshot: () => Effect.Effect<
+    OrchestrationV2ThreadShellSnapshot,
+    OrchestratorV2Error
+  >;
   readonly getThreadEventSequence: (
     threadId: ThreadId,
   ) => Effect.Effect<number, OrchestratorV2Error>;

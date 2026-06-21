@@ -12,7 +12,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Stream from "effect/Stream";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
@@ -126,7 +125,6 @@ const makeLayer = (options?: { readonly failCreate?: boolean; readonly failSetup
       getById: (id) => Effect.succeed(id === projectId ? Option.some(project) : Option.none()),
       getByWorkspaceRoot: () => Effect.succeed(Option.some(project)),
       snapshot: Effect.die("unused"),
-      changes: Stream.empty,
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({ createWorktree, removeWorktree }),
     Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, {

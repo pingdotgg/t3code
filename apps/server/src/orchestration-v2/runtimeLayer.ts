@@ -1,19 +1,24 @@
 import * as Layer from "effect/Layer";
-import * as Effect from "effect/Effect";
+import {
+  OrchestrationEventInfrastructureLayerLive,
+  OrchestrationLayerLive,
+} from "../orchestration/runtimeLayer.ts";
+import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
+import { layer as projectServiceLayer } from "../project/ProjectService.ts";
+import { layer as projectSetupScriptRunnerLayer } from "../project/ProjectSetupScriptRunner.ts";
 import { layer as checkpointCaptureServiceLayer } from "./CheckpointCaptureService.ts";
 import { layer as checkpointServiceLayer } from "./CheckpointService.ts";
 import { layer as checkpointRollbackServiceLayer } from "./CheckpointRollbackService.ts";
 import { layer as commandPolicyLayer } from "./CommandPolicy.ts";
-import { layer as commandReceiptStoreLayer } from "./CommandReceiptStore.ts";
+import { layerFromApplicationReceipts as commandReceiptStoreLayer } from "./CommandReceiptStore.ts";
 import { layer as contextHandoffServiceLayer } from "./ContextHandoffService.ts";
 import { layer as effectOutboxLayer } from "./EffectOutbox.ts";
 import {
-  daemonLayer as effectWorkerDaemonLayer,
   executorLayer as effectExecutorLayer,
   layer as effectWorkerLayer,
 } from "./EffectWorker.ts";
 import { layerFromStores as eventSinkLayer } from "./EventSink.ts";
-import { layer as eventStoreLayer } from "./EventStore.ts";
+import { layerFromOrchestrationEventStore as eventStoreLayer } from "./EventStore.ts";
 import { layer as idAllocatorLayer } from "./IdAllocator.ts";
 import { layer as orchestratorLayer } from "./Orchestrator.ts";
 import { layer as projectionStoreLayer } from "./ProjectionStore.ts";
@@ -21,10 +26,7 @@ import { layer as projectionMaintenanceLayer } from "./ProjectionMaintenance.ts"
 import { layerFromProviderInstanceRegistry as providerAdapterRegistryLayerFromProviderInstances } from "./ProviderAdapterRegistry.ts";
 import { layer as providerEventIngestorLayer } from "./ProviderEventIngestor.ts";
 import { layer as providerSessionManagerLayer } from "./ProviderSessionManager.ts";
-import {
-  layer as providerRuntimeRecoveryLayer,
-  ProviderRuntimeRecoveryService,
-} from "./ProviderRuntimeRecoveryService.ts";
+import { layer as providerRuntimeRecoveryLayer } from "./ProviderRuntimeRecoveryService.ts";
 import { layer as providerSwitchServiceLayer } from "./ProviderSwitchService.ts";
 import { layer as providerTurnControlServiceLayer } from "./ProviderTurnControlService.ts";
 import { layer as providerTurnStartServiceLayer } from "./ProviderTurnStartService.ts";
@@ -33,21 +35,29 @@ import { layer as runFinalizationServiceLayer } from "./RunFinalizationService.t
 import { layer as runtimePolicyLayer } from "./RuntimePolicy.ts";
 import { layer as runtimeRequestServiceLayer } from "./RuntimeRequestService.ts";
 import { layer as threadManagementServiceLayer } from "./ThreadManagementService.ts";
+import { layer as threadLaunchServiceLayer } from "./ThreadLaunchService.ts";
+import { layer as threadLifecycleServiceLayer } from "./ThreadLifecycleService.ts";
 import { layer as threadForkServiceLayer } from "./ThreadForkService.ts";
 import { layer as turnItemPositionStoreLayer } from "./TurnItemPositionStore.ts";
 
+const eventStoreProvided = eventStoreLayer.pipe(
+  Layer.provide(OrchestrationEventInfrastructureLayerLive),
+);
+const commandReceiptStoreProvided = commandReceiptStoreLayer.pipe(
+  Layer.provide(OrchestrationEventInfrastructureLayerLive),
+);
+
 const storesLayer = Layer.mergeAll(
-  eventStoreLayer,
+  OrchestrationEventInfrastructureLayerLive,
+  eventStoreProvided,
   projectionStoreLayer,
-  commandReceiptStoreLayer,
+  commandReceiptStoreProvided,
   effectOutboxLayer,
   turnItemPositionStoreLayer,
 );
 
 const eventSinkProvided = eventSinkLayer.pipe(Layer.provide(storesLayer));
 const projectionMaintenanceProvided = projectionMaintenanceLayer.pipe(Layer.provide(storesLayer));
-
-const commandReceiptStoreProvided = commandReceiptStoreLayer;
 
 const providerEventIngestorProvided = providerEventIngestorLayer.pipe(
   Layer.provide(Layer.mergeAll(eventSinkProvided, idAllocatorLayer)),
@@ -153,10 +163,6 @@ const effectExecutorProvided = effectExecutorLayer.pipe(
 const effectWorkerProvided = effectWorkerLayer.pipe(
   Layer.provide(Layer.merge(storesLayer, effectExecutorProvided)),
 );
-const effectWorkerDaemonProvided = effectWorkerDaemonLayer.pipe(
-  Layer.provide(effectWorkerProvided),
-);
-
 const providerRuntimeRecoveryProvided = providerRuntimeRecoveryLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -169,9 +175,6 @@ const providerRuntimeRecoveryProvided = providerRuntimeRecoveryLayer.pipe(
     ),
   ),
 );
-const providerRuntimeRecoveryStartupProvided = Layer.effectDiscard(
-  Effect.flatMap(ProviderRuntimeRecoveryService, (recovery) => recovery.recover),
-).pipe(Layer.provide(providerRuntimeRecoveryProvided));
 
 const orchestratorProvided = orchestratorLayer.pipe(
   Layer.provide(
@@ -194,11 +197,42 @@ const orchestratorProvided = orchestratorLayer.pipe(
     ),
   ),
 );
+
+const threadManagementProvided = threadManagementServiceLayer.pipe(
+  Layer.provide(orchestratorProvided),
+);
+export const ProjectServiceLayerLive = projectServiceLayer.pipe(
+  Layer.provide(Layer.merge(ProjectionProjectRepositoryLive, OrchestrationLayerLive)),
+);
+export const ProjectSetupScriptRunnerLayerLive = projectSetupScriptRunnerLayer.pipe(
+  Layer.provide(ProjectServiceLayerLive),
+);
+const threadLaunchProvided = threadLaunchServiceLayer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ProjectServiceLayerLive,
+      ProjectSetupScriptRunnerLayerLive,
+      threadManagementProvided,
+      idAllocatorLayer,
+    ),
+  ),
+);
+const threadLifecycleProvided = threadLifecycleServiceLayer.pipe(
+  Layer.provide(threadManagementProvided),
+);
+
 export const OrchestrationV2LayerLive = Layer.mergeAll(
   orchestratorProvided,
-  threadManagementServiceLayer.pipe(Layer.provide(orchestratorProvided)),
-  effectWorkerDaemonProvided,
-  providerRuntimeRecoveryStartupProvided,
+  threadManagementProvided,
+  effectWorkerProvided,
   providerRuntimeRecoveryProvided,
   projectionMaintenanceProvided,
+);
+
+export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
+  OrchestrationLayerLive,
+  OrchestrationV2LayerLive,
+  ProjectServiceLayerLive,
+  threadLaunchProvided,
+  threadLifecycleProvided,
 );

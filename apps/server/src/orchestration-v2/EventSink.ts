@@ -219,6 +219,7 @@ const baseLayer: Layer.Layer<
       if (input.effects.length > 0) {
         yield* effectOutbox.notifyAvailable;
       }
+      yield* eventStore.publishCommitted(storedEvents);
       yield* PubSub.publishAll(liveEvents, storedEvents);
       return storedEvents;
     });
@@ -287,6 +288,7 @@ const baseLayer: Layer.Layer<
         yield* effectOutbox.notifyAvailable;
       }
       if (result.committed) {
+        yield* eventStore.publishCommitted(result.storedEvents);
         yield* PubSub.publishAll(liveEvents, result.storedEvents);
       }
       return result;

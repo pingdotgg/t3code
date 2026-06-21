@@ -6,8 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as ProjectService from "./ProjectService.ts";
 
 export interface ProjectSetupScriptRunnerResultNoScript {
   readonly status: "no-script";
@@ -83,7 +83,7 @@ export class ProjectSetupScriptRunner extends Context.Service<
 >()("t3/project/ProjectSetupScriptRunner") {}
 
 export const make = Effect.gen(function* () {
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const projects = yield* ProjectService.ProjectService;
   const terminalManager = yield* TerminalManager.TerminalManager;
 
   const runForThread: ProjectSetupScriptRunner["Service"]["runForThread"] = Effect.fn(
@@ -99,7 +99,7 @@ export const make = Effect.gen(function* () {
     const projectById =
       suppliedProject ??
       (input.projectId
-        ? yield* projectionSnapshotQuery.getProjectShellById(ProjectId.make(input.projectId)).pipe(
+        ? yield* projects.getById(ProjectId.make(input.projectId)).pipe(
             Effect.map(Option.getOrUndefined),
             Effect.mapError(
               (cause) =>
@@ -115,7 +115,7 @@ export const make = Effect.gen(function* () {
       suppliedProject ??
       projectById ??
       (input.projectCwd
-        ? yield* projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(input.projectCwd).pipe(
+        ? yield* projects.getByWorkspaceRoot(input.projectCwd).pipe(
             Effect.map(Option.getOrUndefined),
             Effect.mapError(
               (cause) =>
