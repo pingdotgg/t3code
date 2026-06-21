@@ -163,6 +163,24 @@ Use these field rules:
 - adapter lookup always uses `providerInstanceId`
 - capability and protocol-specific behavior uses `driver` only at adapter and presentation boundaries
 
+### Provider process residency and thread multiplexing
+
+Make process sharing a provider capability, not an orchestrator special case:
+
+- when `supportsMultipleProviderThreadsPerSession` is true, derive one stable provider-session ID per configured provider instance
+- when it is false, allocate an isolated provider session per app thread
+- Codex enables sharing now; ACP, Claude, Cursor, and OpenCode remain isolated until their adapters are independently proven multiplex-safe
+- model selection, cwd, runtime policy, and MCP authorization are applied on thread start/resume/fork rather than process launch
+- the manager tracks the loaded native thread configuration per app thread, so reattachment or a model/cwd/policy change reapplies thread-scoped settings without redundantly resuming unchanged threads
+- provider-session projections use explicit many-to-many thread bindings
+- archiving, deleting, or switching one thread detaches that binding; it does not release a shared runtime used by sibling threads
+- the manager owns one consumer of each provider process event stream and broadcasts events to run subscribers
+- each run filters broadcast events by app thread, run attempt, provider thread, provider turn, and subagent lineage before ingestion
+- reaping uses aggregate activity: a shared process stays resident while any attached thread is active, then closes after the normal idle timeout
+- full release remains an internal runtime lifecycle operation for process failure, server shutdown, or idle reap
+
+This is an orchestration capability even when only one adapter enables it. Adding ACP or Claude sharing later must require only adapter capability and multiplex-safety work, not a new orchestrator path.
+
 ### 3. Complete the V2 command and event vocabulary
 
 Add V2-native domain commands and events for:
@@ -174,7 +192,7 @@ Add V2-native domain commands and events for:
 - runtime mode
 - interaction mode
 - model-selection changes
-- explicit session release
+- explicit thread detachment from a provider session
 - provider switching
 
 Extend thread and shell projections with:
@@ -206,7 +224,7 @@ Introduce a durable orchestration-effect outbox for operations such as:
 - provider interrupt
 - runtime-request response
 - provider rollback and fork
-- session release
+- provider-session detach
 - checkpoint capture
 - terminal cleanup
 - attachment cleanup
@@ -255,6 +273,9 @@ Add coverage for:
 - more than 100 turn items in one run
 - projection replay equivalence
 - lifecycle command projection behavior
+- capability-driven shared versus isolated provider-session identity
+- two concurrent app threads sharing one Codex runtime without cross-run event ingestion
+- detaching one thread without closing the sibling runtime, followed by idle reap after the last detach
 
 ### Shape 1 exit gate
 
@@ -345,7 +366,7 @@ Create `ThreadLifecycleService` around the Shape 1 lifecycle commands.
 Archive behavior:
 
 - commit archive state
-- enqueue release of live provider sessions
+- enqueue detachment from live provider sessions
 - enqueue terminal closure
 - remove the thread from the active shell projection
 
@@ -359,7 +380,7 @@ Delete behavior:
 
 - commit a tombstone first
 - cancel queued or running work
-- release provider sessions
+- detach the deleted thread from provider sessions
 - close terminal history according to current product semantics
 - clean unreferenced attachments
 - revoke MCP credentials
@@ -519,7 +540,7 @@ Replace V1 and debug V2 endpoints with one production API containing:
 - rollback
 - fork and merge-back
 - provider switch
-- session release
+- provider-session detach
 
 Use final unversioned method names. Do not retain compatibility aliases.
 
@@ -683,7 +704,7 @@ Update client-runtime operations for:
 - rollback
 - fork and merge-back
 - provider switching
-- session release
+- provider-session detach
 
 Commands use final V2 identifiers and receipt semantics directly.
 

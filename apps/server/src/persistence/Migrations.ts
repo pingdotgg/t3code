@@ -49,22 +49,13 @@ import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
 import Migration0035 from "./Migrations/035_ProjectionThreadTitleRegeneration.ts";
 import Migration0036 from "./Migrations/036_ProjectionThreadsPinned.ts";
 import Migration0037 from "./Migrations/037_ProjectionTurnsKeysetIndex.ts";
-<<<<<<< HEAD
 import Migration0038 from "./Migrations/038_ProjectionThreadsPinOrderKey.ts";
 import Migration0039 from "./Migrations/039_ProjectionProjectsDefaultThreadEnvMode.ts";
 import Migration0040 from "./Migrations/040_ProjectionProjectFaviconPath.ts";
-=======
-import Migration026V2 from "./Migrations/026_OrchestrationV2.ts";
-<<<<<<< HEAD
->>>>>>> d788fb20eb (Implement orchestration v2 runtime)
-=======
-import Migration034V2 from "./Migrations/034_OrchestrationV2Subagents.ts";
-<<<<<<< HEAD
->>>>>>> 3273fa742b (feat(orchestration-v2): model native subagents)
-=======
 import Migration033V2 from "./Migrations/033_OrchestrationV2.ts";
+import Migration034V2 from "./Migrations/034_OrchestrationV2Subagents.ts";
 import Migration035V2 from "./Migrations/035_OrchestrationV2Foundation.ts";
->>>>>>> c4eea8d512 (Map orchestration turns to provider instances)
+import Migration036V2 from "./Migrations/036_OrchestrationV2ProviderSessionBindings.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -114,21 +105,13 @@ export const migrationEntries = [
   [35, "ProjectionThreadTitleRegeneration", Migration0035],
   [36, "ProjectionThreadsPinned", Migration0036],
   [37, "ProjectionTurnsKeysetIndex", Migration0037],
-<<<<<<< HEAD
   [38, "ProjectionThreadsPinOrderKey", Migration0038],
   [39, "ProjectionProjectsDefaultThreadEnvMode", Migration0039],
   [40, "ProjectionProjectFaviconPath", Migration0040],
-=======
-  [38, "OrchestrationV2", Migration026V2],
-<<<<<<< HEAD
->>>>>>> d788fb20eb (Implement orchestration v2 runtime)
-=======
-  [39, "OrchestrationV2Subagents", Migration034V2],
-<<<<<<< HEAD
->>>>>>> 3273fa742b (feat(orchestration-v2): model native subagents)
-=======
-  [40, "OrchestrationV2Foundation", Migration035V2],
->>>>>>> c4eea8d512 (Map orchestration turns to provider instances)
+  [41, "OrchestrationV2", Migration033V2],
+  [42, "OrchestrationV2Subagents", Migration034V2],
+  [43, "OrchestrationV2Foundation", Migration035V2],
+  [44, "OrchestrationV2ProviderSessionBindings", Migration036V2],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

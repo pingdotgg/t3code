@@ -7,6 +7,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
@@ -21,6 +22,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
 
 const TestLayer = Layer.mergeAll(
@@ -36,6 +38,116 @@ const providerInstanceId = modelSelection.instanceId;
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(TestLayer)("ProjectionStoreV2", (it) => {
+  it.effect("projects one shared provider session into multiple thread bindings", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const projectId = ProjectId.make("project:projection-shared-provider-session");
+      const firstThreadId = ThreadId.make("thread:projection-shared-provider-session:first");
+      const secondThreadId = ThreadId.make("thread:projection-shared-provider-session:second");
+      const providerSessionId = ProviderSessionId.make(
+        "provider-session:projection-shared-provider-session",
+      );
+      const makeThread = (threadId: ThreadId) => ({
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        id: threadId,
+        projectId,
+        title: "Shared provider session",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: threadId,
+        },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        deletedAt: null,
+      });
+      const session = {
+        id: providerSessionId,
+        driver,
+        providerInstanceId,
+        status: "ready" as const,
+        cwd: "/workspace",
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      };
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-shared-provider-session:first-thread"),
+        type: "thread.created",
+        threadId: firstThreadId,
+        occurredAt: now,
+        payload: makeThread(firstThreadId),
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-shared-provider-session:second-thread"),
+        type: "thread.created",
+        threadId: secondThreadId,
+        occurredAt: now,
+        payload: makeThread(secondThreadId),
+      });
+      for (const [threadId, suffix] of [
+        [firstThreadId, "first"],
+        [secondThreadId, "second"],
+      ] as const) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:projection-shared-provider-session:${suffix}-binding`),
+          type: "provider-session.attached",
+          threadId,
+          driver,
+          providerInstanceId,
+          occurredAt: now,
+          payload: session,
+        });
+      }
+
+      assert.deepEqual(
+        (yield* projectionStore.getThreadProjection(firstThreadId)).providerSessions.map(
+          (value) => value.id,
+        ),
+        [providerSessionId],
+      );
+      assert.deepEqual(
+        (yield* projectionStore.getThreadProjection(secondThreadId)).providerSessions.map(
+          (value) => value.id,
+        ),
+        [providerSessionId],
+      );
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-shared-provider-session:first-detached"),
+        type: "provider-session.detached",
+        threadId: firstThreadId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: { providerSessionId, detachedAt: now },
+      });
+
+      assert.lengthOf(
+        (yield* projectionStore.getThreadProjection(firstThreadId)).providerSessions,
+        0,
+      );
+      assert.lengthOf(
+        (yield* projectionStore.getThreadProjection(secondThreadId)).providerSessions,
+        1,
+      );
+    }),
+  );
+
   it.effect("builds shell snapshots without decoding full turn item payloads", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStoreV2;
@@ -130,12 +242,14 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       const fullProjectionExit = yield* Effect.exit(projectionStore.getThreadProjection(threadId));
 
       assert.deepEqual(
-        shell.threads.map((thread) => ({
-          id: thread.id,
-          itemCount: thread.itemCount,
-          visibleItemCount: thread.visibleItemCount,
-          status: thread.status,
-        })),
+        shell.threads
+          .filter((thread) => thread.id === threadId)
+          .map((thread) => ({
+            id: thread.id,
+            itemCount: thread.itemCount,
+            visibleItemCount: thread.visibleItemCount,
+            status: thread.status,
+          })),
         [
           {
             id: threadId,
