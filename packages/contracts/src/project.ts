@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { RepositoryIdentity } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
+  CommandId,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -64,6 +65,33 @@ export const ProjectChange = Schema.Union([
   }),
 ]);
 export type ProjectChange = typeof ProjectChange.Type;
+
+export const ProjectMutation = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("project.create"),
+    commandId: CommandId,
+    projectId: ProjectId,
+    title: TrimmedNonEmptyString,
+    workspaceRoot: TrimmedNonEmptyString,
+    defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+    scripts: Schema.optional(Schema.Array(ProjectScript)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("project.update"),
+    commandId: CommandId,
+    projectId: ProjectId,
+    title: Schema.optional(TrimmedNonEmptyString),
+    workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+    defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+    scripts: Schema.optional(Schema.Array(ProjectScript)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("project.delete"),
+    commandId: CommandId,
+    projectId: ProjectId,
+  }),
+]);
+export type ProjectMutation = typeof ProjectMutation.Type;
 
 export const ProjectSearchEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,

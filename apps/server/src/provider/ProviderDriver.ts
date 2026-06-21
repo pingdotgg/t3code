@@ -2,8 +2,8 @@
  * ProviderDriver / ProviderInstance — driver SPI as plain values.
  *
  * `ProviderDriver` is a record, not a Context.Service. The thing it produces
- * (`ProviderInstance`) is also a record — three captured closures
- * (`snapshot`, `adapter`, `textGeneration`), an id, and a driver kind. There
+ * (`ProviderInstance`) is also a record of captured closures
+ * (`snapshot`, `orchestrationAdapter`, `textGeneration`), an id, and a driver kind. There
  * are intentionally no per-driver Context tags because tags are
  * singleton-per-runtime and we need many instances of the same driver.
  *
@@ -32,8 +32,7 @@ import type * as Scope from "effect/Scope";
 
 import type { TextGenerationShape } from "../textGeneration/TextGeneration.ts";
 import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
-import type { ProviderAdapterError, ProviderDriverError } from "./Errors.ts";
-import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";
+import type { ProviderDriverError } from "./Errors.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 
 /**
@@ -70,7 +69,6 @@ export interface ProviderInstance {
   readonly accentColor?: string | undefined;
   readonly enabled: boolean;
   readonly snapshot: ServerProviderShape;
-  readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly orchestrationAdapter: ProviderAdapterV2Shape;
   readonly textGeneration: TextGenerationShape;
 }

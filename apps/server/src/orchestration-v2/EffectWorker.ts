@@ -346,21 +346,21 @@ export const layerWithOptions = (
 
 export const layer = layerWithOptions();
 
-export const daemonLayer: Layer.Layer<never, never, OrchestrationEffectWorkerV2> =
-  Layer.effectDiscard(
-    Effect.gen(function* () {
-      const worker = yield* OrchestrationEffectWorkerV2;
-      yield* Effect.forever(
-        worker.runOnce.pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Orchestration effect worker failed", cause).pipe(Effect.as(false)),
-          ),
-          Effect.flatMap((worked) =>
-            worked
-              ? Effect.yieldNow
-              : Effect.raceFirst(worker.awaitWork, Effect.sleep(Duration.millis(50))),
-          ),
-        ),
-      ).pipe(Effect.forkScoped);
-    }),
+export const runDaemon = Effect.gen(function* () {
+  const worker = yield* OrchestrationEffectWorkerV2;
+  return yield* Effect.forever(
+    worker.runOnce.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Orchestration effect worker failed", cause).pipe(Effect.as(false)),
+      ),
+      Effect.flatMap((worked) =>
+        worked
+          ? Effect.yieldNow
+          : Effect.raceFirst(worker.awaitWork, Effect.sleep(Duration.millis(50))),
+      ),
+    ),
   );
+});
+
+export const daemonLayer: Layer.Layer<never, never, OrchestrationEffectWorkerV2> =
+  Layer.effectDiscard(runDaemon.pipe(Effect.forkScoped));

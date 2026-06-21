@@ -1,13 +1,14 @@
 import { assert, it } from "@effect/vitest";
-import { ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { CommandId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import * as ProjectionProjects from "../persistence/Layers/ProjectionProjects.ts";
+import { ServerConfig } from "../config.ts";
+import { ProjectServiceLayerLive } from "../orchestration-v2/runtimeLayer.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
@@ -38,11 +39,12 @@ const metadataLayer = Layer.merge(
   }),
 );
 
-const TestLayer = ProjectService.layer.pipe(
-  Layer.provideMerge(ProjectionProjects.ProjectionProjectRepositoryLive),
+const TestLayer = ProjectServiceLayerLive.pipe(
   Layer.provideMerge(workspacePathsLayer),
   Layer.provideMerge(metadataLayer),
   Layer.provideMerge(SqlitePersistenceMemory),
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
+  Layer.provide(NodeServices.layer),
 );
 
 it.layer(TestLayer)("ProjectService", (it) => {
@@ -56,14 +58,8 @@ it.layer(TestLayer)("ProjectService", (it) => {
       } as const;
       yield* TestClock.setTime(Date.parse("2026-06-20T10:00:00.000Z"));
 
-      const changesFiber = yield* service.changes.pipe(
-        Stream.take(3),
-        Stream.runCollect,
-        Effect.forkChild,
-      );
-      yield* Effect.yieldNow;
-
       const created = yield* service.create({
+        commandId: CommandId.make("command:project:create"),
         projectId,
         title: "Project",
         workspaceRoot: "/work/project/",
@@ -82,7 +78,11 @@ it.layer(TestLayer)("ProjectService", (it) => {
       assert.equal(created.repositoryIdentity?.canonicalKey, "github.com/t3tools/project");
       assert.equal(created.faviconPath, "/work/project/favicon.svg");
 
-      const updated = yield* service.update({ projectId, title: "Renamed" });
+      const updated = yield* service.update({
+        commandId: CommandId.make("command:project:update"),
+        projectId,
+        title: "Renamed",
+      });
       assert.equal(updated.title, "Renamed");
       assert.equal(updated.createdAt, created.createdAt);
 
@@ -96,16 +96,25 @@ it.layer(TestLayer)("ProjectService", (it) => {
         [projectId],
       );
 
-      const deleted = yield* service.delete(projectId);
+      const deleted = yield* service.delete({
+        commandId: CommandId.make("command:project:delete"),
+        projectId,
+      });
       assert.isNotNull(deleted.deletedAt);
       assert.isTrue(Option.isNone(yield* service.getById(projectId)));
       assert.isTrue(Option.isSome(yield* service.getById(projectId, { includeDeleted: true })));
       assert.deepEqual((yield* service.snapshot).projects, []);
 
-      const changes = Array.from(yield* Fiber.join(changesFiber));
+      const sql = yield* SqlClient.SqlClient;
+      const changes = yield* sql<{ readonly event_type: string }>`
+        SELECT event_type
+        FROM orchestration_events
+        WHERE aggregate_kind = 'project' AND stream_id = ${projectId}
+        ORDER BY sequence ASC
+      `;
       assert.deepEqual(
-        changes.map((change) => change.type),
-        ["project.upserted", "project.upserted", "project.deleted"],
+        changes.map((change) => change.event_type),
+        ["project.created", "project.meta-updated", "project.deleted"],
       );
     }),
   );
@@ -115,12 +124,14 @@ it.layer(TestLayer)("ProjectService", (it) => {
       const service = yield* ProjectService.ProjectService;
       yield* TestClock.setTime(Date.parse("2026-06-20T10:00:00.000Z"));
       yield* service.create({
+        commandId: CommandId.make("command:collision:first"),
         projectId: ProjectId.make("project:collision:first"),
         title: "First",
         workspaceRoot: "/work/shared",
       });
       const error = yield* service
         .create({
+          commandId: CommandId.make("command:collision:second"),
           projectId: ProjectId.make("project:collision:second"),
           title: "Second",
           workspaceRoot: "/work/shared",
@@ -135,6 +146,7 @@ it.layer(TestLayer)("ProjectService", (it) => {
       const service = yield* ProjectService.ProjectService;
       yield* TestClock.setTime(Date.parse("2026-06-20T10:00:00.000Z"));
       const input = {
+        commandId: CommandId.make("command:bootstrap:first"),
         projectId: ProjectId.make("project:bootstrap"),
         title: "Bootstrap",
         workspaceRoot: "/work/bootstrap/",
@@ -142,6 +154,7 @@ it.layer(TestLayer)("ProjectService", (it) => {
       const first = yield* service.bootstrap(input);
       const second = yield* service.bootstrap({
         ...input,
+        commandId: CommandId.make("command:bootstrap:second"),
         projectId: ProjectId.make("project:bootstrap:unused"),
       });
       assert.isTrue(first.created);

@@ -8,7 +8,7 @@ import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2CreationSource,
   type OrchestrationV2Run,
-  type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
@@ -143,7 +143,10 @@ export interface ThreadManagementServiceShape {
     readonly projectId: ProjectId;
     readonly threadId: ThreadId;
   }) => Effect.Effect<OrchestrationV2ThreadProjection, ThreadManagementError>;
-  readonly getShellSnapshot: () => Effect.Effect<OrchestrationV2ShellSnapshot, OrchestratorV2Error>;
+  readonly getShellSnapshot: () => Effect.Effect<
+    OrchestrationV2ThreadShellSnapshot,
+    OrchestratorV2Error
+  >;
   readonly listProjectThreads: (input: {
     readonly projectId: ProjectId;
     readonly includeSubagents: boolean;

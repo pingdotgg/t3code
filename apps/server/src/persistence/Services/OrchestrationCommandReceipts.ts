@@ -26,6 +26,7 @@ export const OrchestrationCommandReceipt = Schema.Struct({
   commandId: CommandId,
   aggregateKind: OrchestrationAggregateKind,
   aggregateId: Schema.Union([ProjectId, ThreadId]),
+  commandType: Schema.String,
   acceptedAt: IsoDateTime,
   resultSequence: NonNegativeInt,
   status: OrchestrationCommandReceiptStatus,
@@ -42,6 +43,10 @@ export type GetByCommandIdInput = typeof GetByCommandIdInput.Type;
  * OrchestrationCommandReceiptRepositoryShape - Service API for command receipts.
  */
 export interface OrchestrationCommandReceiptRepositoryShape {
+  readonly insertIfAbsent: (
+    receipt: OrchestrationCommandReceipt,
+  ) => Effect.Effect<boolean, OrchestrationCommandReceiptRepositoryError>;
+
   /**
    * Insert or replace a command receipt row.
    *
