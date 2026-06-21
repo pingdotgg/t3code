@@ -21,14 +21,10 @@ import type {
   ProviderOptionDescriptor,
   ServerProviderModel,
   ServerProviderSkill,
-  ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { ServerSettingsError } from "@t3tools/contracts";
-import {
-  makeUnavailableUsageLimits,
-  makeUsageLimitsSnapshot,
-  type RawUsageWindowInput,
-} from "../providerUsageLimits.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
+import { resolveCodexRateLimitSnapshotUsageLimits } from "../codexUsageProbe.ts";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -385,54 +381,6 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   } satisfies CodexAppServerProviderSnapshot;
 });
 
-const CODEX_PRIMARY_WINDOW_DURATION_MINS = 300; // ~5 hours (short / session window)
-const CODEX_SECONDARY_WINDOW_DURATION_MINS = 10080; // 7 days (weekly window)
-
-function resolveCodexManagedUsageLimits(
-  checkedAt: string,
-  rateLimitsSnapshot?: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitSnapshot | null,
-): ServerProviderUsageLimits {
-  if (!rateLimitsSnapshot) {
-    return makeUnavailableUsageLimits({
-      source: "codexAppServer",
-      checkedAt,
-      reason: "No Codex subscription quota windows reported.",
-    });
-  }
-
-  const windows: RawUsageWindowInput[] = [];
-
-  const addWindow = (
-    window?: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitWindow | null,
-    fallbackDurationMins?: number,
-    label?: string,
-  ) => {
-    if (!window) return;
-    const durationMins =
-      typeof window.windowDurationMins === "number"
-        ? window.windowDurationMins
-        : fallbackDurationMins;
-    windows.push({
-      label: label ?? "Quota",
-      usedPercent: window.usedPercent,
-      ...(typeof window.resetsAt === "number"
-        ? { resetsAt: DateTime.formatIso(DateTime.makeUnsafe(window.resetsAt * 1000)) }
-        : {}),
-      ...(typeof durationMins === "number" ? { windowDurationMins: durationMins } : {}),
-    });
-  };
-
-  addWindow(rateLimitsSnapshot.primary, CODEX_PRIMARY_WINDOW_DURATION_MINS, "Session");
-  addWindow(rateLimitsSnapshot.secondary, CODEX_SECONDARY_WINDOW_DURATION_MINS, "Weekly");
-
-  return makeUsageLimitsSnapshot({
-    source: "codexAppServer",
-    checkedAt,
-    windows,
-    unavailableReason: "No Codex subscription quota windows reported.",
-  });
-}
-
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] => {
   const models = new Set<string>();
   for (const model of codexSettings.customModels) {
@@ -617,7 +565,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
           checkedAt,
           reason: "Usage limits unavailable for API key Codex accounts.",
         })
-      : resolveCodexManagedUsageLimits(checkedAt, snapshot.rateLimits);
+      : resolveCodexRateLimitSnapshotUsageLimits({
+          checkedAt,
+          ...(snapshot.rateLimits ? { snapshot: snapshot.rateLimits } : {}),
+        });
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,

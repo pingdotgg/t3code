@@ -13,6 +13,7 @@ import type {
 import { ProviderDriverKind } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -21,7 +22,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -42,18 +42,14 @@ import {
   type CommandResult,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+
 import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
-import { type ProviderUsageStateShape } from "../Services/ProviderUsageState.ts";
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
-import { CursorListAvailableModelsResponse } from "../acp/CursorAcpExtension.ts";
 
-const decodeCursorListAvailableModelsResponse = Schema.decodeUnknownEffect(
-  CursorListAvailableModelsResponse,
-);
 const PROVIDER = ProviderDriverKind.make("cursor");
 const CURSOR_PRESENTATION = {
   displayName: "Cursor",
@@ -1084,8 +1080,7 @@ const runCursorAboutCommand = (cursorSettings: CursorSettings, environment?: Nod
 export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
-  instanceId?: ProviderInstanceId,
-  providerUsageState?: ProviderUsageStateShape,
+  _instanceId?: ProviderInstanceId,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -1201,21 +1196,14 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
     }
   }
 
-  const runtimeUsageLimits = providerUsageState
-    ? yield* providerUsageState
-        .get(PROVIDER, instanceId)
-        .pipe(Effect.orElseSucceed(() => undefined))
-    : undefined;
-
   const usageLimits =
-    runtimeUsageLimits ??
-    (parsed.auth.status !== "unauthenticated"
+    parsed.auth.status !== "unauthenticated"
       ? makeUnavailableUsageLimits({
           source: "cursorAcp",
           checkedAt,
           reason: "Cursor does not expose subscription usage",
         })
-      : undefined);
+      : undefined;
 
   return buildCursorProviderSnapshot({
     checkedAt,

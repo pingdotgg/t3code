@@ -1,7 +1,6 @@
 import type {
   ProviderDriverKind,
   ProviderInstanceId,
-  ProviderRuntimeEvent,
   ServerProviderUsageLimits,
   ThreadId,
 } from "@t3tools/contracts";
@@ -14,7 +13,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import { parseClaudeRuntimeUsageLimits } from "../claudeUsageProbe.ts";
-import { runtimeUsageToProviderUsageLimits } from "../runtimeUsageToProviderUsageLimits.ts";
+import { parseCodexRuntimeUsageLimits } from "../codexUsageProbe.ts";
 import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
 import {
   ProviderUsageState,
@@ -22,24 +21,8 @@ import {
 } from "../Services/ProviderUsageState.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
 
-const CURSOR_DRIVER = ProviderDriverKindSchema.make("cursor");
 const CLAUDE_DRIVER = ProviderDriverKindSchema.make("claudeAgent");
-
-function toCursorUsageLimits(
-  event: Extract<ProviderRuntimeEvent, { readonly type: "thread.token-usage.updated" }>,
-) {
-  const maxTokens = event.payload.usage.maxTokens;
-  if (typeof maxTokens !== "number") {
-    return undefined;
-  }
-
-  return runtimeUsageToProviderUsageLimits({
-    source: "cursorAcp",
-    checkedAt: event.createdAt,
-    usedTokens: event.payload.usage.usedTokens,
-    maxTokens,
-  });
-}
+const CODEX_DRIVER = ProviderDriverKindSchema.make("codex");
 
 function makeProviderInstanceKey(
   provider: ProviderDriverKind,
@@ -180,54 +163,43 @@ export const ProviderUsageStateLive = Layer.effect(
           return;
         }
 
-        if (event.provider === CURSOR_DRIVER && event.type === "thread.token-usage.updated") {
-          const usage = toCursorUsageLimits(event);
-          if (usage === undefined) {
-            return;
-          }
-
-          const cursorMaybeDate = DateTime.make(event.createdAt);
-          const cursorUpdatedAtMs = Option.isSome(cursorMaybeDate)
-            ? DateTime.toEpochMillis(cursorMaybeDate.value)
-            : DateTime.toEpochMillis(yield* DateTime.now);
-          yield* setThreadUsage(
-            CURSOR_DRIVER,
-            providerInstanceId,
-            event.threadId,
-            usage,
-            cursorUpdatedAtMs,
-          );
-          yield* publishUsageLimits(providerInstanceId, usage);
+        if (event.type !== "account.rate-limits.updated") {
           return;
         }
 
-        if (event.provider !== CLAUDE_DRIVER || event.type !== "account.rate-limits.updated") {
-          return;
-        }
+        const rateLimitsPayload =
+          typeof event.payload === "object" &&
+          event.payload !== null &&
+          "rateLimits" in event.payload
+            ? (event.payload as { readonly rateLimits?: unknown }).rateLimits
+            : undefined;
 
-        const usage = parseClaudeRuntimeUsageLimits({
-          checkedAt: event.createdAt,
-          rateLimits:
-            typeof event.payload === "object" &&
-            event.payload !== null &&
-            "rateLimits" in event.payload
-              ? (event.payload as { readonly rateLimits?: unknown }).rateLimits
-              : undefined,
-        });
+        const usage =
+          event.provider === CLAUDE_DRIVER
+            ? parseClaudeRuntimeUsageLimits({
+                checkedAt: event.createdAt,
+                rateLimits: rateLimitsPayload,
+              })
+            : event.provider === CODEX_DRIVER
+              ? parseCodexRuntimeUsageLimits({
+                  checkedAt: event.createdAt,
+                  rateLimits: rateLimitsPayload,
+                })
+              : undefined;
         if (usage === undefined) {
           return;
         }
 
-        const claudeMaybeDate = DateTime.make(event.createdAt);
-        const claudeUpdatedAtMs = Option.isSome(claudeMaybeDate)
-          ? DateTime.toEpochMillis(claudeMaybeDate.value)
+        const maybeDate = DateTime.make(event.createdAt);
+        const updatedAtMs = Option.isSome(maybeDate)
+          ? DateTime.toEpochMillis(maybeDate.value)
           : DateTime.toEpochMillis(yield* DateTime.now);
         yield* setThreadUsage(
-          CLAUDE_DRIVER,
+          event.provider,
           providerInstanceId,
           event.threadId,
           usage,
-          claudeUpdatedAtMs,
+          updatedAtMs,
         );
         yield* publishUsageLimits(providerInstanceId, usage);
       }),
