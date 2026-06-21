@@ -12,6 +12,40 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 
+export class ReleasePackageManifestError extends Schema.TaggedErrorClass<ReleasePackageManifestError>()(
+  "ReleasePackageManifestError",
+  {
+    operation: Schema.Literals(["read", "decode", "encode", "write"]),
+    filePath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to ${this.operation} release package manifest '${this.filePath}'.`;
+  }
+}
+
+export class ReleaseGitHubOutputConfigurationError extends Schema.TaggedErrorClass<ReleaseGitHubOutputConfigurationError>()(
+  "ReleaseGitHubOutputConfigurationError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to resolve GITHUB_OUTPUT for release package version output.";
+  }
+}
+
+export class ReleaseGitHubOutputWriteError extends Schema.TaggedErrorClass<ReleaseGitHubOutputWriteError>()(
+  "ReleaseGitHubOutputWriteError",
+  {
+    filePath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to append release package version output to '${this.filePath}'.`;
+  }
+}
+
 export const releasePackageFiles = [
   "apps/server/package.json",
   "apps/desktop/package.json",
@@ -39,13 +73,50 @@ export const updateReleasePackageVersions = Effect.fn("updateReleasePackageVersi
 
   for (const relativePath of releasePackageFiles) {
     const filePath = path.join(rootDir, relativePath);
-    const packageJson = yield* fs.readFileString(filePath).pipe(Effect.flatMap(decodePackageJson));
+    const packageJsonText = yield* fs.readFileString(filePath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ReleasePackageManifestError({
+            operation: "read",
+            filePath,
+            cause,
+          }),
+      ),
+    );
+    const packageJson = yield* decodePackageJson(packageJsonText).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ReleasePackageManifestError({
+            operation: "decode",
+            filePath,
+            cause,
+          }),
+      ),
+    );
     if (packageJson.version === version) {
       continue;
     }
 
-    const packageJsonString = yield* encodePackageJson({ ...packageJson, version });
-    yield* fs.writeFileString(filePath, `${packageJsonString}\n`);
+    const packageJsonString = yield* encodePackageJson({ ...packageJson, version }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ReleasePackageManifestError({
+            operation: "encode",
+            filePath,
+            cause,
+          }),
+      ),
+    );
+    yield* fs.writeFileString(filePath, `${packageJsonString}\n`).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ReleasePackageManifestError({
+            operation: "write",
+            filePath,
+            cause,
+          }),
+      ),
+    );
     changed = true;
   }
 
@@ -54,8 +125,23 @@ export const updateReleasePackageVersions = Effect.fn("updateReleasePackageVersi
 
 const writeGithubOutput = Effect.fn("writeGithubOutput")(function* (changed: boolean) {
   const fs = yield* FileSystem.FileSystem;
-  const githubOutputPath = yield* Config.nonEmptyString("GITHUB_OUTPUT");
-  yield* fs.writeFileString(githubOutputPath, `changed=${changed}\n`, { flag: "a" });
+  const githubOutputPath = yield* Config.nonEmptyString("GITHUB_OUTPUT").pipe(
+    Effect.mapError(
+      (cause) =>
+        new ReleaseGitHubOutputConfigurationError({
+          cause,
+        }),
+    ),
+  );
+  yield* fs.writeFileString(githubOutputPath, `changed=${changed}\n`, { flag: "a" }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ReleaseGitHubOutputWriteError({
+          filePath: githubOutputPath,
+          cause,
+        }),
+    ),
+  );
 });
 
 export const updateReleasePackageVersionsCommand = Command.make(
