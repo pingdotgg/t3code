@@ -41,7 +41,11 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS } from "../../provider/codex/CodexDeveloperInstructions.ts";
+import { CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS } from "../../provider/CodexDeveloperInstructions.ts";
+import {
+  materializeCodexShadowHome,
+  resolveCodexHomeLayout,
+} from "../../provider/Drivers/CodexHomeLayout.ts";
 import {
   type EventNdjsonLogger,
   makeEventNdjsonLogger,
@@ -758,7 +762,7 @@ export interface CodexAppServerClientFactoryShape {
     readonly providerSessionId: OrchestrationV2ProviderSession["id"];
     readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   }) => Effect.Effect<
-    CodexClient.CodexAppServerClientShape,
+    CodexClient.CodexAppServerClient["Service"],
     ProviderAdapterOpenSessionError,
     Scope.Scope
   >;
@@ -1056,7 +1060,7 @@ export interface CodexAdapterV2Options {
   readonly clientFactory: CodexAppServerClientFactoryShape;
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2Shape;
-  readonly serverConfig: ServerConfigShape;
+  readonly serverConfig: ServerConfig["Service"];
 }
 
 export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): ProviderAdapterV2Shape {

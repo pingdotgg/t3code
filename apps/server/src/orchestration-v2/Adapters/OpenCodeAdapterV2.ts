@@ -49,7 +49,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import { ServerConfig, type ServerConfigShape } from "../../config.ts";
+import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import {
@@ -271,7 +271,7 @@ export interface OpenCodeAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly runtime: OpenCodeRuntimeShape;
   readonly idAllocator: IdAllocatorV2Shape;
-  readonly serverConfig: ServerConfigShape;
+  readonly serverConfig: ServerConfig["Service"];
 }
 
 function protocolError(detail: string, payload?: unknown): ProviderAdapterProtocolError {
