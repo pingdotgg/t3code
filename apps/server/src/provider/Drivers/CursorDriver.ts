@@ -29,7 +29,6 @@ import {
   type CursorAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/CursorAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
 import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
@@ -37,7 +36,6 @@ import {
   enrichCursorSnapshot,
 } from "../Layers/CursorProvider.ts";
 import { CursorSdkCatalogLive } from "../Layers/CursorSdkCatalog.ts";
-import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -58,7 +56,6 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { probeCursorSkills } from "./CursorSkills.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
@@ -90,7 +87,6 @@ export type CursorDriverEnv =
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
-  | ProviderEventLoggers
   | ServerConfig
   | ServerSettingsService;
 
@@ -110,7 +106,6 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
-      const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -135,11 +130,6 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         ),
       );
 
-      const adapter = yield* makeCursorAdapter(effectiveConfig, {
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-        instanceId,
-      });
       const orchestrationAdapter = yield* CursorAdapterV2Driver.create({
         instanceId,
         displayName,
@@ -219,26 +209,6 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
-        snapshotForCwd: (cwd) =>
-          !effectiveConfig.enabled
-            ? snapshot.getSnapshot
-            : Effect.all([
-                snapshot.getSnapshot,
-                probeCursorSkills(cwd, processEnv).pipe(
-                  Effect.provideService(FileSystem.FileSystem, fileSystem),
-                  Effect.provideService(Path.Path, path),
-                  Effect.mapError(
-                    (cause) =>
-                      new ProviderDriverError({
-                        driver: DRIVER_KIND,
-                        instanceId,
-                        detail: `Failed to discover Cursor skills for '${cwd}'`,
-                        cause,
-                      }),
-                  ),
-                ),
-              ]).pipe(Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills }))),
-        adapter,
         orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;

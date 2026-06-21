@@ -2,7 +2,7 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProjectedTurnItem,
-  OrchestrationV2ShellSnapshot,
+  OrchestrationV2ThreadShellSnapshot,
   OrchestrationV2ShellThreadStatus,
   OrchestrationV2ThreadShell,
   OrchestrationV2ThreadProjection,
@@ -100,7 +100,7 @@ export interface ProjectionStoreV2Shape {
     event: OrchestrationV2DomainEvent,
   ) => Effect.Effect<void, ProjectionStoreV2Error>;
   readonly getShellSnapshot: () => Effect.Effect<
-    OrchestrationV2ShellSnapshot,
+    OrchestrationV2ThreadShellSnapshot,
     ProjectionStoreV2Error
   >;
   readonly getThreadProjection: (
@@ -1882,8 +1882,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const projection = yield* getThreadProjection(threadId);
             const rows = yield* sql<{ readonly snapshot_sequence: number | null }>`
             SELECT MAX(sequence) AS snapshot_sequence
-            FROM orchestration_v2_events
-            WHERE thread_id = ${threadId}
+            FROM orchestration_events
+            WHERE application_event_version = 2
+              AND aggregate_kind = 'thread'
+              AND stream_id = ${threadId}
           `;
             return {
               schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
@@ -1971,7 +1973,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           `,
               sql<{ readonly snapshot_sequence: number | null }>`
             SELECT MAX(sequence) AS snapshot_sequence
-            FROM orchestration_v2_events
+            FROM orchestration_events
+            WHERE application_event_version = 2
+              AND aggregate_kind = 'thread'
           `,
             ]);
 

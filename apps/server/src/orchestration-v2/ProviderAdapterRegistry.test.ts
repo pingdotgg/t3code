@@ -37,7 +37,6 @@ const makeInstance = (
   displayName: String(instanceId),
   enabled: true,
   snapshot: {} as ProviderInstance["snapshot"],
-  adapter: {} as ProviderInstance["adapter"],
   orchestrationAdapter,
   textGeneration: {} as ProviderInstance["textGeneration"],
 });
