@@ -769,24 +769,35 @@ export class CodexAppServerClientFactory extends Context.Service<
   CodexAppServerClientFactoryShape
 >()("t3/orchestration-v2/Adapters/CodexAdapterV2/CodexAppServerClientFactory") {}
 
-export function codexAppServerMcpLaunchConfig(threadId: ThreadId): {
-  readonly args: ReadonlyArray<string>;
-  readonly environment: NodeJS.ProcessEnv;
-} | null {
-  const session = McpProviderSession.readMcpProviderSession(threadId);
-  return session === undefined
-    ? null
-    : {
-        args: [
-          "-c",
-          `mcp_servers.t3-code.url=${session.endpoint}`,
-          "-c",
-          'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
-        ],
-        environment: {
-          T3_MCP_BEARER_TOKEN: session.authorizationHeader.replace(/^Bearer\s+/, ""),
-        },
-      };
+export function codexThreadRuntimeParams(input: {
+  readonly threadId: ThreadId | null;
+  readonly modelSelection?: { readonly model: string };
+  readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
+}): {
+  readonly cwd?: string;
+  readonly model?: string;
+  readonly config?: Readonly<Record<string, unknown>>;
+} {
+  const mcpSession =
+    input.threadId === null ? undefined : McpProviderSession.readMcpProviderSession(input.threadId);
+  return {
+    ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
+    ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
+    ...(mcpSession === undefined
+      ? {}
+      : {
+          config: {
+            mcp_servers: {
+              "t3-code": {
+                url: mcpSession.endpoint,
+                http_headers: {
+                  Authorization: mcpSession.authorizationHeader,
+                },
+              },
+            },
+          },
+        }),
+  };
 }
 
 export const makeCodexAppServerSpawnCommand = Effect.fn(
@@ -826,22 +837,11 @@ export const makeCodexAppServerClientFactoryCommandLayer = (
         open: (input) =>
           Effect.gen(function* () {
             const scope = yield* Scope.Scope;
-            const mcp = codexAppServerMcpLaunchConfig(input.threadId);
             const command = yield* makeCodexAppServerSpawnCommand({
               command: options.command,
-              args: [...(options.args ?? []), ...(mcp?.args ?? [])],
-              ...((input.runtimePolicy.cwd ?? options.cwd) === undefined
-                ? {}
-                : { cwd: input.runtimePolicy.cwd ?? options.cwd }),
-              ...(options.env === undefined && mcp === null
-                ? {}
-                : {
-                    env: {
-                      ...options.env,
-                      ...mcp?.environment,
-                    },
-                    extendEnv: true,
-                  }),
+              args: [...(options.args ?? [])],
+              ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+              ...(options.env === undefined ? {} : { env: options.env, extendEnv: true }),
             });
             const handle = yield* spawner.spawn(command).pipe(
               Effect.provideService(Scope.Scope, scope),
@@ -881,11 +881,37 @@ export function makeCodexAppServerProtocolLogger(input: {
           protocol: "codex.app-server",
           kind: "protocol",
           providerSessionId: input.providerSessionId,
-          event,
+          event: redactCodexProtocolValue(event),
         },
         input.threadId,
       )
       .pipe(Effect.ignore);
+}
+
+export function redactCodexProtocolValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(redactCodexProtocolValue);
+  }
+  if (value === null || typeof value !== "object") {
+    return typeof value === "string" && /^Bearer\s+/i.test(value) ? "[REDACTED]" : value;
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [
+      key,
+      isSensitiveCodexProtocolKey(key) ? "[REDACTED]" : redactCodexProtocolValue(nested),
+    ]),
+  );
+}
+
+function isSensitiveCodexProtocolKey(key: string): boolean {
+  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return (
+    normalized.endsWith("authorization") ||
+    normalized.endsWith("apikey") ||
+    normalized.endsWith("token") ||
+    normalized.endsWith("password") ||
+    normalized.endsWith("secret")
+  );
 }
 
 export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
@@ -906,16 +932,13 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
       open: (input) =>
         Effect.gen(function* () {
           const scope = yield* Scope.Scope;
-          const mcp = codexAppServerMcpLaunchConfig(input.threadId);
           const environment = {
             ...input.environment,
             ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
-            ...mcp?.environment,
           };
           const command = yield* makeCodexAppServerSpawnCommand({
             command: input.settings.binaryPath || "codex",
-            args: ["app-server", ...(mcp?.args ?? [])],
-            ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
+            args: ["app-server"],
             env: environment,
           });
           const handle = yield* spawner.spawn(command).pipe(
@@ -3876,7 +3899,16 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ensureThread: (threadInput) =>
             ensureInitialized.pipe(
-              Effect.andThen(client.request("thread/start", {})),
+              Effect.andThen(
+                client.request(
+                  "thread/start",
+                  codexThreadRuntimeParams({
+                    threadId: threadInput.threadId,
+                    modelSelection: threadInput.modelSelection,
+                    runtimePolicy: threadInput.runtimePolicy,
+                  }),
+                ),
+              ),
               Effect.map(
                 (response): OrchestrationV2ProviderThread =>
                   providerThreadFromCodexThread({
@@ -3905,7 +3937,20 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               }
 
               const response = yield* ensureInitialized.pipe(
-                Effect.andThen(client.request("thread/resume", { threadId: nativeThreadId })),
+                Effect.andThen(
+                  client.request("thread/resume", {
+                    threadId: nativeThreadId,
+                    ...codexThreadRuntimeParams({
+                      threadId: threadInput.threadId ?? threadInput.providerThread.appThreadId,
+                      ...(threadInput.modelSelection === undefined
+                        ? {}
+                        : { modelSelection: threadInput.modelSelection }),
+                      ...(threadInput.runtimePolicy === undefined
+                        ? {}
+                        : { runtimePolicy: threadInput.runtimePolicy }),
+                    }),
+                  }),
+                ),
               );
               return {
                 ...threadInput.providerThread,
@@ -4335,7 +4380,20 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
               const response = yield* ensureInitialized.pipe(
-                Effect.andThen(client.request("thread/fork", { threadId })),
+                Effect.andThen(
+                  client.request("thread/fork", {
+                    threadId,
+                    ...codexThreadRuntimeParams({
+                      threadId: threadInput.targetThreadId,
+                      ...(threadInput.modelSelection === undefined
+                        ? {}
+                        : { modelSelection: threadInput.modelSelection }),
+                      ...(threadInput.runtimePolicy === undefined
+                        ? {}
+                        : { runtimePolicy: threadInput.runtimePolicy }),
+                    }),
+                  }),
+                ),
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterForkThreadError({

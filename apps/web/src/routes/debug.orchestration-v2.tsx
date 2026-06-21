@@ -560,10 +560,18 @@ function applyStreamEventToProjection(
         ...base,
         subagents: upsertProjectionEntity(base.subagents, event.payload),
       };
+    case "provider-session.attached":
     case "provider-session.updated":
       return {
         ...base,
         providerSessions: upsertProjectionEntity(base.providerSessions, event.payload),
+      };
+    case "provider-session.detached":
+      return {
+        ...base,
+        providerSessions: base.providerSessions.filter(
+          (session) => session.id !== event.payload.providerSessionId,
+        ),
       };
     case "provider-thread.updated":
       return {

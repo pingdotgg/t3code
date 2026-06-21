@@ -56,11 +56,11 @@ export const executorLayer: Layer.Layer<
     return OrchestrationEffectExecutorV2.of({
       execute: (effect) => {
         switch (effect.request.type) {
-          case "provider-session.release":
+          case "provider-session.detach":
             return providerSessions
-              .release({
+              .detach({
                 providerSessionId: effect.request.providerSessionId,
-                reason: effect.request.reason,
+                threadId: effect.threadId,
                 ...(effect.request.detail === undefined ? {} : { detail: effect.request.detail }),
               })
               .pipe(
