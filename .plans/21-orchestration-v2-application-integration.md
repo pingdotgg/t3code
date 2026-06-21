@@ -171,6 +171,7 @@ Make process sharing a provider capability, not an orchestrator special case:
 - when it is false, allocate an isolated provider session per app thread
 - Codex enables sharing now; ACP, Claude, Cursor, and OpenCode remain isolated until their adapters are independently proven multiplex-safe
 - model selection, cwd, runtime policy, and MCP authorization are applied on thread start/resume/fork rather than process launch
+- MCP bearer credentials have no idle or maximum lifetime; reissue, thread detachment, provider-session release, and server shutdown revoke them explicitly
 - the manager tracks the loaded native thread configuration per app thread, so reattachment or a model/cwd/policy change reapplies thread-scoped settings without redundantly resuming unchanged threads
 - provider-session projections use explicit many-to-many thread bindings
 - archiving, deleting, or switching one thread detaches that binding; it does not release a shared runtime used by sibling threads
