@@ -2,7 +2,6 @@
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Array from "effect/Array";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -24,6 +23,39 @@ export class InvalidReleaseTagError extends Schema.TaggedErrorClass<InvalidRelea
 ) {
   override get message(): string {
     return `Invalid ${this.channel} release tag '${this.currentTag}'.`;
+  }
+}
+
+const releaseTagListProcessContext = {
+  executable: Schema.Literal("git"),
+  argumentCount: Schema.Number,
+  cwd: Schema.String,
+};
+
+export class ReleaseTagListProcessError extends Schema.TaggedErrorClass<ReleaseTagListProcessError>()(
+  "ReleaseTagListProcessError",
+  {
+    ...releaseTagListProcessContext,
+    operation: Schema.Literals(["spawn", "communicate", "wait-for-exit"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to list release tags during process operation "${this.operation}".`;
+  }
+}
+
+export class ReleaseTagListProcessExitError extends Schema.TaggedErrorClass<ReleaseTagListProcessExitError>()(
+  "ReleaseTagListProcessExitError",
+  {
+    ...releaseTagListProcessContext,
+    exitCode: Schema.Number,
+    stdoutLength: Schema.Number,
+    stderrLength: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Release tag listing exited with code ${this.exitCode}.`;
   }
 }
 
@@ -172,20 +204,80 @@ export const resolvePreviousReleaseTag = (
     return candidates[0]?.tag;
   });
 
-const listGitTags = Effect.fn("listGitTags")(function* () {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const child = yield* spawner.spawn(ChildProcess.make("git", ["tag", "--list"]));
-  const tags = yield* child.stdout.pipe(
+const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
+  stream.pipe(
     Stream.decodeText(),
     Stream.runFold(
       () => "",
       (acc, chunk) => acc + chunk,
     ),
-    Effect.map(String.split(/\r?\n/)),
-    Effect.map(Array.map(String.trim)),
-    Effect.map(Array.filter(String.isNonEmpty)),
   );
-  return tags;
+
+export const listGitTags = Effect.fn("listGitTags")(function* (cwd = process.cwd()) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const args = ["tag", "--list"] as const;
+  const context = {
+    executable: "git",
+    argumentCount: args.length,
+    cwd,
+  } as const;
+  const child = yield* spawner.spawn(ChildProcess.make("git", args, { cwd })).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ReleaseTagListProcessError({
+          ...context,
+          operation: "spawn",
+          cause,
+        }),
+    ),
+  );
+  const [stdout, stderr, exitCode] = yield* Effect.all(
+    [
+      collectStreamAsString(child.stdout).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ReleaseTagListProcessError({
+              ...context,
+              operation: "communicate",
+              cause,
+            }),
+        ),
+      ),
+      collectStreamAsString(child.stderr).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ReleaseTagListProcessError({
+              ...context,
+              operation: "communicate",
+              cause,
+            }),
+        ),
+      ),
+      child.exitCode.pipe(
+        Effect.map(Number),
+        Effect.mapError(
+          (cause) =>
+            new ReleaseTagListProcessError({
+              ...context,
+              operation: "wait-for-exit",
+              cause,
+            }),
+        ),
+      ),
+    ],
+    { concurrency: "unbounded" },
+  );
+
+  if (exitCode !== 0) {
+    return yield* new ReleaseTagListProcessExitError({
+      ...context,
+      exitCode,
+      stdoutLength: stdout.length,
+      stderrLength: stderr.length,
+    });
+  }
+
+  return stdout.split(/\r?\n/).map(String.trim).filter(String.isNonEmpty);
 });
 
 const writeOutput = Effect.fn("writeOutput")(function* (
