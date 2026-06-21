@@ -27,6 +27,7 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { OrchestrationV2LayerLive } from "./runtimeLayer.ts";
+import { layer as mcpSessionRegistryTestLayer } from "../mcp/McpSessionRegistry.testkit.ts";
 import { CURSOR_MODEL_SELECTION } from "./testkit/fixtures/shared.ts";
 
 const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -60,6 +61,7 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
 );
 
 const liveLayer = OrchestrationV2LayerLive.pipe(
+  Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(checkpointStoreLayer),
   Layer.provide(serverConfigLayer),

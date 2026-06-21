@@ -29,6 +29,7 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { OrchestrationV2LayerLive } from "./runtimeLayer.ts";
+import { layer as mcpSessionRegistryTestLayer } from "../mcp/McpSessionRegistry.testkit.ts";
 
 const liveAgentId = process.env.T3_ACP_REGISTRY_LIVE_AGENT_ID?.trim() || "devin";
 const liveCommandPath = process.env.T3_ACP_REGISTRY_LIVE_COMMAND?.trim();
@@ -77,6 +78,7 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
 );
 
 const liveLayer = OrchestrationV2LayerLive.pipe(
+  Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(checkpointStoreLayer),
   Layer.provide(serverConfigLayer),
