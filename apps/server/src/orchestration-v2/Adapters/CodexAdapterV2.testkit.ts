@@ -9,7 +9,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
-import { ServerConfig, type ServerConfigShape } from "../../config.ts";
+import { ServerConfig } from "../../config.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { ProviderAdapterOpenSessionError } from "../ProviderAdapter.ts";
 import { layerFromProviderAdapter } from "../ProviderAdapterRegistry.ts";
@@ -51,7 +51,7 @@ function metadataFromTranscript(transcript: ProviderReplayTranscript): {
 function makeReplayServerConfig(
   scenario: string,
 ): Effect.Effect<
-  ServerConfigShape,
+  ServerConfig["Service"],
   PlatformError.PlatformError,
   FileSystem.FileSystem | Path.Path
 > {

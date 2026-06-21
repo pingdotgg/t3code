@@ -39,7 +39,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import { ServerConfig, type ServerConfigShape } from "../../config.ts";
+import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { cursorSdkParameterId } from "../../provider/cursorSdkModel.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
@@ -818,7 +818,7 @@ export interface CursorAdapterV2Options {
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2Shape;
   readonly runner: CursorAgentSdkRunnerShape;
-  readonly serverConfig: ServerConfigShape;
+  readonly serverConfig: ServerConfig["Service"];
 }
 
 export function makeCursorAdapterV2(
