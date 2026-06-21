@@ -454,7 +454,6 @@ describe("orchestrator MCP toolkit", () => {
               providerInstanceId: codexInstanceId,
               capabilities: new Set(["orchestration"]),
               issuedAt: 1,
-              expiresAt: Number.MAX_SAFE_INTEGER,
             };
             const invoke = (name: string, args: Record<string, unknown>) =>
               server
