@@ -17,7 +17,6 @@ export const layer = Layer.succeed(
           endpoint: "http://127.0.0.1/mcp",
           authorizationHeader: `Bearer mcp-test:${threadId}`,
         },
-        expiresAt: Number.MAX_SAFE_INTEGER,
       }),
     resolve: () => Effect.succeed(undefined),
     revokeProviderSession: () => Effect.void,
