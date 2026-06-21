@@ -11,9 +11,9 @@ import {
 import { encodeOAuthScope, parseAllowedOAuthScope } from "@t3tools/shared/oauthScope";
 import {
   normalizeRelayIssuer,
+  RelayJwtError,
   signRelayJwt,
   verifyRelayJwt,
-  type RelayJwtError,
 } from "@t3tools/shared/relayJwt";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -71,17 +71,6 @@ const allowedScopesByClientId: Record<
   ]),
   [RelayWebClientId]: new Set([RelayEnvironmentConnectScope, RelayEnvironmentStatusScope]),
 };
-
-function relayJwtVerificationFailureReason(error: RelayJwtError): string {
-  const cause = error.cause;
-  if (typeof cause === "object" && cause !== null && "code" in cause) {
-    const code = (cause as { readonly code?: unknown }).code;
-    if (typeof code === "string" && code.length > 0) {
-      return code;
-    }
-  }
-  return cause instanceof Error && cause.name ? cause.name : "unknown";
-}
 
 function resolveDpopAccessTokenScopes(input: {
   readonly clientId: RelayPublicClientId;
@@ -211,7 +200,7 @@ const make = Effect.gen(function* () {
       Effect.tapError((error) =>
         Effect.annotateCurrentSpan(
           "relay.tokens.verification_failure",
-          relayJwtVerificationFailureReason(error),
+          RelayJwtError.diagnosticCode(error),
         ),
       ),
       Effect.flatMap(decodeDpopAccessTokenClaims),

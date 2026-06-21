@@ -100,6 +100,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
   it.effect("reports an installed CLI as unhealthy when --version exits non-zero", () =>
     Effect.gen(function* () {
+      const secretStderr = "broken grok install: secret-token-value";
       const snapshot = yield* Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -108,7 +109,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           const grokPath = path.join(dir, "grok");
           yield* fs.writeFileString(
             grokPath,
-            ["#!/bin/sh", 'printf "%s\\n" "broken grok install" >&2', "exit 2", ""].join("\n"),
+            ["#!/bin/sh", `printf "%s\\n" "${secretStderr}" >&2`, "exit 2", ""].join("\n"),
           );
           yield* fs.chmod(grokPath, 0o755);
 
@@ -122,7 +123,8 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.enabled).toBe(true);
       expect(snapshot.installed).toBe(true);
       expect(snapshot.status).toBe("error");
-      expect(snapshot.message).toContain("broken grok install");
+      expect(snapshot.message).toBe("Grok CLI is installed but failed to run.");
+      expect(snapshot.message).not.toContain(secretStderr);
     }),
   );
 

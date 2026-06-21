@@ -1,3 +1,6 @@
+import type { DesktopBridge } from "@t3tools/contracts";
+import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
 import {
@@ -7,12 +10,15 @@ import {
   subscribeHostAppearance,
 } from "../hostAppearance";
 
-type Theme = "light" | "dark" | "system";
+const ThemePreference = Schema.Literals(["light", "dark", "system"]);
+type Theme = typeof ThemePreference.Type;
 type ThemeSnapshot = {
   theme: Theme;
   systemDark: boolean;
   hostResolvedTheme: "light" | "dark" | null;
 };
+
+type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
 
 const STORAGE_KEY = "t3code:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
@@ -24,17 +30,44 @@ const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
 const THEME_COLOR_META_NAME = "theme-color";
 const DYNAMIC_THEME_COLOR_SELECTOR = `meta[name="${THEME_COLOR_META_NAME}"][data-dynamic-theme-color="true"]`;
 
+export class ThemeStorageError extends Schema.TaggedErrorClass<ThemeStorageError>()(
+  "ThemeStorageError",
+  {
+    operation: Schema.Literals(["read", "write"]),
+    storageKey: Schema.String,
+    theme: Schema.optional(ThemePreference),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to ${this.operation} theme preference for ${this.storageKey}.`;
+  }
+}
+
+export const isThemeStorageError = Schema.is(ThemeStorageError);
+
+export class DesktopThemeSyncError extends Schema.TaggedErrorClass<DesktopThemeSyncError>()(
+  "DesktopThemeSyncError",
+  {
+    theme: ThemePreference,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to sync the ${this.theme} theme to the desktop shell.`;
+  }
+}
+
+export const isDesktopThemeSyncError = Schema.is(DesktopThemeSyncError);
+
 let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
 let lastDesktopTheme: Theme | null = null;
 let lastAppliedTheme: ThemeSnapshot | null = null;
+let themeStorageReadFailure: ThemeStorageError | null = null;
 
 function emitChange() {
   for (const listener of listeners) listener();
-}
-
-function hasThemeStorage() {
-  return typeof window !== "undefined" && typeof localStorage !== "undefined";
 }
 
 function getSystemDark() {
@@ -45,11 +78,59 @@ function getSystemDark() {
   );
 }
 
-function getStored(): Theme {
-  if (!hasThemeStorage()) return DEFAULT_THEME_SNAPSHOT.theme;
-  const raw = localStorage.getItem(STORAGE_KEY);
+export function readThemePreference(): Theme {
+  if (typeof window === "undefined") return DEFAULT_THEME_SNAPSHOT.theme;
+  let raw: string | null;
+  try {
+    raw = window.localStorage.getItem(STORAGE_KEY);
+  } catch (cause) {
+    throw new ThemeStorageError({
+      operation: "read",
+      storageKey: STORAGE_KEY,
+      cause,
+    });
+  }
   if (raw === "light" || raw === "dark" || raw === "system") return raw;
   return DEFAULT_THEME_SNAPSHOT.theme;
+}
+
+export function writeThemePreference(theme: Theme): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, theme);
+    themeStorageReadFailure = null;
+  } catch (cause) {
+    throw new ThemeStorageError({
+      operation: "write",
+      storageKey: STORAGE_KEY,
+      theme,
+      cause,
+    });
+  }
+}
+
+function getStored(): Theme {
+  if (themeStorageReadFailure !== null) {
+    return DEFAULT_THEME_SNAPSHOT.theme;
+  }
+  try {
+    return readThemePreference();
+  } catch (cause) {
+    const error = isThemeStorageError(cause)
+      ? cause
+      : new ThemeStorageError({
+          operation: "read",
+          storageKey: STORAGE_KEY,
+          cause,
+        });
+    themeStorageReadFailure = error;
+    console.error(error.message, {
+      operation: error.operation,
+      storageKey: error.storageKey,
+      ...safeErrorLogAttributes(error),
+    });
+    return DEFAULT_THEME_SNAPSHOT.theme;
+  }
 }
 
 function ensureThemeColorMetaTag(): HTMLMetaElement {
@@ -141,7 +222,18 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   }
 }
 
-function syncDesktopTheme(theme: Theme) {
+export async function syncDesktopThemePreference(
+  bridge: DesktopThemeBridge,
+  theme: Theme,
+): Promise<void> {
+  try {
+    await bridge.setTheme(theme);
+  } catch (cause) {
+    throw new DesktopThemeSyncError({ theme, cause });
+  }
+}
+
+export function syncDesktopTheme(theme: Theme) {
   if (typeof window === "undefined") return;
   const bridge = window.desktopBridge;
   if (!bridge || typeof bridge.setTheme !== "function" || lastDesktopTheme === theme) {
@@ -149,7 +241,14 @@ function syncDesktopTheme(theme: Theme) {
   }
 
   lastDesktopTheme = theme;
-  void bridge.setTheme(theme).catch(() => {
+  void syncDesktopThemePreference(bridge, theme).catch((cause: unknown) => {
+    const error = isDesktopThemeSyncError(cause)
+      ? cause
+      : new DesktopThemeSyncError({ theme, cause });
+    console.error(error.message, {
+      theme: error.theme,
+      ...safeErrorLogAttributes(error),
+    });
     if (lastDesktopTheme === theme) {
       lastDesktopTheme = null;
     }
@@ -157,17 +256,12 @@ function syncDesktopTheme(theme: Theme) {
 }
 
 // Apply immediately on module load to prevent flash
-if (typeof document !== "undefined" && hasThemeStorage()) {
+if (typeof document !== "undefined" && typeof window !== "undefined") {
   applyTheme(getStored());
 }
 
 function getSnapshot(): ThemeSnapshot {
-  if (!hasThemeStorage()) {
-    const hostResolvedTheme = resolveHostResolvedTheme(readHostAppearance());
-    return hostResolvedTheme
-      ? { ...DEFAULT_THEME_SNAPSHOT, hostResolvedTheme }
-      : DEFAULT_THEME_SNAPSHOT;
-  }
+  if (typeof window === "undefined") return DEFAULT_THEME_SNAPSHOT;
   const theme = getStored();
   const hostResolvedTheme = resolveHostResolvedTheme(readHostAppearance());
   const systemDark = theme === "system" ? getSystemDark() : false;
@@ -209,6 +303,7 @@ function subscribe(listener: () => void): () => void {
   // Listen for storage changes from other tabs
   const handleStorage = (e: StorageEvent) => {
     if (e.key === STORAGE_KEY) {
+      themeStorageReadFailure = null;
       applyTheme(getStored(), true);
       emitChange();
     }
@@ -232,8 +327,26 @@ export function useTheme() {
     (theme === "system" ? (snapshot.systemDark ? "dark" : "light") : theme);
 
   const setTheme = useCallback((next: Theme) => {
-    if (!hasThemeStorage()) return;
-    localStorage.setItem(STORAGE_KEY, next);
+    if (typeof window === "undefined") return;
+    try {
+      writeThemePreference(next);
+    } catch (cause) {
+      const error = isThemeStorageError(cause)
+        ? cause
+        : new ThemeStorageError({
+            operation: "write",
+            storageKey: STORAGE_KEY,
+            theme: next,
+            cause,
+          });
+      console.error(error.message, {
+        operation: error.operation,
+        storageKey: error.storageKey,
+        theme: next,
+        ...safeErrorLogAttributes(error),
+      });
+      return;
+    }
     applyTheme(next, true);
     emitChange();
   }, []);

@@ -59,7 +59,7 @@ export class ProjectSetupScriptProjectNotFoundError extends Schema.TaggedErrorCl
   },
 ) {
   override get message(): string {
-    return "Project was not found for setup script execution.";
+    return `Project was not found for setup script execution for thread '${this.threadId}' in '${this.worktreePath}'.`;
   }
 }
 
@@ -78,32 +78,6 @@ export class ProjectSetupScriptRunner extends Context.Service<
   }
 >()("t3/project/ProjectSetupScriptRunner") {}
 
-const isProjectSetupScriptRunnerError = Schema.is(ProjectSetupScriptRunnerError);
-
-function operationError(
-  input: ProjectSetupScriptRunnerInput,
-  operation: ProjectSetupScriptOperationError["operation"],
-  cause: unknown,
-): ProjectSetupScriptOperationError {
-  return new ProjectSetupScriptOperationError({
-    threadId: input.threadId,
-    worktreePath: input.worktreePath,
-    operation,
-    cause,
-    ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
-    ...(input.projectCwd === undefined ? {} : { projectCwd: input.projectCwd }),
-  });
-}
-
-function mapRunnerError(
-  input: ProjectSetupScriptRunnerInput,
-  operation: ProjectSetupScriptOperationError["operation"],
-) {
-  return Effect.mapError((cause: unknown) =>
-    isProjectSetupScriptRunnerError(cause) ? cause : operationError(input, operation, cause),
-  );
-}
-
 export const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const terminalManager = yield* TerminalManager.TerminalManager;
@@ -111,26 +85,43 @@ export const make = Effect.gen(function* () {
   const runForThread: ProjectSetupScriptRunner["Service"]["runForThread"] = Effect.fn(
     "ProjectSetupScriptRunner.runForThread",
   )(function* (input) {
+    const errorContext = {
+      threadId: input.threadId,
+      worktreePath: input.worktreePath,
+      ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+      ...(input.projectCwd === undefined ? {} : { projectCwd: input.projectCwd }),
+    };
     const projectById = input.projectId
-      ? yield* projectionSnapshotQuery
-          .getProjectShellById(ProjectId.make(input.projectId))
-          .pipe(Effect.map(Option.getOrUndefined), mapRunnerError(input, "resolveProject"))
+      ? yield* projectionSnapshotQuery.getProjectShellById(ProjectId.make(input.projectId)).pipe(
+          Effect.map(Option.getOrUndefined),
+          Effect.mapError(
+            (cause) =>
+              new ProjectSetupScriptOperationError({
+                ...errorContext,
+                operation: "resolveProject",
+                cause,
+              }),
+          ),
+        )
       : null;
     const project =
       projectById ??
       (input.projectCwd
-        ? yield* projectionSnapshotQuery
-            .getActiveProjectByWorkspaceRoot(input.projectCwd)
-            .pipe(Effect.map(Option.getOrUndefined), mapRunnerError(input, "resolveProject"))
+        ? yield* projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(input.projectCwd).pipe(
+            Effect.map(Option.getOrUndefined),
+            Effect.mapError(
+              (cause) =>
+                new ProjectSetupScriptOperationError({
+                  ...errorContext,
+                  operation: "resolveProject",
+                  cause,
+                }),
+            ),
+          )
         : null);
 
     if (!project) {
-      return yield* new ProjectSetupScriptProjectNotFoundError({
-        threadId: input.threadId,
-        worktreePath: input.worktreePath,
-        ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
-        ...(input.projectCwd === undefined ? {} : { projectCwd: input.projectCwd }),
-      });
+      return yield* new ProjectSetupScriptProjectNotFoundError(errorContext);
     }
 
     const script = setupProjectScript(project.scripts);
@@ -155,14 +146,32 @@ export const make = Effect.gen(function* () {
         worktreePath: input.worktreePath,
         env,
       })
-      .pipe(mapRunnerError(input, "openTerminal"));
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectSetupScriptOperationError({
+              ...errorContext,
+              operation: "openTerminal",
+              cause,
+            }),
+        ),
+      );
     yield* terminalManager
       .write({
         threadId: input.threadId,
         terminalId,
         data: `${script.command}\r`,
       })
-      .pipe(mapRunnerError(input, "writeCommand"));
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectSetupScriptOperationError({
+              ...errorContext,
+              operation: "writeCommand",
+              cause,
+            }),
+        ),
+      );
 
     return {
       status: "started",

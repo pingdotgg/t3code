@@ -203,8 +203,9 @@ layer("GitLabCli.layer", (it) => {
       });
 
       expect(error.detail).toBe("GitLab CLI (`glab`) is required but not available on PATH.");
+      expect(error._tag).toBe("GitLabCliUnavailableError");
       expect(error.cause).toEqual({
-        tag: "VcsProcessSpawnError",
+        _tag: "VcsProcessSpawnError",
         detail: "Command not found: glab",
       });
     }),
@@ -231,18 +232,9 @@ layer("GitLabCli.layer", (it) => {
           .pipe(Effect.flip);
       });
 
-      expect(error.detail).toBe(
-        "GitLab CLI command failed: fatal: could not read from remote repository",
-      );
+      expect(error.detail).toBe("GitLab CLI command failed.");
       expect(error.detail).not.toContain("VcsProcessExitError");
-      expect(error.cause).toEqual({
-        tag: "VcsProcessExitError",
-        name: "VcsProcessExitError",
-        message:
-          "VCS process failed in gitlab.execute: glab mr view 42 (/repo) exited with 1 - fatal: could not read from remote repository",
-        detail: "fatal: could not read from remote repository",
-        exitCode: 1,
-      });
+      expect(error.cause).toBe(cause);
     }),
   );
 
@@ -265,9 +257,8 @@ layer("GitLabCli.layer", (it) => {
           .pipe(Effect.flip);
       });
 
-      expect(error.detail).toBe(
-        "GitLab CLI command failed: GraphQL parser found token near merge request query",
-      );
+      expect(error._tag).toBe("GitLabCliCommandError");
+      expect(error.detail).toBe("GitLab CLI command failed.");
     }),
   );
 
@@ -400,17 +391,15 @@ layer("GitLabCli.layer", (it) => {
 
   it.effect("surfaces a friendly error when the merge request is not found", () =>
     Effect.gen(function* () {
-      mockedRun.mockReturnValueOnce(
-        Effect.fail(
-          new VcsProcessExitError({
-            operation: "GitLabCli.execute",
-            command: "glab mr view 4888",
-            cwd: "/repo",
-            exitCode: 1,
-            detail: "GET 404 merge request not found",
-          }),
-        ),
-      );
+      const cause = new VcsProcessExitError({
+        operation: "GitLabCli.execute",
+        command: "glab",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "GET 404 merge request not found",
+        failureKind: "not-found",
+      });
+      mockedRun.mockReturnValueOnce(Effect.fail(cause));
 
       const error = yield* Effect.gen(function* () {
         const glab = yield* GitLabCli.GitLabCli;
@@ -420,7 +409,37 @@ layer("GitLabCli.layer", (it) => {
         });
       }).pipe(Effect.flip);
 
-      assert.equal(error.message.includes("Merge request not found"), true);
+      assert.equal(error.message.includes("Merge request 4888 was not found"), true);
+      assert.strictEqual(error._tag, "GitLabMergeRequestNotFoundError");
+      assert.strictEqual(error.command, "glab");
+      assert.strictEqual(error.cwd, "/repo");
+      assert.strictEqual(error.cause, cause);
+      assert.equal(error.message.includes(cause.detail), false);
+    }),
+  );
+
+  it.effect("keeps non-merge-request not-found failures generic", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "GitLabCli.execute",
+        command: "glab",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "GET 404 project not found",
+        failureKind: "not-found",
+      });
+      mockedRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const error = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "missing/project",
+        });
+      }).pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "GitLabCliCommandError");
+      assert.strictEqual(error.cause, cause);
     }),
   );
 });

@@ -7,6 +7,7 @@ import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Redacted from "effect/Redacted";
 import { FetchHttpClient } from "effect/unstable/http";
 
@@ -232,6 +233,11 @@ describe("MobileRegistrations", () => {
   });
 
   it.effect("keeps device registration successful when activity replay fails", () => {
+    const messages: unknown[] = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(message);
+    });
+
     return Effect.gen(function* () {
       const result = yield* Effect.gen(function* () {
         const registrations = yield* MobileRegistrations.MobileRegistrations;
@@ -250,7 +256,7 @@ describe("MobileRegistrations", () => {
                       Effect.fail(
                         new AgentActivityRows.AgentActivityRowListPersistenceError({
                           userId: "dev:julius",
-                          cause: "replay failed",
+                          cause: "sensitive device replay detail",
                         }),
                       ),
                   }),
@@ -262,7 +268,11 @@ describe("MobileRegistrations", () => {
       );
 
       expect(result).toEqual({ ok: true });
-    });
+      expect(messages).toContainEqual([
+        "device registration activity replay failed",
+        { errorTag: "AgentActivityRowListPersistenceError" },
+      ]);
+    }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
   });
 
   it.effect("unregisters the current user's device", () => {

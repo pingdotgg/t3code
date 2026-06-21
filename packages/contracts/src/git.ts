@@ -621,11 +621,16 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
   operation: Schema.String,
   command: Schema.String,
   cwd: Schema.String,
+  argumentCount: Schema.optional(Schema.Number),
+  exitCode: Schema.optional(Schema.Number),
+  stdoutLength: Schema.optional(Schema.Number),
+  stderrLength: Schema.optional(Schema.Number),
+  outputLength: Schema.optional(Schema.Number),
   detail: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
-    return `Git command failed in ${this.operation}: ${this.command} (${this.cwd}) - ${this.detail}`;
+    return `Git command failed in ${this.operation} (${this.cwd}): ${this.detail}`;
   }
 }
 
@@ -644,6 +649,7 @@ export class TextGenerationError extends Schema.TaggedErrorClass<TextGenerationE
 
 export class GitManagerError extends Schema.TaggedErrorClass<GitManagerError>()("GitManagerError", {
   operation: Schema.String,
+  cwd: Schema.String,
   detail: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {
@@ -652,8 +658,25 @@ export class GitManagerError extends Schema.TaggedErrorClass<GitManagerError>()(
   }
 }
 
+export class GitPullRequestMaterializationError extends Schema.TaggedErrorClass<GitPullRequestMaterializationError>()(
+  "GitPullRequestMaterializationError",
+  {
+    cwd: TrimmedNonEmptyStringSchema,
+    pullRequestNumber: PositiveInt,
+    headRepository: Schema.NullOr(TrimmedNonEmptyStringSchema),
+    headBranch: TrimmedNonEmptyStringSchema,
+    localBranch: TrimmedNonEmptyStringSchema,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to materialize pull request #${this.pullRequestNumber} branch ${this.headBranch} as ${this.localBranch}.`;
+  }
+}
+
 export const GitManagerServiceError = Schema.Union([
   GitManagerError,
+  GitPullRequestMaterializationError,
   GitCommandError,
   SourceControlProviderError,
   TextGenerationError,

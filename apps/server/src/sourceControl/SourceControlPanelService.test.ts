@@ -61,6 +61,7 @@ const emptyProvider = SourceControlProvider.SourceControlProvider.of({
       new SourceControlProviderError({
         provider: "unknown",
         operation: "test.getChangeRequest",
+        cwd: "/repo",
         detail: "get change request not stubbed",
       }),
     ),
@@ -69,6 +70,7 @@ const emptyProvider = SourceControlProvider.SourceControlProvider.of({
       new SourceControlProviderError({
         provider: "unknown",
         operation: "test.createChangeRequest",
+        cwd: "/repo",
         detail: "create change request not stubbed",
       }),
     ),
@@ -77,6 +79,7 @@ const emptyProvider = SourceControlProvider.SourceControlProvider.of({
       new SourceControlProviderError({
         provider: "unknown",
         operation: "test.getRepositoryCloneUrls",
+        cwd: "/repo",
         detail: "repository clone URLs not stubbed",
       }),
     ),
@@ -85,6 +88,7 @@ const emptyProvider = SourceControlProvider.SourceControlProvider.of({
       new SourceControlProviderError({
         provider: "unknown",
         operation: "test.createRepository",
+        cwd: "/repo",
         detail: "create repository not stubbed",
       }),
     ),
@@ -94,6 +98,7 @@ const emptyProvider = SourceControlProvider.SourceControlProvider.of({
       new SourceControlProviderError({
         provider: "unknown",
         operation: "test.checkoutChangeRequest",
+        cwd: "/repo",
         detail: "checkout change request not stubbed",
       }),
     ),
@@ -1058,6 +1063,7 @@ describe("SourceControlPanelService", () => {
                   new SourceControlProviderError({
                     provider: "github",
                     operation: "test.listChangeRequests",
+                    cwd: "/repo",
                     detail: "provider unavailable",
                   }),
                 ),

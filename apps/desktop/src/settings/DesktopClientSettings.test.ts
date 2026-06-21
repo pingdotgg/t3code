@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
@@ -118,11 +119,13 @@ describe("DesktopClientSettings", () => {
         assert.instanceOf(error, DesktopClientSettings.DesktopClientSettingsWriteError);
         assert.equal(error.operation, "replace-settings-file");
         assert.equal(error.path, environment.clientSettingsPath);
-        assert.exists(error.cause);
+        assert.instanceOf(error.cause, PlatformError.PlatformError);
+        assert.isString(error.cause.stack);
         assert.equal(
           error.message,
           `Desktop client settings write failed during replace-settings-file at ${environment.clientSettingsPath}.`,
         );
+        assert.notInclude(error.message, error.cause.message);
       }),
     ),
   );

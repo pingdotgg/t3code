@@ -83,12 +83,6 @@ export class DesktopSettingsWriteError extends Schema.TaggedErrorClass<DesktopSe
   }
 }
 
-const writeError = (
-  operation: DesktopSettingsWriteOperation,
-  path: string,
-  cause: unknown,
-): DesktopSettingsWriteError => new DesktopSettingsWriteError({ operation, path, cause });
-
 export class DesktopAppSettings extends Context.Service<
   DesktopAppSettings,
   {
@@ -244,18 +238,46 @@ const writeSettings = Effect.fn("desktop.settings.writeSettings")(function* (inp
   const tempPath = `${input.settingsPath}.${process.pid}.${input.suffix}.tmp`;
   const encoded = yield* encodeDesktopSettingsJson(
     toDesktopSettingsDocument(input.settings, input.defaultSettings),
-  ).pipe(Effect.mapError((cause) => writeError("encode-document", input.settingsPath, cause)));
-  yield* input.fileSystem
-    .makeDirectory(directory, { recursive: true })
-    .pipe(Effect.mapError((cause) => writeError("create-directory", directory, cause)));
-  yield* input.fileSystem
-    .writeFileString(tempPath, `${encoded}\n`)
-    .pipe(Effect.mapError((cause) => writeError("write-temporary-file", tempPath, cause)));
-  yield* input.fileSystem
-    .rename(tempPath, input.settingsPath)
-    .pipe(
-      Effect.mapError((cause) => writeError("replace-settings-file", input.settingsPath, cause)),
-    );
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DesktopSettingsWriteError({
+          operation: "encode-document",
+          path: input.settingsPath,
+          cause,
+        }),
+    ),
+  );
+  yield* input.fileSystem.makeDirectory(directory, { recursive: true }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DesktopSettingsWriteError({
+          operation: "create-directory",
+          path: directory,
+          cause,
+        }),
+    ),
+  );
+  yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DesktopSettingsWriteError({
+          operation: "write-temporary-file",
+          path: tempPath,
+          cause,
+        }),
+    ),
+  );
+  yield* input.fileSystem.rename(tempPath, input.settingsPath).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DesktopSettingsWriteError({
+          operation: "replace-settings-file",
+          path: input.settingsPath,
+          cause,
+        }),
+    ),
+  );
 });
 
 export const make = Effect.gen(function* () {
@@ -276,8 +298,13 @@ export const make = Effect.gen(function* () {
 
       return crypto.randomUUIDv4.pipe(
         Effect.map((uuid) => uuid.replace(/-/g, "")),
-        Effect.mapError((cause) =>
-          writeError("create-temporary-file-name", environment.desktopSettingsPath, cause),
+        Effect.mapError(
+          (cause) =>
+            new DesktopSettingsWriteError({
+              operation: "create-temporary-file-name",
+              path: environment.desktopSettingsPath,
+              cause,
+            }),
         ),
         Effect.flatMap((suffix) =>
           writeSettings({

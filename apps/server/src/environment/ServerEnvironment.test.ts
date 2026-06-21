@@ -1,15 +1,17 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
+
+const isServerEnvironmentIdPersistenceError = Schema.is(
+  ServerEnvironment.ServerEnvironmentIdPersistenceError,
+);
 
 const makeServerEnvironmentLayer = (baseDir: string) =>
   ServerEnvironment.layer.pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));
@@ -71,62 +73,63 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
     }),
   );
 
-  it.effect("fails instead of overwriting a persisted id when reading the file errors", () =>
+  it.effect("structures persisted environment id filesystem failures", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-server-environment-read-error-test-",
+        prefix: "t3-server-environment-error-test-",
       });
       const serverConfig = yield* makeServerConfig(baseDir);
       const environmentIdPath = serverConfig.environmentIdPath;
-      yield* fileSystem.makeDirectory(NodePath.dirname(environmentIdPath), { recursive: true });
-      yield* fileSystem.writeFileString(environmentIdPath, "persisted-environment-id\n");
-      const writeAttempts: string[] = [];
-      const failingFileSystemLayer = FileSystem.layerNoop({
-        exists: (path) => Effect.succeed(path === environmentIdPath),
-        readFileString: (path) =>
-          path === environmentIdPath
-            ? Effect.fail(
-                PlatformError.systemError({
-                  _tag: "PermissionDenied",
-                  module: "FileSystem",
-                  method: "readFileString",
-                  description: "permission denied",
-                  pathOrDescriptor: path,
-                }),
-              )
-            : Effect.fail(
-                PlatformError.systemError({
-                  _tag: "NotFound",
-                  module: "FileSystem",
-                  method: "readFileString",
-                  description: "not found",
-                  pathOrDescriptor: path,
-                }),
-              ),
-        writeFileString: (path) => {
-          writeAttempts.push(path);
-          return Effect.void;
-        },
-      });
+      const methodByOperation = {
+        check: "exists",
+        read: "readFileString",
+        write: "writeFileString",
+      } as const;
 
-      const exit = yield* Effect.gen(function* () {
-        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
-        return yield* serverEnvironment.getDescriptor;
-      }).pipe(
-        Effect.provide(
-          ServerEnvironment.layer.pipe(
-            Layer.provide(Layer.merge(ServerConfig.layer(serverConfig), failingFileSystemLayer)),
+      for (const operation of ["check", "read", "write"] as const) {
+        const writeAttempts: string[] = [];
+        const cause = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: methodByOperation[operation],
+          description: "permission denied",
+          pathOrDescriptor: environmentIdPath,
+        });
+        const failingFileSystemLayer = FileSystem.layerNoop({
+          exists: () =>
+            operation === "check" ? Effect.fail(cause) : Effect.succeed(operation === "read"),
+          readFileString: () => Effect.fail(cause),
+          writeFileString: (path) => {
+            writeAttempts.push(path);
+            return Effect.fail(cause);
+          },
+        });
+
+        const error = yield* Effect.gen(function* () {
+          const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+          return yield* serverEnvironment.getDescriptor;
+        }).pipe(
+          Effect.provide(
+            ServerEnvironment.layer.pipe(
+              Layer.provide(Layer.merge(ServerConfig.layer(serverConfig), failingFileSystemLayer)),
+            ),
           ),
-        ),
-        Effect.exit,
-      );
+          Effect.flip,
+        );
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(writeAttempts).toEqual([]);
-      expect(yield* fileSystem.readFileString(environmentIdPath)).toBe(
-        "persisted-environment-id\n",
-      );
+        expect(isServerEnvironmentIdPersistenceError(error)).toBe(true);
+        if (!isServerEnvironmentIdPersistenceError(error)) {
+          throw error;
+        }
+        expect(error.operation).toBe(operation);
+        expect(error.environmentIdPath).toBe(environmentIdPath);
+        expect(error.cause).toBe(cause);
+        expect(error.message).toBe(
+          `Server environment ID ${operation} failed at '${environmentIdPath}'.`,
+        );
+        expect(writeAttempts).toEqual(operation === "write" ? [environmentIdPath] : []);
+      }
     }),
   );
 });

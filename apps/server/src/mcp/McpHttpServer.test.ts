@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { NodeHttpServer } from "@effect/platform-node";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -48,6 +48,62 @@ it("normalizes empty successful notification responses to accepted", () => {
   );
   expect(resultResponse.status).toBe(200);
 });
+
+it.effect("returns bounded structural preview snapshot failures", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const requests = yield* broker.connect({
+        clientId: "mcp-failure-client",
+        environmentId,
+        threadId,
+        tabId,
+        visible: true,
+        supportsAutomation: true,
+        focusedAt: "2026-06-11T00:00:00.000Z",
+      });
+      yield* Stream.runForEach(requests, (request) =>
+        broker.respond({
+          requestId: request.requestId,
+          ok: false,
+          error: {
+            _tag: "PreviewAutomationExecutionError",
+            message: "sensitive renderer failure",
+            detail: { consoleOutput: "sensitive browser output" },
+          },
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* broker.reportOwner({
+        clientId: "mcp-failure-client",
+        environmentId,
+        threadId,
+        tabId,
+        visible: true,
+        supportsAutomation: true,
+        focusedAt: "2026-06-11T00:00:00.000Z",
+      });
+
+      const snapshot = yield* server
+        .callTool({ name: "preview_snapshot", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+      expect(snapshot.isError).toBe(true);
+      expect(snapshot.content).toEqual([{ type: "text", text: "Preview snapshot failed." }]);
+      expect(snapshot.structuredContent).toEqual({
+        error: {
+          _tag: "PreviewAutomationExecutionError",
+          operation: "snapshot",
+          failureCount: 1,
+        },
+      });
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
 
 it.effect("terminates HTTP MCP sessions with DELETE", () =>
   Effect.scoped(

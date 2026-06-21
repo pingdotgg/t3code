@@ -95,20 +95,6 @@ export class GitWorkflowService extends Context.Service<
 >()("t3/git/GitWorkflowService") {}
 export type GitWorkflowServiceShape = GitWorkflowService["Service"];
 
-const unsupportedGitWorkflow = (operation: string, cwd: string, detail: string) =>
-  new GitManagerError({
-    operation,
-    detail: `${detail} (${cwd})`,
-  });
-
-const unsupportedGitCommand = (operation: string, cwd: string, detail: string) =>
-  new GitCommandError({
-    operation,
-    command: "vcs-route",
-    cwd,
-    detail,
-  });
-
 function nonRepositoryLocalStatus(): VcsStatusLocalResult {
   return {
     isRepo: false,
@@ -154,23 +140,23 @@ export const make = Effect.gen(function* () {
     operation: string,
     cwd: string,
   ) {
-    const handle = yield* registry
-      .resolve({ cwd })
-      .pipe(
-        Effect.mapError((error) =>
-          unsupportedGitWorkflow(
+    const handle = yield* registry.resolve({ cwd }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitManagerError({
             operation,
             cwd,
-            error instanceof Error ? error.message : String(error),
-          ),
-        ),
-      );
+            detail: "Failed to resolve the VCS driver for this Git workflow.",
+            cause,
+          }),
+      ),
+    );
     if (handle.kind !== "git") {
-      return yield* unsupportedGitWorkflow(
+      return yield* new GitManagerError({
         operation,
         cwd,
-        `The ${operation} workflow currently supports Git repositories only; detected ${handle.kind}.`,
-      );
+        detail: `The ${operation} workflow currently supports Git repositories only; detected ${handle.kind}. (${cwd})`,
+      });
     }
   });
 
@@ -178,48 +164,50 @@ export const make = Effect.gen(function* () {
     operation: string,
     cwd: string,
   ) {
-    const handle = yield* registry
-      .resolve({ cwd })
-      .pipe(
-        Effect.mapError((error) =>
-          unsupportedGitCommand(
+    const handle = yield* registry.resolve({ cwd }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitCommandError({
             operation,
+            command: "vcs-route",
             cwd,
-            error instanceof Error ? error.message : String(error),
-          ),
-        ),
-      );
+            detail: "Failed to resolve the VCS driver for this Git command.",
+            cause,
+          }),
+      ),
+    );
     if (handle.kind !== "git") {
-      return yield* unsupportedGitCommand(
+      return yield* new GitCommandError({
         operation,
+        command: "vcs-route",
         cwd,
-        `The ${operation} command currently supports Git repositories only; detected ${handle.kind}.`,
-      );
+        detail: `The ${operation} command currently supports Git repositories only; detected ${handle.kind}.`,
+      });
     }
   });
 
   const detectGitRepositoryForStatus = Effect.fn("GitWorkflowService.detectGitRepositoryForStatus")(
     function* (operation: string, cwd: string) {
-      const handle = yield* registry
-        .detect({ cwd })
-        .pipe(
-          Effect.mapError((error) =>
-            unsupportedGitWorkflow(
+      const handle = yield* registry.detect({ cwd }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
               operation,
               cwd,
-              error instanceof Error ? error.message : String(error),
-            ),
-          ),
-        );
+              detail: "Failed to detect a VCS repository for this Git workflow.",
+              cause,
+            }),
+        ),
+      );
       if (!handle) {
         return false;
       }
       if (handle.kind !== "git") {
-        return yield* unsupportedGitWorkflow(
+        return yield* new GitManagerError({
           operation,
           cwd,
-          `The ${operation} workflow currently supports Git repositories only; detected ${handle.kind}.`,
-        );
+          detail: `The ${operation} workflow currently supports Git repositories only; detected ${handle.kind}. (${cwd})`,
+        });
       }
       return true;
     },
@@ -228,26 +216,28 @@ export const make = Effect.gen(function* () {
   const detectGitRepositoryForCommand = Effect.fn(
     "GitWorkflowService.detectGitRepositoryForCommand",
   )(function* (operation: string, cwd: string) {
-    const handle = yield* registry
-      .detect({ cwd })
-      .pipe(
-        Effect.mapError((error) =>
-          unsupportedGitCommand(
+    const handle = yield* registry.detect({ cwd }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitCommandError({
             operation,
+            command: "vcs-route",
             cwd,
-            error instanceof Error ? error.message : String(error),
-          ),
-        ),
-      );
+            detail: "Failed to detect a VCS repository for this Git command.",
+            cause,
+          }),
+      ),
+    );
     if (!handle) {
       return false;
     }
     if (handle.kind !== "git") {
-      return yield* unsupportedGitCommand(
+      return yield* new GitCommandError({
         operation,
+        command: "vcs-route",
         cwd,
-        `The ${operation} command currently supports Git repositories only; detected ${handle.kind}.`,
-      );
+        detail: `The ${operation} command currently supports Git repositories only; detected ${handle.kind}.`,
+      });
     }
     return true;
   });

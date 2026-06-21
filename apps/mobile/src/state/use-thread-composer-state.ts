@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo } from "react";
 
 import { CommandId, MessageId, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
+import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
@@ -231,7 +232,12 @@ export function useThreadComposerState() {
           appendComposerDraftAttachments(threadKey, images);
         }
       } catch (error) {
-        console.error("[native paste] error converting images", error);
+        console.error("[native paste] error converting images", {
+          environmentId: selectedThreadShell.environmentId,
+          threadId: selectedThreadShell.id,
+          uriCount: uris.length,
+          ...safeErrorLogAttributes(error),
+        });
       }
     },
     [composerDrafts, selectedThreadShell],

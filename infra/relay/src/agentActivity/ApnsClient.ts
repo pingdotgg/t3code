@@ -11,14 +11,17 @@ import * as Schema from "effect/Schema";
 import * as Headers from "effect/unstable/http/Headers";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import type * as RelayConfiguration from "../Config.ts";
+import { ApnsEnvironment as ApnsEnvironmentSchema, type ApnsCredentials } from "../Config.ts";
 import type { ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
 
 const LIVE_ACTIVITY_NAME = "AgentActivity";
 const STALE_AFTER_SECONDS = 2 * 60;
 const DISMISS_AFTER_SECONDS = 5 * 60;
 
-export type ApnsLiveActivityEvent = "start" | "update" | "end";
+const ApnsLiveActivityEventSchema = Schema.Literals(["start", "update", "end"]);
+export type ApnsLiveActivityEvent = typeof ApnsLiveActivityEventSchema.Type;
+
+const ApnsRequestKindSchema = Schema.Literals(["live-activity", "push-notification"]);
 
 interface ApnsLiveActivityRequest {
   readonly token: string;
@@ -42,41 +45,48 @@ export interface ApnsDeliveryResult {
 
 export class ApnsJwtEncodingError extends Schema.TaggedErrorClass<ApnsJwtEncodingError>()(
   "ApnsJwtEncodingError",
-  { cause: Schema.Defect() },
+  {
+    component: Schema.Literals(["header", "payload"]),
+    teamId: Schema.String,
+    keyId: Schema.String,
+    issuedAtUnixSeconds: Schema.Number,
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return "Failed to encode APNs JWT.";
+    return `Failed to encode APNs JWT ${this.component} for key ${this.keyId}.`;
   }
 }
 
 export class ApnsJwtSigningError extends Schema.TaggedErrorClass<ApnsJwtSigningError>()(
   "ApnsJwtSigningError",
-  { cause: Schema.Defect() },
+  {
+    teamId: Schema.String,
+    keyId: Schema.String,
+    issuedAtUnixSeconds: Schema.Number,
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return "Failed to sign APNs JWT.";
+    return `Failed to sign APNs JWT for key ${this.keyId}.`;
   }
 }
 
 export class ApnsHttpRequestError extends Schema.TaggedErrorClass<ApnsHttpRequestError>()(
   "ApnsHttpRequestError",
   {
+    requestKind: ApnsRequestKindSchema,
+    event: Schema.NullOr(ApnsLiveActivityEventSchema),
+    environment: ApnsEnvironmentSchema,
+    bundleId: Schema.String,
+    tokenSuffix: Schema.String,
+    stage: Schema.Literals(["send", "read-response"]),
+    status: Schema.NullOr(Schema.Number),
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return "APNs HTTP request failed.";
-  }
-}
-
-export class ApnsInvalidResponseError extends Schema.TaggedErrorClass<ApnsInvalidResponseError>()(
-  "ApnsInvalidResponseError",
-  {
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return "APNs returned an invalid response.";
+    return `APNs ${this.requestKind} request failed during ${this.stage} in ${this.environment}.`;
   }
 }
 
@@ -84,7 +94,6 @@ export const ApnsError = Schema.Union([
   ApnsJwtEncodingError,
   ApnsJwtSigningError,
   ApnsHttpRequestError,
-  ApnsInvalidResponseError,
 ]);
 export type ApnsError = typeof ApnsError.Type;
 
@@ -113,18 +122,38 @@ const encodeApnsJwtPayloadJson = Schema.encodeEffect(
 );
 
 const makeApnsJwt = Effect.fn("relay.apns.make_jwt")(function* (input: {
-  readonly teamId: RelayConfiguration.ApnsCredentials["teamId"];
-  readonly keyId: RelayConfiguration.ApnsCredentials["keyId"];
-  readonly privateKey: RelayConfiguration.ApnsCredentials["privateKey"];
+  readonly teamId: ApnsCredentials["teamId"];
+  readonly keyId: ApnsCredentials["keyId"];
+  readonly privateKey: ApnsCredentials["privateKey"];
   readonly issuedAtUnixSeconds: number;
 }) {
   const headerJson = yield* encodeApnsJwtHeaderJson({ alg: "ES256", kid: input.keyId }).pipe(
-    Effect.mapError((cause) => new ApnsJwtEncodingError({ cause })),
+    Effect.mapError(
+      (cause) =>
+        new ApnsJwtEncodingError({
+          component: "header",
+          teamId: input.teamId,
+          keyId: input.keyId,
+          issuedAtUnixSeconds: input.issuedAtUnixSeconds,
+          cause,
+        }),
+    ),
   );
   const payloadJson = yield* encodeApnsJwtPayloadJson({
     iss: input.teamId,
     iat: input.issuedAtUnixSeconds,
-  }).pipe(Effect.mapError((cause) => new ApnsJwtEncodingError({ cause })));
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ApnsJwtEncodingError({
+          component: "payload",
+          teamId: input.teamId,
+          keyId: input.keyId,
+          issuedAtUnixSeconds: input.issuedAtUnixSeconds,
+          cause,
+        }),
+    ),
+  );
 
   const privateKey = Redacted.value(input.privateKey);
   const header = Encoding.encodeBase64Url(headerJson);
@@ -141,7 +170,13 @@ const makeApnsJwt = Effect.fn("relay.apns.make_jwt")(function* (input: {
         });
       return `${signingInput}.${Encoding.encodeBase64Url(signature)}`;
     },
-    catch: (cause) => new ApnsJwtSigningError({ cause }),
+    catch: (cause) =>
+      new ApnsJwtSigningError({
+        teamId: input.teamId,
+        keyId: input.keyId,
+        issuedAtUnixSeconds: input.issuedAtUnixSeconds,
+        cause,
+      }),
   });
 });
 
@@ -251,12 +286,12 @@ export class ApnsClient extends Context.Service<
     readonly makeLiveActivityRequest: typeof makeLiveActivityRequest;
     readonly makePushNotificationRequest: typeof makePushNotificationRequest;
     readonly sendLiveActivityRequest: (input: {
-      readonly credentials: RelayConfiguration.ApnsCredentials;
+      readonly credentials: ApnsCredentials;
       readonly request: ApnsLiveActivityRequest;
       readonly issuedAtUnixSeconds: number;
     }) => Effect.Effect<ApnsDeliveryResult, ApnsError>;
     readonly sendPushNotificationRequest: (input: {
-      readonly credentials: RelayConfiguration.ApnsCredentials;
+      readonly credentials: ApnsCredentials;
       readonly request: ApnsPushNotificationRequest;
       readonly issuedAtUnixSeconds: number;
     }) => Effect.Effect<ApnsDeliveryResult, ApnsError>;
@@ -287,10 +322,34 @@ export const make = Effect.gen(function* () {
       }),
       HttpClientRequest.bodyJson(input.request.payload),
       Effect.flatMap(httpClient.execute),
-      Effect.mapError((cause) => new ApnsHttpRequestError({ cause })),
+      Effect.mapError(
+        (cause) =>
+          new ApnsHttpRequestError({
+            requestKind: "live-activity",
+            event: input.request.event,
+            environment: input.credentials.environment,
+            bundleId: input.credentials.bundleId,
+            tokenSuffix: input.request.token.slice(-8),
+            stage: "send",
+            status: null,
+            cause,
+          }),
+      ),
     );
     const responseText = yield* response.text.pipe(
-      Effect.mapError((cause) => new ApnsHttpRequestError({ cause })),
+      Effect.mapError(
+        (cause) =>
+          new ApnsHttpRequestError({
+            requestKind: "live-activity",
+            event: input.request.event,
+            environment: input.credentials.environment,
+            bundleId: input.credentials.bundleId,
+            tokenSuffix: input.request.token.slice(-8),
+            stage: "read-response",
+            status: response.status,
+            cause,
+          }),
+      ),
     );
     const reason = apnsReasonFromBody(responseText);
     return {
@@ -323,10 +382,34 @@ export const make = Effect.gen(function* () {
         }),
         HttpClientRequest.bodyJson(input.request.payload),
         Effect.flatMap(httpClient.execute),
-        Effect.mapError((cause) => new ApnsHttpRequestError({ cause })),
+        Effect.mapError(
+          (cause) =>
+            new ApnsHttpRequestError({
+              requestKind: "push-notification",
+              event: null,
+              environment: input.credentials.environment,
+              bundleId: input.credentials.bundleId,
+              tokenSuffix: input.request.token.slice(-8),
+              stage: "send",
+              status: null,
+              cause,
+            }),
+        ),
       );
       const responseText = yield* response.text.pipe(
-        Effect.mapError((cause) => new ApnsHttpRequestError({ cause })),
+        Effect.mapError(
+          (cause) =>
+            new ApnsHttpRequestError({
+              requestKind: "push-notification",
+              event: null,
+              environment: input.credentials.environment,
+              bundleId: input.credentials.bundleId,
+              tokenSuffix: input.request.token.slice(-8),
+              stage: "read-response",
+              status: response.status,
+              cause,
+            }),
+        ),
       );
       const reason = apnsReasonFromBody(responseText);
       return {

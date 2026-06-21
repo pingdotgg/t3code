@@ -7,6 +7,17 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as PtyAdapter from "./PtyAdapter.ts";
 
+export class BunPtyUnsupportedPlatformError extends Schema.TaggedErrorClass<BunPtyUnsupportedPlatformError>()(
+  "BunPtyUnsupportedPlatformError",
+  {
+    platform: Schema.Literal("win32"),
+  },
+) {
+  override get message(): string {
+    return `Bun PTY terminal support is unavailable on ${this.platform}. Please use Node.js (e.g. by running \`npx t3\`) instead.`;
+  }
+}
+
 export class BunPtyOperationUnavailableError extends Schema.TaggedErrorClass<BunPtyOperationUnavailableError>()(
   "BunPtyOperationUnavailableError",
   {
@@ -109,9 +120,7 @@ class BunPtyProcess implements PtyAdapter.PtyProcess {
 export const make = Effect.fn("BunPtyAdapter.make")(function* () {
   const platform = yield* HostProcessPlatform;
   if (platform === "win32") {
-    return yield* Effect.die(
-      "Bun PTY terminal support is unavailable on Windows. Please use Node.js (e.g. by running `npx t3`) instead.",
-    );
+    return yield* Effect.die(new BunPtyUnsupportedPlatformError({ platform }));
   }
   return PtyAdapter.PtyAdapter.of({
     spawn: (input) =>

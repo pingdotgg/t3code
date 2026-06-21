@@ -1,5 +1,4 @@
 import { assert, describe, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import { beforeEach, vi } from "vite-plus/test";
 
@@ -65,16 +64,65 @@ describe("ElectronUpdater", () => {
       const cause = new Error("network unavailable");
       autoUpdaterMock.checkForUpdates.mockImplementationOnce(() => Promise.reject(cause));
       const updater = yield* ElectronUpdater.ElectronUpdater;
+      autoUpdaterMock.channel = "beta";
 
-      const exit = yield* Effect.exit(updater.checkForUpdates);
+      const error = yield* updater.checkForUpdates.pipe(Effect.flip);
 
-      assert.equal(exit._tag, "Failure");
-      if (exit._tag === "Failure") {
-        const error = Cause.squash(exit.cause);
-        assert.instanceOf(error, ElectronUpdater.ElectronUpdaterCheckForUpdatesError);
-        assert.equal(error.cause, cause);
-        assert.equal(error.message, "Electron updater failed to check for updates.");
-      }
+      assert.instanceOf(error, ElectronUpdater.ElectronUpdaterCheckForUpdatesError);
+      assert.isTrue(ElectronUpdater.isElectronUpdaterError(error));
+      assert.equal(error.channel, "beta");
+      assert.strictEqual(error.cause, cause);
+      assert.equal(error.message, "Electron updater failed to check for updates on channel beta.");
+      assert.notInclude(error.message, cause.message);
+    }).pipe(Effect.provide(ElectronUpdater.layer)),
+  );
+
+  it.effect("preserves the execution-time channel on download failures", () =>
+    Effect.gen(function* () {
+      const cause = new Error("download unavailable");
+      autoUpdaterMock.downloadUpdate.mockImplementationOnce(() => Promise.reject(cause));
+      const updater = yield* ElectronUpdater.ElectronUpdater;
+      autoUpdaterMock.channel = "nightly";
+
+      const error = yield* updater.downloadUpdate.pipe(Effect.flip);
+
+      assert.instanceOf(error, ElectronUpdater.ElectronUpdaterDownloadUpdateError);
+      assert.isTrue(ElectronUpdater.isElectronUpdaterError(error));
+      assert.equal(error.channel, "nightly");
+      assert.strictEqual(error.cause, cause);
+      assert.equal(
+        error.message,
+        "Electron updater failed to download the update on channel nightly.",
+      );
+      assert.notInclude(error.message, cause.message);
+    }).pipe(Effect.provide(ElectronUpdater.layer)),
+  );
+
+  it.effect("preserves quit-and-install flags and the execution-time channel", () =>
+    Effect.gen(function* () {
+      const cause = new Error("quit and install failed");
+      autoUpdaterMock.quitAndInstall.mockImplementationOnce(() => {
+        throw cause;
+      });
+      const updater = yield* ElectronUpdater.ElectronUpdater;
+      autoUpdaterMock.channel = "alpha";
+
+      const error = yield* updater
+        .quitAndInstall({ isSilent: true, isForceRunAfter: false })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(error, ElectronUpdater.ElectronUpdaterQuitAndInstallError);
+      assert.isTrue(ElectronUpdater.isElectronUpdaterError(error));
+      assert.equal(error.channel, "alpha");
+      assert.equal(error.isSilent, true);
+      assert.equal(error.isForceRunAfter, false);
+      assert.strictEqual(error.cause, cause);
+      assert.equal(
+        error.message,
+        "Electron updater failed to quit and install the update on channel alpha (silent: true, force run after: false).",
+      );
+      assert.notInclude(error.message, cause.message);
+      assert.deepEqual(autoUpdaterMock.quitAndInstall.mock.calls, [[true, false]]);
     }).pipe(Effect.provide(ElectronUpdater.layer)),
   );
 });

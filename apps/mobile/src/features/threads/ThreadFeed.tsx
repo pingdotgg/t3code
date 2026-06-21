@@ -1,4 +1,3 @@
-import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { KeyboardAvoidingLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
@@ -31,6 +30,7 @@ import { TouchableOpacity } from "react-native-gesture-handler";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import {
   hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
@@ -1321,8 +1321,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   }, []);
 
   const onCopyWorkRow = useCallback((rowId: string, value: string) => {
-    void Clipboard.setStringAsync(value);
-    void Haptics.selectionAsync();
+    copyTextWithHaptic(value, {
+      target: "thread-work-row",
+      feedback: "selection",
+    });
     setInteractionState((current) => ({ ...current, copiedRowId: rowId }));
     if (copyFeedbackTimeoutRef.current) {
       clearTimeout(copyFeedbackTimeoutRef.current);

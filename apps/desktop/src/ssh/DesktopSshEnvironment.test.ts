@@ -23,6 +23,7 @@ describe("sshEnvironment", () => {
     const cause = new DesktopSshPasswordPrompts.DesktopSshPromptPresentationError({
       requestId: "prompt-1",
       destination: "devbox",
+      operation: "send-prompt-request",
       cause: new Error("renderer send failed"),
     });
 

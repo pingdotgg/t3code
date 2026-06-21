@@ -41,6 +41,8 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   readonly resizeCalls: Array<{ cols: number; rows: number }> = [];
   readonly killSignals: Array<string | undefined> = [];
   readonly pid: number;
+  writeFailure: unknown | undefined;
+  resizeFailure: unknown | undefined;
   private readonly dataListeners = new Set<(data: string) => void>();
   private readonly exitListeners = new Set<(event: PtyAdapter.PtyExitEvent) => void>();
   killed = false;
@@ -50,10 +52,16 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   }
 
   write(data: string): void {
+    if (this.writeFailure !== undefined) {
+      throw this.writeFailure;
+    }
     this.writes.push(data);
   }
 
   resize(cols: number, rows: number): void {
+    if (this.resizeFailure !== undefined) {
+      throw this.resizeFailure;
+    }
     this.resizeCalls.push({ cols, rows });
   }
 
@@ -448,6 +456,39 @@ it.layer(
       fs.writeFileString(filePath, contents),
     );
 
+  it.effect("reports a missing cwd without an artificial cause", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+
+      const { manager, baseDir } = yield* createManager();
+      const cwd = path.join(baseDir, "missing-cwd");
+      const error = yield* Effect.flip(manager.open(openInput({ cwd })));
+
+      expect(error).toMatchObject({
+        _tag: "TerminalCwdNotFoundError",
+        cwd,
+      });
+      expect("cause" in error).toBe(false);
+    }),
+  );
+
+  it.effect("reports a cwd that is not a directory", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+
+      const { manager, baseDir } = yield* createManager();
+      const cwd = path.join(baseDir, "cwd-file");
+      yield* writeFileString(cwd, "not a directory");
+      const error = yield* Effect.flip(manager.open(openInput({ cwd })));
+
+      expect(error).toMatchObject({
+        _tag: "TerminalCwdNotDirectoryError",
+        cwd,
+      });
+      expect("cause" in error).toBe(false);
+    }),
+  );
+
   it.effect("preserves non-notFound cwd stat failures", () =>
     Effect.gen(function* () {
       if ((yield* HostProcessPlatform) === "win32") return;
@@ -465,9 +506,11 @@ it.layer(
       );
 
       expect(error).toMatchObject({
-        _tag: "TerminalCwdError",
+        _tag: "TerminalCwdStatError",
         cwd: blockedCwd,
-        reason: "statFailed",
+        cause: {
+          _tag: "PlatformError",
+        },
       });
     }),
   );
@@ -508,6 +551,60 @@ it.layer(
 
       expect(process.writes).toEqual(["ls\n"]);
       expect(process.resizeCalls).toEqual([{ cols: 120, rows: 30 }]);
+    }),
+  );
+
+  it.effect("preserves structured context and causes for PTY I/O failures", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      const writeCause = new Error("PTY input handle is unavailable");
+      process.writeFailure = writeCause;
+      const writeError = yield* Effect.flip(
+        manager.write({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          data: "secret input that must not be attached to the error",
+        }),
+      );
+
+      expect(writeError).toMatchObject({
+        _tag: "TerminalWriteError",
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        terminalPid: process.pid,
+      });
+      expect(writeError.cause).toBe(writeCause);
+      expect(writeError).not.toHaveProperty("data");
+
+      const resizeCause = new Error("PTY resize handle is unavailable");
+      process.resizeFailure = resizeCause;
+      const resizeError = yield* Effect.flip(
+        manager.resize({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          cols: 132,
+          rows: 40,
+        }),
+      );
+
+      expect(resizeError).toMatchObject({
+        _tag: "TerminalResizeError",
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        terminalPid: process.pid,
+        cols: 132,
+        rows: 40,
+      });
+      expect(resizeError.cause).toBe(resizeCause);
+
+      process.resizeFailure = undefined;
+      yield* manager.open(openInput({ cols: 132, rows: 40 }));
+      expect(process.resizeCalls).toEqual([{ cols: 132, rows: 40 }]);
     }),
   );
 

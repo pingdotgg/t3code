@@ -397,7 +397,7 @@ function CloudEnvironmentRowShell(props: {
                   className={cn("text-xs leading-[16px] underline", statusClassName)}
                   onLongPress={(event) => {
                     event.stopPropagation();
-                    copyTextWithHaptic(errorTraceId);
+                    copyTextWithHaptic(errorTraceId, { target: "connection-trace-id" });
                   }}
                   onPress={(event) => {
                     event.stopPropagation();
@@ -441,7 +441,7 @@ function CopyTraceIdButton(props: { readonly traceId: string }) {
     <Pressable
       accessibilityRole="button"
       onPress={() => {
-        copyTextWithHaptic(props.traceId);
+        copyTextWithHaptic(props.traceId, { target: "connection-trace-id" });
       }}
       className="self-start flex-row items-center gap-1.5 rounded-full bg-subtle px-3 py-2 active:opacity-70"
     >

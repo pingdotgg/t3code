@@ -6,8 +6,12 @@ import * as NodePath from "node:path";
 import { ThreadId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Logger from "effect/Logger";
+import * as Schema from "effect/Schema";
 
 import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+
+const encodeUnknownJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
 
 function parseLogLine(line: string) {
   const match = /^\[([^\]]+)\] ([A-Z]+): (.+)$/.exec(line);
@@ -29,6 +33,38 @@ function parseLogLine(line: string) {
 }
 
 describe("EventNdjsonLogger", () => {
+  it.effect("logs bounded diagnostics when an event cannot be serialized", () => {
+    const messages: Array<unknown> = [];
+    const logCapture = Logger.make<unknown, void>(({ message }) => {
+      if (Array.isArray(message)) {
+        messages.push(...message);
+      } else {
+        messages.push(message);
+      }
+    });
+    const secret = "secret-circular-event-value";
+
+    return Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "provider-native.ndjson");
+      const circular: Record<string, unknown> = { secret };
+      circular.self = circular;
+
+      try {
+        const logger = yield* makeEventNdjsonLogger(basePath, { stream: "native" });
+        assert.exists(logger);
+        if (!logger) return;
+        yield* logger.write(circular, ThreadId.make("thread-1"));
+
+        const serialized = encodeUnknownJson(messages);
+        assert.notInclude(serialized, secret);
+        assert.include(serialized, '"errorTag":"SchemaError"');
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }).pipe(Effect.provide(Logger.layer([logCapture], { mergeWithExisting: false })));
+  });
+
   it.effect("writes effect-style lines to thread-scoped files", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));

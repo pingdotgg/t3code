@@ -1,5 +1,3 @@
-import * as NodeAssert from "node:assert/strict";
-
 import * as Path from "effect/Path";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -14,7 +12,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it } from "@effect/vitest";
+import { it, assert } from "@effect/vitest";
 
 import * as AcpClient from "./client.ts";
 import * as AcpSchema from "./_generated/schema.gen.ts";
@@ -109,7 +107,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
             version: "0.0.0",
           },
         });
-        NodeAssert.equal(init.protocolVersion, 1);
+        assert.equal(init.protocolVersion, 1);
 
         yield* acp.agent.authenticate({ methodId: "cursor_login" });
 
@@ -117,31 +115,29 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           cwd: process.cwd(),
           mcpServers: [],
         });
-        NodeAssert.equal(session.sessionId, "mock-session-1");
+        assert.equal(session.sessionId, "mock-session-1");
 
         const prompt = yield* acp.agent.prompt({
           sessionId: session.sessionId,
           prompt: [{ type: "text", text: "hello" }],
         });
-        NodeAssert.equal(prompt.stopReason, "end_turn");
+        assert.equal(prompt.stopReason, "end_turn");
 
         const streamed = yield* Stream.runCollect(Stream.take(acp.raw.notifications, 2));
-        NodeAssert.equal(streamed.length, 2);
-        NodeAssert.equal(streamed[0]?._tag, "SessionUpdate");
-        NodeAssert.equal(streamed[1]?._tag, "ElicitationComplete");
-        NodeAssert.equal((yield* Ref.get(updates)).length, 1);
-        NodeAssert.equal((yield* Ref.get(elicitationCompletions)).length, 1);
-        NodeAssert.deepEqual(yield* Ref.get(typedRequests), [
-          { message: "hello from typed request" },
-        ]);
-        NodeAssert.deepEqual(yield* Ref.get(typedNotifications), [{ count: 2 }]);
+        assert.equal(streamed.length, 2);
+        assert.equal(streamed[0]?._tag, "SessionUpdate");
+        assert.equal(streamed[1]?._tag, "ElicitationComplete");
+        assert.equal((yield* Ref.get(updates)).length, 1);
+        assert.equal((yield* Ref.get(elicitationCompletions)).length, 1);
+        assert.deepEqual(yield* Ref.get(typedRequests), [{ message: "hello from typed request" }]);
+        assert.deepEqual(yield* Ref.get(typedNotifications), [{ count: 2 }]);
 
         return yield* acp.raw.request("x/echo", {
           hello: "world",
         });
       }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
 
-      NodeAssert.deepEqual(ext, {
+      assert.deepEqual(ext, {
         echoedMethod: "x/echo",
         echoedParams: {
           hello: "world",
@@ -151,7 +147,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
   );
 
   it.effect(
-    "returns formatted invalid params when a typed extension request payload is wrong",
+    "returns structured invalid params without exposing values from typed extension request payloads",
     () =>
       Effect.gen(function* () {
         const handle = yield* makeHandle({ ACP_MOCK_BAD_TYPED_REQUEST: "1" });
@@ -213,12 +209,12 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           );
         }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
 
-        if (Exit.isSuccess(result)) {
-          NodeAssert.fail("Expected prompt to fail for invalid typed extension payload");
+        if (result._tag !== "Failure") {
+          assert.fail("Expected prompt to fail for invalid typed extension payload");
         }
         const rendered = Cause.pretty(result.cause);
-        NodeAssert.ok(rendered.includes("Invalid x/typed_request payload:"));
-        NodeAssert.ok(rendered.includes("Expected string, got 123"));
+        assert.include(rendered, "Invalid payload for ACP extension method 'x/typed_request'.");
+        assert.notInclude(rendered, "Expected string, got 123");
       }),
   );
 
@@ -300,12 +296,10 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           Ref.update(elicitationCompletions, (current) => [...current, notification]),
         );
 
-        NodeAssert.equal((yield* Ref.get(updates)).length, 1);
-        NodeAssert.equal((yield* Ref.get(elicitationCompletions)).length, 1);
-        NodeAssert.deepEqual(yield* Ref.get(typedRequests), [
-          { message: "hello from typed request" },
-        ]);
-        NodeAssert.deepEqual(yield* Ref.get(typedNotifications), [{ count: 2 }]);
+        assert.equal((yield* Ref.get(updates)).length, 1);
+        assert.equal((yield* Ref.get(elicitationCompletions)).length, 1);
+        assert.deepEqual(yield* Ref.get(typedRequests), [{ message: "hello from typed request" }]);
+        assert.deepEqual(yield* Ref.get(typedNotifications), [{ count: 2 }]);
       }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
     }),
   );
@@ -376,7 +370,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           prompt: [{ type: "text", text: "hello" }],
         });
 
-        NodeAssert.equal(yield* Ref.get(successfulHandlers), 1);
+        assert.equal(yield* Ref.get(successfulHandlers), 1);
       }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
     }),
   );
@@ -421,7 +415,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         ? yield* decodedExt(secondOutbound)
         : yield* decodedExt(firstOutbound);
 
-      NodeAssert.notEqual(initializeRequest.id, extRequest.id);
+      assert.notEqual(initializeRequest.id, extRequest.id);
 
       yield* Queue.offer(
         input,
@@ -448,7 +442,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       );
 
       yield* Fiber.join(initializeFiber);
-      NodeAssert.deepEqual(yield* Fiber.join(extFiber), { ok: true });
+      assert.deepEqual(yield* Fiber.join(extFiber), { ok: true });
       yield* Scope.close(scope, Exit.void);
     }),
   );

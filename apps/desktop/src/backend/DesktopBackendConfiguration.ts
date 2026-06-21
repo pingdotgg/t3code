@@ -8,11 +8,23 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
+
+export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedErrorClass<DesktopBackendObservabilitySettingsReadError>()(
+  "DesktopBackendObservabilitySettingsReadError",
+  {
+    settingsPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to read persisted backend observability settings at ${this.settingsPath}.`;
+  }
+}
 
 export class DesktopBackendConfiguration extends Context.Service<
   DesktopBackendConfiguration,
@@ -50,25 +62,34 @@ const DESKTOP_BACKEND_ENV_NAMES = [
 const backendChildEnvPatch = (): Record<string, string | undefined> =>
   Object.fromEntries(DESKTOP_BACKEND_ENV_NAMES.map((name) => [name, undefined]));
 
-const { logWarning: logBackendConfigurationWarning } = DesktopObservability.makeComponentLogger(
-  "desktop-backend-configuration",
-);
+const logBackendObservabilitySettingsReadFailure = (
+  settingsPath: string,
+  cause: PlatformError.PlatformError,
+) => {
+  const error = new DesktopBackendObservabilitySettingsReadError({ settingsPath, cause });
+  return Effect.logWarning(error).pipe(
+    Effect.annotateLogs({
+      component: "desktop-backend-configuration",
+      error,
+    }),
+  );
+};
 
 const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const exists = yield* fileSystem
-    .exists(environment.serverSettingsPath)
-    .pipe(Effect.orElseSucceed(() => false));
-  if (!exists) {
-    return emptyBackendObservabilitySettings;
-  }
-
-  const raw = yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(Effect.option);
+  const raw = yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(
+    Effect.map(Option.some),
+    Effect.catchTags({
+      PlatformError: (cause) =>
+        cause.reason._tag === "NotFound"
+          ? Effect.succeed(Option.none())
+          : logBackendObservabilitySettingsReadFailure(environment.serverSettingsPath, cause).pipe(
+              Effect.as(Option.none()),
+            ),
+    }),
+  );
   if (Option.isNone(raw)) {
-    yield* logBackendConfigurationWarning(
-      "failed to read persisted backend observability settings",
-    );
     return emptyBackendObservabilitySettings;
   }
 

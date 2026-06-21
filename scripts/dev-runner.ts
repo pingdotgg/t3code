@@ -8,7 +8,6 @@ import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Hash from "effect/Hash";
 import * as Layer from "effect/Layer";
@@ -57,10 +56,87 @@ export function getDevRunnerModeArgs(mode: DevMode): ReadonlyArray<string> {
   return MODE_ARGS[mode];
 }
 
-class DevRunnerError extends Data.TaggedError("DevRunnerError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class DevRunnerConfigurationError extends Schema.TaggedErrorClass<DevRunnerConfigurationError>()(
+  "DevRunnerConfigurationError",
+  {
+    configKeys: Schema.Array(Schema.String),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to read dev-runner configuration: ${this.configKeys.join(", ")}.`;
+  }
+}
+
+export class DevRunnerInvalidPortOffsetError extends Schema.TaggedErrorClass<DevRunnerInvalidPortOffsetError>()(
+  "DevRunnerInvalidPortOffsetError",
+  {
+    configKey: Schema.Literal("T3CODE_PORT_OFFSET"),
+    portOffset: Schema.Number,
+    minimum: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `${this.configKey} must be at least ${this.minimum}; received ${this.portOffset}.`;
+  }
+}
+
+export class DevRunnerPortExhaustedError extends Schema.TaggedErrorClass<DevRunnerPortExhaustedError>()(
+  "DevRunnerPortExhaustedError",
+  {
+    startOffset: Schema.Number,
+    requireServerPort: Schema.Boolean,
+    requireWebPort: Schema.Boolean,
+    baseServerPort: Schema.Number,
+    baseWebPort: Schema.Number,
+    maximumPort: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `No required dev ports were available from offset ${this.startOffset} through maximum port ${this.maximumPort}.`;
+  }
+}
+
+export class DevRunnerProcessError extends Schema.TaggedErrorClass<DevRunnerProcessError>()(
+  "DevRunnerProcessError",
+  {
+    operation: Schema.Literals(["spawn", "wait-for-exit"]),
+    mode: Schema.Literals(["dev", "dev:server", "dev:web", "dev:desktop"]),
+    executable: Schema.Literal("vp"),
+    argumentCount: Schema.Number,
+    shell: Schema.Boolean,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Dev-runner process operation "${this.operation}" failed for mode "${this.mode}".`;
+  }
+}
+
+export class DevRunnerProcessExitError extends Schema.TaggedErrorClass<DevRunnerProcessExitError>()(
+  "DevRunnerProcessExitError",
+  {
+    mode: Schema.Literals(["dev", "dev:server", "dev:web", "dev:desktop"]),
+    executable: Schema.Literal("vp"),
+    argumentCount: Schema.Number,
+    shell: Schema.Boolean,
+    exitCode: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Dev-runner process exited with code ${this.exitCode} in mode "${this.mode}".`;
+  }
+}
+
+export const DevRunnerError = Schema.Union([
+  DevRunnerConfigurationError,
+  DevRunnerInvalidPortOffsetError,
+  DevRunnerPortExhaustedError,
+  DevRunnerProcessError,
+  DevRunnerProcessExitError,
+]);
+export type DevRunnerError = typeof DevRunnerError.Type;
+export const isDevRunnerError = Schema.is(DevRunnerError);
 
 const optionalStringConfig = (name: string): Config.Config<string | undefined> =>
   Config.string(name).pipe(
@@ -96,28 +172,40 @@ const OffsetConfig = Config.all({
 export function resolveOffset(config: {
   readonly portOffset: number | undefined;
   readonly devInstance: string | undefined;
-}): { readonly offset: number; readonly source: string } {
+}): Effect.Effect<
+  { readonly offset: number; readonly source: string },
+  DevRunnerInvalidPortOffsetError
+> {
   if (config.portOffset !== undefined) {
     if (config.portOffset < 0) {
-      throw new Error(`Invalid T3CODE_PORT_OFFSET: ${config.portOffset}`);
+      return Effect.fail(
+        new DevRunnerInvalidPortOffsetError({
+          configKey: "T3CODE_PORT_OFFSET",
+          portOffset: config.portOffset,
+          minimum: 0,
+        }),
+      );
     }
-    return {
+    return Effect.succeed({
       offset: config.portOffset,
       source: `T3CODE_PORT_OFFSET=${config.portOffset}`,
-    };
+    });
   }
 
   const seed = config.devInstance?.trim();
   if (!seed) {
-    return { offset: 0, source: "default ports" };
+    return Effect.succeed({ offset: 0, source: "default ports" });
   }
 
   if (/^\d+$/.test(seed)) {
-    return { offset: Number(seed), source: `numeric T3CODE_DEV_INSTANCE=${seed}` };
+    return Effect.succeed({
+      offset: Number(seed),
+      source: `numeric T3CODE_DEV_INSTANCE=${seed}`,
+    });
   }
 
   const offset = ((Hash.string(seed) >>> 0) % MAX_HASH_OFFSET) + 1;
-  return { offset, source: `hashed T3CODE_DEV_INSTANCE=${seed}` };
+  return Effect.succeed({ offset, source: `hashed T3CODE_DEV_INSTANCE=${seed}` });
 }
 
 function resolveBaseDir(baseDir: string | undefined): Effect.Effect<string, never, Path.Path> {
@@ -275,7 +363,7 @@ export function findFirstAvailableOffset<R = NetService.NetService>({
   requireServerPort,
   requireWebPort,
   checkPortAvailability,
-}: FindFirstAvailableOffsetInput<R>): Effect.Effect<number, DevRunnerError, R> {
+}: FindFirstAvailableOffsetInput<R>): Effect.Effect<number, DevRunnerPortExhaustedError, R> {
   return Effect.gen(function* () {
     const checkPort = (checkPortAvailability ??
       defaultCheckPortAvailability) as PortAvailabilityCheck<R>;
@@ -311,8 +399,13 @@ export function findFirstAvailableOffset<R = NetService.NetService>({
       }
     }
 
-    return yield* new DevRunnerError({
-      message: `No available dev ports found from offset ${startOffset}. Tried server=${BASE_SERVER_PORT}+n web=${BASE_WEB_PORT}+n up to port ${MAX_PORT}.`,
+    return yield* new DevRunnerPortExhaustedError({
+      startOffset,
+      requireServerPort,
+      requireWebPort,
+      baseServerPort: BASE_SERVER_PORT,
+      baseWebPort: BASE_WEB_PORT,
+      maximumPort: MAX_PORT,
     });
   });
 }
@@ -333,7 +426,7 @@ export function resolveModePortOffsets<R = NetService.NetService>({
   checkPortAvailability,
 }: ResolveModePortOffsetsInput<R>): Effect.Effect<
   { readonly serverOffset: number; readonly webOffset: number },
-  DevRunnerError,
+  DevRunnerPortExhaustedError,
   R
 > {
   return Effect.gen(function* () {
@@ -397,21 +490,14 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     const { portOffset, devInstance } = yield* OffsetConfig.pipe(
       Effect.mapError(
         (cause) =>
-          new DevRunnerError({
-            message: "Failed to read T3CODE_PORT_OFFSET/T3CODE_DEV_INSTANCE configuration.",
+          new DevRunnerConfigurationError({
+            configKeys: ["T3CODE_PORT_OFFSET", "T3CODE_DEV_INSTANCE"],
             cause,
           }),
       ),
     );
 
-    const { offset, source } = yield* Effect.try({
-      try: () => resolveOffset({ portOffset, devInstance }),
-      catch: (cause) =>
-        new DevRunnerError({
-          message: cause instanceof Error ? cause.message : String(cause),
-          cause,
-        }),
-    });
+    const { offset, source } = yield* resolveOffset({ portOffset, devInstance });
 
     const { serverOffset, webOffset } = yield* resolveModePortOffsets({
       mode: input.mode,
@@ -453,6 +539,12 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       [...MODE_ARGS[input.mode], ...input.runArgs],
       { env },
     );
+    const processContext = {
+      mode: input.mode,
+      executable: "vp" as const,
+      argumentCount: spawnCommand.args.length,
+      shell: spawnCommand.shell,
+    } as const;
     const child = yield* ChildProcess.make(spawnCommand.command, spawnCommand.args, {
       stdin: "inherit",
       stdout: "inherit",
@@ -465,24 +557,34 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       // which would put the runner in a new group and require manual forwarding.
       detached: false,
       forceKillAfter: "1500 millis",
-    });
-
-    const exitCode = yield* child.exitCode;
-    if (exitCode !== 0) {
-      return yield* new DevRunnerError({
-        message: `vp run exited with code ${exitCode}`,
-      });
-    }
-  }).pipe(
-    Effect.mapError((cause) =>
-      cause instanceof DevRunnerError
-        ? cause
-        : new DevRunnerError({
-            message: cause instanceof Error ? cause.message : "dev-runner failed",
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DevRunnerProcessError({
+            ...processContext,
+            operation: "spawn",
             cause,
           }),
-    ),
-  );
+      ),
+    );
+
+    const exitCode = yield* child.exitCode.pipe(
+      Effect.mapError(
+        (cause) =>
+          new DevRunnerProcessError({
+            ...processContext,
+            operation: "wait-for-exit",
+            cause,
+          }),
+      ),
+    );
+    if (exitCode !== 0) {
+      return yield* new DevRunnerProcessExitError({
+        ...processContext,
+        exitCode,
+      });
+    }
+  });
 }
 
 const devRunnerCli = Command.make("dev-runner", {

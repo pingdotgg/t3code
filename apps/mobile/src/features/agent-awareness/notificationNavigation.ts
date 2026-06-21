@@ -3,6 +3,7 @@ import * as Notifications from "expo-notifications";
 import { useRouter } from "expo-router";
 
 import { routeAgentNotificationResponseOnce } from "./notificationPayload";
+import { consumeLastAgentNotificationResponse } from "./notificationResponseConsumer";
 
 export function useAgentNotificationNavigation(): void {
   const router = useRouter();
@@ -18,15 +19,11 @@ export function useAgentNotificationNavigation(): void {
     };
 
     const subscription = Notifications.addNotificationResponseReceivedListener(handleResponse);
-    void Notifications.getLastNotificationResponseAsync()
-      .then((response) => {
-        if (response) {
-          handleResponse(response);
-          return Notifications.clearLastNotificationResponseAsync();
-        }
-        return undefined;
-      })
-      .catch(() => undefined);
+    void consumeLastAgentNotificationResponse({
+      getLastResponse: () => Notifications.getLastNotificationResponseAsync(),
+      clearLastResponse: () => Notifications.clearLastNotificationResponseAsync(),
+      handleResponse,
+    });
 
     return () => {
       subscription.remove();

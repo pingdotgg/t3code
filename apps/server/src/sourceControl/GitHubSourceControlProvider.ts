@@ -2,7 +2,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
 import {
   SourceControlProviderError,
   type ChangeRequest,
@@ -20,19 +19,6 @@ import {
   type SourceControlAuthProbeInput,
   type SourceControlCliDiscoverySpec,
 } from "./SourceControlProviderDiscovery.ts";
-const isSourceControlProviderError = Schema.is(SourceControlProviderError);
-
-function providerError(
-  operation: string,
-  cause: GitHubCli.GitHubCliError,
-): SourceControlProviderError {
-  return new SourceControlProviderError({
-    provider: "github",
-    operation,
-    detail: cause.detail,
-    cause,
-  });
-}
 
 function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeRequest {
   return {
@@ -138,7 +124,20 @@ export const make = Effect.gen(function* () {
           })
           .pipe(
             Effect.map((items) => items.map(toChangeRequest)),
-            Effect.mapError((error) => providerError("listChangeRequests", error)),
+            Effect.mapError(
+              (error) =>
+                new SourceControlProviderError({
+                  provider: "github",
+                  operation: "listChangeRequests",
+                  command: error.command,
+                  cwd: input.cwd,
+                  reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                    input.headSelector,
+                  ),
+                  detail: error.detail,
+                  cause: error,
+                }),
+            ),
           );
       }
 
@@ -176,20 +175,28 @@ export const make = Effect.gen(function* () {
                       })),
                     )
                   : Effect.fail(
-                      new SourceControlProviderError({
-                        provider: "github",
-                        operation: "listChangeRequests",
-                        detail: "GitHub CLI returned invalid change request JSON.",
+                      new GitHubCli.GitHubChangeRequestListDecodeError({
+                        command: "gh",
+                        cwd: input.cwd,
                         cause: decoded.failure,
                       }),
                     ),
               ),
             );
           }),
-          Effect.mapError((error) =>
-            isSourceControlProviderError(error)
-              ? error
-              : providerError("listChangeRequests", error),
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "github",
+                operation: "listChangeRequests",
+                command: error.command,
+                cwd: input.cwd,
+                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.headSelector,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
           ),
         );
     };
@@ -200,7 +207,20 @@ export const make = Effect.gen(function* () {
     getChangeRequest: (input) =>
       github.getPullRequest(input).pipe(
         Effect.map(toChangeRequest),
-        Effect.mapError((error) => providerError("getChangeRequest", error)),
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "getChangeRequest",
+              command: error.command,
+              cwd: input.cwd,
+              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                input.reference,
+              ),
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
       ),
     createChangeRequest: (input) =>
       github
@@ -211,23 +231,87 @@ export const make = Effect.gen(function* () {
           title: input.title,
           bodyFile: input.bodyFile,
         })
-        .pipe(Effect.mapError((error) => providerError("createChangeRequest", error))),
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "github",
+                operation: "createChangeRequest",
+                command: error.command,
+                cwd: input.cwd,
+                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.headSelector,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
+        ),
     getRepositoryCloneUrls: (input) =>
-      github
-        .getRepositoryCloneUrls(input)
-        .pipe(Effect.mapError((error) => providerError("getRepositoryCloneUrls", error))),
+      github.getRepositoryCloneUrls(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "getRepositoryCloneUrls",
+              command: error.command,
+              cwd: input.cwd,
+              repository: SourceControlProvider.transportSafeSourceControlErrorValue(
+                input.repository,
+              ),
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
     createRepository: (input) =>
-      github
-        .createRepository(input)
-        .pipe(Effect.mapError((error) => providerError("createRepository", error))),
+      github.createRepository(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "createRepository",
+              command: error.command,
+              cwd: input.cwd,
+              repository: SourceControlProvider.transportSafeSourceControlErrorValue(
+                input.repository,
+              ),
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
     getDefaultBranch: (input) =>
-      github
-        .getDefaultBranch(input)
-        .pipe(Effect.mapError((error) => providerError("getDefaultBranch", error))),
+      github.getDefaultBranch(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "getDefaultBranch",
+              command: error.command,
+              cwd: input.cwd,
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
     checkoutChangeRequest: (input) =>
-      github
-        .checkoutPullRequest(input)
-        .pipe(Effect.mapError((error) => providerError("checkoutChangeRequest", error))),
+      github.checkoutPullRequest(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "checkoutChangeRequest",
+              command: error.command,
+              cwd: input.cwd,
+              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                input.reference,
+              ),
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
   });
 });
 
