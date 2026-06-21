@@ -109,8 +109,6 @@ export class ApnsDeliveryTransportError extends Schema.TaggedErrorClass<ApnsDeli
   }
 }
 
-export const isApnsDeliveryTransportError = Schema.is(ApnsDeliveryTransportError);
-
 const decodeRelayAgentActivityAggregateStateJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayAgentActivityAggregateStateSchema),
 );

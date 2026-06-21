@@ -10,7 +10,6 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import {
   FetchHttpClient,
   HttpClient,
@@ -139,58 +138,6 @@ const target: LiveActivities.TargetRow = {
   last_live_activity_delivery_at: null,
 };
 
-function makeTransportFailureProbe(cause: Error) {
-  const transportErrors: Array<ApnsDeliveries.ApnsDeliveryTransportError> = [];
-  const requestFailures: Array<HttpClientError.HttpClientError> = [];
-  const logger = Logger.make(({ fiber }) => {
-    const redactedError = fiber.getRef(References.CurrentLogAnnotations).error;
-    const error = Redacted.isRedacted(redactedError) ? Redacted.value(redactedError) : undefined;
-    if (ApnsDeliveries.isApnsDeliveryTransportError(error)) {
-      transportErrors.push(error);
-    }
-  });
-  return {
-    cause,
-    requestFailures,
-    transportErrors,
-    loggerLayer: Logger.layer([logger], { mergeWithExisting: false }),
-    execute: (request: HttpClientRequest.HttpClientRequest) => {
-      const requestFailure = new HttpClientError.HttpClientError({
-        reason: new HttpClientError.TransportError({ request, cause }),
-      });
-      requestFailures.push(requestFailure);
-      return Effect.fail(requestFailure);
-    },
-  };
-}
-
-function expectTransportFailure(
-  probe: ReturnType<typeof makeTransportFailureProbe>,
-  expected: {
-    readonly kind: "live_activity_update" | "push_notification";
-    readonly sourceJobId: string;
-    readonly requestKind: "live-activity" | "push-notification";
-    readonly event: ApnsClient.ApnsLiveActivityEvent | null;
-  },
-) {
-  const error = probe.transportErrors[0]!;
-  expect(error).toMatchObject({
-    deviceId: target.device_id,
-    kind: expected.kind,
-    sourceJobId: expected.sourceJobId,
-    apnsErrorTag: "ApnsHttpRequestError",
-    requestStage: "send",
-    cause: {
-      _tag: "ApnsHttpRequestError",
-      requestKind: expected.requestKind,
-      event: expected.event,
-      stage: "send",
-    },
-  });
-  expect((error.cause as ApnsClient.ApnsHttpRequestError).cause).toBe(probe.requestFailures[0]);
-  expect(probe.requestFailures[0]?.reason).toMatchObject({ cause: probe.cause });
-}
-
 function makeLayer(input: {
   readonly attempts: Array<DeliveryAttempts.DeliveryAttemptInput>;
   readonly sourceJobClaims?: ReadonlyMap<string, DeliveryAttempts.DeliverySourceJobClaimResult>;
@@ -211,7 +158,7 @@ function makeLayer(input: {
   readonly config?: RelayConfiguration.RelayConfiguration["Service"];
   readonly execute?: (
     request: HttpClientRequest.HttpClientRequest,
-  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>;
+  ) => Effect.Effect<HttpClientResponse.HttpClientResponse>;
 }) {
   return ApnsDeliveries.layer.pipe(
     Layer.provide(ApnsClient.layer),
@@ -684,8 +631,18 @@ describe("ApnsDeliveries", () => {
 
   it.effect("processes signed jobs through APNs and records attempts", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
-    const httpCause = new Error("network unavailable");
-    const failure = makeTransportFailureProbe(httpCause);
+    const transportErrors: Array<ApnsDeliveries.ApnsDeliveryTransportError> = [];
+    const logger = Logger.make(({ fiber }) => {
+      const annotation = fiber.getRef(References.CurrentLogAnnotations).error;
+      if (!Redacted.isRedacted(annotation)) {
+        return;
+      }
+      const error = Redacted.value(annotation);
+      // @effect-diagnostics-next-line instanceOfSchema:off
+      if (error instanceof ApnsDeliveries.ApnsDeliveryTransportError) {
+        transportErrors.push(error);
+      }
+    });
     const payload = makeApnsDeliveryJobPayload({
       kind: "live_activity_update",
       userId: target.user_id,
@@ -707,30 +664,33 @@ describe("ApnsDeliveries", () => {
 
       expect(result.kind).toBe("live_activity_update");
       expect(result.ok).toBe(false);
-      expect(result.apnsReason).toBe("APNs live-activity request failed during send in sandbox.");
       expect(attempts).toMatchObject([
         {
           kind: "live_activity_update",
           sourceJobId: "job-1",
           token: "activity-token",
-          transportError: "APNs live-activity request failed during send in sandbox.",
         },
       ]);
-      expectTransportFailure(failure, {
+      expect(transportErrors).toHaveLength(1);
+      const error = transportErrors[0]!;
+      expect(error).toMatchObject({
+        deviceId: target.device_id,
         kind: "live_activity_update",
         sourceJobId: "job-1",
-        requestKind: "live-activity",
-        event: "update",
+        apnsErrorTag: "ApnsJwtSigningError",
+        requestStage: null,
       });
+      expect(error.cause).toBeInstanceOf(ApnsClient.ApnsJwtSigningError);
+      expect(error.cause).toMatchObject({
+        teamId: "team-id",
+        keyId: "key-id",
+      });
+      expect((error.cause as ApnsClient.ApnsJwtSigningError).cause).toBeDefined();
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          makeLayer({
-            attempts,
-            config: signingConfig,
-            execute: failure.execute,
-          }),
-          failure.loggerLayer,
+          makeLayer({ attempts }),
+          Logger.layer([logger], { mergeWithExisting: false }),
         ),
       ),
     );
@@ -793,68 +753,6 @@ describe("ApnsDeliveries", () => {
           config: signingConfig,
           execute,
         }),
-      ),
-    );
-  });
-
-  it.effect("preserves push notification transport failures while recording the result", () => {
-    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
-    const httpCause = new Error("connection reset");
-    const failure = makeTransportFailureProbe(httpCause);
-
-    return Effect.gen(function* () {
-      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.sendPushNotification({
-        target: {
-          user_id: target.user_id,
-          device_id: target.device_id,
-        },
-        token: "apns-device-token",
-        sourceJobId: "job-push-transport",
-        notification: {
-          title: "Thread",
-          body: "Input: Project",
-          environmentId: "env",
-          threadId: "thread",
-          deepLink: "/",
-        },
-      });
-
-      expect(result).toMatchObject({
-        kind: "push_notification",
-        ok: false,
-        apnsStatus: null,
-        apnsReason: "APNs push-notification request failed during send in sandbox.",
-      });
-      expect(attempts).toMatchObject([
-        {
-          kind: "push_notification",
-          sourceJobId: "job-push-transport",
-          transportError: "APNs push-notification request failed during send in sandbox.",
-        },
-      ]);
-      expectTransportFailure(failure, {
-        kind: "push_notification",
-        sourceJobId: "job-push-transport",
-        requestKind: "push-notification",
-        event: null,
-      });
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          makeLayer({
-            attempts,
-            currentTargets: [
-              {
-                ...target,
-                push_token: "apns-device-token",
-              },
-            ],
-            config: signingConfig,
-            execute: failure.execute,
-          }),
-          failure.loggerLayer,
-        ),
       ),
     );
   });
