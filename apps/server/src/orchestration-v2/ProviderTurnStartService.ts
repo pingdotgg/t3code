@@ -15,7 +15,10 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { EventSinkV2 } from "./EventSink.ts";
-import { providerMessageWithContextHandoffs } from "./ContextHandoffService.ts";
+import {
+  ContextHandoffServiceV2,
+  providerMessageWithContextHandoffs,
+} from "./ContextHandoffService.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
@@ -46,6 +49,7 @@ export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
   | EventSinkV2
+  | ContextHandoffServiceV2
   | IdAllocatorV2
   | ProjectionStoreV2
   | ProviderSessionManagerV2
@@ -55,6 +59,7 @@ export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
     const eventSink = yield* EventSinkV2;
+    const contextHandoffService = yield* ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocatorV2;
     const projectionStore = yield* ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManagerV2;
@@ -95,6 +100,15 @@ export const layer: Layer.Layer<
           transfer.status === "pending" &&
           transfer.resolution === null,
       );
+      const existingResumeFallback = projection.contextTransfers.find(
+        (transfer) =>
+          transfer.type === "provider_handoff" &&
+          transfer.sourceThreadId === projection.thread.id &&
+          transfer.targetThreadId === projection.thread.id &&
+          transfer.targetRunId === run.id &&
+          transfer.status === "resolved_portable" &&
+          transfer.resolution?.strategy === "portable_context",
+      );
       if (
         rootNode === undefined ||
         attempt === undefined ||
@@ -126,6 +140,7 @@ export const layer: Layer.Layer<
           ? {}
           : { resumeFromSession: existingSessionProjection }),
       });
+      let effectiveHandoffs = handoffs;
       const loadedProviderThread = yield* Effect.gen(function* () {
         if (nativeForkTransfer !== undefined) {
           const sourceProjection = yield* projectionStore.getThreadProjection(
@@ -160,19 +175,95 @@ export const layer: Layer.Layer<
             ...(sourceProviderTurn === undefined ? {} : { providerTurnId: sourceProviderTurn.id }),
           });
         }
-        return providerThread.nativeThreadRef === null
-          ? yield* session.ensureThread({
+        if (providerThread.nativeThreadRef === null) {
+          return yield* session.ensureThread({
+            threadId: projection.thread.id,
+            modelSelection: run.modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
+            providerSessionId,
+          });
+        }
+        const resumed = yield* Effect.result(
+          session.resumeThread({
+            providerThread,
+            threadId: projection.thread.id,
+            modelSelection: run.modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
+          }),
+        );
+        if (resumed._tag === "Success") {
+          return resumed.success;
+        }
+
+        const replacement = yield* session.ensureThread({
+          threadId: projection.thread.id,
+          modelSelection: run.modelSelection,
+          runtimePolicy: resolvedRuntimePolicy,
+          providerSessionId,
+        });
+        if (existingResumeFallback !== undefined) {
+          return replacement;
+        }
+        const transferId = yield* idAllocator.allocate.contextTransfer({
+          sourceThreadId: projection.thread.id,
+          targetThreadId: projection.thread.id,
+          type: "provider_resume_fallback",
+        });
+        const createdAt = yield* DateTime.now;
+        const handoff = yield* contextHandoffService.prepareProviderHandoff({
+          threadId: projection.thread.id,
+          targetRunId: run.id,
+          transferId,
+          fromProviderThreadIds: [providerThread.id],
+          toProviderThreadId: providerThread.id,
+          fromProviderInstanceId: providerThread.providerInstanceId,
+          toProviderInstanceId: run.providerInstanceId,
+          coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
+          strategy: "full_thread_summary",
+          items: projection.turnItems,
+          createdAt,
+        });
+        effectiveHandoffs = [...handoffs, handoff];
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+              type: "context-handoff.updated",
               threadId: projection.thread.id,
-              modelSelection: run.modelSelection,
-              runtimePolicy: resolvedRuntimePolicy,
-              providerSessionId,
-            })
-          : yield* session.resumeThread({
-              providerThread,
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: createdAt,
+              payload: handoff,
+            },
+            {
+              id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+              type: "context-transfer.updated",
               threadId: projection.thread.id,
-              modelSelection: run.modelSelection,
-              runtimePolicy: resolvedRuntimePolicy,
-            });
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: createdAt,
+              payload: {
+                id: transferId,
+                type: "provider_handoff",
+                sourceThreadId: projection.thread.id,
+                targetThreadId: projection.thread.id,
+                sourcePoint: { threadId: projection.thread.id },
+                basePoint: null,
+                sourceProviderInstanceId: providerThread.providerInstanceId,
+                targetProviderInstanceId: run.providerInstanceId,
+                targetRunId: run.id,
+                status: "resolved_portable",
+                resolution: { strategy: "portable_context", contextHandoffId: handoff.id },
+                createdBy: "system",
+                error: null,
+                createdAt,
+                updatedAt: createdAt,
+                consumedAt: null,
+              },
+            },
+          ],
+        });
+        return replacement;
       });
       const now = yield* DateTime.now;
       const runningProviderThread: OrchestrationV2ProviderThread = {
@@ -322,9 +413,12 @@ export const layer: Layer.Layer<
         message: {
           messageId: message.id,
           text:
-            handoffs.length === 0
+            effectiveHandoffs.length === 0
               ? message.text
-              : providerMessageWithContextHandoffs({ handoffs, userText: message.text }),
+              : providerMessageWithContextHandoffs({
+                  handoffs: effectiveHandoffs,
+                  userText: message.text,
+                }),
           attachments: message.attachments,
           createdBy: message.createdBy,
           creationSource: message.creationSource,
