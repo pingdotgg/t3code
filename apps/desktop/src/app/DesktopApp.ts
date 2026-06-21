@@ -1,8 +1,8 @@
 import * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import * as NetService from "@t3tools/shared/Net";
 import * as Crypto from "effect/Crypto";
@@ -17,6 +17,7 @@ import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
+import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
@@ -32,22 +33,24 @@ const makeDesktopRunId = Crypto.Crypto.pipe(
   Effect.map((value) => value.replaceAll("-", "").slice(0, 12)),
 );
 
-class DesktopBackendPortUnavailableError extends Data.TaggedError(
+export class DesktopBackendPortUnavailableError extends Schema.TaggedErrorClass<DesktopBackendPortUnavailableError>()(
   "DesktopBackendPortUnavailableError",
-)<{
-  readonly startPort: number;
-  readonly maxPort: number;
-  readonly hosts: readonly string[];
-}> {
-  override get message() {
+  {
+    startPort: Schema.Int,
+    maxPort: Schema.Int,
+    hosts: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
     return `No desktop backend port is available on hosts ${this.hosts.join(", ")} between ${this.startPort} and ${this.maxPort}.`;
   }
 }
 
-class DesktopDevelopmentBackendPortRequiredError extends Data.TaggedError(
+export class DesktopDevelopmentBackendPortRequiredError extends Schema.TaggedErrorClass<DesktopDevelopmentBackendPortRequiredError>()(
   "DesktopDevelopmentBackendPortRequiredError",
-)<{}> {
-  override get message() {
+  {},
+) {
+  override get message(): string {
     return "T3CODE_PORT is required in desktop development.";
   }
 }
@@ -100,12 +103,12 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
 ): Effect.fn.Return<
   void,
   never,
-  | DesktopLifecycle.DesktopShutdown
+  | DesktopShutdown.DesktopShutdown
   | DesktopState.DesktopState
   | ElectronApp.ElectronApp
   | ElectronDialog.ElectronDialog
 > {
-  const shutdown = yield* DesktopLifecycle.DesktopShutdown;
+  const shutdown = yield* DesktopShutdown.DesktopShutdown;
   const state = yield* DesktopState.DesktopState;
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -237,7 +240,7 @@ const scopedProgram = Effect.scoped(
     yield* Effect.annotateLogsScoped({ scope: "desktop", runId });
     yield* Effect.annotateCurrentSpan({ scope: "desktop", runId });
 
-    const shutdown = yield* DesktopLifecycle.DesktopShutdown;
+    const shutdown = yield* DesktopShutdown.DesktopShutdown;
     const backendManager = yield* DesktopBackendManager.DesktopBackendManager;
 
     yield* Effect.addFinalizer(() =>

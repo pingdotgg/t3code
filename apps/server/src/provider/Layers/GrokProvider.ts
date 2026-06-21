@@ -6,7 +6,7 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import * as Cause from "effect/Cause";
+import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -19,7 +19,6 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
   buildServerProvider,
-  detailFromResult,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
@@ -195,6 +194,9 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
 
   if (Result.isFailure(versionResult)) {
     const error = versionResult.failure;
+    yield* Effect.logWarning("Grok CLI health check failed.", {
+      errorTag: error._tag,
+    });
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
@@ -207,7 +209,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         auth: { status: "unknown" },
         message: isCommandMissingCause(error)
           ? "Grok CLI (`grok`) is not installed or not on PATH."
-          : `Failed to execute Grok CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
+          : "Failed to execute Grok CLI health check.",
       },
     });
   }
@@ -231,7 +233,11 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   const versionOutput = versionResult.success.value;
   const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
   if (versionOutput.code !== 0) {
-    const detail = detailFromResult(versionOutput);
+    yield* Effect.logWarning("Grok CLI version probe exited with a non-zero status.", {
+      exitCode: versionOutput.code,
+      stdoutLength: versionOutput.stdout.length,
+      stderrLength: versionOutput.stderr.length,
+    });
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
@@ -242,9 +248,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         version,
         status: "error",
         auth: { status: "unknown" },
-        message: detail
-          ? `Grok CLI is installed but failed to run. ${detail}`
-          : "Grok CLI is installed but failed to run.",
+        message: "Grok CLI is installed but failed to run.",
       },
     });
   }
@@ -254,8 +258,9 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     Effect.exit,
   );
   if (Exit.isFailure(discoveryExit)) {
-    const detail = Cause.pretty(discoveryExit.cause);
-    yield* Effect.logWarning("Grok ACP model discovery failed", { cause: detail });
+    yield* Effect.logWarning("Grok ACP model discovery failed", {
+      errorTag: causeErrorTag(discoveryExit.cause),
+    });
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
@@ -266,7 +271,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         version,
         status: "error",
         auth: { status: "unknown" },
-        message: `Grok CLI is installed but ACP startup failed. ${detail}`,
+        message: "Grok CLI is installed but ACP startup failed. Check server logs for details.",
       },
     });
   }
@@ -324,7 +329,7 @@ export const enrichGrokSnapshot = (input: {
     Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
     Effect.catchCause((cause) =>
       Effect.logWarning("Grok version advisory enrichment failed", {
-        cause: Cause.pretty(cause),
+        errorTag: causeErrorTag(cause),
       }),
     ),
     Effect.asVoid,

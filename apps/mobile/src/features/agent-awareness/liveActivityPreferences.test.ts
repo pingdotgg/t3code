@@ -2,7 +2,7 @@ import { beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { ManagedRelayClient } from "@t3tools/client-runtime/relay";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import * as Layer from "effect/Layer";
 import { HttpClient } from "effect/unstable/http";
 
@@ -35,7 +35,7 @@ const connection: SavedRemoteConnection = {
 };
 
 const testLayer = Layer.mergeAll(
-  Layer.succeed(ManagedRelayClient, null as never),
+  Layer.succeed(ManagedRelay.ManagedRelayClient, null as never),
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make(() => Effect.die("unexpected HTTP request")),

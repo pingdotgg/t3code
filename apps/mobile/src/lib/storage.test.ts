@@ -69,4 +69,35 @@ describe("mobile connection storage", () => {
       toStableSavedRemoteConnection(managedConnection),
     ]);
   });
+
+  it("preserves secure-storage read failures with operation and key context", async () => {
+    const cause = new Error("keychain unavailable");
+    mocks.getItemAsync.mockRejectedValueOnce(cause);
+
+    await expect(loadSavedConnections()).rejects.toMatchObject({
+      _tag: "MobileSecureStorageError",
+      operation: "read",
+      key: "t3code.connections",
+      cause,
+      message: "Mobile secure storage operation read failed for key t3code.connections.",
+    });
+  });
+
+  it("logs structured decode failures before using the empty fallback", async () => {
+    await mocks.setItemAsync("t3code.connections", "{");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(loadSavedConnections()).resolves.toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "[mobile-storage] ignored invalid JSON",
+      expect.objectContaining({
+        _tag: "MobileStorageDecodeError",
+        key: "t3code.connections",
+        cause: expect.any(SyntaxError),
+        message: "Failed to decode mobile storage value for key t3code.connections.",
+      }),
+    );
+
+    warn.mockRestore();
+  });
 });

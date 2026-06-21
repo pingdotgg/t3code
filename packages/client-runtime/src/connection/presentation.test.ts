@@ -67,7 +67,7 @@ describe("connection presentation", () => {
           attempt: 2,
           lastFailure: new ConnectionTransientError({
             reason: "transport",
-            message: "Socket closed.",
+            detail: "Socket closed.",
             traceId: "trace-previous",
           }),
         }),
@@ -85,7 +85,7 @@ describe("connection presentation", () => {
           retryAt: 1,
           lastFailure: new ConnectionTransientError({
             reason: "transport",
-            message: "Disconnected.",
+            detail: "Disconnected.",
             traceId: "trace-1",
           }),
         }),
@@ -106,7 +106,7 @@ describe("connection presentation", () => {
           attempt: 2,
           lastFailure: new ConnectionTransientError({
             reason: "transport",
-            message: "Relay connection timed out.",
+            detail: "Relay connection timed out.",
             traceId: "trace-retry",
           }),
         }),

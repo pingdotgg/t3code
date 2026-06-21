@@ -76,19 +76,16 @@ export function ConnectionEnvironmentRow(props: {
         />
 
         <View className="flex-1 gap-0.5">
-          <Text
-            className="text-[16px] font-t3-bold leading-[21px] text-foreground"
-            numberOfLines={1}
-          >
+          <Text className="text-base font-t3-bold leading-[21px] text-foreground" numberOfLines={1}>
             {props.environment.environmentLabel}
           </Text>
-          <Text className="text-[12px] leading-[16px] text-foreground-muted" numberOfLines={1}>
+          <Text className="text-xs leading-[16px] text-foreground-muted" numberOfLines={1}>
             {props.environment.displayUrl}
           </Text>
           {statusLabel ? (
             <Text
               className={cn(
-                "text-[12px] leading-[16px]",
+                "text-xs leading-[16px]",
                 hasConnectionFailure ? "text-rose-500 dark:text-rose-400" : "text-foreground-muted",
               )}
               numberOfLines={props.expanded ? undefined : 1}
@@ -104,7 +101,7 @@ export function ConnectionEnvironmentRow(props: {
                     className="underline"
                     onLongPress={(event) => {
                       event.stopPropagation();
-                      copyTextWithHaptic(statusTraceId);
+                      copyTextWithHaptic(statusTraceId, { target: "connection-trace-id" });
                     }}
                     onPress={(event) => {
                       event.stopPropagation();
@@ -137,14 +134,14 @@ export function ConnectionEnvironmentRow(props: {
           className="gap-3 px-4 pb-4"
         >
           {props.environment.isRelayManaged ? (
-            <Text className="text-[13px] leading-[18px] text-foreground-muted">
+            <Text className="text-sm leading-[18px] text-foreground-muted">
               Managed by T3 Cloud. Tunnel details update automatically.
             </Text>
           ) : (
             <>
               <View className="gap-1.5">
                 <Text
-                  className="text-[11px] font-t3-bold uppercase text-foreground-muted"
+                  className="text-2xs font-t3-bold uppercase text-foreground-muted"
                   style={{ letterSpacing: 0.8 }}
                 >
                   Label
@@ -156,13 +153,13 @@ export function ConnectionEnvironmentRow(props: {
                   placeholderTextColor={placeholderColor}
                   value={label}
                   onChangeText={setLabel}
-                  className="rounded-[14px] border border-input-border bg-input px-4 py-3 text-[15px] text-foreground"
+                  className="rounded-[14px] border border-input-border bg-input px-4 py-3 text-base text-foreground"
                 />
               </View>
 
               <View className="gap-1.5">
                 <Text
-                  className="text-[11px] font-t3-bold uppercase text-foreground-muted"
+                  className="text-2xs font-t3-bold uppercase text-foreground-muted"
                   style={{ letterSpacing: 0.8 }}
                 >
                   URL
@@ -175,7 +172,7 @@ export function ConnectionEnvironmentRow(props: {
                   placeholderTextColor={placeholderColor}
                   value={url}
                   onChangeText={setUrl}
-                  className="rounded-[14px] border border-input-border bg-input px-4 py-3 text-[15px] text-foreground"
+                  className="rounded-[14px] border border-input-border bg-input px-4 py-3 text-base text-foreground"
                 />
               </View>
             </>
@@ -189,7 +186,7 @@ export function ConnectionEnvironmentRow(props: {
               >
                 <SymbolView name="checkmark" size={13} tintColor={primaryFg} type="monochrome" />
                 <Text
-                  className="text-[12px] font-t3-bold uppercase text-primary-foreground"
+                  className="text-xs font-t3-bold uppercase text-primary-foreground"
                   style={{ letterSpacing: 0.8 }}
                 >
                   Save

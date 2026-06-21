@@ -12,12 +12,14 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { ChevronRight, Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { useTheme } from "~/hooks/useTheme";
+import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
@@ -589,8 +591,9 @@ function RenderedMarkdownSurface({
 
 function initialExplorerOpen(): boolean {
   try {
-    return window.localStorage.getItem(FILE_EXPLORER_STORAGE_KEY) !== "false";
-  } catch {
+    return getLocalStorageItem(FILE_EXPLORER_STORAGE_KEY, Schema.Boolean) ?? true;
+  } catch (error) {
+    console.error(error);
     return true;
   }
 }
@@ -650,8 +653,10 @@ export default function FilePreviewPanel({
     setExplorerOpen((current) => {
       const next = !current;
       try {
-        window.localStorage.setItem(FILE_EXPLORER_STORAGE_KEY, String(next));
-      } catch {}
+        setLocalStorageItem(FILE_EXPLORER_STORAGE_KEY, next, Schema.Boolean);
+      } catch (error) {
+        console.error(error);
+      }
       return next;
     });
   };

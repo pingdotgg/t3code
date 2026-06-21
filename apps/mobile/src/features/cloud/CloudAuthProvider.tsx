@@ -1,6 +1,6 @@
 import { ClerkProvider, useAuth } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
-import { ManagedRelayClient, setManagedRelaySession } from "@t3tools/client-runtime/relay";
+import { ManagedRelay, setManagedRelaySession } from "@t3tools/client-runtime/relay";
 import {
   reportAtomCommandResult,
   settleAsyncResult,
@@ -22,7 +22,7 @@ import { resolveCloudPublicConfig, resolveRelayClerkTokenOptions } from "./publi
 function resetManagedRelayTokenCache() {
   return settleAsyncResult(() =>
     runtime.runPromiseExit(
-      ManagedRelayClient.pipe(Effect.flatMap((client) => client.resetTokenCache)),
+      ManagedRelay.ManagedRelayClient.pipe(Effect.flatMap((client) => client.resetTokenCache)),
     ),
   );
 }

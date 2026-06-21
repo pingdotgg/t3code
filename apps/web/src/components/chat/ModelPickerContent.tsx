@@ -19,7 +19,7 @@ import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../../keybindings";
-import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { TooltipProvider } from "../ui/tooltip";
 import {
@@ -102,7 +102,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const modelListRef = useRef<LegendListRef | null>(null);
   const highlightedModelKeyRef = useRef<string | null>(null);
-  const favorites = useSettings((s) => s.favorites ?? []);
+  const favorites = useClientSettings((s) => s.favorites ?? []);
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | "favorites">(
     () => {
       if (props.lockedProvider !== null) {
@@ -117,7 +117,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     () => providedKeybindings ?? [],
     [providedKeybindings],
   );
-  const updateSettings = useUpdateSettings();
+  const updateSettings = useUpdateClientSettings();
 
   const focusSearchInput = useCallback(() => {
     searchInputRef.current?.focus({ preventScroll: true });

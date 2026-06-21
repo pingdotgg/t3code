@@ -2,17 +2,12 @@ import { type GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 
-import {
-  AcpSessionRuntime,
-  type AcpSessionRuntimeOptions,
-  type AcpSessionRuntimeShape,
-  type AcpSpawnInput,
-} from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 const GROK_API_KEY_ENV = "XAI_API_KEY";
 const GROK_OAUTH2_REFERRER_ENV = "GROK_OAUTH2_REFERRER";
@@ -24,7 +19,7 @@ const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 type GrokAcpRuntimeGrokSettings = Pick<GrokSettings, "binaryPath">;
 
 interface GrokAcpRuntimeInput extends Omit<
-  AcpSessionRuntimeOptions,
+  AcpSessionRuntime.AcpSessionRuntimeOptions,
   "authMethodId" | "clientCapabilities" | "spawn"
 > {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
@@ -36,7 +31,7 @@ export function buildGrokAcpSpawnInput(
   grokSettings: GrokAcpRuntimeGrokSettings | null | undefined,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
-): AcpSpawnInput {
+): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: grokSettings?.binaryPath || "grok",
     args: ["agent", "stdio"],
@@ -56,7 +51,11 @@ function resolveGrokAuthMethodId(environment: NodeJS.ProcessEnv | undefined): st
 
 export const makeGrokAcpRuntime = (
   input: GrokAcpRuntimeInput,
-): Effect.Effect<AcpSessionRuntimeShape, EffectAcpErrors.AcpError, Scope.Scope> =>
+): Effect.Effect<
+  AcpSessionRuntime.AcpSessionRuntime["Service"],
+  EffectAcpErrors.AcpError,
+  Scope.Scope
+> =>
   Effect.gen(function* () {
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
@@ -69,7 +68,9 @@ export const makeGrokAcpRuntime = (
         ),
       ),
     );
-    return yield* Effect.service(AcpSessionRuntime).pipe(Effect.provide(acpContext));
+    return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+      Effect.provide(acpContext),
+    );
   });
 
 export function resolveGrokAcpBaseModelId(model: string | null | undefined): string {
@@ -88,7 +89,7 @@ export function currentGrokModelIdFromSessionSetup(
 }
 
 export function applyGrokAcpModelSelection<E>(input: {
-  readonly runtime: Pick<AcpSessionRuntimeShape, "setSessionModel">;
+  readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel">;
   readonly currentModelId: string | undefined;
   readonly requestedModelId: string | undefined;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;

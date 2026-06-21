@@ -8,15 +8,15 @@ import type * as Electron from "electron";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import * as DesktopObservability from "../app/DesktopObservability.ts";
+import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
-import * as PreviewManager from "../preview/Manager.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
+import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
-import * as IpcChannels from "../ipc/channels.ts";
+import { MENU_ACTION_CHANNEL } from "../ipc/channels.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
@@ -42,23 +42,22 @@ export type DesktopWindowError =
   | ElectronWindow.ElectronWindowCreateError
   | PreviewManager.PreviewManagerError;
 
-export interface DesktopWindowShape {
-  readonly createMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
-  readonly ensureMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
-  readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
-  readonly activate: Effect.Effect<void, DesktopWindowError>;
-  readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
-  readonly handleBackendReady: Effect.Effect<void, DesktopWindowError>;
-  readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
-  readonly syncAppearance: Effect.Effect<void>;
-}
-
-export class DesktopWindow extends Context.Service<DesktopWindow, DesktopWindowShape>()(
-  "@t3tools/desktop/window/DesktopWindow",
-) {}
+export class DesktopWindow extends Context.Service<
+  DesktopWindow,
+  {
+    readonly createMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
+    readonly ensureMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
+    readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
+    readonly activate: Effect.Effect<void, DesktopWindowError>;
+    readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
+    readonly handleBackendReady: Effect.Effect<void, DesktopWindowError>;
+    readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
+    readonly syncAppearance: Effect.Effect<void>;
+  }
+>()("@t3tools/desktop/window/DesktopWindow") {}
 
 const { logInfo: logWindowInfo, logWarning: logWindowWarning } =
-  DesktopObservability.makeComponentLogger("desktop-window");
+  makeComponentLogger("desktop-window");
 
 function getIconOption(
   iconPaths: DesktopAssets.DesktopIconPaths,
@@ -143,7 +142,7 @@ function bindFirstRevealTrigger(
   }
 }
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const assets = yield* DesktopAssets.DesktopAssets;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
@@ -381,7 +380,7 @@ const make = Effect.gen(function* () {
 
       const send = () => {
         if (targetWindow.isDestroyed()) return;
-        targetWindow.webContents.send(IpcChannels.MENU_ACTION_CHANNEL, action);
+        targetWindow.webContents.send(MENU_ACTION_CHANNEL, action);
         void runPromise(electronWindow.reveal(targetWindow));
       };
 

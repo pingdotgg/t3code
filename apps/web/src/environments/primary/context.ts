@@ -5,9 +5,8 @@ import {
 } from "@t3tools/client-runtime/environment";
 import type { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { HttpClientError } from "effect/unstable/http";
 
-import { BootstrapHttpError, retryTransientBootstrap } from "./auth";
+import { PrimaryEnvironmentRequestError, retryTransientBootstrap } from "./auth";
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 
 import { runPrimaryHttp } from "../../lib/runtime";
@@ -44,13 +43,9 @@ async function fetchPrimaryEnvironmentDescriptor(): Promise<ExecutionEnvironment
         PrimaryEnvironmentHttpClient.pipe(Effect.flatMap((client) => client.metadata.descriptor())),
       );
     } catch (error) {
-      const status =
-        HttpClientError.isHttpClientError(error) && error.response !== undefined
-          ? error.response.status
-          : 500;
-      throw new BootstrapHttpError({
-        message: `Failed to load server environment descriptor (${status}).`,
-        status,
+      throw PrimaryEnvironmentRequestError.fromCause({
+        operation: "fetch-environment-descriptor",
+        cause: error,
       });
     }
 

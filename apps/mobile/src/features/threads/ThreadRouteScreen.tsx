@@ -20,6 +20,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { buildThreadRoutePath, buildThreadTerminalNavigation } from "../../lib/routes";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { connectionTone } from "../connection/connectionTone";
 
 import {
@@ -390,7 +391,7 @@ export function ThreadRouteScreen() {
                 numberOfLines={1}
                 style={{
                   fontFamily: "DMSans_700Bold",
-                  fontSize: 18,
+                  fontSize: MOBILE_TYPOGRAPHY.headline.fontSize,
                   fontWeight: "900",
                   color: foregroundColor,
                   letterSpacing: -0.4,
@@ -402,7 +403,7 @@ export function ThreadRouteScreen() {
                 numberOfLines={1}
                 style={{
                   fontFamily: "DMSans_700Bold",
-                  fontSize: 12,
+                  fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
                   fontWeight: "700",
                   color: secondaryFg,
                   letterSpacing: 0.3,

@@ -1,5 +1,6 @@
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
+import * as Schema from "effect/Schema";
 import * as SecureStore from "expo-secure-store";
 import { EnvironmentId } from "@t3tools/contracts";
 
@@ -12,21 +13,72 @@ import {
 const CONNECTIONS_KEY = "t3code.connections";
 const PREFERENCES_KEY = "t3code.preferences";
 const AGENT_AWARENESS_DEVICE_ID_KEY = "t3code.agent-awareness.device-id";
+const MobileStorageKey = Schema.Literals([
+  CONNECTIONS_KEY,
+  PREFERENCES_KEY,
+  AGENT_AWARENESS_DEVICE_ID_KEY,
+]);
+type MobileStorageKeyValue = typeof MobileStorageKey.Type;
+
+export class MobileSecureStorageError extends Schema.TaggedErrorClass<MobileSecureStorageError>()(
+  "MobileSecureStorageError",
+  {
+    operation: Schema.Literals(["read", "write", "generate-device-id"]),
+    key: MobileStorageKey,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Mobile secure storage operation ${this.operation} failed for key ${this.key}.`;
+  }
+}
+
+export class MobileStorageDecodeError extends Schema.TaggedErrorClass<MobileStorageDecodeError>()(
+  "MobileStorageDecodeError",
+  {
+    key: MobileStorageKey,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to decode mobile storage value for key ${this.key}.`;
+  }
+}
+
+export class MobileStorageEncodeError extends Schema.TaggedErrorClass<MobileStorageEncodeError>()(
+  "MobileStorageEncodeError",
+  {
+    key: MobileStorageKey,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to encode mobile storage value for key ${this.key}.`;
+  }
+}
 
 export interface Preferences {
   readonly liveActivitiesEnabled?: boolean;
   readonly terminalFontSize?: number;
 }
 
-async function readStorageItem(key: string): Promise<string | null> {
-  return await SecureStore.getItemAsync(key);
+async function readStorageItem(key: MobileStorageKeyValue): Promise<string | null> {
+  try {
+    return await SecureStore.getItemAsync(key);
+  } catch (cause) {
+    throw new MobileSecureStorageError({ operation: "read", key, cause });
+  }
 }
 
-async function writeStorageItem(key: string, value: string): Promise<void> {
-  await SecureStore.setItemAsync(key, value);
+async function writeStorageItem(key: MobileStorageKeyValue, value: string): Promise<void> {
+  try {
+    await SecureStore.setItemAsync(key, value);
+  } catch (cause) {
+    throw new MobileSecureStorageError({ operation: "write", key, cause });
+  }
 }
 
-async function readJsonStorageItem<T>(key: string): Promise<T | null> {
+async function readJsonStorageItem<T>(key: MobileStorageKeyValue): Promise<T | null> {
   const raw = (await readStorageItem(key)) ?? "";
   if (!raw.trim()) {
     return null;
@@ -34,9 +86,23 @@ async function readJsonStorageItem<T>(key: string): Promise<T | null> {
 
   try {
     return JSON.parse(raw) as T;
-  } catch {
+  } catch (cause) {
+    console.warn(
+      "[mobile-storage] ignored invalid JSON",
+      new MobileStorageDecodeError({ key, cause }),
+    );
     return null;
   }
+}
+
+async function writeJsonStorageItem(key: MobileStorageKeyValue, value: unknown) {
+  let encoded: string;
+  try {
+    encoded = JSON.stringify(value);
+  } catch (cause) {
+    throw new MobileStorageEncodeError({ key, cause });
+  }
+  await writeStorageItem(key, encoded);
 }
 
 export async function loadSavedConnections(): Promise<ReadonlyArray<SavedRemoteConnection>> {
@@ -67,7 +133,7 @@ export async function saveConnection(connection: SavedRemoteConnection): Promise
       )
     : pipe(current, Arr.append(stableConnection));
 
-  await writeStorageItem(CONNECTIONS_KEY, JSON.stringify({ connections: next }));
+  await writeJsonStorageItem(CONNECTIONS_KEY, { connections: next });
 }
 
 export async function clearSavedConnection(environmentId: EnvironmentId): Promise<void> {
@@ -76,7 +142,7 @@ export async function clearSavedConnection(environmentId: EnvironmentId): Promis
     current,
     Arr.filter((entry) => entry.environmentId !== environmentId),
   );
-  await writeStorageItem(CONNECTIONS_KEY, JSON.stringify({ connections: next }));
+  await writeJsonStorageItem(CONNECTIONS_KEY, { connections: next });
 }
 
 export async function loadPreferences(): Promise<Preferences> {
@@ -106,7 +172,7 @@ export async function savePreferencesPatch(patch: Partial<Preferences>): Promise
     ...current,
     ...patch,
   };
-  await writeStorageItem(PREFERENCES_KEY, JSON.stringify(next));
+  await writeJsonStorageItem(PREFERENCES_KEY, next);
   return next;
 }
 
@@ -116,8 +182,15 @@ export async function loadOrCreateAgentAwarenessDeviceId(): Promise<string> {
     return existing;
   }
 
-  const { uuidv4 } = await import("./uuid");
-  const deviceId = uuidv4();
+  const deviceId = await import("./uuid")
+    .then(({ uuidv4 }) => uuidv4())
+    .catch((cause) => {
+      throw new MobileSecureStorageError({
+        operation: "generate-device-id",
+        key: AGENT_AWARENESS_DEVICE_ID_KEY,
+        cause,
+      });
+    });
   await writeStorageItem(AGENT_AWARENESS_DEVICE_ID_KEY, deviceId);
   return deviceId;
 }

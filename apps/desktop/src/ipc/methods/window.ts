@@ -18,7 +18,7 @@ import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
-import { makeIpcMethod, makeSyncIpcMethod } from "../DesktopIpc.ts";
+import * as DesktopIpc from "../DesktopIpc.ts";
 
 const ContextMenuPosition = Schema.Struct({
   x: Schema.Number,
@@ -36,7 +36,7 @@ function toWebSocketBaseUrl(httpBaseUrl: URL): string {
   return url.href;
 }
 
-export const getAppBranding = makeSyncIpcMethod({
+export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_APP_BRANDING_CHANNEL,
   result: Schema.NullOr(DesktopAppBrandingSchema),
   handler: Effect.fn("desktop.ipc.window.getAppBranding")(function* () {
@@ -45,7 +45,7 @@ export const getAppBranding = makeSyncIpcMethod({
   }),
 });
 
-export const getLocalEnvironmentBootstrap = makeSyncIpcMethod({
+export const getLocalEnvironmentBootstrap = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL,
   result: Schema.NullOr(DesktopEnvironmentBootstrapSchema),
   handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBootstrap")(function* () {
@@ -65,7 +65,7 @@ export const getLocalEnvironmentBootstrap = makeSyncIpcMethod({
   }),
 });
 
-export const getLocalEnvironmentBearerToken = makeIpcMethod({
+export const getLocalEnvironmentBearerToken = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL,
   payload: Schema.Void,
   result: Schema.String,
@@ -75,7 +75,7 @@ export const getLocalEnvironmentBearerToken = makeIpcMethod({
   }),
 });
 
-export const pickFolder = makeIpcMethod({
+export const pickFolder = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PICK_FOLDER_CHANNEL,
   payload: Schema.UndefinedOr(PickFolderOptionsSchema),
   result: Schema.NullOr(Schema.String),
@@ -91,7 +91,7 @@ export const pickFolder = makeIpcMethod({
   }),
 });
 
-export const confirm = makeIpcMethod({
+export const confirm = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.CONFIRM_CHANNEL,
   payload: Schema.String,
   result: Schema.Boolean,
@@ -104,7 +104,7 @@ export const confirm = makeIpcMethod({
   }),
 });
 
-export const setTheme = makeIpcMethod({
+export const setTheme = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_THEME_CHANNEL,
   payload: DesktopThemeSchema,
   result: Schema.Void,
@@ -114,7 +114,7 @@ export const setTheme = makeIpcMethod({
   }),
 });
 
-export const showContextMenu = makeIpcMethod({
+export const showContextMenu = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.CONTEXT_MENU_CHANNEL,
   payload: ContextMenuInput,
   result: Schema.NullOr(Schema.String),
@@ -135,7 +135,7 @@ export const showContextMenu = makeIpcMethod({
   }),
 });
 
-export const openExternal = makeIpcMethod({
+export const openExternal = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.OPEN_EXTERNAL_CHANNEL,
   payload: Schema.String,
   result: Schema.Boolean,

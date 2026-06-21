@@ -18,6 +18,7 @@ import {
 } from "../review/reviewDiffRendering";
 import type { ReviewHighlightedToken } from "../review/shikiReviewHighlighter";
 import { cn } from "../../lib/cn";
+import { MOBILE_CODE_SURFACE } from "../../lib/typography";
 import {
   buildNativeSourceRows,
   buildNativeSourceTokens,
@@ -28,8 +29,8 @@ import {
 } from "./nativeSourceFileAdapter";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
 
-const SOURCE_LINE_HEIGHT = 24;
-const SOURCE_LINE_NUMBER_WIDTH = 58;
+const SOURCE_LINE_HEIGHT = MOBILE_CODE_SURFACE.rowHeight;
+const SOURCE_LINE_NUMBER_WIDTH = MOBILE_CODE_SURFACE.gutterWidth;
 const NATIVE_SOURCE_STYLE_JSON = JSON.stringify(NATIVE_SOURCE_STYLE);
 
 interface SourceFileSurfaceProps {
@@ -56,10 +57,12 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
       style={{ minHeight: SOURCE_LINE_HEIGHT }}
     >
       <NativeText
-        className="select-none pr-3 text-right text-[11px] leading-[24px] text-foreground-tertiary"
+        className="select-none pr-3 text-right text-foreground-tertiary"
         style={{
           width: SOURCE_LINE_NUMBER_WIDTH,
           fontFamily: REVIEW_MONO_FONT_FAMILY,
+          fontSize: MOBILE_CODE_SURFACE.lineNumberFontSize,
+          lineHeight: MOBILE_CODE_SURFACE.rowHeight,
         }}
       >
         {props.index + 1}
@@ -67,8 +70,13 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
       <NativeText
         selectable
         numberOfLines={1}
-        className="text-[13px] font-medium leading-[24px] text-foreground"
-        style={{ fontFamily: REVIEW_MONO_FONT_FAMILY, minWidth: 320 }}
+        className="font-normal text-foreground"
+        style={{
+          fontFamily: REVIEW_MONO_FONT_FAMILY,
+          fontSize: MOBILE_CODE_SURFACE.fontSize,
+          lineHeight: MOBILE_CODE_SURFACE.rowHeight,
+          minWidth: 320,
+        }}
       >
         {props.tokens && props.tokens.length > 0
           ? (() => {
@@ -80,7 +88,7 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
                 const fontWeight =
                   token.fontStyle !== null && (token.fontStyle & 2) === 2
                     ? ("700" as const)
-                    : ("500" as const);
+                    : ("400" as const);
                 const fontStyle =
                   token.fontStyle !== null && (token.fontStyle & 1) === 1
                     ? ("italic" as const)
@@ -142,9 +150,7 @@ function SourceHighlightStatusView(props: { readonly status: SourceHighlightStat
   if (props.status === "error") {
     return (
       <View className="border-b border-border bg-card px-4 py-2">
-        <Text className="text-[11px] font-t3-medium uppercase text-foreground-muted">
-          Plain text
-        </Text>
+        <Text className="text-2xs font-t3-medium uppercase text-foreground-muted">Plain text</Text>
       </View>
     );
   }

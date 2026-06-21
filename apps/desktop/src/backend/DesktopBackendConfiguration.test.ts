@@ -3,6 +3,8 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -21,6 +23,10 @@ const encodePersistedServerObservabilitySettingsDocument = Schema.encodeEffect(
   Schema.fromJsonString(PersistedServerObservabilitySettingsDocument),
 );
 
+const isDesktopBackendObservabilitySettingsReadError = Schema.is(
+  DesktopBackendConfiguration.DesktopBackendObservabilitySettingsReadError,
+);
+
 const serverExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
   getState: Effect.die("unexpected getState"),
   backendConfig: Effect.succeed({
@@ -34,7 +40,7 @@ const serverExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExp
   setMode: () => Effect.die("unexpected setMode"),
   setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
   getAdvertisedEndpoints: Effect.succeed([]),
-} satisfies DesktopServerExposure.DesktopServerExposureShape);
+} satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
 
 function makeEnvironmentLayer(
   baseDir: string,
@@ -164,6 +170,62 @@ describe("DesktopBackendConfiguration", () => {
         assert.isUndefined(config.bootstrap.otlpMetricsUrl);
       }),
     ),
+  );
+
+  it.effect("logs structured context when persisted observability settings cannot be read", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const settingsPath = `${baseDir}/userdata/settings.json`;
+      const cause = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "readFileString",
+        pathOrDescriptor: settingsPath,
+      });
+      const messages: Array<unknown> = [];
+      const logger = Logger.make(({ message }) => {
+        messages.push(message);
+      });
+      const failingFileSystemLayer = Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          readFileString: () => Effect.fail(cause),
+        }),
+      );
+
+      const config = yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        return yield* configuration.resolve;
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            DesktopBackendConfiguration.layer.pipe(
+              Layer.provideMerge(serverExposureLayer),
+              Layer.provideMerge(makeEnvironmentLayer(baseDir)),
+              Layer.provideMerge(failingFileSystemLayer),
+            ),
+            Logger.layer([logger], { mergeWithExisting: false }),
+          ),
+        ),
+      );
+
+      assert.isUndefined(config.bootstrap.otlpTracesUrl);
+      assert.isUndefined(config.bootstrap.otlpMetricsUrl);
+
+      const error = messages
+        .flatMap((message) => (Array.isArray(message) ? message : [message]))
+        .find(isDesktopBackendObservabilitySettingsReadError);
+      assert.isDefined(error);
+      assert.equal(error.settingsPath, settingsPath);
+      assert.equal(error.cause, cause);
+      assert.equal(
+        error.message,
+        `Failed to read persisted backend observability settings at ${settingsPath}.`,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("captures backend output in development so child process logs can be persisted", () =>

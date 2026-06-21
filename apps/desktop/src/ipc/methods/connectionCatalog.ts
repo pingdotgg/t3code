@@ -4,9 +4,9 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopConnectionCatalogStore from "../../app/DesktopConnectionCatalogStore.ts";
 import * as IpcChannels from "../channels.ts";
-import { makeIpcMethod } from "../DesktopIpc.ts";
+import * as DesktopIpc from "../DesktopIpc.ts";
 
-export const getConnectionCatalog = makeIpcMethod({
+export const getConnectionCatalog = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.GET_CONNECTION_CATALOG_CHANNEL,
   payload: Schema.Void,
   result: Schema.NullOr(Schema.String),
@@ -16,7 +16,7 @@ export const getConnectionCatalog = makeIpcMethod({
   }),
 });
 
-export const setConnectionCatalog = makeIpcMethod({
+export const setConnectionCatalog = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_CONNECTION_CATALOG_CHANNEL,
   payload: Schema.String,
   result: Schema.Boolean,
@@ -26,7 +26,7 @@ export const setConnectionCatalog = makeIpcMethod({
   }),
 });
 
-export const clearConnectionCatalog = makeIpcMethod({
+export const clearConnectionCatalog = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.CLEAR_CONNECTION_CATALOG_CHANNEL,
   payload: Schema.Void,
   result: Schema.Void,
