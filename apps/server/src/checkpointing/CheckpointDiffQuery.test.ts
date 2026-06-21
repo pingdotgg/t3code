@@ -9,6 +9,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { checkpointRefForThreadTurn } from "./Utils.ts";
 import * as CheckpointDiffQuery from "./CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
+import { CheckpointThreadNotFoundError } from "./Errors.ts";
 
 function makeThreadCheckpointContext(input: {
   readonly projectId: ProjectId;
@@ -412,7 +413,14 @@ describe("CheckpointDiffQuery.layer", () => {
         });
       }).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(error.message).toContain("Thread 'thread-missing' not found.");
+      expect(error).toBeInstanceOf(CheckpointThreadNotFoundError);
+      expect(error).toMatchObject({
+        operation: "CheckpointDiffQuery.getTurnDiff",
+        threadId,
+      });
+      expect(error.message).toBe(
+        "Checkpoint invariant violation in CheckpointDiffQuery.getTurnDiff: Thread 'thread-missing' not found.",
+      );
     }),
   );
 });
