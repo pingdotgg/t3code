@@ -142,6 +142,21 @@ export class BuildScriptError extends Data.TaggedError("BuildScriptError")<{
   }
 }
 
+export class LinuxIconResizeError extends Schema.TaggedErrorClass<LinuxIconResizeError>()(
+  "LinuxIconResizeError",
+  {
+    operation: Schema.Literal("resize"),
+    iconSize: Schema.Int,
+    primaryTool: Schema.Literal("magick"),
+    fallbackTool: Schema.Literal("convert"),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to ${this.operation} the Linux desktop icon to ${this.iconSize}x${this.iconSize} with \`${this.primaryTool}\` or \`${this.fallbackTool}\`. Install ImageMagick so either tool is available.`;
+  }
+}
+
 const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   stream.pipe(
     Stream.decodeText(),
@@ -877,7 +892,7 @@ function stageLinuxIcons(stageResourcesDir: string, sourcePng: string, verbose: 
   });
 }
 
-function stageLinuxIconSize(
+export function stageLinuxIconSize(
   sourcePng: string,
   targetPng: string,
   iconSize: number,
@@ -890,13 +905,20 @@ function stageLinuxIconSize(
     );
 
   return resize("magick").pipe(
-    Effect.catch(() =>
+    Effect.catch((primaryCause) =>
       resize("convert").pipe(
         Effect.mapError(
-          () =>
-            new BuildScriptError({
-              message:
-                "ImageMagick is required to generate Linux desktop icon sizes. Install ImageMagick so either `magick` or `convert` is available.",
+          (fallbackCause) =>
+            new LinuxIconResizeError({
+              operation: "resize",
+              iconSize,
+              primaryTool: "magick",
+              fallbackTool: "convert",
+              cause: new AggregateError(
+                [primaryCause, fallbackCause],
+                "Both Linux icon resize tool attempts failed.",
+                { cause: primaryCause },
+              ),
             }),
         ),
       ),
