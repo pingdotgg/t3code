@@ -61,6 +61,11 @@ const PULL_REQUEST_STATE_PRESENTATION: Record<
   },
 };
 
+// An open PR whose merge isn't blocked (GitHub `mergeStateStatus === "CLEAN"`,
+// surfaced as `isReadyToMerge`) gets a distinct cyan tint to flag "ready to
+// merge". Blocked PRs keep the normal open-green.
+const PULL_REQUEST_READY_COLOR_CLASS = "text-cyan-600 dark:text-cyan-400";
+
 export function PullRequestStateIcon({
   pr,
   className,
@@ -68,8 +73,13 @@ export function PullRequestStateIcon({
   pr: GitPullRequestSummary;
   className?: string;
 }) {
-  const { Icon, colorClass } = PULL_REQUEST_STATE_PRESENTATION[resolvePullRequestVisualState(pr)];
-  return <Icon className={cn(colorClass, className)} aria-hidden />;
+  const visualState = resolvePullRequestVisualState(pr);
+  const { Icon, colorClass } = PULL_REQUEST_STATE_PRESENTATION[visualState];
+  const resolvedColorClass =
+    visualState === "open" && pr.isReadyToMerge === true
+      ? PULL_REQUEST_READY_COLOR_CLASS
+      : colorClass;
+  return <Icon className={cn(resolvedColorClass, className)} aria-hidden />;
 }
 
 const STATUS_FILTER_OPTIONS: ReadonlyArray<{ value: PullRequestStatusFilter; label: string }> = [

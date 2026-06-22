@@ -423,6 +423,9 @@ importers:
       effect:
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=c502bc684210b707dfceb87d8fe6ad6843395af6e19cfc02cd65854898bde2c5)
+      jsonc-parser:
+        specifier: ^3.3.1
+        version: 3.3.1
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0

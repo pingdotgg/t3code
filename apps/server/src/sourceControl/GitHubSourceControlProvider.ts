@@ -61,6 +61,11 @@ function toPullRequestSummary(summary: GitHubCli.GitHubPullRequestSummary): GitP
     baseBranch: summary.baseRefName,
     headBranch: summary.headRefName,
     author: summary.author ?? null,
+    // "CLEAN" is GitHub's signal that nothing blocks the merge; every other state
+    // (BLOCKED, BEHIND, DIRTY, UNSTABLE, DRAFT, UNKNOWN, …) means it's blocked.
+    ...(typeof summary.mergeStateStatus === "string"
+      ? { isReadyToMerge: summary.mergeStateStatus.toUpperCase() === "CLEAN" }
+      : {}),
   };
 }
 

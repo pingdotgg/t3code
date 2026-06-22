@@ -96,6 +96,58 @@ describe("ElectronMenu", () => {
     }).pipe(Effect.provide(ElectronMenu.layer)),
   );
 
+  it.effect("scales the popup position by the window zoom factor when zoomed out", () =>
+    Effect.gen(function* () {
+      let popupOptions: Electron.PopupOptions | undefined;
+      buildFromTemplateMock.mockImplementation(() => ({
+        popup: (options: Electron.PopupOptions) => {
+          popupOptions = options;
+          options.callback?.();
+        },
+      }));
+
+      const window = {
+        webContents: { getZoomFactor: () => 0.5 },
+      } as unknown as Electron.BrowserWindow;
+
+      const electronMenu = yield* ElectronMenu.ElectronMenu;
+      yield* electronMenu.showContextMenu({
+        window,
+        items: [{ id: "copy", label: "Copy" }],
+        position: Option.some({ x: 100, y: 240 }),
+      });
+
+      assert.equal(popupOptions?.x, 50);
+      assert.equal(popupOptions?.y, 120);
+    }).pipe(Effect.provide(ElectronMenu.layer)),
+  );
+
+  it.effect("leaves the popup position unchanged at default (100%) zoom", () =>
+    Effect.gen(function* () {
+      let popupOptions: Electron.PopupOptions | undefined;
+      buildFromTemplateMock.mockImplementation(() => ({
+        popup: (options: Electron.PopupOptions) => {
+          popupOptions = options;
+          options.callback?.();
+        },
+      }));
+
+      const window = {
+        webContents: { getZoomFactor: () => 1 },
+      } as unknown as Electron.BrowserWindow;
+
+      const electronMenu = yield* ElectronMenu.ElectronMenu;
+      yield* electronMenu.showContextMenu({
+        window,
+        items: [{ id: "copy", label: "Copy" }],
+        position: Option.some({ x: 100, y: 240 }),
+      });
+
+      assert.equal(popupOptions?.x, 100);
+      assert.equal(popupOptions?.y, 240);
+    }).pipe(Effect.provide(ElectronMenu.layer)),
+  );
+
   it.effect("defers popupTemplate side effects until the returned Effect runs", () =>
     Effect.gen(function* () {
       const popupMock = vi.fn();

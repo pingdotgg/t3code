@@ -569,7 +569,9 @@ label:has(> select#reasoning-effort) select {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 0.75rem;
-  background: color-mix(in srgb, var(--muted) 78%, var(--background));
+  /* `--code-block-bg` is set inline when a VSCode theme is active; otherwise the
+     code area uses the app's muted/background mix. The header is unaffected. */
+  background: var(--code-block-bg, color-mix(in srgb, var(--muted) 78%, var(--background)));
 }
 
 .chat-markdown .chat-markdown-codeblock-header {
@@ -610,6 +612,9 @@ label:has(> select#reasoning-effort) select {
   border: none;
   border-radius: 0;
   background: transparent;
+  /* Fallback color for the plain <pre> shown before highlighting resolves; when
+     a VSCode theme is active it matches the theme's editor foreground. */
+  color: var(--code-block-fg, inherit);
 }
 
 .chat-markdown .chat-markdown-codeblock[data-wrap="true"] pre {

@@ -80,6 +80,7 @@ import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as VscodeThemeCatalog from "./themes/VscodeThemeCatalog.ts";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem.ts";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths.ts";
 import { VcsStatusBroadcaster } from "./vcs/VcsStatusBroadcaster.ts";
@@ -153,6 +154,8 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverRemoveKeybinding, AuthOrchestrationOperateScope],
   [WS_METHODS.serverGetSettings, AuthOrchestrationReadScope],
   [WS_METHODS.serverUpdateSettings, AuthOrchestrationOperateScope],
+  [WS_METHODS.themesList, AuthOrchestrationReadScope],
+  [WS_METHODS.themesGetJson, AuthOrchestrationReadScope],
   [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetTraceDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
@@ -277,6 +280,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const serverSettings = yield* ServerSettingsService;
       const startup = yield* ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+      const vscodeThemeCatalog = yield* VscodeThemeCatalog.VscodeThemeCatalog;
       const workspaceFileSystem = yield* WorkspaceFileSystem;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
@@ -1119,6 +1123,14 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.themesList]: (_input) =>
+          observeRpcEffect(WS_METHODS.themesList, vscodeThemeCatalog.listThemes, {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.themesGetJson]: ({ id }) =>
+          observeRpcEffect(WS_METHODS.themesGetJson, vscodeThemeCatalog.resolveTheme(id), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverDiscoverSourceControl,

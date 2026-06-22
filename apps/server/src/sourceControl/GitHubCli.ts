@@ -38,6 +38,7 @@ export interface GitHubPullRequestSummary {
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
+  readonly mergeStateStatus?: string | null;
 }
 
 export interface GitHubRepositoryCloneUrls {
@@ -308,7 +309,7 @@ export const make = Effect.fn("makeGitHubCli")(function* () {
           "--limit",
           String(input.limit ?? 50),
           "--json",
-          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,author,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,state,isDraft,mergeStateStatus,mergedAt,author,isCrossRepository,headRepository,headRepositoryOwner",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -375,7 +376,7 @@ export const make = Effect.fn("makeGitHubCli")(function* () {
           input.reference,
           ...(input.repo ? ["--repo", input.repo] : []),
           "--json",
-          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,author,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,state,isDraft,mergeStateStatus,mergedAt,author,isCrossRepository,headRepository,headRepositoryOwner",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),

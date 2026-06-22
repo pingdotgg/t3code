@@ -80,6 +80,21 @@ const normalizePosition = (
     ({ x, y }) => Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0,
   ).pipe(Option.map(({ x, y }) => ({ x: Math.floor(x), y: Math.floor(y) })));
 
+// The renderer reports the click in CSS pixels (clientX/clientY). Electron's
+// `menu.popup` wants window-relative DIP, and under webFrame page zoom a CSS point
+// (x, y) maps to DIP (x * zoom, y * zoom). So scale by the live zoom factor;
+// at 100% zoom (Ctrl+0) the factor is 1 and the position is unchanged.
+const readWindowZoomFactor = (window: Electron.BrowserWindow): number => {
+  try {
+    const zoomFactor = window.webContents.getZoomFactor();
+    return Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+  } catch {
+    return 1;
+  }
+};
+
+const scaleByZoom = (value: number, zoomFactor: number): number => Math.round(value * zoomFactor);
+
 export const layer = Layer.effect(
   ElectronMenu,
   Effect.gen(function* () {
@@ -174,6 +189,7 @@ export const layer = Layer.effect(
 
           const menu = Electron.Menu.buildFromTemplate(buildTemplate(normalizedItems, complete));
           const popupPosition = normalizePosition(input.position);
+          const zoomFactor = readWindowZoomFactor(input.window);
           const popupOptions = Option.match(popupPosition, {
             onNone: (): Electron.PopupOptions => ({
               window: input.window,
@@ -181,8 +197,8 @@ export const layer = Layer.effect(
             }),
             onSome: (position): Electron.PopupOptions => ({
               window: input.window,
-              x: position.x,
-              y: position.y,
+              x: scaleByZoom(position.x, zoomFactor),
+              y: scaleByZoom(position.y, zoomFactor),
               callback: () => complete(Option.none()),
             }),
           });

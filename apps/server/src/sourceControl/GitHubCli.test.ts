@@ -186,6 +186,54 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("requests and parses mergeStateStatus when listing pull requests", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 51,
+                title: "Ready PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/51",
+                baseRefName: "main",
+                headRefName: "feature/ready",
+                state: "open",
+                isDraft: false,
+                mergeStateStatus: "CLEAN",
+              },
+              {
+                number: 52,
+                title: "Blocked PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/52",
+                baseRefName: "main",
+                headRefName: "feature/blocked",
+                state: "open",
+                isDraft: false,
+                mergeStateStatus: "BLOCKED",
+              },
+            ]),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.listPullRequests({ cwd: "/repo", state: "open" });
+
+      assert.deepStrictEqual(
+        result.map((pr) => ({ number: pr.number, mergeStateStatus: pr.mergeStateStatus })),
+        [
+          { number: 51, mergeStateStatus: "CLEAN" },
+          { number: 52, mergeStateStatus: "BLOCKED" },
+        ],
+      );
+      const firstCall = mockRun.mock.calls[0]?.[0];
+      assert.isDefined(firstCall);
+      assert.isTrue(firstCall.args.some((arg) => arg.includes("mergeStateStatus")));
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("reads repository clone URLs", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

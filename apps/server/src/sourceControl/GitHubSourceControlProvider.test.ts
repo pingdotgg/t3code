@@ -165,6 +165,71 @@ it.effect("creates GitHub PRs through provider-neutral input names", () =>
   }),
 );
 
+it.effect("derives ready-to-merge from gh mergeStateStatus for open PRs", () =>
+  Effect.gen(function* () {
+    const provider = yield* makeProvider({
+      listPullRequests: () =>
+        Effect.succeed([
+          {
+            number: 1,
+            title: "Clean",
+            url: "https://github.com/o/r/pull/1",
+            baseRefName: "main",
+            headRefName: "f1",
+            state: "open",
+            isDraft: false,
+            mergeStateStatus: "CLEAN",
+          },
+          {
+            number: 2,
+            title: "Blocked",
+            url: "https://github.com/o/r/pull/2",
+            baseRefName: "main",
+            headRefName: "f2",
+            state: "open",
+            isDraft: false,
+            mergeStateStatus: "BLOCKED",
+          },
+          {
+            number: 3,
+            title: "Unknown",
+            url: "https://github.com/o/r/pull/3",
+            baseRefName: "main",
+            headRefName: "f3",
+            state: "open",
+            isDraft: false,
+            mergeStateStatus: "UNKNOWN",
+          },
+          {
+            number: 4,
+            title: "Unreported",
+            url: "https://github.com/o/r/pull/4",
+            baseRefName: "main",
+            headRefName: "f4",
+            state: "open",
+            isDraft: false,
+          },
+        ]),
+    });
+
+    const listPullRequests = provider.listPullRequests;
+    if (!listPullRequests) {
+      throw new Error("expected GitHub provider to support listPullRequests");
+    }
+    const pullRequests = yield* listPullRequests({ cwd: "/repo", state: "open" });
+
+    assert.deepStrictEqual(
+      pullRequests.map((pr) => ({ number: pr.number, isReadyToMerge: pr.isReadyToMerge })),
+      [
+        { number: 1, isReadyToMerge: true },
+        { number: 2, isReadyToMerge: false },
+        { number: 3, isReadyToMerge: false },
+        { number: 4, isReadyToMerge: undefined },
+      ],
+    );
+  }),
+);
+
 it("accepts active authenticated GitHub accounts when another account fails", () => {
   const auth = GitHubSourceControlProvider.discovery.parseAuth(
     processResult(

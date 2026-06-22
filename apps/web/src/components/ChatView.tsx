@@ -3944,6 +3944,13 @@ function ChatViewContent(props: ChatViewProps) {
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       forkedFromThreadId: draftThread?.forkedFromThreadId ?? null,
+                      // Forking a PR-review thread keeps the PR identity, so the
+                      // fork stays grouped as a PR thread (icon, open-in-browser).
+                      // Only set when the source has one — otherwise the decider
+                      // still derives it from a "Review PR #N" title as usual.
+                      ...(forkSourceShell?.pullRequestReview
+                        ? { pullRequestReview: forkSourceShell.pullRequestReview }
+                        : {}),
                       createdAt: activeThread.createdAt,
                     },
                   }

@@ -20,6 +20,9 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
+  // GitHub's merge-readiness rollup (CLEAN, BLOCKED, BEHIND, DIRTY, UNSTABLE,
+  // DRAFT, UNKNOWN, …). Only present when the gh query requested it.
+  readonly mergeStateStatus?: string | null;
 }
 
 const GitHubPullRequestSchema = Schema.Struct({
@@ -30,6 +33,7 @@ const GitHubPullRequestSchema = Schema.Struct({
   headRefName: TrimmedNonEmptyString,
   state: Schema.optional(Schema.NullOr(Schema.String)),
   isDraft: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  mergeStateStatus: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   author: Schema.optional(
     Schema.NullOr(
@@ -106,6 +110,7 @@ function normalizeGitHubPullRequestRecord(
       : {}),
     ...(headRepositoryNameWithOwner ? { headRepositoryNameWithOwner } : {}),
     ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
+    ...(typeof raw.mergeStateStatus === "string" ? { mergeStateStatus: raw.mergeStateStatus } : {}),
   };
 }
 

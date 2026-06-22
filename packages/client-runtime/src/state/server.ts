@@ -133,6 +133,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
     }),
+    themesList: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:themes-list",
+      tag: WS_METHODS.themesList,
+    }),
+    themesGetJson: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:themes-get-json",
+      tag: WS_METHODS.themesGetJson,
+    }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",

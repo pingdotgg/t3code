@@ -13,6 +13,12 @@ import {
   FilesystemBrowseResult,
   FilesystemBrowseError,
 } from "./filesystem.ts";
+import {
+  VscodeThemeCatalogError,
+  VscodeThemeJsonInput,
+  VscodeThemeJsonResult,
+  VscodeThemeListResult,
+} from "./themes.ts";
 import { AssetAccessError, AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import {
   GitActionProgressEvent,
@@ -213,6 +219,8 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
+  themesList: "themes.list",
+  themesGetJson: "themes.getJson",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
@@ -286,6 +294,18 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsThemesListRpc = Rpc.make(WS_METHODS.themesList, {
+  payload: Schema.Struct({}),
+  success: VscodeThemeListResult,
+  error: Schema.Union([VscodeThemeCatalogError, EnvironmentAuthorizationError]),
+});
+
+export const WsThemesGetJsonRpc = Rpc.make(WS_METHODS.themesGetJson, {
+  payload: VscodeThemeJsonInput,
+  success: VscodeThemeJsonResult,
+  error: Schema.Union([VscodeThemeCatalogError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -704,6 +724,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsThemesListRpc,
+  WsThemesGetJsonRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

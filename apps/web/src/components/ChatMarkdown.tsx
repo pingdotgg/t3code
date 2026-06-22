@@ -50,8 +50,13 @@ import { ScrollArea } from "./ui/scroll-area";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useOpenInPreferredEditor } from "../editorPreferences";
-import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
+import {
+  resolveDiffThemeName,
+  isPierreThemeName,
+  type CodeBlockThemeName,
+} from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
+import { useCodeBlockTheme } from "../hooks/useCodeBlockTheme";
 import { LRUCache } from "../lib/lruCache";
 import { useTheme } from "../hooks/useTheme";
 import {
@@ -249,7 +254,11 @@ function extractCodeBlock(
   };
 }
 
-function createHighlightCacheKey(code: string, language: string, themeName: DiffThemeName): string {
+function createHighlightCacheKey(
+  code: string,
+  language: string,
+  themeName: CodeBlockThemeName,
+): string {
   return `${fnv1a32(code).toString(36)}:${code.length}:${language}:${themeName}`;
 }
 
@@ -257,24 +266,36 @@ function estimateHighlightedSize(html: string, code: string): number {
   return Math.max(html.length * 2, code.length * 3);
 }
 
-function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
-  const cached = highlighterPromiseCache.get(language);
+function getHighlighterPromise(
+  language: string,
+  activeThemeId: string | null,
+): Promise<DiffsHighlighter> {
+  // Key by (language, theme) so a highlighter created before a custom theme was
+  // selected isn't reused — `getSharedHighlighter` must attach the custom theme
+  // for `codeToHtml({ theme: id })` to resolve it. The custom theme must already
+  // be registered (see ensureCustomThemeRegistered) before this runs.
+  const cacheKey = activeThemeId ? `${language}::${activeThemeId}` : language;
+  const cached = highlighterPromiseCache.get(cacheKey);
   if (cached) return cached;
 
   const promise = getSharedHighlighter({
-    themes: [resolveDiffThemeName("dark"), resolveDiffThemeName("light")],
+    themes: [
+      resolveDiffThemeName("dark"),
+      resolveDiffThemeName("light"),
+      ...(activeThemeId ? [activeThemeId] : []),
+    ],
     langs: [language as SupportedLanguages],
     preferredHighlighter: "shiki-js",
   }).catch((err) => {
-    highlighterPromiseCache.delete(language);
+    highlighterPromiseCache.delete(cacheKey);
     if (language === "text") {
       // "text" itself failed — Shiki cannot initialize at all, surface the error
       throw err;
     }
     // Language not supported by Shiki — fall back to "text"
-    return getHighlighterPromise("text");
+    return getHighlighterPromise("text", activeThemeId);
   });
-  highlighterPromiseCache.set(language, promise);
+  highlighterPromiseCache.set(cacheKey, promise);
   return promise;
 }
 
@@ -500,12 +521,16 @@ function MarkdownCodeBlock({
   language,
   fenceTitle,
   theme,
+  background,
+  foreground,
   children,
 }: {
   code: string;
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
+  background?: string | null;
+  foreground?: string | null;
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
@@ -542,11 +567,24 @@ function MarkdownCodeBlock({
     [],
   );
 
+  // When a VSCode theme is active, drive the code area's background/foreground
+  // from it via CSS variables on the container so the highlighted code AND the
+  // suspense-fallback plain <pre> share the theme's background (no flash). The
+  // header keeps using the app's `--muted` (see index.css).
+  const themeStyle =
+    background || foreground
+      ? ({
+          ...(background ? { "--code-block-bg": background } : {}),
+          ...(foreground ? { "--code-block-fg": foreground } : {}),
+        } as React.CSSProperties)
+      : undefined;
+
   return (
     <div
       className="chat-markdown-codeblock leading-snug"
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
+      style={themeStyle}
     >
       <div className="chat-markdown-codeblock-header select-none">
         <span className="chat-markdown-codeblock-title">
@@ -602,7 +640,7 @@ function MarkdownCodeBlock({
 interface SuspenseShikiCodeBlockProps {
   className: string | undefined;
   code: string;
-  themeName: DiffThemeName;
+  themeName: CodeBlockThemeName;
   isStreaming: boolean;
 }
 
@@ -639,7 +677,7 @@ function SuspenseShikiCodeBlock({
 interface UncachedShikiCodeBlockProps {
   code: string;
   language: string;
-  themeName: DiffThemeName;
+  themeName: CodeBlockThemeName;
   cacheKey: string;
   isStreaming: boolean;
 }
@@ -651,7 +689,10 @@ function UncachedShikiCodeBlock({
   cacheKey,
   isStreaming,
 }: UncachedShikiCodeBlockProps) {
-  const highlighter = use(getHighlighterPromise(language));
+  // A non-pierre theme name is a user-selected VSCode theme id that must be
+  // included when creating the highlighter so codeToHtml can resolve it.
+  const activeThemeId = isPierreThemeName(themeName) ? null : themeName;
+  const highlighter = use(getHighlighterPromise(language, activeThemeId));
   const highlightedHtml = useMemo(() => {
     try {
       return highlighter.codeToHtml(code, { lang: language, theme: themeName });
@@ -1172,6 +1213,13 @@ function ChatMarkdown({
     serverConfig?.availableEditors ?? [],
   );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  const codeTheme = useCodeBlockTheme();
+  // Use the selected VSCode theme once it's fetched + registered; until then
+  // (or when none is selected) fall back to the app's light/dark pierre theme.
+  const codeBlockThemeName: CodeBlockThemeName =
+    codeTheme.isReady && codeTheme.activeThemeId ? codeTheme.activeThemeId : diffThemeName;
+  const codeBlockBackground = codeTheme.isReady ? codeTheme.background : null;
+  const codeBlockForeground = codeTheme.isReady ? codeTheme.foreground : null;
   const markdownFileLinkMetaByHref = useMemo(() => {
     const metaByHref = new Map<
       string,
@@ -1413,13 +1461,15 @@ function ChatMarkdown({
             language={language}
             fenceTitle={fenceTitle}
             theme={resolvedTheme}
+            background={codeBlockBackground}
+            foreground={codeBlockForeground}
           >
             <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
               <Suspense fallback={<pre {...props}>{children}</pre>}>
                 <SuspenseShikiCodeBlock
                   className={codeBlock.className}
                   code={codeBlock.code}
-                  themeName={diffThemeName}
+                  themeName={codeBlockThemeName}
                   isStreaming={isStreaming}
                 />
               </Suspense>
@@ -1429,7 +1479,9 @@ function ChatMarkdown({
       },
     }),
     [
-      diffThemeName,
+      codeBlockThemeName,
+      codeBlockBackground,
+      codeBlockForeground,
       fileLinkParentSuffixByPath,
       isStreaming,
       markdownFileLinkMetaByHref,

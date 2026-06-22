@@ -55,6 +55,7 @@ import { ServerSettingsLive } from "./serverSettings.ts";
 import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
 import { RepositoryIdentityResolverLive } from "./project/Layers/RepositoryIdentityResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as VscodeThemeCatalog from "./themes/VscodeThemeCatalog.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -259,6 +260,7 @@ const WorkspaceLayerLive = Layer.mergeAll(
   WorkspacePathsLive,
   WorkspaceEntriesLayerLive,
   WorkspaceFileSystemLayerLive,
+  VscodeThemeCatalog.layer,
 );
 
 const ProjectFaviconResolverLayerLive = ProjectFaviconResolverLive.pipe(

@@ -106,6 +106,11 @@ export const GitPullRequestSummary = Schema.Struct({
   baseBranch: TrimmedNonEmptyStringSchema,
   headBranch: TrimmedNonEmptyStringSchema,
   author: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  // True when nothing blocks the merge (GitHub `mergeStateStatus === "CLEAN"`):
+  // required reviews approved and required checks passing, no conflicts. Absent
+  // for providers/queries that don't report merge readiness. Drives the cyan
+  // "ready to merge" icon; anything that blocks the merge stays the normal color.
+  isReadyToMerge: Schema.optional(Schema.Boolean),
 });
 export type GitPullRequestSummary = typeof GitPullRequestSummary.Type;
 

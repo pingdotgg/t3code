@@ -121,6 +121,7 @@ import {
   type ServerEnvironmentShape,
 } from "./environment/Services/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as VscodeThemeCatalog from "./themes/VscodeThemeCatalog.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -521,6 +522,7 @@ const buildAppUnderTest = (options?: {
         Layer.provide(workspaceEntriesLayer),
       ),
       ProjectFaviconResolverLive.pipe(Layer.provide(WorkspacePathsLive)),
+      VscodeThemeCatalog.layer,
     );
     const gitWorkflowLayer = GitWorkflowService.layer.pipe(
       Layer.provideMerge(vcsDriverRegistryLayer),

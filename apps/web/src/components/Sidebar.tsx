@@ -662,6 +662,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     },
     [openPrLink, prStatus],
   );
+  const handleReviewPrClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (!reviewPullRequest) return;
+      openPrLink(event, reviewPullRequest.url);
+    },
+    [openPrLink, reviewPullRequest],
+  );
   const handleRenameInputRef = useCallback(
     (element: HTMLInputElement | null) => {
       if (element && renamingInputRef.current !== element) {
@@ -803,9 +810,14 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span className="inline-flex items-center justify-center">
+                  <button
+                    type="button"
+                    aria-label={`Open pull request #${reviewPullRequest.number} in browser`}
+                    className="inline-flex cursor-pointer items-center justify-center rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                    onClick={handleReviewPrClick}
+                  >
                     <PullRequestStateIcon pr={reviewPullRequest} className="size-3" />
-                  </span>
+                  </button>
                 }
               />
               <TooltipPopup side="top">
@@ -2843,11 +2855,17 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
               to="/"
             >
               <T3Wordmark />
-              <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
+              <span
+                className="truncate text-sm font-medium tracking-tight text-muted-foreground"
+                data-slot="sidebar-wordmark-name"
+              >
                 Code
               </span>
-              <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
-                ILH
+              <span
+                className="shrink-0 rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60"
+                data-slot="sidebar-wordmark-badge"
+              >
+                logflash
               </span>
             </Link>
           }

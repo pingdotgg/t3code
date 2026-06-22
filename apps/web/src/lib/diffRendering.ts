@@ -8,8 +8,21 @@ export const DIFF_THEME_NAMES = {
 
 export type DiffThemeName = (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NAMES];
 
+/**
+ * Theme name accepted by the code-block highlighter. Either one of the built-in
+ * pierre themes (used for diffs and as the default for code blocks) or an
+ * arbitrary VSCode theme id the user selected, which is registered with Shiki
+ * at runtime. The `string & {}` keeps autocompletion for the known names while
+ * still accepting any registered id.
+ */
+export type CodeBlockThemeName = DiffThemeName | (string & {});
+
 export function resolveDiffThemeName(theme: "light" | "dark"): DiffThemeName {
   return theme === "dark" ? DIFF_THEME_NAMES.dark : DIFF_THEME_NAMES.light;
+}
+
+export function isPierreThemeName(themeName: string): themeName is DiffThemeName {
+  return themeName === DIFF_THEME_NAMES.dark || themeName === DIFF_THEME_NAMES.light;
 }
 
 const FNV_OFFSET_BASIS_32 = 0x811c9dc5;

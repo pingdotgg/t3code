@@ -92,6 +92,14 @@ export const ClientSettingsSchema = Schema.Struct({
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
+  // Identifier of the VSCode theme applied to rendered code blocks. `null`
+  // means "use the built-in pierre light/dark themes that follow the app's
+  // light/dark mode". The id is a stable string produced by the server's
+  // theme catalog; the resolved theme JSON is fetched at runtime and never
+  // persisted here. Client-only (device-local) by design.
+  codeBlockThemeId: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -541,5 +549,6 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  codeBlockThemeId: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;
