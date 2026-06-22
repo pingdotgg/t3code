@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
   EnvironmentId,
@@ -23,6 +23,7 @@ import {
   removeComposerDraftAttachment,
   replaceComposerDraftAttachments,
   setComposerDraftText,
+  updateComposerDraftSettings,
   useComposerDraft,
 } from "../../state/use-composer-drafts";
 import { useBranches } from "../../state/queries";
@@ -158,34 +159,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       ? selectedEnvironmentIdOverride
       : (projects[0]?.environmentId ?? null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
-  const [selectedModelKey, setSelectedModelKey] = useState<string | null>(null);
-  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("local");
-  const [selectedBranchName, setSelectedBranchName] = useState<string | null>(null);
-  const [selectedWorktreePath, setSelectedWorktreePath] = useState<string | null>(null);
-  const branchLoadVersionRef = useRef(0);
   const [submitting, setSubmitting] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
-  const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>(DEFAULT_RUNTIME_MODE);
-  const [interactionMode, setInteractionMode] = useState<ProviderInteractionMode>(
-    DEFAULT_PROVIDER_INTERACTION_MODE,
-  );
-  const [modelSelectionOverrides, setModelSelectionOverrides] = useState<
-    Record<string, ModelSelection>
-  >({});
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
 
   const reset = useCallback(() => {
     setSelectedEnvironmentId(null);
     setSelectedProjectKey(null);
-    setSelectedModelKey(null);
-    setWorkspaceMode("local");
-    setSelectedBranchName(null);
-    setSelectedWorktreePath(null);
     setSubmitting(false);
     setBranchQuery("");
-    setRuntimeMode(DEFAULT_RUNTIME_MODE);
-    setInteractionMode(DEFAULT_PROVIDER_INTERACTION_MODE);
-    setModelSelectionOverrides({});
     setExpandedProvider(null);
   }, []);
 
@@ -247,33 +229,33 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;
+  const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? "local";
+  const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
+  const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
+  const runtimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const interactionMode = selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE;
 
   const modelOptions = useMemo(
     () =>
       buildModelOptions(
         selectedEnvironmentServerConfig,
-        selectedProject?.defaultModelSelection ?? null,
+        selectedProjectDraft.modelSelection ?? selectedProject?.defaultModelSelection ?? null,
       ),
-    [selectedEnvironmentServerConfig, selectedProject?.defaultModelSelection],
+    [
+      selectedEnvironmentServerConfig,
+      selectedProject?.defaultModelSelection,
+      selectedProjectDraft.modelSelection,
+    ],
   );
 
-  const defaultModelKey = selectedProject?.defaultModelSelection
-    ? `${selectedProject.defaultModelSelection.instanceId}:${selectedProject.defaultModelSelection.model}`
-    : null;
-  const baseSelectedModel =
-    modelOptions.find((option) => option.key === selectedModelKey)?.selection ??
-    (defaultModelKey
-      ? modelOptions.find((option) => option.key === defaultModelKey)?.selection
-      : null) ??
+  const selectedModel =
+    selectedProjectDraft.modelSelection ??
     selectedProject?.defaultModelSelection ??
     modelOptions[0]?.selection ??
     null;
-  const selectedModelIdentity = baseSelectedModel
-    ? `${baseSelectedModel.instanceId}:${baseSelectedModel.model}`
+  const selectedModelKey = selectedModel
+    ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;
-  const selectedModel =
-    (selectedModelIdentity ? modelSelectionOverrides[selectedModelIdentity] : null) ??
-    baseSelectedModel;
 
   const selectedModelOption =
     modelOptions.find(
@@ -282,13 +264,31 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         option.selection.instanceId === selectedModel.instanceId &&
         option.selection.model === selectedModel.model,
     ) ?? null;
-  const selectedProviderSkills =
-    selectedEnvironmentServerConfig?.providers.find(
-      (provider) => provider.instanceId === selectedModel?.instanceId,
-    )?.skills ?? [];
+  const selectedProviderSkills = useMemo(
+    () =>
+      selectedEnvironmentServerConfig?.providers.find(
+        (provider) => provider.instanceId === selectedModel?.instanceId,
+      )?.skills ?? [],
+    [selectedEnvironmentServerConfig, selectedModel?.instanceId],
+  );
+  const setSelectedModelKey = useCallback(
+    (key: string | null) => {
+      if (!key || !selectedProjectDraftKey) {
+        return;
+      }
+      const option = modelOptions.find((candidate) => candidate.key === key);
+      if (!option) {
+        return;
+      }
+      updateComposerDraftSettings(selectedProjectDraftKey, {
+        modelSelection: option.selection,
+      });
+    },
+    [modelOptions, selectedProjectDraftKey],
+  );
   const setSelectedModelOptions = useCallback(
     (options: ReadonlyArray<ProviderOptionSelection> | undefined) => {
-      if (!selectedModel || !selectedModelIdentity) {
+      if (!selectedModel || !selectedProjectDraftKey) {
         return;
       }
       const nextSelection: ModelSelection = options
@@ -297,12 +297,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
             instanceId: selectedModel.instanceId,
             model: selectedModel.model,
           };
-      setModelSelectionOverrides((current) => ({
-        ...current,
-        [selectedModelIdentity]: nextSelection,
-      }));
+      updateComposerDraftSettings(selectedProjectDraftKey, {
+        modelSelection: nextSelection,
+      });
     },
-    [selectedModel, selectedModelIdentity],
+    [selectedModel, selectedProjectDraftKey],
   );
 
   const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
@@ -381,62 +380,85 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
 
   const setProject = useCallback((project: EnvironmentProject) => {
     const nextProjectKey = scopedProjectKey(project.environmentId, project.id);
-    branchLoadVersionRef.current += 1;
     setSelectedEnvironmentId(project.environmentId);
     setSelectedProjectKey(nextProjectKey);
-    setSelectedBranchName(null);
-    setSelectedWorktreePath(null);
-    setModelSelectionOverrides({});
   }, []);
 
   const selectEnvironment = useCallback((environmentId: EnvironmentId) => {
-    branchLoadVersionRef.current += 1;
     setSelectedEnvironmentId(environmentId);
     setSelectedProjectKey(null);
-    setSelectedBranchName(null);
-    setSelectedWorktreePath(null);
-    setModelSelectionOverrides({});
   }, []);
+
+  const setWorkspaceMode = useCallback(
+    (mode: WorkspaceMode) => {
+      if (!selectedProjectDraftKey) {
+        return;
+      }
+      updateComposerDraftSettings(selectedProjectDraftKey, {
+        workspaceSelection: {
+          mode,
+          branch: selectedBranchName,
+          worktreePath: selectedWorktreePath,
+        },
+      });
+    },
+    [selectedBranchName, selectedProjectDraftKey, selectedWorktreePath],
+  );
 
   const selectBranch = useCallback(
     (branch: VcsRef) => {
-      setSelectedBranchName(branch.name);
-      setSelectedWorktreePath(
-        selectedProject ? normalizeSelectedWorktreePath(selectedProject, branch) : null,
-      );
+      if (!selectedProject || !selectedProjectDraftKey) {
+        return;
+      }
+      updateComposerDraftSettings(selectedProjectDraftKey, {
+        workspaceSelection: {
+          mode: workspaceMode,
+          branch: branch.name,
+          worktreePath: normalizeSelectedWorktreePath(selectedProject, branch),
+        },
+      });
     },
-    [selectedProject],
+    [selectedProject, selectedProjectDraftKey, workspaceMode],
   );
 
+  const refreshBranches = branchState.refresh;
   const loadBranches = useCallback(async () => {
     if (!selectedProject) {
       return;
     }
+    setPendingConnectionError(null);
+    refreshBranches();
+  }, [refreshBranches, selectedProject]);
 
-    const loadVersion = ++branchLoadVersionRef.current;
-    const projectKey = scopedProjectKey(selectedProject.environmentId, selectedProject.id);
-    branchState.refresh();
-    if (loadVersion !== branchLoadVersionRef.current || selectedProjectKey !== projectKey) {
+  useEffect(() => {
+    if (workspaceMode !== "worktree" || selectedBranchName !== null) {
       return;
     }
-    setPendingConnectionError(null);
-    if (workspaceMode === "worktree" && !selectedBranchName) {
-      const preferredBranch =
-        availableBranches.find((branch) => branch.current)?.name ??
-        availableBranches.find((branch) => branch.isDefault)?.name ??
-        null;
-      if (preferredBranch) {
-        setSelectedBranchName(preferredBranch);
-      }
+    const preferredBranch =
+      availableBranches.find((branch) => branch.current) ??
+      availableBranches.find((branch) => branch.isDefault) ??
+      null;
+    if (preferredBranch) {
+      selectBranch(preferredBranch);
     }
-  }, [
-    availableBranches,
-    branchState,
-    selectedBranchName,
-    selectedProject,
-    selectedProjectKey,
-    workspaceMode,
-  ]);
+  }, [availableBranches, selectBranch, selectedBranchName, workspaceMode]);
+
+  const setRuntimeMode = useCallback(
+    (value: RuntimeMode) => {
+      if (selectedProjectDraftKey) {
+        updateComposerDraftSettings(selectedProjectDraftKey, { runtimeMode: value });
+      }
+    },
+    [selectedProjectDraftKey],
+  );
+  const setInteractionMode = useCallback(
+    (value: ProviderInteractionMode) => {
+      if (selectedProjectDraftKey) {
+        updateComposerDraftSettings(selectedProjectDraftKey, { interactionMode: value });
+      }
+    },
+    [selectedProjectDraftKey],
+  );
 
   const value = useMemo<NewTaskFlowContextValue>(
     () => ({
@@ -513,6 +535,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       setProject,
       selectBranch,
       selectEnvironment,
+      setInteractionMode,
+      setPrompt,
+      setRuntimeMode,
+      setSelectedModelKey,
+      setWorkspaceMode,
       submitting,
       workspaceMode,
       appendAttachments,

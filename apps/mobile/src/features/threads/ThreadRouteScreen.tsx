@@ -1,13 +1,7 @@
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import * as Option from "effect/Option";
-import {
-  EnvironmentId,
-  type ModelSelection,
-  type ProjectScript,
-  type ProviderInteractionMode,
-  type RuntimeMode,
-} from "@t3tools/contracts";
+import { EnvironmentId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Pressable, ScrollView, Text as RNText, View } from "react-native";
 import { useWorkspaceState } from "../../state/workspace";
@@ -79,18 +73,6 @@ export function ThreadRouteScreen() {
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
-  const updateThreadMetadata = useAtomCommand(
-    threadEnvironment.updateMetadata,
-    "thread metadata update",
-  );
-  const setThreadRuntimeMode = useAtomCommand(
-    threadEnvironment.setRuntimeMode,
-    "thread runtime mode",
-  );
-  const setThreadInteractionMode = useAtomCommand(
-    threadEnvironment.setInteractionMode,
-    "thread interaction mode",
-  );
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
   const router = useRouter();
   const params = useLocalSearchParams<{
@@ -105,6 +87,18 @@ export function ThreadRouteScreen() {
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
+  const selectedThreadWithDraftSettings = useMemo(
+    () =>
+      selectedThread
+        ? {
+            ...selectedThread,
+            modelSelection: composer.modelSelection ?? selectedThread.modelSelection,
+            runtimeMode: composer.runtimeMode ?? selectedThread.runtimeMode,
+            interactionMode: composer.interactionMode ?? selectedThread.interactionMode,
+          }
+        : null,
+    [composer.interactionMode, composer.modelSelection, composer.runtimeMode, selectedThread],
+  );
 
   /* ─── Native header theming ──────────────────────────────────────── */
   const iconColor = String(useThemeColor("--color-icon"));
@@ -157,51 +151,6 @@ export function ThreadRouteScreen() {
   const handleOpenConnectionEditor = useCallback(() => {
     void router.push("/connections");
   }, [router]);
-  const handleUpdateThreadModelSelection = useCallback(
-    (modelSelection: ModelSelection) => {
-      if (!selectedThread) {
-        return;
-      }
-      return updateThreadMetadata({
-        environmentId: selectedThread.environmentId,
-        input: {
-          threadId: selectedThread.id,
-          modelSelection,
-        },
-      });
-    },
-    [selectedThread, updateThreadMetadata],
-  );
-  const handleUpdateThreadRuntimeMode = useCallback(
-    (runtimeMode: RuntimeMode) => {
-      if (!selectedThread) {
-        return;
-      }
-      return setThreadRuntimeMode({
-        environmentId: selectedThread.environmentId,
-        input: {
-          threadId: selectedThread.id,
-          runtimeMode,
-        },
-      });
-    },
-    [selectedThread, setThreadRuntimeMode],
-  );
-  const handleUpdateThreadInteractionMode = useCallback(
-    (interactionMode: ProviderInteractionMode) => {
-      if (!selectedThread) {
-        return;
-      }
-      return setThreadInteractionMode({
-        environmentId: selectedThread.environmentId,
-        input: {
-          threadId: selectedThread.id,
-          interactionMode,
-        },
-      });
-    },
-    [selectedThread, setThreadInteractionMode],
-  );
   const handleStopThread = useCallback(() => {
     if (
       !selectedThread ||
@@ -435,7 +384,7 @@ export function ThreadRouteScreen() {
 
       <View className="flex-1 bg-screen">
         <ThreadDetailScreen
-          selectedThread={selectedThread}
+          selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
           contentPresentation={contentPresentation}
           screenTone={connectionTone(routeConnectionState)}
           connectionError={routeConnectionError}
@@ -466,9 +415,9 @@ export function ThreadRouteScreen() {
           onStopThread={handleStopThread}
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
-          onUpdateThreadModelSelection={handleUpdateThreadModelSelection}
-          onUpdateThreadRuntimeMode={handleUpdateThreadRuntimeMode}
-          onUpdateThreadInteractionMode={handleUpdateThreadInteractionMode}
+          onUpdateThreadModelSelection={composer.onUpdateModelSelection}
+          onUpdateThreadRuntimeMode={composer.onUpdateRuntimeMode}
+          onUpdateThreadInteractionMode={composer.onUpdateInteractionMode}
           onRespondToApproval={requests.onRespondToApproval}
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
