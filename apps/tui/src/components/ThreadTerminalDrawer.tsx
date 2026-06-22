@@ -52,40 +52,37 @@ function renderSegment(segment: TermSegment, key: number): React.ReactNode {
   );
 }
 
-export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
+/**
+ * One terminal's headless xterm + live subscription. Every tab's pane stays
+ * MOUNTED while the drawer is open, so background terminals keep buffering their
+ * PTY output — switching tabs (flipping `visible`) is instant and preserves the
+ * live screen instead of resetting and replaying history. Only the visible pane
+ * paints; hidden panes still write to their buffer but skip the repaint.
+ */
+const TerminalPane = React.memo(function TerminalPane({
   client,
   info,
   cols,
   rows,
+  visible,
   focused,
   copyRef,
-  tabIds,
-  activeTabId,
-  onSelectTab,
-  onNewTab,
-  onCloseTab,
 }: {
   readonly client: TuiClient;
   readonly info: TerminalInfo;
   readonly cols: number;
   readonly rows: number;
-  /** Whether keystrokes are routed to this terminal (drives the focus affordance). */
+  readonly visible: boolean;
   readonly focused: boolean;
-  /** Filled with a getter for the viewport text so the app can copy it (OSC 52). */
   readonly copyRef: React.MutableRefObject<(() => string) | null>;
-  /** This thread's terminal tabs + the active one, for the tab bar. */
-  readonly tabIds: ReadonlyArray<string>;
-  readonly activeTabId: string;
-  readonly onSelectTab: (id: string) => void;
-  readonly onNewTab: () => void;
-  readonly onCloseTab: (id: string) => void;
 }): React.ReactNode {
-  const palette = usePalette();
   const safeCols = Math.max(2, cols);
   const safeRows = Math.max(2, rows);
   const termRef = React.useRef<XTerm | null>(null);
   const scheduled = React.useRef(false);
   const renderTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visibleRef = React.useRef(visible);
+  visibleRef.current = visible;
   const [, bump] = React.useReducer((n: number) => n + 1, 0);
 
   if (!termRef.current) {
@@ -107,22 +104,24 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
     [],
   );
 
-  // Expose the viewport text so the app can copy it to the clipboard.
+  // Expose the viewport text for ^O copy while this is the visible terminal.
   React.useEffect(() => {
-    copyRef.current = () => readTerminalViewport(term);
+    if (!visible) return;
+    const getter = () => readTerminalViewport(term);
+    copyRef.current = getter;
     return () => {
-      copyRef.current = null;
+      if (copyRef.current === getter) copyRef.current = null;
     };
-  }, [copyRef, term]);
+  }, [visible, copyRef, term]);
 
-  // Forward a paste to the PTY while the terminal is focused (the prompt editor
+  // Forward a paste to the PTY while this terminal is focused (the prompt editor
   // handles its own paste). Wrap in bracketed-paste markers when the running
   // program asked for them, so multi-line pastes don't auto-execute line by line.
   usePaste((event) => {
     if (!focused) return;
     const text = new TextDecoder().decode(event.bytes);
     if (text.length === 0) return;
-    const data = term.modes.bracketedPasteMode ? `[200~${text}[201~` : text;
+    const data = term.modes.bracketedPasteMode ? `[200~${text}[201~` : text;
     void client.terminalWrite(info.threadId, info.terminalId, data).catch(() => {});
   });
 
@@ -133,7 +132,8 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
 
   React.useEffect(() => {
     const scheduleRender = () => {
-      if (scheduled.current) return;
+      // Hidden panes still buffer output (term.write above) but don't repaint.
+      if (!visibleRef.current || scheduled.current) return;
       scheduled.current = true;
       renderTimer.current = setTimeout(() => {
         renderTimer.current = null;
@@ -174,7 +174,56 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
     };
   }, [info.threadId, info.terminalId]);
 
+  // Repaint once when this pane becomes visible — its buffer may have advanced
+  // while it was hidden (no repaints fired).
+  React.useEffect(() => {
+    if (visible) bump();
+  }, [visible]);
+
+  if (!visible) return null;
   const frame = readTerminalFrame(term);
+  return (
+    <>
+      {frame.rows.map((segments, index) => (
+        <text key={index}>
+          {segments.length === 0 ? " " : segments.map((segment, i) => renderSegment(segment, i))}
+        </text>
+      ))}
+    </>
+  );
+});
+
+export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
+  client,
+  info,
+  cols,
+  rows,
+  focused,
+  copyRef,
+  tabIds,
+  activeTabId,
+  onSelectTab,
+  onNewTab,
+  onCloseTab,
+}: {
+  readonly client: TuiClient;
+  /** The active terminal's info — its non-id fields (thread/cwd/title) are shared. */
+  readonly info: TerminalInfo;
+  readonly cols: number;
+  readonly rows: number;
+  /** Whether keystrokes are routed to the active terminal (drives the focus affordance). */
+  readonly focused: boolean;
+  /** Filled with a getter for the viewport text so the app can copy it (OSC 52). */
+  readonly copyRef: React.MutableRefObject<(() => string) | null>;
+  /** This thread's terminal tabs + the active one, for the tab bar. */
+  readonly tabIds: ReadonlyArray<string>;
+  readonly activeTabId: string;
+  readonly onSelectTab: (id: string) => void;
+  readonly onNewTab: () => void;
+  readonly onCloseTab: (id: string) => void;
+}): React.ReactNode {
+  const palette = usePalette();
+  const safeRows = Math.max(2, rows);
   return (
     <box
       flexDirection="column"
@@ -219,10 +268,19 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
           <text fg={palette.dim}>{"+ new"}</text>
         </box>
       </box>
-      {frame.rows.map((segments, index) => (
-        <text key={index}>
-          {segments.length === 0 ? " " : segments.map((segment, i) => renderSegment(segment, i))}
-        </text>
+      {/* Every tab's pane stays mounted so background terminals keep buffering;
+          only the active one paints, so switching is instant and lossless. */}
+      {tabIds.map((id) => (
+        <TerminalPane
+          key={`${info.threadId}:${id}`}
+          client={client}
+          info={{ ...info, terminalId: id }}
+          cols={cols}
+          rows={rows}
+          visible={id === activeTabId}
+          focused={focused && id === activeTabId}
+          copyRef={copyRef}
+        />
       ))}
     </box>
   );

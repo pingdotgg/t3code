@@ -1173,7 +1173,6 @@ export function ChatView({
 
       {activeTerminal && detailTabs ? (
         <ThreadTerminalDrawer
-          key={activeTerminal.terminalId}
           client={client}
           info={activeTerminal}
           cols={termCols}

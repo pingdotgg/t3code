@@ -54,6 +54,58 @@ describe("ThreadTerminalDrawer tab bar", () => {
     t.renderer.destroy();
   });
 
+  it("Given a tab switch, then both panes stay subscribed (kept alive, no replay)", async () => {
+    let subscribes = 0;
+    let unsubscribes = 0;
+    const countingClient = {
+      subscribeTerminal: () => {
+        subscribes += 1;
+        return () => {
+          unsubscribes += 1;
+        };
+      },
+      terminalWrite: () => Promise.resolve(),
+      terminalResize: () => Promise.resolve(),
+      terminalClose: () => Promise.resolve(),
+    } as unknown as TuiClient;
+
+    function Harness(): React.ReactNode {
+      const [active, setActive] = React.useState("term-1");
+      const copyRef = React.useRef<(() => string) | null>(null);
+      return (
+        <ThreadTerminalDrawer
+          client={countingClient}
+          info={info}
+          cols={40}
+          rows={4}
+          focused={false}
+          copyRef={copyRef}
+          tabIds={["term-1", "term-2"]}
+          activeTabId={active}
+          onSelectTab={setActive}
+          onNewTab={() => {}}
+          onCloseTab={() => {}}
+        />
+      );
+    }
+
+    const t = await testRender(<Harness />, { width: 50, height: 12 });
+    await t.renderOnce();
+    await t.flush();
+    // Both tabs' panes mount and subscribe up front.
+    expect(subscribes).toBe(2);
+
+    const lines = t.captureCharFrame().split("\n");
+    const row = lines.findIndex((line) => line.includes("+ new"));
+    const col = (lines[row] ?? "").indexOf("2");
+    await t.mockMouse.click(col, row);
+    await t.flush();
+    // Switching active did NOT tear down or recreate a subscription — kept alive.
+    expect(subscribes).toBe(2);
+    expect(unsubscribes).toBe(0);
+    t.renderer.destroy();
+  });
+
   it("Given a tab is clicked, then onSelectTab fires with its id", async () => {
     const selected: string[] = [];
     const copyRef = React.createRef<(() => string) | null>() as React.MutableRefObject<
