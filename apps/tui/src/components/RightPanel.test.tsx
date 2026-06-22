@@ -39,7 +39,7 @@ async function render(node: React.ReactNode) {
 describe("RightPanel", () => {
   it("Given no git status, then it shows a placeholder", async () => {
     const t = await render(
-      <RightPanel status={null} busy={false} width={32} height={14} onRunAction={() => {}} onOpenUrl={() => {}} />,
+      <RightPanel status={null} busy={false} width={32} height={14} onRunAction={() => {}} onPull={() => {}} onOpenUrl={() => {}} />,
     );
     expect(t.captureCharFrame()).toContain("no git status");
     t.renderer.destroy();
@@ -54,6 +54,7 @@ describe("RightPanel", () => {
         width={32}
         height={14}
         onRunAction={(a) => actions.push(a)}
+        onPull={() => {}}
         onOpenUrl={() => {}}
       />,
     );
@@ -79,6 +80,7 @@ describe("RightPanel", () => {
         width={32}
         height={14}
         onRunAction={() => {}}
+        onPull={() => {}}
         onOpenUrl={(url) => opened.push(url)}
       />,
     );
@@ -91,6 +93,32 @@ describe("RightPanel", () => {
     await t.mockMouse.click(col, row);
     await t.flush();
     expect(opened).toEqual(["https://example/pr/42"]);
+    t.renderer.destroy();
+  });
+
+  it("Given the branch is behind upstream, then it offers Pull and runs it on click", async () => {
+    let pulled = 0;
+    const t = await render(
+      <RightPanel
+        status={status({ behindCount: 2 })}
+        busy={false}
+        width={32}
+        height={14}
+        onRunAction={() => {}}
+        onPull={() => {
+          pulled += 1;
+        }}
+        onOpenUrl={() => {}}
+      />,
+    );
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("Pull");
+    const lines = frame.split("\n");
+    const row = lines.findIndex((line) => line.includes("▸") && line.includes("Pull"));
+    const col = (lines[row] ?? "").indexOf("Pull") + 1;
+    await t.mockMouse.click(col, row);
+    await t.flush();
+    expect(pulled).toBe(1);
     t.renderer.destroy();
   });
 });

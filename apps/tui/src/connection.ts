@@ -351,6 +351,8 @@ export interface TuiClient {
     readonly commitMessage?: string;
     readonly featureBranch?: boolean;
   }) => Promise<void>;
+  /** Pull the worktree's branch from its upstream. */
+  readonly runGitPull: (cwd: string) => Promise<void>;
   /** Fetch the unified diff for the turn that produced the given checkpoint. */
   readonly getTurnDiff: (threadId: ThreadId, toTurnCount: number) => Promise<string>;
   /** Fetch the cumulative diff of all changes in the thread up to `toTurnCount`. */
@@ -727,6 +729,9 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
           Effect.asVoid,
         ),
       ),
+
+    runGitPull: (cwd) =>
+      runtime.runPromise(request(WS_METHODS.vcsPull, { cwd }).pipe(Effect.asVoid)),
 
     getTurnDiff: (threadId, toTurnCount) =>
       runtime.runPromise(

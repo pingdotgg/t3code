@@ -22,6 +22,7 @@ export function RightPanel({
   width,
   height,
   onRunAction,
+  onPull,
   onOpenUrl,
 }: {
   readonly status: VcsStatusResult | null;
@@ -29,6 +30,7 @@ export function RightPanel({
   readonly width: number;
   readonly height: number;
   readonly onRunAction: (action: GitStackedAction) => void;
+  readonly onPull: () => void;
   readonly onOpenUrl: (url: string) => void;
 }): React.ReactNode {
   const palette = usePalette();
@@ -40,8 +42,12 @@ export function RightPanel({
   const runQuick = () => {
     if (quick.kind === "run_action") onRunAction(quick.action);
     else if (quick.kind === "open_pr" && pr) onOpenUrl(pr.url);
+    else if (quick.kind === "run_pull") onPull();
   };
-  const quickActionable = quick.kind === "run_action" || quick.kind === "open_pr";
+  // Publishing a repo needs a provider/visibility dialog the TUI doesn't host, so
+  // it's surfaced as a hint rather than a runnable action.
+  const quickActionable =
+    quick.kind === "run_action" || quick.kind === "open_pr" || quick.kind === "run_pull";
 
   return (
     <box
@@ -85,6 +91,9 @@ export function RightPanel({
             </text>
           </box>
           {quick.kind === "show_hint" ? <text fg={palette.dim}>{`  ${clip(quick.hint, room)}`}</text> : null}
+          {quick.kind === "open_publish" ? (
+            <text fg={palette.dim}>{"  publish from the terminal (^E)"}</text>
+          ) : null}
 
           {/* Contextual actions menu. */}
           {items.length > 0 ? (

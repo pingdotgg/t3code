@@ -56,6 +56,8 @@ export interface Store {
   readonly setFilter: (filter: string) => void;
   /** Run a git stacked action on the selected thread's worktree (commitMessage for commit-bearing actions). */
   readonly runGitAction: (action: GitStackedAction, commitMessage?: string) => void;
+  /** Pull the selected thread's worktree from upstream. */
+  readonly pullGit: () => void;
 }
 
 export function createStore(client: TuiClient): Store {
@@ -242,6 +244,21 @@ export function createStore(client: TuiClient): Store {
         .then(() => set({ gitBusy: false, status: "Git action complete.", statusKind: "success" }))
         .catch((error: unknown) =>
           set({ gitBusy: false, status: `Git failed: ${String(error)}`, statusKind: "error" }),
+        );
+    },
+    pullGit: () => {
+      if (state.gitBusy) return;
+      const cwd = currentCwd();
+      if (!cwd) {
+        set({ status: "No worktree for git actions.", statusKind: "error" });
+        return;
+      }
+      set({ gitBusy: true, status: "Pulling…", statusKind: "busy" });
+      client
+        .runGitPull(cwd)
+        .then(() => set({ gitBusy: false, status: "Pulled.", statusKind: "success" }))
+        .catch((error: unknown) =>
+          set({ gitBusy: false, status: `Pull failed: ${String(error)}`, statusKind: "error" }),
         );
     },
   };
