@@ -293,6 +293,12 @@ const baseCursorSettings: CursorSettings = {
   apiEndpoint: "",
   customModels: [],
 };
+const cursorAcpDiscoveryFailedMessage = [
+  "Cursor ACP model discovery failed.",
+  "Cursor CLI setup may be incomplete; install or enable the Cursor CLI, restart T3 Code, and try again.",
+  "See https://cursor.com/docs/cli/installation.",
+  "Check server logs for ACP details.",
+].join(" ");
 
 describe("getCursorFallbackModels", () => {
   it("does not publish any built-in cursor models before ACP discovery", () => {
@@ -338,12 +344,11 @@ describe("buildCursorProviderSnapshot", () => {
           auth: { status: "unauthenticated" },
           message: "Cursor Agent is not authenticated. Run `agent login` and try again.",
         },
-        discoveryWarning: "Cursor ACP model discovery failed. Check server logs for details.",
+        discoveryWarning: cursorAcpDiscoveryFailedMessage,
       }),
     ).toMatchObject({
       status: "error",
-      message:
-        "Cursor Agent is not authenticated. Run `agent login` and try again. Cursor ACP model discovery failed. Check server logs for details.",
+      message: `Cursor Agent is not authenticated. Run \`agent login\` and try again. ${cursorAcpDiscoveryFailedMessage}`,
       models: [
         {
           slug: "claude-sonnet-4-6",
