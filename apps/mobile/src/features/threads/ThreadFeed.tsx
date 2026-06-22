@@ -98,6 +98,10 @@ export interface ThreadFeedProps {
   readonly layoutVariant?: LayoutVariant;
   readonly composerExpanded?: boolean;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+  /** Older history beyond the live activity window can be lazy-loaded on scroll-up. */
+  readonly hasMoreOlder?: boolean;
+  readonly loadingOlder?: boolean;
+  readonly onLoadOlder?: () => void;
 }
 
 function MessageAttachmentImage(props: {
@@ -1277,6 +1281,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     initialScrollReadyRef.current = true;
   }, []);
 
+  // Reaching the top (oldest) lazy-loads older history. The hook keys an
+  // in-flight guard by thread, so repeated fires during scroll coalesce.
+  const { hasMoreOlder, loadingOlder, onLoadOlder } = props;
+  const onStartReachedOlderHistory = useCallback(() => {
+    if (hasMoreOlder && !loadingOlder) {
+      onLoadOlder?.();
+    }
+  }, [hasMoreOlder, loadingOlder, onLoadOlder]);
+
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
     previousLatestTurnRef.current = props.latestTurn;
@@ -1489,6 +1502,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               layout: true,
             },
           }}
+          // Keep the viewport anchored when older history prepends at the top.
+          maintainVisibleContentPosition
+          onStartReached={onStartReachedOlderHistory}
+          onStartReachedThreshold={0.5}
           data={presentedFeed}
           extraData={listAppearanceData}
           renderItem={renderItem}
@@ -1504,7 +1521,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           onLoad={onListLoad}
           onScroll={onListScroll}
           scrollEventThrottle={16}
-          ListHeaderComponent={<View style={{ height: topContentInset }} />}
+          ListHeaderComponent={
+            <View style={{ height: topContentInset }}>
+              {loadingOlder ? <ActivityIndicator style={{ marginTop: 8 }} /> : null}
+            </View>
+          }
           contentContainerStyle={{
             paddingTop: 12,
             paddingBottom: bottomContentInset,

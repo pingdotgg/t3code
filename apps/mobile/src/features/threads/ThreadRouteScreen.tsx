@@ -401,6 +401,9 @@ export function ThreadRouteScreen() {
           draftAttachments={composer.draftAttachments}
           connectionStateLabel={routeConnectionState}
           activeThreadBusy={composer.activeThreadBusy}
+          hasMoreOlderActivities={composer.hasMoreOlderActivities}
+          loadingOlderActivities={composer.loadingOlderActivities}
+          onLoadOlderActivities={composer.onLoadOlderActivities}
           environmentId={selectedThread.environmentId}
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
           threadCwd={selectedThreadCwd}
