@@ -310,23 +310,20 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
             const longestLine = Math.max(1, ...body.split("\n").map((line) => line.length));
             const bubbleWidth = Math.min(maxBubble, longestLine + 4);
             return (
-              <box key={message.id} flexDirection="row" justifyContent="flex-end" marginBottom={1}>
-                <box
-                  flexDirection="column"
-                  width={bubbleWidth}
-                  flexShrink={0}
-                  border
-                  borderStyle="rounded"
-                  borderColor={palette.accent}
-                  paddingLeft={1}
-                  paddingRight={1}
-                >
-                  <markdown
-                    content={body}
-                    syntaxStyle={syntaxStyle}
-                    streaming={message.streaming}
-                  />
-                </box>
+              <box
+                key={message.id}
+                flexDirection="column"
+                alignSelf="flex-end"
+                width={bubbleWidth}
+                flexShrink={0}
+                marginBottom={1}
+                border
+                borderStyle="rounded"
+                borderColor={palette.accent}
+                paddingLeft={1}
+                paddingRight={1}
+              >
+                <markdown content={body} syntaxStyle={syntaxStyle} streaming={message.streaming} />
               </box>
             );
           }
