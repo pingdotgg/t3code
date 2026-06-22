@@ -1097,6 +1097,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   status: OrchestrationV2ShellThreadStatus,
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),
+  latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtc),
+  hasActionableProposedPlan: Schema.Boolean,
   itemCount: NonNegativeInt,
   visibleItemCount: NonNegativeInt,
   createdAt: Schema.DateTimeUtc,
@@ -1667,6 +1669,7 @@ export const OrchestrationV2Command = Schema.Union([
     text: Schema.String,
     attachments: Schema.Array(ChatAttachment),
     modelSelection: Schema.optional(ModelSelection),
+    sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
     dispatchMode: Schema.Union([
       Schema.Struct({ type: Schema.Literal("steer_active"), targetRunId: RunId }),
       Schema.Struct({ type: Schema.Literal("restart_active"), targetRunId: RunId }),
@@ -1767,6 +1770,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
 export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
   schemaVersion: PositiveInt,
   snapshotSequence: NonNegativeInt,
+  projects: Schema.Array(OrchestrationProjectShell),
   threads: Schema.Array(OrchestrationV2ThreadShell),
 });
 export type OrchestrationV2ArchivedShellSnapshot = typeof OrchestrationV2ArchivedShellSnapshot.Type;
@@ -1791,11 +1795,20 @@ export type OrchestrationV2ArchivedShellStreamItem =
   typeof OrchestrationV2ArchivedShellStreamItem.Type;
 
 export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("root") }),
+  Schema.Struct({
+    type: Schema.Literal("root"),
+    branch: Schema.optional(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("existing_worktree"),
+    worktreePath: TrimmedNonEmptyString,
+    branch: Schema.optional(TrimmedNonEmptyString),
+  }),
   Schema.Struct({
     type: Schema.Literal("worktree"),
     baseRef: TrimmedNonEmptyString,
     branch: Schema.optional(TrimmedNonEmptyString),
+    startFromOrigin: Schema.optional(Schema.Boolean),
   }),
 ]);
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
@@ -1803,6 +1816,9 @@ export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
 
 export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   commandId: CommandId,
+  creationSource: Schema.optional(OrchestrationV2CreationSource),
+  threadId: Schema.optional(ThreadId),
+  reuseExistingThread: Schema.optional(Schema.Boolean),
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
@@ -1810,7 +1826,11 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   initialMessage: Schema.optional(
-    Schema.Struct({ text: Schema.String, attachments: Schema.Array(ChatAttachment) }),
+    Schema.Struct({
+      messageId: Schema.optional(MessageId),
+      text: Schema.String,
+      attachments: Schema.Array(ChatAttachment),
+    }),
   ),
 });
 export type OrchestrationV2ThreadLaunchInput = typeof OrchestrationV2ThreadLaunchInput.Type;

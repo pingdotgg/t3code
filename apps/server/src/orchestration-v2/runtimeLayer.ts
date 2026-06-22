@@ -32,13 +32,20 @@ import { layer as providerTurnControlServiceLayer } from "./ProviderTurnControlS
 import { layer as providerTurnStartServiceLayer } from "./ProviderTurnStartService.ts";
 import { layer as runExecutionServiceLayer } from "./RunExecutionService.ts";
 import { layer as runFinalizationServiceLayer } from "./RunFinalizationService.ts";
-import { layer as runtimePolicyLayer } from "./RuntimePolicy.ts";
+import { layerFromProjectRepository as runtimePolicyLayerFromProjectRepository } from "./RuntimePolicy.ts";
 import { layer as runtimeRequestServiceLayer } from "./RuntimeRequestService.ts";
 import { layer as threadManagementServiceLayer } from "./ThreadManagementService.ts";
 import { layer as threadLaunchServiceLayer } from "./ThreadLaunchService.ts";
 import { layer as threadLifecycleServiceLayer } from "./ThreadLifecycleService.ts";
 import { layer as threadForkServiceLayer } from "./ThreadForkService.ts";
 import { layer as turnItemPositionStoreLayer } from "./TurnItemPositionStore.ts";
+
+export const ProjectServiceLayerLive = projectServiceLayer.pipe(
+  Layer.provide(Layer.merge(ProjectionProjectRepositoryLive, OrchestrationLayerLive)),
+);
+const runtimePolicyProvided = runtimePolicyLayerFromProjectRepository.pipe(
+  Layer.provide(ProjectionProjectRepositoryLive),
+);
 
 const eventStoreProvided = eventStoreLayer.pipe(
   Layer.provide(OrchestrationEventInfrastructureLayerLive),
@@ -111,7 +118,7 @@ const providerTurnStartServiceProvided = providerTurnStartServiceLayer.pipe(
       projectionStoreLayer,
       providerSessionManagerProvided,
       runExecutionServiceProvided,
-      runtimePolicyLayer,
+      runtimePolicyProvided,
     ),
   ),
 );
@@ -130,7 +137,7 @@ const checkpointRollbackServiceProvided = checkpointRollbackServiceLayer.pipe(
       idAllocatorLayer,
       projectionStoreLayer,
       providerSessionManagerProvided,
-      runtimePolicyLayer,
+      runtimePolicyProvided,
     ),
   ),
 );
@@ -189,7 +196,7 @@ const orchestratorProvided = orchestratorLayer.pipe(
       idAllocatorLayer,
       providerAdapterRegistryProvided,
       providerEventIngestorProvided,
-      runtimePolicyLayer,
+      runtimePolicyProvided,
       providerSessionManagerProvided,
       providerSwitchServiceProvided,
       runExecutionServiceProvided,
@@ -200,9 +207,6 @@ const orchestratorProvided = orchestratorLayer.pipe(
 
 const threadManagementProvided = threadManagementServiceLayer.pipe(
   Layer.provide(orchestratorProvided),
-);
-export const ProjectServiceLayerLive = projectServiceLayer.pipe(
-  Layer.provide(Layer.merge(ProjectionProjectRepositoryLive, OrchestrationLayerLive)),
 );
 export const ProjectSetupScriptRunnerLayerLive = projectSetupScriptRunnerLayer.pipe(
   Layer.provide(ProjectServiceLayerLive),
