@@ -9,7 +9,9 @@ import {
   deriveContextWindow,
   formatContextWindow,
 } from "../contextWindow.ts";
+import { buildFileTree, collectDirPaths, flattenFileTree } from "../fileTree.ts";
 import { clip } from "../format.ts";
+import { STATUS_ICONS } from "../icons.ts";
 import { type ActionableProposedPlan, latestActionableProposedPlan } from "../proposedPlan.ts";
 import { WorkingIndicator } from "./WorkingIndicator.tsx";
 import {
@@ -55,7 +57,9 @@ function ToolRow({
   const status = workLogStatusKind(entry);
   const iconColor = entry.tone === "error" ? ansi("red") : palette.accent;
   const statusGlyph =
-    status === "success" ? "✓" : status === "failure" ? "✗" : status === "progress" ? "⟳" : null;
+    status === "success" || status === "failure" || status === "progress"
+      ? STATUS_ICONS[status].glyph
+      : null;
   const statusColor =
     status === "success" ? ansi("green") : status === "failure" ? ansi("red") : palette.dim;
   const previewRoom = Math.max(8, width - label.length - 8);
@@ -181,7 +185,7 @@ function FoldableRowView({
     <box flexDirection="column" marginTop={1} marginBottom={1}>
       <markdown content={body} syntaxStyle={syntaxStyle} streaming={message.streaming} {...mdClient} />
       {checkpoint ? (
-        <ChangedFiles
+        <ChangedFilesTree
           checkpoint={checkpoint}
           palette={palette}
           width={width}
@@ -219,8 +223,14 @@ function TurnFoldSection({
   );
 }
 
-/** The per-message "changed files (N)  +A -D" summary, with each file's own +/-. */
-function ChangedFiles({
+const CHANGED_FILES_ROW_CAP = 40;
+
+/**
+ * The per-message changed-files summary, rendered as a collapsible directory tree
+ * (mirrors the web ChangedFilesTree). The header opens the turn diff; "collapse
+ * all / expand all" folds every directory; each directory row toggles on click.
+ */
+function ChangedFilesTree({
   checkpoint,
   palette,
   width,
@@ -229,34 +239,74 @@ function ChangedFiles({
   readonly checkpoint: OrchestrationCheckpointSummary;
   readonly palette: Palette;
   readonly width: number;
-  /** Open the diff viewer scoped to this turn (clicking the summary). */
+  /** Open the diff viewer scoped to this turn (clicking the header). */
   readonly onOpenDiff?: (turnCount: number) => void;
 }): React.ReactNode {
-  const { additions, deletions } = diffStat(checkpoint.files);
+  const files = checkpoint.files;
+  const tree = React.useMemo(() => buildFileTree(files), [files]);
+  const allDirs = React.useMemo(() => collectDirPaths(tree), [tree]);
+  const [collapsedDirs, setCollapsedDirs] = React.useState<ReadonlySet<string>>(() => new Set());
+  const rows = React.useMemo(() => flattenFileTree(tree, collapsedDirs), [tree, collapsedDirs]);
+  const { additions, deletions } = diffStat(files);
+  const hasDirs = allDirs.length > 0;
+  const allCollapsed = hasDirs && allDirs.every((path) => collapsedDirs.has(path));
+  const nameRoom = Math.max(8, width - 20);
+
+  const toggleDir = (path: string) =>
+    setCollapsedDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  const toggleAll = () => setCollapsedDirs(allCollapsed ? new Set() : new Set(allDirs));
+
   return (
-    <box
-      flexDirection="column"
-      marginTop={1}
-      {...(onOpenDiff
-        ? { onMouseDown: () => onOpenDiff(checkpoint.checkpointTurnCount) }
-        : {})}
-    >
-      <text>
-        <span fg={palette.dim}>{`changed files (${checkpoint.files.length})  `}</span>
-        <span fg={ansi("green")}>{`+${additions}`}</span>
-        <span fg={palette.dim}>{" "}</span>
-        <span fg={ansi("red")}>{`-${deletions}`}</span>
-        {onOpenDiff ? <span fg={palette.dim}>{"   ▸ diff"}</span> : null}
-      </text>
-      {checkpoint.files.slice(0, 12).map((file) => (
-        <text key={file.path}>
-          <span fg={palette.text}>{`  ${clip(file.path, Math.max(8, width - 16))}`}</span>
-          <span fg={ansi("green")}>{`  +${file.additions}`}</span>
-          <span fg={ansi("red")}>{` -${file.deletions}`}</span>
-        </text>
-      ))}
-      {checkpoint.files.length > 12 ? (
-        <text fg={palette.dim}>{`  +${checkpoint.files.length - 12} more`}</text>
+    <box flexDirection="column" marginTop={1}>
+      <box flexDirection="row" justifyContent="space-between">
+        <box
+          {...(onOpenDiff
+            ? { onMouseDown: () => onOpenDiff(checkpoint.checkpointTurnCount) }
+            : {})}
+        >
+          <text>
+            <span fg={palette.dim}>{`changed files (${files.length})  `}</span>
+            <span fg={ansi("green")}>{`+${additions}`}</span>
+            <span fg={palette.dim}>{" "}</span>
+            <span fg={ansi("red")}>{`-${deletions}`}</span>
+            {onOpenDiff ? <span fg={palette.dim}>{"   ▸ diff"}</span> : null}
+          </text>
+        </box>
+        {hasDirs ? (
+          <box onMouseDown={toggleAll}>
+            <text fg={palette.dim}>{allCollapsed ? "expand all" : "collapse all"}</text>
+          </box>
+        ) : null}
+      </box>
+      {rows.slice(0, CHANGED_FILES_ROW_CAP).map((row) => {
+        const indent = "  ".repeat(row.depth + 1);
+        if (row.kind === "dir") {
+          return (
+            <box key={`d:${row.path}`} onMouseDown={() => toggleDir(row.path)}>
+              <text>
+                <span fg={palette.dim}>{`${indent}${row.collapsed ? "▸" : "▾"} `}</span>
+                <span fg={palette.text}>{clip(`${row.name}/`, nameRoom)}</span>
+                <span fg={ansi("green")}>{`  +${row.additions}`}</span>
+                <span fg={ansi("red")}>{` -${row.deletions}`}</span>
+              </text>
+            </box>
+          );
+        }
+        return (
+          <text key={`f:${row.path}`}>
+            <span fg={palette.text}>{`${indent}${clip(row.name, nameRoom)}`}</span>
+            <span fg={ansi("green")}>{`  +${row.additions}`}</span>
+            <span fg={ansi("red")}>{` -${row.deletions}`}</span>
+          </text>
+        );
+      })}
+      {rows.length > CHANGED_FILES_ROW_CAP ? (
+        <text fg={palette.dim}>{`  +${rows.length - CHANGED_FILES_ROW_CAP} more`}</text>
       ) : null}
     </box>
   );

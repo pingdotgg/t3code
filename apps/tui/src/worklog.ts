@@ -4,6 +4,8 @@ import {
   type ToolLifecycleItemType,
 } from "@t3tools/contracts";
 
+import { TOOL_ICONS } from "./icons.ts";
+
 // Derive the per-turn "work log" (tool calls / thinking) from a thread's activity
 // stream — a trimmed port of the web client's session-logic.deriveWorkLogEntries.
 // Pure: the timeline interleaves these with messages and MessagesTimeline renders
@@ -322,34 +324,31 @@ export function deriveWorkLogEntries(
 
 // ── View helpers (pure; MessagesTimeline maps the result to palette colors) ──
 
-const TERMINAL = "$";
-const PENCIL = "✎";
-
-/** A single glyph standing in for the web UI's per-tool icon. */
+/** A single glyph standing in for the web UI's per-tool lucide icon (see icons.ts). */
 export function workLogIcon(entry: WorkLogEntry): string {
-  if (entry.tone === "thinking") return "✱";
-  if (entry.tone === "error") return "✗";
+  if (entry.tone === "thinking") return TOOL_ICONS.thinking.glyph;
+  if (entry.tone === "error") return TOOL_ICONS.error.glyph;
   switch (entry.itemType) {
     case "command_execution":
-      return TERMINAL;
+      return TOOL_ICONS.terminal.glyph;
     case "file_change":
-      return PENCIL;
+      return TOOL_ICONS.fileChange.glyph;
     case "image_view":
-      return "◇";
+      return TOOL_ICONS.imageView.glyph;
     case "web_search":
-      return "⌕";
+      return TOOL_ICONS.webSearch.glyph;
     case "mcp_tool_call":
-      return "⚙";
+      return TOOL_ICONS.mcp.glyph;
     case "dynamic_tool_call":
     case "collab_agent_tool_call":
-      return "⚒";
+      return TOOL_ICONS.dynamic.glyph;
     default:
       break;
   }
-  if (entry.requestKind === "command") return TERMINAL;
-  if (entry.requestKind === "file-change") return PENCIL;
-  if (entry.requestKind === "file-read") return "›";
-  return "•";
+  if (entry.requestKind === "command") return TOOL_ICONS.terminal.glyph;
+  if (entry.requestKind === "file-change") return TOOL_ICONS.fileChange.glyph;
+  if (entry.requestKind === "file-read") return TOOL_ICONS.fileRead.glyph;
+  return TOOL_ICONS.default.glyph;
 }
 
 export function workLogStatusKind(entry: WorkLogEntry): WorkLogStatusKind {

@@ -92,6 +92,19 @@ const IDLE: ThreadStatus = {
   rank: 8,
 };
 
+/** Every thread-status dot glyph, for the single-column width guard in tests. */
+export const THREAD_STATUS_GLYPHS: ReadonlyArray<string> = [
+  PENDING_APPROVAL,
+  AWAITING_INPUT,
+  PLAN_READY,
+  WORKING,
+  CONNECTING,
+  ERRORED,
+  READY,
+  COMPLETED,
+  IDLE,
+].map((status) => status.glyph);
+
 /**
  * Resolve a thread's status to a dot, in the same priority order the web sidebar
  * uses. Always returns a status (idle is the fallback) so list rows show a dot.

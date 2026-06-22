@@ -103,7 +103,7 @@ describe("MessagesTimeline body", () => {
     expect(frame).toContain("pnpm test");
   });
 
-  it("Given a checkpoint for an assistant message, then it renders a changed-files summary", async () => {
+  it("Given a checkpoint for an assistant message, then it renders a changed-files tree", async () => {
     const frame = await bodyFrame({
       messages: [
         {
@@ -123,9 +123,57 @@ describe("MessagesTimeline body", () => {
       ] as never,
     });
     expect(frame).toContain("changed files (1)");
-    expect(frame).toContain("src/app.ts");
+    // Rendered as a directory tree: a "src/" folder row with the "app.ts" file under it.
+    expect(frame).toContain("src/");
+    expect(frame).toContain("app.ts");
+    expect(frame).toContain("collapse all");
     expect(frame).toContain("+5");
     expect(frame).toContain("-2");
+  });
+
+  it("Given the changed-files tree, then 'collapse all' hides the files under their folders", async () => {
+    const full = {
+      ...detail("default"),
+      messages: [
+        { id: "m1", role: "assistant", text: "done", createdAt: "2026-06-19T00:00:00.000Z", streaming: false },
+      ],
+      checkpoints: [
+        {
+          assistantMessageId: "m1",
+          checkpointTurnCount: 4,
+          completedAt: "2026-06-19T00:00:01.000Z",
+          files: [
+            { path: "src/app.ts", kind: "file", additions: 5, deletions: 2 },
+            { path: "src/util/clip.ts", kind: "file", additions: 1, deletions: 0 },
+          ],
+        },
+      ],
+    } as unknown as OrchestrationThread;
+    const ref = React.createRef<null>();
+    const t = await testRender(
+      <MessagesTimeline
+        detail={full}
+        approvals={[]}
+        approvalIndex={0}
+        projectHint={null}
+        width={88}
+        height={20}
+        syntaxStyle={SyntaxStyle.create()}
+        scrollRef={ref as never}
+      />,
+      { width: 92, height: 24 },
+    );
+    await t.renderOnce();
+    await t.flush();
+    expect(t.captureCharFrame()).toContain("app.ts");
+    const lines = t.captureCharFrame().split("\n");
+    const headerRow = lines.findIndex((line) => line.includes("collapse all"));
+    const col = (lines[headerRow] ?? "").indexOf("collapse all") + 2;
+    await t.mockMouse.click(col, headerRow);
+    await t.flush();
+    // Every directory is folded, so the file leaves are gone.
+    expect(t.captureCharFrame()).not.toContain("app.ts");
+    t.renderer.destroy();
   });
 
   it("Given onOpenDiff, then the changed-files summary is clickable and opens that turn", async () => {
