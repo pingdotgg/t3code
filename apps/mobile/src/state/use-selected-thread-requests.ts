@@ -1,7 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useMemo, useState } from "react";
 
-import { ApprovalRequestId, type ProviderApprovalDecision } from "@t3tools/contracts";
+import {
+  ApprovalRequestId,
+  type OrchestrationThreadActivity,
+  type ProviderApprovalDecision,
+} from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
 import { threadEnvironment } from "../state/threads";
@@ -53,7 +57,20 @@ function setUserInputDraftCustomAnswer(
   });
 }
 
-export function useSelectedThreadRequests() {
+/**
+ * Pending approval / user-input requests for the selected thread.
+ *
+ * `activities` should be the FULL loaded set (lazy-loaded older pages + the
+ * windowed live view, i.e. `useThreadComposerState().mergedActivities`): the
+ * detail snapshot windows activities to the most recent page, so deriving from
+ * `selectedThread.activities` alone would hide a prompt the user scrolled back
+ * to load. Falls back to the live window when not provided. Deriving from the
+ * merged set is sound — resolutions are always newer than their requests, so a
+ * loaded request whose resolution exists always has that resolution loaded too.
+ */
+export function useSelectedThreadRequests(
+  activities?: ReadonlyArray<OrchestrationThreadActivity>,
+) {
   const respondToApproval = useAtomCommand(
     threadEnvironment.respondToApproval,
     "thread approval response",
@@ -70,14 +87,15 @@ export function useSelectedThreadRequests() {
     null,
   );
 
+  const requestActivities = activities ?? selectedThread?.activities ?? null;
   const activePendingApprovals = useMemo(
-    () => (selectedThread ? derivePendingApprovals(selectedThread.activities) : []),
-    [selectedThread],
+    () => (requestActivities ? derivePendingApprovals(requestActivities) : []),
+    [requestActivities],
   );
   const activePendingApproval = activePendingApprovals[0] ?? null;
   const activePendingUserInputs = useMemo(
-    () => (selectedThread ? derivePendingUserInputs(selectedThread.activities) : []),
-    [selectedThread],
+    () => (requestActivities ? derivePendingUserInputs(requestActivities) : []),
+    [requestActivities],
   );
   const activePendingUserInput = activePendingUserInputs[0] ?? null;
   const activePendingUserInputDrafts =

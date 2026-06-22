@@ -126,16 +126,22 @@ const ThreadIdLookupInput = Schema.Struct({
  */
 const THREAD_DETAIL_ACTIVITY_WINDOW = 500;
 
+// `beforeSequence`/`limit` are NonNegativeInt (not bare Number) to match the
+// contract: the WHERE clause `(sequence < beforeSequence OR sequence IS NULL)`
+// is only equivalent to the old `COALESCE(sequence, -1) < beforeSequence` when
+// `beforeSequence` is non-negative — a negative cursor would silently match no
+// sequenced rows and return only unsequenced ones. Validating here (not just at
+// the RPC boundary) keeps any future non-RPC caller honest.
 const ThreadActivitiesBeforeSequenceInput = Schema.Struct({
   threadId: ThreadId,
-  beforeSequence: Schema.Number,
-  limit: Schema.Number,
+  beforeSequence: NonNegativeInt,
+  limit: NonNegativeInt,
 });
 const ThreadActivitiesBeforeActivityInput = Schema.Struct({
   threadId: ThreadId,
   beforeCreatedAt: IsoDateTime,
   beforeActivityId: EventId,
-  limit: Schema.Number,
+  limit: NonNegativeInt,
 });
 const ProjectionProjectLookupRowSchema = ProjectionProjectDbRowSchema;
 const ProjectionThreadIdLookupRowSchema = Schema.Struct({

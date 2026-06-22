@@ -123,6 +123,10 @@
       "types": "./src/state/threads.ts",
       "default": "./src/state/threads.ts"
     },
+    "./state/thread-reducer": {
+      "types": "./src/state/threadReducer.ts",
+      "default": "./src/state/threadReducer.ts"
+    },
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"
