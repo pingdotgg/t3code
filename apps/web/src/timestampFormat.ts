@@ -40,8 +40,15 @@ function getTimestampFormatter(
   return formatter;
 }
 
+function parseTimestampDate(isoDate: string): Date | null {
+  const date = new Date(isoDate);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 export function formatTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
-  return getTimestampFormatter(timestampFormat, true).format(new Date(isoDate));
+  const date = parseTimestampDate(isoDate);
+  if (!date) return "";
+  return getTimestampFormatter(timestampFormat, true).format(date);
 }
 
 const monthNameFormatter = new Intl.DateTimeFormat(undefined, { month: "long" });
@@ -69,8 +76,8 @@ export function formatChatTimestampTooltip(
   isoDate: string,
   timestampFormat: TimestampFormat,
 ): string {
-  const date = new Date(isoDate);
-  if (Number.isNaN(date.getTime())) return "";
+  const date = parseTimestampDate(isoDate);
+  if (!date) return "";
   const time = formatShortTimestamp(isoDate, timestampFormat);
   const day = date.getDate();
   const month = monthNameFormatter.format(date);
@@ -79,7 +86,9 @@ export function formatChatTimestampTooltip(
 }
 
 export function formatShortTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
-  return getTimestampFormatter(timestampFormat, false).format(new Date(isoDate));
+  const date = parseTimestampDate(isoDate);
+  if (!date) return "";
+  return getTimestampFormatter(timestampFormat, false).format(date);
 }
 
 /**
@@ -88,7 +97,9 @@ export function formatShortTimestamp(isoDate: string, timestampFormat: Timestamp
  * so callers can style the numeric portion independently.
  */
 export function formatRelativeTime(isoDate: string): { value: string; suffix: string | null } {
-  const diffMs = Date.now() - new Date(isoDate).getTime();
+  const date = parseTimestampDate(isoDate);
+  if (!date) return { value: "", suffix: null };
+  const diffMs = Date.now() - date.getTime();
   if (diffMs < 0) return { value: "just now", suffix: null };
   const seconds = Math.floor(diffMs / 1000);
   if (seconds < 60) return { value: "just now", suffix: null };
@@ -110,7 +121,9 @@ export function formatRelativeTimeLabel(isoDate: string) {
  * Useful for labels like "Connected for 3m".
  */
 export function formatElapsedDurationLabel(isoDate: string, nowMs: number = Date.now()): string {
-  const diffMs = nowMs - new Date(isoDate).getTime();
+  const date = parseTimestampDate(isoDate);
+  if (!date) return "";
+  const diffMs = nowMs - date.getTime();
   if (diffMs <= 0) return "just now";
 
   const seconds = Math.floor(diffMs / 1000);
