@@ -116,7 +116,7 @@ import {
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
-import { cn, randomUUID } from "~/lib/utils";
+import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 
 function ComposerVideoThumbnail({ file }: { file: File }) {
@@ -255,6 +255,7 @@ import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { type SessionPhase, type Thread, videoMimeType } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
+import { resolveComposerDispatchMode, type ComposerDispatchMode } from "./composerDispatch";
 import {
   deriveLatestContextWindowSnapshot,
   formatProviderDisplayName,
@@ -443,6 +444,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
   hasSendableContent: boolean;
+  queueShortcutLabel: string;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -455,6 +457,14 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
           usage={props.activeContextWindow}
           providerDisplayName={props.activeThreadProviderDisplayName}
         />
+      ) : null}
+      {props.isPreparingWorktree ? (
+        <span className="text-secondary-label text-xs">Preparing worktree...</span>
+      ) : null}
+      {props.isRunning && props.hasSendableContent ? (
+        <span className="hidden text-[11px] text-muted-foreground/70 sm:inline">
+          <kbd className="font-mono">{props.queueShortcutLabel}</kbd> to queue
+        </span>
       ) : null}
       <ComposerPrimaryActions
         compact={props.compact}
@@ -614,7 +624,7 @@ export interface ChatComposerProps {
   scheduleStickToBottom: () => void;
 
   // Callbacks
-  onSend: (e?: { preventDefault: () => void }) => void;
+  onSend: (e?: { preventDefault: () => void }, dispatchMode?: ComposerDispatchMode) => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -1939,37 +1949,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   const submitComposer = useCallback(
-    (event?: { preventDefault: () => void }) => {
-      if (noProviderAvailable || isSendDisabled) {
-        event?.preventDefault();
-        return;
-      }
-      // A send while a pasted image is still compressing would strand that
-      // image: the turn snapshot wouldn't include it, and it would surface
-      // in the *next* draft instead. Only oversized images hit this — small
-      // files clear the pending counter within a microtask.
-      if (activeThreadId && (pendingImageCompressionsRef.current.get(activeThreadId) ?? 0) > 0) {
-        event?.preventDefault();
-        toastManager.add({
-          type: "info",
-          title: "Still compressing a pasted image.",
-          description: "Send again once its thumbnail appears.",
-        });
-        return;
-      }
-      onSend(event);
+    (event?: { preventDefault: () => void }, dispatchMode?: ComposerDispatchMode) => {
+      onSend(event, dispatchMode ?? resolveComposerDispatchMode({ phase, queueModifier: false }));
       if (shouldBlurMobileComposerOnSubmit()) {
         blurMobileComposerAfterSend();
       }
     },
-    [
-      activeThreadId,
-      blurMobileComposerAfterSend,
-      isSendDisabled,
-      noProviderAvailable,
-      onSend,
-      shouldBlurMobileComposerOnSubmit,
-    ],
+    [blurMobileComposerAfterSend, onSend, phase, shouldBlurMobileComposerOnSubmit],
   );
   const expandMobileComposer = useCallback(() => {
     if (composerBlurFrameRef.current !== null) {
@@ -2024,11 +2010,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return true;
       }
     }
-    if (
-      key === "Enter" &&
-      shouldSubmitComposerOnEnter({ isMobileViewport, shiftKey: event.shiftKey })
-    ) {
-      submitComposer();
+    if (key === "Enter" && !event.shiftKey) {
+      submitComposer(
+        undefined,
+        resolveComposerDispatchMode({
+          phase,
+          queueModifier: event.metaKey || event.ctrlKey,
+        }),
+      );
       return true;
     }
     return false;
@@ -3562,6 +3551,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   isPreparingWorktree={isPreparingWorktree}
                   hasSendableContent={composerSendState.hasSendableContent}
+                  queueShortcutLabel={isMacPlatform(navigator.platform) ? "⌘↵" : "Ctrl+Enter"}
                   preserveComposerFocusOnPointerDown={isMobileViewport}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}

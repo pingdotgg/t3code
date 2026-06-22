@@ -509,6 +509,48 @@ it.effect("ProviderSessionManagerV2 releases live sessions when its layer shuts 
   }),
 );
 
+it.effect("ProviderSessionManagerV2 closes event subscriptions normally on server shutdown", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-shutdown-subscription");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const bufferedSubscription = yield* runtime.subscribeEvents!;
+      const activeSubscription = yield* runtime.subscribeEvents!;
+      const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+      assert.isDefined(adapterQueue);
+      yield* Queue.offer(adapterQueue!, {
+        type: "provider_session.updated",
+        driver: CODEX_DRIVER,
+        providerSession: runtime.providerSession,
+      });
+      assert.isTrue(Option.isSome(yield* activeSubscription.events.pipe(Stream.runHead)));
+
+      yield* manager.shutdown;
+
+      assert.isEmpty(yield* bufferedSubscription.events.pipe(Stream.runCollect));
+    });
+
+    yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })));
+  }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 issues MCP credentials before opening and revokes them on close",
   () =>

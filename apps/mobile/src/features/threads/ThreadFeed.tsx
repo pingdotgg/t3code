@@ -48,7 +48,7 @@ import { isPdfFile } from "../../lib/filePreview";
 import { PresentationSource } from "../../components/NativePresentation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reanimated";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { useThemeColor } from "../../lib/useThemeColor";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useFontFamily } from "../../lib/useFontFamily";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
@@ -218,202 +218,6 @@ function MessageAttachmentImage(props: {
         <Image source={{ uri }} className={props.className} resizeMode="cover" />
       </Pressable>
     </PresentationSource>
-  );
-}
-
-// The attachment union has an open member (`type: string` for attachment
-// types from newer servers), so literal comparisons do not narrow it. Split
-// with guards and render unknown types as inert rows, never crash.
-function isImageAttachment(attachment: ChatAttachment): attachment is ChatImageAttachment {
-  return attachment.type === "image";
-}
-
-function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAttachment {
-  return attachment.type === "file";
-}
-
-function MessageAttachmentFile(props: {
-  readonly environmentId: EnvironmentId;
-  readonly attachment: ChatFileAttachment;
-  readonly onPressPreview: (source: FilePreviewSource) => void;
-  readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
-}) {
-  const sourceIdentifier = useId();
-  const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
-    refresh: true,
-    reportFailure: false,
-  });
-  const preparedConnection = usePreparedConnection(props.environmentId);
-  const { attachment } = props;
-  const videoType = videoMimeType(attachment);
-  const isPdf = isPdfFile(attachment);
-  const fileTypeLabel = isPdf
-    ? "PDF"
-    : (attachment.name.match(/\.([a-z0-9]{1,8})$/i)?.[1]?.toUpperCase() ?? "File");
-  const sizeLabel = formatAttachmentSize(attachment.sizeBytes);
-  const thumbnailUrl = useAssetUrl(
-    props.environmentId,
-    videoType === null
-      ? null
-      : {
-          _tag: "attachment",
-          attachmentId: attachment.id,
-          fileName: attachment.name,
-          mimeType: videoType,
-        },
-  );
-  const httpBaseUrl = Option.isSome(preparedConnection)
-    ? preparedConnection.value.httpBaseUrl
-    : null;
-  const openingRef = useRef<AbortController | null>(null);
-  const [opening, setOpening] = useState(false);
-
-  useFocusEffect(
-    useCallback(() => {
-      setOpening(false);
-      return () => {
-        openingRef.current?.abort();
-        openingRef.current = null;
-      };
-    }, [props.environmentId, attachment.id, httpBaseUrl]),
-  );
-
-  const shareFile = (sourceIdentifier?: string) => {
-    if (httpBaseUrl === null || openingRef.current) return;
-    const controller = new AbortController();
-    openingRef.current = controller;
-    setOpening(true);
-    void (async () => {
-      try {
-        const result = await createAssetUrl({
-          environmentId: props.environmentId,
-          input: {
-            resource: {
-              _tag: "attachment",
-              attachmentId: attachment.id,
-              fileName: attachment.name,
-              mimeType: attachment.mimeType,
-            },
-          },
-        });
-        if (controller.signal.aborted) return;
-        if (result._tag === "Failure") {
-          throw squashAtomCommandFailure(result);
-        }
-        const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
-        if (url === null) {
-          throw new Error("The attachment could not be opened.");
-        }
-        await downloadAndShareAttachment({
-          url,
-          attachment,
-          signal: controller.signal,
-          sourceIdentifier,
-        });
-      } catch (error) {
-        if (!controller.signal.aborted) {
-          Alert.alert(
-            "Could not open attachment",
-            error instanceof Error ? error.message : "The attachment is unavailable.",
-          );
-        }
-      } finally {
-        if (openingRef.current === controller) {
-          openingRef.current = null;
-          setOpening(false);
-        }
-      }
-    })();
-  };
-
-  if (videoType !== null) {
-    return (
-      <VideoAttachmentTile
-        name={attachment.name}
-        sourceIdentifier={`attachment:${props.environmentId}:${attachment.id}`}
-        thumbnailSource={thumbnailUrl}
-        disabled={opening || httpBaseUrl === null}
-        onPress={(sourceIdentifier) => props.onPressVideo(attachment, sourceIdentifier)}
-        onShare={() => shareFile(`attachment:${props.environmentId}:${attachment.id}`)}
-        className="my-1 rounded-2xl"
-        style={{ width: 224, maxWidth: "100%", aspectRatio: 16 / 9 }}
-      />
-    );
-  }
-
-  return (
-    <PresentationSource
-      identifier={sourceIdentifier}
-      className="my-1"
-      style={{ width: 280, maxWidth: "100%" }}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Open ${attachment.name}`}
-        accessibilityValue={{ text: `${fileTypeLabel}, ${sizeLabel}` }}
-        accessibilityState={{ disabled: opening || httpBaseUrl === null, busy: opening }}
-        disabled={opening || httpBaseUrl === null}
-        className="min-w-0 flex-row items-center gap-3 rounded-xl border border-border bg-card p-3 active:bg-subtle"
-        onPress={() =>
-          isPdf
-            ? props.onPressPreview({
-                kind: "pdf",
-                name: attachment.name,
-                environmentId: props.environmentId,
-                resource: {
-                  _tag: "attachment",
-                  attachmentId: attachment.id,
-                  fileName: attachment.name,
-                  mimeType: "application/pdf",
-                },
-                sourceIdentifier,
-              })
-            : shareFile(sourceIdentifier)
-        }
-      >
-        <View className="h-12 w-10 shrink-0 items-center justify-center rounded-lg bg-subtle">
-          {opening ? (
-            <ActivityIndicator size="small" />
-          ) : (
-            <SymbolView
-              name="doc.text"
-              size={26}
-              tintColorClassName={isPdf ? "accent-red-500" : "accent-foreground-muted"}
-              type="monochrome"
-            />
-          )}
-        </View>
-        <View className="min-w-0 flex-1 gap-1">
-          <Text className="font-t3-medium text-sm text-foreground" numberOfLines={2}>
-            {attachment.name}
-          </Text>
-          <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-            {fileTypeLabel} · {sizeLabel}
-          </Text>
-        </View>
-        <SymbolView
-          name="chevron.right"
-          size={12}
-          tintColorClassName="accent-foreground-muted"
-          type="monochrome"
-        />
-      </Pressable>
-    </PresentationSource>
-  );
-}
-
-/**
- * An attachment type this build does not know (newer server). Rendered as an
- * inert row: the name is still useful, but there is nothing to open.
- */
-function MessageAttachmentUnknown(props: { readonly name: string }) {
-  return (
-    <View className="flex-row items-center gap-2 py-1">
-      <SymbolView name="doc.text" size={16} tintColor="#a3a3a3" type="monochrome" />
-      <Text className="min-w-0 flex-1 text-sm text-foreground" numberOfLines={1}>
-        {props.name}
-      </Text>
-    </View>
   );
 }
 
@@ -755,18 +559,23 @@ function MarkdownCodeBlock(props: {
 }
 
 function useReviewCommentColors(): ReviewCommentColors {
-  const theme = useUniwindTheme();
+  const background = useThemeColor("--color-card");
+  const border = useThemeColor("--color-border");
+  const mutedBackground = useThemeColor("--color-subtle");
+  const text = useThemeColor("--color-foreground");
+  const mutedText = useThemeColor("--color-foreground-muted");
+  const codeBackground = useThemeColor("--color-md-code-bg");
 
   return useMemo(
     () => ({
-      background: theme["--color-card"],
-      border: theme["--color-border"],
-      mutedBackground: theme["--color-subtle"],
-      text: theme["--color-foreground"],
-      mutedText: theme["--color-foreground-muted"],
-      codeBackground: theme["--color-md-code-bg"],
+      background,
+      border,
+      mutedBackground,
+      text,
+      mutedText,
+      codeBackground,
     }),
-    [theme],
+    [background, border, codeBackground, mutedBackground, mutedText, text],
   );
 }
 
@@ -781,26 +590,25 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
     [appearance.baseFontSize],
   );
   const themeMode = themeAppearance;
-  const theme = useUniwindTheme();
-  const markdownBodyColor = theme["--color-md-body"];
-  const markdownStrongColor = theme["--color-md-strong"];
-  const markdownLinkColor = theme["--color-md-link"];
-  const markdownBlockquoteBg = theme["--color-md-blockquote-bg"];
-  const markdownBlockquoteBorder = theme["--color-md-blockquote-border"];
-  const markdownCodeBg = theme["--color-md-code-bg"];
-  const markdownCodeText = theme["--color-md-code-text"];
-  const markdownInlineCodeText = theme["--color-foreground-secondary"];
-  const markdownHrColor = theme["--color-md-hr"];
-  const markdownUserBodyColor = theme["--color-user-bubble-foreground"];
-  const markdownUserCodeBg = theme["--color-md-user-code-bg"];
-  const markdownUserCodeText = theme["--color-md-user-code-text"];
-  const markdownUserInlineCodeText = theme["--color-user-bubble-foreground-muted"];
-  const markdownUserFenceBg = theme["--color-md-user-fence-bg"];
-  const markdownUserFenceText = theme["--color-md-user-fence-text"];
-  const iconSubtleColor = theme["--color-icon-subtle"];
-  const inlineSkillForeground = theme["--color-inline-skill-foreground"];
-  const userBubbleSkillForeground = theme["--color-user-bubble-skill-foreground"];
-  const userBubbleForegroundMuted = theme["--color-user-bubble-foreground-muted"];
+  const markdownBodyColor = String(useThemeColor("--color-md-body"));
+  const markdownStrongColor = String(useThemeColor("--color-md-strong"));
+  const markdownLinkColor = String(useThemeColor("--color-md-link"));
+  const markdownBlockquoteBg = String(useThemeColor("--color-md-blockquote-bg"));
+  const markdownBlockquoteBorder = String(useThemeColor("--color-md-blockquote-border"));
+  const markdownCodeBg = String(useThemeColor("--color-md-code-bg"));
+  const markdownCodeText = String(useThemeColor("--color-md-code-text"));
+  const markdownInlineCodeText = String(useThemeColor("--color-foreground-secondary"));
+  const markdownHrColor = String(useThemeColor("--color-md-hr"));
+  const markdownUserBodyColor = String(useThemeColor("--color-user-bubble-foreground"));
+  const markdownUserCodeBg = String(useThemeColor("--color-md-user-code-bg"));
+  const markdownUserCodeText = String(useThemeColor("--color-md-user-code-text"));
+  const markdownUserInlineCodeText = String(useThemeColor("--color-user-bubble-foreground-muted"));
+  const markdownUserFenceBg = String(useThemeColor("--color-md-user-fence-bg"));
+  const markdownUserFenceText = String(useThemeColor("--color-md-user-fence-text"));
+  const iconSubtleColor = String(useThemeColor("--color-icon-subtle"));
+  const inlineSkillForeground = String(useThemeColor("--color-inline-skill-foreground"));
+  const userBubbleSkillForeground = String(useThemeColor("--color-user-bubble-skill-foreground"));
+  const userBubbleForegroundMuted = String(useThemeColor("--color-user-bubble-foreground-muted"));
   const regularFontFamily = useFontFamily("regular");
   const boldFontFamily = useFontFamily("bold");
 
@@ -1193,10 +1001,7 @@ function renderFeedEntry(
         accessibilityState={{ expanded: entry.expanded }}
         onPress={() => props.onToggleTurnFold(entry.runId)}
         hitSlop={4}
-        className="mb-1 min-h-11 flex-row items-center gap-2 border-b border-adaptive-neutral-200-a80-white-a8 px-2"
-        style={{
-          minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.workRowSizing.estimatedRowHeight),
-        }}
+        className="mb-3 min-h-11 flex-row items-center gap-2 border-b border-neutral-200/80 px-2 dark:border-white/[0.08]"
       >
         <Text
           key={props.workRowSizing.textSizeKey}
@@ -1209,6 +1014,7 @@ function renderFeedEntry(
           collapsedDirection="right"
           size={15}
           tintColor={iconSubtleColor}
+          type="monochrome"
         />
       </Pressable>
     );
@@ -1303,7 +1109,7 @@ function renderFeedEntry(
             })}
           </View>
           <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
-            <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
+            <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
               {timestampLabel}
             </Text>
             {message.text.trim().length > 0 ? (
@@ -1357,9 +1163,8 @@ function renderFeedEntry(
               key={attachment.id}
               environmentId={props.environmentId}
               attachmentId={attachment.id}
-              name={attachment.name}
-              className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-adaptive-neutral-200-800"
-              onPressPreview={props.onPressPreview}
+              className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-neutral-200 dark:bg-neutral-800"
+              onPressImage={props.onPressImage}
             />
           ) : isFileAttachment(attachment) ? (
             <MessageAttachmentFile
@@ -1382,7 +1187,7 @@ function renderFeedEntry(
               buttonSize={28}
               iconSize={13}
             />
-            <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
+            <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
               {timestampLabel}
             </Text>
           </View>
@@ -1425,11 +1230,11 @@ const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly st
   return (
     <View className="mb-4 flex-row items-center gap-2 px-1.5 py-1">
       <View className="flex-row items-center gap-1">
-        <View className="h-1 w-1 rounded-full bg-adaptive-neutral-400-500" />
-        <View className="h-1 w-1 rounded-full bg-adaptive-neutral-400-a80-500-a80" />
-        <View className="h-1 w-1 rounded-full bg-adaptive-neutral-400-a60-500-a60" />
+        <View className="h-1 w-1 rounded-full bg-neutral-400 dark:bg-neutral-500" />
+        <View className="h-1 w-1 rounded-full bg-neutral-400/80 dark:bg-neutral-500/80" />
+        <View className="h-1 w-1 rounded-full bg-neutral-400/60 dark:bg-neutral-500/60" />
       </View>
-      <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
+      <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
         Working for {durationLabel}
       </Text>
     </View>
@@ -1518,7 +1323,6 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
 }) {
   const { codeSurface, nativeReviewDiffStyle } = useAppearanceCodeSurface();
   const { themeAppearance: appearanceScheme, themeId } = useAppearancePreferences();
-  const appTheme = useUniwindTheme();
   const NativeReviewDiffView = resolveNativeReviewDiffView();
   const patch = useMemo(() => buildReviewCommentPatch(props.comment), [props.comment]);
   const parsedDiff = useMemo(
@@ -1531,8 +1335,8 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
     [nativeReviewDiffData.rows],
   );
   const nativeReviewDiffTheme = useMemo(
-    () => createNativeReviewDiffTheme(appearanceScheme, themeId, appTheme),
-    [appearanceScheme, appTheme, themeId],
+    () => createNativeReviewDiffTheme(appearanceScheme, themeId),
+    [appearanceScheme, themeId],
   );
   const nativeRowsJson = useMemo(() => JSON.stringify(compactNativeRows), [compactNativeRows]);
   const nativeThemeJson = useMemo(
@@ -1755,9 +1559,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     ? navigationHeaderHeight || insets.top + IOS_NAV_BAR_HEIGHT
     : topContentInset;
 
-  const theme = useUniwindTheme();
-  const iconSubtleColor = theme["--color-icon-subtle"];
-  const userBubbleColor = theme["--color-user-bubble"];
+  const iconSubtleColor = useThemeColor("--color-icon-subtle");
+  const userBubbleColor = useThemeColor("--color-user-bubble");
   const onMarkdownLinkPress = useCallback(
     (href: string) => {
       const presentation = resolveMarkdownLinkPresentation(href);

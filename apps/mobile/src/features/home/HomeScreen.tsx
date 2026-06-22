@@ -1113,7 +1113,6 @@ export function HomeScreen(props: HomeScreenProps) {
             onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
             variant="plain"
           />
-<<<<<<< HEAD
           {emptyState.loading ? (
             <View className="mt-4 items-center">
               <ActivityIndicator colorClassName={"accent-icon-muted"} />
@@ -1123,19 +1122,6 @@ export function HomeScreen(props: HomeScreenProps) {
       </View>
     );
   }
-=======
-        ) : !hasResults ? (
-          <EmptyState
-            title="No threads yet"
-            detail="Create a task to start a new coding runtime."
-          />
-        ) : (
-          projectGroups.map((group) => {
-            const isExpanded = expandedProjects.has(group.key);
-            const visibleThreads = isExpanded
-              ? group.threads
-              : group.threads.slice(0, COLLAPSED_THREAD_LIMIT);
->>>>>>> 8f521e516e (Complete orchestration V2 frontend cutover)
 
   const listHeader = Platform.OS === "ios" ? null : <HomeTopContentSpacer />;
 

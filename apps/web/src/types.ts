@@ -1,7 +1,7 @@
 import type {
   ChatFileAttachment as ContractChatFileAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
-  ChatUnknownAttachment as ContractChatUnknownAttachment,
+  OrchestrationV2UserMessageInputIntent,
   ProjectScript as ContractProjectScript,
   ProviderInteractionMode,
   RuntimeMode,
@@ -63,6 +63,7 @@ export function isFileAttachment(attachment: ChatAttachment): attachment is Chat
 
 export interface ChatMessage extends Omit<ThreadConversationMessage, "attachments"> {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  readonly inputIntent?: OrchestrationV2UserMessageInputIntent | undefined;
 }
 
 export type ProposedPlan = ThreadProposedPlan;
