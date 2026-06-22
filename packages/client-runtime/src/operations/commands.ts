@@ -1,6 +1,7 @@
 import {
   CommandId,
   ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2CheckpointUnavailableError,
   WS_METHODS,
   type ChatAttachment,
   type MessageId,
@@ -145,6 +146,29 @@ export interface RevertThreadCheckpointInput extends ThreadCommandInput {
 }
 
 export type StopThreadSessionInput = ThreadCommandInput;
+
+export interface ForkThreadFromRunInput extends CommandMetadata {
+  readonly sourceThreadId: ThreadId;
+  readonly targetThreadId: ThreadId;
+  readonly runId: RunId;
+  readonly title?: string;
+}
+
+export interface MergeThreadBackInput extends CommandMetadata {
+  readonly sourceThreadId: ThreadId;
+  readonly targetThreadId: ThreadId;
+  readonly runId: RunId;
+}
+
+export interface ReorderQueuedRunInput extends ThreadCommandInput {
+  readonly runId: RunId;
+  readonly beforeRunId: RunId | null;
+}
+
+export interface PromoteQueuedRunInput extends ThreadCommandInput {
+  readonly queuedRunId: RunId;
+  readonly targetRunId: RunId;
+}
 
 const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(function* (
   input: CommandMetadata,
@@ -330,8 +354,13 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
       });
     }
     if (input.modelSelection !== undefined) {
+      const projection = yield* getProjection(input.threadId);
+      const type =
+        projection.thread.providerInstanceId === input.modelSelection.instanceId
+          ? ("thread.model-selection.set" as const)
+          : ("provider.switch" as const);
       result = yield* dispatch({
-        type: "thread.model-selection.set",
+        type,
         commandId: result === null ? commandId : CommandId.make(`${commandId}:model-selection`),
         threadId: input.threadId,
         modelSelection: input.modelSelection,
@@ -517,8 +546,21 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
       projection.checkpoints.find(
         (candidate) => candidate.id === input.checkpointId && candidate.scopeId === input.scopeId,
       ) ??
-      projection.checkpoints.findLast((candidate) => candidate.appRunOrdinal === input.turnCount);
-    if (checkpoint === undefined) return { sequence: 0 };
+      projection.checkpoints.findLast((candidate) =>
+        input.turnCount === 0
+          ? candidate.ordinalWithinScope === 0 && candidate.appRunOrdinal === null
+          : candidate.appRunOrdinal === input.turnCount,
+      );
+    if (checkpoint === undefined || checkpoint.status !== "ready") {
+      const target =
+        input.checkpointId === undefined
+          ? `run ordinal ${input.turnCount ?? "unknown"}`
+          : `checkpoint ${input.checkpointId}`;
+      return yield* new OrchestrationV2CheckpointUnavailableError({
+        threadId: input.threadId,
+        target,
+      });
+    }
     return yield* dispatch({
       type: "checkpoint.rollback",
       commandId: yield* allocateCommandId(input),
@@ -545,4 +587,57 @@ export const stopThreadSession = Effect.fn("EnvironmentCommands.stopThreadSessio
     });
   }
   return result;
+});
+
+export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRun")(function* (
+  input: ForkThreadFromRunInput,
+) {
+  return yield* dispatch({
+    type: "thread.fork",
+    commandId: yield* allocateCommandId(input),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    sourceThreadId: input.sourceThreadId,
+    targetThreadId: input.targetThreadId,
+    sourcePoint: { type: "run", runId: input.runId },
+    ...(input.title === undefined ? {} : { title: input.title }),
+  });
+});
+
+export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(function* (
+  input: MergeThreadBackInput,
+) {
+  return yield* dispatch({
+    type: "thread.merge_back",
+    commandId: yield* allocateCommandId(input),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    sourceThreadId: input.sourceThreadId,
+    targetThreadId: input.targetThreadId,
+    sourcePoint: { type: "run", runId: input.runId },
+  });
+});
+
+export const reorderQueuedRun = Effect.fn("EnvironmentCommands.reorderQueuedRun")(function* (
+  input: ReorderQueuedRunInput,
+) {
+  return yield* dispatch({
+    type: "queued-run.reorder",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    runId: input.runId,
+    beforeRunId: input.beforeRunId,
+  });
+});
+
+export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun")(function* (
+  input: PromoteQueuedRunInput,
+) {
+  return yield* dispatch({
+    type: "queued-message.promote-to-steer",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    queuedRunId: input.queuedRunId,
+    targetRunId: input.targetRunId,
+  });
 });

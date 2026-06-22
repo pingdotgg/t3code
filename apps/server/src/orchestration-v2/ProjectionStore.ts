@@ -7,6 +7,7 @@ import type {
   OrchestrationV2ThreadShell,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
+  ProviderSessionId,
 } from "@t3tools/contracts";
 import {
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
@@ -281,6 +282,98 @@ export function applyToProjection(
         contextTransfers: upsertById(base.contextTransfers, event.payload),
       };
   }
+}
+
+/**
+ * Replay state for entities whose persisted projection is shared across thread bindings.
+ *
+ * Provider sessions are process-scoped: one session row can be bound to several app
+ * threads. Updating that row changes what every bound thread reads, even though the
+ * application event itself belongs to one thread stream. Keeping the binding index here
+ * makes in-memory replay match the normalized SQL projection without scanning every
+ * thread for every session event.
+ */
+export interface ProjectionReplayState {
+  readonly projections: Map<ThreadId, OrchestrationV2ThreadProjection>;
+  readonly providerSessionThreadIds: Map<ProviderSessionId, ReadonlySet<ThreadId>>;
+}
+
+export function makeProjectionReplayState(): ProjectionReplayState {
+  return {
+    projections: new Map(),
+    providerSessionThreadIds: new Map(),
+  };
+}
+
+export function applyToProjectionReplayState(
+  state: ProjectionReplayState,
+  event: OrchestrationV2DomainEvent,
+): boolean {
+  if (event.type === "thread.created" && !state.projections.has(event.threadId)) {
+    state.projections.set(event.threadId, emptyProjection(event));
+    return true;
+  }
+
+  const current = state.projections.get(event.threadId);
+  if (current === undefined) {
+    return false;
+  }
+
+  let next = applyToProjection(current, event);
+  if (event.type === "provider-session.updated") {
+    const boundThreadIds = state.providerSessionThreadIds.get(event.payload.id);
+    if (boundThreadIds?.has(event.threadId) !== true) {
+      // The SQL projection updates the global session row but does not implicitly
+      // create a thread binding for an update event.
+      next = { ...next, providerSessions: current.providerSessions };
+    }
+  }
+  state.projections.set(event.threadId, next);
+
+  switch (event.type) {
+    case "provider-session.attached": {
+      const boundThreadIds = new Set(state.providerSessionThreadIds.get(event.payload.id) ?? []);
+      boundThreadIds.add(event.threadId);
+      state.providerSessionThreadIds.set(event.payload.id, boundThreadIds);
+      for (const threadId of boundThreadIds) {
+        if (threadId === event.threadId) continue;
+        const projection = state.projections.get(threadId);
+        if (projection === undefined) continue;
+        state.projections.set(threadId, {
+          ...projection,
+          providerSessions: upsertById(projection.providerSessions, event.payload),
+        });
+      }
+      break;
+    }
+    case "provider-session.updated": {
+      const boundThreadIds = state.providerSessionThreadIds.get(event.payload.id) ?? [];
+      for (const threadId of boundThreadIds) {
+        if (threadId === event.threadId) continue;
+        const projection = state.projections.get(threadId);
+        if (projection === undefined) continue;
+        state.projections.set(threadId, {
+          ...projection,
+          providerSessions: upsertById(projection.providerSessions, event.payload),
+        });
+      }
+      break;
+    }
+    case "provider-session.detached": {
+      const boundThreadIds = new Set(
+        state.providerSessionThreadIds.get(event.payload.providerSessionId) ?? [],
+      );
+      boundThreadIds.delete(event.threadId);
+      if (boundThreadIds.size === 0) {
+        state.providerSessionThreadIds.delete(event.payload.providerSessionId);
+      } else {
+        state.providerSessionThreadIds.set(event.payload.providerSessionId, boundThreadIds);
+      }
+      break;
+    }
+  }
+
+  return true;
 }
 
 type PayloadRow = {
@@ -2110,29 +2203,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
   ProjectionStoreV2,
   Effect.gen(function* () {
-    const projections = yield* Ref.make(new Map<ThreadId, OrchestrationV2ThreadProjection>());
+    const replayState = yield* Ref.make(makeProjectionReplayState());
     const sequence = yield* Ref.make(0);
 
     const service: ProjectionStoreV2Shape = {
       apply: (event) =>
         Effect.gen(function* () {
-          const result = yield* Ref.modify(projections, (existing) => {
-            const next = new Map(existing);
-
-            if (event.type === "thread.created" && !next.has(event.threadId)) {
-              next.set(event.threadId, emptyProjection(event));
-              return [undefined, next] as const;
-            }
-
-            const projection = next.get(event.threadId);
-            if (!projection) {
+          const result = yield* Ref.modify(replayState, (existing) => {
+            const next: ProjectionReplayState = {
+              projections: new Map(existing.projections),
+              providerSessionThreadIds: new Map(existing.providerSessionThreadIds),
+            };
+            if (!applyToProjectionReplayState(next, event)) {
               return [
                 new ProjectionStoreThreadNotFoundError({ threadId: event.threadId }),
                 existing,
               ] as const;
             }
-
-            next.set(event.threadId, applyToProjection(projection, event));
             return [undefined, next] as const;
           });
 
@@ -2143,7 +2230,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
         }),
       getShellSnapshot: () =>
         Effect.gen(function* () {
-          const existing = yield* Ref.get(projections);
+          const existing = (yield* Ref.get(replayState)).projections;
           const shells = yield* Effect.forEach(
             [...existing.keys()].toSorted((left, right) =>
               String(left).localeCompare(String(right)),
@@ -2161,7 +2248,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
         }),
       getThreadProjection: (threadId) =>
         Effect.gen(function* () {
-          const existing = yield* Ref.get(projections);
+          const existing = (yield* Ref.get(replayState)).projections;
           const readProjection = (
             targetThreadId: ThreadId,
             seenThreadIds: ReadonlySet<ThreadId>,

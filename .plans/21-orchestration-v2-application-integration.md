@@ -486,16 +486,18 @@ Create `ProviderRuntimeRecoveryService` and run it before command readiness.
 
 It must:
 
-- reconcile provider sessions left active by a crash
-- expire or cancel orphaned runtime requests
-- reclaim pending or running outbox effects
-- resume provider threads where supported
-- retry recoverable attempts within policy
-- terminalize unrecoverable runs
-- release idle sessions
+- expose one idempotent durable reconciliation path used as a best-effort shutdown finalizer and as the authoritative startup repair
+- stop the effect worker and close/revoke live provider sessions before shutdown reconciliation
+- mark every persisted nonterminal provider session stopped without eagerly reopening provider processes on startup
+- cancel the complete provider-bound active run subtree, close streaming messages/items, return active provider threads to idle, and expire or cancel orphaned runtime requests
+- preserve a `waiting` run only when its pending/running replay-safe checkpoint-capture effect can still complete it; cancel a waiting run with no such durable effect as stale
+- cancel pending or running process-bound effects whose outcome cannot be replayed safely: provider turn start, interrupt, steer, restart, and runtime-request response
+- immediately requeue only explicitly replay-safe effects such as deterministic checkpoint capture, cleanup, detach, and checkpoint-targeted rollback
+- commit each thread's durable state repair and process-bound effect cancellation in one transaction
+- suppress normal terminal-event queue advancement while reconciliation is committing, then resume genuinely queued runs after startup recovery
 - prevent one logical effect from executing concurrently twice
 
-Recovery decisions must be driven by capabilities and runtime policy, not provider-name checks.
+Provider processes remain lazy. A later user turn, a genuinely queued turn, or an explicitly replay-safe effect may reopen a session and resume the provider-native thread then; the mere presence of persisted session or thread metadata must not spawn a process. Replay classification is effect-semantic and provider-neutral, not a provider-name check.
 
 ### 7. Portable provider fallback
 
@@ -528,6 +530,10 @@ Direct service-level integration tests must cover:
 - archive, unarchive, and delete cleanup
 - checkpoint capture, diff, and rollback
 - process restart during each durable external effect
+- graceful shutdown during an active effect
+- idempotent startup reconciliation after a partial or missing shutdown finalizer
+- no provider process spawn for idle persisted sessions
+- queued turns do not start during shutdown and resume only after startup reconciliation
 - provider-native resume
 - failed native resume followed by portable fallback
 
@@ -537,6 +543,9 @@ Direct service-level integration tests must cover:
 - Provider session transition decisions preserve current production model, mode, workspace, and instance-routing semantics.
 - External side effects are durable and idempotent.
 - Restart recovery leaves no permanently active run or request.
+- Unknown-outcome provider effects are retired rather than blindly replayed, while explicitly replay-safe effects are reclaimed.
+- Clean shutdown performs best-effort reconciliation, and startup remains correct after `SIGKILL`, a crash, or a failed finalizer.
+- Idle persisted sessions do not spawn provider processes during recovery.
 - Portable fallback can continue a thread after native resume failure.
 - No WebSocket or production client cutover has occurred yet.
 - `vp check`, `vp run typecheck`, and `vp test` pass.
@@ -871,7 +880,19 @@ Add web and mobile integration coverage for:
 
 ## Shape 4.5: V2-Native Frontend Enrichment
 
-Implementation status: in progress. Sections 1 and 2 are implemented for web; mobile cutover and the deeper supporting-state, graph, workflow, and parity-removal sections remain.
+Implementation status: in progress. The web-first pass through Sections 1, 2, 4, and 5 is implemented. Mobile remains on the Shape 4.0 presentation path; shared selector extraction and parity-facade removal are intentionally deferred until the mobile port demonstrates what is actually shared.
+
+Web-first implementation outcome:
+
+- Production web continues to render the server-authoritative `visibleTurnItems` sequence and now joins individual rows to narrowly selected V2 run, attempt, node, provider, request, checkpoint, subagent, handoff, and transfer state.
+- Expandable production inspectors expose command input/output and exit state, file changes and diff navigation, search provenance, dynamic/provider-native structured payloads, checkpoint rollback, subagent/fork navigation, provider identity, attempts, and context handoff state.
+- An environment-scoped, cycle-safe relationship graph combines shell lineage with projection subagent and context-transfer edges while retaining missing-node fallback. The web header exposes related-thread navigation plus capability-gated fork, merge-back, and provider-session detach actions.
+- Production web exposes queued-run reordering and promotion-to-steer directly from V2 run state. Cross-provider model selection dispatches `provider.switch`; same-provider model changes retain `thread.model-selection.set`.
+- Production message rows retain their original projected-item reference. User messages visibly distinguish queued, steer, and queued-then-promoted intent; completed assistant responses expose exact-run forking, including inherited source-thread provenance.
+- While a run is active, an empty composer keeps the Stop action. Entering content replaces it with Send, whose current default is explicit steering; `Mod+Enter` explicitly queues. The default action is isolated behind a small policy seam for a future user setting, without adding an action menu now.
+- Interrupt request/result, compaction, handoff, fork, and subagent lifecycle items use polished production-native dividers or compact rows. Todo updates remain ordinary work-log items because the Tasks right-panel surface owns rich task progress.
+- Shutdown now blocks new mutations, stops the effect worker, closes provider sessions and MCP capabilities, and best-effort reconciles durable state. Startup repeats that repair authoritatively, atomically cancels the complete provider-bound in-flight execution subtree plus its non-replayable effects, allows a waiting run to finish only through its durable replay-safe checkpoint capture, leaves idle provider processes closed, and resumes genuinely queued turns after repair. A development-server restart therefore leaves the interrupted thread terminal and sendable instead of failing projection startup.
+- No mobile binding or shared presentation abstraction was introduced during this pass. The existing projection reducer and command semantics remain the shared substrate.
 
 ### Goal
 
