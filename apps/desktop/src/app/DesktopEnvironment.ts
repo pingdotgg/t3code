@@ -81,7 +81,7 @@ export class DesktopEnvironment extends Context.Service<
   DesktopEnvironmentShape
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
-const APP_BASE_NAME = "T3 Code";
+const APP_BASE_NAME = "T3";
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -99,10 +99,13 @@ function resolveDesktopAppBranding(input: {
   readonly appVersion: string;
 }): DesktopAppBranding {
   const stageLabel = resolveDesktopAppStageLabel(input);
+  // `stageLabel` stays the typed enum ("Alpha") for IPC/telemetry; only the
+  // user-facing label is rebranded.
+  const displayStageLabel = stageLabel === "Alpha" ? "Logflash" : stageLabel;
   return {
     baseName: APP_BASE_NAME,
     stageLabel,
-    displayName: `${APP_BASE_NAME} (${stageLabel})`,
+    displayName: `${APP_BASE_NAME} (${displayStageLabel})`,
   };
 }
 
