@@ -95,7 +95,6 @@ describe.skip("Right panel: Browser surface + full publish-repo flow", () => {
   it("Given the panel, then a Browser surface can be opened (web RightPanelTabs)", () => {});
 });
 
-describe.skip("Settings overlay", () => {
-  it("Given the settings key, when pressed, then a settings surface opens", () => {});
-  it("Given settings, then general / providers / source-control / keybindings sections exist", () => {});
-});
+// Settings overlay: SHIPPED — the palette's "Settings" opens a read-only
+// reference (SettingsView.test) with providers + source-control state and the
+// keybindings reference (keymap.test). Editing settings stays in the web.

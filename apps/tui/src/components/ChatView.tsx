@@ -28,6 +28,7 @@ import { type Command, filterCommands } from "../commands.ts";
 import { buildFileTree, flattenFileTree } from "../fileTree.ts";
 import { CommandPalette } from "./CommandPalette.tsx";
 import { FilesView, type FilesStatus, type ViewingFile } from "./FilesView.tsx";
+import { SettingsView } from "./SettingsView.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
 import { RightPanel } from "./RightPanel.tsx";
 import { SelectOverlay, type SelectStatus } from "./SelectOverlay.tsx";
@@ -117,6 +118,9 @@ export function ChatView({
   );
   const [viewingFile, setViewingFile] = React.useState<ViewingFile | null>(null);
   const filesScrollRef = React.useRef<ScrollBoxRenderable | null>(null);
+  // The settings / reference overlay (palette → Settings).
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const settingsScrollRef = React.useRef<ScrollBoxRenderable | null>(null);
   // Model picker (^K → m): fetched lazily on open.
   // A native-<select> picker for the composer controls (model / runtime / reasoning).
   const [picker, setPicker] = React.useState<{
@@ -517,7 +521,11 @@ export function ChatView({
   // header + tab bar + frame + border(2) = frame rows + 4.
   const termRows = Math.max(2, terminalDrawerHeight - 4);
   const rightPanelVisible =
-    rightPanelOpen && width >= RIGHT_PANEL_MIN_TERMINAL_WIDTH && !diffOpen && !filesOpen;
+    rightPanelOpen &&
+    width >= RIGHT_PANEL_MIN_TERMINAL_WIDTH &&
+    !diffOpen &&
+    !filesOpen &&
+    !settingsOpen;
   const rightWidth = rightPanelVisible ? RIGHT_PANEL_WIDTH : 0;
   const chatWidth = Math.max(20, width - listWidth - rightWidth - 4);
 
@@ -975,6 +983,12 @@ export function ChatView({
         run: () => runCommand(openFiles),
       });
     }
+    list.push({
+      id: "settings",
+      title: "Settings",
+      keywords: "keybindings reference help providers",
+      run: () => runCommand(() => setSettingsOpen(true)),
+    });
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, checkpoints.length, activeTerminal, detailTabs, terminalOpen, rightPanelOpen, actionablePlan]);
@@ -991,7 +1005,9 @@ export function ChatView({
   const keyMode =
     activeTerminal && terminalFocused
       ? "terminal"
-      : filesOpen
+      : settingsOpen
+        ? "settings"
+        : filesOpen
         ? "files"
         : diffOpen
         ? "diff"
@@ -1116,6 +1132,9 @@ export function ChatView({
     onFilesBack: filesBack,
     onFilesScrollUp: () => filesScroll(-1),
     onFilesScrollDown: () => filesScroll(1),
+    onSettingsScrollUp: () => settingsScrollRef.current?.scrollBy({ x: 0, y: -SCROLL_STEP }),
+    onSettingsScrollDown: () => settingsScrollRef.current?.scrollBy({ x: 0, y: SCROLL_STEP }),
+    onSettingsClose: () => setSettingsOpen(false),
     onRevertPrev: () =>
       setRevertIndex((index) => (index <= 0 ? checkpoints.length - 1 : index - 1)),
     onRevertNext: () => setRevertIndex((index) => (index + 1) % Math.max(checkpoints.length, 1)),
@@ -1292,7 +1311,15 @@ export function ChatView({
           onSearchInput={store.setFilter}
           onFocusSearch={() => setFocus("filter")}
         />
-        {filesOpen ? (
+        {settingsOpen ? (
+          <SettingsView
+            controls={controls}
+            vcsStatus={state.vcsStatus}
+            width={chatWidth}
+            height={panesHeight}
+            scrollRef={settingsScrollRef}
+          />
+        ) : filesOpen ? (
           <FilesView
             cwdLabel={terminalCwd}
             status={filesStatus}

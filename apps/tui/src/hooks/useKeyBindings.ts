@@ -17,6 +17,7 @@ export type KeyBindingMode =
   | "terminal"
   | "command"
   | "files"
+  | "settings"
   | "confirmDelete"
   | "revert"
   | "diff"
@@ -52,6 +53,10 @@ export interface KeyBindingActions {
   readonly onFilesBack: () => void;
   readonly onFilesScrollUp: () => void;
   readonly onFilesScrollDown: () => void;
+  // Settings / reference overlay: scroll + close.
+  readonly onSettingsScrollUp: () => void;
+  readonly onSettingsScrollDown: () => void;
+  readonly onSettingsClose: () => void;
   readonly onCloseOverlay: () => void;
   // Model picker
   // Select pickers (model / runtime / reasoning): ↑/↓ move, Enter applies, Esc
@@ -169,6 +174,12 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       if (key.name === "pagedown") return actions.onFilesScrollDown();
       if (key.name === "return" || key.name === "enter") return actions.onFilesActivate();
       if (key.name === "escape") return actions.onFilesBack();
+      return;
+    }
+    if (actions.mode === "settings") {
+      if (key.name === "up" || key.name === "pageup") return actions.onSettingsScrollUp();
+      if (key.name === "down" || key.name === "pagedown") return actions.onSettingsScrollDown();
+      if (key.name === "escape") return actions.onSettingsClose();
       return;
     }
     if (actions.mode === "confirmDelete") {
