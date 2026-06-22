@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 import {
-  deriveWorkLog,
+  deriveWorkLogEntries,
   workLogIcon,
   workLogLabel,
   workLogPreview,
@@ -26,9 +26,9 @@ function activity(partial: Partial<OrchestrationThreadActivity>): OrchestrationT
   } as OrchestrationThreadActivity;
 }
 
-describe("deriveWorkLog", () => {
+describe("deriveWorkLogEntries", () => {
   it("Given a command tool activity, then it yields one entry with the command preview", () => {
-    const entries = deriveWorkLog([
+    const entries = deriveWorkLogEntries([
       activity({
         summary: "Ran command",
         payload: { itemType: "command_execution", title: "Terminal", detail: "ls -la" },
@@ -43,7 +43,7 @@ describe("deriveWorkLog", () => {
   });
 
   it("Given lifecycle updates for one toolCallId, then they collapse into a single entry", () => {
-    const entries = deriveWorkLog([
+    const entries = deriveWorkLogEntries([
       activity({
         kind: "tool.updated",
         summary: "Edit",
@@ -61,7 +61,7 @@ describe("deriveWorkLog", () => {
   });
 
   it("Given hidden lifecycle activities, then tool.started / context-window / checkpoint are dropped", () => {
-    const entries = deriveWorkLog([
+    const entries = deriveWorkLogEntries([
       activity({ kind: "tool.started", summary: "starting" }),
       activity({ kind: "context-window.updated", summary: "ctx" }),
       activity({ kind: "tool.completed", summary: "Checkpoint captured" }),
@@ -70,14 +70,14 @@ describe("deriveWorkLog", () => {
   });
 
   it("Given an ExitPlanMode tool activity, then it is treated as a plan boundary and hidden", () => {
-    const entries = deriveWorkLog([
+    const entries = deriveWorkLogEntries([
       activity({ kind: "tool.updated", summary: "Exit", payload: { detail: "ExitPlanMode: foo" } }),
     ]);
     expect(entries).toHaveLength(0);
   });
 
   it("Given a file-change activity with changed files, then the preview shows the first + count", () => {
-    const entries = deriveWorkLog([
+    const entries = deriveWorkLogEntries([
       activity({
         kind: "tool.completed",
         summary: "Edited files",
@@ -94,7 +94,7 @@ describe("deriveWorkLog", () => {
   });
 
   it("Given a thinking activity (task.progress), then its tone is thinking", () => {
-    const entries = deriveWorkLog([
+    const entries = deriveWorkLogEntries([
       activity({ kind: "task.progress", tone: "info", summary: "", payload: { summary: "Pondering" } }),
     ]);
     expect(entries[0]!.tone).toBe("thinking");
@@ -105,7 +105,7 @@ describe("deriveWorkLog", () => {
   it("Given activities out of order, then they are sorted by sequence", () => {
     const a = activity({ sequence: 5, summary: "second", payload: { itemType: "web_search" } });
     const b = activity({ sequence: 2, summary: "first", payload: { itemType: "web_search" } });
-    const entries = deriveWorkLog([a, b]);
+    const entries = deriveWorkLogEntries([a, b]);
     expect(entries.map((e) => e.label)).toEqual(["first", "second"]);
   });
 });

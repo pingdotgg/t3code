@@ -111,8 +111,6 @@ export function ChatView({
   const [newField, setNewField] = React.useState<"message" | "branch" | "worktree">("message");
   // Which pending approval ^A/^R act on; ↑/↓ move it while an approval is up.
   const [approvalIndex, setApprovalIndex] = React.useState(0);
-  // Collapse long tool-call runs in the conversation (^T toggles).
-  const [workLogExpanded, setWorkLogExpanded] = React.useState(false);
   // User-set prompt height in editor rows; null = auto-grow with content.
   const [promptHeight, setPromptHeight] = React.useState<number | null>(null);
   const [activeTerminal, setActiveTerminal] = React.useState<TerminalInfo | null>(null);
@@ -654,7 +652,6 @@ export function ChatView({
         .catch((error) => store.setStatus(`implement failed: ${String(error)}`, "error"));
       store.setStatus("Implementing plan…", "busy");
     },
-    onToggleWorkLog: () => setWorkLogExpanded((expanded) => !expanded),
     onOpenActions: () => {
       if (!detail) {
         store.setStatus("Select a thread first.");
@@ -868,7 +865,6 @@ export function ChatView({
     "^E term",
     ...(actionablePlan ? ["^Y implement"] : []),
     ...(approvals.length > 0 ? [approvals.length > 1 ? "^A/^R approve (↑/↓)" : "^A/^R approve"] : []),
-    `^T tools ${workLogExpanded ? "▾" : "▸"}`,
     "^K actions",
     "^F find",
     ...(working ? ["Esc stop"] : []),
@@ -915,7 +911,6 @@ export function ChatView({
             approvals={approvals}
             approvalIndex={activeApprovalIndex}
             projectHint={selectedProjectTitle}
-            workLogCollapsed={!workLogExpanded}
             width={chatWidth}
             height={panesHeight}
             syntaxStyle={syntaxStyle}

@@ -4,67 +4,37 @@ import type {
 } from "@t3tools/contracts";
 
 import type { OrchestrationThread } from "./connection.ts";
-import { deriveWorkLog, type WorkLogEntry } from "./worklog.ts";
+import { deriveWorkLogEntries, type WorkLogEntry } from "./worklog.ts";
 
-// Build the conversation timeline the way the web UI does: messages and the
-// derived work log (tool calls / thinking) interleaved in chronological order,
-// plus the helpers backing the changed-files summary and the working indicator.
-// All pure, so the ordering + working math are unit-tested without a renderer.
+// Build the conversation timeline the way the web UI does: messages interleaved
+// with the derived work log, where CONSECUTIVE tool calls collapse into one
+// "work" group that shows its most recent entry plus a "+N previous tool calls"
+// expander (per-group). Plus the changed-files + working-indicator helpers. All
+// pure, so the ordering is unit-tested without a renderer.
+
+/** Most-recent work-log entries shown per group before "+N previous tool calls". */
+export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 
 export type TimelineRow =
   | { readonly kind: "message"; readonly id: string; readonly message: OrchestrationMessage }
-  | { readonly kind: "tool"; readonly id: string; readonly entry: WorkLogEntry };
+  | {
+      readonly kind: "work";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly groupedEntries: ReadonlyArray<WorkLogEntry>;
+    };
 
 export type TimelineEntry =
   | TimelineRow
   | { readonly kind: "separator"; readonly id: string; readonly turnNumber: number };
 
-export type FoldedEntry =
-  | TimelineEntry
-  | { readonly kind: "folded"; readonly id: string; readonly hiddenCount: number };
-
 function rowTurnId(row: TimelineRow): string | null {
-  return row.kind === "message" ? row.message.turnId : row.entry.turnId;
-}
-
-/**
- * Collapse runs of consecutive tool rows to their last `recent`, replacing the
- * earlier ones with a single "folded" marker — progressive disclosure for long
- * turns (mirrors the web work-log's "first N + show more"). A no-op when expanded.
- */
-export function foldWorkLog(
-  entries: ReadonlyArray<TimelineEntry>,
-  options: { readonly collapsed: boolean; readonly recent: number },
-): FoldedEntry[] {
-  if (!options.collapsed) return [...entries];
-  const out: FoldedEntry[] = [];
-  let index = 0;
-  while (index < entries.length) {
-    const entry = entries[index];
-    if (!entry || entry.kind !== "tool") {
-      if (entry) out.push(entry);
-      index += 1;
-      continue;
-    }
-    let end = index;
-    while (end < entries.length && entries[end]?.kind === "tool") end += 1;
-    const run = entries.slice(index, end);
-    if (run.length > options.recent) {
-      const hiddenCount = run.length - options.recent;
-      out.push({ kind: "folded", id: `fold:${run[0]?.id ?? index}`, hiddenCount });
-      out.push(...run.slice(hiddenCount));
-    } else {
-      out.push(...run);
-    }
-    index = end;
-  }
-  return out;
+  return row.kind === "message" ? row.message.turnId : (row.groupedEntries[0]?.turnId ?? null);
 }
 
 /**
  * Insert a separator before the first row of each turn after the first, numbering
- * turns 1..N in order — so the conversation reads as distinct turns (mirrors the
- * web timeline's turn folds).
+ * turns 1..N in order — so the conversation reads as distinct turns.
  */
 export function withTurnSeparators(rows: ReadonlyArray<TimelineRow>): TimelineEntry[] {
   const out: TimelineEntry[] = [];
@@ -84,34 +54,60 @@ export function withTurnSeparators(rows: ReadonlyArray<TimelineRow>): TimelineEn
   return out;
 }
 
-interface OrderedRow {
-  readonly row: TimelineRow;
+interface OrderedItem {
+  readonly message: OrchestrationMessage | null;
+  readonly entry: WorkLogEntry | null;
   readonly createdAt: string;
 }
 
-/** Interleave messages and work-log entries by createdAt (stable: ties keep messages first). */
-export function buildTimeline(
+/**
+ * Interleave messages and work-log entries by createdAt, then group consecutive
+ * work entries into a single "work" row (mirrors the web's deriveTimelineEntries
+ * + work-group collapsing). Stable: on a timestamp tie, messages sort first.
+ */
+export function deriveTimelineEntries(
   messages: ReadonlyArray<OrchestrationMessage>,
   activities: OrchestrationThread["activities"],
 ): TimelineRow[] {
-  const ordered: OrderedRow[] = [
+  const ordered: OrderedItem[] = [
     ...messages.map(
-      (message): OrderedRow => ({
-        row: { kind: "message", id: message.id, message },
-        createdAt: message.createdAt,
-      }),
+      (message): OrderedItem => ({ message, entry: null, createdAt: message.createdAt }),
     ),
-    ...deriveWorkLog(activities).map(
-      (entry): OrderedRow => ({
-        row: { kind: "tool", id: entry.id, entry },
-        createdAt: entry.createdAt,
-      }),
+    ...deriveWorkLogEntries(activities).map(
+      (entry): OrderedItem => ({ message: null, entry, createdAt: entry.createdAt }),
     ),
   ];
-  // Array.prototype.sort is stable, so equal timestamps keep the message-before-tool
-  // insertion order above.
+  // Stable sort: equal timestamps keep messages (added first) before work entries.
   ordered.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  return ordered.map((item) => item.row);
+
+  const rows: TimelineRow[] = [];
+  let index = 0;
+  while (index < ordered.length) {
+    const item = ordered[index];
+    if (!item) {
+      index += 1;
+      continue;
+    }
+    if (item.message) {
+      rows.push({ kind: "message", id: item.message.id, message: item.message });
+      index += 1;
+      continue;
+    }
+    // Gather consecutive work entries into one group.
+    const group: WorkLogEntry[] = [];
+    let cursor = index;
+    while (cursor < ordered.length && ordered[cursor]?.entry) {
+      const entry = ordered[cursor]?.entry;
+      if (entry) group.push(entry);
+      cursor += 1;
+    }
+    const first = group[0];
+    if (first) {
+      rows.push({ kind: "work", id: first.id, createdAt: first.createdAt, groupedEntries: group });
+    }
+    index = cursor;
+  }
+  return rows;
 }
 
 // ── Working indicator ────────────────────────────────────────────────────────

@@ -7,11 +7,11 @@ import type {
 } from "@t3tools/contracts";
 import type { OrchestrationThread } from "./connection.ts";
 import {
-  buildTimeline,
   changedFilesByMessage,
+  deriveTimelineEntries,
   diffStat,
-  foldWorkLog,
   isWorking,
+  MAX_VISIBLE_WORK_LOG_ENTRIES,
   revertableCheckpoints,
   withTurnSeparators,
   workingElapsedSeconds,
@@ -32,47 +32,80 @@ const toolActivity = (id: string, createdAt: string): OrchestrationThreadActivit
     createdAt,
   }) as OrchestrationThreadActivity;
 
-describe("buildTimeline", () => {
+describe("deriveTimelineEntries", () => {
   it("Given messages and tool activities, then they interleave in chronological order", () => {
-    const rows = buildTimeline(
+    const rows = deriveTimelineEntries(
       [
         message("m1", "user", "2026-06-19T00:00:00.000Z"),
         message("m2", "assistant", "2026-06-19T00:00:02.000Z"),
       ],
       [toolActivity("a1", "2026-06-19T00:00:01.000Z")],
     );
-    expect(rows.map((r) => r.kind)).toEqual(["message", "tool", "message"]);
+    expect(rows.map((r) => r.kind)).toEqual(["message", "work", "message"]);
     expect(rows.map((r) => r.id)).toEqual(["m1", "a1", "m2"]);
   });
 
   it("Given a message and a tool at the same instant, then the message sorts first", () => {
-    const rows = buildTimeline(
+    const rows = deriveTimelineEntries(
       [message("m1", "user", "2026-06-19T00:00:00.000Z")],
       [toolActivity("a1", "2026-06-19T00:00:00.000Z")],
     );
-    expect(rows.map((r) => r.kind)).toEqual(["message", "tool"]);
+    expect(rows.map((r) => r.kind)).toEqual(["message", "work"]);
+  });
+
+  it("Given consecutive tool activities, then they group into one work row", () => {
+    const rows = deriveTimelineEntries(
+      [
+        message("m1", "user", "2026-06-19T00:00:00.000Z"),
+        message("m2", "assistant", "2026-06-19T00:00:09.000Z"),
+      ],
+      [
+        toolActivity("a1", "2026-06-19T00:00:01.000Z"),
+        toolActivity("a2", "2026-06-19T00:00:02.000Z"),
+        toolActivity("a3", "2026-06-19T00:00:03.000Z"),
+      ],
+    );
+    expect(rows.map((r) => r.kind)).toEqual(["message", "work", "message"]);
+    const work = rows.find((r) => r.kind === "work");
+    expect(work).toBeDefined();
+    if (work?.kind !== "work") throw new Error("expected work row");
+    expect(work.groupedEntries.map((e) => e.id)).toEqual(["a1", "a2", "a3"]);
+    // The row is keyed by its first entry, so it is stable as the group grows.
+    expect(work.id).toBe("a1");
+  });
+
+  it("Given a message between tool runs, then it splits them into two work groups", () => {
+    const rows = deriveTimelineEntries(
+      [message("m1", "assistant", "2026-06-19T00:00:03.000Z")],
+      [
+        toolActivity("a1", "2026-06-19T00:00:01.000Z"),
+        toolActivity("a2", "2026-06-19T00:00:02.000Z"),
+        toolActivity("a3", "2026-06-19T00:00:04.000Z"),
+      ],
+    );
+    expect(rows.map((r) => r.kind)).toEqual(["work", "message", "work"]);
   });
 });
 
 describe("withTurnSeparators", () => {
   const msgRow = (id: string, turnId: string | null) =>
     ({ kind: "message", id, message: { id, turnId } }) as never;
-  const toolRow = (id: string, turnId: string | null) =>
-    ({ kind: "tool", id, entry: { id, turnId } }) as never;
+  const workRow = (id: string, turnId: string | null) =>
+    ({ kind: "work", id, createdAt: "t", groupedEntries: [{ id, turnId }] }) as never;
 
   it("Given rows across two turns, then a numbered separator precedes the second turn", () => {
     const entries = withTurnSeparators([
       msgRow("m1", "t1"),
-      toolRow("a1", "t1"),
+      workRow("a1", "t1"),
       msgRow("m2", "t2"),
     ]);
-    expect(entries.map((e) => e.kind)).toEqual(["message", "tool", "separator", "message"]);
+    expect(entries.map((e) => e.kind)).toEqual(["message", "work", "separator", "message"]);
     const separator = entries.find((e) => e.kind === "separator");
     expect(separator).toMatchObject({ kind: "separator", turnNumber: 2 });
   });
 
   it("Given a single turn, then no separator is inserted", () => {
-    const entries = withTurnSeparators([msgRow("m1", "t1"), toolRow("a1", "t1")]);
+    const entries = withTurnSeparators([msgRow("m1", "t1"), workRow("a1", "t1")]);
     expect(entries.some((e) => e.kind === "separator")).toBe(false);
   });
 
@@ -82,34 +115,9 @@ describe("withTurnSeparators", () => {
   });
 });
 
-describe("foldWorkLog", () => {
-  const msgRow = (id: string) => ({ kind: "message", id, message: { id, turnId: "t1" } }) as never;
-  const toolRow = (id: string) => ({ kind: "tool", id, entry: { id, turnId: "t1" } }) as never;
-
-  it("Given a long tool run when collapsed, then earlier rows fold to a marker", () => {
-    const folded = foldWorkLog(
-      [msgRow("m1"), toolRow("a1"), toolRow("a2"), toolRow("a3"), toolRow("a4"), toolRow("a5")],
-      { collapsed: true, recent: 2 },
-    );
-    expect(folded.map((e) => e.kind)).toEqual(["message", "folded", "tool", "tool"]);
-    const marker = folded.find((e) => e.kind === "folded");
-    expect(marker).toMatchObject({ kind: "folded", hiddenCount: 3 });
-    expect(folded.filter((e) => e.kind === "tool").map((e) => (e as { id: string }).id)).toEqual([
-      "a4",
-      "a5",
-    ]);
-  });
-
-  it("Given a short run, then nothing folds", () => {
-    const folded = foldWorkLog([toolRow("a1"), toolRow("a2")], { collapsed: true, recent: 3 });
-    expect(folded.some((e) => e.kind === "folded")).toBe(false);
-  });
-
-  it("Given expanded, then it is a no-op", () => {
-    const rows = [toolRow("a1"), toolRow("a2"), toolRow("a3"), toolRow("a4")];
-    const folded = foldWorkLog(rows, { collapsed: false, recent: 1 });
-    expect(folded.some((e) => e.kind === "folded")).toBe(false);
-    expect(folded).toHaveLength(4);
+describe("work-group collapsing", () => {
+  it("keeps only the most recent entries visible by default", () => {
+    expect(MAX_VISIBLE_WORK_LOG_ENTRIES).toBe(1);
   });
 });
 

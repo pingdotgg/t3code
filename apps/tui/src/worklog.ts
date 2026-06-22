@@ -302,7 +302,7 @@ function isHiddenActivity(activity: OrchestrationThreadActivity): boolean {
   );
 }
 
-export function deriveWorkLog(
+export function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): WorkLogEntry[] {
   const ordered = [...activities].sort(compareByOrder);
