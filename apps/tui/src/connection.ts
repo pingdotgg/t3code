@@ -15,10 +15,14 @@ import {
   ProviderInstanceId,
   type ProviderInteractionMode,
   type RuntimeMode,
+  type GitStackedAction,
   type TerminalAttachStreamEvent,
   type ThreadId,
   ThreadId as ThreadIdSchema,
   TrimmedNonEmptyString,
+  type VcsStatusLocalResult,
+  type VcsStatusRemoteResult,
+  type VcsStatusResult,
   WS_METHODS,
 } from "@t3tools/contracts";
 import {
@@ -42,8 +46,10 @@ import {
   unarchiveThread as unarchiveThreadOp,
   updateThreadMetadata,
 } from "@t3tools/client-runtime/operations";
-import { request, rpcSessionFactoryLayer, RpcSessionFactory, subscribe } from "@t3tools/client-runtime/rpc";
+import { request, rpcSessionFactoryLayer, RpcSessionFactory, runStream, subscribe } from "@t3tools/client-runtime/rpc";
 import type { RpcSession } from "@t3tools/client-runtime/rpc";
+
+import { mergeVcsStatus } from "./gitActions.logic.ts";
 
 import {
   flattenModelOptions,
@@ -333,6 +339,18 @@ export interface TuiClient {
   readonly deleteThread: (threadId: ThreadId) => Promise<void>;
   readonly stopSession: (threadId: ThreadId) => Promise<void>;
   readonly revertCheckpoint: (threadId: ThreadId, turnCount: number) => Promise<void>;
+  /** Live git status for a worktree (folded from the snapshot/local/remote stream). */
+  readonly subscribeVcsStatus: (
+    cwd: string,
+    onStatus: (status: VcsStatusResult) => void,
+  ) => () => void;
+  /** Run a stacked git action (commit/push/create_pr/…); resolves when it finishes. */
+  readonly runGitStackedAction: (input: {
+    readonly cwd: string;
+    readonly action: GitStackedAction;
+    readonly commitMessage?: string;
+    readonly featureBranch?: boolean;
+  }) => Promise<void>;
   /** Fetch the unified diff for the turn that produced the given checkpoint. */
   readonly getTurnDiff: (threadId: ThreadId, toTurnCount: number) => Promise<string>;
   /** Fetch the cumulative diff of all changes in the thread up to `toTurnCount`. */
@@ -445,6 +463,8 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
   const latestThreads = new Map<string, OrchestrationThread>();
   let warmOrder = 0;
   let shellWarm: WarmRef<EnvironmentShellState> | null = null;
+  // Monotonic id correlating a stacked-git-action's progress stream on the server.
+  let gitActionSeq = 0;
 
   /** Close a warm thread's scope and drop its cached snapshot. */
   const evictThread = (key: string) => {
@@ -658,6 +678,52 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
     revertCheckpoint: (threadId, turnCount) =>
       runtime.runPromise(
         revertThreadCheckpoint({ threadId, turnCount: NonNegativeInt.make(turnCount) }).pipe(
+          Effect.asVoid,
+        ),
+      ),
+
+    subscribeVcsStatus: (cwd, onStatus) => {
+      // The stream delivers split local/remote results; fold them into the
+      // combined VcsStatusResult the UI + gitActions logic expect. Remote may
+      // be null (no upstream resolved yet) — fall back to "no remote" defaults.
+      let local: VcsStatusLocalResult | null = null;
+      let remote: VcsStatusRemoteResult | null = null;
+      const emit = () => {
+        const merged = mergeVcsStatus(local, remote);
+        if (merged) onStatus(merged);
+      };
+      const stream = subscribe(WS_METHODS.subscribeVcsStatus, { cwd }).pipe(
+        Stream.tap((event) =>
+          Effect.sync(() => {
+            if (event._tag === "snapshot") {
+              local = event.local;
+              remote = event.remote;
+            } else if (event._tag === "localUpdated") {
+              local = event.local;
+            } else {
+              remote = event.remote;
+            }
+            emit();
+          }),
+        ),
+      );
+      return forkUnsub(stream);
+    },
+
+    runGitStackedAction: (input) =>
+      runtime.runPromise(
+        runStream(WS_METHODS.gitRunStackedAction, {
+          actionId: `tui-action-${++gitActionSeq}`,
+          cwd: input.cwd,
+          action: input.action,
+          ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
+          ...(input.featureBranch !== undefined ? { featureBranch: input.featureBranch } : {}),
+        }).pipe(
+          // The stream ends when the action completes; an action_failed event (or a
+          // failed stream) surfaces as a rejected promise.
+          Stream.runForEach((event) =>
+            event.kind === "action_failed" ? Effect.fail(new Error(event.message)) : Effect.void,
+          ),
           Effect.asVoid,
         ),
       ),

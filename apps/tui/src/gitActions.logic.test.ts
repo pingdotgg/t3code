@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { VcsStatusResult } from "@t3tools/contracts";
-import { buildGitMenuItems, resolveGitQuickAction } from "./gitActions.logic.ts";
+import { buildGitMenuItems, mergeVcsStatus, resolveGitQuickAction } from "./gitActions.logic.ts";
 
 const status = (over: Partial<VcsStatusResult>): VcsStatusResult =>
   ({
@@ -49,6 +49,33 @@ describe("resolveGitQuickAction", () => {
   it("Given no upstream and no commits, then Push is disabled with a hint", () => {
     const action = resolveGitQuickAction(status({ hasUpstream: false, aheadCount: 0 }), false);
     expect(action).toMatchObject({ kind: "show_hint", label: "Push", disabled: true });
+  });
+});
+
+describe("mergeVcsStatus", () => {
+  const local = {
+    isRepo: true,
+    hasPrimaryRemote: true,
+    isDefaultRef: false,
+    refName: "feature/x",
+    hasWorkingTreeChanges: true,
+    workingTree: { files: [], insertions: 0, deletions: 0 },
+  } as never;
+  const remote = { hasUpstream: true, aheadCount: 3, behindCount: 1, pr: null } as never;
+
+  it("Given no local result yet, then the merged status is null", () => {
+    expect(mergeVcsStatus(null, remote)).toBeNull();
+  });
+
+  it("Given local with no remote, then it defaults remote fields to 'no upstream'", () => {
+    const merged = mergeVcsStatus(local, null);
+    expect(merged).toMatchObject({ hasUpstream: false, aheadCount: 0, behindCount: 0, pr: null });
+    expect(merged?.refName).toBe("feature/x");
+  });
+
+  it("Given local and remote, then it combines both halves", () => {
+    const merged = mergeVcsStatus(local, remote);
+    expect(merged).toMatchObject({ hasWorkingTreeChanges: true, aheadCount: 3, behindCount: 1 });
   });
 });
 

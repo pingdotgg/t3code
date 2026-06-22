@@ -1,4 +1,31 @@
-import type { GitStackedAction, VcsStatusResult } from "@t3tools/contracts";
+import type {
+  GitStackedAction,
+  VcsStatusLocalResult,
+  VcsStatusRemoteResult,
+  VcsStatusResult,
+} from "@t3tools/contracts";
+
+/**
+ * Fold the VCS-status stream's split local/remote results into the combined
+ * status the UI + action logic expect. Remote may be absent (no upstream
+ * resolved yet) — fall back to "no remote" defaults. Null until the first local.
+ */
+export function mergeVcsStatus(
+  local: VcsStatusLocalResult | null,
+  remote: VcsStatusRemoteResult | null,
+): VcsStatusResult | null {
+  if (!local) return null;
+  return {
+    ...local,
+    hasUpstream: remote?.hasUpstream ?? false,
+    aheadCount: remote?.aheadCount ?? 0,
+    behindCount: remote?.behindCount ?? 0,
+    pr: remote?.pr ?? null,
+    ...(remote?.aheadOfDefaultCount !== undefined
+      ? { aheadOfDefaultCount: remote.aheadOfDefaultCount }
+      : {}),
+  } as VcsStatusResult;
+}
 
 // Pure git quick-action + menu logic, ported from the web's
 // GitActionsControl.logic.ts (buildMenuItems / resolveQuickAction). Given a
