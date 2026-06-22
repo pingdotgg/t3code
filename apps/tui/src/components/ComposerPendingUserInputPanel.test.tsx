@@ -3,7 +3,7 @@ import * as React from "react";
 import { testRender } from "@opentui/react/test-utils";
 
 import type { PendingUserInput } from "../userInput.ts";
-import { UserInputForm } from "./UserInputForm.tsx";
+import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel.tsx";
 
 const pending: PendingUserInput = {
   requestId: "r1",
@@ -31,22 +31,22 @@ async function frameOf(node: React.ReactNode): Promise<string> {
   return frame;
 }
 
-describe("UserInputForm", () => {
+describe("ComposerPendingUserInputPanel", () => {
   it("Given a question, then it renders the prompt and its options with the cursor", async () => {
     const frame = await frameOf(
-      <UserInputForm pending={pending} questionIndex={0} optionIndex={0} selectedLabels={[]} width={60} />,
+      <ComposerPendingUserInputPanel pending={pending} questionIndex={0} optionIndex={0} selectedLabels={[]} width={60} />,
     );
     expect(frame).toContain("Database");
     expect(frame).toContain("Which database driver?");
     expect(frame).toContain("Postgres");
     expect(frame).toContain("SQLite");
     expect(frame).toContain("▸ ( ) Postgres");
-    expect(frame).toContain("Enter answer");
+    expect(frame).toContain("Enter submit");
   });
 
   it("Given a selected single-select option, then it shows the filled marker", async () => {
     const frame = await frameOf(
-      <UserInputForm
+      <ComposerPendingUserInputPanel
         pending={pending}
         questionIndex={0}
         optionIndex={1}
@@ -64,7 +64,7 @@ describe("UserInputForm", () => {
       questions: [{ ...pending.questions[0]!, multiSelect: true }],
     };
     const frame = await frameOf(
-      <UserInputForm pending={multi} questionIndex={0} optionIndex={0} selectedLabels={["Postgres"]} width={60} />,
+      <ComposerPendingUserInputPanel pending={multi} questionIndex={0} optionIndex={0} selectedLabels={["Postgres"]} width={60} />,
     );
     expect(frame).toContain("[x] Postgres");
     expect(frame).toContain("[ ] SQLite");

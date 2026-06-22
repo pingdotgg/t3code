@@ -3,7 +3,9 @@ import * as React from "react";
 
 import type { ComposerControls } from "../controls.ts";
 import { usePalette } from "../theme.ts";
-import { ControlsRow } from "./ControlsRow.tsx";
+import type { PendingUserInput } from "../userInput.ts";
+import { ComposerFooter } from "./ComposerFooter.tsx";
+import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel.tsx";
 
 // Reply key map. The textarea ALWAYS merges these over its defaults, so we can't
 // remove a default by omission — we override it. Two concerns:
@@ -103,6 +105,11 @@ export const ChatComposer = React.memo(function ChatComposer({
   composerEpoch,
   controls,
   working,
+  width,
+  pendingUserInput,
+  uiQuestionIndex,
+  uiOptionIndex,
+  uiSelectedLabels,
   onReplyInput,
   onReplySubmit,
   onDraftInput,
@@ -114,6 +121,8 @@ export const ChatComposer = React.memo(function ChatComposer({
   onOpenModel,
   onOpenReasoning,
   onStop,
+  onSend,
+  onSubmitAnswer,
 }: {
   readonly mode: "compose" | "new" | "rename" | "filter" | "commit";
   readonly reply: string;
@@ -139,6 +148,13 @@ export const ChatComposer = React.memo(function ChatComposer({
   /** Composer controls shown inside the box (compose mode only), mirroring web. */
   readonly controls: ComposerControls;
   readonly working: boolean;
+  /** Content width for the pending-question panel's wrapping. */
+  readonly width: number;
+  /** When set, a question panel renders above the input and Enter submits the answer. */
+  readonly pendingUserInput: PendingUserInput | null;
+  readonly uiQuestionIndex: number;
+  readonly uiOptionIndex: number;
+  readonly uiSelectedLabels: ReadonlyArray<string>;
   readonly onReplyInput: (value: string) => void;
   readonly onReplySubmit: () => void;
   readonly onDraftInput: (value: string) => void;
@@ -150,6 +166,8 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly onOpenModel: () => void;
   readonly onOpenReasoning: () => void;
   readonly onStop: () => void;
+  readonly onSend: () => void;
+  readonly onSubmitAnswer: () => void;
 }): React.ReactNode {
   const palette = usePalette();
   const replyRef = React.useRef<TextareaRenderable | null>(null);
@@ -258,6 +276,11 @@ export const ChatComposer = React.memo(function ChatComposer({
     );
   }
 
+  // While a question is pending the composer stays put (mirroring the web): the
+  // question panel renders above the input, the input goes static (answer via the
+  // options for now), and the footer's primary action becomes Submit answer.
+  const answering = pendingUserInput !== null;
+  const showInput = inputFocused && !answering;
   return (
     <box
       flexDirection="column"
@@ -268,37 +291,48 @@ export const ChatComposer = React.memo(function ChatComposer({
       paddingRight={1}
       flexShrink={0}
     >
+      {pendingUserInput ? (
+        <ComposerPendingUserInputPanel
+          pending={pendingUserInput}
+          questionIndex={uiQuestionIndex}
+          optionIndex={uiOptionIndex}
+          selectedLabels={uiSelectedLabels}
+          width={width}
+        />
+      ) : null}
       <box flexDirection="row" flexShrink={0}>
         <text>
           <span fg={palette.accent}>{"› "}</span>
         </text>
-        {inputFocused ? (
-        // Multiline editor: Enter sends, Shift+Enter newlines, paste inserts the
-        // full clipboard (no single-line cap). Uncontrolled — remounted via
-        // `composerEpoch` to clear after send; content mirrored out via onContentChange.
-        <textarea
-          key={`reply-${composerEpoch}`}
-          ref={replyRef}
-          focused
-          // Seeds on (re)mount only — restores the draft when the composer remounts
-          // after an overlay/terminal-focus, without fighting live edits.
-          initialValue={reply}
-          placeholder={placeholder}
-          flexGrow={1}
-          // Fixed viewport so long prompts scroll (cursor stays in view) instead of
-          // overflowing; ^↑/^↓ change this height.
-          height={Math.max(1, editorRows)}
-          wrapMode="word"
-          keyBindings={replyKeyBindings}
-          textColor={palette.text}
-          cursorColor={palette.accent}
-          placeholderColor={palette.dim}
-          onContentChange={() => onReplyInput(replyRef.current?.plainText ?? "")}
-          onSubmit={onReplySubmit}
-        />
+        {showInput ? (
+          // Multiline editor: Enter sends, Shift+Enter newlines, paste inserts the
+          // full clipboard (no single-line cap). Uncontrolled — remounted via
+          // `composerEpoch` to clear after send; content mirrored out via onContentChange.
+          <textarea
+            key={`reply-${composerEpoch}`}
+            ref={replyRef}
+            focused
+            // Seeds on (re)mount only — restores the draft when the composer remounts
+            // after an overlay/terminal-focus, without fighting live edits.
+            initialValue={reply}
+            placeholder={placeholder}
+            flexGrow={1}
+            // Fixed viewport so long prompts scroll (cursor stays in view) instead of
+            // overflowing; ^↑/^↓ change this height.
+            height={Math.max(1, editorRows)}
+            wrapMode="word"
+            keyBindings={replyKeyBindings}
+            textColor={palette.text}
+            cursorColor={palette.accent}
+            placeholderColor={palette.dim}
+            onContentChange={() => onReplyInput(replyRef.current?.plainText ?? "")}
+            onSubmit={onReplySubmit}
+          />
         ) : (
           <text>
-            {reply.length > 0 ? (
+            {answering ? (
+              <span fg={palette.dim}>pick an option above, then Enter to submit</span>
+            ) : reply.length > 0 ? (
               <span fg={palette.text}>{reply}</span>
             ) : (
               <span fg={palette.dim}>^P to type a reply</span>
@@ -306,14 +340,18 @@ export const ChatComposer = React.memo(function ChatComposer({
           </text>
         )}
       </box>
-      <ControlsRow
+      <ComposerFooter
         controls={controls}
         working={working}
+        answering={answering}
+        hasText={reply.length > 0}
         onTogglePlan={onTogglePlan}
         onOpenAccess={onOpenAccess}
         onOpenModel={onOpenModel}
         onOpenReasoning={onOpenReasoning}
         onStop={onStop}
+        onSend={onSend}
+        onSubmitAnswer={onSubmitAnswer}
       />
     </box>
   );

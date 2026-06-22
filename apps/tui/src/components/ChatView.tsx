@@ -33,7 +33,6 @@ import { RightPanel } from "./RightPanel.tsx";
 import { SelectOverlay, type SelectStatus } from "./SelectOverlay.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { ConfirmDeleteMenu, RevertMenu } from "./ThreadOverlays.tsx";
-import { UserInputForm } from "./UserInputForm.tsx";
 import { type TerminalInfo, ThreadTerminalDrawer } from "./ThreadTerminalDrawer.tsx";
 import {
   composerControls,
@@ -476,12 +475,16 @@ export function ChatView({
   const maxPromptLines = Math.max(3, Math.floor(height * 0.6));
   const autoPromptLines = Math.min(Math.max(reply.split("\n").length, 1), 8);
   const promptLines = Math.min(promptHeight ?? autoPromptLines, maxPromptLines);
+  // A pending question renders a panel inside the composer (header + question +
+  // options + hint + spacer), so the composer grows to fit it.
+  const pendingPanelHeight =
+    userInputActive && uiQuestion ? uiQuestion.options.length + 4 : 0;
   const composerHeight =
     focus === "new"
       ? 9
       : focus === "rename" || focus === "filter" || focus === "commit"
         ? 5
-        : promptLines + 4;
+        : promptLines + 4 + pendingPanelHeight;
   const defaultTerminalHeight = Math.floor(height * 0.4);
   const maxTerminalHeight = Math.max(6, height - composerHeight - 6);
   const terminalDrawerHeight = activeTerminal
@@ -557,6 +560,37 @@ export function ChatView({
       .catch((error) => store.setStatus(`send failed: ${String(error)}`, "error"));
     store.setStatus("Reply sent.", "success");
     clearReply();
+  };
+
+  // Submit the active pending question (Enter, or the composer's Submit-answer
+  // action): advance to the next question, or respond when it's the last.
+  const submitUserInput = () => {
+    if (!detail || !pendingUserInput || !uiQuestion) return;
+    // Plain Enter on a single-select question picks the highlighted option.
+    let selections = uiSelections;
+    if (!uiQuestion.multiSelect) {
+      const option = uiQuestion.options[uiOptionIndex];
+      if (option) selections = { ...uiSelections, [uiQuestion.id]: [option.label] };
+    }
+    if ((selections[uiQuestion.id]?.length ?? 0) === 0) {
+      store.setStatus("Select an option first.");
+      return;
+    }
+    const isLast = uiQuestionIndex >= pendingUserInput.questions.length - 1;
+    if (!isLast) {
+      setUiSelections(selections);
+      setUiQuestionIndex((index) => index + 1);
+      setUiOptionIndex(0);
+      return;
+    }
+    const answers = buildUserInputAnswers(pendingUserInput.questions, selections);
+    void client
+      .respondUserInput(detail.id, pendingUserInput.requestId, answers)
+      .catch((error) => store.setStatus(`answer failed: ${String(error)}`, "error"));
+    store.setStatus("Answer sent.", "success");
+    setUiSelections({});
+    setUiQuestionIndex(0);
+    setUiOptionIndex(0);
   };
 
   const submitNewThread = () => {
@@ -1110,34 +1144,7 @@ export function ChatView({
         return { ...prev, [uiQuestion.id]: [option.label] };
       });
     },
-    onUserInputConfirm: () => {
-      if (!detail || !pendingUserInput || !uiQuestion) return;
-      // Plain Enter on a single-select question picks the highlighted option.
-      let selections = uiSelections;
-      if (!uiQuestion.multiSelect) {
-        const option = uiQuestion.options[uiOptionIndex];
-        if (option) selections = { ...uiSelections, [uiQuestion.id]: [option.label] };
-      }
-      if ((selections[uiQuestion.id]?.length ?? 0) === 0) {
-        store.setStatus("Select an option first.");
-        return;
-      }
-      const isLast = uiQuestionIndex >= pendingUserInput.questions.length - 1;
-      if (!isLast) {
-        setUiSelections(selections);
-        setUiQuestionIndex((index) => index + 1);
-        setUiOptionIndex(0);
-        return;
-      }
-      const answers = buildUserInputAnswers(pendingUserInput.questions, selections);
-      void client
-        .respondUserInput(detail.id, pendingUserInput.requestId, answers)
-        .catch((error) => store.setStatus(`answer failed: ${String(error)}`, "error"));
-      store.setStatus("Answer sent.", "success");
-      setUiSelections({});
-      setUiQuestionIndex(0);
-      setUiOptionIndex(0);
-    },
+    onUserInputConfirm: submitUserInput,
     onUserInputDefer: () => setUserInputDeferred(true),
     onReopenUserInput: () => {
       if (pendingUserInput) setUserInputDeferred(false);
@@ -1369,14 +1376,6 @@ export function ChatView({
         <RevertMenu checkpoints={checkpoints} selected={Math.min(revertIndex, checkpoints.length - 1)} />
       ) : overlay === "confirmDelete" && detail ? (
         <ConfirmDeleteMenu title={detail.title} />
-      ) : keyMode === "userInput" && pendingUserInput ? (
-        <UserInputForm
-          pending={pendingUserInput}
-          questionIndex={uiQuestionIndex}
-          optionIndex={uiOptionIndex}
-          selectedLabels={uiSelectedLabels}
-          width={chatWidth}
-        />
       ) : (
         <ChatComposer
           // Search/filter now lives in the sidebar; the composer never owns it.
@@ -1396,6 +1395,11 @@ export function ChatView({
           composerEpoch={composerEpoch}
           controls={controls}
           working={working}
+          width={chatWidth}
+          pendingUserInput={userInputActive ? pendingUserInput : null}
+          uiQuestionIndex={uiQuestionIndex}
+          uiOptionIndex={uiOptionIndex}
+          uiSelectedLabels={uiSelectedLabels}
           onReplyInput={setReply}
           onReplySubmit={sendReply}
           onDraftInput={(value) => setDraft(value.replace(/\t/g, ""))}
@@ -1407,6 +1411,8 @@ export function ChatView({
           onOpenModel={openModelPicker}
           onOpenReasoning={openReasoningPicker}
           onStop={stopTurn}
+          onSend={sendReply}
+          onSubmitAnswer={submitUserInput}
         />
       )}
 

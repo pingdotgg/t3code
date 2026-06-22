@@ -4,12 +4,13 @@ import { clip } from "../format.ts";
 import { usePalette } from "../theme.ts";
 import type { PendingUserInput } from "../userInput.ts";
 
-// The pending user-input form (mirrors the web ComposerPendingUserInputPanel):
-// renders the active question, its options with selection markers, and a progress
-// hint. Purely presentational — key handling lives in useKeyBindings, the answer
-// state in ChatView.
+// The pending user-input panel (matches the web ComposerPendingUserInputPanel):
+// the active question + its options, rendered INSIDE the persistent composer
+// (above the input) so the composer's controls + Submit-answer action stay put.
+// Purely presentational — key handling lives in useKeyBindings, answer state in
+// ChatView.
 
-export const UserInputForm = React.memo(function UserInputForm({
+export const ComposerPendingUserInputPanel = React.memo(function ComposerPendingUserInputPanel({
   pending,
   questionIndex,
   optionIndex,
@@ -28,15 +29,7 @@ export const UserInputForm = React.memo(function UserInputForm({
   const multi = question.multiSelect;
   const labelRoom = Math.max(8, width - 8);
   return (
-    <box
-      flexDirection="column"
-      border
-      borderStyle="rounded"
-      borderColor={palette.accent}
-      paddingLeft={1}
-      paddingRight={1}
-      flexShrink={0}
-    >
+    <box flexDirection="column" marginBottom={1} flexShrink={0}>
       <text>
         <span fg={palette.accent}>{`${question.header}  `}</span>
         {pending.questions.length > 1 ? (
@@ -58,8 +51,8 @@ export const UserInputForm = React.memo(function UserInputForm({
       })}
       <text fg={palette.dim}>
         {multi
-          ? "↑/↓ move · Space toggle · Enter confirm · Esc defer"
-          : "↑/↓ select · Enter answer · Esc defer"}
+          ? "↑/↓ move · Space toggle · Enter submit · Esc defer"
+          : "↑/↓ select · Enter submit · Esc defer"}
       </text>
     </box>
   );

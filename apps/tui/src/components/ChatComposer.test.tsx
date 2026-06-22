@@ -30,6 +30,11 @@ const base = {
     reasoning: "high",
   },
   working: false,
+  width: 56,
+  pendingUserInput: null,
+  uiQuestionIndex: 0,
+  uiOptionIndex: 0,
+  uiSelectedLabels: [],
   onReplyInput: noop,
   onReplySubmit: noop,
   onDraftInput: noop,
@@ -41,6 +46,8 @@ const base = {
   onOpenModel: noop,
   onOpenReasoning: noop,
   onStop: noop,
+  onSend: noop,
+  onSubmitAnswer: noop,
 } as const;
 
 async function frameOf(node: React.ReactNode): Promise<string> {
