@@ -1,3 +1,7 @@
+// @effect-diagnostics globalDateInEffect:off -- the CPR-gate grace window
+// (lastCursorQueryRelayedAt) is wall-clock session state shared between the
+// sync PTY drain and the write path; threading Clock through both is a
+// follow-up.
 /**
  * TerminalManager - Terminal session orchestration service interface.
  *
@@ -192,6 +196,14 @@ interface TerminalSubprocessInspectResult {
   readonly hasRunningSubprocess: boolean;
   readonly childCommand: string | null;
   readonly processIds: ReadonlyArray<number>;
+  /**
+   * Whether the shell itself owns the PTY's foreground process group
+   * (`tpgid === pgid` of the terminal process) — i.e. the terminal is at an
+   * interactive prompt, even if background jobs (`… &`) exist. `undefined`
+   * when the platform/inspector can't tell (Windows, custom fixtures); the
+   * caller then falls back to `!hasRunningSubprocess`.
+   */
+  readonly shellForeground?: boolean;
 }
 
 interface TerminalSubprocessInspector {
@@ -251,6 +263,21 @@ export interface TerminalSessionState {
   unsubscribeData: (() => void) | null;
   unsubscribeExit: (() => void) | null;
   hasRunningSubprocess: boolean;
+  /**
+   * Whether the shell owns the PTY's foreground process group (idle prompt,
+   * possibly with background jobs). Drives the input reply-strip: strip only
+   * while true — a foreground job (vim, a CPR-based UI) is reading the replies
+   * to its own queries. Defaults true at spawn; refreshed by the subprocess
+   * poll (`tpgid === pgid`), falling back to `!hasRunningSubprocess` when the
+   * platform can't tell.
+   */
+  shellForeground: boolean;
+  /**
+   * When a cursor-position query (`CSI 6 n`) was last relayed in the live
+   * stream (epoch ms; 0 = never). Arms the query-gated CPR strip in `write`
+   * for {@link CURSOR_QUERY_REPLY_GRACE_MS}.
+   */
+  lastCursorQueryRelayedAt: number;
   /** Normalized child command name when `hasRunningSubprocess`; cleared when idle. */
   childCommandLabel: string | null;
   runtimeEnv: Record<string, string> | null;
@@ -703,6 +730,32 @@ const posixInspectSubprocess = Effect.fn("terminal.posixInspectSubprocess")(func
   ProcessRunner.ProcessRunner
 > {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+
+  // Foreground-ownership probe: the PTY's foreground process group (`tpgid`)
+  // equals the shell's own group (`pgid`) exactly when the shell is at an
+  // interactive prompt — background jobs (`… &`) keep tpgid on the shell while
+  // a foreground vim/fzf moves it to the job's group. `undefined` when `ps`
+  // fails or the fields don't parse (callers fall back to the child check).
+  let shellForeground: boolean | undefined;
+  const tpgidResult = yield* Effect.exit(
+    processRunner.run({
+      command: "ps",
+      args: ["-p", String(terminalPid), "-o", "tpgid=,pgid="],
+      timeout: "1 second",
+      maxOutputBytes: 8_192,
+      outputMode: "truncate",
+      timeoutBehavior: "timedOutResult",
+    }),
+  );
+  if (tpgidResult._tag === "Success" && tpgidResult.value.code === 0) {
+    const [tpgidRaw, pgidRaw] = tpgidResult.value.stdout.trim().split(/\s+/g);
+    const tpgid = Number(tpgidRaw);
+    const pgid = Number(pgidRaw);
+    if (Number.isInteger(tpgid) && Number.isInteger(pgid) && tpgid > 0 && pgid > 0) {
+      shellForeground = tpgid === pgid;
+    }
+  }
+
   const runPgrep = processRunner
     .run({
       command: "pgrep",
@@ -750,14 +803,24 @@ const posixInspectSubprocess = Effect.fn("terminal.posixInspectSubprocess")(func
     if (pgrepResult.value.code === 0) {
       childPid = parseFirstChildPidFromPgrep(pgrepResult.value.stdout);
     } else if (pgrepResult.value.code === 1) {
-      return { hasRunningSubprocess: false, childCommand: null, processIds: [] };
+      return {
+      hasRunningSubprocess: false,
+      childCommand: null,
+      processIds: [],
+      ...(shellForeground !== undefined ? { shellForeground } : {}),
+    };
     }
   }
 
   if (childPid === null) {
     const psResult = yield* Effect.exit(runPs);
     if (psResult._tag === "Failure" || psResult.value.code !== 0) {
-      return { hasRunningSubprocess: false, childCommand: null, processIds: [] };
+      return {
+      hasRunningSubprocess: false,
+      childCommand: null,
+      processIds: [],
+      ...(shellForeground !== undefined ? { shellForeground } : {}),
+    };
     }
     for (const line of psResult.value.stdout.split(/\r?\n/g)) {
       const [pidRaw, ppidRaw] = line.trim().split(/\s+/g);
@@ -772,7 +835,12 @@ const posixInspectSubprocess = Effect.fn("terminal.posixInspectSubprocess")(func
   }
 
   if (childPid === null) {
-    return { hasRunningSubprocess: false, childCommand: null, processIds: [] };
+    return {
+      hasRunningSubprocess: false,
+      childCommand: null,
+      processIds: [],
+      ...(shellForeground !== undefined ? { shellForeground } : {}),
+    };
   }
 
   const runComm = processRunner.run({
@@ -837,6 +905,7 @@ const posixInspectSubprocess = Effect.fn("terminal.posixInspectSubprocess")(func
     hasRunningSubprocess: true,
     childCommand: normalized ? truncateTerminalWireLabel(normalized) : null,
     processIds: [...processIds],
+    ...(shellForeground !== undefined ? { shellForeground } : {}),
   };
 });
 
@@ -852,37 +921,300 @@ function defaultSubprocessInspectorForPlatform(platform: NodeJS.Platform) {
   });
 }
 
-function capHistory(history: string, maxLines: number): string {
+/**
+ * Upper bound on retained scrollback CHARACTERS, complementing the line limit.
+ *
+ * The line cap alone cannot bound a full-screen program: synchronized-output
+ * redraw frames (cursor addressing + `CSI K` clears, no newlines) make a
+ * single "line" arbitrarily large — observed 21 MB of history at only 4,999
+ * lines from a TUI repainting on a spinner tick. That bloats server memory
+ * (`session.history`), the persisted log, and the reattach snapshot shipped
+ * to clients. 2 MiB comfortably holds 5,000 lines of ordinary shell output.
+ */
+const DEFAULT_HISTORY_CHAR_LIMIT = 2 * 1024 * 1024;
+
+function capHistory(history: string, maxLines: number, maxChars: number): string {
   if (history.length === 0) return history;
   const hasTrailingNewline = history.endsWith("\n");
   const lines = history.split("\n");
   if (hasTrailingNewline) {
     lines.pop();
   }
-  if (lines.length <= maxLines) return history;
-  const capped = lines.slice(lines.length - maxLines).join("\n");
-  return hasTrailingNewline ? `${capped}\n` : capped;
+  let capped = history;
+  if (lines.length > maxLines) {
+    const joined = lines.slice(lines.length - maxLines).join("\n");
+    capped = hasTrailingNewline ? `${joined}\n` : joined;
+  }
+  if (capped.length > maxChars) {
+    // Cut from the head at the friendliest boundary inside the excess: the
+    // next line start if one exists, else the next escape introducer (a
+    // frame-ish boundary in redraw streams), else a hard cut. A torn leading
+    // sequence degrades exactly like the line cap tearing SGR state does.
+    const cut = capped.length - maxChars;
+    const newline = capped.indexOf("\n", cut);
+    if (newline !== -1 && newline < cut + 64 * 1024) {
+      capped = capped.slice(newline + 1);
+    } else {
+      const escape = capped.indexOf("\u001b", cut);
+      capped = capped.slice(escape !== -1 && escape < cut + 64 * 1024 ? escape : cut);
+    }
+  }
+  return capped;
 }
 
 function isCsiFinalByte(codePoint: number): boolean {
   return codePoint >= 0x40 && codePoint <= 0x7e;
 }
 
-function shouldStripCsiSequence(body: string, finalByte: string): boolean {
-  if (finalByte === "n") {
-    return true;
-  }
-  if (finalByte === "R" && /^[0-9;?]*$/.test(body)) {
-    return true;
-  }
-  if (finalByte === "c" && /^[>0-9;?]*$/.test(body)) {
-    return true;
-  }
+// ─── Canonical terminal capability-sequence grammar ─────────────────────────
+//
+// Single source of truth for every capability sequence the sanitizer knows.
+// ALL matching layers derive from this table — the framed strip rules for the
+// scrollback and live views, the client-input reply filter, and the flattened
+// residue patterns — so a sequence type added here is wired into every layer
+// at once and the layers cannot drift out of sync (the recurring review
+// finding class: "handled in layer X but missed in layer Y").
+//
+// Semantics per entry:
+//   response (terminal→host): spurious echo in output — stripped from history
+//     AND live when `stripFromOutput` (OSC 4 rgb is the exception: in output
+//     that shape is the legitimate set-palette command); stripped from client
+//     input via `input` (the emulator auto-reply that feeds the idle-prompt
+//     echo loop; null relays it).
+//   query (host→terminal): stripped from scrollback (a replay would re-trigger
+//     the emulator's answer) but relayed live so the client answers it.
+//   flattened: the reply's parameters echoed as visible text once the shell
+//     flattened away the introducer; stripped in runs, and alone only when
+//     `loneStrippable` (unambiguous shapes).
+//
+// `samples` hold concrete bodies for the cross-layer invariant tests: every
+// layer is exercised against every sample in 7-bit and 8-bit framings, so a
+// half-wired entry fails the suite instead of shipping.
+export interface TerminalSequenceDescriptor {
+  readonly name: string;
+  readonly kind: "csi" | "osc" | "dcs";
+  readonly response?: {
+    /** Framed body (CSI: full body incl. final byte; OSC/DCS: content prefix). */
+    readonly body: string;
+    readonly stripFromOutput: boolean;
+    /** Input-filter body (null = relayed in input). */
+    readonly input: string | null;
+    /**
+     * Only strip this reply from input while a matching query was recently
+     * relayed in the live stream. Needed when the reply's byte shape collides
+     * with real keyboard input (CPR `CSI 1;2R` == xterm's modified F3): the
+     * keystroke passes at a quiet prompt, while the query-driven echo flood is
+     * still broken because the querying prompt re-arms the gate every redraw.
+     */
+    readonly inputRequiresRecentQuery?: boolean;
+    readonly samples: ReadonlyArray<string>;
+  };
+  readonly query?: {
+    readonly body: string;
+    readonly samples: ReadonlyArray<string>;
+  };
+  readonly flattened?: {
+    readonly source: string;
+    readonly loneStrippable: boolean;
+    readonly samples: ReadonlyArray<string>;
+  };
+}
+
+export const TERMINAL_SEQUENCE_GRAMMAR: ReadonlyArray<TerminalSequenceDescriptor> = [
+  {
+    name: "DECRPM mode report / DECRQM query",
+    kind: "csi",
+    response: {
+      body: "[?0-9;]*\\$y",
+      stripFromOutput: true,
+      input: "\\?[0-9;]*\\$y",
+      samples: ["?2026;2$y", "?69;0$y"],
+    },
+    query: { body: "[?0-9;]*\\$p", samples: ["?2026$p"] },
+    flattened: {
+      source: "[0-9]+;[0-9]+\\$y",
+      loneStrippable: true,
+      samples: ["2026;2$y", "69;0$y"],
+    },
+  },
+  {
+    name: "device attributes (primary/secondary DA)",
+    kind: "csi",
+    response: {
+      // Responses carry parameters; the bare `CSI c` / `CSI ? c` / `CSI > c`
+      // query forms deliberately do NOT match (covered by `query` below).
+      body: "(?:\\?[0-9;]+|>[0-9]+;[0-9;]+)c",
+      stripFromOutput: true,
+      input: "[?>][0-9;]+c",
+      samples: ["?1;2c", ">0;276;0c"],
+    },
+    query: { body: "[>0-9;?]*c", samples: ["c", ">c", "?c"] },
+    flattened: {
+      // Two or three params, the `>` sometimes preserved by the echo. Run-only:
+      // a lone "1;2c" is indistinguishable from ordinary text.
+      source: ">?[0-9]+;[0-9]+(?:;[0-9]+)?c",
+      loneStrippable: false,
+      samples: ["1;2c", ">0;276;0c", "0;276;0c"],
+    },
+  },
+  {
+    name: "device status report (DSR)",
+    kind: "csi",
+    response: {
+      body: "\\??[03]n",
+      stripFromOutput: true,
+      input: "\\??[03]n",
+      samples: ["0n", "3n", "?0n"],
+    },
+    // Any other `n`-final CSI (`CSI 5 n`, `CSI 6 n`, DEC forms) is a query —
+    // `[^]*` keeps scrollback stripping every n-final CSI, as it always has.
+    query: { body: "[^]*n", samples: ["5n", "6n"] },
+  },
+  {
+    name: "cursor position report (CPR / DECXCPR)",
+    kind: "csi",
+    response: {
+      body: "[0-9;?]*R",
+      stripFromOutput: true,
+      // Input requires the two-parameter reply shape so a bare `CSI R` or
+      // anything keystroke-like is never eaten — and is additionally gated on a
+      // recently-relayed `CSI 6 n` query, because `CSI 1;<mod>R` is also
+      // xterm's encoding for modified F3.
+      input: "\\??[0-9]*;[0-9]+R",
+      inputRequiresRecentQuery: true,
+      samples: ["1;1R", "?5;10R", ";1R"],
+    },
+    flattened: {
+      // The `;1RR` prompt-flood shape; the echoed "R" can double. Run-only.
+      source: "[0-9]*;[0-9]+R+",
+      loneStrippable: false,
+      samples: [";1RR", "1;1R"],
+    },
+  },
+  {
+    name: "OSC 10/11/12 colour",
+    kind: "osc",
+    response: {
+      // In OUTPUT `OSC 1[012];rgb:` is the legitimate set-default-colour
+      // command (themes) — like OSC 4, never stripped there; the reply shape
+      // only travels as client input, where it is dropped. A framed reply
+      // replayed from an old log re-applies the colour the terminal already
+      // has (a no-op set), never re-triggering the echo loop.
+      body: "(?:10|11|12);rgb:",
+      stripFromOutput: false,
+      input: "1[012];rgb:[0-9a-fA-F/]*",
+      samples: ["11;rgb:1616/1616/1616", "10;rgb:ffff/ffff/ffff"],
+    },
+    query: { body: "(?:10|11|12);\\?", samples: ["11;?"] },
+    flattened: {
+      // Pinned to the real OSC numbers (never an unbounded `(?:[0-9]+;)+` run —
+      // that both over-matched ordinary "<n>;rgb:…" text and was a ReDoS). The
+      // lookbehind skips a colour run still inside an intact OSC frame the
+      // escape walk chose to keep.
+      source: "(?<!\\x1b\\]|\\x9d)1[012];rgb:[0-9a-fA-F/]+",
+      loneStrippable: true,
+      samples: ["11;rgb:1616/1616/1616"],
+    },
+  },
+  {
+    name: "OSC 4 palette colour",
+    kind: "osc",
+    response: {
+      // In OUTPUT `OSC 4;<idx>;rgb:` is the legitimate set-palette command
+      // (themes) — never stripped there. The reply shape only travels as
+      // client input, where it is dropped.
+      body: "4;[0-9]+;rgb:",
+      stripFromOutput: false,
+      input: "4;[0-9]+;rgb:[0-9a-fA-F/]*",
+      samples: ["4;1;rgb:1616/1616/1616"],
+    },
+    query: { body: "4;[0-9]+;\\?", samples: ["4;1;?"] },
+    flattened: {
+      // Same framed-lookbehind guard as OSC 10/11/12: a kept framed OSC 4
+      // set-palette command must not have its inner payload deleted.
+      source: "(?<!\\x1b\\]|\\x9d)4;[0-9]+;rgb:[0-9a-fA-F/]+",
+      loneStrippable: true,
+      samples: ["4;0;rgb:1818/1e1e/2626"],
+    },
+  },
+  {
+    name: "DECRPSS / DECRQSS status strings",
+    kind: "dcs",
+    response: {
+      body: "[01]?\\$r",
+      stripFromOutput: true,
+      input: "[01]?\\$r[^\\x1b\\x07\\x9c]*",
+      samples: ["1$r0m"],
+    },
+    query: { body: "\\$q", samples: ["$qm"] },
+    flattened: {
+      // Length-bounded payload: unbounded `[0-9;]*` both ate following number
+      // runs of legitimate text and was a backtracking hazard.
+      source: "[01]\\$r[0-9;]{0,8}[a-zA-Z]",
+      loneStrippable: true,
+      samples: ["1$r0m"],
+    },
+  },
+];
+
+// One composed matcher per (kind × class), derived once at module load. CSI
+// bodies (incl. final byte) must match fully; OSC/DCS bodies are content
+// prefixes, mirroring how the walk hands them over.
+function composeFramedMatcher(
+  kind: TerminalSequenceDescriptor["kind"],
+  sources: ReadonlyArray<string>,
+): RegExp | null {
+  if (sources.length === 0) return null;
+  const alternation = sources.map((source) => `(?:${source})`).join("|");
+  return kind === "csi" ? new RegExp(`^(?:${alternation})$`) : new RegExp(`^(?:${alternation})`);
+}
+
+function framedMatchers(kind: TerminalSequenceDescriptor["kind"]) {
+  const entries = TERMINAL_SEQUENCE_GRAMMAR.filter((descriptor) => descriptor.kind === kind);
+  return {
+    response: composeFramedMatcher(
+      kind,
+      entries.flatMap((d) => (d.response?.stripFromOutput ? [d.response.body] : [])),
+    ),
+    query: composeFramedMatcher(
+      kind,
+      entries.flatMap((d) => (d.query ? [d.query.body] : [])),
+    ),
+  };
+}
+
+const CSI_MATCHERS = framedMatchers("csi");
+const OSC_MATCHERS = framedMatchers("osc");
+const DCS_MATCHERS = framedMatchers("dcs");
+
+/**
+ * Whether a CSI sequence should be dropped from the sanitized terminal stream.
+ * `responsesOnly` (the live view) strips only terminal→host responses; the
+ * default (scrollback) also strips host→terminal queries so a replay can't
+ * re-trigger one. Derived from {@link TERMINAL_SEQUENCE_GRAMMAR}.
+ */
+function shouldStripCsiSequence(body: string, finalByte: string, responsesOnly = false): boolean {
+  const full = `${body}${finalByte}`;
+  if (CSI_MATCHERS.response?.test(full)) return true;
+  if (!responsesOnly && CSI_MATCHERS.query?.test(full)) return true;
   return false;
 }
 
-function shouldStripOscSequence(content: string): boolean {
-  return /^(10|11|12);(?:\?|rgb:)/.test(content);
+/** OSC counterpart of {@link shouldStripCsiSequence} (tests content, not body+final). */
+function shouldStripOscSequence(content: string, responsesOnly = false): boolean {
+  if (OSC_MATCHERS.response?.test(content)) return true;
+  if (!responsesOnly && OSC_MATCHERS.query?.test(content)) return true;
+  return false;
+}
+
+/**
+ * DCS counterpart. Only the `$`-intermediate capability-negotiation forms are
+ * classified; other DCS (sixel, DECUDK, tmux passthrough) is left untouched.
+ */
+function shouldStripDcsSequence(content: string, responsesOnly = false): boolean {
+  if (DCS_MATCHERS.response?.test(content)) return true;
+  if (!responsesOnly && DCS_MATCHERS.query?.test(content)) return true;
+  return false;
 }
 
 function stripStringTerminator(value: string): string {
@@ -928,17 +1260,199 @@ function findEscapeSequenceEndIndex(input: string, start: number): number | null
   return isEscapeFinalByte(input.charCodeAt(cursor)) ? cursor + 1 : start + 1;
 }
 
-function sanitizeTerminalHistoryChunk(
-  pendingControlSequence: string,
+// Flattened-residue patterns, derived from the grammar. RUN strips 2+
+// fragments in sequence; TOKEN additionally strips the unambiguous shapes even
+// in isolation. Fragments in an echoed run are adjacent or separated by BEL/CR/
+// a flattened DSR "n" tail — never by a space (verified against the captured
+// logs): a space is ordinary text, and including it would let a run bridge
+// across real words and delete an ambiguous lone token next to a genuine one
+// ("see 1;2c 2026;2$y").
+const FLATTENED_SOURCES = TERMINAL_SEQUENCE_GRAMMAR.flatMap((descriptor) =>
+  descriptor.flattened ? [descriptor.flattened] : [],
+);
+const FLATTENED_FRAGMENT = `(?:${FLATTENED_SOURCES.map((f) => `(?:${f.source})`).join("|")})`;
+const FLATTENED_REPLY_RUN = new RegExp(
+  `${FLATTENED_FRAGMENT}(?:[\\x07\\rn]{0,8}${FLATTENED_FRAGMENT})+`,
+  "g",
+);
+const FLATTENED_REPLY_TOKEN = new RegExp(
+  `(?:${FLATTENED_SOURCES.filter((f) => f.loneStrippable)
+    .map((f) => `(?:${f.source})`)
+    .join("|")})`,
+  "g",
+);
+/**
+ * Drop the flattened terminal-reply residue a shell echoes at the prompt.
+ *
+ * When a capability reply lands at an idle prompt the shell echoes its
+ * *flattened* parameters as visible text (the ESC introducer is already gone, so
+ * the escape-aware strip can't see it). Two passes: drop a run of 2+ flattened
+ * fragments (DSR "n"/BEL/CR may separate them), then drop the unambiguous
+ * OSC-colour / DECRPM / DECRPSS tokens even when isolated. Ambiguous lone
+ * "<m>;<v>c" / "n" forms and ordinary words (e.g. "running", "1;2c") are kept.
+ */
+function stripFlattenedModeReplyResidue(text: string): string {
+  // Every fragment contains either ";" (DECRPM/DA/OSC) or "$r" (DECRPSS), so text
+  // with neither can't hold residue — skip the regexes.
+  if (!text.includes(";") && !text.includes("$r")) {
+    return text;
+  }
+  return text.replace(FLATTENED_REPLY_RUN, "").replace(FLATTENED_REPLY_TOKEN, "");
+}
+
+// Matches the terminal→host response sequences the browser emulator
+// auto-generates in answer to a program's capability queries: DECRPM "$y",
+// device-attributes "c", device-status "0n"/"3n", cursor-position report
+// "<row>;<col>R" (CPR), OSC 10/11/12 + OSC 4 palette colour, and DECRPSS "$r".
+// Each introducer accepts both the 7-bit ESC form and the 8-bit C1 byte (CSI
+// 0x9b, OSC 0x9d, DCS 0x90), and each terminator the BEL, ESC\, or 8-bit ST
+// (0x9c) — matching the output sanitizer so a C1-encoded reply can't slip past.
+//
+// CPR (`CSI <row>;<col> R`) IS stripped: like the other capability replies it is
+// an emulator auto-answer (to `CSI 6 n`), and a prompt that re-queries on redraw
+// makes the echoed reply the worst runaway-flood source (issue: a prompt's
+// `;1RR` flood). The `;`-separated two-parameter form is required, so it never
+// matches a single keystroke or a bare `CSI R`. The bare DSR query forms are
+// kept — the DA alternation requires a parameter so `CSI ? c` / `CSI > c` and
+// `CSI 6 n` queries pass through.
+//
+// Focus in/out (CSI I / CSI O) are NOT stripped: a program that enabled focus
+// reporting (DECSET ?1004 — vim, tmux) legitimately expects them, and they are
+// user-action-driven so they never feed the runaway redraw-requery loop the
+// capability responses do.
+const INPUT_CSI = "(?:\\x1b\\[|\\x9b)";
+const INPUT_OSC = "(?:\\x1b\\]|\\x9d)";
+const INPUT_DCS = "(?:\\x1bP|\\x90)";
+const INPUT_ST = "(?:\\x07|\\x1b\\\\|\\x9c)";
+function composeInputMatcher(gated: boolean): RegExp | null {
+  const sources = TERMINAL_SEQUENCE_GRAMMAR.flatMap((descriptor) => {
+    const response = descriptor.response;
+    if (!response?.input) return [];
+    if ((response.inputRequiresRecentQuery ?? false) !== gated) return [];
+    switch (descriptor.kind) {
+      case "csi":
+        return [`${INPUT_CSI}(?:${response.input})`];
+      case "osc":
+        return [`${INPUT_OSC}(?:${response.input})${INPUT_ST}`];
+      case "dcs":
+        return [`${INPUT_DCS}(?:${response.input})${INPUT_ST}`];
+    }
+  });
+  return sources.length === 0 ? null : new RegExp(sources.join("|"), "g");
+}
+
+const INPUT_TERMINAL_RESPONSE = composeInputMatcher(false);
+const INPUT_QUERY_GATED_RESPONSE = composeInputMatcher(true);
+// A relayed cursor-position query in the LIVE stream (`CSI 6 n` / `CSI ? 6 n`,
+// 7-bit or 8-bit) — arms the query-gated input strip for a grace window.
+const RELAYED_CURSOR_QUERY = new RegExp(`${INPUT_CSI}\\??6n`);
+/**
+ * How long after relaying a cursor-position query the CPR reply strip stays
+ * armed. A prompt that re-queries on every redraw (the flood scenario)
+ * constantly re-arms it; a quiet prompt lets modified-F3 keystrokes through.
+ */
+export const CURSOR_QUERY_REPLY_GRACE_MS = 5_000;
+/**
+ * Strip the browser emulator's auto-generated terminal responses from client
+ * input before it reaches the PTY.
+ *
+ * The emulator answers the program's capability queries (DECRPM, device
+ * attributes, device status, cursor position, OSC colour) and emits focus
+ * events, sending them all as input. At an idle prompt the shell has no reader
+ * for them, so it echoes them — and a prompt that re-queries on redraw turns
+ * that into a runaway feedback loop. A user never types these, so dropping them
+ * at the source breaks the loop. The cursor-position report (CPR) is the most
+ * aggressive offender (a prompt's `;1RR` flood), so its two-parameter
+ * `CSI <row>;<col> R` reply is stripped too; only the bare query forms
+ * (`CSI 6 n`, `CSI ? c`) are kept.
+ *
+ * The write path only applies this while NO foreground subprocess is running
+ * (the idle-prompt scenario above): a running program (vim, a CPR-based UI) is
+ * presumed to be reading the replies to its own queries, and stripping them
+ * would stall its capability negotiation. Exported for unit testing.
+ */
+export function stripTerminalResponsesFromInput(
   data: string,
-): { visibleText: string; pendingControlSequence: string } {
-  const input = `${pendingControlSequence}${data}`;
-  let visibleText = "";
+  options: {
+    /**
+     * Include the query-gated reply shapes (CPR). Defaults true (the full
+     * strip); the write path passes whether a cursor query was recently
+     * relayed, so an idle prompt with no outstanding query lets the
+     * byte-identical modified-F3 keystrokes through.
+     */
+    readonly includeQueryGated?: boolean;
+  } = {},
+): string {
+  // Skip the regexes unless the data carries a 7-bit ESC or one of the 8-bit C1
+  // introducers (CSI 0x9b, OSC 0x9d, DCS 0x90) a response could start with.
+  const hasIntroducer =
+    data.includes("\x1b") ||
+    data.includes("\x9b") ||
+    data.includes("\x9d") ||
+    data.includes("\x90");
+  if (!hasIntroducer) return data;
+  let stripped = INPUT_TERMINAL_RESPONSE ? data.replace(INPUT_TERMINAL_RESPONSE, "") : data;
+  if ((options.includeQueryGated ?? true) && INPUT_QUERY_GATED_RESPONSE) {
+    stripped = stripped.replace(INPUT_QUERY_GATED_RESPONSE, "");
+  }
+  return stripped;
+}
+
+// Upper bound on the buffered incomplete-sequence remainder. An unterminated
+// OSC/DCS introducer (a program killed mid-escape-write, or binary output
+// containing a stray 0x9d/0x90 byte) would otherwise swallow ALL subsequent
+// output into `pendingControlSequence` forever — freezing the live stream and
+// growing server memory unboundedly. Past this cap the stuck introducer is
+// emitted verbatim and the rest re-sanitized (see sanitizeTerminalChunkDual),
+// so the stream recovers and complete sequences after the introducer still get
+// stripped. Sized to hold any realistic legitimate cross-chunk sequence (OSC 52
+// clipboard payloads, tmux-passthrough wrappers); a larger-than-cap sixel
+// merely degrades to raw passthrough of bytes the sanitizer keeps anyway.
+const MAX_PENDING_CONTROL_SEQUENCE_LENGTH = 64 * 1024;
+
+/**
+ * Single parse of a chunk that produces BOTH sanitized views at once:
+ *   - `historyText`: the scrollback strip — drops terminal queries AND responses
+ *     so a replay can never re-trigger a query whose answer would echo.
+ *   - `liveText`: the live-stream strip — drops only terminal→host responses
+ *     (spurious echo) while relaying host→terminal queries the client answers.
+ *
+ * Both share one walk and one pending-sequence boundary: the boundary depends
+ * only on byte structure (where an incomplete escape sequence ends), never on
+ * which complete sequences are stripped, so it is identical for both views.
+ */
+function sanitizeTerminalChunkOnce(input: string): {
+  historyText: string;
+  liveText: string;
+  pendingControlSequence: string;
+} {
+  let historyText = "";
+  let liveText = "";
   let index = 0;
 
-  const append = (value: string) => {
-    visibleText += value;
+  // Ordinary text and sequences neither view strips go to both buffers.
+  const appendBoth = (value: string) => {
+    historyText += value;
+    liveText += value;
   };
+  // A CSI sequence: each view keeps it unless its own strip rule removes it.
+  const appendCsi = (sequence: string, body: string, finalByte: string) => {
+    if (!shouldStripCsiSequence(body, finalByte, false)) historyText += sequence;
+    if (!shouldStripCsiSequence(body, finalByte, true)) liveText += sequence;
+  };
+  const appendOsc = (sequence: string, content: string) => {
+    if (!shouldStripOscSequence(content, false)) historyText += sequence;
+    if (!shouldStripOscSequence(content, true)) liveText += sequence;
+  };
+  const appendDcs = (sequence: string, content: string) => {
+    if (!shouldStripDcsSequence(content, false)) historyText += sequence;
+    if (!shouldStripDcsSequence(content, true)) liveText += sequence;
+  };
+  const pending = () => ({
+    historyText: stripFlattenedModeReplyResidue(historyText),
+    liveText: stripFlattenedModeReplyResidue(liveText),
+    pendingControlSequence: input.slice(index),
+  });
 
   while (index < input.length) {
     const codePoint = input.charCodeAt(index);
@@ -946,7 +1460,7 @@ function sanitizeTerminalHistoryChunk(
     if (codePoint === 0x1b) {
       const nextCodePoint = input.charCodeAt(index + 1);
       if (Number.isNaN(nextCodePoint)) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return pending();
       }
 
       if (nextCodePoint === 0x5b) {
@@ -955,16 +1469,14 @@ function sanitizeTerminalHistoryChunk(
           if (isCsiFinalByte(input.charCodeAt(cursor))) {
             const sequence = input.slice(index, cursor + 1);
             const body = input.slice(index + 2, cursor);
-            if (!shouldStripCsiSequence(body, input[cursor] ?? "")) {
-              append(sequence);
-            }
+            appendCsi(sequence, body, input[cursor] ?? "");
             index = cursor + 1;
             break;
           }
           cursor += 1;
         }
         if (cursor >= input.length) {
-          return { visibleText, pendingControlSequence: input.slice(index) };
+          return pending();
         }
         continue;
       }
@@ -977,12 +1489,16 @@ function sanitizeTerminalHistoryChunk(
       ) {
         const terminatorIndex = findStringTerminatorIndex(input, index + 2);
         if (terminatorIndex === null) {
-          return { visibleText, pendingControlSequence: input.slice(index) };
+          return pending();
         }
         const sequence = input.slice(index, terminatorIndex);
         const content = stripStringTerminator(input.slice(index + 2, terminatorIndex));
-        if (nextCodePoint !== 0x5d || !shouldStripOscSequence(content)) {
-          append(sequence);
+        if (nextCodePoint === 0x5d) {
+          appendOsc(sequence, content);
+        } else if (nextCodePoint === 0x50) {
+          appendDcs(sequence, content);
+        } else {
+          appendBoth(sequence);
         }
         index = terminatorIndex;
         continue;
@@ -990,9 +1506,9 @@ function sanitizeTerminalHistoryChunk(
 
       const escapeSequenceEndIndex = findEscapeSequenceEndIndex(input, index + 1);
       if (escapeSequenceEndIndex === null) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return pending();
       }
-      append(input.slice(index, escapeSequenceEndIndex));
+      appendBoth(input.slice(index, escapeSequenceEndIndex));
       index = escapeSequenceEndIndex;
       continue;
     }
@@ -1003,16 +1519,14 @@ function sanitizeTerminalHistoryChunk(
         if (isCsiFinalByte(input.charCodeAt(cursor))) {
           const sequence = input.slice(index, cursor + 1);
           const body = input.slice(index + 1, cursor);
-          if (!shouldStripCsiSequence(body, input[cursor] ?? "")) {
-            append(sequence);
-          }
+          appendCsi(sequence, body, input[cursor] ?? "");
           index = cursor + 1;
           break;
         }
         cursor += 1;
       }
       if (cursor >= input.length) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return pending();
       }
       continue;
     }
@@ -1020,22 +1534,119 @@ function sanitizeTerminalHistoryChunk(
     if (codePoint === 0x9d || codePoint === 0x90 || codePoint === 0x9e || codePoint === 0x9f) {
       const terminatorIndex = findStringTerminatorIndex(input, index + 1);
       if (terminatorIndex === null) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return pending();
       }
       const sequence = input.slice(index, terminatorIndex);
       const content = stripStringTerminator(input.slice(index + 1, terminatorIndex));
-      if (codePoint !== 0x9d || !shouldStripOscSequence(content)) {
-        append(sequence);
+      if (codePoint === 0x9d) {
+        appendOsc(sequence, content);
+      } else if (codePoint === 0x90) {
+        appendDcs(sequence, content);
+      } else {
+        appendBoth(sequence);
       }
       index = terminatorIndex;
       continue;
     }
 
-    append(input[index] ?? "");
+    appendBoth(input[index] ?? "");
     index += 1;
   }
 
-  return { visibleText, pendingControlSequence: "" };
+  return {
+    historyText: stripFlattenedModeReplyResidue(historyText),
+    liveText: stripFlattenedModeReplyResidue(liveText),
+    pendingControlSequence: "",
+  };
+}
+
+// Bounded number of overflow recoveries per chunk. Each recovery emits the
+// stuck introducer verbatim and RE-SANITIZES the rest of the remainder, so
+// complete sequences after an unterminated introducer still get stripped
+// instead of being flushed raw into history. The bound keeps an adversarial
+// introducer-flood from turning the walk quadratic; past it the remainder is
+// flushed verbatim (raw passthrough).
+const MAX_PENDING_OVERFLOW_RECOVERIES = 4;
+
+/**
+ * {@link sanitizeTerminalChunkOnce} plus overflow recovery: when the buffered
+ * incomplete-sequence remainder exceeds {@link MAX_PENDING_CONTROL_SEQUENCE_LENGTH}
+ * (an unterminated OSC/DCS introducer would otherwise swallow all subsequent
+ * output forever), the stuck introducer is emitted verbatim and the rest is
+ * re-walked so it is still properly sanitized.
+ */
+function sanitizeTerminalChunkDual(
+  pendingControlSequence: string,
+  data: string,
+): { historyText: string; liveText: string; pendingControlSequence: string } {
+  let historyText = "";
+  let liveText = "";
+  let input = `${pendingControlSequence}${data}`;
+  for (let recoveries = 0; recoveries < MAX_PENDING_OVERFLOW_RECOVERIES; recoveries += 1) {
+    const walk = sanitizeTerminalChunkOnce(input);
+    historyText += walk.historyText;
+    liveText += walk.liveText;
+    if (walk.pendingControlSequence.length <= MAX_PENDING_CONTROL_SEQUENCE_LENGTH) {
+      return {
+        historyText,
+        liveText,
+        pendingControlSequence: walk.pendingControlSequence,
+      };
+    }
+    // Overflowed: the remainder starts at an introducer that never terminated.
+    // Emit the introducer bytes verbatim and re-sanitize everything after them.
+    const stuck = walk.pendingControlSequence;
+    const introducerLength = stuck.charCodeAt(0) === 0x1b ? 2 : 1;
+    const introducer = stuck.slice(0, introducerLength);
+    historyText += introducer;
+    liveText += introducer;
+    input = stuck.slice(introducerLength);
+  }
+  // Recovery budget exhausted (adversarial introducer flood): flush raw.
+  return {
+    historyText: historyText + input,
+    liveText: liveText + input,
+    pendingControlSequence: "",
+  };
+}
+
+/**
+ * Sanitize one chunk of terminal output. `responsesOnly` selects the live-stream
+ * view (strips only terminal responses, relaying queries the client answers);
+ * the default selects the scrollback view (also strips queries). Both are
+ * computed in one pass — see {@link sanitizeTerminalChunkDual}. Exported for unit
+ * testing.
+ */
+export function sanitizeTerminalHistoryChunk(
+  pendingControlSequence: string,
+  data: string,
+  options: { readonly responsesOnly?: boolean } = {},
+): { visibleText: string; pendingControlSequence: string } {
+  const dual = sanitizeTerminalChunkDual(pendingControlSequence, data);
+  return {
+    visibleText: (options.responsesOnly ?? false) ? dual.liveText : dual.historyText,
+    pendingControlSequence: dual.pendingControlSequence,
+  };
+}
+
+/**
+ * Sanitize a WHOLE persisted scrollback buffer for load/migration, losslessly.
+ *
+ * Unlike the per-chunk API, there is no next chunk: a trailing incomplete
+ * sequence (an unterminated OSC/DCS introducer a program left mid-write) must
+ * be appended back VERBATIM rather than held in `pendingControlSequence` —
+ * discarding it would silently truncate everything after the introducer, and
+ * the caller persists the result over the log file, making the loss permanent.
+ * Exported for unit testing.
+ */
+export function sanitizePersistedTerminalHistory(raw: string): string {
+  // Single walk with NO overflow recovery: the streaming path's 64 KiB cap
+  // exists to keep a LIVE stream from freezing, but here the whole buffer is
+  // already in hand and the result is persisted back over the log file — the
+  // trailing incomplete sequence must be preserved byte-for-byte however large
+  // it is, never re-sanitized as if it were ordinary text.
+  const result = sanitizeTerminalChunkOnce(raw);
+  return `${result.historyText}${result.pendingControlSequence}`;
 }
 
 function legacySafeThreadId(threadId: string): string {
@@ -1142,6 +1753,7 @@ function normalizedRuntimeEnv(
 interface TerminalManagerOptions {
   logsDir: string;
   historyLineLimit?: number;
+  historyCharLimit?: number;
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
@@ -1182,6 +1794,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const logsDir = options.logsDir;
   const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
+  const historyCharLimit = options.historyCharLimit ?? DEFAULT_HISTORY_CHAR_LIMIT;
   const platform = yield* HostProcessPlatform;
   // Terminals must inherit the user's full environment (minus the blocklist
   // applied in createTerminalSpawnEnv) — an allowlist here silently strips
@@ -1451,7 +2064,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             (cause) => new TerminalHistoryError({ operation: "read", threadId, terminalId, cause }),
           ),
         );
-      const capped = capHistory(raw, historyLineLimit);
+      // Sanitize on load so terminal query/response residue persisted by older
+      // builds (the "…$y" / colour-report garble) is stripped from replayed
+      // scrollback — not just from newly-written output. Idempotent for clean
+      // logs; the rewrite below persists the cleanup.
+      const capped = capHistory(
+        sanitizePersistedTerminalHistory(raw),
+        historyLineLimit,
+        historyCharLimit,
+      );
       if (capped !== raw) {
         yield* fileSystem
           .writeFileString(nextPath, capped)
@@ -1491,7 +2112,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             new TerminalHistoryError({ operation: "migrate", threadId, terminalId, cause }),
         ),
       );
-    const capped = capHistory(raw, historyLineLimit);
+    // Sanitize while migrating so the new-path log starts clean (see above).
+    const capped = capHistory(
+      sanitizePersistedTerminalHistory(raw),
+      historyLineLimit,
+      historyCharLimit,
+    );
     yield* fileSystem
       .writeFileString(nextPath, capped)
       .pipe(
@@ -1671,15 +2297,24 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }
 
         if (nextEvent.type === "output") {
-          const sanitized = sanitizeTerminalHistoryChunk(
+          // One parse yields both views: the scrollback strip (drops queries and
+          // responses) feeds history; the live strip (drops only responses,
+          // relaying queries the client answers) feeds the streamed data.
+          const sanitized = sanitizeTerminalChunkDual(
             session.pendingHistoryControlSequence,
             nextEvent.data,
           );
           session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
-          if (sanitized.visibleText.length > 0) {
+          // A relayed cursor query means a CPR reply is genuinely expected —
+          // arm the query-gated input strip for the grace window.
+          if (RELAYED_CURSOR_QUERY.test(sanitized.liveText)) {
+            session.lastCursorQueryRelayedAt = Date.now();
+          }
+          if (sanitized.historyText.length > 0) {
             session.history = capHistory(
-              `${session.history}${sanitized.visibleText}`,
+              `${session.history}${sanitized.historyText}`,
               historyLineLimit,
+              historyCharLimit,
             );
           }
           const eventStamp = advanceEventSequence(session);
@@ -1689,8 +2324,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             threadId: session.threadId,
             terminalId: session.terminalId,
             sequence: eventStamp.sequence,
-            history: sanitized.visibleText.length > 0 ? session.history : null,
-            data: nextEvent.data,
+            history: sanitized.historyText.length > 0 ? session.history : null,
+            data: sanitized.liveText,
           } as const;
         }
 
@@ -1699,6 +2334,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.process = null;
         session.pid = null;
         session.hasRunningSubprocess = false;
+        session.shellForeground = true;
         session.childCommandLabel = null;
         session.status = "exited";
         session.pendingHistoryControlSequence = "";
@@ -1771,6 +2407,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.process = null;
       session.pid = null;
       session.hasRunningSubprocess = false;
+      session.shellForeground = true;
       session.childCommandLabel = null;
       session.status = "exited";
       session.pendingHistoryControlSequence = "";
@@ -1868,6 +2505,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.exitCode = null;
       session.exitSignal = null;
       session.hasRunningSubprocess = false;
+      session.shellForeground = true;
       session.childCommandLabel = null;
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
@@ -1945,6 +2583,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.pid = null;
         session.process = null;
         session.hasRunningSubprocess = false;
+        session.shellForeground = true;
         session.childCommandLabel = null;
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
@@ -2061,9 +2700,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         if (
           Option.isNone(liveSession) ||
           liveSession.value.status !== "running" ||
-          liveSession.value.pid !== terminalPid ||
-          (liveSession.value.hasRunningSubprocess === next.hasRunningSubprocess &&
-            liveSession.value.childCommandLabel === nextChildLabel)
+          liveSession.value.pid !== terminalPid
+        ) {
+          return [Option.none(), state] as const;
+        }
+        // Refresh the foreground-ownership signal even when nothing wire-label-
+        // worthy changed (a `fg`/`bg` flip of the same child alters what the
+        // input reply-strip must do without changing the activity event).
+        liveSession.value.shellForeground = next.shellForeground ?? !next.hasRunningSubprocess;
+        if (
+          liveSession.value.hasRunningSubprocess === next.hasRunningSubprocess &&
+          liveSession.value.childCommandLabel === nextChildLabel
         ) {
           return [Option.none(), state] as const;
         }
@@ -2176,6 +2823,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         unsubscribeData: null,
         unsubscribeExit: null,
         hasRunningSubprocess: false,
+        shellForeground: true,
+        lastCursorQueryRelayedAt: 0,
         childCommandLabel: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
       };
@@ -2499,8 +3148,28 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         terminalId,
       });
     }
+    // The reply-strip exists to break the IDLE-PROMPT echo loop (a shell with
+    // no reader echoes the emulator's auto-replies, and a prompt that re-queries
+    // on redraw turns that into a flood). The gate is PTY foreground ownership,
+    // not mere child existence: a background job (`sleep 100 &`) leaves the
+    // shell at the prompt (tpgid still the shell's — keep stripping), while a
+    // foreground vim/fzf/CPR-based UI owns the terminal and is reading the
+    // replies to its own queries — relay input verbatim; stripping would starve
+    // its capability negotiation. The ~1s subprocess-poll latency means a
+    // program's very first queries can still lose a reply, and a program
+    // `exec`'d over the shell keeps its pgid so it still looks like the shell —
+    // both accepted next to the runaway flood the strip prevents.
+    const data = session.shellForeground
+      ? stripTerminalResponsesFromInput(input.data, {
+          // CPR shares its byte shape with modified function keys; only strip
+          // it while a relayed cursor query makes a reply genuinely expected.
+          includeQueryGated:
+            Date.now() - session.lastCursorQueryRelayedAt < CURSOR_QUERY_REPLY_GRACE_MS,
+        })
+      : input.data;
+    if (data.length === 0) return;
     yield* Effect.try({
-      try: () => process.write(input.data),
+      try: () => process.write(data),
       catch: (cause) =>
         new TerminalWriteError({
           threadId: input.threadId,
@@ -2588,6 +3257,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             unsubscribeData: null,
             unsubscribeExit: null,
             hasRunningSubprocess: false,
+            shellForeground: true,
+        lastCursorQueryRelayedAt: 0,
             childCommandLabel: null,
             runtimeEnv: normalizedRuntimeEnv(input.env),
           };

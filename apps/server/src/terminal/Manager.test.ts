@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import {
   DEFAULT_TERMINAL_ID,
   type TerminalAttachStreamEvent,
@@ -28,6 +28,12 @@ import { expect } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "./Manager.ts";
+import {
+  sanitizePersistedTerminalHistory,
+  sanitizeTerminalHistoryChunk,
+  stripTerminalResponsesFromInput,
+  TERMINAL_SEQUENCE_GRAMMAR,
+} from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
 class WaitForConditionError extends Data.TaggedError("WaitForConditionError")<{
@@ -203,11 +209,13 @@ const multiTerminalHistoryLogPath = (
 
 interface CreateManagerOptions {
   shellResolver?: () => string;
+  historyCharLimit?: number;
   env?: NodeJS.ProcessEnv;
   subprocessInspector?: (terminalPid: number) => Effect.Effect<{
     readonly hasRunningSubprocess: boolean;
     readonly childCommand: string | null;
     readonly processIds: ReadonlyArray<number>;
+    readonly shellForeground?: boolean;
   }>;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
@@ -241,6 +249,9 @@ const createManager = (
       const manager = yield* TerminalManager.makeWithOptions({
         logsDir,
         historyLineLimit,
+        ...(options.historyCharLimit !== undefined
+          ? { historyCharLimit: options.historyCharLimit }
+          : {}),
         ptyAdapter,
         ...(options.shellResolver !== undefined ? { shellResolver: options.shellResolver } : {}),
         ...(options.env !== undefined ? { env: options.env } : {}),
@@ -927,6 +938,152 @@ it.layer(
     }),
   );
 
+  it.effect(
+    "strips capability replies at an idle prompt but relays them to a foreground program",
+    () =>
+      Effect.gen(function* () {
+        let inspect: {
+          readonly hasRunningSubprocess: boolean;
+          readonly childCommand: string | null;
+          readonly processIds: ReadonlyArray<number>;
+        } = { hasRunningSubprocess: false, childCommand: null, processIds: [] };
+        const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
+          subprocessInspector: () => Effect.succeed(inspect),
+          subprocessPollIntervalMs: 20,
+        });
+        yield* manager.open(openInput());
+        const process = ptyAdapter.processes[0];
+        expect(process).toBeDefined();
+        if (!process) return;
+
+        // No relayed cursor query yet: `CSI 1;2R` is xterm's modified-F3
+        // keystroke, not a CPR reply — it must reach the PTY.
+        yield* manager.write({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          data: "\x1b[1;2R",
+        });
+        expect(process.writes).toEqual(["\x1b[1;2R"]);
+        process.writes.length = 0;
+
+        // The prompt queries the cursor position — relaying it arms the CPR strip.
+        process.emitData("\x1b[6n");
+        yield* waitFor(
+          Effect.map(getEvents, (events) =>
+            events.some((event) => event.type === "output" && event.data.includes("\x1b[6n")),
+          ),
+          "1200 millis",
+        );
+
+        // Idle prompt (no subprocess) with an outstanding query: the emulator's
+        // CPR auto-reply is dropped — the shell would only echo it back (the
+        // `;1RR` flood).
+        yield* manager.write({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          data: "\x1b[1;1R",
+        });
+        expect(process.writes).toEqual([]);
+
+        // Foreground program running (vim): it issued the query and is blocked
+        // reading the answer — input must pass through verbatim.
+        inspect = { hasRunningSubprocess: true, childCommand: "vim", processIds: [100] };
+        yield* waitFor(
+          Effect.map(getEvents, (events) =>
+            events.some((event) => event.type === "activity" && event.hasRunningSubprocess),
+          ),
+          "1200 millis",
+        );
+        yield* manager.write({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          data: "\x1b[1;1R",
+        });
+        expect(process.writes).toEqual(["\x1b[1;1R"]);
+      }),
+  );
+
+  it.effect("keeps stripping replies while only a BACKGROUND job runs (shell owns the PTY)", () =>
+    Effect.gen(function* () {
+      // `sleep 100 &` puts a child under the shell, but the shell still owns
+      // the PTY's foreground group (tpgid == shell pgid) and is at the prompt —
+      // the echo loop is live, so replies must still be stripped. The inspector
+      // reports the foreground signal explicitly.
+      let inspect: {
+        readonly hasRunningSubprocess: boolean;
+        readonly childCommand: string | null;
+        readonly processIds: ReadonlyArray<number>;
+        readonly shellForeground?: boolean;
+      } = {
+        hasRunningSubprocess: false,
+        childCommand: null,
+        processIds: [],
+        shellForeground: true,
+      };
+      let inspections = 0;
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
+        subprocessInspector: () => {
+          inspections += 1;
+          return Effect.succeed(inspect);
+        },
+        subprocessPollIntervalMs: 20,
+      });
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      inspect = {
+        hasRunningSubprocess: true,
+        childCommand: "sleep",
+        processIds: [100],
+        shellForeground: true, // background job — the shell keeps the prompt
+      };
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some((event) => event.type === "activity" && event.hasRunningSubprocess),
+        ),
+        "1200 millis",
+      );
+      // The prompt's cursor query arms the CPR strip (CPR is query-gated).
+      process.emitData("\x1b[6n");
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some((event) => event.type === "output" && event.data.includes("\x1b[6n")),
+        ),
+        "1200 millis",
+      );
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: "\x1b[1;1R",
+      });
+      expect(process.writes).toEqual([]); // still stripped — echo loop stays broken
+
+      // The job moves to the foreground (`fg`): tpgid flips to the job's group
+      // even though the wire label doesn't change — replies must now pass.
+      inspect = {
+        hasRunningSubprocess: true,
+        childCommand: "sleep",
+        processIds: [100],
+        shellForeground: false,
+      };
+      // No activity event fires for a pure fg/bg flip; wait until the poller has
+      // demonstrably run with the flipped fixture instead of sleeping blind.
+      const inspectionsAtFlip = inspections;
+      yield* waitFor(
+        Effect.sync(() => inspections >= inspectionsAtFlip + 2),
+        "1200 millis",
+      );
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: "\x1b[1;1R",
+      });
+      expect(process.writes).toEqual(["\x1b[1;1R"]);
+    }),
+  );
+
   it.effect("does not invoke subprocess polling until a terminal session is running", () =>
     Effect.gen(function* () {
       let checks = 0;
@@ -950,6 +1107,32 @@ it.layer(
         Effect.sync(() => checks > 0),
         "1200 millis",
       );
+    }),
+  );
+
+  it.effect("caps history by characters when a redraw stream has no newlines", () =>
+    Effect.gen(function* () {
+      // A full-screen program repainting with synchronized-output frames emits
+      // megabytes with almost no newlines — the line cap alone retains all of
+      // it (observed: 21 MB at 4,999 lines). The character cap bounds it.
+      const { manager, ptyAdapter } = yield* createManager(5_000, { historyCharLimit: 400 });
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      const frame = "\u001b[?2026h\u001b[18;2H\u001b[0m\u001b[49m\u001b[Kframe\u001b[?2026l";
+      for (let i = 0; i < 40; i += 1) {
+        process.emitData(frame);
+      }
+      process.emitData("tail-marker");
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      expect(reopened.history.length).toBeLessThanOrEqual(400);
+      expect(reopened.history.includes("tail-marker")).toBe(true);
+      // The cut lands on an escape boundary, not mid-sequence.
+      expect(reopened.history.startsWith("\u001b")).toBe(true);
     }),
   );
 
@@ -980,7 +1163,9 @@ it.layer(
 
       process.emitData("prompt ");
       process.emitData("\u001b[32mok\u001b[0m ");
-      process.emitData("\u001b]11;rgb:ffff/ffff/ffff\u0007");
+      // A colour QUERY is replay-unsafe (the emulator would re-answer it); the
+      // rgb SET form is legitimate output and covered by the grammar invariants.
+      process.emitData("\u001b]11;?\u0007");
       process.emitData("\u001b[1;1R");
       process.emitData("done\n");
 
@@ -991,6 +1176,22 @@ it.layer(
     }),
   );
 
+  it.effect("sanitizes a pre-existing raw history log on load (older builds wrote it dirty)", () =>
+    Effect.gen(function* () {
+      const { manager, logsDir } = yield* createManager();
+      const logPath = yield* historyLogPath(logsDir);
+      // A log an older build persisted without sanitizing: the exact repeating
+      // DECRPM residue from #1238, ESC introducers intact. On load it must be
+      // stripped so it cannot replay (and re-trigger) at the prompt.
+      const garble = "[?69;0$y[?2026;2$y[?2027;0$y[?2031;0$y[?2048;0$y";
+      yield* writeFileString(logPath, `prompt$ ${garble.repeat(15)}done\n`);
+
+      const opened = yield* manager.open(openInput());
+      assert.equal(opened.history, "prompt$ done\n");
+      // The cleaned history is persisted back, so it stays clean on re-read.
+      assert.equal(yield* readFileString(logPath), "prompt$ done\n");
+    }),
+  );
   it.effect(
     "preserves clear and style control sequences while dropping chunk-split query traffic",
     () =>
@@ -1005,7 +1206,7 @@ it.layer(
         process.emitData("\u001b[H\u001b[2J");
         process.emitData("prompt ");
         process.emitData("\u001b]11;");
-        process.emitData("rgb:ffff/ffff/ffff\u0007\u001b[1;1");
+        process.emitData("?\u0007\u001b[1;1");
         process.emitData("R\u001b[36mdone\u001b[0m\n");
 
         yield* manager.close({ threadId: "thread-1" });
@@ -1701,4 +1902,553 @@ it.layer(
       expect(process.killSignals).toContain("SIGKILL");
     }).pipe(Effect.provide(TestClock.layer())),
   );
+});
+
+describe("sanitizeTerminalHistoryChunk", () => {
+  const sanitize = (data: string, pending = "") => sanitizeTerminalHistoryChunk(pending, data);
+
+  it("strips DECRPM mode reports (CSI ? Pm ; Ps $ y) from history", () => {
+    const reports = "\x1b[?69;0$y\x1b[?2026;2$y\x1b[?2048;0$y";
+    const { visibleText } = sanitize(`before${reports}after`);
+    assert.equal(visibleText, "beforeafter");
+    // The residue users were seeing must not survive.
+    assert.ok(!visibleText.includes("$y"));
+    assert.ok(!visibleText.includes("2026"));
+  });
+
+  it("strips DECRQM mode queries (CSI ? Pm $ p) so replay can't re-trigger them", () => {
+    const { visibleText } = sanitize("x\x1b[?2026$p\x1b[?2048$py");
+    assert.equal(visibleText, "xy");
+  });
+
+  it("keeps ordinary text and non-report CSI sequences", () => {
+    // SGR colour (m) and cursor moves stay; a plain 'p'/'y' without the `$`
+    // intermediate is not a mode sequence and must be preserved.
+    const { visibleText } = sanitize("\x1b[31mred\x1b[0m \x1b[2Aup happy");
+    assert.equal(visibleText, "\x1b[31mred\x1b[0m \x1b[2Aup happy");
+  });
+
+  it("drops the flattened mode-reply residue a shell echoes at the prompt", () => {
+    // The ESC introducer is already gone (the shell flattened the reply), so the
+    // escape-aware strip can't see it. A run of flattened DECRPM / DA / OSC-colour
+    // replies is dropped (DSR "n"/BEL/CR may separate them).
+    assert.equal(
+      sanitize("prompt$ 69;0$y2026;2$y2027;0$y2031;0$y2048;0$y").visibleText,
+      "prompt$ ",
+    );
+    assert.equal(sanitize("a 1;2c11;rgb:1616/1616/1616n1;2c b").visibleText, "a  b");
+    // Lone DECRPM / OSC-colour / DECRPSS tokens are distinctive enough on their own.
+    assert.equal(sanitize("x 2026;2$y y").visibleText, "x  y");
+    assert.equal(sanitize("c 4;0;rgb:1818/1e1e/2626 d").visibleText, "c  d");
+    assert.equal(sanitize("tail 1$r0m end").visibleText, "tail  end"); // flattened DECRPSS (#1238)
+    // Ambiguous lone tokens and ordinary words are preserved.
+    assert.equal(sanitize("see commit 1;2c now").visibleText, "see commit 1;2c now");
+    assert.equal(sanitize("running a connection").visibleText, "running a connection");
+  });
+
+  it("drops a flattened cursor-position-report (CPR) run, keeps a lone one", () => {
+    // The `;1RR`/`<row>;<col>R` flood from a prompt's CSI 6n re-query echoing at
+    // an idle prompt. Stripped as a run; a lone `<n>;<n>R` is ambiguous and kept.
+    assert.equal(sanitize(`prompt$ ${";1RR".repeat(40)}`).visibleText, "prompt$ ");
+    assert.equal(sanitize(`x ${"1;1R".repeat(20)} y`).visibleText, "x  y");
+    assert.equal(sanitize("at 12;5R done").visibleText, "at 12;5R done"); // lone, kept
+  });
+
+  it("drops a flattened secondary-DA (three-parameter) run", () => {
+    // `CSI > Pp;Pv;Pc c` flattens to ">0;276;0c" (the ">" is sometimes kept by
+    // the echo); stripped in a run like the two-parameter primary form.
+    assert.equal(sanitize("prompt$ >0;276;0c>0;276;0c").visibleText, "prompt$ ");
+    assert.equal(sanitize("a 0;276;0c1;2c b").visibleText, "a  b");
+    // A lone three-parameter token is ambiguous and kept.
+    assert.equal(sanitize("ver 0;276;0c here").visibleText, "ver 0;276;0c here");
+  });
+
+  it("does not over-match ordinary text that merely looks reply-shaped", () => {
+    // The colour alternative is pinned to OSC 10/11/12 and OSC 4 (`4;<idx>;`), so
+    // an arbitrary "<n>;rgb:…" in program output survives.
+    assert.equal(sanitize("set 1;rgb:ff/00/00 now").visibleText, "set 1;rgb:ff/00/00 now");
+    assert.equal(sanitize("hsl 7;rgb:aabbcc done").visibleText, "hsl 7;rgb:aabbcc done");
+    // A DECRPM/DA token immediately followed by a word must not swallow its first
+    // letter (regression: a trailing "n?" used to eat the "n" of "next").
+    assert.equal(sanitize("v 1;2$ynext").visibleText, "v next");
+    // The DECRPSS payload is length-bounded so it can't eat a following number run.
+    assert.equal(
+      sanitize("tail 1$r0;120;340;Hello there").visibleText,
+      "tail 1$r0;120;340;Hello there",
+    );
+    // A space is ordinary text, not a run separator: an ambiguous lone token next
+    // to a genuine one must not be bridged into a deletable run — only the
+    // unambiguous DECRPM token goes.
+    assert.equal(sanitize("see 1;2c 2026;2$y now").visibleText, "see 1;2c  now");
+    assert.equal(
+      sanitize("coords 5;10c 6;11c 7;12c here").visibleText,
+      "coords 5;10c 6;11c 7;12c here",
+    );
+  });
+
+  it("strips an OSC 4 palette query from scrollback but relays it live", () => {
+    // A replayed OSC 4 query (`OSC 4;<idx>;? ST`) makes the emulator re-answer,
+    // and the echoed answer garbles the prompt — so scrollback drops it, while
+    // the live stream relays it for the client to answer (the answer is then
+    // stripped by the input filter, breaking the loop).
+    const query = "\x1b]4;1;?\x07";
+    assert.equal(sanitize(`a${query}b`).visibleText, "ab");
+    assert.equal(
+      sanitizeTerminalHistoryChunk("", `a${query}b`, { responsesOnly: true }).visibleText,
+      `a${query}b`,
+    );
+  });
+
+  it("preserves a framed OSC 4 palette report instead of mangling its inner rgb", () => {
+    // The escape walk keeps a framed OSC 4 report (only OSC 10/11/12 are stripped),
+    // so the flattened pass must not delete the inner `4;<idx>;rgb:…` and leave a
+    // broken `ESC ] … ST` shell — in either view. The flattened (unframed) form is
+    // still dropped.
+    const framed = "\x1b]4;1;rgb:ff/00/00\x07";
+    assert.equal(sanitize(`a ${framed} b`).visibleText, `a ${framed} b`);
+    assert.equal(
+      sanitizeTerminalHistoryChunk("", `a ${framed} b`, { responsesOnly: true }).visibleText,
+      `a ${framed} b`,
+    );
+    assert.equal(sanitize("echo 4;1;rgb:ff/00/00 here").visibleText, "echo  here");
+  });
+
+  it("strips a huge adversarial ';'-run in linear time (no ReDoS)", () => {
+    // A program-controlled buffer of many "<digits>;" groups that never reaches
+    // "rgb:" used to drive catastrophic backtracking (tens of seconds). The
+    // pinned colour alternative makes this fail fast.
+    const evil = "1".repeat(20) + ";";
+    const start = process.hrtime.bigint();
+    sanitize(`${evil.repeat(16000)}rgb`);
+    const ms = Number(process.hrtime.bigint() - start) / 1e6;
+    assert.ok(ms < 1000, `flattened strip took ${ms}ms — possible ReDoS`);
+  });
+
+  it("handles a report split across chunks via the pending buffer", () => {
+    const first = sanitize("tail\x1b[?69;0");
+    assert.equal(first.visibleText, "tail");
+    assert.notEqual(first.pendingControlSequence, "");
+    const second = sanitize("$ydone", first.pendingControlSequence);
+    assert.equal(second.visibleText, "done");
+  });
+
+  it("flushes an over-long unterminated introducer instead of freezing the stream", () => {
+    // A stray OSC/DCS introducer with no terminator (binary output, a program
+    // killed mid-escape-write) must not swallow all subsequent output into the
+    // pending buffer forever — past the cap the remainder flushes verbatim and
+    // the stream recovers.
+    let pending = "";
+    let emitted = "";
+    const first = sanitize("before\x1b]0;never-terminated-", pending);
+    emitted += first.visibleText;
+    pending = first.pendingControlSequence;
+    assert.equal(first.visibleText, "before");
+    assert.notEqual(pending, "");
+    const chunk = "x".repeat(8 * 1024);
+    for (let i = 0; i < 12; i += 1) {
+      const step = sanitize(chunk, pending);
+      emitted += step.visibleText;
+      pending = step.pendingControlSequence;
+    }
+    assert.ok(
+      emitted.includes("x".repeat(1024)),
+      "stream stayed frozen after an unterminated introducer",
+    );
+    assert.equal(pending, "");
+    // Later output flows normally again.
+    assert.equal(sanitize("after", pending).visibleText, "after");
+  });
+
+  it("still strips framed replies inside an overflow-recovered tail", () => {
+    // The overflow recovery re-sanitizes the remainder after the stuck
+    // introducer instead of flushing it raw, so a framed capability reply
+    // buried past an unterminated introducer can't land in history and replay.
+    const junk = "j".repeat(70 * 1024);
+    const result = sanitize(`\x9d${junk}\x1b[?2026;2$yvisible`);
+    assert.equal(result.visibleText.includes("2026;2$y"), false);
+    assert.equal(result.visibleText.includes("visible"), true);
+    assert.equal(result.visibleText.includes(junk.slice(0, 1024)), true); // junk kept (raw text)
+  });
+
+  it("preserves scrollback after an unterminated introducer on whole-buffer load", () => {
+    // A log written by an older build can contain an introducer with no
+    // terminator partway through; everything after it must survive the
+    // load-time sanitize verbatim, since the result is persisted back over the
+    // log file (dropping the pending tail would be permanent truncation).
+    const raw = `early history\n\x1b]0;unterminated${"later content\n".repeat(50)}`;
+    assert.equal(sanitizePersistedTerminalHistory(raw), raw);
+    // Residue in the terminated portion is still stripped; the tail survives.
+    const dirty = "prompt$ \x1b[?2026;2$y rest\x1b]0;tail-without-terminator";
+    const cleaned = sanitizePersistedTerminalHistory(dirty);
+    assert.equal(cleaned.includes("$y"), false);
+    assert.equal(cleaned.includes("tail-without-terminator"), true);
+  });
+
+  it("self-heals a flattened token split across PTY chunks on the next reload", () => {
+    // A *flattened* reply (ESC introducer already gone) has no escape framing for
+    // the pending buffer to hold, so if a PTY read splits it mid-token both halves
+    // are written to history live (transient garble). But they land contiguously,
+    // so readHistory()'s whole-buffer sanitize rejoins and strips them on restore —
+    // the residue does not return after a restart (the persistence concern in the
+    // cross-chunk #1238 follow-up).
+    const live = sanitize("prompt$ 2026;2").visibleText + sanitize("$y done").visibleText;
+    assert.equal(live, "prompt$ 2026;2$y done"); // contiguous in the persisted log
+    assert.equal(sanitize(live).visibleText, "prompt$  done"); // stripped on reload
+  });
+
+  it("strips the real-world restore residue reported in issue #1238", () => {
+    // The exact escape-reply fragments a user saw flood the prompt on terminal
+    // restore: "2026;2$y2027;0$y2031;0$y2048;0$y1$r0m" — DECRPM mode reports
+    // (CSI ? Pm ; Ps $ y) plus a DECRPSS status reply (DCS Ps $ r D…D ST),
+    // reconstructed as the raw sequences the replayed history carried.
+    const residue = "\x1b[?2026;2$y\x1b[?2027;0$y\x1b[?2031;0$y\x1b[?2048;0$y\x1bP1$r0m\x1b\\";
+    assert.equal(sanitize(`prompt$ ${residue}`).visibleText, "prompt$ ");
+  });
+
+  describe("responsesOnly (live stream)", () => {
+    const live = (data: string, pending = "") =>
+      sanitizeTerminalHistoryChunk(pending, data, { responsesOnly: true });
+
+    it("strips terminal responses (DA, DECRPM, cursor, DSR) that leak as garbage", () => {
+      const responses = "\x1b[?1;2c\x1b[?2026;2$y\x1b[2;5R\x1b[0n";
+      assert.equal(live(`a${responses}b`).visibleText, "ab");
+    });
+
+    it("keeps framed OSC 10/11/12 rgb output — the legitimate set-colour command", () => {
+      // In OUTPUT that shape is a host→terminal set (themes), not a response;
+      // the reply form only travels as client input, where it is stripped.
+      const set = "\x1b]11;rgb:1616/1616/1616\x07";
+      assert.equal(live(`a${set}b`).visibleText, `a${set}b`);
+      assert.equal(sanitize(`a${set}b`).visibleText, `a${set}b`);
+    });
+
+    it("keeps queries the client must still answer (DECRQM, DA, DSR, OSC colour)", () => {
+      const queries = "\x1b[?2026$p\x1b[c\x1b[6n\x1b]11;?\x07";
+      assert.equal(live(`x${queries}y`).visibleText, `x${queries}y`);
+    });
+
+    it("keeps ordinary display sequences", () => {
+      assert.equal(live("\x1b[31mred\x1b[0m up").visibleText, "\x1b[31mred\x1b[0m up");
+    });
+
+    it("relays a query split across chunks while history strips it", () => {
+      // The query (DECRQM `$p`) arrives in two pieces. The live view must relay
+      // it across the pending boundary; the scrollback view strips it.
+      const liveFirst = live("x\x1b[?2026");
+      assert.equal(liveFirst.visibleText, "x");
+      assert.notEqual(liveFirst.pendingControlSequence, "");
+      assert.equal(live("$py", liveFirst.pendingControlSequence).visibleText, "\x1b[?2026$py");
+
+      const histFirst = sanitize("x\x1b[?2026");
+      assert.equal(histFirst.visibleText, "x");
+      assert.equal(sanitize("$py", histFirst.pendingControlSequence).visibleText, "y");
+    });
+
+    it("diverges within one chunk: strips the response, relays the query", () => {
+      // `\x1b[0n` is a DSR *response* (stripped by both views); `\x1b[6n` is the
+      // cursor-position *query* the client must answer (relayed live, stripped
+      // from scrollback). Same input, two outputs from one parse.
+      const data = "A\x1b[0n B\x1b[6n C";
+      assert.equal(live(data).visibleText, "A B\x1b[6n C");
+      assert.equal(sanitize(data).visibleText, "A B C");
+    });
+  });
+
+  describe("8-bit C1 introducers", () => {
+    it("strips an 8-bit CSI DECRPM report (0x9b … $ y) like its ESC[ form", () => {
+      assert.equal(sanitize("a\x9b?2026;2$yb").visibleText, "ab");
+      // Live view strips the report too (it is a response, not a query).
+      assert.equal(
+        sanitizeTerminalHistoryChunk("", "a\x9b?2026;2$yb", { responsesOnly: true }).visibleText,
+        "ab",
+      );
+    });
+
+    it("keeps an 8-bit OSC colour set (0x9d … BEL); relays the query live only", () => {
+      // The rgb form in output is the legitimate set-colour command — kept in
+      // both views, 8-bit framing included.
+      assert.equal(
+        sanitize("a\x9d11;rgb:1616/1616/1616\x07b").visibleText,
+        "a\x9d11;rgb:1616/1616/1616\x07b",
+      );
+      // The `?` colour query is relayed live (the client must answer it) but
+      // stripped from scrollback so a replay cannot re-trigger it.
+      assert.equal(
+        sanitizeTerminalHistoryChunk("", "a\x9d11;?\x07b", { responsesOnly: true }).visibleText,
+        "a\x9d11;?\x07b",
+      );
+      assert.equal(sanitize("a\x9d11;?\x07b").visibleText, "ab");
+    });
+
+    it("buffers an incomplete 8-bit CSI across chunks", () => {
+      const first = sanitize("tail\x9b?69;0");
+      assert.equal(first.visibleText, "tail");
+      assert.notEqual(first.pendingControlSequence, "");
+      assert.equal(sanitize("$ydone", first.pendingControlSequence).visibleText, "done");
+    });
+  });
+
+  describe("DCS status strings (DECRQSS / DECRPSS)", () => {
+    const live = (data: string) => sanitizeTerminalHistoryChunk("", data, { responsesOnly: true });
+
+    it("strips a DECRPSS status reply (DCS Ps $ r D…D ST) from both views", () => {
+      assert.equal(sanitize("a\x1bP1$r0m\x1b\\b").visibleText, "ab");
+      assert.equal(live("a\x1bP1$r0m\x1b\\b").visibleText, "ab");
+    });
+
+    it("relays a DECRQSS query (DCS $ q D…D ST) live but strips it from scrollback", () => {
+      assert.equal(live("a\x1bP$qm\x1b\\b").visibleText, "a\x1bP$qm\x1b\\b");
+      assert.equal(sanitize("a\x1bP$qm\x1b\\b").visibleText, "ab");
+    });
+
+    it("leaves other DCS strings (sixel, DECUDK) untouched", () => {
+      const sixel = "\x1bPq#0;2;0;0;0#0~~\x1b\\";
+      assert.equal(sanitize(`a${sixel}b`).visibleText, `a${sixel}b`);
+      assert.equal(live(`a${sixel}b`).visibleText, `a${sixel}b`);
+    });
+  });
+});
+
+describe("stripTerminalResponsesFromInput", () => {
+  it("drops the browser's auto-replies that drive the echo loop", () => {
+    const flood =
+      "\x1b[?69;0$y\x1b[?2026;2$y\x1b[?1;2c\x1b]11;rgb:1616/1616/1616\x1b\\\x1b[0n\x1bP1$r0m\x1b\\\x1b[>0;276;0c";
+    assert.equal(stripTerminalResponsesFromInput(flood), "");
+  });
+
+  it("accepts the 8-bit ST (0x9c) terminator for OSC/DCS replies", () => {
+    assert.equal(stripTerminalResponsesFromInput("\x1b]11;rgb:1616/1616/1616\x9c"), "");
+    assert.equal(stripTerminalResponsesFromInput("\x1bP1$r0m\x9c"), "");
+  });
+
+  it("strips OSC 4 palette colour replies so they can't re-arm the echo loop", () => {
+    assert.equal(stripTerminalResponsesFromInput("\x1b]4;1;rgb:1616/1616/1616\x07"), "");
+    assert.equal(stripTerminalResponsesFromInput("\x1b]4;255;rgb:ffff/0000/0000\x1b\\"), "");
+  });
+
+  it("strips replies that use 8-bit C1 introducers (0x9b CSI, 0x9d OSC, 0x90 DCS)", () => {
+    assert.equal(stripTerminalResponsesFromInput("\x9b?69;0$y"), ""); // C1 CSI DECRPM
+    assert.equal(stripTerminalResponsesFromInput("\x9b>0;276;0c"), ""); // C1 CSI secondary DA
+    assert.equal(stripTerminalResponsesFromInput("\x9d4;1;rgb:1616/1616/1616\x9c"), ""); // C1 OSC 4 + C1 ST
+    assert.equal(stripTerminalResponsesFromInput("\x901$r0m\x9c"), ""); // C1 DCS DECRPSS
+  });
+
+  it("keeps focus events so DECSET ?1004 programs (vim/tmux) still receive them", () => {
+    assert.equal(stripTerminalResponsesFromInput("\x1b[I"), "\x1b[I"); // focus in
+    assert.equal(stripTerminalResponsesFromInput("\x1b[O"), "\x1b[O"); // focus out
+  });
+
+  it("strips cursor-position report (CPR) replies that drive the prompt redraw flood", () => {
+    assert.equal(stripTerminalResponsesFromInput("\x1b[1;1R"), ""); // CPR reply
+    assert.equal(stripTerminalResponsesFromInput("\x1b[;1R"), ""); // empty-row CPR
+    assert.equal(stripTerminalResponsesFromInput("\x1b[1;1R\x1b[1;1R\x1b[1;1R"), ""); // flood
+    assert.equal(stripTerminalResponsesFromInput("\x9b5;10R"), ""); // 8-bit C1 CPR
+    // DEC-private CPR (`CSI ? r;c R`, the DECXCPR answer to `CSI ? 6 n`) —
+    // matches the output strip so neither form can feed the echo loop.
+    assert.equal(stripTerminalResponsesFromInput("\x1b[?1;1R"), "");
+    assert.equal(stripTerminalResponsesFromInput("\x9b?5;10R"), "");
+  });
+
+  it("keeps CPR-shaped bytes when no cursor query is outstanding (modified F3)", () => {
+    // `CSI 1;2R` is byte-identical to xterm's Shift+F3 — without a recently
+    // relayed `CSI 6 n` the write path passes it through; the ungated reply
+    // shapes still strip.
+    assert.equal(
+      stripTerminalResponsesFromInput("\x1b[1;2R", { includeQueryGated: false }),
+      "\x1b[1;2R",
+    );
+    assert.equal(
+      stripTerminalResponsesFromInput("\x1b[?2026;2$y\x1b[1;2R", { includeQueryGated: false }),
+      "\x1b[1;2R",
+    );
+    assert.equal(stripTerminalResponsesFromInput("\x1b[1;2R", { includeQueryGated: true }), "");
+  });
+
+  it("keeps real user input, cursor moves, and bare query forms", () => {
+    assert.equal(stripTerminalResponsesFromInput("ls -la\r"), "ls -la\r"); // keystrokes
+    assert.equal(
+      stripTerminalResponsesFromInput("\x1b[A\x1b[B\x1b[C\x1b[D"),
+      "\x1b[A\x1b[B\x1b[C\x1b[D",
+    ); // arrows
+    assert.equal(stripTerminalResponsesFromInput("\x03"), "\x03"); // Ctrl-C
+    assert.equal(stripTerminalResponsesFromInput("\x1b[1;5H"), "\x1b[1;5H"); // cursor-move (H, not CPR)
+    assert.equal(stripTerminalResponsesFromInput("\x1b[c"), "\x1b[c"); // bare DA query kept
+    assert.equal(stripTerminalResponsesFromInput("\x1b[>c"), "\x1b[>c"); // bare secondary DA query kept
+    assert.equal(stripTerminalResponsesFromInput("\x1b[6n"), "\x1b[6n"); // DSR query kept
+  });
+});
+
+// ─── Cross-layer grammar invariants ──────────────────────────────────────────
+// Every sample in TERMINAL_SEQUENCE_GRAMMAR is exercised against every layer in
+// every framing. These encode the consistency laws the individual layers must
+// obey — the class of defect earlier review rounds kept finding ("handled in
+// layer X, missed in layer Y") fails here instead of shipping.
+describe("terminal sequence grammar invariants", () => {
+  const historyView = (data: string) => sanitizeTerminalHistoryChunk("", data).visibleText;
+  const liveView = (data: string) =>
+    sanitizeTerminalHistoryChunk("", data, { responsesOnly: true }).visibleText;
+
+  type Kind = (typeof TERMINAL_SEQUENCE_GRAMMAR)[number]["kind"];
+  // 7-bit, 8-bit-C1, and (for string sequences) alternate-terminator framings.
+  const framings = (kind: Kind, body: string): ReadonlyArray<[label: string, framed: string]> => {
+    switch (kind) {
+      case "csi":
+        return [
+          ["7-bit", `\x1b[${body}`],
+          ["8-bit", `\x9b${body}`],
+        ];
+      case "osc":
+        return [
+          ["7-bit BEL", `\x1b]${body}\x07`],
+          ["7-bit ST", `\x1b]${body}\x1b\\`],
+          ["8-bit", `\x9d${body}\x9c`],
+        ];
+      case "dcs":
+        return [
+          ["7-bit ST", `\x1bP${body}\x1b\\`],
+          ["7-bit BEL", `\x1bP${body}\x07`],
+          ["8-bit", `\x90${body}\x9c`],
+        ];
+    }
+  };
+  const strippedBy = (view: (data: string) => string, framed: string) =>
+    view(`a${framed}b`) === "ab";
+  const keptBy = (view: (data: string) => string, framed: string) =>
+    view(`a${framed}b`) === `a${framed}b`;
+
+  for (const descriptor of TERMINAL_SEQUENCE_GRAMMAR) {
+    describe(descriptor.name, () => {
+      const response = descriptor.response;
+      if (response) {
+        it("response: output views obey stripFromOutput in every framing", () => {
+          for (const sample of response.samples) {
+            for (const [label, framed] of framings(descriptor.kind, sample)) {
+              if (response.stripFromOutput) {
+                assert.equal(
+                  strippedBy(historyView, framed),
+                  true,
+                  `history keeps ${label} ${sample}`,
+                );
+                assert.equal(strippedBy(liveView, framed), true, `live keeps ${label} ${sample}`);
+              } else {
+                assert.equal(
+                  keptBy(historyView, framed),
+                  true,
+                  `history strips ${label} ${sample}`,
+                );
+                assert.equal(keptBy(liveView, framed), true, `live strips ${label} ${sample}`);
+              }
+            }
+          }
+        });
+
+        it("response: input filter obeys `input` in every framing", () => {
+          for (const sample of response.samples) {
+            for (const [label, framed] of framings(descriptor.kind, sample)) {
+              const filtered = stripTerminalResponsesFromInput(`a${framed}b`);
+              if (response.input !== null) {
+                assert.equal(filtered, "ab", `input relays ${label} ${sample}`);
+              } else {
+                assert.equal(filtered, `a${framed}b`, `input strips ${label} ${sample}`);
+              }
+            }
+          }
+        });
+
+        it("law: a response stripped from input is stripped from scrollback (OSC 4 rgb is the one documented exception)", () => {
+          // Replay safety: if the input filter drops the emulator reply, the
+          // persisted scrollback must never carry the framed reply either —
+          // except OSC 4 rgb, whose output shape is the legitimate set-palette
+          // command and MUST survive output.
+          const exception = !response.stripFromOutput;
+          for (const sample of response.samples) {
+            for (const [label, framed] of framings(descriptor.kind, sample)) {
+              if (response.input !== null && !exception) {
+                assert.equal(
+                  strippedBy(historyView, framed),
+                  true,
+                  `input-stripped ${label} ${sample} survives scrollback`,
+                );
+              }
+            }
+          }
+        });
+      }
+
+      const query = descriptor.query;
+      if (query) {
+        it("query: stripped from scrollback, relayed live, untouched in input", () => {
+          for (const sample of query.samples) {
+            for (const [label, framed] of framings(descriptor.kind, sample)) {
+              assert.equal(
+                strippedBy(historyView, framed),
+                true,
+                `history keeps query ${label} ${sample}`,
+              );
+              assert.equal(keptBy(liveView, framed), true, `live strips query ${label} ${sample}`);
+              assert.equal(
+                stripTerminalResponsesFromInput(`a${framed}b`),
+                `a${framed}b`,
+                `input strips query ${label} ${sample}`,
+              );
+            }
+          }
+        });
+      }
+
+      const flattened = descriptor.flattened;
+      if (flattened) {
+        it("flattened: a run always strips; a lone token strips iff loneStrippable", () => {
+          for (const sample of flattened.samples) {
+            const run = `${sample}${sample}`;
+            assert.equal(historyView(`a ${run} b`), "a  b", `run survives history: ${sample}`);
+            assert.equal(liveView(`a ${run} b`), "a  b", `run survives live: ${sample}`);
+            if (flattened.loneStrippable) {
+              assert.equal(historyView(`a ${sample} b`), "a  b", `lone token survives: ${sample}`);
+            } else {
+              assert.equal(
+                historyView(`a ${sample} b`),
+                `a ${sample} b`,
+                `ambiguous lone token stripped: ${sample}`,
+              );
+            }
+          }
+        });
+      }
+
+      it("law: 7-bit and 8-bit framings behave identically in every layer", () => {
+        const bodies = [...(response?.samples ?? []), ...(query?.samples ?? [])];
+        for (const sample of bodies) {
+          const framed = framings(descriptor.kind, sample);
+          const reference = framed[0];
+          if (!reference) continue;
+          for (const [label, form] of framed.slice(1)) {
+            for (const [layer, view] of [
+              ["history", historyView],
+              ["live", liveView],
+              ["input", (data: string) => stripTerminalResponsesFromInput(data)],
+            ] as const) {
+              assert.equal(
+                view(`a${form}b`) === "ab",
+                view(`a${reference[1]}b`) === "ab",
+                `${layer} disagrees between ${reference[0]} and ${label} for ${sample}`,
+              );
+            }
+          }
+        }
+      });
+
+      it("law: sanitizing is idempotent over every framed sample", () => {
+        const bodies = [...(response?.samples ?? []), ...(query?.samples ?? [])];
+        for (const sample of bodies) {
+          for (const [label, framed] of framings(descriptor.kind, sample)) {
+            const once = historyView(`a${framed}b`);
+            assert.equal(historyView(once), once, `history not idempotent for ${label} ${sample}`);
+            const live = liveView(`a${framed}b`);
+            assert.equal(liveView(live), live, `live not idempotent for ${label} ${sample}`);
+          }
+        }
+      });
+    });
+  }
 });
