@@ -483,6 +483,11 @@ export function ChatView({
   const maxPromptLines = Math.max(3, Math.floor(height * 0.6));
   const autoPromptLines = Math.min(Math.max(reply.split("\n").length, 1), 8);
   const promptLines = Math.min(promptHeight ?? autoPromptLines, maxPromptLines);
+  // A popover (picker / palette / revert / confirm) floats ABOVE the composer,
+  // which stays visible (unfocused, compact) below — mirroring the web, where a
+  // dropdown opens over the still-present composer rather than replacing it.
+  const popoverOpen =
+    !!picker || overlay === "command" || overlay === "revert" || overlay === "confirmDelete";
   // A pending question renders a panel inside the composer (header + question +
   // options + hint + spacer), so the composer grows to fit it.
   const pendingPanelHeight =
@@ -492,29 +497,27 @@ export function ChatView({
       ? 9
       : focus === "rename" || focus === "filter" || focus === "commit"
         ? 5
-        : promptLines + 4 + pendingPanelHeight;
+        : popoverOpen
+          ? 5 // compact: a one-line static input + the footer, under the popover
+          : promptLines + 4 + pendingPanelHeight;
   const defaultTerminalHeight = Math.floor(height * 0.4);
   const maxTerminalHeight = Math.max(6, height - composerHeight - 6);
   const terminalDrawerHeight = activeTerminal
     ? Math.min(Math.max(terminalHeight ?? defaultTerminalHeight, 6), maxTerminalHeight)
     : 0;
-  // The bottom slot holds either the composer or an open picker. The picker grows
-  // UP into the space above (the panes shrink) instead of overflowing off-screen.
-  // Cap it so the panes always keep at least a few rows. Each option ≈ 2 rows
-  // (name + description) plus the title + border.
-  const aroundReserve = terminalDrawerHeight + 1; // footer hint (controls now live in the composer)
-  const bottomSlotCap = Math.max(4, height - aroundReserve - 4);
-  const pickerWanted = picker
-    ? Math.min(Math.max(picker.options.length, 1) * 2 + 3, Math.floor(height * 0.6))
-    : 0;
-  // The command palette grows up like the picker; its list windows within.
+  // Each popover grows UP into the space above (the panes shrink) instead of
+  // overflowing off-screen; capped so the panes keep at least a few rows.
+  const pickerWanted = picker ? Math.max(picker.options.length, 1) * 2 + 3 : 0;
   const commandWanted = overlay === "command" ? Math.floor(height * 0.5) : 0;
-  const bottomSlot = Math.min(
-    picker ? pickerWanted : overlay === "command" ? commandWanted : composerHeight,
-    bottomSlotCap,
+  const revertWanted = overlay === "revert" ? Math.min(checkpoints.length, 8) + 3 : 0;
+  const confirmWanted = overlay === "confirmDelete" ? 4 : 0;
+  const popoverCap = Math.max(0, height - terminalDrawerHeight - composerHeight - 6);
+  const popoverHeight = Math.min(
+    pickerWanted + commandWanted + revertWanted + confirmWanted,
+    popoverCap,
   );
-  const pickerContentRows = Math.max(2, bottomSlot - 3);
-  const bottomReserve = terminalDrawerHeight + bottomSlot + 1;
+  const pickerContentRows = Math.max(2, popoverHeight - 3);
+  const bottomReserve = terminalDrawerHeight + popoverHeight + composerHeight + 1;
   const panesHeight = Math.max(4, height - bottomReserve);
   const listViewport = Math.max(1, panesHeight - 3);
   const termCols = Math.max(2, width - 4);
@@ -1386,6 +1389,8 @@ export function ChatView({
         />
       ) : null}
 
+      {/* Popovers float ABOVE the still-present composer (mirroring the web's
+          dropdowns), rather than replacing it. */}
       {picker ? (
         <SelectOverlay
           title={picker.title}
@@ -1413,8 +1418,9 @@ export function ChatView({
         <RevertMenu checkpoints={checkpoints} selected={Math.min(revertIndex, checkpoints.length - 1)} />
       ) : overlay === "confirmDelete" && detail ? (
         <ConfirmDeleteMenu title={detail.title} />
-      ) : (
-        <ChatComposer
+      ) : null}
+
+      <ChatComposer
           // Search/filter now lives in the sidebar; the composer never owns it.
           mode={focus === "filter" ? "compose" : focus}
           reply={reply}
@@ -1428,7 +1434,14 @@ export function ChatView({
           newWorktree={newWorktree}
           newField={newField}
           editorRows={promptLines}
-          inputFocused={!terminalFocused && !diffOpen && !picker && focus !== "filter"}
+          inputFocused={
+            !terminalFocused &&
+            !diffOpen &&
+            !filesOpen &&
+            !settingsOpen &&
+            !popoverOpen &&
+            focus !== "filter"
+          }
           composerEpoch={composerEpoch}
           controls={controls}
           working={working}
@@ -1453,7 +1466,6 @@ export function ChatView({
           onSend={sendReply}
           onSubmitAnswer={submitUserInput}
         />
-      )}
 
       <box flexDirection="row" justifyContent="space-between" paddingLeft={1} paddingRight={1} flexShrink={0}>
         <text fg={palette.dim}>{hint}</text>
