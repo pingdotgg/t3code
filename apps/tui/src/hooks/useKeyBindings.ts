@@ -15,7 +15,7 @@ import { useKeyboard } from "@opentui/react";
 
 export type KeyBindingMode =
   | "terminal"
-  | "actions"
+  | "command"
   | "confirmDelete"
   | "revert"
   | "diff"
@@ -37,16 +37,13 @@ export interface KeyBindingActions {
   readonly onShrinkTerminal: () => void;
   readonly onTerminalCopy: () => void;
   readonly onTerminalKey: (sequence: string) => void;
-  // Thread-actions overlay (^K)
-  readonly onOpenActions: () => void;
-  readonly onActionRename: () => void;
-  readonly onActionArchive: () => void;
-  readonly onActionDelete: () => void;
-  readonly onActionStop: () => void;
-  readonly onActionRevert: () => void;
-  readonly onActionDiff: () => void;
-  readonly onActionModel: () => void;
-  readonly onActionReasoning: () => void;
+  // Command palette (^K): a fuzzy filter input (owns typed chars) over commands;
+  // ↑/↓ move the highlight, Enter runs, Esc closes.
+  readonly onOpenCommandPalette: () => void;
+  readonly onCommandPrev: () => void;
+  readonly onCommandNext: () => void;
+  readonly onCommandRun: () => void;
+  readonly onCommandClose: () => void;
   readonly onCloseOverlay: () => void;
   // Model picker
   // Select pickers (model / runtime / reasoning): ↑/↓ move, Enter applies, Esc
@@ -131,17 +128,12 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     // Ctrl+C always exits cleanly (outside the terminal).
     if (key.ctrl && key.name === "c") return actions.onExit();
 
-    // ── Thread-actions overlay (mnemonic keys) ──────────────────────────────
-    if (actions.mode === "actions") {
-      if (key.name === "r") return actions.onActionRename();
-      if (key.name === "a") return actions.onActionArchive();
-      if (key.name === "d") return actions.onActionDelete();
-      if (key.name === "s") return actions.onActionStop();
-      if (key.name === "v") return actions.onActionRevert();
-      if (key.name === "g") return actions.onActionDiff();
-      if (key.name === "m") return actions.onActionModel();
-      if (key.name === "e") return actions.onActionReasoning();
-      if (key.name === "escape") return actions.onCloseOverlay();
+    // ── Command palette (filter input owns typed chars) ─────────────────────
+    if (actions.mode === "command") {
+      if (key.name === "up") return actions.onCommandPrev();
+      if (key.name === "down") return actions.onCommandNext();
+      if (key.name === "return" || key.name === "enter") return actions.onCommandRun();
+      if (key.name === "escape") return actions.onCommandClose();
       return;
     }
     if (actions.mode === "select") {
@@ -228,7 +220,7 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     if (key.shift && key.name === "tab") return actions.onTogglePlanMode();
     if (key.ctrl && key.name === "y") return actions.onImplementPlan();
     if (key.ctrl && key.name === "u") return actions.onReopenUserInput();
-    if (key.ctrl && key.name === "k") return actions.onOpenActions();
+    if (key.ctrl && key.name === "k") return actions.onOpenCommandPalette();
     if (key.ctrl && key.name === "f") return actions.onOpenFilter();
     if (key.ctrl && key.name === "l") return actions.onToggleRightPanel();
     // ^G opens the draft in $EDITOR (interrupt is on Esc).

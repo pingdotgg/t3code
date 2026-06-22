@@ -10,16 +10,17 @@ import { describe, it } from "bun:test";
 // plan↔build toggle, rename, archive/unarchive, delete, stop-session, search/filter,
 // multiline composer + paste, tool-call rows, changed-files summary, working indicator,
 // proposed-plan card, implement-plan (^Y, same thread via sourceProposedPlan),
-// context-window meter, cycle pending approvals (↑/↓), checkpoint revert (^K → v),
+// context-window meter, cycle pending approvals (↑/↓), checkpoint revert,
 // plan/build badge on the prompt, pending user-input form,
-// new-thread runtime-mode + plan/build options, turn diff viewer (^K → g),
-// model/provider picker (^K → m, via server config + updateThreadMetadata),
+// new-thread runtime-mode + plan/build options, per-file + all-changes turn diff viewer,
+// model/provider picker (via server config + updateThreadMetadata),
 // new-thread branch/worktree fields (Tab cycles), composer controls in the box
 // (model-first), Shift+Tab plan/build alias, single-column icon glyphs mapped to
 // web lucide icons, changed-files directory tree with collapse-all, settled-turn
-// "Worked for" fold, and the right-side source-control panel (^L: branch + PR
-// status, Push & create PR / Commit / View PR). See web-parity.test.ts for the
-// keyboard parity table + remaining parity backlog.
+// "Worked for" fold, the right-side source-control panel (^L: branch + PR
+// status, Push & create PR / Commit / View PR), thread next/prev + jump (Alt+↑/↓,
+// Alt+1…9), and the command palette (^K — fuzzy commands folding in the thread
+// actions). See web-parity.test.ts for the keyboard parity table + remaining backlog.
 
 describe.skip("Non-goal: image / file attachments", () => {
   it("is an explicit TUI non-goal — kept here only to document the decision", () => {});

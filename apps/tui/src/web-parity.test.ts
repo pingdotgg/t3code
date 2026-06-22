@@ -30,12 +30,11 @@ const KEYMAP_PARITY: ReadonlyArray<KeyParity> = [
   { command: "plan/build toggle", web: "Shift+Tab", tui: "Shift+Tab (and ^B)", status: "aligned" },
   { command: "new thread", web: "Cmd/Ctrl+N", tui: "^N", status: "aligned" },
   { command: "toggle terminal", web: "Ctrl+`", tui: "^E", status: "aligned" },
-  { command: "thread actions", web: "(menu)", tui: "^K", status: "aligned" },
+  { command: "command palette", web: "Cmd/Ctrl+K", tui: "^K", status: "aligned" },
   { command: "filter / search", web: "Cmd/Ctrl+F", tui: "^F", status: "aligned" },
   { command: "source-control panel", web: "(surface)", tui: "^L", status: "aligned" },
   { command: "thread next/prev", web: "Cmd/Ctrl+[ / ]", tui: "Alt+↑ / Alt+↓", status: "aligned" },
   { command: "thread jump 1–9", web: "Cmd/Ctrl+1…9", tui: "Alt+1…9", status: "aligned" },
-  { command: "command palette", web: "Cmd/Ctrl+K", tui: null, status: "backlog" },
   { command: "terminal split", web: "Cmd/Ctrl+D", tui: null, status: "n/a" },
 ];
 
@@ -58,9 +57,9 @@ describe("keyboard parity", () => {
     expect(planToggle?.tui).toContain("Shift+Tab");
   });
 
-  it("Given the table, then it tracks at least the known backlog shortcuts", () => {
-    const backlog = KEYMAP_PARITY.filter((e) => e.status === "backlog").map((e) => e.command);
-    expect(backlog).toContain("command palette");
+  it("Given the command palette, then it is aligned on ^K (web parity)", () => {
+    const palette = KEYMAP_PARITY.find((e) => e.command === "command palette");
+    expect(palette).toMatchObject({ status: "aligned", tui: "^K" });
   });
 
   it("Given thread navigation, then it is aligned via terminal-friendly Alt combos", () => {
@@ -74,10 +73,6 @@ describe("keyboard parity", () => {
 //
 // Thread next/prev (Alt+↑/↓) + jump (Alt+1…9): SHIPPED — see store.test
 // (moveThreadSelection / selectThreadByIndex) and the keymap table above.
-
-describe.skip("Keyboard: command palette", () => {
-  it("Given the palette key, when pressed, then a searchable command list opens", () => {});
-});
 
 describe.skip("Composer: provider-traits + plan-sidebar toggle + compact menu", () => {
   it("Given a provider with traits, then the composer shows its trait controls", () => {});

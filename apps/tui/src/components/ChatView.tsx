@@ -25,6 +25,8 @@ import { buildUserInputAnswers, derivePendingUserInputs } from "../userInput.ts"
 import { buildRows, selectionEquals } from "./Sidebar.logic.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import { type DiffStatus, type DiffView, DiffViewer } from "./DiffViewer.tsx";
+import { type Command, filterCommands } from "../commands.ts";
+import { CommandPalette } from "./CommandPalette.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
 import { RightPanel } from "./RightPanel.tsx";
 import { SelectOverlay, type SelectStatus } from "./SelectOverlay.tsx";
@@ -77,10 +79,13 @@ export function ChatView({
     "compose",
   );
   // Transient key-driven overlay over the composer (thread actions / delete confirm / revert).
-  const [overlay, setOverlay] = React.useState<"none" | "actions" | "confirmDelete" | "revert">(
+  const [overlay, setOverlay] = React.useState<"none" | "command" | "confirmDelete" | "revert">(
     "none",
   );
   const [revertIndex, setRevertIndex] = React.useState(0);
+  // The command palette (^K): its filter query and highlighted row.
+  const [commandQuery, setCommandQuery] = React.useState("");
+  const [commandIndex, setCommandIndex] = React.useState(0);
   // Turn diff viewer (^K → g): which checkpoint's diff, its fetch state, the text.
   const [diffOpen, setDiffOpen] = React.useState(false);
   const [diffIndex, setDiffIndex] = React.useState(0);
@@ -230,6 +235,24 @@ export function ChatView({
       return;
     }
     store.runGitAction(action);
+  };
+
+  const openNewThread = () => {
+    setProjectIndex(0);
+    setNewRuntimeMode(detail?.runtimeMode ?? "full-access");
+    setNewInteractionMode("default");
+    setNewBranch("");
+    setNewWorktree("");
+    setNewField("message");
+    setFocus("new");
+  };
+
+  const implementPlan = () => {
+    if (!detail || !actionablePlan) return;
+    void client
+      .implementPlan(detail, actionablePlan.id)
+      .catch((error) => store.setStatus(`implement failed: ${String(error)}`, "error"));
+    store.setStatus("Implementing plan…", "busy");
   };
 
   // Interrupt the running turn — the red stop button and Esc both call this.
@@ -411,7 +434,12 @@ export function ChatView({
   const pickerWanted = picker
     ? Math.min(Math.max(picker.options.length, 1) * 2 + 3, Math.floor(height * 0.6))
     : 0;
-  const bottomSlot = Math.min(picker ? pickerWanted : composerHeight, bottomSlotCap);
+  // The command palette grows up like the picker; its list windows within.
+  const commandWanted = overlay === "command" ? Math.floor(height * 0.5) : 0;
+  const bottomSlot = Math.min(
+    picker ? pickerWanted : overlay === "command" ? commandWanted : composerHeight,
+    bottomSlotCap,
+  );
   const pickerContentRows = Math.max(2, bottomSlot - 3);
   const bottomReserve = terminalDrawerHeight + bottomSlot + 1;
   const panesHeight = Math.max(4, height - bottomReserve);
@@ -573,6 +601,130 @@ export function ChatView({
     })();
   };
 
+  // Run a palette command: close the palette, then perform the action (the action
+  // may open its own sub-overlay, e.g. delete → confirm, which wins over "none").
+  const runCommand = (action: () => void) => {
+    setOverlay("none");
+    action();
+  };
+
+  // The command palette's command list, built from current context + handlers
+  // (mirrors the web CommandPalette). ChatView owns the handlers, so commands are
+  // assembled here and fuzzy-filtered by commandQuery.
+  const paletteCommands = React.useMemo<Command[]>(() => {
+    const list: Command[] = [];
+    list.push({ id: "new", title: "New thread", hint: "^N", run: () => runCommand(openNewThread) });
+    if (detail) {
+      list.push({
+        id: "plan",
+        title: detail.interactionMode === "plan" ? "Switch to build mode" : "Switch to plan mode",
+        hint: "^B",
+        keywords: "interaction mode",
+        run: () => runCommand(togglePlanMode),
+      });
+      list.push({
+        id: "rename",
+        title: "Rename thread",
+        run: () =>
+          runCommand(() => {
+            setRenameDraft(detail.title);
+            setFocus("rename");
+          }),
+      });
+      list.push({
+        id: "archive",
+        title: detail.archivedAt ? "Unarchive thread" : "Archive thread",
+        run: () =>
+          runCommand(() => {
+            const archived = detail.archivedAt !== null;
+            void (archived
+              ? client.unarchiveThread(detail.id)
+              : client.archiveThread(detail.id)
+            ).catch(() => {});
+            store.setStatus(archived ? "Unarchived." : "Archived.", "success");
+          }),
+      });
+      list.push({
+        id: "delete",
+        title: "Delete thread",
+        run: () => runCommand(() => setOverlay("confirmDelete")),
+      });
+      list.push({
+        id: "stop",
+        title: "Stop session",
+        run: () =>
+          runCommand(() => {
+            void client.stopSession(detail.id).catch(() => {});
+            store.setStatus("Session stopped.", "success");
+          }),
+      });
+      if (checkpoints.length > 0) {
+        list.push({
+          id: "diff",
+          title: "View all changes",
+          keywords: "diff",
+          run: () =>
+            runCommand(() => {
+              setDiffFocusPath(null);
+              setDiffIndex(0);
+              setDiffOpen(true);
+            }),
+        });
+        list.push({
+          id: "revert",
+          title: "Revert to checkpoint…",
+          run: () =>
+            runCommand(() => {
+              setRevertIndex(0);
+              setOverlay("revert");
+            }),
+        });
+      }
+      list.push({ id: "model", title: "Change model", run: () => runCommand(openModelPicker) });
+      list.push({
+        id: "reasoning",
+        title: "Change reasoning effort",
+        run: () => runCommand(openReasoningPicker),
+      });
+      list.push({
+        id: "runtime",
+        title: "Change runtime access",
+        hint: "^O",
+        run: () => runCommand(openRuntimePicker),
+      });
+      if (actionablePlan) {
+        list.push({ id: "implement", title: "Implement plan", hint: "^Y", run: () => runCommand(implementPlan) });
+      }
+    }
+    list.push({
+      id: "terminal",
+      title: activeTerminal ? "Hide terminal" : "Show terminal",
+      hint: "^E",
+      run: () => runCommand(toggleTerminal),
+    });
+    list.push({
+      id: "panel",
+      title: rightPanelOpen ? "Hide source-control panel" : "Show source-control panel",
+      hint: "^L",
+      keywords: "git",
+      run: () => runCommand(() => setRightPanelOpen((open) => !open)),
+    });
+    list.push({
+      id: "filter",
+      title: "Filter threads",
+      hint: "^F",
+      keywords: "search",
+      run: () => runCommand(() => setFocus("filter")),
+    });
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail, checkpoints.length, activeTerminal, rightPanelOpen, actionablePlan]);
+
+  const filteredCommands = React.useMemo(
+    () => filterCommands(paletteCommands, commandQuery),
+    [paletteCommands, commandQuery],
+  );
+
   const keyMode =
     activeTerminal && terminalFocused
       ? "terminal"
@@ -580,8 +732,8 @@ export function ChatView({
         ? "diff"
         : picker
           ? "select"
-          : overlay === "actions"
-        ? "actions"
+          : overlay === "command"
+        ? "command"
         : overlay === "confirmDelete"
           ? "confirmDelete"
           : overlay === "revert"
@@ -652,15 +804,7 @@ export function ChatView({
     },
     onScrollUp: () => scrollRef.current?.scrollBy({ x: 0, y: -SCROLL_STEP }),
     onScrollDown: () => scrollRef.current?.scrollBy({ x: 0, y: SCROLL_STEP }),
-    onNewThread: () => {
-      setProjectIndex(0);
-      setNewRuntimeMode(detail?.runtimeMode ?? "full-access");
-      setNewInteractionMode("default");
-      setNewBranch("");
-      setNewWorktree("");
-      setNewField("message");
-      setFocus("new");
-    },
+    onNewThread: openNewThread,
     onToggleTerminal: toggleTerminal,
     onGrowTerminal: () => resizeTerminal(2),
     onShrinkTerminal: () => resizeTerminal(-2),
@@ -685,55 +829,22 @@ export function ChatView({
     onThreadPrev: () => store.moveThreadSelection(-1),
     onThreadNext: () => store.moveThreadSelection(1),
     onThreadJump: (index) => store.selectThreadByIndex(index),
-    onImplementPlan: () => {
-      if (!detail || !actionablePlan) return;
-      void client
-        .implementPlan(detail, actionablePlan.id)
-        .catch((error) => store.setStatus(`implement failed: ${String(error)}`, "error"));
-      store.setStatus("Implementing plan…", "busy");
+    onImplementPlan: implementPlan,
+    onOpenCommandPalette: () => {
+      setCommandQuery("");
+      setCommandIndex(0);
+      setOverlay("command");
     },
-    onOpenActions: () => {
-      if (!detail) {
-        store.setStatus("Select a thread first.");
-        return;
-      }
-      setOverlay("actions");
-    },
-    onActionRename: () => {
-      if (!detail) return;
-      setRenameDraft(detail.title);
-      setOverlay("none");
-      setFocus("rename");
-    },
-    onActionArchive: () => {
-      if (!detail) return;
-      const archived = detail.archivedAt !== null;
-      void (archived ? client.unarchiveThread(detail.id) : client.archiveThread(detail.id)).catch(
-        () => {},
-      );
-      setOverlay("none");
-      store.setStatus(archived ? "Unarchived." : "Archived.", "success");
-    },
-    onActionDelete: () => {
-      if (!detail) return;
-      setOverlay("confirmDelete");
-    },
-    onActionStop: () => {
-      if (!detail) return;
-      void client.stopSession(detail.id).catch(() => {});
-      setOverlay("none");
-      store.setStatus("Session stopped.", "success");
-    },
-    onActionRevert: () => {
-      if (!detail) return;
-      if (checkpoints.length === 0) {
-        setOverlay("none");
-        store.setStatus("No checkpoints to revert to.");
-        return;
-      }
-      setRevertIndex(0);
-      setOverlay("revert");
-    },
+    onCommandPrev: () =>
+      setCommandIndex((index) =>
+        filteredCommands.length === 0 ? 0 : (index - 1 + filteredCommands.length) % filteredCommands.length,
+      ),
+    onCommandNext: () =>
+      setCommandIndex((index) =>
+        filteredCommands.length === 0 ? 0 : (index + 1) % filteredCommands.length,
+      ),
+    onCommandRun: () => filteredCommands[commandIndex]?.run(),
+    onCommandClose: () => setOverlay("none"),
     onRevertPrev: () =>
       setRevertIndex((index) => (index <= 0 ? checkpoints.length - 1 : index - 1)),
     onRevertNext: () => setRevertIndex((index) => (index + 1) % Math.max(checkpoints.length, 1)),
@@ -803,17 +914,6 @@ export function ChatView({
     onReopenUserInput: () => {
       if (pendingUserInput) setUserInputDeferred(false);
     },
-    onActionDiff: () => {
-      if (!detail) return;
-      if (checkpoints.length === 0) {
-        setOverlay("none");
-        store.setStatus("No turn diffs yet.");
-        return;
-      }
-      setOverlay("none");
-      setDiffIndex(0);
-      setDiffOpen(true);
-    },
     onDiffPrev: () => {
       setDiffFocusPath(null);
       setDiffIndex((index) => (index <= 0 ? diffEntryCount - 1 : index - 1));
@@ -826,14 +926,6 @@ export function ChatView({
     onDiffScrollDown: () => diffScrollRef.current?.scrollBy({ x: 0, y: SCROLL_STEP }),
     onDiffToggleView: () => setDiffView((view) => (view === "unified" ? "split" : "unified")),
     onDiffClose: () => setDiffOpen(false),
-    onActionModel: () => {
-      setOverlay("none");
-      openModelPicker();
-    },
-    onActionReasoning: () => {
-      setOverlay("none");
-      openReasoningPicker();
-    },
     onOpenRuntime: openRuntimePicker,
     onSelectPrev: () => movePicker(-1),
     onSelectNext: () => movePicker(1),
@@ -924,7 +1016,7 @@ export function ChatView({
     "^E term",
     ...(actionablePlan ? ["^Y implement"] : []),
     ...(approvals.length > 0 ? [approvals.length > 1 ? "^A/^R approve (↑/↓)" : "^A/^R approve"] : []),
-    "^K actions",
+    "^K commands",
     "^F find",
     ...(width >= RIGHT_PANEL_MIN_TERMINAL_WIDTH ? [`^L panel ${rightPanelOpen ? "▾" : "▸"}`] : []),
     ...(working ? ["Esc stop"] : []),
@@ -1012,9 +1104,22 @@ export function ChatView({
           maxRows={pickerContentRows}
           onSelect={(index) => applyPicker(index)}
         />
+      ) : overlay === "command" ? (
+        <CommandPalette
+          commands={filteredCommands}
+          selectedIndex={commandIndex}
+          query={commandQuery}
+          width={width - 4}
+          maxRows={Math.max(1, pickerContentRows - 1)}
+          onInput={(value) => {
+            setCommandQuery(value);
+            setCommandIndex(0);
+          }}
+          onRun={(index) => filteredCommands[index]?.run()}
+        />
       ) : overlay === "revert" && detail ? (
         <RevertMenu checkpoints={checkpoints} selected={Math.min(revertIndex, checkpoints.length - 1)} />
-      ) : (overlay === "actions" || overlay === "confirmDelete") && detail ? (
+      ) : overlay === "confirmDelete" && detail ? (
         <ThreadActionsMenu
           overlay={overlay}
           title={detail.title}
