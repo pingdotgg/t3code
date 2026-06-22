@@ -1,43 +1,58 @@
-import * as Arr from "effect/Array";
-import type { OrchestrationShellSnapshot, OrchestrationShellStreamEvent } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ShellSnapshot,
+  OrchestrationV2ShellStreamItem,
+} from "@t3tools/contracts";
 
-/**
- * Reduce a single shell stream event into an existing snapshot, returning a new
- * snapshot with the event's changes applied. This is a pure reducer that both
- * web and mobile can use to keep their local shell snapshot in sync.
- *
- * Returns the original snapshot reference unchanged if the event is not
- * recognized (forward-compatible).
- */
+function upsertById<T extends { readonly id: unknown }>(
+  items: ReadonlyArray<T>,
+  item: T,
+): ReadonlyArray<T> {
+  const index = items.findIndex((candidate) => candidate.id === item.id);
+  if (index === -1) return [...items, item];
+  return items.map((candidate, candidateIndex) => (candidateIndex === index ? item : candidate));
+}
+
+/** Applies one committed V2 shell delta while preserving active/archive exclusivity. */
 export function applyShellStreamEvent(
-  snapshot: OrchestrationShellSnapshot,
-  event: OrchestrationShellStreamEvent,
-): OrchestrationShellSnapshot {
+  snapshot: OrchestrationV2ShellSnapshot,
+  event: Exclude<OrchestrationV2ShellStreamItem, { readonly kind: "snapshot" }>,
+): OrchestrationV2ShellSnapshot {
   if (event.sequence <= snapshot.snapshotSequence) return snapshot;
 
   switch (event.kind) {
-    case "project-upserted": {
-      const projects = snapshot.projects.some((p) => p.id === event.project.id)
-        ? Arr.map(snapshot.projects, (p) => (p.id === event.project.id ? event.project : p))
-        : Arr.append(snapshot.projects, event.project);
-      return { ...snapshot, projects, snapshotSequence: event.sequence };
-    }
-    case "project-removed":
+    case "project.updated":
       return {
         ...snapshot,
-        projects: Arr.filter(snapshot.projects, (p) => p.id !== event.projectId),
+        projects: upsertById(snapshot.projects, event.project),
         snapshotSequence: event.sequence,
       };
-    case "thread-upserted": {
-      const threads = snapshot.threads.some((t) => t.id === event.thread.id)
-        ? Arr.map(snapshot.threads, (t) => (t.id === event.thread.id ? event.thread : t))
-        : Arr.append(snapshot.threads, event.thread);
-      return { ...snapshot, threads, snapshotSequence: event.sequence };
-    }
-    case "thread-removed":
+    case "project.removed":
       return {
         ...snapshot,
-        threads: Arr.filter(snapshot.threads, (t) => t.id !== event.threadId),
+        projects: snapshot.projects.filter((project) => project.id !== event.projectId),
+        snapshotSequence: event.sequence,
+      };
+    case "thread.updated": {
+      const withoutThread = (threads: OrchestrationV2ShellSnapshot["threads"]) =>
+        threads.filter((thread) => thread.id !== event.thread.id);
+      return {
+        ...snapshot,
+        threads:
+          event.location === "active"
+            ? upsertById(withoutThread(snapshot.threads), event.thread)
+            : withoutThread(snapshot.threads),
+        archivedThreads:
+          event.location === "archive"
+            ? upsertById(withoutThread(snapshot.archivedThreads), event.thread)
+            : withoutThread(snapshot.archivedThreads),
+        snapshotSequence: event.sequence,
+      };
+    }
+    case "thread.removed":
+      return {
+        ...snapshot,
+        threads: snapshot.threads.filter((thread) => thread.id !== event.threadId),
+        archivedThreads: snapshot.archivedThreads.filter((thread) => thread.id !== event.threadId),
         snapshotSequence: event.sequence,
       };
     default:
