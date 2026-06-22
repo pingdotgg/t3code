@@ -298,21 +298,29 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
             );
           }
           const message = row.message;
-          const roleColor =
-            message.role === "user"
-              ? ansi("yellow")
-              : message.role === "assistant"
-                ? palette.accent
-                : palette.dim;
-          const who = message.role === "user" ? "you" : message.role;
           const body = message.text.trim().length > 0 ? message.text : "…";
           const checkpoint = checkpointByMessage.get(message.id);
+          // User text sits in a rounded box on the right; the assistant (and any
+          // other role) renders plain on the left — mirroring the web chat layout.
+          if (message.role === "user") {
+            return (
+              <box key={message.id} flexDirection="row" justifyContent="flex-end" marginBottom={1}>
+                <box
+                  flexDirection="column"
+                  border
+                  borderStyle="rounded"
+                  borderColor={palette.dim}
+                  paddingLeft={1}
+                  paddingRight={1}
+                  maxWidth={Math.max(24, Math.floor(width * 0.8))}
+                >
+                  <text fg={palette.text}>{body}</text>
+                </box>
+              </box>
+            );
+          }
           return (
             <box key={message.id} flexDirection="column" marginBottom={1}>
-              <text>
-                <span fg={roleColor}>{who}</span>
-                {message.streaming ? <span fg={palette.dim}> ⟳</span> : null}
-              </text>
               <markdown content={body} syntaxStyle={syntaxStyle} streaming={message.streaming} />
               {checkpoint ? (
                 <ChangedFiles
