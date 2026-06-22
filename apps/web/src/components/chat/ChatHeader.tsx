@@ -47,6 +47,7 @@ import {
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
 import { cn } from "~/lib/utils";
+import { ThreadRelationshipsControl } from "./ThreadRelationshipsControl";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -421,6 +422,12 @@ export const ChatHeader = memo(function ChatHeader({
             onDeleteScript={onDeleteProjectScript}
           />
         )}
+        {!draftId ? (
+          <ThreadRelationshipsControl
+            environmentId={activeThreadEnvironmentId}
+            threadId={activeThreadId}
+          />
+        ) : null}
         {showOpenInPicker && (
           <OpenInPicker
             environmentId={activeThreadEnvironmentId}
