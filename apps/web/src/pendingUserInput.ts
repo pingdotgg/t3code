@@ -85,6 +85,9 @@ export function setPendingUserInputCustomAnswer(
   customAnswer: string,
 ): PendingUserInputDraftAnswer {
   const normalizedCustomAnswer = normalizeDraftAnswer(customAnswer);
+  // ponytail: collapse whitespace-only drafts to "" so we never persist pure-
+  // whitespace custom text that resolves to no answer but clutters the store.
+  const storedCustomAnswer = normalizedCustomAnswer ? customAnswer : "";
   const selectedOptionLabels = normalizedCustomAnswer
     ? undefined
     : normalizeSelectedOptionLabels(draft?.selectedOptionLabels);
@@ -96,7 +99,7 @@ export function setPendingUserInputCustomAnswer(
 
   return {
     ...(answerSource ? { answerSource } : {}),
-    customAnswer,
+    customAnswer: storedCustomAnswer,
     ...(selectedOptionLabels.length > 0 ? { selectedOptionLabels } : {}),
   };
 }

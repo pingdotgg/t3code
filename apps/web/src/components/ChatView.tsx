@@ -1805,11 +1805,18 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThread) {
       return;
     }
+    // ponytail: skip pruning until the thread's activities have hydrated, otherwise
+    // a brief empty-activities window on thread switch would delete restored drafts
+    // (activePendingUserInputRequestIds is derived from threadActivities).
+    if (threadActivities === EMPTY_ACTIVITIES && activePendingUserInputRequestIds.length === 0) {
+      return;
+    }
     clearInactivePendingUserInputDraftRequests(threadId, activePendingUserInputRequestIds);
   }, [
     activePendingUserInputRequestIds,
     activeThread,
     clearInactivePendingUserInputDraftRequests,
+    threadActivities,
     threadId,
   ]);
   const lastSyncedPendingInputRef = useRef<{
