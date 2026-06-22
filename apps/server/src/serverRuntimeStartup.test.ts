@@ -21,7 +21,7 @@ it.effect("runs projection repair, recovery, worker startup, and bootstrap in or
     const result = yield* ServerRuntimeStartup.runOrderedV2StartupPhases({
       verify: record("verify").pipe(Effect.as({ valid: false })),
       rebuild: record("rebuild").pipe(Effect.as({ valid: true })),
-      recover: record("recover").pipe(Effect.as({ resumedSessions: 2 })),
+      recover: record("recover").pipe(Effect.as({ closedRequests: 2 })),
       startEffectWorker: record("worker"),
       autoBootstrap: record("bootstrap").pipe(Effect.as({ projectId: "project-1" })),
     });
@@ -34,7 +34,7 @@ it.effect("runs projection repair, recovery, worker startup, and bootstrap in or
       "bootstrap",
     ]);
     assert.deepEqual(result, {
-      recovery: { resumedSessions: 2 },
+      recovery: { closedRequests: 2 },
       bootstrap: { projectId: "project-1" },
     });
   }),
