@@ -11,7 +11,7 @@ import {
 } from "../contextWindow.ts";
 import { buildFileTree, collectDirPaths, flattenFileTree } from "../fileTree.ts";
 import { clip } from "../format.ts";
-import { fileTypeColor, STATUS_ICONS } from "../icons.ts";
+import { fileTypeColor, STATUS_ICONS, TOOL_ICONS } from "../icons.ts";
 import { type ActionableProposedPlan, latestActionableProposedPlan } from "../proposedPlan.ts";
 import { WorkingIndicator } from "./WorkingIndicator.tsx";
 import {
@@ -122,6 +122,49 @@ interface RowRenderContext {
   readonly mdClient: Record<string, never>;
   readonly checkpointByMessage: Map<string, OrchestrationCheckpointSummary>;
   readonly onOpenDiff?: (turnCount: number, filePath?: string) => void;
+  /** Resolve a message image attachment to a URL (until OpenTUI renders images inline). */
+  readonly getAttachmentUrl?: (attachmentId: string) => Promise<string | null>;
+  /** Surface a resolved attachment URL (e.g. in the status line) when clicked. */
+  readonly onOpenUrl?: (url: string) => void;
+}
+
+/**
+ * An image attachment shown as a link until OpenTUI can render images inline.
+ * Resolves the asset URL on mount; clicking surfaces the full URL (the terminal
+ * linkifies it / the status line makes it copyable).
+ */
+function AttachmentLink({
+  attachment,
+  ctx,
+}: {
+  readonly attachment: { readonly id: string; readonly name: string; readonly sizeBytes: number };
+  readonly ctx: RowRenderContext;
+}): React.ReactNode {
+  const { palette, width, getAttachmentUrl, onOpenUrl } = ctx;
+  const [url, setUrl] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!getAttachmentUrl) return;
+    let cancelled = false;
+    void getAttachmentUrl(attachment.id).then((resolved) => {
+      if (!cancelled) setUrl(resolved);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [attachment.id, getAttachmentUrl]);
+
+  const sizeKb = Math.max(1, Math.round(attachment.sizeBytes / 1024));
+  const label = `${TOOL_ICONS.imageView.glyph} ${attachment.name} · ${sizeKb} KB`;
+  const tail = url ?? "  (resolving link…)";
+  const click = url && onOpenUrl ? () => onOpenUrl(url) : undefined;
+  return (
+    <box {...(click ? { onMouseDown: click } : {})}>
+      <text>
+        <span fg={palette.accent}>{label}</span>
+        <span fg={palette.dim}>{`  ${clip(tail, Math.max(8, width - label.length - 4))}`}</span>
+      </text>
+    </box>
+  );
 }
 
 /**
@@ -145,6 +188,16 @@ function FoldableRowView({
   const message = row.message;
   const body = message.text.trim().length > 0 ? message.text : "…";
   const checkpoint = checkpointByMessage.get(message.id);
+  // Image attachments (until OpenTUI renders images inline) — shown as links.
+  const images = (message.attachments ?? []).filter((a) => a.type === "image");
+  const attachmentsNode =
+    images.length > 0 ? (
+      <box flexDirection="column" marginTop={1}>
+        {images.map((attachment) => (
+          <AttachmentLink key={attachment.id} attachment={attachment} ctx={ctx} />
+        ))}
+      </box>
+    ) : null;
   if (message.role === "user") {
     const maxBubble = Math.max(16, Math.floor(width * 0.72));
     const longestLine = body.split("\n").reduce((max, line) => Math.max(max, line.length), 1);
@@ -154,36 +207,34 @@ function FoldableRowView({
     // cross-size is auto, so "100%"/alignSelf/marginLeft:auto all collapse —
     // only a concrete width gives flex-end a reference to push against.
     return (
-      <box
-        flexDirection="row"
-        width={width}
-        justifyContent="flex-end"
-        marginTop={1}
-        marginBottom={1}
-      >
-        <box
-          flexDirection="column"
-          width={bubbleWidth}
-          flexShrink={0}
-          border
-          borderStyle="rounded"
-          borderColor={palette.accent}
-          paddingLeft={1}
-          paddingRight={1}
-        >
-          <markdown
-            content={body}
-            syntaxStyle={syntaxStyle}
-            streaming={message.streaming}
-            {...mdClient}
-          />
+      <box flexDirection="column" marginTop={1} marginBottom={1}>
+        <box flexDirection="row" width={width} justifyContent="flex-end">
+          <box
+            flexDirection="column"
+            width={bubbleWidth}
+            flexShrink={0}
+            border
+            borderStyle="rounded"
+            borderColor={palette.accent}
+            paddingLeft={1}
+            paddingRight={1}
+          >
+            <markdown
+              content={body}
+              syntaxStyle={syntaxStyle}
+              streaming={message.streaming}
+              {...mdClient}
+            />
+          </box>
         </box>
+        {attachmentsNode}
       </box>
     );
   }
   return (
     <box flexDirection="column" marginTop={1} marginBottom={1}>
       <markdown content={body} syntaxStyle={syntaxStyle} streaming={message.streaming} {...mdClient} />
+      {attachmentsNode}
       {checkpoint ? (
         <ChangedFilesTree
           checkpoint={checkpoint}
@@ -379,6 +430,8 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   syntaxStyle,
   scrollRef,
   onOpenDiff,
+  getAttachmentUrl,
+  onOpenUrl,
   treeSitterClient,
 }: {
   readonly detail: OrchestrationThread | null;
@@ -391,6 +444,10 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   readonly scrollRef: React.MutableRefObject<ScrollBoxRenderable | null>;
   /** Open the diff viewer scoped to a turn (clicking its changed-files summary). */
   readonly onOpenDiff?: (turnCount: number, filePath?: string) => void;
+  /** Resolve a message image attachment to a URL (shown as a link until inline images land). */
+  readonly getAttachmentUrl?: (attachmentId: string) => Promise<string | null>;
+  /** Surface a resolved attachment URL when clicked (e.g. in the status line). */
+  readonly onOpenUrl?: (url: string) => void;
   /** Test seam: inject a tree-sitter client so <markdown> can paint in tests. */
   readonly treeSitterClient?: unknown;
 }): React.ReactNode {
@@ -434,6 +491,8 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
     mdClient,
     checkpointByMessage,
     ...(onOpenDiff ? { onOpenDiff } : {}),
+    ...(getAttachmentUrl ? { getAttachmentUrl } : {}),
+    ...(onOpenUrl ? { onOpenUrl } : {}),
   };
 
   if (!detail) {

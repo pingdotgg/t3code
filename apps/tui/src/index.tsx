@@ -84,7 +84,7 @@ async function main(): Promise<void> {
 
   const options: TuiOptions = { origin, bearerToken, mintSocketUrl, logPath };
   const runtime = buildTuiRuntime(options);
-  const client = makeTuiClient(runtime);
+  const client = makeTuiClient(runtime, origin);
 
   // Render on a transparent background so the user's terminal theme (and its own
   // background colour) shows through instead of OpenTUI's opaque default.

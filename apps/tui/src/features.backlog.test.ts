@@ -24,8 +24,11 @@ import { describe, it } from "bun:test";
 // (terminal tabs — the TUI form of the web's terminal groups). See
 // web-parity.test.ts for the keyboard parity table + remaining backlog.
 
-describe.skip("Non-goal: image / file attachments", () => {
-  it("is an explicit TUI non-goal — kept here only to document the decision", () => {});
+// Image attachments: shown as a resolved link to the file (MessagesTimeline.test)
+// until OpenTUI's inline-image PR lands; INLINE rendering is the only part still
+// blocked (on that upstream PR), tracked here.
+describe.skip("Backlog: inline image rendering (blocked on OpenTUI image PR)", () => {
+  it("renders image attachments inline once OpenTUI supports it (link shown until then)", () => {});
 });
 
 // Multiple terminals per thread (the web's "terminal groups"): SHIPPED as tabs —

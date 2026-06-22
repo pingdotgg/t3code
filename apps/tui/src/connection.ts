@@ -380,6 +380,8 @@ export interface TuiClient {
   ) => Promise<void>;
   /** Close one terminal session (and its history) for a thread. */
   readonly terminalClose: (threadId: ThreadId, terminalId: string) => Promise<void>;
+  /** Resolve a message image attachment to an absolute URL, or null on failure. */
+  readonly getAttachmentUrl: (attachmentId: string) => Promise<string | null>;
   readonly dispose: () => Promise<void>;
 }
 
@@ -398,7 +400,7 @@ interface WarmRef<S> {
 /** Number of recently-viewed threads whose live state we keep warm (LRU). */
 const THREAD_WARM_LIMIT = 8;
 
-export function makeTuiClient(runtime: TuiRuntime): TuiClient {
+export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
   const forkUnsub = <A>(stream: Stream.Stream<A, unknown, EnvironmentSupervisor>): (() => void) => {
     const fiber = runtime.runFork(Stream.runDrain(stream));
     return () => {
@@ -812,6 +814,23 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
           Effect.asVoid,
         ),
       ),
+
+    getAttachmentUrl: (attachmentId) =>
+      runtime
+        .runPromise(
+          request(WS_METHODS.assetsCreateUrl, {
+            resource: { _tag: "attachment", attachmentId },
+          }).pipe(
+            Effect.map((result) => {
+              try {
+                return new URL(result.relativeUrl, origin || undefined).toString();
+              } catch {
+                return result.relativeUrl;
+              }
+            }),
+          ),
+        )
+        .catch(() => null),
 
     dispose: () => {
       disposeWarm();

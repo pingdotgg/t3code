@@ -84,6 +84,50 @@ async function bodyFrame(
 }
 
 describe("MessagesTimeline body", () => {
+  it("Given a message with an image attachment, then it shows a link to the file", async () => {
+    const full = {
+      ...detail("default"),
+      messages: [
+        {
+          id: "u1",
+          role: "user",
+          text: "look at this",
+          createdAt: "2026-06-19T00:00:00.000Z",
+          updatedAt: "2026-06-19T00:00:00.000Z",
+          streaming: false,
+          attachments: [
+            { type: "image", id: "att1", name: "diagram.png", mimeType: "image/png", sizeBytes: 24_576 },
+          ],
+        },
+      ],
+    } as unknown as OrchestrationThread;
+    const ref = React.createRef<null>();
+    const t = await testRender(
+      <MessagesTimeline
+        detail={full}
+        approvals={[]}
+        approvalIndex={0}
+        projectHint={null}
+        width={88}
+        height={20}
+        syntaxStyle={SyntaxStyle.create()}
+        scrollRef={ref as never}
+        getAttachmentUrl={async () => "https://srv/assets/att1.png"}
+      />,
+      { width: 92, height: 24 },
+    );
+    // Let the async URL resolve and repaint.
+    for (let i = 0; i < 6; i += 1) {
+      await t.renderOnce();
+      await t.flush();
+    }
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("diagram.png");
+    expect(frame).toContain("24 KB");
+    expect(frame).toContain("att1.png"); // the resolved link is shown
+    t.renderer.destroy();
+  });
+
   it("Given a tool activity, then it renders a tool-call row with the command", async () => {
     const frame = await bodyFrame({
       activities: [
