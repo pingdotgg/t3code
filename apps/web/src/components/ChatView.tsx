@@ -79,6 +79,7 @@ import {
   derivePhase,
   deriveTimelineEntries,
   deriveTimelineEntriesFromVisibleTurnItems,
+  deriveRevertTurnCountByUserMessageId,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
   findSidebarProposedPlan,
@@ -178,7 +179,7 @@ import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { buildDraftThreadRouteParams } from "../threadRoutes";
+import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -240,15 +241,8 @@ import {
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { resolveThreadPr } from "./ThreadStatusIndicators";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
-import { ThreadSyncStatusPill } from "./chat/ThreadSyncStatusPill";
-import {
-  DRAFT_HERO_TRANSITION_ANIMATION_ID,
-  DRAFT_HERO_TRANSITION_DURATION_MS,
-  DRAFT_HERO_TRANSITION_EASING,
-  MOBILE_COMPOSER_VIEW_TRANSITION_NAME,
-  MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
-  runMobileComposerTransition,
-} from "./chat/draftHeroTransition";
+import { QueuedRunsControl } from "./chat/QueuedRunsControl";
+import type { ComposerDispatchMode } from "./chat/composerDispatch";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   branchMismatchKey,
@@ -1190,6 +1184,9 @@ function ChatViewContent(props: ChatViewProps) {
     reportFailure: false,
   });
   const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
+    reportFailure: false,
+  });
+  const forkThreadFromRun = useAtomCommand(threadEnvironment.forkFromRun, {
     reportFailure: false,
   });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
@@ -2399,8 +2396,7 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
   const timelineEntries = isServerThread ? serverTimelineEntries : draftTimelineEntries;
-  const { turnDiffSummaries, inferredCheckpointTurnCountByRunId } =
-    useTurnDiffSummaries(activeThread);
+  const { turnDiffSummaries } = useTurnDiffSummaries(activeThread);
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
     const byMessageId = new Map<MessageId, TurnDiffSummary>();
     for (const summary of turnDiffSummaries) {
@@ -2409,38 +2405,14 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return byMessageId;
   }, [turnDiffSummaries]);
-  const revertTurnCountByUserMessageId = useMemo(() => {
-    const byUserMessageId = new Map<MessageId, number>();
-    for (let index = 0; index < timelineEntries.length; index += 1) {
-      const entry = timelineEntries[index];
-      if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
-        continue;
-      }
-
-      for (let nextIndex = index + 1; nextIndex < timelineEntries.length; nextIndex += 1) {
-        const nextEntry = timelineEntries[nextIndex];
-        if (!nextEntry || nextEntry.kind !== "message") {
-          continue;
-        }
-        if (nextEntry.message.role === "user") {
-          break;
-        }
-        const summary = turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
-        if (!summary) {
-          continue;
-        }
-        const turnCount =
-          summary.checkpointTurnCount ?? inferredCheckpointTurnCountByRunId[summary.runId];
-        if (typeof turnCount !== "number") {
-          break;
-        }
-        byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
-        break;
-      }
-    }
-
-    return byUserMessageId;
-  }, [inferredCheckpointTurnCountByRunId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  const revertTurnCountByUserMessageId = useMemo(
+    () =>
+      deriveRevertTurnCountByUserMessageId({
+        timelineEntries,
+        checkpoints: turnDiffSummaries,
+      }),
+    [timelineEntries, turnDiffSummaries],
+  );
 
   const gitCwd = activeProject
     ? projectScriptCwd({
@@ -4561,7 +4533,114 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const onRollbackCheckpoint = useCallback(
+    async (input: { readonly checkpointId: string; readonly scopeId: string }) => {
+      if (!activeThread || isRevertingCheckpoint) return;
+      if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
+        setThreadError(
+          activeThread.id,
+          `Reconnect ${activeEnvironmentUnavailableLabel} before reverting checkpoints.`,
+        );
+        return;
+      }
+      if (phase === "running" || isSendBusy || isConnecting) {
+        setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
+        return;
+      }
+      const localApi = readLocalApi();
+      const confirmed =
+        localApi == null
+          ? window.confirm("Roll back this thread to the selected checkpoint?")
+          : await localApi.dialogs.confirm(
+              "Roll back this thread to the selected checkpoint?\nThis action cannot be undone.",
+            );
+      if (!confirmed) return;
+
+      setIsRevertingCheckpoint(true);
+      setThreadError(activeThread.id, null);
+      const result = await revertThreadCheckpoint({
+        environmentId,
+        input: {
+          threadId: activeThread.id,
+          checkpointId: input.checkpointId,
+          scopeId: input.scopeId,
+        },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to revert thread state.",
+        );
+      }
+      setIsRevertingCheckpoint(false);
+    },
+    [
+      activeEnvironmentUnavailable,
+      activeEnvironmentUnavailableLabel,
+      activeThread,
+      environmentId,
+      isConnecting,
+      isRevertingCheckpoint,
+      isSendBusy,
+      phase,
+      revertThreadCheckpoint,
+      setThreadError,
+    ],
+  );
+
+  const onOpenRelatedThread = useCallback(
+    (threadId: ThreadId) => {
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(scopeThreadRef(environmentId, threadId)),
+      });
+    },
+    [environmentId, navigate],
+  );
+
+  const onForkFromRun = useCallback(
+    async (input: { readonly sourceThreadId: ThreadId; readonly runId: RunId }) => {
+      if (!activeThread || activeEnvironmentUnavailable) return;
+      const targetThreadId = newThreadId();
+      const result = await forkThreadFromRun({
+        environmentId,
+        input: {
+          sourceThreadId: input.sourceThreadId,
+          targetThreadId,
+          runId: input.runId,
+          title: `${activeThread.title} fork`,
+        },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          setThreadError(
+            activeThread.id,
+            error instanceof Error ? error.message : "Failed to fork this response.",
+          );
+        }
+        return;
+      }
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(scopeThreadRef(environmentId, targetThreadId)),
+      });
+    },
+    [
+      activeEnvironmentUnavailable,
+      activeThread,
+      environmentId,
+      forkThreadFromRun,
+      navigate,
+      setThreadError,
+    ],
+  );
+
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    dispatchMode: ComposerDispatchMode = "auto",
+  ) => {
     e?.preventDefault();
     if (
       !activeThread ||
@@ -4762,6 +4841,11 @@ function ChatViewContent(props: ChatViewProps) {
         createdAt: messageCreatedAt,
         updatedAt: messageCreatedAt,
         streaming: false,
+        ...(phase === "running" && dispatchMode === "queue"
+          ? { inputIntent: "queued_turn" as const }
+          : phase === "running" && dispatchMode === "steer"
+            ? { inputIntent: "steer" as const }
+            : {}),
       },
     ]);
     setThreadError(threadIdForSend, null);
@@ -4891,6 +4975,7 @@ function ChatViewContent(props: ChatViewProps) {
           titleSeed: title,
           runtimeMode,
           interactionMode,
+          dispatchMode,
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
         },
@@ -5828,6 +5913,9 @@ function ChatViewContent(props: ChatViewProps) {
                 activeThreadEnvironmentId={activeThread.environmentId}
                 routeThreadKey={routeThreadKey}
                 onOpenTurnDiff={onOpenTurnDiff}
+                onOpenThread={onOpenRelatedThread}
+                onForkFromRun={onForkFromRun}
+                onRollbackCheckpoint={(input) => void onRollbackCheckpoint(input)}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
                 isRevertingCheckpoint={isRevertingCheckpoint}
@@ -5887,6 +5975,12 @@ function ChatViewContent(props: ChatViewProps) {
               </div>
               <div className="chat-composer-horizontal-inset">
                 <div className="pointer-events-auto relative z-10 isolate">
+                  {isServerThread && activeThread ? (
+                    <QueuedRunsControl
+                      environmentId={activeThread.environmentId}
+                      threadId={activeThread.id}
+                    />
+                  ) : null}
                   <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                   <div className="relative z-10">
                     <ChatComposer

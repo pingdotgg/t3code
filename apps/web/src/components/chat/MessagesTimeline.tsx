@@ -5,6 +5,7 @@ import {
   type ScopedThreadRef,
   type ServerProviderSkill,
   type RunId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
@@ -46,6 +47,7 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   EyeIcon,
+  GitForkIcon,
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
@@ -99,6 +101,9 @@ import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
+import { V2ItemInspector } from "./V2ItemInspector";
+import { useV2ItemSupport } from "../../state/v2ItemSupport";
+import { isV2LifecycleItem, V2LifecycleRow } from "./V2LifecycleRow";
 
 import {
   buildInlineTerminalContextText,
@@ -133,6 +138,15 @@ interface TimelineRowSharedState {
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
+  onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
+  onForkFromRun: (input: {
+    readonly sourceThreadId: ThreadId;
+    readonly runId: RunId;
+  }) => Promise<void>;
+  onRollbackCheckpoint: (input: {
+    readonly checkpointId: string;
+    readonly scopeId: string;
+  }) => void;
   onToggleTurnFold: (runId: RunId) => void;
 }
 
@@ -164,6 +178,15 @@ interface MessagesTimelineProps {
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   routeThreadKey: string;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
+  onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
+  onForkFromRun: (input: {
+    readonly sourceThreadId: ThreadId;
+    readonly runId: RunId;
+  }) => Promise<void>;
+  onRollbackCheckpoint: (input: {
+    readonly checkpointId: string;
+    readonly scopeId: string;
+  }) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
@@ -198,6 +221,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   turnDiffSummaryByAssistantMessageId,
   routeThreadKey,
   onOpenTurnDiff,
+  onOpenThread,
+  onForkFromRun,
+  onRollbackCheckpoint,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   isRevertingCheckpoint,
@@ -427,6 +453,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onOpenThread,
+      onForkFromRun,
+      onRollbackCheckpoint,
       onToggleTurnFold,
       onToggleWorkGroup,
     }),
@@ -441,6 +470,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onOpenThread,
+      onForkFromRun,
+      onRollbackCheckpoint,
       onToggleTurnFold,
       onToggleWorkGroup,
     ],
@@ -948,6 +980,25 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           markdownCwd={ctx.markdownCwd}
         />
       </div>
+      {(row.message.inputIntent && row.message.inputIntent !== "turn_start") ||
+      (row.projectedItem &&
+        row.projectedItem.item.status !== "completed" &&
+        row.projectedItem.item.status !== "pending" &&
+        row.projectedItem.item.status !== "waiting") ? (
+        <div className="me-1 flex items-center gap-1.5">
+          {row.message.inputIntent && row.message.inputIntent !== "turn_start" ? (
+            <UserMessageIntentBadge intent={row.message.inputIntent} />
+          ) : null}
+          {row.projectedItem &&
+          row.projectedItem.item.status !== "completed" &&
+          row.projectedItem.item.status !== "pending" &&
+          row.projectedItem.item.status !== "waiting" ? (
+            <span className="rounded-full border border-destructive/25 bg-destructive/8 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
+              {row.projectedItem.item.status}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
           <Tooltip>
@@ -967,6 +1018,39 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </div>
       </div>
     </div>
+  );
+}
+
+function UserMessageIntentBadge({
+  intent,
+}: {
+  readonly intent: NonNullable<TimelineMessage["inputIntent"]>;
+}) {
+  const presentation =
+    intent === "queued_turn"
+      ? { label: "queued", className: "border-amber-500/25 bg-amber-500/8 text-amber-700" }
+      : intent === "promoted_queued_to_steer"
+        ? {
+            label: "queued → steer",
+            className: "border-sky-500/25 bg-sky-500/8 text-sky-700",
+          }
+        : { label: "steer", className: "border-sky-500/25 bg-sky-500/8 text-sky-700" };
+  return (
+    <span
+      className={cn(
+        "me-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium tracking-wide",
+        presentation.className,
+      )}
+      title={
+        intent === "queued_turn"
+          ? "Queued behind the active turn"
+          : intent === "promoted_queued_to_steer"
+            ? "Originally queued, then promoted to steer the active turn"
+            : "Steered the active turn"
+      }
+    >
+      {presentation.label}
+    </span>
   );
 }
 
@@ -1036,8 +1120,16 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
         {row.showAssistantMeta ? (
-          <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
+          <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-60 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
+            {row.projectedItem?.item.type === "assistant_message" ? (
+              <AssistantForkButton projectedItem={row.projectedItem} />
+            ) : null}
             <AssistantCopyButton row={row} />
+            {row.projectedItem && row.projectedItem.item.status !== "completed" ? (
+              <span className="rounded-full border border-border/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                {row.projectedItem.item.status}
+              </span>
+            ) : null}
             {!row.message.streaming && (
               <Tooltip>
                 <TooltipTrigger
@@ -1054,6 +1146,59 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         ) : null}
       </div>
     </>
+  );
+}
+
+function AssistantForkButton({
+  projectedItem,
+}: {
+  readonly projectedItem: NonNullable<Extract<TimelineRow, { kind: "message" }>["projectedItem"]>;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const [busy, setBusy] = useState(false);
+  const support = useV2ItemSupport({
+    environmentId: ctx.activeThreadEnvironmentId,
+    sourceThreadId: projectedItem.sourceThreadId,
+    sourceItemId: projectedItem.sourceItemId,
+  });
+  const capabilities = support.providerSession?.capabilities;
+  const canForkNatively =
+    capabilities?.threads.canForkThread === true &&
+    capabilities.threads.canForkFromTurn === true &&
+    capabilities.identity.nativeThreadIds === "strong";
+  const canFork =
+    projectedItem.item.runId !== null &&
+    projectedItem.item.status === "completed" &&
+    (capabilities === undefined ||
+      canForkNatively ||
+      capabilities.context.supportsFullThreadHandoff === true);
+
+  if (!canFork || projectedItem.item.runId === null) return null;
+  const runId = projectedItem.item.runId;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              void ctx
+                .onForkFromRun({ sourceThreadId: projectedItem.sourceThreadId, runId })
+                .finally(() => setBusy(false));
+            }}
+            aria-label="Fork from this response"
+          />
+        }
+      >
+        <GitForkIcon className={cn("size-3", busy && "animate-pulse")} />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Fork from this response</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -1186,6 +1331,16 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
 function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
   const ctx = use(TimelineRowCtx);
   const { item, visibility, sourceThreadId } = row.projectedItem;
+  if (isV2LifecycleItem(item)) {
+    return (
+      <V2LifecycleRow
+        item={item}
+        createdAt={row.createdAt}
+        timestampFormat={ctx.timestampFormat}
+        onOpenThread={ctx.onOpenThread}
+      />
+    );
+  }
   const presentation = v2EventPresentation(item);
   const Icon = presentation.icon;
   return (
@@ -1240,18 +1395,17 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
               From {sourceThreadId}
             </p>
           ) : null}
-          <details
-            className="group/v2-details mt-2 rounded-md border border-border/50 bg-background/45"
-            data-v2-structured-details="true"
-          >
-            <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2 py-1.5 text-[11px] font-medium text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden">
-              <ChevronRightIcon className="size-3 transition-transform group-open/v2-details:rotate-90" />
-              Structured details
-            </summary>
-            <pre className="max-h-80 overflow-auto border-t border-border/50 px-2 py-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
-              {JSON.stringify(item, null, 2)}
-            </pre>
-          </details>
+          <div className="mt-2">
+            <V2ItemInspector
+              projectedItem={row.projectedItem}
+              environmentId={ctx.activeThreadEnvironmentId}
+              cwd={ctx.markdownCwd}
+              workspaceRoot={ctx.workspaceRoot}
+              onOpenThread={ctx.onOpenThread}
+              onOpenTurnDiff={ctx.onOpenTurnDiff}
+              onRollbackCheckpoint={ctx.onRollbackCheckpoint}
+            />
+          </div>
         </div>
       </div>
     </section>
@@ -2129,6 +2283,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
 }) {
   const { workEntry, workspaceRoot } = props;
   const activity = use(TimelineRowActivityCtx);
+  const ctx = use(TimelineRowCtx);
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = false;
@@ -2143,7 +2298,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       : rawPreview;
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
-  const canExpand = expandedBody !== null;
+  const canExpand = expandedBody !== null || workEntry.projectedItem !== undefined;
   const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle = showFailedIndicator && !workLogEntryIsToolLike(workEntry);
   const iconWrapperClass = cn(
@@ -2273,15 +2428,27 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           </div>
         </div>
       </div>
-      {expanded && canExpand && expandedBody ? (
+      {expanded && canExpand ? (
         <div
           className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
-          <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground select-text">
-            {expandedBody}
-          </pre>
+          {workEntry.projectedItem ? (
+            <V2ItemInspector
+              projectedItem={workEntry.projectedItem}
+              environmentId={ctx.activeThreadEnvironmentId}
+              cwd={ctx.markdownCwd}
+              workspaceRoot={workspaceRoot}
+              onOpenThread={ctx.onOpenThread}
+              onOpenTurnDiff={ctx.onOpenTurnDiff}
+              onRollbackCheckpoint={ctx.onRollbackCheckpoint}
+            />
+          ) : expandedBody ? (
+            <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground select-text">
+              {expandedBody}
+            </pre>
+          ) : null}
         </div>
       ) : null}
     </div>

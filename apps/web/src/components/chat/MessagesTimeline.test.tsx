@@ -1,4 +1,4 @@
-import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -180,6 +180,9 @@ function buildProps() {
     turnDiffSummaryByAssistantMessageId: new Map(),
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
+    onOpenThread: () => {},
+    onForkFromRun: async () => {},
+    onRollbackCheckpoint: () => {},
     revertTurnCountByUserMessageId: new Map(),
     onRevertUserMessage: () => {},
     isRevertingCheckpoint: false,
@@ -436,7 +439,78 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("rounded-2xl bg-accent p-3");
   });
 
-  it("renders inline terminal labels with the composer chip UI", () => {
+  it("keeps steer intent visible on committed user messages", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const entry = buildUserTimelineEntry("Adjust the current turn");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          { ...entry, message: { ...entry.message, inputIntent: "steer" as const } },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Steered the active turn");
+    expect(markup).toContain(">steer<");
+  });
+
+  it("exposes a per-response fork action for completed assistant items", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const projectedItem = {
+      position: 0,
+      visibility: "local",
+      sourceThreadId: "thread-1",
+      sourceItemId: "assistant-item-1",
+      item: {
+        id: "assistant-item-1",
+        threadId: "thread-1",
+        runId: "run-1",
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "completed",
+        title: null,
+        startedAt: null,
+        completedAt: null,
+        updatedAt: {},
+        type: "assistant_message",
+        messageId: "assistant-message-1",
+        text: "Done",
+        streaming: false,
+      },
+    } as never;
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "assistant-message-1",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem,
+            message: {
+              id: MessageId.make("assistant-message-1"),
+              role: "assistant",
+              text: "Done",
+              runId: RunId.make("run-1"),
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Fork from this response"');
+  });
+
+  it("renders inline terminal labels with the composer chip UI", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -568,9 +642,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-v2-item-type="run_interrupt_request"');
     expect(markup).toContain("Interrupt requested");
     expect(markup).toContain("Waiting for the provider to stop.");
-    expect(markup).toContain('data-v2-structured-details="true"');
-    expect(markup).toContain("Structured details");
-    expect(markup).toContain("&quot;type&quot;: &quot;run_interrupt_request&quot;");
+    expect(markup).not.toContain("Structured details");
   });
 
   it("keeps inherited V2 work provenance on the rendered row", async () => {

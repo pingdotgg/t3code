@@ -131,6 +131,7 @@ export interface OrchestratorV2DispatchResult {
 }
 
 export interface OrchestratorV2Shape {
+  readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
   readonly dispatch: (
     command: OrchestrationV2Command,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
@@ -636,6 +637,41 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       yield* effectWorker.drain(1);
     });
+
+  const resumeQueuedRuns = Effect.gen(function* () {
+    const shell = yield* projectionStore.getShellSnapshot();
+    let resumed = 0;
+    for (const thread of shell.threads) {
+      const resumedThread = yield* Effect.gen(function* () {
+        const projection = yield* projectionStore.getThreadProjection(thread.id);
+        if (projection.runs.some(isBlockingRun) || nextQueuedRun(projection) === undefined) {
+          return false;
+        }
+        yield* dispatchSemaphore.withPermit(startNextQueuedRun(thread.id));
+        return true;
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to resume queued V2 run after recovery", {
+            threadId: thread.id,
+            cause,
+          }).pipe(Effect.as(false)),
+        ),
+      );
+      if (resumedThread) {
+        resumed += 1;
+      }
+    }
+    return resumed;
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new OrchestratorDispatchError({
+          commandId: CommandId.make("command:system:resume-queued-runs"),
+          commandType: "message.dispatch",
+          cause,
+        }),
+    ),
+  );
 
   const dispatchThreadCreate = Effect.fn("orchestrationV2.dispatch.threadCreate")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>,
@@ -4340,6 +4376,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Stream.filter(
       (stored) =>
         stored.event.type === "run.updated" &&
+        !String(stored.commandId).startsWith("command:runtime-reconcile:") &&
         (stored.event.payload.status === "completed" ||
           stored.event.payload.status === "interrupted" ||
           stored.event.payload.status === "failed" ||
@@ -4359,6 +4396,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   return OrchestratorV2.of({
+    resumeQueuedRuns,
     dispatch: dispatchWithReceipt,
     getThreadProjection: (threadId) =>
       projectionStore
@@ -4432,6 +4470,13 @@ export const layer: Layer.Layer<
 export const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
   OrchestratorV2,
   OrchestratorV2.of({
+    resumeQueuedRuns: Effect.fail(
+      new OrchestratorDispatchError({
+        commandId: CommandId.make("command:system:resume-queued-runs"),
+        commandType: "message.dispatch",
+        cause: "Orchestration V2 live runtime is not configured.",
+      }),
+    ),
     dispatch: (command) =>
       Effect.fail(
         new OrchestratorDispatchError({

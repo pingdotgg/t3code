@@ -3,6 +3,7 @@ import type {
   EnvironmentProject,
   EnvironmentThread,
   EnvironmentThreadShell,
+  ScopedThreadProjection,
   ThreadConversationMessage,
   ThreadProposedPlan,
   ThreadRuntimeSummary,
@@ -41,8 +42,8 @@ const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).p
 const EMPTY_THREAD_DETAIL_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
   Atom.withLabel("web-thread-detail:empty"),
 );
-const EMPTY_THREAD_STATUS_ATOM = Atom.make<EnvironmentThreadStatus>("empty").pipe(
-  Atom.withLabel("web-thread-status:empty"),
+const EMPTY_SCOPED_THREAD_PROJECTION_ATOM = Atom.make<ScopedThreadProjection | null>(null).pipe(
+  Atom.withLabel("web-scoped-thread-projection:empty"),
 );
 const EMPTY_MESSAGES_ATOM = Atom.make(EMPTY_MESSAGES).pipe(
   Atom.withLabel("web-thread-messages:empty"),
@@ -143,20 +144,10 @@ export function useThreadDetail(ref: ScopedThreadRef | null): EnvironmentThread 
   );
 }
 
-export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadStatus {
+export function useThreadProjection(ref: ScopedThreadRef | null): ScopedThreadProjection | null {
   return useAtomValue(
-    ref === null ? EMPTY_THREAD_STATUS_ATOM : environmentThreadDetails.statusAtom(ref),
+    ref === null ? EMPTY_SCOPED_THREAD_PROJECTION_ATOM : environmentThreadDetails.threadAtom(ref),
   );
-}
-
-export function resolveThreadDetailRef(
-  ref: ScopedThreadRef | null,
-  options: {
-    shellExists: boolean;
-    waitForShell: boolean;
-  },
-): ScopedThreadRef | null {
-  return ref !== null && (!options.waitForShell || options.shellExists) ? ref : null;
 }
 
 /** Detail collections composed with shell-authoritative thread/workspace metadata. */

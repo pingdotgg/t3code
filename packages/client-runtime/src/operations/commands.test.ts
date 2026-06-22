@@ -1,7 +1,11 @@
 import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   CommandId,
   EnvironmentId,
   MessageId,
+  NodeId,
   ORCHESTRATION_V2_WS_METHODS,
   PlanId,
   ProjectId,
@@ -30,8 +34,18 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
-import { archiveThread, createProject, startThreadTurn } from "./commands.ts";
+import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
+import {
+  archiveThread,
+  createProject,
+  forkThreadFromRun,
+  mergeThreadBack,
+  promoteQueuedRun,
+  reorderQueuedRun,
+  revertThreadCheckpoint,
+  startThreadTurn,
+  updateThreadMetadata,
+} from "./commands.ts";
 
 const TEST_CRYPTO_LAYER = Layer.succeed(
   Crypto.Crypto,
@@ -145,6 +159,50 @@ describe("V2 environment commands", () => {
 
       expect(commands).toEqual([
         { type: "thread.archive", commandId: "queued-command", threadId: "thread-1" },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("resolves run ordinal zero to the persisted thread-start checkpoint", () =>
+    Effect.gen(function* () {
+      const scopeId = CheckpointScopeId.make("checkpoint-scope-root");
+      const checkpointId = CheckpointId.make("checkpoint-thread-start");
+      const projection: OrchestrationV2ThreadProjection = {
+        ...v2Projection,
+        checkpoints: [
+          {
+            id: checkpointId,
+            threadId: v2ThreadId,
+            scopeId,
+            runId: null,
+            nodeId: NodeId.make("node-run-1"),
+            parentCheckpointId: null,
+            ordinalWithinScope: 0,
+            appRunOrdinal: null,
+            ref: CheckpointRef.make("refs/t3/thread-start"),
+            status: "ready",
+            files: [],
+            capturedAt: v2Now,
+          },
+        ],
+      };
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+
+      yield* revertThreadCheckpoint({
+        commandId: CommandId.make("rollback-thread-start"),
+        threadId: v2ThreadId,
+        turnCount: 0,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(commands).toEqual([
+        {
+          type: "checkpoint.rollback",
+          commandId: "rollback-thread-start",
+          threadId: v2ThreadId,
+          scopeId,
+          checkpointId,
+        },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
@@ -323,6 +381,80 @@ describe("V2 environment commands", () => {
           },
         });
       }
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect(
+    "dispatches V2-native relationship and queue commands without compatibility shaping",
+    () =>
+      Effect.gen(function* () {
+        const commands: OrchestrationV2Command[] = [];
+        const supervisor = yield* makeSupervisor({ commands, projects: [] });
+        const provide = Effect.provideService(
+          EnvironmentSupervisor.EnvironmentSupervisor,
+          supervisor,
+        );
+
+        yield* forkThreadFromRun({
+          commandId: CommandId.make("fork"),
+          sourceThreadId: v2ThreadId,
+          targetThreadId: ThreadId.make("thread-fork"),
+          runId: RunId.make("run-1"),
+        }).pipe(provide);
+        yield* mergeThreadBack({
+          commandId: CommandId.make("merge"),
+          sourceThreadId: ThreadId.make("thread-fork"),
+          targetThreadId: v2ThreadId,
+          runId: RunId.make("run-2"),
+        }).pipe(provide);
+        yield* reorderQueuedRun({
+          commandId: CommandId.make("reorder"),
+          threadId: v2ThreadId,
+          runId: RunId.make("run-3"),
+          beforeRunId: RunId.make("run-4"),
+        }).pipe(provide);
+        yield* promoteQueuedRun({
+          commandId: CommandId.make("promote"),
+          threadId: v2ThreadId,
+          queuedRunId: RunId.make("run-3"),
+          targetRunId: RunId.make("run-active"),
+        }).pipe(provide);
+
+        expect(commands).toMatchObject([
+          { type: "thread.fork", sourcePoint: { type: "run", runId: "run-1" } },
+          { type: "thread.merge_back", sourcePoint: { type: "run", runId: "run-2" } },
+          { type: "queued-run.reorder", runId: "run-3", beforeRunId: "run-4" },
+          {
+            type: "queued-message.promote-to-steer",
+            queuedRunId: "run-3",
+            targetRunId: "run-active",
+          },
+        ]);
+      }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("uses provider.switch when model selection changes provider instance", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+
+      yield* updateThreadMetadata({
+        commandId: CommandId.make("switch-provider"),
+        threadId: v2ThreadId,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claude"),
+          model: "claude-sonnet-4-6",
+        },
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(commands).toEqual([
+        {
+          type: "provider.switch",
+          commandId: "switch-provider",
+          threadId: v2ThreadId,
+          modelSelection: { instanceId: "claude", model: "claude-sonnet-4-6" },
+        },
+      ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 });

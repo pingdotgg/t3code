@@ -1,5 +1,6 @@
 import type {
   ChatImageAttachment as ContractChatImageAttachment,
+  OrchestrationV2UserMessageInputIntent,
   ProjectScript as ContractProjectScript,
   ProviderInteractionMode,
   RuntimeMode,
@@ -38,6 +39,7 @@ export type ChatAttachment = ChatImageAttachment;
 
 export interface ChatMessage extends Omit<ThreadConversationMessage, "attachments"> {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  readonly inputIntent?: OrchestrationV2UserMessageInputIntent | undefined;
 }
 
 export type ProposedPlan = ThreadProposedPlan;
