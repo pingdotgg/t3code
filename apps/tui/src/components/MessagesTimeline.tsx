@@ -300,21 +300,32 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
           const message = row.message;
           const body = message.text.trim().length > 0 ? message.text : "…";
           const checkpoint = checkpointByMessage.get(message.id);
-          // User text sits in a rounded box on the right; the assistant (and any
-          // other role) renders plain on the left — mirroring the web chat layout.
+          // User text sits in an accent-bordered rounded box on the right; the
+          // assistant (and any other role) renders plain on the left — mirroring
+          // the web chat layout. The box needs a DEFINITE width for <markdown> to
+          // render (it's block-level and reports no intrinsic width), so size it
+          // to the content's longest line + box chrome, capped at ~72% of the pane.
           if (message.role === "user") {
+            const maxBubble = Math.max(16, Math.floor(width * 0.72));
+            const longestLine = Math.max(1, ...body.split("\n").map((line) => line.length));
+            const bubbleWidth = Math.min(maxBubble, longestLine + 4);
             return (
               <box key={message.id} flexDirection="row" justifyContent="flex-end" marginBottom={1}>
                 <box
                   flexDirection="column"
+                  width={bubbleWidth}
+                  flexShrink={0}
                   border
                   borderStyle="rounded"
-                  borderColor={palette.dim}
+                  borderColor={palette.accent}
                   paddingLeft={1}
                   paddingRight={1}
-                  maxWidth={Math.max(24, Math.floor(width * 0.8))}
                 >
-                  <text fg={palette.text}>{body}</text>
+                  <markdown
+                    content={body}
+                    syntaxStyle={syntaxStyle}
+                    streaming={message.streaming}
+                  />
                 </box>
               </box>
             );

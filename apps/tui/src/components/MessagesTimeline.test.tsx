@@ -174,18 +174,23 @@ describe("MessagesTimeline body", () => {
     t.renderer.destroy();
   });
 
-  it("Given user and assistant messages, then neither shows a role label and user text is boxed", async () => {
+  it("Given user and assistant messages, then the user text is a right-aligned box with no role labels", async () => {
     const frame = await bodyFrame({
       messages: [
         { id: "u1", role: "user", text: "ship it please", createdAt: "2026-06-19T00:00:00.000Z", streaming: false },
         { id: "a1", role: "assistant", text: "on it", createdAt: "2026-06-19T00:00:01.000Z", streaming: false },
       ] as never,
     });
-    // The user text renders (in a right-side box); the old "you"/"assistant"
-    // labels are gone.
-    expect(frame).toContain("ship it please");
+    // The old "you"/"assistant" role labels are gone.
     expect(frame).not.toContain("you");
     expect(frame).not.toContain("assistant");
+    // The user message is a box offset to the right — its rounded top-border sits
+    // well past the left edge (unlike the full-width timeline border at column 0).
+    const bubbleTops = frame
+      .split("\n")
+      .map((line) => line.indexOf("╭"))
+      .filter((col) => col > 10);
+    expect(bubbleTops.length).toBeGreaterThan(0);
   });
 
   it("Given messages across two turns, then a numbered turn separator is shown", async () => {
