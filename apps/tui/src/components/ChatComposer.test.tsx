@@ -35,6 +35,8 @@ const base = {
   uiQuestionIndex: 0,
   uiOptionIndex: 0,
   uiSelectedLabels: [],
+  answerDraft: "",
+  onAnswerInput: noop,
   onReplyInput: noop,
   onReplySubmit: noop,
   onDraftInput: noop,
@@ -67,6 +69,39 @@ describe("ChatComposer", () => {
   it("Given compose mode with focus, when rendered, then the ^P hint is gone (input is mounted)", async () => {
     const frame = await frameOf(<ChatComposer {...base} mode="compose" inputFocused />);
     expect(frame).not.toContain("^P to type a reply");
+  });
+
+  it("Given a pending question, then the composer stays put with the question panel + Submit answer", async () => {
+    const pending = {
+      requestId: "r1",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      questions: [
+        {
+          id: "q1",
+          header: "Scope",
+          question: "Which scope should the plan target?",
+          options: [
+            { label: "Both", description: "" },
+            { label: "Data only", description: "" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    } as never;
+    const t = await testRender(
+      <ChatComposer {...base} mode="compose" inputFocused pendingUserInput={pending} />,
+      { width: 80, height: 12 },
+    );
+    await t.renderOnce();
+    await t.flush();
+    const frame = t.captureCharFrame();
+    // Question panel + custom-answer field + the Submit-answer primary action,
+    // all inside the still-present composer (with its model footer).
+    expect(frame).toContain("Which scope should the plan target?");
+    expect(frame).toContain("Type your own answer");
+    expect(frame).toContain("Submit answer");
+    expect(frame).toContain("model gpt-5");
+    t.renderer.destroy();
   });
 
   it("Given compose mode, then the controls render inside the composer box, model first", async () => {

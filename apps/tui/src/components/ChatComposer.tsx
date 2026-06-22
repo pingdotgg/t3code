@@ -110,6 +110,8 @@ export const ChatComposer = React.memo(function ChatComposer({
   uiQuestionIndex,
   uiOptionIndex,
   uiSelectedLabels,
+  answerDraft,
+  onAnswerInput,
   onReplyInput,
   onReplySubmit,
   onDraftInput,
@@ -155,6 +157,9 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly uiQuestionIndex: number;
   readonly uiOptionIndex: number;
   readonly uiSelectedLabels: ReadonlyArray<string>;
+  /** The free-text custom answer typed while a question is pending. */
+  readonly answerDraft: string;
+  readonly onAnswerInput: (value: string) => void;
   readonly onReplyInput: (value: string) => void;
   readonly onReplySubmit: () => void;
   readonly onDraftInput: (value: string) => void;
@@ -277,10 +282,18 @@ export const ChatComposer = React.memo(function ChatComposer({
   }
 
   // While a question is pending the composer stays put (mirroring the web): the
-  // question panel renders above the input, the input goes static (answer via the
-  // options for now), and the footer's primary action becomes Submit answer.
+  // question panel renders above a single-line custom-answer field, and the
+  // footer's primary action becomes Submit answer. A single-line <input> (not the
+  // multiline editor) leaves ↑/↓ + Enter to the question keymap (option nav +
+  // submit) while typing fills a free-text answer.
   const answering = pendingUserInput !== null;
-  const showInput = inputFocused && !answering;
+  // A free-text answer only makes sense for single-select questions (multi-select
+  // toggles options); for those, Space must type rather than toggle (see the
+  // `answerTyping` flag in ChatView/useKeyBindings).
+  const allowCustomAnswer =
+    answering && !pendingUserInput.questions[uiQuestionIndex]?.multiSelect;
+  const showReplyEditor = inputFocused && !answering;
+  const showAnswerInput = inputFocused && allowCustomAnswer;
   return (
     <box
       flexDirection="column"
@@ -304,7 +317,7 @@ export const ChatComposer = React.memo(function ChatComposer({
         <text>
           <span fg={palette.accent}>{"› "}</span>
         </text>
-        {showInput ? (
+        {showReplyEditor ? (
           // Multiline editor: Enter sends, Shift+Enter newlines, paste inserts the
           // full clipboard (no single-line cap). Uncontrolled — remounted via
           // `composerEpoch` to clear after send; content mirrored out via onContentChange.
@@ -327,6 +340,17 @@ export const ChatComposer = React.memo(function ChatComposer({
             placeholderColor={palette.dim}
             onContentChange={() => onReplyInput(replyRef.current?.plainText ?? "")}
             onSubmit={onReplySubmit}
+          />
+        ) : showAnswerInput ? (
+          <input
+            value={answerDraft}
+            onInput={onAnswerInput}
+            focused
+            placeholder="Type your own answer, or leave blank to use the selected option"
+            flexGrow={1}
+            textColor={palette.text}
+            cursorColor={palette.accent}
+            placeholderColor={palette.dim}
           />
         ) : (
           <text>

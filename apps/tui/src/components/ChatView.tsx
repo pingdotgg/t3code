@@ -131,6 +131,9 @@ export function ChatView({
   const [uiQuestionIndex, setUiQuestionIndex] = React.useState(0);
   const [uiOptionIndex, setUiOptionIndex] = React.useState(0);
   const [uiSelections, setUiSelections] = React.useState<Record<string, string[]>>({});
+  // A free-text answer typed into the composer while a question is pending (the
+  // web's "Type your own answer, or leave blank to use the selected option").
+  const [customAnswer, setCustomAnswer] = React.useState("");
   const [reply, setReply] = React.useState("");
   // Bumped to remount (clear) the uncontrolled multiline reply editor.
   const [composerEpoch, setComposerEpoch] = React.useState(0);
@@ -452,6 +455,7 @@ export function ChatView({
     setUiQuestionIndex(0);
     setUiOptionIndex(0);
     setUiSelections({});
+    setCustomAnswer("");
   }, [pendingRequestId]);
   const userInputActive = pendingUserInput !== null && !userInputDeferred;
   const uiQuestion = pendingUserInput?.questions[uiQuestionIndex] ?? null;
@@ -566,16 +570,21 @@ export function ChatView({
   // action): advance to the next question, or respond when it's the last.
   const submitUserInput = () => {
     if (!detail || !pendingUserInput || !uiQuestion) return;
-    // Plain Enter on a single-select question picks the highlighted option.
+    // A typed custom answer wins; otherwise a single-select Enter picks the
+    // highlighted option.
+    const custom = customAnswer.trim();
     let selections = uiSelections;
-    if (!uiQuestion.multiSelect) {
+    if (!uiQuestion.multiSelect && custom.length > 0) {
+      selections = { ...uiSelections, [uiQuestion.id]: [custom] };
+    } else if (!uiQuestion.multiSelect) {
       const option = uiQuestion.options[uiOptionIndex];
       if (option) selections = { ...uiSelections, [uiQuestion.id]: [option.label] };
     }
     if ((selections[uiQuestion.id]?.length ?? 0) === 0) {
-      store.setStatus("Select an option first.");
+      store.setStatus("Pick an option or type an answer first.");
       return;
     }
+    setCustomAnswer("");
     const isLast = uiQuestionIndex >= pendingUserInput.questions.length - 1;
     if (!isLast) {
       setUiSelections(selections);
@@ -1129,6 +1138,7 @@ export function ChatView({
       if (count === 0) return;
       setUiOptionIndex((index) => (index + 1) % count);
     },
+    answerTyping: userInputActive && uiQuestion !== null && !uiQuestion.multiSelect,
     onUserInputToggle: () => {
       if (!uiQuestion) return;
       const option = uiQuestion.options[uiOptionIndex];
@@ -1400,6 +1410,8 @@ export function ChatView({
           uiQuestionIndex={uiQuestionIndex}
           uiOptionIndex={uiOptionIndex}
           uiSelectedLabels={uiSelectedLabels}
+          answerDraft={customAnswer}
+          onAnswerInput={setCustomAnswer}
           onReplyInput={setReply}
           onReplySubmit={sendReply}
           onDraftInput={(value) => setDraft(value.replace(/\t/g, ""))}

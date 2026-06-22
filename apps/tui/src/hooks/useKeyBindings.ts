@@ -77,6 +77,8 @@ export interface KeyBindingActions {
   readonly onUserInputPrev: () => void;
   readonly onUserInputNext: () => void;
   readonly onUserInputToggle: () => void;
+  /** True while a single-select custom-answer field is focused — Space then types. */
+  readonly answerTyping: boolean;
   readonly onUserInputConfirm: () => void;
   readonly onUserInputDefer: () => void;
   readonly onReopenUserInput: () => void;
@@ -184,7 +186,8 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     if (actions.mode === "userInput") {
       if (key.name === "up") return actions.onUserInputPrev();
       if (key.name === "down") return actions.onUserInputNext();
-      if (key.name === "space") return actions.onUserInputToggle();
+      // While typing a free-text answer, Space belongs to the input (not toggle).
+      if (key.name === "space" && !actions.answerTyping) return actions.onUserInputToggle();
       if (key.name === "return" || key.name === "enter") return actions.onUserInputConfirm();
       if (key.name === "escape") return actions.onUserInputDefer();
       return;
