@@ -178,7 +178,6 @@ export function shouldPlay(
 type CurrentThreadIdAccessor = () => ThreadId | null;
 
 class NotificationSoundManager {
-  private audio: HTMLAudioElement | null = null;
   private lastPlayAtMs = 0;
   private getCurrentThreadId: CurrentThreadIdAccessor = () => null;
 
@@ -186,15 +185,13 @@ class NotificationSoundManager {
     this.getCurrentThreadId = accessor;
   }
 
-  private ensureAudio(): HTMLAudioElement | null {
+  // Fresh elements avoid stale media state after output-device or autoplay-state changes.
+  private createAudio(): HTMLAudioElement | null {
     if (typeof document === "undefined") return null;
-    if (this.audio === null) {
-      const audio = new Audio(NOTIFICATION_SOUND_URL);
-      audio.preload = "auto";
-      audio.volume = 1;
-      this.audio = audio;
-    }
-    return this.audio;
+    const audio = new Audio(NOTIFICATION_SOUND_URL);
+    audio.preload = "auto";
+    audio.volume = 1;
+    return audio;
   }
 
   private buildFocusContext(): NotificationFocusContext {
@@ -217,14 +214,9 @@ class NotificationSoundManager {
     if (!shouldPlay(triggers, settings, focusContext, nowMs, this.lastPlayAtMs)) {
       return;
     }
-    const audio = this.ensureAudio();
+    const audio = this.createAudio();
     if (!audio) return;
     this.lastPlayAtMs = nowMs;
-    try {
-      audio.currentTime = 0;
-    } catch {
-      // Some browsers throw when setting currentTime before metadata loads.
-    }
     void audio.play().catch((error) => {
       console.warn("[NOTIFICATION_SOUND] play failed", error);
     });
@@ -235,21 +227,15 @@ class NotificationSoundManager {
    * so callers can show a toast on rejection (e.g. autoplay blocked).
    */
   async playTest(): Promise<void> {
-    const audio = this.ensureAudio();
+    const audio = this.createAudio();
     if (!audio) {
       throw new Error("Audio playback is not available in this environment.");
-    }
-    try {
-      audio.currentTime = 0;
-    } catch {
-      // ignore
     }
     await audio.play();
   }
 
   /** Test-only: reset internal state. */
   resetForTests(): void {
-    this.audio = null;
     this.lastPlayAtMs = 0;
     this.getCurrentThreadId = () => null;
   }
