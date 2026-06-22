@@ -20,7 +20,7 @@ import {
   SidebarSeparator,
   useSidebar,
 } from "../ui/sidebar";
-import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
+import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../connect/T3ConnectSidebarSignIn";
 
 export type SettingsSectionPath =
   | "/settings/general"

@@ -1,6 +1,6 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
+import * as React from "react";
+import * as ReactDOM from "react-dom/client";
+import { createHashHistory, createBrowserHistory, RouterProvider } from "@tanstack/react-router";
 
 import "@fontsource-variable/dm-sans/index.css";
 import "@fontsource/jetbrains-mono/400.css";
@@ -9,10 +9,11 @@ import "@xterm/xterm/css/xterm.css";
 import "./index.css";
 
 import { isElectron } from "./env";
-import { hasCloudPublicConfig } from "./cloud/publicConfig";
+import { hasCloudPublicConfig, resolveCloudPublicConfig } from "./cloud/publicConfig";
 import { getRouter } from "./router";
 import { syncDocumentWindowControlsOverlayClass } from "./lib/windowControlsOverlay";
-import { AppRoot } from "./AppRoot";
+import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
+import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
 const history = isElectron ? createHashHistory() : createBrowserHistory();
@@ -23,21 +24,31 @@ if (isElectron) {
   syncDocumentWindowControlsOverlayClass();
 }
 
-const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
-const ConfiguredCloudAuthRoot = React.lazy(() => import("./cloud/ConfiguredCloudAuthRoot"));
+const clerkPublishableKey = resolveCloudPublicConfig().clerkPublishableKey;
+const T3ConnectClerkProvider = React.lazy(() =>
+  isElectron
+    ? import("./components/connect/T3ConnectClerkProvider.electron")
+    : import("./components/connect/T3ConnectClerkProvider.web"),
+);
 
-const app = <AppRoot router={router} />;
+const AuthWrapper = (props: { children: React.ReactNode }) =>
+  clerkPublishableKey && hasCloudPublicConfig() ? (
+    <React.Suspense fallback={null}>
+      <T3ConnectClerkProvider publishableKey={clerkPublishableKey}>
+        {props.children}
+      </T3ConnectClerkProvider>
+    </React.Suspense>
+  ) : (
+    props.children
+  );
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    {clerkPublishableKey && hasCloudPublicConfig() ? (
-      <React.Suspense fallback={null}>
-        <ConfiguredCloudAuthRoot publishableKey={clerkPublishableKey}>
-          {app}
-        </ConfiguredCloudAuthRoot>
-      </React.Suspense>
-    ) : (
-      app
-    )}
+    <AuthWrapper>
+      <AppAtomRegistryProvider>
+        <RouterProvider router={router} />
+        <ElectronBrowserHost />
+      </AppAtomRegistryProvider>
+    </AuthWrapper>
   </React.StrictMode>,
 );
