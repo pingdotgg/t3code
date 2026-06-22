@@ -81,11 +81,28 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
+export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
+  "provider-session.detach",
+  "provider-thread.rollback",
+  "checkpoint.capture",
+  "terminal.cleanup",
+  "attachment.cleanup",
+] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+
+export const PROCESS_BOUND_EFFECT_TYPES = [
+  "provider-turn.start",
+  "provider-turn.interrupt",
+  "provider-turn.steer",
+  "provider-turn.restart",
+  "runtime-request.respond",
+] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+
 export const OrchestrationEffectStatusV2 = Schema.Literals([
   "pending",
   "running",
   "succeeded",
   "failed",
+  "cancelled",
 ]);
 export type OrchestrationEffectStatusV2 = typeof OrchestrationEffectStatusV2.Type;
 
@@ -138,7 +155,15 @@ export interface EffectOutboxV2Shape {
   readonly listByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
-  readonly reclaimRunning: Effect.Effect<number, EffectOutboxError>;
+  readonly cancelUnsettled: (input: {
+    readonly threadId: ThreadId;
+    readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+    readonly reason: string;
+  }) => Effect.Effect<number, EffectOutboxError>;
+  readonly reconcileAfterProcessLoss: Effect.Effect<
+    { readonly requeued: number; readonly cancelled: number },
+    EffectOutboxError
+  >;
   readonly claimNext: (input: {
     readonly workerId: string;
     readonly leaseDurationMs: number;
@@ -289,22 +314,65 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               : new EffectOutboxError({ operation: "list", cause }),
           ),
         ),
-      reclaimRunning: Effect.gen(function* () {
+      cancelUnsettled: ({ threadId, effectTypes, reason }) =>
+        Effect.gen(function* () {
+          if (effectTypes.length === 0) return 0;
+          const now = DateTime.formatIso(yield* DateTime.now);
+          const rows = yield* sql<{ readonly effect_id: string }>`
+            UPDATE orchestration_v2_effect_outbox
+            SET
+              status = 'cancelled',
+              lease_owner = NULL,
+              lease_expires_at = NULL,
+              completed_at = ${now},
+              updated_at = ${now},
+              last_error = ${reason}
+            WHERE thread_id = ${threadId}
+              AND status IN ('pending', 'running')
+              AND effect_type IN ${sql.in(effectTypes)}
+            RETURNING effect_id
+          `;
+          return rows.length;
+        }).pipe(
+          Effect.mapError(
+            (cause) => new EffectOutboxError({ operation: "cancel-unsettled", cause }),
+          ),
+        ),
+      reconcileAfterProcessLoss: Effect.gen(function* () {
         const now = DateTime.formatIso(yield* DateTime.now);
-        const rows = yield* sql<{ readonly effect_id: string }>`
+        const cancelledRows = yield* sql<{ readonly effect_id: string }>`
+          UPDATE orchestration_v2_effect_outbox
+          SET
+            status = 'cancelled',
+            lease_owner = NULL,
+            lease_expires_at = NULL,
+            completed_at = ${now},
+            updated_at = ${now},
+            last_error = 'Cancelled because the server process ended before the effect completed.'
+          WHERE status IN ('pending', 'running')
+            AND effect_type IN ${sql.in(PROCESS_BOUND_EFFECT_TYPES)}
+          RETURNING effect_id
+        `;
+        const requeuedRows = yield* sql<{ readonly effect_id: string }>`
           UPDATE orchestration_v2_effect_outbox
           SET
             status = 'pending',
             lease_owner = NULL,
             lease_expires_at = NULL,
             available_at = ${now},
-            updated_at = ${now}
+            updated_at = ${now},
+            last_error = 'Requeued after the previous server process ended.'
           WHERE status = 'running'
+            AND effect_type IN ${sql.in(REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS)}
           RETURNING effect_id
         `;
-        if (rows.length > 0) yield* Queue.offer(available, undefined);
-        return rows.length;
-      }).pipe(Effect.mapError((cause) => new EffectOutboxError({ operation: "reclaim", cause }))),
+        if (requeuedRows.length > 0) yield* Queue.offer(available, undefined);
+        return { requeued: requeuedRows.length, cancelled: cancelledRows.length };
+      }).pipe(
+        Effect.mapError(
+          (cause) => new EffectOutboxError({ operation: "reconcile-process-loss", cause }),
+        ),
+      ),
       claimNext: ({ workerId, leaseDurationMs }) =>
         Effect.gen(function* () {
           const now = yield* DateTime.now;

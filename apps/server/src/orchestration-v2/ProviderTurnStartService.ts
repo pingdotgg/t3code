@@ -403,11 +403,13 @@ export const layer: Layer.Layer<
           ) + 1,
         shouldFinalizeRun: () =>
           projectionStore.getThreadProjection(projection.thread.id).pipe(
-            Effect.map(
-              (current) =>
-                current.runs.find((candidate) => candidate.id === run.id)?.activeAttemptId ===
-                attempt.id,
-            ),
+            Effect.map((current) => {
+              const currentRun = current.runs.find((candidate) => candidate.id === run.id);
+              return (
+                currentRun?.activeAttemptId === attempt.id &&
+                (currentRun.status === "starting" || currentRun.status === "running")
+              );
+            }),
             Effect.catchCause(() => Effect.succeed(false)),
           ),
         message: {

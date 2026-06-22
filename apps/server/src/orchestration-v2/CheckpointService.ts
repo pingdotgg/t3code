@@ -131,6 +131,9 @@ export interface CheckpointServiceV2Shape {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly ordinalWithinScope: number;
   }) => Effect.Effect<void, CheckpointServiceV2Error>;
+  readonly materializeBaselineCheckpoint: (input: {
+    readonly scope: OrchestrationV2CheckpointScope;
+  }) => Effect.Effect<OrchestrationV2Checkpoint, CheckpointServiceV2Error>;
   readonly capture: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly runId: RunId | null;
@@ -310,6 +313,51 @@ export const layer: Layer.Layer<
         ),
       );
 
+    const materializeBaselineCheckpoint: CheckpointServiceV2Shape["materializeBaselineCheckpoint"] =
+      (input) =>
+        withWorkspaceLock(
+          input.scope.cwd,
+          Effect.gen(function* () {
+            const ordinalWithinScope = 0;
+            const checkpointRef = checkpointRefForScopeOrdinal({
+              scopeId: input.scope.id,
+              ordinalWithinScope,
+            });
+            const checkpointId = yield* checkpointIdForScopeOrdinal(idAllocator, {
+              scopeId: input.scope.id,
+              ordinalWithinScope,
+            });
+            const checkpointable = yield* isGitCheckpointable(input.scope.cwd);
+            const available = checkpointable
+              ? yield* checkpointStore.hasCheckpointRef({
+                  cwd: input.scope.cwd,
+                  checkpointRef,
+                })
+              : false;
+            return makeCheckpoint({
+              id: checkpointId,
+              scope: input.scope,
+              runId: null,
+              nodeId: input.scope.nodeId,
+              parentCheckpointId: null,
+              ordinalWithinScope,
+              appRunOrdinal: null,
+              ref: checkpointRef,
+              status: available ? "ready" : "missing",
+              files: [],
+              capturedAt: input.scope.createdAt,
+            });
+          }),
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new CheckpointCaptureError({
+                scopeId: input.scope.id,
+                cause,
+              }),
+          ),
+        );
+
     const capture: CheckpointServiceV2Shape["capture"] = (input) =>
       withWorkspaceLock(
         input.scope.cwd,
@@ -319,7 +367,7 @@ export const layer: Layer.Layer<
             ordinalWithinScope: input.ordinalWithinScope,
           });
           const parentCheckpointId =
-            input.ordinalWithinScope > 1
+            input.ordinalWithinScope > 0
               ? yield* checkpointIdForScopeOrdinal(idAllocator, {
                   scopeId: input.scope.id,
                   ordinalWithinScope: input.ordinalWithinScope - 1,
@@ -507,6 +555,7 @@ export const layer: Layer.Layer<
         ),
       ensureScope,
       captureBaseline,
+      materializeBaselineCheckpoint,
       capture,
       restore,
       deleteStaleRefs,
