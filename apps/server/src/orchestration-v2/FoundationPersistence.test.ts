@@ -13,6 +13,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   RunId,
   ThreadId,
@@ -28,6 +29,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { CommandReceiptStoreV2, layer as commandReceiptStoreLayer } from "./CommandReceiptStore.ts";
 import { EffectOutboxV2, layer as effectOutboxLayer } from "./EffectOutbox.ts";
 import {
@@ -37,11 +39,13 @@ import {
 } from "./EffectWorker.ts";
 import { EventSinkV2, layer as eventSinkLayer } from "./EventSink.ts";
 import { EventStoreV2, layer as eventStoreLayer } from "./EventStore.ts";
+import { layer as idAllocatorLayer } from "./IdAllocator.ts";
 import {
   ProjectionMaintenanceV2,
   layer as projectionMaintenanceLayer,
 } from "./ProjectionMaintenance.ts";
 import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
+import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 
 const databaseLayer = SqlitePersistenceMemory;
 const eventStoreProvided = eventStoreLayer.pipe(Layer.provideMerge(databaseLayer));
@@ -58,6 +62,7 @@ const TestLayer = Layer.mergeAll(
   eventSinkProvided,
   effectOutboxProvided,
   commandReceiptStoreProvided,
+  idAllocatorLayer,
   projectionMaintenanceProvided,
 );
 
@@ -181,6 +186,71 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
         assert.equal(received.value.event.id, nextEvent.id);
         afterSequence = received.value.sequence;
       }
+    }),
+  );
+
+  it.effect("replays shared provider-session payloads across every bound thread", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const maintenance = yield* ProjectionMaintenanceV2;
+      const now = yield* DateTime.now;
+      const firstThreadId = ThreadId.make("thread:foundation-shared-session:first");
+      const secondThreadId = ThreadId.make("thread:foundation-shared-session:second");
+      const providerSessionId = ProviderSessionId.make("provider-session:foundation:shared");
+      const firstSession = {
+        id: providerSessionId,
+        driver: providerDriver,
+        providerInstanceId,
+        status: "ready" as const,
+        cwd: "/workspace/first",
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      };
+      const secondSession = { ...firstSession, cwd: "/workspace/second" };
+
+      yield* eventSink.write({
+        events: [
+          threadCreatedEvent({
+            id: "event:foundation-shared-session:first-thread",
+            thread: makeThread(firstThreadId, now),
+            now,
+          }),
+          {
+            id: EventId.make("event:foundation-shared-session:first-attachment"),
+            type: "provider-session.attached",
+            threadId: firstThreadId,
+            driver: providerDriver,
+            providerInstanceId,
+            occurredAt: now,
+            payload: firstSession,
+          },
+          threadCreatedEvent({
+            id: "event:foundation-shared-session:second-thread",
+            thread: makeThread(secondThreadId, now),
+            now,
+          }),
+          {
+            id: EventId.make("event:foundation-shared-session:second-attachment"),
+            type: "provider-session.attached",
+            threadId: secondThreadId,
+            driver: providerDriver,
+            providerInstanceId,
+            occurredAt: now,
+            payload: secondSession,
+          },
+        ],
+      });
+
+      assert.equal(
+        (yield* projectionStore.getThreadProjection(firstThreadId)).providerSessions[0]?.cwd,
+        secondSession.cwd,
+      );
+      assert.isTrue((yield* maintenance.verify).valid);
+      assert.isTrue((yield* maintenance.rebuild).valid);
     }),
   );
 
@@ -368,33 +438,140 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
-  it.effect("reclaims running effects immediately during startup recovery", () =>
-    Effect.gen(function* () {
-      const outbox = yield* EffectOutboxV2;
-      const commandId = CommandId.make("command:foundation-reclaim-running");
-      yield* outbox.enqueue([
-        {
-          id: "effect:foundation-reclaim-running",
-          commandId,
-          threadId: ThreadId.make("thread:foundation-reclaim-running"),
-          request: {
-            type: "provider-turn.start",
-            runId: RunId.make("run:foundation-reclaim-running"),
+  it.effect(
+    "retires live provider effects and requeues replay-safe effects after process loss",
+    () =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutboxV2;
+        const commandId = CommandId.make("command:foundation-reclaim-running");
+        yield* outbox.enqueue([
+          {
+            id: "effect:a-foundation-cancel-provider-turn",
+            commandId,
+            threadId: ThreadId.make("thread:foundation-reclaim-running"),
+            request: {
+              type: "provider-turn.start",
+              runId: RunId.make("run:foundation-reclaim-running"),
+            },
           },
-        },
-      ]);
+          {
+            id: "effect:b-foundation-requeue-cleanup",
+            commandId,
+            threadId: ThreadId.make("thread:foundation-reclaim-running"),
+            request: { type: "terminal.cleanup" },
+          },
+        ]);
+        assert.isTrue(
+          Option.isSome(
+            yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
+          ),
+        );
+        assert.isTrue(
+          Option.isSome(
+            yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
+          ),
+        );
+        assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, {
+          cancelled: 1,
+          requeued: 1,
+        });
+        const cancelled = yield* outbox.get("effect:a-foundation-cancel-provider-turn");
+        assert.isTrue(Option.isSome(cancelled));
+        if (Option.isSome(cancelled)) assert.equal(cancelled.value.status, "cancelled");
+
+        const reclaimed = yield* outbox.claimNext({
+          workerId: "recovery-worker",
+          leaseDurationMs: 30_000,
+        });
+        assert.isTrue(Option.isSome(reclaimed));
+        if (Option.isSome(reclaimed)) {
+          assert.equal(reclaimed.value.request.type, "terminal.cleanup");
+          assert.equal(reclaimed.value.attemptCount, 2);
+        }
+      }),
+  );
+
+  it.effect("atomically cancels stale runs and their process-bound effects", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const outbox = yield* EffectOutboxV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:foundation-process-loss");
+      const runId = RunId.make("run:foundation-process-loss");
+      const commandId = CommandId.make("command:foundation-process-loss");
+      const thread = makeThread(threadId, now);
+      yield* eventSink.commitCommand({
+        commandId,
+        threadId,
+        commandType: "foundation.process-loss",
+        acceptedAt: now,
+        events: [
+          threadCreatedEvent({ id: "event:foundation-process-loss:thread", thread, now }),
+          {
+            id: EventId.make("event:foundation-process-loss:run"),
+            type: "run.created",
+            threadId,
+            runId,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: runId,
+              threadId,
+              ordinal: 1,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: MessageId.make("message:foundation-process-loss"),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "starting",
+              queuePosition: null,
+              requestedAt: now,
+              startedAt: null,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+        ],
+        effects: [
+          {
+            id: "effect:foundation-process-loss",
+            commandId,
+            threadId,
+            request: { type: "provider-turn.start", runId },
+          },
+        ],
+      });
       assert.isTrue(
         Option.isSome(
           yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
         ),
       );
-      assert.equal(yield* outbox.reclaimRunning, 1);
-      const reclaimed = yield* outbox.claimNext({
-        workerId: "recovery-worker",
-        leaseDurationMs: 30_000,
-      });
-      assert.isTrue(Option.isSome(reclaimed));
-      if (Option.isSome(reclaimed)) assert.equal(reclaimed.value.attemptCount, 2);
+
+      const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+        Effect.provideService(
+          OrchestrationEffectWorkerV2,
+          OrchestrationEffectWorkerV2.of({
+            awaitWork: Effect.void,
+            runOnce: Effect.succeed(false),
+            drain: () => Effect.succeed(0),
+          }),
+        ),
+      );
+      const first = yield* recovery.recover;
+      assert.equal(first.terminalizedRuns, 1);
+      assert.equal(first.retiredEffects, 1);
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      assert.equal(projection.runs[0]?.status, "cancelled");
+      const effect = yield* outbox.get("effect:foundation-process-loss");
+      assert.isTrue(Option.isSome(effect));
+      if (Option.isSome(effect)) assert.equal(effect.value.status, "cancelled");
+
+      const second = yield* recovery.recover;
+      assert.equal(second.terminalizedRuns, 0);
+      assert.equal(second.retiredEffects, 0);
     }),
   );
 

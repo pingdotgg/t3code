@@ -8,12 +8,14 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
@@ -24,8 +26,10 @@ import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
+import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
+import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
@@ -325,7 +329,9 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const keybindings = yield* Keybindings.Keybindings;
   const projectionMaintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
   const providerRuntimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+  const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
   const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -334,6 +340,33 @@ export const make = Effect.gen(function* () {
 
   const commandGate = yield* makeCommandGate;
   const httpListening = yield* Deferred.make<void>();
+  const effectWorkerFiber = yield* Ref.make<Fiber.Fiber<void, never> | null>(null);
+
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      yield* commandGate.failCommandReady(
+        new ServerRuntimeStartupError({
+          mode: serverConfig.mode,
+          host: serverConfig.host ?? null,
+          port: serverConfig.port,
+          cause: "Server runtime is shutting down.",
+        }),
+      );
+      const workerFiber = yield* Ref.getAndSet(effectWorkerFiber, null);
+      if (workerFiber !== null) {
+        yield* Fiber.interrupt(workerFiber).pipe(Effect.ignore);
+      }
+      yield* providerSessions.shutdown;
+      const reconciliation = yield* providerRuntimeRecovery.reconcile("shutdown");
+      yield* Effect.logInfo("V2 orchestration shutdown reconciliation completed", reconciliation);
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("V2 orchestration shutdown reconciliation failed", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    ),
+  );
 
     yield* Effect.addFinalizer(() => Scope.close(reactorScope, Exit.void));
 
@@ -382,8 +415,13 @@ export const make = Effect.gen(function* () {
       startEffectWorker: runStartupPhase(
         "orchestration-v2.effect-worker.start",
         Effect.gen(function* () {
-          yield* EffectWorker.runDaemon.pipe(Effect.forkScoped);
+          const workerFiber = yield* EffectWorker.runDaemon.pipe(Effect.forkScoped);
+          yield* Ref.set(effectWorkerFiber, workerFiber);
           yield* agentAwarenessRelay.start();
+          const resumedQueuedRuns = yield* orchestrator.resumeQueuedRuns;
+          if (resumedQueuedRuns > 0) {
+            yield* Effect.logInfo("V2 queued runs resumed", { resumedQueuedRuns });
+          }
         }),
       ),
       autoBootstrap: (serverConfig.autoBootstrapProjectFromCwd
@@ -427,72 +465,21 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("server.startup", { kind: "server", root: true }),
   );
 
-      yield* Effect.logDebug("startup phase: starting server settings runtime");
-      yield* runStartupPhase(
-        "settings.start",
-        serverSettings.start.pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("failed to start server settings runtime", {
-              path: error.settingsPath,
-              operation: error.operation,
-              providerInstanceId: error.providerInstanceId,
-              environmentVariable: error.environmentVariable,
-              cause: error.cause,
-            }),
-          ),
-        ),
-      );
-
-      yield* Effect.logDebug("startup phase: parking orchestration roots at activation");
-      yield* runStartupPhase(
-        "reactors.start",
-        Effect.gen(function* () {
-          yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
-          yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
-        }),
-      );
-
-      const welcomeBase = yield* resolveWelcomeBase;
-      const environment = yield* serverEnvironment.getDescriptor;
-      yield* Effect.logDebug("startup phase: preparing welcome payload");
-
-      if (serverConfig.autoBootstrapProjectFromCwd) {
-        yield* forkParked(
-          runStartupPhase(
-            "welcome.autobootstrap",
-            Effect.gen(function* () {
-              const bootstrapTargets = yield* resolveAutoBootstrapWelcomeTargets.pipe(
-                Effect.provideService(Crypto.Crypto, crypto),
-              );
-              if (!bootstrapTargets.bootstrapProjectId && !bootstrapTargets.bootstrapThreadId) {
-                return;
-              }
-
-              yield* Effect.logDebug("startup phase: publishing bootstrapped welcome event", {
-                environmentId: environment.environmentId,
-                cwd: welcomeBase.cwd,
-                projectName: welcomeBase.projectName,
-                bootstrapProjectId: bootstrapTargets.bootstrapProjectId,
-                bootstrapThreadId: bootstrapTargets.bootstrapThreadId,
-              });
-              yield* lifecycleEvents.publish({
-                version: 1,
-                type: "welcome",
-                payload: {
-                  environment,
-                  ...welcomeBase,
-                  ...bootstrapTargets,
-                },
-              });
-            }).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("startup auto-bootstrap welcome failed", {
-                  cause,
-                }),
-              ),
-            ),
-          ),
-        );
+  yield* Effect.forkScoped(
+    Effect.gen(function* () {
+      const startupExit = yield* Effect.exit(startup);
+      if (Exit.isFailure(startupExit)) {
+        const error = new ServerRuntimeStartupError({
+          mode: serverConfig.mode,
+          host: serverConfig.host ?? null,
+          port: serverConfig.port,
+          cause: startupExit.cause,
+        });
+        yield* Effect.logError("server runtime startup failed", {
+          cause: Cause.pretty(startupExit.cause),
+        });
+        yield* commandGate.failCommandReady(error);
+        return;
       }
 
       yield* Effect.logDebug("startup phase: waiting for http listener");

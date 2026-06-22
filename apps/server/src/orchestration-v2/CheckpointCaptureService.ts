@@ -91,6 +91,11 @@ export const layer: Layer.Layer<
       }
 
       const capturedAt = yield* DateTime.now;
+      const baselineCheckpoint = projection.checkpoints.some(
+        (candidate) => candidate.scopeId === scope.id && candidate.ordinalWithinScope === 0,
+      )
+        ? null
+        : yield* checkpoints.materializeBaselineCheckpoint({ scope });
       const checkpoint = yield* checkpoints.capture({
         scope,
         runId: run.id,
@@ -107,6 +112,20 @@ export const layer: Layer.Layer<
         acceptedAt: capturedAt,
         effects: [],
         events: [
+          ...(baselineCheckpoint === null
+            ? []
+            : [
+                {
+                  id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
+                  type: "checkpoint.captured" as const,
+                  threadId: input.threadId,
+                  nodeId: baselineCheckpoint.nodeId,
+                  driver: providerThread.driver,
+                  providerInstanceId: run.providerInstanceId,
+                  occurredAt: capturedAt,
+                  payload: baselineCheckpoint,
+                },
+              ]),
           {
             id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
             type: "checkpoint.captured",
