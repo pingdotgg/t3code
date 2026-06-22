@@ -378,6 +378,8 @@ export interface TuiClient {
     cols: number,
     rows: number,
   ) => Promise<void>;
+  /** Close one terminal session (and its history) for a thread. */
+  readonly terminalClose: (threadId: ThreadId, terminalId: string) => Promise<void>;
   readonly dispose: () => Promise<void>;
 }
 
@@ -800,6 +802,13 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
     terminalResize: (threadId, terminalId, cols, rows) =>
       runtime.runPromise(
         request(WS_METHODS.terminalResize, { threadId, terminalId, cols, rows }).pipe(
+          Effect.asVoid,
+        ),
+      ),
+
+    terminalClose: (threadId, terminalId) =>
+      runtime.runPromise(
+        request(WS_METHODS.terminalClose, { threadId, terminalId, deleteHistory: true }).pipe(
           Effect.asVoid,
         ),
       ),

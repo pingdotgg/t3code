@@ -59,6 +59,11 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
   rows,
   focused,
   copyRef,
+  tabIds,
+  activeTabId,
+  onSelectTab,
+  onNewTab,
+  onCloseTab,
 }: {
   readonly client: TuiClient;
   readonly info: TerminalInfo;
@@ -68,6 +73,12 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
   readonly focused: boolean;
   /** Filled with a getter for the viewport text so the app can copy it (OSC 52). */
   readonly copyRef: React.MutableRefObject<(() => string) | null>;
+  /** This thread's terminal tabs + the active one, for the tab bar. */
+  readonly tabIds: ReadonlyArray<string>;
+  readonly activeTabId: string;
+  readonly onSelectTab: (id: string) => void;
+  readonly onNewTab: () => void;
+  readonly onCloseTab: (id: string) => void;
 }): React.ReactNode {
   const palette = usePalette();
   const safeCols = Math.max(2, cols);
@@ -167,7 +178,7 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
   return (
     <box
       flexDirection="column"
-      height={safeRows + 3}
+      height={safeRows + 4}
       flexShrink={0}
       border
       borderStyle="rounded"
@@ -183,6 +194,31 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
             : "  ·  ^P focus · ^E close"}
         </span>
       </text>
+      {/* Terminal tabs (the TUI's terminal groups): click a number to switch, ✕
+          to close the active one, + to open another shell on this thread. */}
+      <box flexDirection="row" flexShrink={0}>
+        {tabIds.map((id, index) => {
+          const active = id === activeTabId;
+          return (
+            <box key={id} flexDirection="row" marginRight={1} flexShrink={0}>
+              <box onMouseDown={() => onSelectTab(id)}>
+                <text>
+                  <span fg={active ? palette.accent : palette.dim}>{active ? "▸" : " "}</span>
+                  <span fg={active ? palette.text : palette.dim}>{` ${index + 1}`}</span>
+                </text>
+              </box>
+              {active && tabIds.length > 1 ? (
+                <box onMouseDown={() => onCloseTab(id)}>
+                  <text fg={palette.dim}>{" ✕"}</text>
+                </box>
+              ) : null}
+            </box>
+          );
+        })}
+        <box onMouseDown={onNewTab}>
+          <text fg={palette.dim}>{"+ new"}</text>
+        </box>
+      </box>
       {frame.rows.map((segments, index) => (
         <text key={index}>
           {segments.length === 0 ? " " : segments.map((segment, i) => renderSegment(segment, i))}

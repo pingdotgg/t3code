@@ -19,13 +19,19 @@ import { describe, it } from "bun:test";
 // web lucide icons, changed-files directory tree with collapse-all, settled-turn
 // "Worked for" fold, the right-side source-control panel (^L: branch + PR
 // status, Push & create PR / Commit / View PR), thread next/prev + jump (Alt+↑/↓,
-// Alt+1…9), and the command palette (^K — fuzzy commands folding in the thread
-// actions). See web-parity.test.ts for the keyboard parity table + remaining backlog.
+// Alt+1…9), the command palette (^K — fuzzy commands folding in the thread
+// actions), the right-panel Pull action, and multiple terminals per thread
+// (terminal tabs — the TUI form of the web's terminal groups). See
+// web-parity.test.ts for the keyboard parity table + remaining backlog.
 
 describe.skip("Non-goal: image / file attachments", () => {
   it("is an explicit TUI non-goal — kept here only to document the decision", () => {});
 });
 
-describe.skip("Non-goal: multiple terminals / tabs", () => {
-  it("is out of scope for the single-terminal drawer — documented, not planned", () => {});
+// Multiple terminals per thread (the web's "terminal groups"): SHIPPED as tabs —
+// see terminalTabs.test (add/close/cycle) and ThreadTerminalDrawer.test (tab bar).
+// Only the web's split-pane *layout* within a group is out of scope (unusable in a
+// single-column TUI drawer).
+describe.skip("Non-goal: split-pane terminal layouts", () => {
+  it("split grids don't fit a single-column TUI drawer — tabs cover the use case", () => {});
 });

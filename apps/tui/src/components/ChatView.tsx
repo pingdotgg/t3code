@@ -1,6 +1,5 @@
 import { type ScrollBoxRenderable, type SelectOption, SyntaxStyle } from "@opentui/core";
 import {
-  DEFAULT_TERMINAL_ID,
   type GitStackedAction,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -42,6 +41,13 @@ import {
   runtimeModeLabel,
 } from "../controls.ts";
 import { gitActionNeedsCommitMessage } from "../gitActions.logic.ts";
+import {
+  addTab,
+  closeTab,
+  cycleActiveId,
+  initialTabs,
+  type ThreadTabs,
+} from "../terminalTabs.ts";
 
 /** Default width of the thread-list pane. */
 const LIST_PANE_WIDTH = 34;
@@ -50,6 +56,8 @@ const RIGHT_PANEL_WIDTH = 32;
 const RIGHT_PANEL_MIN_TERMINAL_WIDTH = 100;
 /** Conversation lines scrolled per page key. */
 const SCROLL_STEP = 8;
+/** Cap on terminals per thread (mirrors the web's per-group limit). */
+const MAX_TERMINALS_PER_THREAD = 6;
 
 // Top-level layout + state wiring (mirrors apps/web/src/components/ChatView.tsx):
 // owns the external store + UI state, derives the row window and pane heights,
@@ -133,7 +141,13 @@ export function ChatView({
   const [rightPanelOpen, setRightPanelOpen] = React.useState(false);
   // User-set prompt height in editor rows; null = auto-grow with content.
   const [promptHeight, setPromptHeight] = React.useState<number | null>(null);
-  const [activeTerminal, setActiveTerminal] = React.useState<TerminalInfo | null>(null);
+  // Multiple terminals per thread (the TUI form of the web's terminal groups):
+  // each thread keeps a list of client-chosen terminal ids + the active one; the
+  // drawer shows the selected thread's active terminal with a tab bar.
+  const [terminalOpen, setTerminalOpen] = React.useState(false);
+  const [terminalTabs, setTerminalTabs] = React.useState<ReadonlyMap<string, ThreadTabs>>(
+    () => new Map(),
+  );
   // The terminal drawer coexists with the prompt; this tracks which one keystrokes go to.
   const [terminalFocused, setTerminalFocused] = React.useState(false);
   // User-set terminal-drawer height in rows; null = the default proportion.
@@ -153,6 +167,24 @@ export function ChatView({
     [state.shell, state.expanded, state.loadedInFull, selectedThreadId, state.filter],
   );
   const detail = state.detail;
+  // The selected thread's terminal tabs + the single active terminal the drawer
+  // renders (derived so the existing single-terminal usages keep working).
+  const terminalCwd = detail
+    ? (detail.worktreePath ??
+      projects.find((p) => p.id === detail.projectId)?.workspaceRoot ??
+      process.cwd())
+    : process.cwd();
+  const detailTabs = detail ? (terminalTabs.get(detail.id) ?? null) : null;
+  const activeTerminal: TerminalInfo | null =
+    terminalOpen && detail && detailTabs
+      ? {
+          threadId: detail.id,
+          terminalId: detailTabs.activeId,
+          title: detail.title,
+          cwd: terminalCwd,
+          worktreePath: detail.worktreePath,
+        }
+      : null;
   const controls = composerControls(detail);
   const sessionActive =
     !!detail && ["starting", "running", "ready"].includes(detail.session?.status ?? "");
@@ -445,7 +477,8 @@ export function ChatView({
   const panesHeight = Math.max(4, height - bottomReserve);
   const listViewport = Math.max(1, panesHeight - 3);
   const termCols = Math.max(2, width - 4);
-  const termRows = Math.max(2, terminalDrawerHeight - 3);
+  // header + tab bar + frame + border(2) = frame rows + 4.
+  const termRows = Math.max(2, terminalDrawerHeight - 4);
   const rightPanelVisible = rightPanelOpen && width >= RIGHT_PANEL_MIN_TERMINAL_WIDTH && !diffOpen;
   const rightWidth = rightPanelVisible ? RIGHT_PANEL_WIDTH : 0;
   const chatWidth = Math.max(20, width - listWidth - rightWidth - 4);
@@ -526,25 +559,64 @@ export function ChatView({
     setFocus("compose");
   };
 
+  // Replace one thread's tab state in the map immutably.
+  const setThreadTabs = (threadId: string, tabs: ThreadTabs | null) =>
+    setTerminalTabs((prev) => {
+      const next = new Map(prev);
+      if (tabs) next.set(threadId, tabs);
+      else next.delete(threadId);
+      return next;
+    });
+
   // ^E shows/hides the drawer (opening focuses it); ^P flips focus between the
-  // prompt and the terminal (so it gets you back to the terminal too).
+  // prompt and the terminal. Opening seeds a default terminal tab for the thread.
   const toggleTerminal = () => {
-    if (activeTerminal) {
-      setActiveTerminal(null);
+    if (terminalOpen) {
+      setTerminalOpen(false);
       setTerminalFocused(false);
       return;
     }
     if (!detail) return;
-    const project = projects.find((p) => p.id === detail.projectId);
-    const cwd = detail.worktreePath ?? project?.workspaceRoot ?? process.cwd();
-    setActiveTerminal({
-      threadId: detail.id,
-      terminalId: DEFAULT_TERMINAL_ID,
-      title: detail.title,
-      cwd,
-      worktreePath: detail.worktreePath,
-    });
+    if (!terminalTabs.has(detail.id)) setThreadTabs(detail.id, initialTabs());
+    setTerminalOpen(true);
     setTerminalFocused(true);
+  };
+
+  // Open a fresh terminal tab on the selected thread (server creates it on attach).
+  const newTerminal = () => {
+    if (!detail) return;
+    const current = terminalTabs.get(detail.id) ?? null;
+    if ((current?.ids.length ?? 0) >= MAX_TERMINALS_PER_THREAD) {
+      store.setStatus(`At most ${MAX_TERMINALS_PER_THREAD} terminals per thread.`);
+      return;
+    }
+    setThreadTabs(detail.id, addTab(current));
+    setTerminalOpen(true);
+    setTerminalFocused(true);
+  };
+
+  const selectTerminal = (id: string) => {
+    if (!detail || !detailTabs || !detailTabs.ids.includes(id)) return;
+    setThreadTabs(detail.id, { ids: detailTabs.ids, activeId: id });
+    setTerminalFocused(true);
+  };
+
+  const cycleTerminal = (delta: 1 | -1) => {
+    if (!detail || !detailTabs) return;
+    selectTerminal(cycleActiveId(detailTabs, delta));
+  };
+
+  // Close a terminal tab: free its server session, drop it, and fall back to a
+  // neighbour (or close the drawer when it was the last one).
+  const closeTerminal = (id: string) => {
+    if (!detail || !detailTabs || !detailTabs.ids.includes(id)) return;
+    void client.terminalClose(detail.id, id).catch(() => {});
+    const remaining = closeTab(detailTabs, id);
+    setThreadTabs(detail.id, remaining);
+    if (!remaining) {
+      setTerminalOpen(false);
+      setTerminalFocused(false);
+    }
   };
 
   const toggleFocus = () => {
@@ -702,6 +774,21 @@ export function ChatView({
       hint: "^E",
       run: () => runCommand(toggleTerminal),
     });
+    if (detail) {
+      list.push({ id: "terminal-new", title: "New terminal", keywords: "shell group tab", run: () => runCommand(newTerminal) });
+    }
+    if (detailTabs && detailTabs.ids.length > 1) {
+      list.push({ id: "terminal-next", title: "Next terminal", keywords: "tab", run: () => runCommand(() => cycleTerminal(1)) });
+      list.push({ id: "terminal-prev", title: "Previous terminal", keywords: "tab", run: () => runCommand(() => cycleTerminal(-1)) });
+    }
+    if (terminalOpen && detailTabs) {
+      list.push({
+        id: "terminal-close",
+        title: "Close terminal",
+        keywords: "tab",
+        run: () => runCommand(() => closeTerminal(detailTabs.activeId)),
+      });
+    }
     list.push({
       id: "panel",
       title: rightPanelOpen ? "Hide source-control panel" : "Show source-control panel",
@@ -718,7 +805,7 @@ export function ChatView({
     });
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail, checkpoints.length, activeTerminal, rightPanelOpen, actionablePlan]);
+  }, [detail, checkpoints.length, activeTerminal, detailTabs, terminalOpen, rightPanelOpen, actionablePlan]);
 
   const filteredCommands = React.useMemo(
     () => filterCommands(paletteCommands, commandQuery),
@@ -1084,14 +1171,20 @@ export function ChatView({
         ) : null}
       </box>
 
-      {activeTerminal ? (
+      {activeTerminal && detailTabs ? (
         <ThreadTerminalDrawer
+          key={activeTerminal.terminalId}
           client={client}
           info={activeTerminal}
           cols={termCols}
           rows={termRows}
           focused={terminalFocused}
           copyRef={terminalCopyRef}
+          tabIds={detailTabs.ids}
+          activeTabId={detailTabs.activeId}
+          onSelectTab={selectTerminal}
+          onNewTab={newTerminal}
+          onCloseTab={closeTerminal}
         />
       ) : null}
 
