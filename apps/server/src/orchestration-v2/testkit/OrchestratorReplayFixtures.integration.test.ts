@@ -96,6 +96,16 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   assert.isDefined(projection);
   const latestRun = projection.runs.at(-1);
   assert.deepEqual(latestRun?.modelSelection, input.driver.modelSelection);
+  if (projection.runs.some((run) => run.status === "completed")) {
+    const threadStartCheckpoint = projection.checkpoints.find(
+      (checkpoint) => checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null,
+    );
+    assert.isDefined(
+      threadStartCheckpoint,
+      "completed threads must retain an addressable thread-start checkpoint",
+    );
+    assert.equal(threadStartCheckpoint.status, "ready");
+  }
   return result;
 });
 
