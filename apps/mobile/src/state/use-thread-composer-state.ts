@@ -115,14 +115,19 @@ export function useThreadComposerState() {
     : null;
   const activityRequestKeyRef = useRef(activityRequestKey);
   activityRequestKeyRef.current = activityRequestKey;
+
+  const liveActivities = selectedThreadDetail?.activities ?? EMPTY_ACTIVITIES;
+  // The live window's oldest activity is stable while new activities only
+  // append; it changes when the window is re-snapshotted (reconnect) or rows are
+  // removed (checkpoint revert), either of which can make prepended older pages
+  // stale or gappy — so reset the lazy-load state when it (or the thread) changes.
+  const liveOldestActivityId = liveActivities[0]?.id ?? null;
   useEffect(() => {
     setOlderActivities([]);
     setOlderLoaded(false);
     setOlderHasMore(false);
     setLoadingOlderActivities(false);
-  }, [activityRequestKey]);
-
-  const liveActivities = selectedThreadDetail?.activities ?? EMPTY_ACTIVITIES;
+  }, [activityRequestKey, liveOldestActivityId]);
   const mergedActivities = useMemo(
     () =>
       olderActivities.length > 0 ? [...olderActivities, ...liveActivities] : liveActivities,
