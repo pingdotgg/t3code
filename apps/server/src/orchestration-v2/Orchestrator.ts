@@ -1649,6 +1649,54 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
       const dispatchMode = command.dispatchMode;
+      const sourcePlanProjection =
+        command.sourcePlanRef === undefined
+          ? null
+          : yield* getProjectionWithPendingEvents(command.sourcePlanRef.threadId, events);
+      const sourcePlan =
+        command.sourcePlanRef === undefined
+          ? null
+          : (sourcePlanProjection?.plans.find(
+              (plan) => plan.id === command.sourcePlanRef?.planId && plan.kind === "proposed_plan",
+            ) ?? null);
+      if (command.sourcePlanRef !== undefined && sourcePlan === null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Proposed plan ${command.sourcePlanRef.planId} does not exist on thread ${command.sourcePlanRef.threadId}.`,
+        });
+      }
+      if (
+        sourcePlanProjection !== null &&
+        sourcePlanProjection.thread.projectId !== projection.thread.projectId
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Proposed plan ${command.sourcePlanRef?.planId} belongs to a different project.`,
+        });
+      }
+      if (sourcePlan !== null && sourcePlan.status !== "active") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Proposed plan ${sourcePlan.id} is not active.`,
+        });
+      }
+      const completeSourcePlan = (occurredAt: DateTime.Utc) =>
+        sourcePlan === null
+          ? Effect.void
+          : emit(
+              events,
+              command,
+            )({
+              type: "plan.updated",
+              threadId: sourcePlan.threadId,
+              ...(sourcePlan.runId === null ? {} : { runId: sourcePlan.runId }),
+              nodeId: sourcePlan.nodeId,
+              occurredAt,
+              payload: { ...sourcePlan, status: "completed" },
+            });
 
       if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
         yield* dispatchSteerIntoRun({
@@ -1783,6 +1831,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           completedAt: null,
           checkpointId: null,
           contextHandoffId: null,
+          ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
         };
         const attempt: OrchestrationV2RunAttempt = {
           id: attemptId,
@@ -1861,6 +1910,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: run,
         });
+        yield* completeSourcePlan(now);
         yield* emitEvent({
           type: "run-attempt.created",
           threadId: command.threadId,
@@ -2030,6 +2080,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           completedAt: null,
           checkpointId: null,
           contextHandoffId: null,
+          ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
         };
         const attempt: OrchestrationV2RunAttempt = {
           id: attemptId,
@@ -2116,6 +2167,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: run,
         });
+        yield* completeSourcePlan(now);
         yield* emitEvent({
           type: "run-attempt.created",
           threadId: command.threadId,
@@ -2613,6 +2665,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         checkpointId: null,
         contextHandoffId:
           portableForkHandoff?.id ?? providerSwitchHandoff?.id ?? mergeBackHandoff?.id ?? null,
+        ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
       };
       const attempt: OrchestrationV2RunAttempt = {
         id: attemptId,
@@ -2917,6 +2970,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: run,
       });
+      yield* completeSourcePlan(now);
       yield* emitEvent({
         type: "run-attempt.created",
         threadId: command.threadId,
