@@ -13,8 +13,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { EventStoreV2 } from "./EventStore.ts";
 import {
-  applyToProjection,
-  emptyProjection,
+  applyToProjectionReplayState,
+  makeProjectionReplayState,
   ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
   ProjectionStoreV2,
 } from "./ProjectionStore.ts";
@@ -121,19 +121,11 @@ export const layer: Layer.Layer<
     });
 
     const expectedProjections = (events: ReadonlyArray<OrchestrationV2StoredEvent>) => {
-      const projections = new Map<ThreadId, OrchestrationV2ThreadProjection>();
+      const state = makeProjectionReplayState();
       for (const stored of events) {
-        const event = stored.event;
-        if (event.type === "thread.created") {
-          projections.set(event.threadId, emptyProjection(event));
-          continue;
-        }
-        const current = projections.get(event.threadId);
-        if (current !== undefined) {
-          projections.set(event.threadId, applyToProjection(current, event));
-        }
+        applyToProjectionReplayState(state, stored.event);
       }
-      return projections;
+      return state.projections;
     };
 
     const verify = Effect.gen(function* () {

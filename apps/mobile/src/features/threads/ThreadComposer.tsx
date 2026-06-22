@@ -568,7 +568,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           silently drops experimental_backgroundImage on Android, which left this
           strip fully transparent and the feed text legible through the composer. */}
       <View
-        className="absolute inset-0 bg-linear-to-b from-screen/0 via-screen/60 to-screen/90"
         pointerEvents="none"
         style={[
           StyleSheet.absoluteFill,
@@ -603,6 +602,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         ) : null}
 
         <ComposerSurface
+          isDarkMode={isDarkMode}
           style={
             isExpanded
               ? {

@@ -178,7 +178,6 @@ const providerRuntimeRecoveryProvided = providerRuntimeRecoveryLayer.pipe(
       eventSinkProvided,
       idAllocatorLayer,
       projectionStoreLayer,
-      providerSessionManagerProvided,
     ),
   ),
 );
@@ -229,6 +228,7 @@ export const OrchestrationV2LayerLive = Layer.mergeAll(
   orchestratorProvided,
   threadManagementProvided,
   effectWorkerProvided,
+  providerSessionManagerProvided,
   providerRuntimeRecoveryProvided,
   projectionMaintenanceProvided,
 );
