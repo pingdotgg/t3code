@@ -391,4 +391,37 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("lucide-x");
     expect(markup).toContain('aria-label="Tool call failed"');
   });
+
+  it("offers a 'Load older history' control when older activity remains", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Hi")]}
+        hasMoreOlder
+      />,
+    );
+    expect(markup).toContain("Load older history");
+  });
+
+  it("shows a loading indicator while older history is being fetched", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Hi")]}
+        hasMoreOlder
+        loadingOlder
+      />,
+    );
+    expect(markup).toContain("Loading older history");
+  });
+
+  it("renders no older-history control when none remains", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[buildUserTimelineEntry("Hi")]} />,
+    );
+    expect(markup).not.toContain("older history");
+  });
 });
