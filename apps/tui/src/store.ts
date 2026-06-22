@@ -1,4 +1,8 @@
-import { DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT } from "@t3tools/contracts";
+import {
+  DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT,
+  type GitStackedAction,
+  type VcsStatusResult,
+} from "@t3tools/contracts";
 
 import type { OrchestrationShellSnapshot, OrchestrationThread, TuiClient } from "./connection.ts";
 import {
@@ -28,6 +32,10 @@ export interface StoreState {
   readonly statusKind: StatusKind;
   /** Sidebar filter text; empty = unfiltered. */
   readonly filter: string;
+  /** Live git status for the selected thread's worktree, or null. */
+  readonly vcsStatus: VcsStatusResult | null;
+  /** True while a git stacked action is running. */
+  readonly gitBusy: boolean;
 }
 
 export interface Store {
@@ -41,6 +49,8 @@ export interface Store {
   readonly loadMore: (id: string) => void;
   readonly setStatus: (status: string, kind?: StatusKind) => void;
   readonly setFilter: (filter: string) => void;
+  /** Run a git stacked action on the selected thread's worktree. */
+  readonly runGitAction: (action: GitStackedAction) => void;
 }
 
 export function createStore(client: TuiClient): Store {
@@ -53,10 +63,19 @@ export function createStore(client: TuiClient): Store {
     status: "Connecting…",
     statusKind: "busy",
     filter: "",
+    vcsStatus: null,
+    gitBusy: false,
   };
   const listeners = new Set<() => void>();
   let unsubShell: (() => void) | null = null;
   let unsubThread: (() => void) | null = null;
+  let unsubVcs: (() => void) | null = null;
+  // The worktree currently subscribed for git status, so we only resubscribe on change.
+  let vcsCwd: string | null = null;
+
+  // Commit-bearing actions need a message the TUI can't yet collect; route them
+  // to the terminal instead of running an empty-message commit.
+  const COMMIT_ACTIONS = new Set<GitStackedAction>(["commit", "commit_push", "commit_push_pr"]);
 
   const selectedThreadId = () => (state.selection?.kind === "thread" ? state.selection.id : null);
   const rowsNow = () =>
@@ -70,6 +89,27 @@ export function createStore(client: TuiClient): Store {
     emit();
   };
 
+  /** The cwd to query git status for: the thread's worktree, else its project root. */
+  const currentCwd = (): string | null => {
+    const detail = state.detail;
+    if (!detail) return null;
+    if (detail.worktreePath) return detail.worktreePath;
+    const project = state.shell?.projects.find((p) => p.id === detail.projectId);
+    return project?.workspaceRoot ?? null;
+  };
+
+  /** (Re)subscribe the git-status stream when the selected worktree changes. */
+  const syncVcs = () => {
+    const cwd = currentCwd();
+    if (cwd === vcsCwd) return;
+    vcsCwd = cwd;
+    unsubVcs?.();
+    unsubVcs = null;
+    set({ vcsStatus: null });
+    if (!cwd) return;
+    unsubVcs = client.subscribeVcsStatus(cwd, (status) => set({ vcsStatus: status }));
+  };
+
   const subscribeDetail = (threadId: string | null) => {
     unsubThread?.();
     unsubThread = null;
@@ -77,6 +117,7 @@ export function createStore(client: TuiClient): Store {
     unsubThread = client.subscribeThread(threadId as never, (thread) => {
       if (state.selection?.kind === "thread" && state.selection.id === thread.id) {
         set({ detail: thread });
+        syncVcs();
       }
     });
   };
@@ -90,6 +131,7 @@ export function createStore(client: TuiClient): Store {
     // live value streams in immediately after (no refetch, no blank).
     const cached = threadId ? client.peekThread(threadId as never) : null;
     set({ selection, detail: cached });
+    syncVcs();
   };
 
   const ensureValidSelection = (rows: Row[]) => {
@@ -129,6 +171,7 @@ export function createStore(client: TuiClient): Store {
     stop: () => {
       unsubShell?.();
       unsubThread?.();
+      unsubVcs?.();
     },
     moveSelection: (delta) => {
       const rows = rowsNow();
@@ -163,6 +206,25 @@ export function createStore(client: TuiClient): Store {
       state = { ...state, filter };
       ensureValidSelection(rowsNow());
       emit();
+    },
+    runGitAction: (action) => {
+      if (state.gitBusy) return;
+      if (COMMIT_ACTIONS.has(action)) {
+        set({ status: "Commit needs a message — use the terminal (^E) to commit.", statusKind: "info" });
+        return;
+      }
+      const cwd = currentCwd();
+      if (!cwd) {
+        set({ status: "No worktree for git actions.", statusKind: "error" });
+        return;
+      }
+      set({ gitBusy: true, status: `Running ${action}…`, statusKind: "busy" });
+      client
+        .runGitStackedAction({ cwd, action })
+        .then(() => set({ gitBusy: false, status: "Git action complete.", statusKind: "success" }))
+        .catch((error: unknown) =>
+          set({ gitBusy: false, status: `Git failed: ${String(error)}`, statusKind: "error" }),
+        );
     },
   };
 }

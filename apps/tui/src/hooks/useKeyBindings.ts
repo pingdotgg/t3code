@@ -95,6 +95,7 @@ export interface KeyBindingActions {
   readonly onScrollDown: () => void;
   readonly onNewThread: () => void;
   readonly onTogglePlanMode: () => void;
+  readonly onToggleRightPanel: () => void;
   readonly onImplementPlan: () => void;
   readonly onGrowPrompt: () => void;
   readonly onShrinkPrompt: () => void;
@@ -212,6 +213,7 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     if (key.ctrl && key.name === "u") return actions.onReopenUserInput();
     if (key.ctrl && key.name === "k") return actions.onOpenActions();
     if (key.ctrl && key.name === "f") return actions.onOpenFilter();
+    if (key.ctrl && key.name === "l") return actions.onToggleRightPanel();
     // ^G opens the draft in $EDITOR (interrupt is on Esc).
     if (key.ctrl && key.name === "g") return actions.onEditInEditor();
     if (key.ctrl && key.name === "a") return actions.onApprove();

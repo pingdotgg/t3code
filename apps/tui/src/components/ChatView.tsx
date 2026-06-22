@@ -25,6 +25,7 @@ import { buildRows, selectionEquals } from "./Sidebar.logic.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import { type DiffStatus, type DiffView, DiffViewer } from "./DiffViewer.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
+import { RightPanel } from "./RightPanel.tsx";
 import { SelectOverlay, type SelectStatus } from "./SelectOverlay.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { RevertMenu, ThreadActionsMenu } from "./ThreadActionsMenu.tsx";
@@ -40,6 +41,9 @@ import {
 
 /** Default width of the thread-list pane. */
 const LIST_PANE_WIDTH = 34;
+/** Width of the source-control panel, and the terminal width below which it auto-hides. */
+const RIGHT_PANEL_WIDTH = 32;
+const RIGHT_PANEL_MIN_TERMINAL_WIDTH = 100;
 /** Conversation lines scrolled per page key. */
 const SCROLL_STEP = 8;
 
@@ -110,6 +114,8 @@ export function ChatView({
   const [newField, setNewField] = React.useState<"message" | "branch" | "worktree">("message");
   // Which pending approval ^A/^R act on; ↑/↓ move it while an approval is up.
   const [approvalIndex, setApprovalIndex] = React.useState(0);
+  // The right-side source-control panel (^L), auto-hidden on narrow terminals.
+  const [rightPanelOpen, setRightPanelOpen] = React.useState(false);
   // User-set prompt height in editor rows; null = auto-grow with content.
   const [promptHeight, setPromptHeight] = React.useState<number | null>(null);
   const [activeTerminal, setActiveTerminal] = React.useState<TerminalInfo | null>(null);
@@ -385,7 +391,9 @@ export function ChatView({
   const listViewport = Math.max(1, panesHeight - 3);
   const termCols = Math.max(2, width - 4);
   const termRows = Math.max(2, terminalDrawerHeight - 3);
-  const chatWidth = Math.max(20, width - listWidth - 4);
+  const rightPanelVisible = rightPanelOpen && width >= RIGHT_PANEL_MIN_TERMINAL_WIDTH && !diffOpen;
+  const rightWidth = rightPanelVisible ? RIGHT_PANEL_WIDTH : 0;
+  const chatWidth = Math.max(20, width - listWidth - rightWidth - 4);
 
   // Window the list around the selection so the highlighted row stays on screen.
   const selectedIndex = Math.max(
@@ -644,6 +652,7 @@ export function ChatView({
     onShrinkPrompt: () => resizePrompt(-2),
     onEditInEditor: editInEditor,
     onTogglePlanMode: togglePlanMode,
+    onToggleRightPanel: () => setRightPanelOpen((open) => !open),
     onImplementPlan: () => {
       if (!detail || !actionablePlan) return;
       void client
@@ -866,6 +875,7 @@ export function ChatView({
     ...(approvals.length > 0 ? [approvals.length > 1 ? "^A/^R approve (↑/↓)" : "^A/^R approve"] : []),
     "^K actions",
     "^F find",
+    ...(width >= RIGHT_PANEL_MIN_TERMINAL_WIDTH ? [`^L panel ${rightPanelOpen ? "▾" : "▸"}`] : []),
     ...(working ? ["Esc stop"] : []),
     "^C quit",
   ].join(" · ");
@@ -917,6 +927,16 @@ export function ChatView({
             onOpenDiff={openDiffAtTurn}
           />
         )}
+        {rightPanelVisible ? (
+          <RightPanel
+            status={state.vcsStatus}
+            busy={state.gitBusy}
+            width={rightWidth}
+            height={panesHeight}
+            onRunAction={store.runGitAction}
+            onOpenUrl={(url) => store.setStatus(url, "info")}
+          />
+        ) : null}
       </box>
 
       {activeTerminal ? (

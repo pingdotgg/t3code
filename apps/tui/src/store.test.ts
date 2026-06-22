@@ -17,6 +17,8 @@ function fakeClient() {
       return () => {};
     },
     peekThread: () => null as OrchestrationThread | null,
+    subscribeVcsStatus: () => () => {},
+    runGitStackedAction: () => Promise.resolve(),
   } as unknown as TuiClient;
   return {
     client,
