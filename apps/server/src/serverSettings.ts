@@ -15,6 +15,8 @@ import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
+  type IntegrationAccount,
+  type IntegrationKind,
   isProviderDriverKind,
   type ModelSelection,
   type ProviderInstanceConfig,
@@ -79,6 +81,13 @@ function providerEnvironmentSecretName(input: {
   return `provider-env-${Buffer.from(input.instanceId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
 }
 
+function integrationAccountSecretName(input: {
+  readonly kind: IntegrationKind;
+  readonly accountId: string;
+}): string {
+  return `integration-${input.kind}-${input.accountId}`;
+}
+
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
 ): ProviderInstanceEnvironmentVariable {
@@ -90,6 +99,18 @@ function redactProviderEnvironmentVariable(
     ...variable,
     value: "",
     ...(variable.value.length > 0 || variable.valueRedacted ? { valueRedacted: true } : {}),
+  };
+}
+
+function redactIntegrationAccount(account: IntegrationAccount): IntegrationAccount {
+  if (!account.apiKeyRedacted && account.apiKey.length === 0) {
+    const { apiKeyRedacted: _omit, ...rest } = account;
+    return rest;
+  }
+  return {
+    ...account,
+    apiKey: "",
+    ...(account.apiKey.length > 0 || account.apiKeyRedacted ? { apiKeyRedacted: true } : {}),
   };
 }
 
@@ -105,7 +126,13 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  const integrations = {
+    github: settings.integrations.github.map(redactIntegrationAccount),
+    gitlab: settings.integrations.gitlab.map(redactIntegrationAccount),
+    jira: settings.integrations.jira.map(redactIntegrationAccount),
+    linear: settings.integrations.linear.map(redactIntegrationAccount),
+  } satisfies ServerSettings["integrations"];
+  return { ...settings, providerInstances, integrations };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -363,6 +390,52 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const materializeIntegrationAccountSecrets = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const integrations: Record<IntegrationKind, IntegrationAccount[]> = {
+        github: [],
+        gitlab: [],
+        jira: [],
+        linear: [],
+      };
+
+      for (const [kind, accounts] of Object.entries(settings.integrations) as Array<
+        [IntegrationKind, IntegrationAccount[]]
+      >) {
+        const hydratedAccounts: IntegrationAccount[] = [];
+        for (const account of accounts) {
+          if (!account.apiKeyRedacted) {
+            hydratedAccounts.push(account);
+            continue;
+          }
+          const secret = yield* secretStore
+            .get(integrationAccountSecretName({ kind, accountId: account.id }))
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    operation: "read-secret",
+                    cause,
+                  }),
+              ),
+            );
+          hydratedAccounts.push({
+            ...account,
+            apiKey: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+          });
+        }
+        integrations[kind] = hydratedAccounts;
+      }
+
+      return {
+        ...settings,
+        integrations: integrations as ServerSettings["integrations"],
+      };
+    });
+
   const persistProviderEnvironmentSecrets = (
     current: ServerSettings,
     next: ServerSettings,
@@ -464,6 +537,86 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const persistIntegrationAccountSecrets = (
+    current: ServerSettings,
+    next: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const integrations: Record<IntegrationKind, IntegrationAccount[]> = {
+        github: [],
+        gitlab: [],
+        jira: [],
+        linear: [],
+      };
+
+      const nextSecretKeys = new Set<string>();
+      for (const [kind, accounts] of Object.entries(next.integrations) as Array<
+        [IntegrationKind, IntegrationAccount[]]
+      >) {
+        const persistedAccounts: IntegrationAccount[] = [];
+        for (const account of accounts) {
+          const secretName = integrationAccountSecretName({ kind, accountId: account.id });
+          if (account.apiKey.length > 0) {
+            yield* secretStore.set(secretName, textEncoder.encode(account.apiKey)).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    operation: "write-secret",
+                    cause,
+                  }),
+              ),
+            );
+            nextSecretKeys.add(secretName);
+            persistedAccounts.push(redactIntegrationAccount(account));
+            continue;
+          }
+
+          if (!account.apiKeyRedacted) {
+            yield* secretStore.remove(secretName).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    operation: "remove-secret",
+                    cause,
+                  }),
+              ),
+            );
+          } else {
+            nextSecretKeys.add(secretName);
+          }
+
+          persistedAccounts.push(redactIntegrationAccount(account));
+        }
+        integrations[kind] = persistedAccounts;
+      }
+
+      for (const [kind, accounts] of Object.entries(current.integrations) as Array<
+        [IntegrationKind, IntegrationAccount[]]
+      >) {
+        for (const account of accounts) {
+          const secretName = integrationAccountSecretName({ kind, accountId: account.id });
+          if (nextSecretKeys.has(secretName)) continue;
+          yield* secretStore.remove(secretName).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "remove-stale-secret",
+                  cause,
+                }),
+            ),
+          );
+        }
+      }
+
+      return {
+        ...next,
+        integrations: integrations as ServerSettings["integrations"],
+      };
+    });
+
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
@@ -561,6 +714,7 @@ const make = Effect.gen(function* () {
     ready: Deferred.await(startedDeferred),
     getSettings: getSettingsFromCache.pipe(
       Effect.flatMap(materializeProviderEnvironmentSecrets),
+      Effect.flatMap(materializeIntegrationAccountSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
@@ -570,21 +724,24 @@ const make = Effect.gen(function* () {
           const nextPersisted = yield* persistProviderEnvironmentSecrets(
             current,
             applyServerSettingsPatch(current, patch),
-          );
+          ).pipe(Effect.flatMap((settings) => persistIntegrationAccountSecrets(current, settings)));
           const next = yield* normalizeServerSettings(nextPersisted);
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
           const materialized = yield* materializeProviderEnvironmentSecrets(next);
-          return resolveTextGenerationProvider(materialized);
+          const materializedWithIntegrations =
+            yield* materializeIntegrationAccountSecrets(materialized);
+          return resolveTextGenerationProvider(materializedWithIntegrations);
         }),
       ),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub).pipe(
         Stream.mapEffect((settings) =>
           materializeProviderEnvironmentSecrets(settings).pipe(
+            Effect.flatMap(materializeIntegrationAccountSecrets),
             Effect.catch((error: ServerSettingsError) =>
-              Effect.logWarning("failed to materialize provider environment secrets", {
+              Effect.logWarning("failed to materialize server settings secrets", {
                 operation: error.operation,
                 providerInstanceId: error.providerInstanceId,
                 environmentVariable: error.environmentVariable,

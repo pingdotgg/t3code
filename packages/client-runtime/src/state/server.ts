@@ -186,6 +186,12 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    testIntegrationToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:test-integration-token",
+      tag: WS_METHODS.serverTestIntegrationToken,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

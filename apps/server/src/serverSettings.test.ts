@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  IntegrationAccountId,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettings,
@@ -586,6 +587,115 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(
         roundTripped.providerInstances[instanceId]?.environment?.[0]?.value,
         "sk-or-secret",
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("stores integration API keys outside settings.json and redacts them for clients", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const next = yield* serverSettings.updateSettings({
+        integrations: {
+          github: [
+            {
+              id: IntegrationAccountId.make("github_personal"),
+              name: "Personal",
+              apiKey: "ghp_secret",
+              apiKeyRedacted: true,
+            },
+          ],
+          gitlab: [],
+          jira: [],
+          linear: [],
+        },
+      });
+
+      assert.deepEqual(next.integrations.github[0], {
+        id: IntegrationAccountId.make("github_personal"),
+        name: "Personal",
+        apiKey: "ghp_secret",
+        apiKeyRedacted: true,
+      });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, "ghp_secret");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.deepEqual(JSON.parse(raw).integrations.github, [
+        {
+          id: IntegrationAccountId.make("github_personal"),
+          name: "Personal",
+          apiKey: "",
+          apiKeyRedacted: true,
+        },
+      ]);
+
+      assert.deepEqual(
+        ServerSettingsModule.redactServerSettingsForClient(next).integrations.github,
+        [
+          {
+            id: IntegrationAccountId.make("github_personal"),
+            name: "Personal",
+            apiKey: "",
+            apiKeyRedacted: true,
+          },
+        ],
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("migrates plaintext integration keys into the secret store on save", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const next = yield* serverSettings.updateSettings({
+        integrations: {
+          github: [
+            {
+              id: IntegrationAccountId.make("github_legacy_plaintext"),
+              name: "Legacy",
+              apiKey: "ghp_legacy_secret",
+            },
+          ],
+          gitlab: [],
+          jira: [],
+          linear: [],
+        },
+      });
+
+      assert.deepEqual(next.integrations.github[0], {
+        id: IntegrationAccountId.make("github_legacy_plaintext"),
+        name: "Legacy",
+        apiKey: "ghp_legacy_secret",
+        apiKeyRedacted: true,
+      });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, "ghp_legacy_secret");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.deepEqual(JSON.parse(raw).integrations.github, [
+        {
+          id: IntegrationAccountId.make("github_legacy_plaintext"),
+          name: "Legacy",
+          apiKey: "",
+          apiKeyRedacted: true,
+        },
+      ]);
+
+      assert.deepEqual(
+        ServerSettingsModule.redactServerSettingsForClient(next).integrations.github,
+        [
+          {
+            id: IntegrationAccountId.make("github_legacy_plaintext"),
+            name: "Legacy",
+            apiKey: "",
+            apiKeyRedacted: true,
+          },
+        ],
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );

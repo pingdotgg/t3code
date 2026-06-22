@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as PlatformError from "effect/PlatformError";
+import * as NodePath from "node:path";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -223,6 +224,41 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       );
       assert.isAtLeast(chmodCalls.filter((call) => call.mode === 0o600).length, 2);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("encrypts secret contents at rest", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const plaintext = new TextEncoder().encode("super-secret-token");
+
+      yield* secretStore.set("session-signing-key", plaintext);
+
+      const persisted = yield* fileSystem.readFile(
+        NodePath.join(serverConfig.secretsDir, "session-signing-key.bin"),
+      );
+
+      assert.notDeepEqual(Array.from(persisted), Array.from(plaintext));
+      const roundTrip = yield* secretStore.get("session-signing-key");
+      assert.deepEqual(Array.from(Option.getOrThrow(roundTrip)), Array.from(plaintext));
+    }).pipe(Effect.provide(makeServerSecretStoreLayer())),
+  );
+
+  it.effect("returns a read error when the secret payload cannot be decrypted", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const secretPath = NodePath.join(serverConfig.secretsDir, "session-signing-key.bin");
+
+      yield* fileSystem.writeFile(secretPath, Uint8Array.from([0, 1, 2, 3]));
+
+      const error = yield* Effect.flip(secretStore.get("session-signing-key"));
+
+      assert.instanceOf(error, ServerSecretStore.SecretStoreReadError);
+      assert.include(error.message, "Failed to read secret session-signing-key.");
+    }).pipe(Effect.provide(makeServerSecretStoreLayer())),
   );
 
   it.effect("propagates read failures other than missing-file errors", () =>

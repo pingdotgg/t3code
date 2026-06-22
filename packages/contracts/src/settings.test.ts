@@ -2,7 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { DEFAULT_SERVER_SETTINGS, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  INTEGRATION_DISPLAY_NAMES,
+  ServerSettings,
+  ServerSettingsPatch,
+} from "./settings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
@@ -64,6 +69,19 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   });
 });
 
+describe("ServerSettings.integrations", () => {
+  it("defaults to empty account arrays for GitHub and Linear", () => {
+    expect(DEFAULT_SERVER_SETTINGS.integrations).toEqual({
+      github: [],
+      gitlab: [],
+      jira: [],
+      linear: [],
+    });
+    expect(INTEGRATION_DISPLAY_NAMES.github).toBe("GitHub");
+    expect(INTEGRATION_DISPLAY_NAMES.linear).toBe("Linear");
+  });
+});
+
 describe("ServerSettings worktree defaults", () => {
   it("defaults start-from-origin off for legacy configs", () => {
     expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(false);
@@ -103,6 +121,18 @@ describe("ServerSettingsPatch.providerInstances", () => {
     });
     const ollamaId = ProviderInstanceId.make("ollama_local");
     expect(patch.providerInstances?.[ollamaId]?.driver).toBe("ollama");
+  });
+});
+
+describe("ServerSettingsPatch.integrations", () => {
+  it("treats integrations as an optional whole-map replacement", () => {
+    const patch = decodeServerSettingsPatch({});
+    expect(patch.integrations).toBeUndefined();
+
+    const replacement = decodeServerSettingsPatch({
+      integrations: { github: [], gitlab: [], jira: [], linear: [] },
+    });
+    expect(replacement.integrations).toEqual({ github: [], gitlab: [], jira: [], linear: [] });
   });
 });
 

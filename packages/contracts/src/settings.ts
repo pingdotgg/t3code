@@ -39,6 +39,122 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
 
+// ── Integrations ────────────────────────────────────────────────────
+
+export const IntegrationKind = Schema.Literals(["github", "gitlab", "jira", "linear"]);
+export type IntegrationKind = typeof IntegrationKind.Type;
+
+export const INTEGRATION_KINDS = [
+  "github",
+  "gitlab",
+  "jira",
+  "linear",
+] as const satisfies readonly IntegrationKind[];
+
+export const INTEGRATION_DISPLAY_NAMES: Record<IntegrationKind, string> = {
+  github: "GitHub",
+  gitlab: "GitLab",
+  jira: "Jira",
+  linear: "Linear",
+};
+
+export interface IntegrationDefinition {
+  readonly accountPlaceholder: string;
+  readonly accountHint: string;
+  readonly tokenLabel: string;
+  readonly baseUrlLabel?: string | undefined;
+  readonly baseUrlPlaceholder?: string | undefined;
+  readonly baseUrlRequired?: boolean | undefined;
+}
+
+export const INTEGRATION_DEFINITIONS: Record<IntegrationKind, IntegrationDefinition> = {
+  github: {
+    accountPlaceholder: "Personal",
+    accountHint: "Connect a GitHub personal access token.",
+    tokenLabel: "personal access token",
+  },
+  gitlab: {
+    accountPlaceholder: "Work",
+    accountHint: "Connect a GitLab personal access token.",
+    tokenLabel: "personal access token",
+  },
+  jira: {
+    accountPlaceholder: "Issue tracking",
+    accountHint: "Use your Jira email or username with the API token.",
+    tokenLabel: "API token",
+    baseUrlLabel: "Jira URL",
+    baseUrlPlaceholder: "https://your-domain.atlassian.net",
+    baseUrlRequired: true,
+  },
+  linear: {
+    accountPlaceholder: "Design",
+    accountHint: "Connect a Linear API token.",
+    tokenLabel: "API token",
+  },
+};
+
+const INTEGRATION_ACCOUNT_ID_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+const integrationAccountIdSchema = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(INTEGRATION_ACCOUNT_ID_PATTERN),
+);
+
+export const IntegrationAccountId = integrationAccountIdSchema.pipe(
+  Schema.brand("IntegrationAccountId"),
+);
+export type IntegrationAccountId = typeof IntegrationAccountId.Type;
+
+export const IntegrationAccount = Schema.Struct({
+  id: IntegrationAccountId,
+  name: TrimmedNonEmptyString,
+  baseUrl: Schema.optionalKey(TrimmedString),
+  apiKey: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  apiKeyRedacted: Schema.optionalKey(Schema.Boolean),
+});
+export type IntegrationAccount = typeof IntegrationAccount.Type;
+
+export const IntegrationsSettings = Schema.Struct({
+  github: Schema.Array(IntegrationAccount).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  gitlab: Schema.Array(IntegrationAccount).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  jira: Schema.Array(IntegrationAccount).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  linear: Schema.Array(IntegrationAccount).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type IntegrationsSettings = typeof IntegrationsSettings.Type;
+
+export const DEFAULT_INTEGRATIONS_SETTINGS: IntegrationsSettings = Schema.decodeSync(
+  IntegrationsSettings,
+)({});
+
+export const IntegrationAccountTokenValidationInput = Schema.Struct({
+  kind: IntegrationKind,
+  accountId: Schema.optionalKey(IntegrationAccountId),
+  accountName: Schema.optionalKey(TrimmedString),
+  baseUrl: Schema.optionalKey(TrimmedString),
+  apiKey: Schema.optionalKey(TrimmedNonEmptyString),
+  useStoredToken: Schema.optionalKey(Schema.Boolean),
+});
+export type IntegrationAccountTokenValidationInput =
+  typeof IntegrationAccountTokenValidationInput.Type;
+
+export const IntegrationAccountTokenValidationResult = Schema.Struct({
+  accountLabel: TrimmedNonEmptyString,
+});
+export type IntegrationAccountTokenValidationResult =
+  typeof IntegrationAccountTokenValidationResult.Type;
+
+export class IntegrationAccountTokenValidationError extends Schema.TaggedErrorClass<IntegrationAccountTokenValidationError>()(
+  "IntegrationAccountTokenValidationError",
+  {
+    kind: IntegrationKind,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Integration token validation failed for ${INTEGRATION_DISPLAY_NAMES[this.kind]}: ${this.detail}`;
+  }
+}
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -408,6 +524,9 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  integrations: IntegrationsSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTEGRATIONS_SETTINGS)),
+  ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
@@ -530,6 +649,14 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  integrations: Schema.optionalKey(
+    Schema.Struct({
+      github: Schema.optionalKey(Schema.Array(IntegrationAccount)),
+      gitlab: Schema.optionalKey(Schema.Array(IntegrationAccount)),
+      jira: Schema.optionalKey(Schema.Array(IntegrationAccount)),
+      linear: Schema.optionalKey(Schema.Array(IntegrationAccount)),
+    }),
+  ),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

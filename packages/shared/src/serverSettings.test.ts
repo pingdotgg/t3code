@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  IntegrationAccountId,
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -193,5 +194,49 @@ describe("serverSettings helpers", () => {
       enabled: true,
       config: { homePath: "~/.codex" },
     });
+  });
+
+  it("replaces integration account arrays instead of merging them by index", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      integrations: {
+        github: [
+          {
+            id: IntegrationAccountId.make("github_personal"),
+            name: "Personal",
+            apiKey: "secret",
+            apiKeyRedacted: true,
+          },
+        ],
+        gitlab: [],
+        jira: [],
+        linear: [],
+      },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        integrations: {
+          github: [
+            {
+              id: IntegrationAccountId.make("github_work"),
+              name: "Work",
+              apiKey: "",
+              apiKeyRedacted: true,
+            },
+          ],
+          gitlab: [],
+          jira: [],
+          linear: [],
+        },
+      }).integrations.github,
+    ).toEqual([
+      {
+        id: IntegrationAccountId.make("github_work"),
+        name: "Work",
+        apiKey: "",
+        apiKeyRedacted: true,
+      },
+    ]);
   });
 });

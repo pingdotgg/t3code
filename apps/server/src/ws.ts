@@ -49,6 +49,7 @@ import {
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   EnvironmentAuthorizationError,
+  IntegrationAccountTokenValidationError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -77,6 +78,7 @@ import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as Integrations from "./integrations.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -289,6 +291,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverRemoveKeybinding, AuthOrchestrationOperateScope],
   [WS_METHODS.serverGetSettings, AuthOrchestrationReadScope],
   [WS_METHODS.serverUpdateSettings, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverTestIntegrationToken, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetTraceDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
@@ -1222,6 +1225,65 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
             serverSettings
               .updateSettings(patch)
               .pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverTestIntegrationToken]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverTestIntegrationToken,
+            Effect.gen(function* () {
+              if ((input.useStoredToken ?? false) || input.apiKey === undefined) {
+                if (input.accountId === undefined) {
+                  return yield* Effect.fail(
+                    new IntegrationAccountTokenValidationError({
+                      kind: input.kind,
+                      detail: "An account id is required to retest a stored token.",
+                    }),
+                  );
+                }
+
+                const settings = yield* serverSettings.getSettings;
+                const accounts = settings.integrations[input.kind];
+                const account = accounts.find((candidate) => candidate.id === input.accountId);
+                if (account === undefined) {
+                  return yield* Effect.fail(
+                    new IntegrationAccountTokenValidationError({
+                      kind: input.kind,
+                      detail: "Stored integration account not found.",
+                    }),
+                  );
+                }
+
+                if (account.apiKey.length === 0) {
+                  return yield* Effect.fail(
+                    new IntegrationAccountTokenValidationError({
+                      kind: input.kind,
+                      detail: "Stored integration token is unavailable.",
+                    }),
+                  );
+                }
+
+                return yield* Integrations.testIntegrationToken({
+                  kind: input.kind,
+                  accountName: input.accountName ?? account.name,
+                  ...(input.baseUrl !== undefined
+                    ? { baseUrl: input.baseUrl }
+                    : account.baseUrl !== undefined
+                      ? { baseUrl: account.baseUrl }
+                      : {}),
+                  apiKey: account.apiKey,
+                });
+              }
+
+              return yield* Integrations.testIntegrationToken({
+                kind: input.kind,
+                ...(input.accountId !== undefined ? { accountId: input.accountId } : {}),
+                ...(input.accountName !== undefined ? { accountName: input.accountName } : {}),
+                ...(input.baseUrl !== undefined ? { baseUrl: input.baseUrl } : {}),
+                apiKey: input.apiKey,
+              });
+            }),
             {
               "rpc.aggregate": "server",
             },
