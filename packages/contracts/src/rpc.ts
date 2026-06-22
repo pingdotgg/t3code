@@ -1,16 +1,7 @@
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import {
-  ProviderAuthCancelInput,
-  ProviderAuthCompleteInput,
-  ProviderAuthState,
-  ProviderInstallCancelInput,
-  ProviderInstallState,
-  ProviderSetupError,
-  ProviderSetupInput,
-} from "./providerSetup.ts";
+import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
@@ -28,15 +19,12 @@ import {
   FilesystemBrowseResult,
   FilesystemBrowseError,
 } from "./filesystem.ts";
+import { AssetAccessError, AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import {
-  AssetAccessError,
-  AssetCreateUrlInput,
-  AssetCreateUrlResult,
-  AttachmentCreateUploadUrlInput,
-  AttachmentCreateUploadUrlResult,
-  AttachmentDeleteInput,
-  AttachmentUploadSigningKeyError,
-} from "./assets.ts";
+  PersistChatAttachmentsError,
+  PersistChatAttachmentsInput,
+  PersistChatAttachmentsResult,
+} from "./chatAttachment.ts";
 import {
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffInput,
@@ -86,11 +74,6 @@ import {
   OrchestrationRpcSchemas,
   OrchestrationGetWorkflowScriptError,
 } from "./orchestration.ts";
-import {
-  ProviderUploadFeedbackError,
-  ProviderUploadFeedbackInput,
-  ProviderUploadFeedbackResult,
-} from "./provider.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   PullRequestActionInput,
@@ -113,9 +96,6 @@ import {
   PullRequestSummary,
   PullRequestReviewerCandidateList,
   PullRequestReviewerRequestInput,
-  PullRequestLabelCandidateList,
-  PullRequestLabelChangeInput,
-  PullRequestSetFilesViewedInput,
   PullRequestSubmitReviewInput,
   PullRequestThreadCommentsInput,
   PullRequestThreadCommentsResult,
@@ -209,11 +189,7 @@ import {
   ResourceTelemetryRetryResult,
   ResourceTelemetrySnapshot,
 } from "./resourceTelemetry.ts";
-import {
-  ProviderConsumeResetCreditInput,
-  ProviderConsumeResetCreditResult,
-} from "./providerUsageLimits.ts";
-import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
+import { UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
   SourceControlCloneRepositoryInput,
@@ -226,6 +202,7 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -237,6 +214,7 @@ export const WS_METHODS = {
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  projectsMutate: "projects.mutate",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -244,21 +222,7 @@ export const WS_METHODS = {
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
   assetsCreateUrl: "assets.createUrl",
-  attachmentsCreateUploadUrl: "attachments.createUploadUrl",
-  attachmentsDelete: "attachments.delete",
-
-  // Provider methods
-  providerUploadFeedback: "provider.uploadFeedback",
-  providerAuthStart: "provider.auth.start",
-  providerConsumeResetCredit: "provider.consumeResetCredit",
-  providerAuthComplete: "provider.auth.complete",
-  providerAuthCancel: "provider.auth.cancel",
-  providerAuthLogout: "provider.auth.logout",
-  providerAuthSubscribe: "provider.auth.subscribe",
-  providerInstallStart: "provider.install.start",
-  providerInstallCancel: "provider.install.cancel",
-  providerInstallSubscribe: "provider.install.subscribe",
-  providerInstallRemove: "provider.install.remove",
+  assetsPersistChatAttachments: "assets.persistChatAttachments",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -323,7 +287,6 @@ export const WS_METHODS = {
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
-  serverRefreshUsageRates: "server.refreshUsageRates",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -352,8 +315,6 @@ export const WS_METHODS = {
   pullRequestsSubscribeRefreshes: "pullRequests.subscribeRefreshes",
   pullRequestsReviewerCandidates: "pullRequests.reviewerCandidates",
   pullRequestsRequestReviewers: "pullRequests.requestReviewers",
-  pullRequestsLabelCandidates: "pullRequests.labelCandidates",
-  pullRequestsSetLabels: "pullRequests.setLabels",
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -407,81 +368,15 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
      */
     instanceId: Schema.optional(ProviderInstanceId),
     cwd: Schema.optional(TrimmedNonEmptyString),
-    /** Explicit user request. Background status refreshes must not open agent sessions. */
-    refreshModels: Schema.optional(Schema.Boolean),
   }),
   success: ServerProviderUpdatedPayload,
-  error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),
+  error: EnvironmentAuthorizationError,
 });
 
 export const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvider, {
   payload: ServerProviderUpdateInput,
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([ServerProviderUpdateError, EnvironmentAuthorizationError]),
-});
-
-const ProviderSetupRpcError = Schema.Union([ProviderSetupError, EnvironmentAuthorizationError]);
-
-export const WsProviderConsumeResetCreditRpc = Rpc.make(WS_METHODS.providerConsumeResetCredit, {
-  payload: ProviderConsumeResetCreditInput,
-  success: ProviderConsumeResetCreditResult,
-  error: ProviderSetupRpcError,
-});
-
-export const WsProviderAuthStartRpc = Rpc.make(WS_METHODS.providerAuthStart, {
-  payload: ProviderSetupInput,
-  success: ProviderAuthState,
-  error: ProviderSetupRpcError,
-});
-
-export const WsProviderAuthCompleteRpc = Rpc.make(WS_METHODS.providerAuthComplete, {
-  payload: ProviderAuthCompleteInput,
-  success: ProviderAuthState,
-  error: ProviderSetupRpcError,
-});
-
-export const WsProviderAuthCancelRpc = Rpc.make(WS_METHODS.providerAuthCancel, {
-  payload: ProviderAuthCancelInput,
-  success: ProviderAuthState,
-  error: ProviderSetupRpcError,
-});
-
-export const WsProviderAuthLogoutRpc = Rpc.make(WS_METHODS.providerAuthLogout, {
-  payload: ProviderSetupInput,
-  success: ProviderAuthState,
-  error: ProviderSetupRpcError,
-});
-
-export const WsProviderAuthSubscribeRpc = Rpc.make(WS_METHODS.providerAuthSubscribe, {
-  payload: ProviderSetupInput,
-  success: ProviderAuthState,
-  error: ProviderSetupRpcError,
-  stream: true,
-});
-
-export const WsProviderInstallStartRpc = Rpc.make(WS_METHODS.providerInstallStart, {
-  payload: ProviderSetupInput,
-  success: ProviderInstallState,
-  error: ProviderSetupRpcError,
-});
-
-export const WsProviderInstallCancelRpc = Rpc.make(WS_METHODS.providerInstallCancel, {
-  payload: ProviderInstallCancelInput,
-  success: ProviderInstallState,
-  error: ProviderSetupRpcError,
-});
-
-export const WsProviderInstallSubscribeRpc = Rpc.make(WS_METHODS.providerInstallSubscribe, {
-  payload: ProviderSetupInput,
-  success: ProviderInstallState,
-  error: ProviderSetupRpcError,
-  stream: true,
-});
-
-export const WsProviderInstallRemoveRpc = Rpc.make(WS_METHODS.providerInstallRemove, {
-  payload: ProviderSetupInput,
-  success: ProviderInstallState,
-  error: ProviderSetupRpcError,
 });
 
 export const WsServerUpdateServerRpc = Rpc.make(WS_METHODS.serverUpdateServer, {
@@ -564,16 +459,6 @@ export const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSumm
   payload: UsageSummaryInput,
   success: UsageSummary,
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
-});
-
-/**
- * Refetches the model rate table ahead of its daily TTL, so a model released
- * since the last fetch gets priced. The next usage summary uses the new table.
- */
-export const WsServerRefreshUsageRatesRpc = Rpc.make(WS_METHODS.serverRefreshUsageRates, {
-  payload: Schema.Struct({}),
-  success: UsagePricing,
-  error: EnvironmentAuthorizationError,
 });
 
 export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
@@ -757,19 +642,6 @@ export const WsPullRequestsRequestReviewersRpc = Rpc.make(WS_METHODS.pullRequest
   error: PullRequestRpcError,
 });
 
-/** Read when the label menu opens, for the same reason the reviewer candidates are. */
-export const WsPullRequestsLabelCandidatesRpc = Rpc.make(WS_METHODS.pullRequestsLabelCandidates, {
-  payload: PullRequestRef,
-  success: PullRequestLabelCandidateList,
-  error: PullRequestRpcError,
-});
-
-export const WsPullRequestsSetLabelsRpc = Rpc.make(WS_METHODS.pullRequestsSetLabels, {
-  payload: PullRequestLabelChangeInput,
-  success: Schema.Void,
-  error: PullRequestRpcError,
-});
-
 export const WsSourceControlLookupRepositoryRpc = Rpc.make(
   WS_METHODS.sourceControlLookupRepository,
   {
@@ -824,6 +696,12 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
 });
 
+export const WsProjectsMutateRpc = Rpc.make(WS_METHODS.projectsMutate, {
+  payload: ProjectMutation,
+  success: Project,
+  error: Schema.Union([ProjectMutationError, EnvironmentAuthorizationError]),
+});
+
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: LaunchEditorInput,
   error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
@@ -841,21 +719,10 @@ export const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
 });
 
-export const WsAttachmentsCreateUploadUrlRpc = Rpc.make(WS_METHODS.attachmentsCreateUploadUrl, {
-  payload: AttachmentCreateUploadUrlInput,
-  success: AttachmentCreateUploadUrlResult,
-  error: Schema.Union([AttachmentUploadSigningKeyError, EnvironmentAuthorizationError]),
-});
-
-export const WsAttachmentsDeleteRpc = Rpc.make(WS_METHODS.attachmentsDelete, {
-  payload: AttachmentDeleteInput,
-  error: EnvironmentAuthorizationError,
-});
-
-export const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, {
-  payload: ProviderUploadFeedbackInput,
-  success: ProviderUploadFeedbackResult,
-  error: Schema.Union([ProviderUploadFeedbackError, EnvironmentAuthorizationError]),
+export const WsAssetsPersistChatAttachmentsRpc = Rpc.make(WS_METHODS.assetsPersistChatAttachments, {
+  payload: PersistChatAttachmentsInput,
+  success: PersistChatAttachmentsResult,
+  error: Schema.Union([PersistChatAttachmentsError, EnvironmentAuthorizationError]),
 });
 
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
@@ -1228,8 +1095,6 @@ export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerCon
      * dropped by old servers.
      */
     environmentThemes: Schema.optional(Schema.Boolean),
-    /** Whether this client understands `usageLimitSourcesUpdated` events. */
-    usageLimitSources: Schema.optional(Schema.Boolean),
   }),
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
@@ -1269,16 +1134,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
-  WsProviderConsumeResetCreditRpc,
-  WsProviderAuthStartRpc,
-  WsProviderAuthCompleteRpc,
-  WsProviderAuthCancelRpc,
-  WsProviderAuthLogoutRpc,
-  WsProviderAuthSubscribeRpc,
-  WsProviderInstallStartRpc,
-  WsProviderInstallCancelRpc,
-  WsProviderInstallSubscribeRpc,
-  WsProviderInstallRemoveRpc,
   WsServerUpdateServerRpc,
   WsServerUpdateServerWithProgressRpc,
   WsServerCommitDesktopUpdateRpc,
@@ -1293,7 +1148,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
-  WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
@@ -1322,8 +1176,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsSubscribeRefreshesRpc,
   WsPullRequestsReviewerCandidatesRpc,
   WsPullRequestsRequestReviewersRpc,
-  WsPullRequestsLabelCandidatesRpc,
-  WsPullRequestsSetLabelsRpc,
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
@@ -1332,12 +1184,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
+  WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,
-  WsAttachmentsCreateUploadUrlRpc,
-  WsAttachmentsDeleteRpc,
-  WsProviderUploadFeedbackRpc,
+  WsAssetsPersistChatAttachmentsRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,

@@ -223,6 +223,13 @@ export function applyToProjection(
     case "provider-thread.updated":
       return {
         ...base,
+        thread:
+          event.payload.appThreadId === base.thread.id
+            ? {
+                ...base.thread,
+                activeProviderThreadId: event.payload.id,
+              }
+            : base.thread,
         providerThreads: upsertById(base.providerThreads, event.payload),
       };
     case "provider-turn.updated":
@@ -288,6 +295,8 @@ type ShellThreadRow = {
   readonly active_run_id: string | null;
   readonly pending_request_payload_json: string | null;
   readonly latest_message_payload_json: string | null;
+  readonly latest_user_message_at: string | null;
+  readonly has_actionable_proposed_plan: number;
   readonly item_count: number;
 };
 
@@ -638,6 +647,13 @@ export function threadShellFromProjection(
       (left, right) =>
         DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
     )[0] ?? null;
+  const latestUserMessage =
+    projection.messages
+      .filter((message) => message.role === "user")
+      .toSorted(
+        (left, right) =>
+          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+      )[0] ?? null;
   return {
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
@@ -673,6 +689,10 @@ export function threadShellFromProjection(
             text: latestVisibleMessage.text,
             updatedAt: latestVisibleMessage.updatedAt,
           },
+    latestUserMessageAt: latestUserMessage?.updatedAt ?? null,
+    hasActionableProposedPlan: projection.plans.some(
+      (plan) => plan.kind === "proposed_plan" && plan.status === "active",
+    ),
     itemCount: activeLocalTurnItems(projection).length,
     visibleItemCount: projection.visibleTurnItems.length,
     createdAt: projection.thread.createdAt,
@@ -693,6 +713,8 @@ type ShellThreadState = {
   readonly activeRunId: RunId | null;
   readonly pendingRuntimeRequest: OrchestrationV2ThreadProjection["runtimeRequests"][number] | null;
   readonly latestVisibleMessage: OrchestrationV2ConversationMessage | null;
+  readonly latestUserMessageAt: DateTime.Utc | null;
+  readonly hasActionableProposedPlan: boolean;
   readonly itemCount: number;
   readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
   readonly runOrdinalById: ReadonlyMap<RunId, number>;
@@ -819,6 +841,8 @@ function shellFromState(input: {
             text: input.state.latestVisibleMessage.text,
             updatedAt: input.state.latestVisibleMessage.updatedAt,
           },
+    latestUserMessageAt: input.state.latestUserMessageAt,
+    hasActionableProposedPlan: input.state.hasActionableProposedPlan,
     itemCount: input.state.itemCount,
     visibleItemCount: input.visibleItemCount,
     createdAt: input.state.thread.createdAt,
@@ -1950,6 +1974,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS latest_message_payload_json,
               (
+                SELECT message.updated_at
+                FROM orchestration_v2_projection_messages message
+                WHERE message.thread_id = t.thread_id
+                  AND message.role = 'user'
+                ORDER BY message.updated_at DESC, message.message_id DESC
+                LIMIT 1
+              ) AS latest_user_message_at,
+              EXISTS (
+                SELECT 1
+                FROM orchestration_v2_projection_plans plan
+                WHERE plan.thread_id = t.thread_id
+                  AND plan.kind = 'proposed_plan'
+                  AND plan.status = 'active'
+              ) AS has_actionable_proposed_plan,
+              (
                 SELECT COUNT(*)
                 FROM orchestration_v2_projection_turn_items i
                 LEFT JOIN orchestration_v2_projection_runs r
@@ -2015,6 +2054,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   activeRunId: row.active_run_id === null ? null : RunId.make(row.active_run_id),
                   pendingRuntimeRequest,
                   latestVisibleMessage,
+                  latestUserMessageAt:
+                    row.latest_user_message_at === null
+                      ? null
+                      : DateTime.makeUnsafe(row.latest_user_message_at),
+                  hasActionableProposedPlan: row.has_actionable_proposed_plan === 1,
                   itemCount: row.item_count,
                   updatedAt: thread.updatedAt,
                   runOrdinalById:
