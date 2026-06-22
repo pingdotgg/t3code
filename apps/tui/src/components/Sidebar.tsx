@@ -97,6 +97,10 @@ export const Sidebar = React.memo(function Sidebar({
   width,
   height,
   store,
+  filter,
+  searchFocused,
+  onSearchInput,
+  onFocusSearch,
 }: {
   readonly rows: ReadonlyArray<Row>;
   readonly selection: Selection | null;
@@ -105,6 +109,13 @@ export const Sidebar = React.memo(function Sidebar({
   readonly width: number;
   readonly height: number;
   readonly store: Store;
+  /** Current project/thread search query (mirrors the store filter). */
+  readonly filter: string;
+  /** True while the search box owns keyboard focus (filter mode). */
+  readonly searchFocused: boolean;
+  readonly onSearchInput: (value: string) => void;
+  /** Focus the search box (e.g. clicked) — enters filter mode. */
+  readonly onFocusSearch: () => void;
 }): React.ReactNode {
   const palette = usePalette();
   const innerWidth = Math.max(8, width - 4);
@@ -123,6 +134,42 @@ export const Sidebar = React.memo(function Sidebar({
         <strong>T3</strong>
         <span fg={palette.dim}> Code</span>
       </text>
+      <box
+        flexDirection="row"
+        marginTop={1}
+        marginBottom={1}
+        border
+        borderStyle="rounded"
+        borderColor={searchFocused ? palette.accent : palette.dim}
+        paddingLeft={1}
+        paddingRight={1}
+        flexShrink={0}
+        onMouseDown={onFocusSearch}
+      >
+        <text>
+          <span fg={searchFocused ? palette.accent : palette.dim}>{"⌕ "}</span>
+        </text>
+        {searchFocused ? (
+          <input
+            value={filter}
+            onInput={onSearchInput}
+            focused
+            flexGrow={1}
+            placeholder="Search projects…"
+            textColor={palette.text}
+            cursorColor={palette.accent}
+            placeholderColor={palette.dim}
+          />
+        ) : (
+          <text>
+            {filter.length > 0 ? (
+              <span fg={palette.text}>{filter}</span>
+            ) : (
+              <span fg={palette.dim}>Search projects…</span>
+            )}
+          </text>
+        )}
+      </box>
       <text>
         <span fg={palette.accent}>Projects</span>
         {moreAbove ? <span fg={palette.dim}>{"  ↑ more"}</span> : null}

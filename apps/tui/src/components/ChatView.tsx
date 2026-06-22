@@ -867,6 +867,10 @@ export function ChatView({
           width={listWidth}
           height={panesHeight}
           store={store}
+          filter={state.filter}
+          searchFocused={focus === "filter" && !terminalFocused && !diffOpen && !picker}
+          onSearchInput={store.setFilter}
+          onFocusSearch={() => setFocus("filter")}
         />
         {diffOpen && diffCheckpoint ? (
           <DiffViewer
@@ -943,10 +947,11 @@ export function ChatView({
         />
       ) : (
         <ChatComposer
-          mode={focus}
+          // Search/filter now lives in the sidebar; the composer never owns it.
+          mode={focus === "filter" ? "compose" : focus}
           reply={reply}
           draft={draft}
-          auxValue={focus === "rename" ? renameDraft : focus === "filter" ? state.filter : ""}
+          auxValue={focus === "rename" ? renameDraft : ""}
           placeholder={placeholder}
           projectName={projects[activeProjectIndex]?.title ?? "(none)"}
           interactionMode={focus === "new" ? newInteractionMode : (detail?.interactionMode ?? "default")}
@@ -955,14 +960,14 @@ export function ChatView({
           newWorktree={newWorktree}
           newField={newField}
           editorRows={promptLines}
-          inputFocused={!terminalFocused && !diffOpen && !picker}
+          inputFocused={!terminalFocused && !diffOpen && !picker && focus !== "filter"}
           composerEpoch={composerEpoch}
           onReplyInput={setReply}
           onReplySubmit={sendReply}
           onDraftInput={(value) => setDraft(value.replace(/\t/g, ""))}
           onBranchInput={(value) => setNewBranch(value.replace(/\t/g, ""))}
           onWorktreeInput={(value) => setNewWorktree(value.replace(/\t/g, ""))}
-          onAuxInput={focus === "rename" ? setRenameDraft : store.setFilter}
+          onAuxInput={setRenameDraft}
         />
       )}
 
