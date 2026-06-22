@@ -142,18 +142,30 @@ export class CodexAppServerSpawnError extends Schema.TaggedErrorClass<CodexAppSe
   }
 }
 
+export const CodexAppServerProcessStderrTailByteLimit = 4 * 1024;
+
 export class CodexAppServerProcessExitedError extends Schema.TaggedErrorClass<CodexAppServerProcessExitedError>()(
   "CodexAppServerProcessExitedError",
   {
     code: Schema.optional(Schema.Number),
     pid: Schema.optionalKey(Schema.Int),
+    stderrTail: Schema.optionalKey(Schema.String),
+    stderrTruncated: Schema.optionalKey(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message() {
-    return this.code === undefined
-      ? "Codex App Server process exited"
-      : `Codex App Server process exited with code ${this.code}`;
+    const base =
+      this.code === undefined
+        ? "Codex App Server process exited"
+        : `Codex App Server process exited with code ${this.code}`;
+    if (!this.stderrTail) {
+      return base;
+    }
+    const label = this.stderrTruncated
+      ? `recent stderr (last ${CodexAppServerProcessStderrTailByteLimit} bytes, truncated)`
+      : `recent stderr (last ${CodexAppServerProcessStderrTailByteLimit} bytes)`;
+    return `${base}\n\n${label}:\n${this.stderrTail}`;
   }
 }
 

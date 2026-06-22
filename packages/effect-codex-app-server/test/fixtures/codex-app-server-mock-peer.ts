@@ -36,6 +36,29 @@ const handleMethod = (message: Record<string, unknown>) => {
 
   switch (method) {
     case "initialize": {
+      const exitStderrChunks = process.env.CODEX_APP_SERVER_TEST_EXIT_WITH_STDERR_CHUNKS;
+      if (exitStderrChunks !== undefined) {
+        const chunks = exitStderrChunks.split("|");
+        const writeChunk = (index: number) => {
+          const chunk = chunks[index];
+          if (chunk === undefined) {
+            process.exit(1);
+            return;
+          }
+          process.stderr.write(chunk, () => {
+            process.nextTick(() => writeChunk(index + 1));
+          });
+        };
+        writeChunk(0);
+        return;
+      }
+      const exitStderr = process.env.CODEX_APP_SERVER_TEST_EXIT_WITH_STDERR;
+      if (exitStderr !== undefined) {
+        process.stderr.write(exitStderr, () => {
+          process.exit(1);
+        });
+        return;
+      }
       // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone mock peer process has no Effect runtime.
       const platform = NodeOS.platform();
       const stderrBytes = Number(process.env.CODEX_APP_SERVER_TEST_STDERR_BYTES ?? 0);

@@ -10,11 +10,23 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 
 import * as CodexClient from "./client.ts";
+import * as CodexError from "./errors.ts";
 
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/codex-app-server-mock-peer.ts"),
 );
 const mockPeerArgs = (path: string) => [path];
+const initializeParams = {
+  clientInfo: {
+    name: "effect-codex-app-server-test",
+    title: "Effect Codex App Server Test",
+    version: "0.0.0",
+  },
+  capabilities: {
+    experimentalApi: true,
+    optOutNotificationMethods: null,
+  },
+} as const;
 
 it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
   const makeHandle = (env?: Record<string, string>) =>
@@ -57,17 +69,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
           Ref.update(messageDeltas, (current) => [...current, payload]),
         );
 
-        const initialized = yield* client.request("initialize", {
-          clientInfo: {
-            name: "effect-codex-app-server-test",
-            title: "Effect Codex App Server Test",
-            version: "0.0.0",
-          },
-          capabilities: {
-            experimentalApi: true,
-            optOutNotificationMethods: null,
-          },
-        });
+        const initialized = yield* client.request("initialize", initializeParams);
         assert.equal(initialized.userAgent, "mock-codex-app-server");
 
         yield* client.notify("initialized", undefined);
@@ -134,17 +136,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
 
       const initialized = yield* Effect.gen(function* () {
         const client = yield* CodexClient.CodexAppServerClient;
-        return yield* client.request("initialize", {
-          clientInfo: {
-            name: "effect-codex-app-server-test",
-            title: "Effect Codex App Server Test",
-            version: "0.0.0",
-          },
-          capabilities: {
-            experimentalApi: true,
-            optOutNotificationMethods: null,
-          },
-        });
+        return yield* client.request("initialize", initializeParams);
       }).pipe(
         Effect.timeout("5 seconds"),
         Effect.provide(context),
@@ -152,6 +144,62 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       );
 
       assert.equal(initialized.userAgent, "mock-codex-app-server");
+    }),
+  );
+  it.effect("includes child stderr tail when initialize exits before responding", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle({
+        CODEX_APP_SERVER_TEST_EXIT_WITH_STDERR: " \nAccess is denied\n ",
+      });
+      const scope = yield* Scope.make();
+      const clientLayer = CodexClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(clientLayer, scope);
+
+      const error = yield* Effect.gen(function* () {
+        const client = yield* CodexClient.CodexAppServerClient;
+        return yield* client.request("initialize", initializeParams).pipe(Effect.flip);
+      }).pipe(
+        Effect.timeout("5 seconds"),
+        Effect.provide(context),
+        Effect.ensuring(Scope.close(scope, Exit.void)),
+      );
+
+      assert.instanceOf(error, CodexError.CodexAppServerProcessExitedError);
+      assert.equal(error.code, 1);
+      assert.equal(error.stderrTail, "Access is denied");
+      assert.equal(error.stderrTruncated, false);
+      assert.include(error.message, "Codex App Server process exited with code 1");
+      assert.include(error.message, "recent stderr (last 4096 bytes)");
+      assert.include(error.message, "Access is denied");
+    }),
+  );
+  it.effect("includes redacted delayed multi-chunk stderr when initialize exits", () =>
+    Effect.gen(function* () {
+      const secret = "sk-proj-clientDiagnosticSecret1234567890";
+      const handle = yield* makeHandle({
+        CODEX_APP_SERVER_TEST_EXIT_WITH_STDERR_CHUNKS: [
+          `OPENAI_API_KEY=${secret}\n`,
+          "Delayed access failure\n",
+        ].join("|"),
+      });
+      const scope = yield* Scope.make();
+      const clientLayer = CodexClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(clientLayer, scope);
+
+      const error = yield* Effect.gen(function* () {
+        const client = yield* CodexClient.CodexAppServerClient;
+        return yield* client.request("initialize", initializeParams).pipe(Effect.flip);
+      }).pipe(
+        Effect.timeout("5 seconds"),
+        Effect.provide(context),
+        Effect.ensuring(Scope.close(scope, Exit.void)),
+      );
+
+      assert.instanceOf(error, CodexError.CodexAppServerProcessExitedError);
+      assert.notInclude(error.stderrTail ?? "", secret);
+      assert.notInclude(error.message, secret);
+      assert.include(error.message, "[REDACTED]");
+      assert.include(error.message, "Delayed access failure");
     }),
   );
 });
