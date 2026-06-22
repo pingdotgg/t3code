@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   CommandId,
@@ -12,6 +12,10 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import {
+  liveWindowOldestActivityId,
+  oldestActivityByChronology,
+} from "@t3tools/client-runtime/state/thread-reducer";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
@@ -113,40 +117,83 @@ export function useThreadComposerState() {
   const activityRequestKey = selectedThreadShell
     ? `${selectedThreadShell.environmentId}\u0000${selectedThreadShell.id}`
     : null;
-  const activityRequestKeyRef = useRef(activityRequestKey);
-  activityRequestKeyRef.current = activityRequestKey;
-
   const liveActivities = selectedThreadDetail?.activities ?? EMPTY_ACTIVITIES;
-  // The live window's oldest activity is stable while new activities only
-  // append; it changes when the window is re-snapshotted (reconnect) or rows are
-  // removed (checkpoint revert), either of which can make prepended older pages
-  // stale or gappy — so reset the lazy-load state when it (or the thread) changes.
-  const liveOldestActivityId = liveActivities[0]?.id ?? null;
-  useEffect(() => {
+  // Order-independent oldest boundary: `activities[0]` shifts when the reducer
+  // re-sorts unsequenced rows on the first live append, which would otherwise
+  // make a plain append look like a window reshape. See helper docs.
+  const liveOldestActivityId = useMemo(
+    () => liveWindowOldestActivityId(liveActivities),
+    [liveActivities],
+  );
+  const liveActivityCount = liveActivities.length;
+  // Bumps on every lazy-load reset so a late in-flight load can't repopulate the
+  // freshly-cleared state (the thread key alone doesn't change on a same-thread
+  // window reshape).
+  const olderActivitiesGenRef = useRef(0);
+  // The request key of an in-flight older-history load — coalesces the duplicate
+  // dispatches the list fires before the loading state updates.
+  const inFlightOlderKeyRef = useRef<string | null>(null);
+  // The oldest row we've paged past. Advancing this (not re-deriving from the
+  // merged set) lets an all-overlap page keep paging when the server still
+  // reports `hasMore`, without re-requesting the same cursor. Reset on reshape.
+  const olderCursorRef = useRef<OrchestrationThreadActivity | null>(null);
+  // Reset the lazy-loaded older pages when the live window is *reshaped* rather
+  // than purely appended-to: a different thread or a re-snapshot (reconnect)
+  // changes its oldest row, and a checkpoint revert removes rows so the count
+  // shrinks. A pure append (same thread, same oldest, larger count) keeps them.
+  const olderWindowRef = useRef({
+    key: activityRequestKey,
+    oldest: liveOldestActivityId,
+    count: liveActivityCount,
+  });
+  // useLayoutEffect (not useEffect) so the cleared state commits before the new
+  // thread paints; otherwise the previous thread's lazy-loaded pages stay merged
+  // in for one frame, flashing stale feed rows.
+  useLayoutEffect(() => {
+    const prev = olderWindowRef.current;
+    olderWindowRef.current = {
+      key: activityRequestKey,
+      oldest: liveOldestActivityId,
+      count: liveActivityCount,
+    };
+    const reshaped =
+      activityRequestKey !== prev.key ||
+      liveOldestActivityId !== prev.oldest ||
+      liveActivityCount < prev.count;
+    if (!reshaped) {
+      return;
+    }
+    olderActivitiesGenRef.current += 1;
+    inFlightOlderKeyRef.current = null;
+    olderCursorRef.current = null;
     setOlderActivities([]);
     setOlderLoaded(false);
     setOlderHasMore(false);
     setLoadingOlderActivities(false);
-  }, [activityRequestKey, liveOldestActivityId]);
+  }, [activityRequestKey, liveOldestActivityId, liveActivityCount]);
   const mergedActivities = useMemo(
     () =>
       olderActivities.length > 0 ? [...olderActivities, ...liveActivities] : liveActivities,
     [olderActivities, liveActivities],
   );
+  // Latest merged set, read inside the async load handler so dedup runs against
+  // the current state, not the snapshot captured when the load was dispatched.
+  const mergedActivitiesRef = useRef(mergedActivities);
+  mergedActivitiesRef.current = mergedActivities;
   // Before any page is loaded, the server tells us whether older history exists.
   const hasMoreOlderActivities = olderLoaded
     ? olderHasMore
     : (selectedThreadDetail?.hasMoreActivities ?? false);
 
-  // Synchronous in-flight guard keyed by thread: the list fires onLoadOlder
-  // repeatedly while pinned at the top, but loading *state* only updates next
-  // render, so without this a fast scroll dispatches duplicate same-cursor calls.
-  const inFlightOlderKeyRef = useRef<string | null>(null);
   const onLoadOlderActivities = useCallback(() => {
     if (!selectedThreadShell || !hasMoreOlderActivities) {
       return;
     }
-    const oldestActivity = mergedActivities[0];
+    // Page from the explicit cursor (oldest row already paged past) or, before
+    // any page, the chronologically-oldest loaded row (matches the reshape
+    // sentinel): the reducer sorts unsequenced rows to the end, so index 0 can be
+    // a newer sequenced row whose cursor would skip older unsequenced history.
+    const oldestActivity = olderCursorRef.current ?? oldestActivityByChronology(mergedActivities);
     if (!oldestActivity || !activityRequestKey) {
       return;
     }
@@ -158,6 +205,7 @@ export function useThreadComposerState() {
         ? { beforeSequence: oldestActivity.sequence }
         : { beforeCreatedAt: oldestActivity.createdAt, beforeActivityId: oldestActivity.id };
     const requestKey = activityRequestKey;
+    const gen = olderActivitiesGenRef.current;
     inFlightOlderKeyRef.current = requestKey;
     setLoadingOlderActivities(true);
     void loadThreadActivities({
@@ -165,32 +213,39 @@ export function useThreadComposerState() {
       input: { threadId: selectedThreadShell.id, ...cursorInput },
     })
       .then((result) => {
-        if (activityRequestKeyRef.current !== requestKey) {
+        // Window/thread reset while in flight — drop the page so it can't
+        // repopulate state cleared by the reset.
+        if (olderActivitiesGenRef.current !== gen) {
           return;
         }
         if (result._tag !== "Success") {
           return;
         }
         const page = result.value;
-        setOlderActivities((prev) => {
-          // Dedup against both already-loaded older pages and the live window,
-          // since mobile merges everything into one array (duplicate ids would
-          // produce duplicate React keys in the feed).
-          const seen = new Set(prev.map((activity) => activity.id));
-          for (const activity of liveActivities) {
-            seen.add(activity.id);
-          }
-          const fresh = page.activities.filter((activity) => !seen.has(activity.id));
-          return [...fresh, ...prev];
-        });
+        // Advance the cursor to this page's oldest row (pages are ascending) even
+        // if every row dedupes away — the server cursor is strict, so the cursor
+        // strictly decreases and paging can't loop, while an all-overlap page no
+        // longer terminates paging the server says has more.
+        const pageOldest = page.activities[0];
+        if (pageOldest) {
+          olderCursorRef.current = pageOldest;
+        }
+        // Dedup against the LATEST merged set (via ref) so a live append or a
+        // prior prepend that settled mid-flight can't leave duplicate ids.
+        const seen = new Set(mergedActivitiesRef.current.map((activity) => activity.id));
+        const fresh = page.activities.filter((activity) => !seen.has(activity.id));
+        if (fresh.length === 0) {
+          setOlderLoaded(true);
+          setOlderHasMore(page.hasMore);
+          return;
+        }
+        setOlderActivities((prev) => [...fresh, ...prev]);
         setOlderLoaded(true);
         setOlderHasMore(page.hasMore);
       })
       .finally(() => {
-        if (inFlightOlderKeyRef.current === requestKey) {
+        if (olderActivitiesGenRef.current === gen) {
           inFlightOlderKeyRef.current = null;
-        }
-        if (activityRequestKeyRef.current === requestKey) {
           setLoadingOlderActivities(false);
         }
       });
@@ -199,7 +254,6 @@ export function useThreadComposerState() {
     hasMoreOlderActivities,
     mergedActivities,
     activityRequestKey,
-    liveActivities,
     loadThreadActivities,
   ]);
 
