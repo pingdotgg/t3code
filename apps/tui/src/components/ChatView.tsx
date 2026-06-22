@@ -5,10 +5,10 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { useRenderer, useTerminalDimensions } from "@opentui/react";
-import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as React from "react";
 
 import { derivePendingApprovals } from "../approvals.ts";
@@ -207,8 +207,6 @@ export function ChatView({
         }
       : null;
   const controls = composerControls(detail);
-  const sessionActive =
-    !!detail && ["starting", "running", "ready"].includes(detail.session?.status ?? "");
   // The agent is actively running a turn — show the red stop affordance (mirrors
   // the web composer swapping its send button for a stop button while running).
   const working = !!detail && isWorking(detail);
@@ -819,9 +817,9 @@ export function ChatView({
     void (async () => {
       let dir: string | null = null;
       try {
-        dir = await mkdtemp(join(tmpdir(), "t3-prompt-"));
-        const file = join(dir, "prompt.md");
-        await writeFile(file, draftText, "utf8");
+        dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-prompt-"));
+        const file = NodePath.join(dir, "prompt.md");
+        await NodeFSP.writeFile(file, draftText, "utf8");
         const { cmd, args } = resolveEditorCommand({
           VISUAL: process.env.VISUAL,
           EDITOR: process.env.EDITOR,
@@ -829,21 +827,21 @@ export function ChatView({
         renderer.suspend();
         try {
           await new Promise<void>((resolve) => {
-            const child = spawn(cmd, [...args, file], { stdio: "inherit" });
+            const child = NodeChildProcess.spawn(cmd, [...args, file], { stdio: "inherit" });
             child.once("exit", () => resolve());
             child.once("error", () => resolve());
           });
         } finally {
           renderer.resume();
         }
-        const edited = normalizeEditedPrompt(await readFile(file, "utf8"));
+        const edited = normalizeEditedPrompt(await NodeFSP.readFile(file, "utf8"));
         setReply(edited);
         setComposerEpoch((epoch) => epoch + 1);
         store.setStatus("Prompt updated from $EDITOR.", "success");
       } catch {
         store.setStatus("Could not open $EDITOR.", "error");
       } finally {
-        if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+        if (dir) await NodeFSP.rm(dir, { recursive: true, force: true }).catch(() => {});
       }
     })();
   };

@@ -77,6 +77,8 @@ describe("CheckpointDiffQuery.layer", () => {
           Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
             getCommandReadModel: () =>
               Effect.die("CheckpointDiffQuery should not request the command read model"),
+            getThreadActivitiesPage: () =>
+              Effect.die("CheckpointDiffQuery should not request thread activities"),
             getSnapshot: () =>
               Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
             getShellSnapshot: () =>
@@ -186,6 +188,8 @@ describe("CheckpointDiffQuery.layer", () => {
           Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
             getCommandReadModel: () =>
               Effect.die("CheckpointDiffQuery should not request the command read model"),
+            getThreadActivitiesPage: () =>
+              Effect.die("CheckpointDiffQuery should not request thread activities"),
             getSnapshot: () =>
               Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
             getShellSnapshot: () =>
@@ -270,6 +274,8 @@ describe("CheckpointDiffQuery.layer", () => {
           Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
             getCommandReadModel: () =>
               Effect.die("CheckpointDiffQuery should not request the command read model"),
+            getThreadActivitiesPage: () =>
+              Effect.die("CheckpointDiffQuery should not request thread activities"),
             getSnapshot: () =>
               Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
             getShellSnapshot: () =>
@@ -339,6 +345,8 @@ describe("CheckpointDiffQuery.layer", () => {
           Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
             getCommandReadModel: () =>
               Effect.die("CheckpointDiffQuery should not request the command read model"),
+            getThreadActivitiesPage: () =>
+              Effect.die("CheckpointDiffQuery should not request thread activities"),
             getSnapshot: () =>
               Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
             getShellSnapshot: () =>
@@ -393,6 +401,8 @@ describe("CheckpointDiffQuery.layer", () => {
           Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
             getCommandReadModel: () =>
               Effect.die("CheckpointDiffQuery should not request the command read model"),
+            getThreadActivitiesPage: () =>
+              Effect.die("CheckpointDiffQuery should not request thread activities"),
             getSnapshot: () =>
               Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
             getShellSnapshot: () =>

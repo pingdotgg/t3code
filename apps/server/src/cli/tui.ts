@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeModule from "node:module";
 
 import { AuthStandardClientScopes } from "@t3tools/contracts";
 import * as Console from "effect/Console";
@@ -48,10 +48,10 @@ function runBunTui(input: {
   readonly mintSocketUrl: () => Promise<string>;
 }): Promise<void> {
   const bunCommand = process.env.T3_TUI_BUN ?? "bun";
-  const tuiEntry = createRequire(import.meta.url).resolve("@t3tools/tui");
+  const tuiEntry = NodeModule.createRequire(import.meta.url).resolve("@t3tools/tui");
 
   return new Promise<void>((resolve) => {
-    const child = spawn(bunCommand, [tuiEntry], {
+    const child = NodeChildProcess.spawn(bunCommand, [tuiEntry], {
       stdio: ["inherit", "inherit", "inherit", "ipc"],
       env: {
         ...process.env,

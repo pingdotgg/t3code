@@ -1,4 +1,4 @@
-import { createRequire } from "node:module";
+import * as NodeModule from "node:module";
 
 import { RGBA } from "@opentui/core";
 import { usePaste } from "@opentui/react";
@@ -16,7 +16,7 @@ import { ansi, THEME, usePalette } from "../theme.ts";
 
 // @xterm/headless ships as CommonJS, so load it via createRequire (matching the
 // repo's node-pty pattern) rather than a named ESM import. Works under Bun.
-const { Terminal } = createRequire(import.meta.url)(
+const { Terminal } = NodeModule.createRequire(import.meta.url)(
   "@xterm/headless",
 ) as typeof import("@xterm/headless");
 type XTerm = InstanceType<typeof Terminal>;

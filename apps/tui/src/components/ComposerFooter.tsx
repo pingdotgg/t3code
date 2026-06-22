@@ -1,7 +1,7 @@
 import * as React from "react";
 
 import { type ComposerControls, interactionModeLabel, runtimeModeLabel } from "../controls.ts";
-import { ansi, type Palette, usePalette } from "../theme.ts";
+import { ansi, usePalette } from "../theme.ts";
 
 // The composer footer (mirrors apps/web ChatComposer): a model picker + mode
 // controls on the left, and the primary action on the right. Component names

@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import * as NodeFS from "node:fs";
 
 import {
   ApprovalRequestId,
@@ -201,7 +201,7 @@ const fileLoggerLayer = (logPath: string) =>
     Logger.formatJson.pipe(
       Logger.map((line: string) => {
         try {
-          appendFileSync(logPath, `${line}\n`);
+          NodeFS.appendFileSync(logPath, `${line}\n`);
         } catch {
           // Logging must never crash the UI.
         }
