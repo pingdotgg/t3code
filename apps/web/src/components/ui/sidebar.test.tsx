@@ -7,6 +7,7 @@ import {
   SidebarMenuSubButton,
   SidebarProvider,
   SidebarTrigger,
+  resolveSidebarState,
 } from "./sidebar";
 
 function renderSidebarButton(className?: string) {
@@ -18,6 +19,16 @@ function renderSidebarButton(className?: string) {
 }
 
 describe("sidebar interactive cursors", () => {
+  it("uses mobile sheet visibility for the shared responsive state", () => {
+    expect(resolveSidebarState({ isMobile: true, open: true, openMobile: false })).toBe(
+      "collapsed",
+    );
+    expect(resolveSidebarState({ isMobile: true, open: false, openMobile: true })).toBe("expanded");
+    expect(resolveSidebarState({ isMobile: false, open: true, openMobile: false })).toBe(
+      "expanded",
+    );
+  });
+
   it("exposes collapsed state for shared titlebar inset styling", () => {
     const html = renderToStaticMarkup(
       <SidebarProvider defaultOpen={false}>

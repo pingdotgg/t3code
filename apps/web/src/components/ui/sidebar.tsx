@@ -90,6 +90,14 @@ function useSidebarVisibility() {
   return isMobile ? openMobile : open;
 }
 
+function resolveSidebarState(input: {
+  isMobile: boolean;
+  open: boolean;
+  openMobile: boolean;
+}): SidebarContextProps["state"] {
+  return (input.isMobile ? input.openMobile : input.open) ? "expanded" : "collapsed";
+}
+
 function SidebarProvider({
   defaultOpen = true,
   open: openProp,
@@ -137,7 +145,7 @@ function SidebarProvider({
 
   // We add a state so that we can do data-state="expanded" or "collapsed".
   // This makes it easier to style the sidebar with Tailwind classes.
-  const state = open ? "expanded" : "collapsed";
+  const state = resolveSidebarState({ isMobile, open, openMobile });
 
   const contextValue = React.useMemo<SidebarContextProps>(
     () => ({
@@ -1014,6 +1022,7 @@ export {
   SidebarRail,
   SidebarSeparator,
   SidebarTrigger,
+  resolveSidebarState,
   useSidebar,
   useSidebarVisibility,
 };
