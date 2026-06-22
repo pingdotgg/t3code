@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { SyntaxStyle } from "@opentui/core";
+import { MockTreeSitterClient } from "@opentui/core/testing";
 import * as React from "react";
 import { testRender } from "@opentui/react/test-utils";
 
@@ -174,23 +175,61 @@ describe("MessagesTimeline body", () => {
     t.renderer.destroy();
   });
 
-  it("Given user and assistant messages, then the user text is a right-aligned box with no role labels", async () => {
-    const frame = await bodyFrame({
+  it("Given a user message in the real flex-row layout, its markdown paints right-aligned", async () => {
+    // The bug: inside a flexGrow→scrollbox the cross-size is auto, so width="100%"
+    // / alignSelf collapse and the bubble vanishes. Reproduce the real ChatView
+    // nesting (sidebar + grown timeline) and paint the markdown via a mock
+    // tree-sitter client (the harness has no worker).
+    const mock = new MockTreeSitterClient({ autoResolveTimeout: 0 });
+    mock.setMockResult({ highlights: [] });
+    const ref = React.createRef<null>();
+    const chatWidth = 92 - 30 - 4;
+    const full = {
+      ...detail("default"),
       messages: [
-        { id: "u1", role: "user", text: "ship it please", createdAt: "2026-06-19T00:00:00.000Z", streaming: false },
-        { id: "a1", role: "assistant", text: "on it", createdAt: "2026-06-19T00:00:01.000Z", streaming: false },
-      ] as never,
-    });
-    // The old "you"/"assistant" role labels are gone.
+        { id: "a1", role: "assistant", text: "looking into it", createdAt: "2026-06-19T00:00:00.000Z", streaming: false },
+        { id: "u1", role: "user", text: "ship it please", createdAt: "2026-06-19T00:00:01.000Z", streaming: false },
+      ],
+    } as unknown as OrchestrationThread;
+    const t = await testRender(
+      <box flexDirection="column" width={92} height={24}>
+        <box height={20} flexShrink={0} flexDirection="row">
+          <box width={30} height={20} border borderStyle="rounded">
+            <text>sidebar</text>
+          </box>
+          <MessagesTimeline
+            detail={full}
+            approvals={[]}
+            approvalIndex={0}
+            workLogCollapsed={false}
+            projectHint={null}
+            width={chatWidth}
+            height={20}
+            syntaxStyle={SyntaxStyle.create()}
+            scrollRef={ref as never}
+            treeSitterClient={mock}
+          />
+        </box>
+      </box>,
+      { width: 92, height: 26 },
+    );
+    for (let i = 0; i < 8; i += 1) {
+      await t.renderOnce();
+      try {
+        mock.resolveAllHighlightOnce();
+      } catch {
+        // no pending highlight this pass
+      }
+      await t.flush();
+    }
+    const frame = t.captureCharFrame();
+    // The user's markdown actually paints — and the old role labels are gone.
+    expect(frame).toContain("ship it please");
     expect(frame).not.toContain("you");
-    expect(frame).not.toContain("assistant");
-    // The user message is a box offset to the right — its rounded top-border sits
-    // well past the left edge (unlike the full-width timeline border at column 0).
-    const bubbleTops = frame
-      .split("\n")
-      .map((line) => line.indexOf("╭"))
-      .filter((col) => col > 10);
-    expect(bubbleTops.length).toBeGreaterThan(0);
+    // The bubble is right-aligned: its text sits well to the right of the timeline.
+    const userLine = frame.split("\n").find((line) => line.includes("ship it please")) ?? "";
+    expect(userLine.indexOf("ship it please")).toBeGreaterThan(60);
+    t.renderer.destroy();
   });
 
   it("Given messages across two turns, then a numbered turn separator is shown", async () => {

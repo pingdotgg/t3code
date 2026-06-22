@@ -171,6 +171,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   syntaxStyle,
   scrollRef,
   onOpenDiff,
+  treeSitterClient,
 }: {
   readonly detail: OrchestrationThread | null;
   readonly approvals: ReadonlyArray<PendingApproval>;
@@ -184,7 +185,10 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   readonly scrollRef: React.MutableRefObject<ScrollBoxRenderable | null>;
   /** Open the diff viewer scoped to a turn (clicking its changed-files summary). */
   readonly onOpenDiff?: (turnCount: number) => void;
+  /** Test seam: inject a tree-sitter client so <markdown> can paint in tests. */
+  readonly treeSitterClient?: unknown;
 }): React.ReactNode {
+  const mdClient = treeSitterClient ? { treeSitterClient: treeSitterClient as never } : {};
   const palette = usePalette();
   const contextWindow = React.useMemo(
     () => (detail ? deriveContextWindow(detail.activities) : null),
@@ -307,29 +311,49 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
           // to the content's longest line + box chrome, capped at ~72% of the pane.
           if (message.role === "user") {
             const maxBubble = Math.max(16, Math.floor(width * 0.72));
-            const longestLine = Math.max(1, ...body.split("\n").map((line) => line.length));
+            const longestLine = body.split("\n").reduce((max, line) => Math.max(max, line.length), 1);
             const bubbleWidth = Math.min(maxBubble, longestLine + 4);
+            // Right-align by putting the bubble in a row whose width is the
+            // DEFINITE scrollbox content width (= the `width` prop). Inside a
+            // scrollbox the cross-size is auto, so "100%"/alignSelf/marginLeft:auto
+            // all collapse to nothing — only a concrete width gives flex-end a
+            // reference to push against.
             return (
               <box
                 key={message.id}
-                flexDirection="column"
-                alignSelf="flex-end"
-                width={bubbleWidth}
-                flexShrink={0}
+                flexDirection="row"
+                width={width}
+                justifyContent="flex-end"
                 marginBottom={1}
-                border
-                borderStyle="rounded"
-                borderColor={palette.accent}
-                paddingLeft={1}
-                paddingRight={1}
               >
-                <markdown content={body} syntaxStyle={syntaxStyle} streaming={message.streaming} />
+                <box
+                  flexDirection="column"
+                  width={bubbleWidth}
+                  flexShrink={0}
+                  border
+                  borderStyle="rounded"
+                  borderColor={palette.accent}
+                  paddingLeft={1}
+                  paddingRight={1}
+                >
+                  <markdown
+                    content={body}
+                    syntaxStyle={syntaxStyle}
+                    streaming={message.streaming}
+                    {...mdClient}
+                  />
+                </box>
               </box>
             );
           }
           return (
             <box key={message.id} flexDirection="column" marginBottom={1}>
-              <markdown content={body} syntaxStyle={syntaxStyle} streaming={message.streaming} />
+              <markdown
+                content={body}
+                syntaxStyle={syntaxStyle}
+                streaming={message.streaming}
+                {...mdClient}
+              />
               {checkpoint ? (
                 <ChangedFiles
                   checkpoint={checkpoint}
