@@ -45,6 +45,10 @@ export interface Store {
   readonly start: () => void;
   readonly stop: () => void;
   readonly moveSelection: (delta: number) => void;
+  /** Move selection to the next/prev THREAD row, skipping project headers. */
+  readonly moveThreadSelection: (delta: 1 | -1) => void;
+  /** Select the Nth (1-based) visible thread, like the web's thread-jump 1–9. */
+  readonly selectThreadByIndex: (index: number) => void;
   readonly select: (selection: Selection) => void;
   readonly toggleProject: (id: string) => void;
   readonly loadMore: (id: string) => void;
@@ -179,6 +183,21 @@ export function createStore(client: TuiClient): Store {
       const nextIndex = Math.min(rows.length - 1, Math.max(0, index + delta));
       const next = rows[nextIndex];
       if (next) applySelection(selectionFromRow(next));
+    },
+    moveThreadSelection: (delta) => {
+      const threads = rowsNow().filter((row) => row.kind === "thread");
+      if (threads.length === 0) return;
+      const currentId = selectedThreadId();
+      let index = threads.findIndex((row) => row.id === currentId);
+      // Not on a thread yet: step into the first (next) or last (prev) one.
+      if (index < 0) index = delta > 0 ? -1 : threads.length;
+      const nextIndex = Math.min(threads.length - 1, Math.max(0, index + delta));
+      const next = threads[nextIndex];
+      if (next) applySelection(selectionFromRow(next));
+    },
+    selectThreadByIndex: (index) => {
+      const target = rowsNow().filter((row) => row.kind === "thread")[index - 1];
+      if (target) applySelection(selectionFromRow(target));
     },
     select: (selection) => applySelection(selection),
     toggleProject: (id) => {

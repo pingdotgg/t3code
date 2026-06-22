@@ -99,6 +99,11 @@ export interface KeyBindingActions {
   readonly onNewThread: () => void;
   readonly onTogglePlanMode: () => void;
   readonly onToggleRightPanel: () => void;
+  /** Alt+↑ / Alt+↓ — move to the prev/next thread (skipping project headers). */
+  readonly onThreadPrev: () => void;
+  readonly onThreadNext: () => void;
+  /** Alt+1…9 — jump to the Nth visible thread (web's thread-jump). */
+  readonly onThreadJump: (index: number) => void;
   readonly onImplementPlan: () => void;
   readonly onGrowPrompt: () => void;
   readonly onShrinkPrompt: () => void;
@@ -208,7 +213,11 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     // ── Compose mode (default) ──────────────────────────────────────────────
     if (key.ctrl && key.name === "e") return actions.onToggleTerminal();
     if (key.ctrl && key.name === "p") return actions.onToggleFocus();
-    // ^↑/^↓ resize the prompt you're focused on; arrows navigate the sidebar.
+    // Alt+↑/↓ jump thread-to-thread; ^↑/^↓ resize the prompt; plain arrows
+    // navigate every sidebar row. Alt+1…9 jumps straight to a visible thread.
+    if (key.option && key.name === "up") return actions.onThreadPrev();
+    if (key.option && key.name === "down") return actions.onThreadNext();
+    if (key.option && /^[1-9]$/.test(key.name)) return actions.onThreadJump(Number(key.name));
     if (key.name === "up") return key.ctrl ? actions.onGrowPrompt() : actions.onNavUp();
     if (key.name === "down") return key.ctrl ? actions.onShrinkPrompt() : actions.onNavDown();
     if (key.name === "pageup") return actions.onScrollUp();

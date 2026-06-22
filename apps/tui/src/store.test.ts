@@ -78,6 +78,40 @@ describe("createStore", () => {
     expect(f.threadSubs).toContain("t1");
   });
 
+  it("Given an expanded project, when jumping to thread index 2, then it selects the second visible thread", () => {
+    const f = fakeClient();
+    const store = createStore(f.client);
+    store.start();
+    f.pushShell(oneProjectTwoThreads);
+    store.toggleProject("p1");
+    store.selectThreadByIndex(2);
+    // threads sorted by updatedAt desc → [t1, t2]; index 2 is t2.
+    expect(store.getState().selection).toEqual({ kind: "thread", id: "t2" });
+  });
+
+  it("Given a selected thread, when moving the thread selection, then it skips to the adjacent thread", () => {
+    const f = fakeClient();
+    const store = createStore(f.client);
+    store.start();
+    f.pushShell(oneProjectTwoThreads);
+    store.toggleProject("p1");
+    store.selectThreadByIndex(1);
+    store.moveThreadSelection(1);
+    expect(store.getState().selection).toEqual({ kind: "thread", id: "t2" });
+    store.moveThreadSelection(-1);
+    expect(store.getState().selection).toEqual({ kind: "thread", id: "t1" });
+  });
+
+  it("Given no thread is selected, when moving thread selection forward, then it steps into the first thread", () => {
+    const f = fakeClient();
+    const store = createStore(f.client);
+    store.start();
+    f.pushShell(oneProjectTwoThreads);
+    store.toggleProject("p1"); // selection sits on the project header
+    store.moveThreadSelection(1);
+    expect(store.getState().selection).toEqual({ kind: "thread", id: "t1" });
+  });
+
   it("Given setStatus, then the status text updates", () => {
     const f = fakeClient();
     const store = createStore(f.client);

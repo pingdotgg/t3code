@@ -679,6 +679,9 @@ export function ChatView({
     onEditInEditor: editInEditor,
     onTogglePlanMode: togglePlanMode,
     onToggleRightPanel: () => setRightPanelOpen((open) => !open),
+    onThreadPrev: () => store.moveThreadSelection(-1),
+    onThreadNext: () => store.moveThreadSelection(1),
+    onThreadJump: (index) => store.selectThreadByIndex(index),
     onImplementPlan: () => {
       if (!detail || !actionablePlan) return;
       void client

@@ -33,9 +33,9 @@ const KEYMAP_PARITY: ReadonlyArray<KeyParity> = [
   { command: "thread actions", web: "(menu)", tui: "^K", status: "aligned" },
   { command: "filter / search", web: "Cmd/Ctrl+F", tui: "^F", status: "aligned" },
   { command: "source-control panel", web: "(surface)", tui: "^L", status: "aligned" },
+  { command: "thread next/prev", web: "Cmd/Ctrl+[ / ]", tui: "Alt+↑ / Alt+↓", status: "aligned" },
+  { command: "thread jump 1–9", web: "Cmd/Ctrl+1…9", tui: "Alt+1…9", status: "aligned" },
   { command: "command palette", web: "Cmd/Ctrl+K", tui: null, status: "backlog" },
-  { command: "thread next/prev", web: "Cmd/Ctrl+[ / ]", tui: null, status: "backlog" },
-  { command: "thread jump 1–9", web: "Cmd/Ctrl+1…9", tui: null, status: "backlog" },
   { command: "terminal split", web: "Cmd/Ctrl+D", tui: null, status: "n/a" },
 ];
 
@@ -61,16 +61,19 @@ describe("keyboard parity", () => {
   it("Given the table, then it tracks at least the known backlog shortcuts", () => {
     const backlog = KEYMAP_PARITY.filter((e) => e.status === "backlog").map((e) => e.command);
     expect(backlog).toContain("command palette");
-    expect(backlog).toContain("thread jump 1–9");
+  });
+
+  it("Given thread navigation, then it is aligned via terminal-friendly Alt combos", () => {
+    const jump = KEYMAP_PARITY.find((e) => e.command === "thread jump 1–9");
+    expect(jump?.status).toBe("aligned");
+    expect(jump?.tui).toContain("Alt+1");
   });
 });
 
 // ── Backlog: dimensions not yet at parity ────────────────────────────────────
-
-describe.skip("Keyboard: thread next/prev + jump 1–9", () => {
-  it("Given a focused conversation, when pressing the next/prev binding, then selection moves between threads", () => {});
-  it("Given the jump binding 1–9, when pressed, then it selects the Nth visible thread", () => {});
-});
+//
+// Thread next/prev (Alt+↑/↓) + jump (Alt+1…9): SHIPPED — see store.test
+// (moveThreadSelection / selectThreadByIndex) and the keymap table above.
 
 describe.skip("Keyboard: command palette", () => {
   it("Given the palette key, when pressed, then a searchable command list opens", () => {});
