@@ -1,4 +1,4 @@
-import type { EnvironmentId, OrchestrationShellSnapshot } from "@t3tools/contracts";
+import type { EnvironmentId, OrchestrationV2ShellSnapshot } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -10,7 +10,7 @@ export function createEnvironmentSnapshotAtom<E>(
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentShellState, E>>,
 ) {
   return Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get): OrchestrationShellSnapshot | null =>
+    Atom.make((get): OrchestrationV2ShellSnapshot | null =>
       Option.match(AsyncResult.value(get(shellStateAtom(environmentId))), {
         onNone: () => null,
         onSome: (state) => Option.getOrNull(state.snapshot),

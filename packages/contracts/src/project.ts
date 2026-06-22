@@ -73,6 +73,7 @@ export const ProjectMutation = Schema.Union([
     projectId: ProjectId,
     title: TrimmedNonEmptyString,
     workspaceRoot: TrimmedNonEmptyString,
+    createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
     defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
     scripts: Schema.optional(Schema.Array(ProjectScript)),
   }),
@@ -89,9 +90,19 @@ export const ProjectMutation = Schema.Union([
     type: Schema.Literal("project.delete"),
     commandId: CommandId,
     projectId: ProjectId,
+    force: Schema.optional(Schema.Boolean),
   }),
 ]);
 export type ProjectMutation = typeof ProjectMutation.Type;
+
+export class ProjectMutationError extends Schema.TaggedErrorClass<ProjectMutationError>()(
+  "ProjectMutationError",
+  {
+    commandId: CommandId,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
 export const ProjectSearchEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
