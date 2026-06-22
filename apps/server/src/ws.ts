@@ -1,8 +1,11 @@
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import * as Encoding from "effect/Encoding";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -13,9 +16,11 @@ import {
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
+  CommandId,
   type DiscoveredLocalServerList,
   type GitActionProgressEvent,
   type GitManagerServiceError,
+  type MessageId,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_V2_WS_METHODS,
@@ -28,18 +33,21 @@ import {
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
+  type ProjectMutation,
   ProjectListEntriesError,
   ProjectReadFileError,
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProjectMutationError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
-  RpcClientId,
+  ChatAttachmentId,
+  PersistChatAttachmentsError,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -81,6 +89,8 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
+import { attachmentRelativePath, createDeterministicAttachmentId } from "./attachmentStore.ts";
+import { parseBase64DataUrl } from "./imageMime.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -117,6 +127,73 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
 }
+
+const persistChatAttachments = Effect.fn("ws.assets.persistChatAttachments")(function* (input: {
+  readonly threadId: ThreadId;
+  readonly messageId: MessageId;
+  readonly attachments: ReadonlyArray<{
+    readonly type: "image";
+    readonly name: string;
+    readonly mimeType: string;
+    readonly sizeBytes: number;
+    readonly dataUrl: string;
+  }>;
+}) {
+  const config = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* Effect.forEach(
+    input.attachments.map((attachment, index) => ({ attachment, index })),
+    Effect.fn("ws.assets.persistChatAttachment")(function* ({ attachment, index }) {
+      const parsed = parseBase64DataUrl(attachment.dataUrl);
+      if (parsed === null || parsed.mimeType !== attachment.mimeType.toLowerCase()) {
+        return yield* new PersistChatAttachmentsError({
+          message: `Attachment ${attachment.name} has an invalid image payload.`,
+        });
+      }
+      const bytes = yield* Effect.fromResult(Encoding.decodeBase64(parsed.base64)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PersistChatAttachmentsError({
+              message: `Attachment ${attachment.name} is not valid base64.`,
+              cause,
+            }),
+        ),
+      );
+      if (bytes.byteLength !== attachment.sizeBytes) {
+        return yield* new PersistChatAttachmentsError({
+          message: `Attachment ${attachment.name} size does not match its payload.`,
+        });
+      }
+      const rawId = createDeterministicAttachmentId(input.threadId, `${input.messageId}:${index}`);
+      if (rawId === null) {
+        return yield* new PersistChatAttachmentsError({
+          message: "Could not allocate an attachment identifier.",
+        });
+      }
+      const persisted = {
+        type: "image" as const,
+        id: ChatAttachmentId.make(rawId),
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+      };
+      yield* fileSystem
+        .writeFile(path.join(config.attachmentsDir, attachmentRelativePath(persisted)), bytes)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new PersistChatAttachmentsError({
+                message: `Could not persist attachment ${attachment.name}.`,
+                cause,
+              }),
+          ),
+        );
+      return persisted;
+    }),
+    { concurrency: 2 },
+  );
+});
 
 function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesError): {
   readonly failure: ProjectEntriesFailure;
@@ -253,8 +330,11 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.sourceControlPublishRepository, AuthOrchestrationOperateScope],
   [WS_METHODS.projectsSearchEntries, AuthOrchestrationReadScope],
   [WS_METHODS.projectsWriteFile, AuthOrchestrationOperateScope],
+  [WS_METHODS.projectsMutate, AuthOrchestrationOperateScope],
   [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
   [WS_METHODS.filesystemBrowse, AuthOrchestrationReadScope],
+  [WS_METHODS.assetsCreateUrl, AuthOrchestrationReadScope],
+  [WS_METHODS.assetsPersistChatAttachments, AuthOrchestrationOperateScope],
   [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsPull, AuthOrchestrationOperateScope],
@@ -623,20 +703,28 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
         },
       );
 
-      const getOrchestrationV2ArchivedShellSnapshot = threadManagement.getShellSnapshot().pipe(
-        Effect.map((snapshot) => ({
-          schemaVersion: snapshot.schemaVersion,
-          snapshotSequence: snapshot.snapshotSequence,
-          threads: snapshot.archivedThreads,
-        })),
-        Effect.mapError(
-          (cause) =>
-            new OrchestrationV2GetShellSnapshotError({
-              message: "Failed to load archived thread snapshot",
-              cause,
-            }),
-        ),
-      );
+      const getOrchestrationV2ArchivedShellSnapshot = sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const projects = yield* projectionSnapshotQuery.getShellSnapshot();
+            const threads = yield* threadManagement.getShellSnapshot();
+            return {
+              schemaVersion: threads.schemaVersion,
+              snapshotSequence: yield* applicationEvents.latestApplicationSequence,
+              projects: projects.projects,
+              threads: threads.archivedThreads,
+            } as const;
+          }),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationV2GetShellSnapshotError({
+                message: "Failed to load archived thread snapshot",
+                cause,
+              }),
+          ),
+        );
 
       const subscribeOrchestrationV2ArchivedShell = Effect.fn(
         "ws.orchestrationV2.subscribeArchivedShell",
@@ -671,6 +759,64 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
         return Stream.concat(Stream.make({ kind: "snapshot" as const, snapshot }), live);
       });
 
+      const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
+        switch (mutation.type) {
+          case "project.create":
+            return yield* projectService.create({
+              commandId: mutation.commandId,
+              projectId: mutation.projectId,
+              title: mutation.title,
+              workspaceRoot: mutation.workspaceRoot,
+              ...(mutation.createWorkspaceRootIfMissing === undefined
+                ? {}
+                : { createWorkspaceRootIfMissing: mutation.createWorkspaceRootIfMissing }),
+              ...(mutation.defaultModelSelection === undefined
+                ? {}
+                : { defaultModelSelection: mutation.defaultModelSelection }),
+              ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
+            });
+          case "project.update":
+            return yield* projectService.update({
+              commandId: mutation.commandId,
+              projectId: mutation.projectId,
+              ...(mutation.title === undefined ? {} : { title: mutation.title }),
+              ...(mutation.workspaceRoot === undefined
+                ? {}
+                : { workspaceRoot: mutation.workspaceRoot }),
+              ...(mutation.defaultModelSelection === undefined
+                ? {}
+                : { defaultModelSelection: mutation.defaultModelSelection }),
+              ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
+            });
+          case "project.delete": {
+            const snapshot = yield* threadManagement.getShellSnapshot();
+            const projectThreads = [...snapshot.threads, ...snapshot.archivedThreads].filter(
+              (thread) => thread.projectId === mutation.projectId,
+            );
+            if (projectThreads.length > 0 && mutation.force !== true) {
+              return yield* new ProjectMutationError({
+                commandId: mutation.commandId,
+                message: `Project ${mutation.projectId} is not empty.`,
+              });
+            }
+            yield* Effect.forEach(
+              projectThreads,
+              (thread) =>
+                threadManagement.dispatch({
+                  type: "thread.delete",
+                  commandId: CommandId.make(`${mutation.commandId}:delete-thread:${thread.id}`),
+                  threadId: thread.id,
+                }),
+              { concurrency: 1, discard: true },
+            );
+            return yield* projectService.delete({
+              commandId: mutation.commandId,
+              projectId: mutation.projectId,
+            });
+          }
+        }
+      });
+
       const handlers = ServerWsRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
@@ -680,7 +826,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                 threadManagement.dispatch(
                   ThreadManagementService.withCreationProvenance(command, {
                     createdBy: "user",
-                    creationSource: "web",
+                    creationSource: "creationSource" in command ? command.creationSource : "web",
                   }),
                 ),
               )
@@ -771,26 +917,29 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               .enqueueCommand(
                 threadLaunch.launch({
                   commandId: input.commandId,
+                  ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+                  ...(input.reuseExistingThread === undefined
+                    ? {}
+                    : { reuseExistingThread: input.reuseExistingThread }),
                   projectId: input.projectId,
                   title: input.title,
                   modelSelection: input.modelSelection,
                   runtimeMode: input.runtimeMode,
                   interactionMode: input.interactionMode,
-                  workspaceStrategy:
-                    input.workspaceStrategy.type === "root"
-                      ? { type: "root" }
-                      : {
-                          type: "worktree",
-                          baseRef: input.workspaceStrategy.baseRef,
-                          ...(input.workspaceStrategy.branch === undefined
-                            ? {}
-                            : { branch: input.workspaceStrategy.branch }),
-                        },
+                  workspaceStrategy: input.workspaceStrategy,
                   ...(input.initialMessage === undefined
                     ? {}
-                    : { initialMessage: input.initialMessage }),
+                    : {
+                        initialMessage: {
+                          ...(input.initialMessage.messageId === undefined
+                            ? {}
+                            : { messageId: input.initialMessage.messageId }),
+                          text: input.initialMessage.text,
+                          attachments: input.initialMessage.attachments,
+                        },
+                      }),
                   createdBy: "user",
-                  creationSource: "web",
+                  creationSource: input.creationSource ?? "web",
                 }),
               )
               .pipe(
@@ -1137,6 +1286,22 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.projectsMutate]: (mutation) =>
+          observeRpcEffect(
+            WS_METHODS.projectsMutate,
+            startup.enqueueCommand(mutateProject(mutation)).pipe(
+              Effect.mapError((cause) =>
+                cause._tag === "ProjectMutationError"
+                  ? cause
+                  : new ProjectMutationError({
+                      commandId: mutation.commandId,
+                      message: "Failed to mutate project.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [WS_METHODS.shellOpenInEditor]: (input) =>
           observeRpcEffect(WS_METHODS.shellOpenInEditor, externalLauncher.launchEditor(input), {
             "rpc.aggregate": "workspace",
@@ -1194,6 +1359,12 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               });
             }),
             { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.assetsPersistChatAttachments]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.assetsPersistChatAttachments,
+            persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
+            { "rpc.aggregate": "orchestration" },
           ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(

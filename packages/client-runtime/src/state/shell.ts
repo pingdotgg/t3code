@@ -1,11 +1,12 @@
 import {
-  ORCHESTRATION_WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
-  type OrchestrationShellSnapshot,
-  type OrchestrationShellStreamItem,
+  type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ShellStreamItem,
   type ServerConfig,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -29,7 +30,7 @@ import { followStreamInEnvironment } from "./runtime.ts";
 export type EnvironmentShellStatus = "empty" | "cached" | "synchronizing" | "live";
 
 export interface EnvironmentShellState {
-  readonly snapshot: Option.Option<OrchestrationShellSnapshot>;
+  readonly snapshot: Option.Option<OrchestrationV2ShellSnapshot>;
   readonly status: EnvironmentShellStatus;
   readonly error: Option.Option<string>;
 }
@@ -41,7 +42,7 @@ const EMPTY_SHELL_STATE: EnvironmentShellState = {
 };
 
 function shellStatusForSnapshot(
-  snapshot: Option.Option<OrchestrationShellSnapshot>,
+  snapshot: Option.Option<OrchestrationV2ShellSnapshot>,
 ): EnvironmentShellStatus {
   return Option.isSome(snapshot) ? "cached" : "empty";
 }
@@ -61,7 +62,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           environmentId,
           ...safeErrorLogAttributes(error),
         }),
-        Effect.as(Option.none<OrchestrationShellSnapshot>()),
+        Effect.as(Option.none<OrchestrationV2ShellSnapshot>()),
       ),
     ),
   );
@@ -70,11 +71,10 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     status: shellStatusForSnapshot(cachedSnapshot),
     error: Option.none(),
   });
-  const awaitingCompletion = yield* Ref.make(false);
-  const persistence = yield* Queue.sliding<OrchestrationShellSnapshot>(1);
+  const persistence = yield* Queue.sliding<OrchestrationV2ShellSnapshot>(1);
 
   const persist = Effect.fn("EnvironmentShellState.persist")(function* (
-    snapshot: OrchestrationShellSnapshot,
+    snapshot: OrchestrationV2ShellSnapshot,
   ) {
     yield* cache.saveShell(environmentId, snapshot).pipe(
       Effect.catch((error) =>
@@ -133,7 +133,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     );
 
   const applyItem = Effect.fn("EnvironmentShellState.applyItem")(function* (
-    item: OrchestrationShellStreamItem,
+    item: OrchestrationV2ShellStreamItem,
   ) {
     if (item.kind === "synchronized") {
       yield* Ref.set(awaitingCompletion, false);
@@ -169,56 +169,13 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     yield* Queue.offer(persistence, nextSnapshot);
   });
 
-  const foregroundResubscriptions = Option.match(wakeups, {
-    onNone: () => Stream.never,
-    onSome: (service) =>
-      service.changes.pipe(Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup)),
-  });
-
-  yield* setSynchronizing;
-  yield* Effect.forkScoped(
-    subscribeDynamic(
-      ORCHESTRATION_WS_METHODS.subscribeShell,
-      Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
-        const supportsCompletionMarker = yield* session.initialConfig.pipe(
-          Effect.map((config) => config.shellResumeCompletionMarker === true),
-          Effect.orElseSucceed(() => false),
-        );
-        yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
-        yield* setSynchronizing;
-
-        const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
-          Effect.flatMap(
-            Option.match({
-              onSome: Effect.succeed,
-              onNone: () =>
-                SubscriptionRef.changes(supervisor.prepared).pipe(
-                  Stream.filter(Option.isSome),
-                  Stream.map((value) => value.value),
-                  Stream.runHead,
-                  Effect.map(Option.getOrThrow),
-                ),
-            }),
-          ),
-        );
-        const httpSnapshot = yield* snapshotLoader.load(prepared);
-        if (Option.isSome(httpSnapshot)) {
-          yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
-          return {
-            afterSequence: httpSnapshot.value.snapshotSequence,
-            ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
-          };
-        }
-
-        return supportsCompletionMarker ? { requestCompletionMarker: true as const } : {};
-      }),
-      {
-        onExpectedFailure: (cause) => setStreamError(Cause.squash(cause)),
-        retryExpectedFailureAfter: "250 millis",
-        resubscribe: foregroundResubscriptions,
-      },
-    ).pipe(Stream.runForEach(applyItem)),
-  );
+  yield* subscribe(
+    ORCHESTRATION_V2_WS_METHODS.subscribeShell,
+    {},
+    {
+      onExpectedFailure: (cause) => setStreamError(Cause.squash(cause)),
+    },
+  ).pipe(Stream.runForEach(applyItem), Effect.forkScoped);
   yield* SubscriptionRef.changes(supervisor.state).pipe(
     Stream.runForEach((connectionState) => {
       switch (connectionProjectionPhase(connectionState)) {
@@ -314,8 +271,20 @@ export function createEnvironmentShellSummaryAtom(input: {
         continue;
       }
       hasSnapshot = true;
-      const updatedAt = state.snapshot.value.updatedAt;
-      if (latestSnapshotUpdatedAt === null || updatedAt > latestSnapshotUpdatedAt) {
+      const snapshot = state.snapshot.value;
+      const updatedAt = snapshot.threads.concat(snapshot.archivedThreads).reduce<string | null>(
+        (latest, thread) => {
+          const value = DateTime.formatIso(thread.updatedAt);
+          return latest === null || value > latest ? value : latest;
+        },
+        snapshot.projects.reduce<string | null>((latest, project) => {
+          return latest === null || project.updatedAt > latest ? project.updatedAt : latest;
+        }, null),
+      );
+      if (
+        updatedAt !== null &&
+        (latestSnapshotUpdatedAt === null || updatedAt > latestSnapshotUpdatedAt)
+      ) {
         latestSnapshotUpdatedAt = updatedAt;
       }
     }

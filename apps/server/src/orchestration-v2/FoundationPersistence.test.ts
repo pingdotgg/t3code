@@ -11,7 +11,9 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -60,6 +62,7 @@ const TestLayer = Layer.mergeAll(
 );
 
 const providerInstanceId = ProviderInstanceId.make("codex");
+const providerDriver = ProviderDriverKind.make("codex");
 const modelSelection = {
   instanceId: providerInstanceId,
   model: "gpt-5.4",
@@ -404,7 +407,32 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread:foundation-many-items");
       const runId = RunId.make("run:foundation-many-items");
+      const providerThreadId = ProviderThreadId.make("provider-thread:foundation-many-items");
       const thread = makeThread(threadId, now);
+      const providerThreadEvent = {
+        id: EventId.make("event:foundation-many-items:provider-thread"),
+        type: "provider-thread.updated" as const,
+        threadId,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: providerThreadId,
+          driver: providerDriver,
+          providerInstanceId,
+          providerSessionId: null,
+          appThreadId: threadId,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "active" as const,
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      } satisfies OrchestrationV2DomainEvent;
       const runEvent = {
         id: EventId.make("event:foundation-many-items:run"),
         type: "run.created" as const,
@@ -467,11 +495,13 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       yield* eventSink.write({
         events: [
           threadCreatedEvent({ id: "event:foundation-many-items:thread", thread, now }),
+          providerThreadEvent,
           runEvent,
           ...itemEvents,
         ],
       });
       const beforeUpdate = yield* projectionStore.getThreadProjection(threadId);
+      assert.equal(beforeUpdate.thread.activeProviderThreadId, providerThreadId);
       const ordinals = beforeUpdate.turnItems.map((item) => item.ordinal);
       assert.lengthOf(ordinals, 151);
       assert.equal(new Set(ordinals).size, 151);

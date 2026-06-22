@@ -54,6 +54,7 @@ export type {
   SnoozeThreadInput,
   StartThreadTurnInput,
   StopThreadSessionInput,
+  ThreadCommandInput,
   UnarchiveThreadInput,
   UnsettleThreadInput,
   UnsnoozeThreadInput,

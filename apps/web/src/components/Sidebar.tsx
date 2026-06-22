@@ -442,7 +442,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     [discoveredPorts, navigateToThread, openPreview, threadRef],
   );
   const isThreadRunning =
-    thread.session?.status === "running" && thread.session.activeTurnId != null;
+    thread.runtime?.status === "running" && thread.runtime.activeRunId != null;
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -1777,8 +1777,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
 
       if (clicked === "mark-unread") {
-        for (const { threadKey, thread } of selectedThreadEntries) {
-          markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+        for (const threadKey of threadKeys) {
+          const thread = sidebarThreadByKeyRef.current.get(threadKey);
+          markThreadUnread(threadKey, thread?.latestRun?.completedAt);
         }
         clearSelection();
         return;
@@ -2155,7 +2156,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
 
       if (clicked === "mark-unread") {
-        markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+        markThreadUnread(threadKey, thread.latestRun?.completedAt);
         return;
       }
       if (clicked === "copy-path") {

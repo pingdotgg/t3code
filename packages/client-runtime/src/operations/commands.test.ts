@@ -1,13 +1,22 @@
 import {
   CommandId,
   EnvironmentId,
-  ORCHESTRATION_WS_METHODS,
+  MessageId,
+  ORCHESTRATION_V2_WS_METHODS,
+  PlanId,
   ProjectId,
+  ProviderInstanceId,
+  RunId,
   ThreadId,
-  type ClientOrchestrationCommand,
+  WS_METHODS,
+  type OrchestrationV2Command,
+  type OrchestrationV2ThreadLaunchInput,
+  type OrchestrationV2ThreadProjection,
+  type ProjectMutation,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -21,13 +30,8 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import {
-  archiveThread,
-  createProject,
-  settleThread,
-  stopThreadSession,
-  unsettleThread,
-} from "./commands.ts";
+import { v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
+import { archiveThread, createProject, startThreadTurn } from "./commands.ts";
 
 const TEST_CRYPTO_LAYER = Layer.succeed(
   Crypto.Crypto,
@@ -44,14 +48,45 @@ const TARGET = new PrimaryConnectionTarget({
   wsBaseUrl: "wss://environment.example.test",
 });
 
-const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(function* (
-  dispatched: ClientOrchestrationCommand[],
-) {
+const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(function* (input: {
+  readonly commands: OrchestrationV2Command[];
+  readonly projects: ProjectMutation[];
+  readonly launches?: OrchestrationV2ThreadLaunchInput[];
+  readonly projection?: OrchestrationV2ThreadProjection;
+}) {
   const client = {
-    [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+    [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
       Effect.sync(() => {
-        dispatched.push(command);
-        return { sequence: dispatched.length };
+        input.commands.push(command);
+        return { sequence: input.commands.length };
+      }),
+    [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: () =>
+      Effect.succeed(input.projection ?? v2Projection),
+    [ORCHESTRATION_V2_WS_METHODS.launchThread]: (launchInput: OrchestrationV2ThreadLaunchInput) =>
+      Effect.sync(() => {
+        input.launches?.push(launchInput);
+        return {
+          threadId: launchInput.threadId ?? v2ThreadId,
+          projection: input.projection ?? v2Projection,
+          resumed: false,
+        };
+      }),
+    [WS_METHODS.projectsMutate]: (mutation: ProjectMutation) =>
+      Effect.sync(() => {
+        input.projects.push(mutation);
+        return {
+          id: mutation.projectId,
+          title: mutation.type === "project.create" ? mutation.title : "Project",
+          workspaceRoot:
+            mutation.type === "project.create" ? mutation.workspaceRoot : "/workspace/project",
+          repositoryIdentity: null,
+          faviconPath: null,
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-06-06T00:00:00.000Z",
+          updatedAt: "2026-06-06T00:00:00.000Z",
+          deletedAt: null,
+        };
       }),
   } as unknown as WsRpcProtocolClient;
   const session: RpcSession.RpcSession = {
@@ -72,103 +107,222 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
 });
 
-describe("environment commands", () => {
-  it.effect("adds generated command metadata", () =>
+describe("V2 environment commands", () => {
+  it.effect("routes projects through the event-sourced project transport", () =>
     Effect.gen(function* () {
-      const dispatched: ClientOrchestrationCommand[] = [];
-      const supervisor = yield* makeSupervisor(dispatched);
+      const projects: ProjectMutation[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects });
 
-      const result = yield* createProject({
+      yield* createProject({
         projectId: ProjectId.make("project-1"),
         title: "Project",
         workspaceRoot: "/workspace/project",
-        createdAt: "2026-06-06T00:00:00.000Z",
+        createWorkspaceRootIfMissing: true,
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
-      expect(result).toEqual({ sequence: 1 });
-      expect(dispatched).toEqual([
+      expect(projects).toEqual([
         {
           type: "project.create",
           commandId: "00000000-0000-4000-8000-000000000000",
           projectId: "project-1",
           title: "Project",
           workspaceRoot: "/workspace/project",
-          createdAt: "2026-06-06T00:00:00.000Z",
+          createWorkspaceRootIfMissing: true,
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 
-  it.effect("preserves caller metadata for idempotent queued commands", () =>
+  it.effect("preserves caller command ids for idempotent V2 commands", () =>
     Effect.gen(function* () {
-      const dispatched: ClientOrchestrationCommand[] = [];
-      const supervisor = yield* makeSupervisor(dispatched);
-
-      yield* stopThreadSession({
-        commandId: CommandId.make("queued-command"),
-        threadId: ThreadId.make("thread-1"),
-        createdAt: "2026-06-06T00:01:00.000Z",
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-      expect(dispatched).toEqual([
-        {
-          type: "thread.session.stop",
-          commandId: "queued-command",
-          threadId: "thread-1",
-          createdAt: "2026-06-06T00:01:00.000Z",
-        },
-      ]);
-    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
-  );
-
-  it.effect("does not add timestamps to commands without createdAt", () =>
-    Effect.gen(function* () {
-      const dispatched: ClientOrchestrationCommand[] = [];
-      const supervisor = yield* makeSupervisor(dispatched);
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
 
       yield* archiveThread({
-        commandId: CommandId.make("archive-command"),
+        commandId: CommandId.make("queued-command"),
         threadId: ThreadId.make("thread-1"),
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
-      expect(dispatched).toEqual([
-        {
-          type: "thread.archive",
-          commandId: "archive-command",
-          threadId: "thread-1",
-        },
+      expect(commands).toEqual([
+        { type: "thread.archive", commandId: "queued-command", threadId: "thread-1" },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 
-  it.effect("dispatches settle and unsettle commands without timestamps", () =>
+  it.effect("preserves plan implementation provenance on V2 runs", () =>
     Effect.gen(function* () {
-      const dispatched: ClientOrchestrationCommand[] = [];
-      const supervisor = yield* makeSupervisor(dispatched);
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
 
-      yield* settleThread({
-        commandId: CommandId.make("settle-command"),
-        threadId: ThreadId.make("thread-1"),
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-      yield* unsettleThread({
-        commandId: CommandId.make("unsettle-command"),
-        threadId: ThreadId.make("thread-1"),
-        reason: "user",
+      yield* startThreadTurn({
+        commandId: CommandId.make("implement-plan"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-implementation"),
+          role: "user",
+          text: "Implement the plan",
+          attachments: [],
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        sourceProposedPlan: {
+          threadId: ThreadId.make("thread-plan"),
+          planId: PlanId.make("plan-1"),
+        },
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
-      expect(dispatched).toEqual([
-        {
-          type: "thread.settle",
-          commandId: "settle-command",
-          threadId: "thread-1",
+      expect(commands).toHaveLength(1);
+      expect(commands[0]).toMatchObject({
+        type: "message.dispatch",
+        commandId: "implement-plan",
+        threadId: v2ThreadId,
+        sourcePlanRef: { threadId: "thread-plan", planId: "plan-1" },
+        dispatchMode: { type: "start_immediately" },
+      });
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("preserves an existing worktree and branch during first-message launch", () =>
+    Effect.gen(function* () {
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
+
+      yield* startThreadTurn({
+        commandId: CommandId.make("launch-existing-worktree"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-existing-worktree"),
+          role: "user",
+          text: "Continue here",
+          attachments: [],
         },
-        {
-          type: "thread.unsettle",
-          commandId: "unsettle-command",
-          threadId: "thread-1",
-          reason: "user",
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project-1"),
+            title: "Thread",
+            modelSelection: v2Projection.thread.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: "feature",
+            worktreePath: "/workspace/project-worktrees/feature",
+            createdAt: "2026-06-20T00:00:00.000Z",
+          },
         },
-      ]);
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(launches[0]).toMatchObject({
+        threadId: v2ThreadId,
+        workspaceStrategy: {
+          type: "existing_worktree",
+          worktreePath: "/workspace/project-worktrees/feature",
+          branch: "feature",
+        },
+      });
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("provisions an origin-based worktree for an existing empty thread", () =>
+    Effect.gen(function* () {
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
+
+      yield* startThreadTurn({
+        commandId: CommandId.make("launch-existing-thread-worktree"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-existing-thread-worktree"),
+          role: "user",
+          text: "Move to a worktree",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          prepareWorktree: {
+            projectCwd: "/workspace/project",
+            baseBranch: "main",
+            branch: "feature",
+            startFromOrigin: true,
+          },
+        },
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(launches[0]).toMatchObject({
+        threadId: v2ThreadId,
+        reuseExistingThread: true,
+        projectId: v2Projection.thread.projectId,
+        workspaceStrategy: {
+          type: "worktree",
+          baseRef: "main",
+          branch: "feature",
+          startFromOrigin: true,
+        },
+      });
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("maps explicit active-run delivery modes to V2 dispatch semantics", () =>
+    Effect.gen(function* () {
+      const activeRunId = RunId.make("run-active");
+      const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+      const projection: OrchestrationV2ThreadProjection = {
+        ...v2Projection,
+        runs: [
+          {
+            id: activeRunId,
+            threadId: v2ThreadId,
+            ordinal: 1,
+            providerInstanceId: v2Projection.thread.providerInstanceId,
+            modelSelection: v2Projection.thread.modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make("message-active"),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "running",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        ],
+      };
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+
+      for (const [mode, expectedType] of [
+        ["queue", "queue_after_active"],
+        ["steer", "steer_active"],
+        ["restart", "restart_active"],
+      ] as const) {
+        yield* startThreadTurn({
+          commandId: CommandId.make(`command-${mode}`),
+          threadId: v2ThreadId,
+          message: {
+            messageId: MessageId.make(`message-${mode}`),
+            role: "user",
+            text: mode,
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          dispatchMode: mode,
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+        expect(commands.at(-1)).toMatchObject({
+          type: "message.dispatch",
+          dispatchMode: {
+            type: expectedType,
+            ...(mode === "queue" ? {} : { targetRunId: activeRunId }),
+          },
+        });
+      }
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 });

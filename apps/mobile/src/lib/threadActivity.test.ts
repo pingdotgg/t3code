@@ -1,466 +1,112 @@
+import type { ThreadWorkEntry } from "@t3tools/client-runtime/state/shell";
+import { MessageId, RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  EventId,
-  MessageId,
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-  TurnId,
-  type OrchestrationThread,
-  type OrchestrationThreadActivity,
-} from "@t3tools/contracts";
+import { makeThreadFixture } from "../test-fixtures";
+import { buildThreadFeed, deriveThreadFeedPresentation } from "./threadActivity";
 
-import {
-  buildThreadFeed,
-  deriveThreadFeedPresentation,
-  type ThreadFeedActivity,
-  type ThreadFeedEntry,
-} from "./threadActivity";
+const runId = RunId.make("run-1");
 
-function makeActivity(
-  input: Partial<OrchestrationThreadActivity> &
-    Pick<OrchestrationThreadActivity, "id" | "kind" | "summary" | "createdAt">,
-): OrchestrationThreadActivity {
+function message(role: "user" | "assistant", text: string, createdAt: string, id: string) {
   return {
-    tone: "info",
-    payload: {},
-    turnId: null,
-    ...input,
-  };
+    id: MessageId.make(id),
+    role,
+    text,
+    attachments: [],
+    runId: role === "assistant" ? runId : null,
+    streaming: false,
+    createdAt,
+    updatedAt: createdAt,
+  } as const;
 }
 
-function makeThread(
-  input: Partial<OrchestrationThread> & Pick<OrchestrationThread, "id" | "projectId" | "title">,
-): OrchestrationThread {
+function commandEntry(overrides: Partial<ThreadWorkEntry> = {}): ThreadWorkEntry {
+  const structuredPayload = {
+    type: "command_execution",
+    input: "vp check",
+    output: "ok",
+  } as ThreadWorkEntry["structuredPayload"];
   return {
-    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    latestTurn: null,
-    createdAt: "2026-04-01T00:00:00.000Z",
-    updatedAt: "2026-04-01T00:00:00.000Z",
-    archivedAt: null,
-    deletedAt: null,
-    messages: [],
-    proposedPlans: [],
-    activities: [],
-    checkpoints: [],
-    session: null,
-    ...input,
-    settledOverride: input.settledOverride ?? null,
-    settledAt: input.settledAt ?? null,
+    id: "item-1",
+    createdAt: "2026-06-20T00:00:02.000Z",
+    runId,
+    label: "Ran command",
+    command: "vp check",
+    detail: "ok",
+    tone: "tool",
+    itemType: "command_execution",
+    toolLifecycleStatus: "completed",
+    structuredPayload,
+    ...overrides,
   };
 }
 
 describe("buildThreadFeed", () => {
-  it("keeps historic work entries attributed to their turns", () => {
-    const thread = makeThread({
-      id: ThreadId.make("thread-1"),
-      projectId: ProjectId.make("project-1"),
-      title: "Runtime warning thread",
-      latestTurn: {
-        turnId: TurnId.make("turn-latest"),
-        state: "running",
-        requestedAt: "2026-04-01T00:00:00.000Z",
-        startedAt: "2026-04-01T00:00:01.000Z",
-        completedAt: null,
-        assistantMessageId: null,
-      },
-      activities: [
-        makeActivity({
-          id: EventId.make("activity-old"),
-          kind: "runtime.warning",
-          summary: "Runtime warning",
-          createdAt: "2026-04-01T00:00:02.000Z",
-          turnId: TurnId.make("turn-old"),
-          payload: {
-            message: "Old warning",
-          },
-        }),
-        makeActivity({
-          id: EventId.make("activity-latest"),
-          kind: "runtime.warning",
-          summary: "Runtime warning",
-          createdAt: "2026-04-01T00:00:03.000Z",
-          turnId: TurnId.make("turn-latest"),
-          payload: {
-            message: "Latest warning",
-          },
-        }),
+  it("orders V2 messages and work entries while retaining structured tool data", () => {
+    const thread = makeThreadFixture({
+      messages: [
+        message("user", "Run checks", "2026-06-20T00:00:01.000Z", "message-user"),
+        message("assistant", "Done", "2026-06-20T00:00:03.000Z", "message-assistant"),
       ],
+      workEntries: [commandEntry()],
     });
 
     const feed = buildThreadFeed(thread);
-    expect(feed).toMatchObject([
-      {
-        type: "activity-group",
-        turnId: "turn-old",
-        activities: [{ id: "activity-old", turnId: "turn-old" }],
-      },
-      {
-        type: "activity-group",
-        turnId: "turn-latest",
-        activities: [{ id: "activity-latest", turnId: "turn-latest" }],
-      },
+    expect(feed.map((entry) => entry.type)).toEqual(["message", "activity-group", "message"]);
+    const activity = feed.find((entry) => entry.type === "activity-group")?.activities[0];
+    expect(activity?.runId).toBe(runId);
+    expect(activity?.fullDetail).toContain('"input": "vp check"');
+  });
+
+  it("folds settled V2 run work while keeping the terminal assistant message visible", () => {
+    const thread = makeThreadFixture({
+      messages: [
+        message("user", "Run checks", "2026-06-20T00:00:01.000Z", "message-user"),
+        message("assistant", "Done", "2026-06-20T00:00:03.000Z", "message-assistant"),
+      ],
+      workEntries: [commandEntry()],
+    });
+    const feed = buildThreadFeed(thread);
+    const latestRun = {
+      runId,
+      status: "completed" as const,
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: "2026-06-20T00:00:03.000Z",
+    };
+
+    const collapsed = deriveThreadFeedPresentation(feed, latestRun, new Set());
+    expect(collapsed.map((entry) => entry.type)).toEqual(["message", "run-fold", "message"]);
+
+    const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([runId]));
+    expect(expanded.map((entry) => entry.type)).toEqual([
+      "message",
+      "run-fold",
+      "activity-group",
+      "message",
     ]);
   });
 
-  it("collapses matching tool lifecycle rows like desktop", () => {
-    const thread = makeThread({
-      id: ThreadId.make("thread-2"),
-      projectId: ProjectId.make("project-1"),
-      title: "Collapsed tools",
-      latestTurn: {
-        turnId: TurnId.make("turn-1"),
-        state: "completed",
-        requestedAt: "2026-04-01T00:00:00.000Z",
-        startedAt: "2026-04-01T00:00:01.000Z",
-        completedAt: "2026-04-01T00:00:03.000Z",
-        assistantMessageId: null,
-      },
-      activities: [
-        makeActivity({
-          id: EventId.make("tool-updated"),
-          kind: "tool.updated",
-          tone: "tool",
-          summary: "Run tests",
-          createdAt: "2026-04-01T00:00:01.000Z",
-          turnId: TurnId.make("turn-1"),
-          payload: {
-            title: "Run tests",
-            itemType: "command_execution",
-            detail: "/bin/zsh -lc 'bun run test'",
-          },
-        }),
-        makeActivity({
-          id: EventId.make("tool-completed"),
-          kind: "tool.completed",
-          tone: "tool",
-          summary: "Run tests completed",
-          createdAt: "2026-04-01T00:00:02.000Z",
-          turnId: TurnId.make("turn-1"),
-          payload: {
-            title: "Run tests",
-            itemType: "command_execution",
-            detail: "/bin/zsh -lc 'bun run test'",
-          },
-        }),
-      ],
+  it("keeps an active run expanded and marks failed tools as failures", () => {
+    const thread = makeThreadFixture({
+      messages: [message("user", "Run checks", "2026-06-20T00:00:01.000Z", "message-user")],
+      workEntries: [commandEntry({ tone: "error", toolLifecycleStatus: "failed" })],
     });
-
     const feed = buildThreadFeed(thread);
-    const group = feed[0];
-
-    expect(group).toMatchObject({
-      type: "activity-group",
-    });
-    if (!group || group.type !== "activity-group") {
-      return;
-    }
-
-    expect(group.activities).toHaveLength(1);
-    expect(group.activities[0]).toMatchObject({
-      id: "tool-completed",
-      createdAt: "2026-04-01T00:00:02.000Z",
-      turnId: "turn-1",
-      summary: "Run tests",
-      detail: "bun run test",
-      canExpand: true,
-      icon: "command",
-      toolLike: true,
-      status: "success",
-    });
-    expect(group.activities[0]?.getFullDetail()).toBe("/bin/zsh -lc 'bun run test'");
-    expect(group.activities[0]?.getCopyText()).toBe(
-      "Run tests\nbun run test\n/bin/zsh -lc 'bun run test'",
-    );
-  });
-
-  it("keeps MCP inputs available to expanded mobile work rows", () => {
-    const turnId = TurnId.make("turn-mcp");
-    const thread = makeThread({
-      id: ThreadId.make("thread-mcp"),
-      projectId: ProjectId.make("project-1"),
-      title: "Expandable MCP call",
-      latestTurn: {
-        turnId,
-        state: "completed",
-        requestedAt: "2026-04-01T00:00:00.000Z",
-        startedAt: "2026-04-01T00:00:01.000Z",
-        completedAt: "2026-04-01T00:00:03.000Z",
-        assistantMessageId: null,
-      },
-      activities: [
-        makeActivity({
-          id: EventId.make("mcp-completed"),
-          kind: "tool.completed",
-          tone: "tool",
-          summary: "Call repository tool",
-          createdAt: "2026-04-01T00:00:02.000Z",
-          turnId,
-          payload: {
-            title: "Call repository tool",
-            itemType: "mcp_tool_call",
-            detail: "repository.search",
-            status: "completed",
-            data: {
-              item: {
-                server: "repository",
-                tool: "search",
-                arguments: { query: "work log" },
-              },
-            },
-          },
-        }),
-      ],
-    });
-
-    const group = buildThreadFeed(thread)[0];
-    expect(group).toMatchObject({ type: "activity-group" });
-    if (!group || group.type !== "activity-group") {
-      return;
-    }
-
-    expect(group.activities[0]?.icon).toBe("wrench");
-    expect(group.activities[0]?.getFullDetail()).toContain('"query": "work log"');
-    expect(group.activities[0]?.getFullDetail()).toContain("repository.search");
-  });
-
-  it("defers large tool output expansion until a work row is opened or copied", () => {
-    let serializedToolOutputs = 0;
-    const activities = Array.from({ length: 5_000 }, (_, index) =>
-      makeActivity({
-        id: EventId.make(`large-tool-${index}`),
-        kind: "tool.completed",
-        tone: "tool",
-        summary: `Tool ${index}`,
-        createdAt: new Date(Date.UTC(2026, 3, 1, 0, 0, index)).toISOString(),
-        payload: {
-          title: `Tool ${index}`,
-          itemType: "mcp_tool_call",
-          status: "completed",
-          data: {
-            item: {
-              toJSON: () => {
-                serializedToolOutputs += 1;
-                return { output: "x".repeat(32_768) };
-              },
-            },
-          },
-        },
-      }),
-    );
-    const thread = makeThread({
-      id: ThreadId.make("thread-large-tools"),
-      projectId: ProjectId.make("project-1"),
-      title: "Large tools",
-      activities,
-    });
-
-    const feed = buildThreadFeed(thread);
-    expect(serializedToolOutputs).toBe(0);
-
-    const group = feed[0];
-    expect(group).toMatchObject({ type: "activity-group" });
-    if (!group || group.type !== "activity-group") {
-      return;
-    }
-
-    expect(group.activities).toHaveLength(5_000);
-    expect(group.activities[0]?.getFullDetail()).toContain('"output"');
-    expect(serializedToolOutputs).toBe(1);
-    expect(group.activities[0]?.getCopyText()).toContain('"output"');
-    expect(serializedToolOutputs).toBe(1);
-  });
-
-  it("folds settled turn work while leaving the terminal answer visible", () => {
-    const turnId = TurnId.make("turn-1");
-    const thread = makeThread({
-      id: ThreadId.make("thread-3"),
-      projectId: ProjectId.make("project-1"),
-      title: "Folded work",
-      latestTurn: {
-        turnId,
-        state: "completed",
-        requestedAt: "2026-04-01T00:00:00.000Z",
-        startedAt: "2026-04-01T00:00:01.000Z",
-        completedAt: "2026-04-01T00:00:18.000Z",
-        assistantMessageId: MessageId.make("assistant-final"),
-      },
-      messages: [
-        {
-          id: MessageId.make("assistant-commentary"),
-          role: "assistant",
-          text: "I am checking.",
-          turnId,
-          streaming: false,
-          createdAt: "2026-04-01T00:00:02.000Z",
-          updatedAt: "2026-04-01T00:00:03.000Z",
-        },
-        {
-          id: MessageId.make("assistant-final"),
-          role: "assistant",
-          text: "Done.",
-          turnId,
-          streaming: false,
-          createdAt: "2026-04-01T00:00:17.000Z",
-          updatedAt: "2026-04-01T00:00:18.000Z",
-        },
-      ],
-      activities: [
-        makeActivity({
-          id: EventId.make("tool-completed"),
-          kind: "tool.completed",
-          tone: "tool",
-          summary: "Read files",
-          createdAt: "2026-04-01T00:00:05.000Z",
-          turnId,
-          payload: {
-            title: "Read files",
-            itemType: "file_read",
-            status: "completed",
-          },
-        }),
-      ],
-    });
-
-    const feed = buildThreadFeed(thread);
-    const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
-    expect(collapsed.map((entry) => entry.id)).toEqual(["turn-fold:turn-1", "assistant-final"]);
-    expect(collapsed[0]).toMatchObject({
-      type: "turn-fold",
-      label: "Worked for 17s",
-      expanded: false,
-    });
-
-    const expanded = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set([turnId]));
-    expect(expanded.map((entry) => entry.id)).toEqual([
-      "turn-fold:turn-1",
-      "assistant-commentary",
-      "tool-completed",
-      "assistant-final",
-    ]);
-  });
-
-  it("measures a steer-superseded turn from its user boundary through trailing work", () => {
-    const firstTurnId = TurnId.make("turn-1");
-    const secondTurnId = TurnId.make("turn-2");
-    const thread = makeThread({
-      id: ThreadId.make("thread-steered"),
-      projectId: ProjectId.make("project-1"),
-      title: "Steered work",
-      latestTurn: {
-        turnId: secondTurnId,
-        state: "running",
-        requestedAt: "2026-04-01T00:00:14.000Z",
-        startedAt: "2026-04-01T00:00:14.000Z",
+    const presented = deriveThreadFeedPresentation(
+      feed,
+      {
+        runId,
+        status: "running",
+        startedAt: "2026-06-20T00:00:01.000Z",
         completedAt: null,
-        assistantMessageId: MessageId.make("assistant-next"),
       },
-      messages: [
-        {
-          id: MessageId.make("user-1"),
-          role: "user",
-          text: "Do it once more.",
-          turnId: null,
-          streaming: false,
-          createdAt: "2026-04-01T00:00:00.000Z",
-          updatedAt: "2026-04-01T00:00:00.000Z",
-        },
-        {
-          id: MessageId.make("assistant-commentary"),
-          role: "assistant",
-          text: "Kicking off call 1.",
-          turnId: firstTurnId,
-          streaming: false,
-          createdAt: "2026-04-01T00:00:09.000Z",
-          updatedAt: "2026-04-01T00:00:09.000Z",
-        },
-        {
-          id: MessageId.make("user-2"),
-          role: "user",
-          text: "Actually do 15.",
-          turnId: null,
-          streaming: false,
-          createdAt: "2026-04-01T00:00:14.000Z",
-          updatedAt: "2026-04-01T00:00:14.000Z",
-        },
-        {
-          id: MessageId.make("assistant-next"),
-          role: "assistant",
-          text: "One down - adjusting.",
-          turnId: secondTurnId,
-          streaming: true,
-          createdAt: "2026-04-01T00:00:17.000Z",
-          updatedAt: "2026-04-01T00:00:17.000Z",
-        },
-      ],
-      activities: [
-        makeActivity({
-          id: EventId.make("work-1"),
-          kind: "tool.completed",
-          tone: "tool",
-          summary: "Ran command",
-          createdAt: "2026-04-01T00:00:12.000Z",
-          turnId: firstTurnId,
-          payload: {
-            title: "Ran command",
-            itemType: "command_execution",
-            status: "completed",
-          },
-        }),
-      ],
-    });
+      new Set(),
+    );
 
-    const feed = buildThreadFeed(thread);
-    const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
-    expect(collapsed.find((entry) => entry.type === "turn-fold")).toMatchObject({
-      turnId: firstTurnId,
-      label: "Worked for 12s",
-    });
-  });
-
-  it("keeps an active turn expanded and classifies error-shaped tool output", () => {
-    const turnId = TurnId.make("turn-running");
-    const thread = makeThread({
-      id: ThreadId.make("thread-4"),
-      projectId: ProjectId.make("project-1"),
-      title: "Running work",
-      latestTurn: {
-        turnId,
-        state: "running",
-        requestedAt: "2026-04-01T00:00:00.000Z",
-        startedAt: "2026-04-01T00:00:01.000Z",
-        completedAt: null,
-        assistantMessageId: null,
-      },
-      activities: [
-        makeActivity({
-          id: EventId.make("tool-failed"),
-          kind: "tool.completed",
-          tone: "tool",
-          summary: "Run command",
-          createdAt: "2026-04-01T00:00:05.000Z",
-          turnId,
-          payload: {
-            title: "Run command",
-            itemType: "command_execution",
-            detail: "zsh: command not found: nope",
-            status: "completed",
-          },
-        }),
-      ],
-    });
-
-    const feed = buildThreadFeed(thread);
-    expect(deriveThreadFeedPresentation(feed, thread.latestTurn, new Set())).toEqual(feed);
-    expect(feed[0]).toMatchObject({
-      type: "activity-group",
-      activities: [{ status: "failure" }],
-    });
+    expect(presented.some((entry) => entry.type === "run-fold")).toBe(false);
+    expect(presented.find((entry) => entry.type === "activity-group")?.activities[0]?.status).toBe(
+      "failure",
+    );
   });
 
   it("appends active work as a normal timeline row", () => {

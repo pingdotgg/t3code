@@ -1,67 +1,48 @@
-import type {
-  OrchestrationCheckpointSummary,
-  OrchestrationLatestTurn,
-  OrchestrationMessage,
-  OrchestrationProposedPlan,
-  OrchestrationSession,
-  OrchestrationThread,
-  OrchestrationThreadActivity,
-  ScopedThreadRef,
-} from "@t3tools/contracts";
+import type { OrchestrationV2ThreadProjection, ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
-import type { EnvironmentThread, EnvironmentThreadShell } from "./models.ts";
-import { scopeThread } from "./models.ts";
-import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threadState.ts";
+import type {
+  EnvironmentThread,
+  EnvironmentThreadShell,
+  ThreadCheckpointSummary,
+  ThreadConversationMessage,
+  ThreadPendingApproval,
+  ThreadPendingUserInput,
+  ThreadProposedPlan,
+  ThreadRunSummary,
+  ThreadRuntimeSummary,
+  ScopedThreadProjection,
+  ThreadWorkEntry,
+} from "./models.ts";
+import { presentThread } from "./models.ts";
+import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threads.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
 
-const EMPTY_MESSAGES: ReadonlyArray<OrchestrationMessage> = Object.freeze([]);
-const EMPTY_ACTIVITIES: ReadonlyArray<OrchestrationThreadActivity> = Object.freeze([]);
-const EMPTY_PROPOSED_PLANS: ReadonlyArray<OrchestrationProposedPlan> = Object.freeze([]);
-const EMPTY_CHECKPOINTS: ReadonlyArray<OrchestrationCheckpointSummary> = Object.freeze([]);
+const EMPTY_MESSAGES: ReadonlyArray<ThreadConversationMessage> = Object.freeze([]);
+const EMPTY_WORK_ENTRIES: ReadonlyArray<ThreadWorkEntry> = Object.freeze([]);
+const EMPTY_PROPOSED_PLANS: ReadonlyArray<ThreadProposedPlan> = Object.freeze([]);
+const EMPTY_CHECKPOINTS: ReadonlyArray<ThreadCheckpointSummary> = Object.freeze([]);
+const EMPTY_APPROVALS: ReadonlyArray<ThreadPendingApproval> = Object.freeze([]);
+const EMPTY_USER_INPUTS: ReadonlyArray<ThreadPendingUserInput> = Object.freeze([]);
+const EMPTY_VISIBLE_TURN_ITEMS: OrchestrationV2ThreadProjection["visibleTurnItems"] = Object.freeze(
+  [],
+);
 
-/**
- * Combine detail-only collections with the shell's authoritative thread metadata.
- *
- * Shell and detail subscriptions are intentionally independent. A cached detail can
- * therefore briefly outlive a newer shell snapshot after reconnecting. Workspace
- * consumers must use the shell branch/worktree/project fields so they do not target
- * a stale checkout while retaining messages, activities, plans, and checkpoints
- * from the detail subscription.
- */
+/** Shell metadata wins over an independently cached detail projection. */
 export function mergeEnvironmentThread(
   detail: EnvironmentThread | null,
   shell: EnvironmentThreadShell | null,
 ): EnvironmentThread | null {
-  if (detail === null || shell === null) {
-    return detail;
-  }
-  if (detail.environmentId !== shell.environmentId || detail.id !== shell.id) {
-    return detail;
-  }
-
+  if (detail === null || shell === null) return detail;
+  if (detail.environmentId !== shell.environmentId || detail.id !== shell.id) return detail;
   return {
     ...detail,
-    environmentId: shell.environmentId,
-    id: shell.id,
-    projectId: shell.projectId,
-    title: shell.title,
-    modelSelection: shell.modelSelection,
-    runtimeMode: shell.runtimeMode,
-    interactionMode: shell.interactionMode,
-    branch: shell.branch,
-    worktreePath: shell.worktreePath,
-    latestTurn: shell.latestTurn,
-    createdAt: shell.createdAt,
-    updatedAt: shell.updatedAt,
-    archivedAt: shell.archivedAt,
-    settledOverride: shell.settledOverride,
-    settledAt: shell.settledAt,
-    snoozedUntil: shell.snoozedUntil,
-    snoozedAt: shell.snoozedAt,
-    session: shell.session,
+    ...shell,
+    latestRun: detail.latestRun,
+    runtime: detail.runtime,
+    source: shell.source,
   };
 }
 
@@ -86,15 +67,13 @@ export function createEnvironmentThreadDetailAtoms<E>(
 
   const threadDetailAtomFamily = Atom.family((key: string) => {
     const ref = parseThreadKey(key);
-    let previousSource: OrchestrationThread | null = null;
+    let previousSource: OrchestrationV2ThreadProjection | null = null;
     let previousValue: EnvironmentThread | null = null;
     return Atom.make((get) => {
       const source = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
-      if (source === previousSource) {
-        return previousValue;
-      }
+      if (source === previousSource) return previousValue;
       previousSource = source;
-      previousValue = source === null ? null : scopeThread(ref.environmentId, source);
+      previousValue = source === null ? null : presentThread(ref.environmentId, source);
       return previousValue;
     }).pipe(
       Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
@@ -102,88 +81,96 @@ export function createEnvironmentThreadDetailAtoms<E>(
     );
   });
 
-  const threadStatusAtomFamily = Atom.family((key: string) =>
+  const scopedThreadProjectionAtomFamily = Atom.family((key: string) => {
+    const ref = parseThreadKey(key);
+    let previousProjection: OrchestrationV2ThreadProjection | null = null;
+    let previousValue: ScopedThreadProjection | null = null;
+    return Atom.make((get) => {
+      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      if (projection === previousProjection) return previousValue;
+      previousProjection = projection;
+      previousValue = projection === null ? null : { environmentId: ref.environmentId, projection };
+      return previousValue;
+    }).pipe(
+      Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
+      Atom.withLabel(`scoped-thread-projection:${key}`),
+    );
+  });
+
+  const visibleTurnItemsAtomFamily = Atom.family((key: string) =>
+    Atom.make(
+      (get): OrchestrationV2ThreadProjection["visibleTurnItems"] =>
+        Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.visibleTurnItems ??
+        EMPTY_VISIBLE_TURN_ITEMS,
+    ).pipe(
+      Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
+      Atom.withLabel(`environment-thread-visible-turn-items:${key}`),
+    ),
+  );
+
+  const family = <A>(label: string, select: (thread: EnvironmentThread) => A, empty: A) =>
+    Atom.family((key: string) =>
+      Atom.make((get): A => {
+        const thread = get(threadDetailAtomFamily(key));
+        return thread === null ? empty : select(thread);
+      }).pipe(
+        Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
+        Atom.withLabel(`environment-thread-${label}:${key}`),
+      ),
+    );
+
+  const messages = family("messages", (thread) => thread.messages, EMPTY_MESSAGES);
+  const workEntries = family("work-entries", (thread) => thread.workEntries, EMPTY_WORK_ENTRIES);
+  const proposedPlans = family(
+    "proposed-plans",
+    (thread) => thread.proposedPlans,
+    EMPTY_PROPOSED_PLANS,
+  );
+  const checkpoints = family("checkpoints", (thread) => thread.checkpoints, EMPTY_CHECKPOINTS);
+  const pendingApprovals = family(
+    "pending-approvals",
+    (thread) => thread.pendingApprovals,
+    EMPTY_APPROVALS,
+  );
+  const pendingUserInputs = family(
+    "pending-user-inputs",
+    (thread) => thread.pendingUserInputs,
+    EMPTY_USER_INPUTS,
+  );
+  const runtime = family<ThreadRuntimeSummary | null>("runtime", (thread) => thread.runtime, null);
+  const latestRun = family<ThreadRunSummary | null>(
+    "latest-run",
+    (thread) => thread.latestRun,
+    null,
+  );
+
+  const status = Atom.family((key: string) =>
     Atom.make((get) => get(threadStateValueAtomFamily(key)).status).pipe(
       Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
       Atom.withLabel(`environment-thread-status:${key}`),
     ),
   );
-
-  const threadErrorAtomFamily = Atom.family((key: string) =>
+  const error = Atom.family((key: string) =>
     Atom.make((get) => Option.getOrNull(get(threadStateValueAtomFamily(key)).error)).pipe(
       Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
       Atom.withLabel(`environment-thread-error:${key}`),
     ),
   );
 
-  const threadMessagesAtomFamily = Atom.family((key: string) =>
-    Atom.make(
-      (get): ReadonlyArray<OrchestrationMessage> =>
-        get(threadDetailAtomFamily(key))?.messages ?? EMPTY_MESSAGES,
-    ).pipe(
-      Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
-      Atom.withLabel(`environment-thread-messages:${key}`),
-    ),
-  );
-
-  const threadActivitiesAtomFamily = Atom.family((key: string) =>
-    Atom.make(
-      (get): ReadonlyArray<OrchestrationThreadActivity> =>
-        get(threadDetailAtomFamily(key))?.activities ?? EMPTY_ACTIVITIES,
-    ).pipe(
-      Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
-      Atom.withLabel(`environment-thread-activities:${key}`),
-    ),
-  );
-
-  const threadProposedPlansAtomFamily = Atom.family((key: string) =>
-    Atom.make(
-      (get): ReadonlyArray<OrchestrationProposedPlan> =>
-        get(threadDetailAtomFamily(key))?.proposedPlans ?? EMPTY_PROPOSED_PLANS,
-    ).pipe(
-      Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
-      Atom.withLabel(`environment-thread-proposed-plans:${key}`),
-    ),
-  );
-
-  const threadCheckpointsAtomFamily = Atom.family((key: string) =>
-    Atom.make(
-      (get): ReadonlyArray<OrchestrationCheckpointSummary> =>
-        get(threadDetailAtomFamily(key))?.checkpoints ?? EMPTY_CHECKPOINTS,
-    ).pipe(
-      Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
-      Atom.withLabel(`environment-thread-checkpoints:${key}`),
-    ),
-  );
-
-  const threadSessionAtomFamily = Atom.family((key: string) =>
-    Atom.make(
-      (get): OrchestrationSession | null => get(threadDetailAtomFamily(key))?.session ?? null,
-    ).pipe(
-      Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
-      Atom.withLabel(`environment-thread-session:${key}`),
-    ),
-  );
-
-  const threadLatestTurnAtomFamily = Atom.family((key: string) =>
-    Atom.make(
-      (get): OrchestrationLatestTurn | null => get(threadDetailAtomFamily(key))?.latestTurn ?? null,
-    ).pipe(
-      Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
-      Atom.withLabel(`environment-thread-latest-turn:${key}`),
-    ),
-  );
-
   return {
     stateAtom: (ref: ScopedThreadRef) => threadStateValueAtomFamily(threadKey(ref)),
+    threadAtom: (ref: ScopedThreadRef) => scopedThreadProjectionAtomFamily(threadKey(ref)),
+    visibleTurnItemsAtom: (ref: ScopedThreadRef) => visibleTurnItemsAtomFamily(threadKey(ref)),
     detailAtom: (ref: ScopedThreadRef) => threadDetailAtomFamily(threadKey(ref)),
-    statusAtom: (ref: ScopedThreadRef) => threadStatusAtomFamily(threadKey(ref)),
-    errorAtom: (ref: ScopedThreadRef) => threadErrorAtomFamily(threadKey(ref)),
-    messagesAtom: (ref: ScopedThreadRef) => threadMessagesAtomFamily(threadKey(ref)),
-    activitiesAtom: (ref: ScopedThreadRef) => threadActivitiesAtomFamily(threadKey(ref)),
-    proposedPlansAtom: (ref: ScopedThreadRef) => threadProposedPlansAtomFamily(threadKey(ref)),
-    checkpointsAtom: (ref: ScopedThreadRef) => threadCheckpointsAtomFamily(threadKey(ref)),
-    sessionAtom: (ref: ScopedThreadRef) => threadSessionAtomFamily(threadKey(ref)),
-    latestTurnAtom: (ref: ScopedThreadRef) => threadLatestTurnAtomFamily(threadKey(ref)),
+    statusAtom: (ref: ScopedThreadRef) => status(threadKey(ref)),
+    errorAtom: (ref: ScopedThreadRef) => error(threadKey(ref)),
+    messagesAtom: (ref: ScopedThreadRef) => messages(threadKey(ref)),
+    workEntriesAtom: (ref: ScopedThreadRef) => workEntries(threadKey(ref)),
+    proposedPlansAtom: (ref: ScopedThreadRef) => proposedPlans(threadKey(ref)),
+    checkpointsAtom: (ref: ScopedThreadRef) => checkpoints(threadKey(ref)),
+    pendingApprovalsAtom: (ref: ScopedThreadRef) => pendingApprovals(threadKey(ref)),
+    pendingUserInputsAtom: (ref: ScopedThreadRef) => pendingUserInputs(threadKey(ref)),
+    runtimeAtom: (ref: ScopedThreadRef) => runtime(threadKey(ref)),
+    latestRunAtom: (ref: ScopedThreadRef) => latestRun(threadKey(ref)),
   };
 }

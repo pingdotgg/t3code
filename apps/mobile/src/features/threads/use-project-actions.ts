@@ -58,15 +58,16 @@ export function useCreateProjectThread() {
 
       const result = await startTurn({
         environmentId: input.project.environmentId,
-        input: buildProjectThreadStartTurnInput({
-          projectId: input.project.id,
-          projectCwd: input.project.workspaceRoot,
-          threadId: metadata.threadId,
-          commandId: metadata.commandId,
-          messageId: metadata.messageId,
-          createdAt: metadata.createdAt,
-          text: initialMessageText,
-          attachments: input.initialAttachments,
+        input: {
+          commandId: CommandId.make(metadata.commandId),
+          creationSource: "mobile",
+          threadId,
+          message: {
+            messageId: MessageId.make(metadata.messageId),
+            role: "user",
+            text: initialMessageText,
+            attachments: input.initialAttachments,
+          },
           modelSelection: input.modelSelection,
           runtimeMode: input.runtimeMode,
           interactionMode: input.interactionMode,

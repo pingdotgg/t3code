@@ -1,11 +1,5 @@
 import type {
   ChatImageAttachment as ContractChatImageAttachment,
-  OrchestrationCheckpointFile,
-  OrchestrationCheckpointSummary,
-  OrchestrationLatestTurn,
-  OrchestrationMessage,
-  OrchestrationProposedPlan,
-  OrchestrationSession,
   ProjectScript as ContractProjectScript,
   ProviderInteractionMode,
   RuntimeMode,
@@ -14,6 +8,11 @@ import type {
   EnvironmentProject,
   EnvironmentThread,
   EnvironmentThreadShell,
+  ThreadCheckpointSummary,
+  ThreadConversationMessage,
+  ThreadProposedPlan,
+  ThreadRunSummary,
+  ThreadRuntimeSummary,
 } from "@t3tools/client-runtime/state/shell";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -37,21 +36,21 @@ export interface ChatImageAttachment extends ContractChatImageAttachment {
 
 export type ChatAttachment = ChatImageAttachment;
 
-export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
+export interface ChatMessage extends Omit<ThreadConversationMessage, "attachments"> {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
 }
 
-export type ProposedPlan = OrchestrationProposedPlan;
-export type TurnDiffFileChange = OrchestrationCheckpointFile;
-export type TurnDiffSummary = OrchestrationCheckpointSummary;
+export type ProposedPlan = ThreadProposedPlan;
+export type TurnDiffFileChange = ThreadCheckpointSummary["files"][number];
+export type TurnDiffSummary = ThreadCheckpointSummary;
 
 export type Project = EnvironmentProject;
 export type Thread = EnvironmentThread;
 export type ThreadShell = EnvironmentThreadShell;
 
 export interface ThreadTurnState {
-  latestTurn: OrchestrationLatestTurn | null;
+  latestRun: ThreadRunSummary | null;
 }
 
 export type SidebarThreadSummary = EnvironmentThreadShell;
-export type ThreadSession = OrchestrationSession;
+export type ThreadSession = ThreadRuntimeSummary;

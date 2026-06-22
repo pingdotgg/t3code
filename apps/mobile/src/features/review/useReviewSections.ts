@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 
-import type { EnvironmentId, OrchestrationCheckpointSummary, ThreadId } from "@t3tools/contracts";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { useCheckpointDiff } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
@@ -59,7 +60,7 @@ export function useReviewSections(input: {
           getReviewSectionIdForCheckpoint(checkpoint),
           checkpoint,
         ]),
-      ) as Record<string, OrchestrationCheckpointSummary>,
+      ) as Record<string, ThreadCheckpointSummary>,
     [readyCheckpoints],
   );
   const reviewSections = useMemo(

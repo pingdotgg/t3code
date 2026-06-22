@@ -1,4 +1,4 @@
-import { ORCHESTRATION_WS_METHODS } from "@t3tools/contracts";
+import { ORCHESTRATION_V2_WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
 import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
@@ -10,11 +10,11 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
   return {
     turnDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-diff",
-      tag: ORCHESTRATION_WS_METHODS.getTurnDiff,
+      tag: ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
     }),
     fullThreadDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:full-thread-diff",
-      tag: ORCHESTRATION_WS_METHODS.getFullThreadDiff,
+      tag: ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
     }),
     threadSearch: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:thread-search",
@@ -24,7 +24,7 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     }),
     archivedShellSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:archived-shell-snapshot",
-      tag: ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
+      tag: ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
     }),
   };
 }

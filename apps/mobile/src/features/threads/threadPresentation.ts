@@ -7,49 +7,9 @@ export function threadSortValue(thread: EnvironmentThreadShell): number {
   return Number.isNaN(candidate) ? 0 : candidate;
 }
 
-export type ThreadStatusKind =
-  | "pending-approval"
-  | "awaiting-input"
-  | "working"
-  | "connecting"
-  | "error"
-  | "plan-ready";
-
-export interface ThreadStatusPresentation extends StatusTone {
-  readonly kind: ThreadStatusKind;
-  /** Foreground color for the leading status icon. */
-  readonly iconColor: string;
-  /** Background color for the leading status icon circle. */
-  readonly iconBackground: string;
-  /** Whether the indicator represents in-flight activity. */
-  readonly pulse: boolean;
-}
-
-/** Neutral icon colors for threads with no actionable status. */
-export const THREAD_STATUS_NEUTRAL_ICON = {
-  iconColor: "#8e8e93",
-  iconBackground: "rgba(142,142,147,0.22)",
-} as const;
-
-function isLatestTurnSettled(
-  latestTurn: OrchestrationLatestTurn | null,
-  session: OrchestrationSession | null,
-): boolean {
-  if (!latestTurn?.startedAt) return false;
-  if (!latestTurn.completedAt) return false;
-  if (!session) return true;
-  return session.status !== "running";
-}
-
-/**
- * Resolves the user-facing status of a thread, in priority order. Returns
- * `null` for quiescent threads so rows stay free of "Idle"-style noise.
- * Mirrors `resolveThreadStatusPill` in apps/web/src/components/Sidebar.logic.ts.
- */
-export function resolveThreadStatus(
-  thread: EnvironmentThreadShell,
-): ThreadStatusPresentation | null {
-  if (thread.hasPendingApprovals) {
+export function threadStatusTone(thread: EnvironmentThreadShell): StatusTone {
+  const status = thread.runtime?.status;
+  if (status === "running" || status === "waiting") {
     return {
       kind: "pending-approval",
       label: "Needs Approval",
@@ -60,8 +20,7 @@ export function resolveThreadStatus(
       pulse: false,
     };
   }
-
-  if (thread.hasPendingUserInput) {
+  if (status === "completed") {
     return {
       kind: "awaiting-input",
       label: "Awaiting Input",
@@ -72,8 +31,7 @@ export function resolveThreadStatus(
       pulse: false,
     };
   }
-
-  if (thread.session?.status === "running") {
+  if (status === "queued" || status === "starting") {
     return {
       kind: "working",
       label: "Working",
@@ -84,8 +42,7 @@ export function resolveThreadStatus(
       pulse: true,
     };
   }
-
-  if (thread.session?.status === "starting") {
+  if (status === "failed") {
     return {
       kind: "connecting",
       label: "Connecting",
