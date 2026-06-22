@@ -141,21 +141,24 @@ function AttachmentLink({
   readonly ctx: RowRenderContext;
 }): React.ReactNode {
   const { palette, width, getAttachmentUrl, onOpenUrl } = ctx;
-  const [url, setUrl] = React.useState<string | null>(null);
+  const [link, setLink] = React.useState<"pending" | "failed" | string>(
+    getAttachmentUrl ? "pending" : "failed",
+  );
   React.useEffect(() => {
     if (!getAttachmentUrl) return;
     let cancelled = false;
     void getAttachmentUrl(attachment.id).then((resolved) => {
-      if (!cancelled) setUrl(resolved);
+      if (!cancelled) setLink(resolved ?? "failed");
     });
     return () => {
       cancelled = true;
     };
   }, [attachment.id, getAttachmentUrl]);
 
+  const url = link !== "pending" && link !== "failed" ? link : null;
   const sizeKb = Math.max(1, Math.round(attachment.sizeBytes / 1024));
   const label = `${TOOL_ICONS.imageView.glyph} ${attachment.name} · ${sizeKb} KB`;
-  const tail = url ?? "  (resolving link…)";
+  const tail = url ?? (link === "pending" ? "  (resolving link…)" : "  (link unavailable)");
   const click = url && onOpenUrl ? () => onOpenUrl(url) : undefined;
   return (
     <box {...(click ? { onMouseDown: click } : {})}>

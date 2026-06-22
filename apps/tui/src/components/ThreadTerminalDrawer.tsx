@@ -127,8 +127,13 @@ const TerminalPane = React.memo(function TerminalPane({
 
   React.useEffect(() => {
     if (term.cols !== safeCols || term.rows !== safeRows) term.resize(safeCols, safeRows);
-    void client.terminalResize(info.threadId, info.terminalId, safeCols, safeRows).catch(() => {});
-  }, [safeCols, safeRows]);
+    // Keep the local buffer shaped for every pane, but only tell the server about
+    // the visible one — background tabs needn't trigger N PTY resizes per window
+    // resize; a hidden pane resyncs when it becomes visible (visible is a dep).
+    if (visible) {
+      void client.terminalResize(info.threadId, info.terminalId, safeCols, safeRows).catch(() => {});
+    }
+  }, [safeCols, safeRows, visible]);
 
   React.useEffect(() => {
     const scheduleRender = () => {

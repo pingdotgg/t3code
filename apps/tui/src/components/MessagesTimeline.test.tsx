@@ -128,6 +128,49 @@ describe("MessagesTimeline body", () => {
     t.renderer.destroy();
   });
 
+  it("Given an attachment whose link can't be resolved, then it shows it as unavailable (not stuck resolving)", async () => {
+    const full = {
+      ...detail("default"),
+      messages: [
+        {
+          id: "u1",
+          role: "user",
+          text: "look",
+          createdAt: "2026-06-19T00:00:00.000Z",
+          updatedAt: "2026-06-19T00:00:00.000Z",
+          streaming: false,
+          attachments: [
+            { type: "image", id: "att1", name: "broken.png", mimeType: "image/png", sizeBytes: 1024 },
+          ],
+        },
+      ],
+    } as unknown as OrchestrationThread;
+    const ref = React.createRef<null>();
+    const t = await testRender(
+      <MessagesTimeline
+        detail={full}
+        approvals={[]}
+        approvalIndex={0}
+        projectHint={null}
+        width={88}
+        height={20}
+        syntaxStyle={SyntaxStyle.create()}
+        scrollRef={ref as never}
+        getAttachmentUrl={async () => null}
+      />,
+      { width: 92, height: 24 },
+    );
+    for (let i = 0; i < 6; i += 1) {
+      await t.renderOnce();
+      await t.flush();
+    }
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("broken.png");
+    expect(frame).toContain("link unavailable");
+    expect(frame).not.toContain("resolving");
+    t.renderer.destroy();
+  });
+
   it("Given a tool activity, then it renders a tool-call row with the command", async () => {
     const frame = await bodyFrame({
       activities: [

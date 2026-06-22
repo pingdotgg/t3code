@@ -192,6 +192,13 @@ export function ChatView({
   // the web composer swapping its send button for a stop button while running).
   const working = !!detail && isWorking(detail);
 
+  const detailId = detail?.id ?? null;
+  React.useEffect(() => {
+    // Terminal focus is global but tabs are per-thread: dropping focus on a
+    // thread switch stops keystrokes routing to whichever shell the new thread
+    // happens to have, until the user re-focuses it (^P) explicitly.
+    setTerminalFocused(false);
+  }, [detailId]);
   const actionablePlan = React.useMemo(
     () => (detail ? latestActionableProposedPlan(detail) : null),
     [detail],
@@ -258,9 +265,17 @@ export function ChatView({
   };
 
   // Right-panel git actions: commit-bearing ones open the commit-message dialog
-  // first, then run with the typed message; the rest run immediately.
+  // first, then run with the typed message; the rest run immediately. When there
+  // is nothing to commit, drop the commit step (don't prompt for a message on a
+  // pure push) — run the push/PR part, or hint for a bare "commit".
   const onRunGitAction = (action: GitStackedAction) => {
     if (gitActionNeedsCommitMessage(action)) {
+      if (!state.vcsStatus?.hasWorkingTreeChanges) {
+        if (action === "commit_push") store.runGitAction("push");
+        else if (action === "commit_push_pr") store.runGitAction("create_pr");
+        else store.setStatus("Nothing to commit.");
+        return;
+      }
       setPendingCommitAction(action);
       setCommitDraft("");
       setFocus("commit");
@@ -559,11 +574,19 @@ export function ChatView({
     setFocus("compose");
   };
 
-  // Replace one thread's tab state in the map immutably.
-  const setThreadTabs = (threadId: string, tabs: ThreadTabs | null) =>
+  // Update one thread's tabs from the LATEST map (functional, so rapid tab ops
+  // — fast key-repeat close/cycle — serialize correctly instead of each reading
+  // the same render-captured snapshot). The updater returns the same map to
+  // no-op when the thread/id is gone.
+  const updateThreadTabs = (
+    threadId: string,
+    update: (tabs: ThreadTabs | null) => ThreadTabs | null,
+  ) =>
     setTerminalTabs((prev) => {
+      const nextTabs = update(prev.get(threadId) ?? null);
+      if (nextTabs === (prev.get(threadId) ?? null)) return prev;
       const next = new Map(prev);
-      if (tabs) next.set(threadId, tabs);
+      if (nextTabs) next.set(threadId, nextTabs);
       else next.delete(threadId);
       return next;
     });
@@ -577,7 +600,7 @@ export function ChatView({
       return;
     }
     if (!detail) return;
-    if (!terminalTabs.has(detail.id)) setThreadTabs(detail.id, initialTabs());
+    updateThreadTabs(detail.id, (tabs) => tabs ?? initialTabs());
     setTerminalOpen(true);
     setTerminalFocused(true);
   };
@@ -585,35 +608,43 @@ export function ChatView({
   // Open a fresh terminal tab on the selected thread (server creates it on attach).
   const newTerminal = () => {
     if (!detail) return;
-    const current = terminalTabs.get(detail.id) ?? null;
-    if ((current?.ids.length ?? 0) >= MAX_TERMINALS_PER_THREAD) {
-      store.setStatus(`At most ${MAX_TERMINALS_PER_THREAD} terminals per thread.`);
-      return;
-    }
-    setThreadTabs(detail.id, addTab(current));
     setTerminalOpen(true);
     setTerminalFocused(true);
+    updateThreadTabs(detail.id, (tabs) => {
+      if ((tabs?.ids.length ?? 0) >= MAX_TERMINALS_PER_THREAD) {
+        store.setStatus(`At most ${MAX_TERMINALS_PER_THREAD} terminals per thread.`);
+        return tabs; // surface the existing terminals without adding another.
+      }
+      return addTab(tabs);
+    });
   };
 
   const selectTerminal = (id: string) => {
-    if (!detail || !detailTabs || !detailTabs.ids.includes(id)) return;
-    setThreadTabs(detail.id, { ids: detailTabs.ids, activeId: id });
+    if (!detail) return;
+    updateThreadTabs(detail.id, (tabs) =>
+      tabs && tabs.ids.includes(id) ? { ids: tabs.ids, activeId: id } : tabs,
+    );
     setTerminalFocused(true);
   };
 
   const cycleTerminal = (delta: 1 | -1) => {
-    if (!detail || !detailTabs) return;
-    selectTerminal(cycleActiveId(detailTabs, delta));
+    if (!detail) return;
+    updateThreadTabs(detail.id, (tabs) =>
+      tabs ? { ids: tabs.ids, activeId: cycleActiveId(tabs, delta) } : tabs,
+    );
+    setTerminalFocused(true);
   };
 
   // Close a terminal tab: free its server session, drop it, and fall back to a
   // neighbour (or close the drawer when it was the last one).
   const closeTerminal = (id: string) => {
-    if (!detail || !detailTabs || !detailTabs.ids.includes(id)) return;
+    if (!detail) return;
     void client.terminalClose(detail.id, id).catch(() => {});
-    const remaining = closeTab(detailTabs, id);
-    setThreadTabs(detail.id, remaining);
-    if (!remaining) {
+    const willBeEmpty = (detailTabs?.ids.length ?? 0) <= 1;
+    updateThreadTabs(detail.id, (tabs) =>
+      tabs && tabs.ids.includes(id) ? closeTab(tabs, id) : tabs,
+    );
+    if (willBeEmpty) {
       setTerminalOpen(false);
       setTerminalFocused(false);
     }
@@ -811,6 +842,10 @@ export function ChatView({
     () => filterCommands(paletteCommands, commandQuery),
     [paletteCommands, commandQuery],
   );
+  // Clamp at use: the command list can shrink while the palette is open (a turn
+  // finishes, a tab closes), which would otherwise leave commandIndex past the
+  // end — no highlight, Enter no-ops.
+  const safeCommandIndex = Math.min(commandIndex, Math.max(0, filteredCommands.length - 1));
 
   const keyMode =
     activeTerminal && terminalFocused
@@ -930,7 +965,7 @@ export function ChatView({
       setCommandIndex((index) =>
         filteredCommands.length === 0 ? 0 : (index + 1) % filteredCommands.length,
       ),
-    onCommandRun: () => filteredCommands[commandIndex]?.run(),
+    onCommandRun: () => filteredCommands[safeCommandIndex]?.run(),
     onCommandClose: () => setOverlay("none"),
     onRevertPrev: () =>
       setRevertIndex((index) => (index <= 0 ? checkpoints.length - 1 : index - 1)),
@@ -1202,7 +1237,7 @@ export function ChatView({
       ) : overlay === "command" ? (
         <CommandPalette
           commands={filteredCommands}
-          selectedIndex={commandIndex}
+          selectedIndex={safeCommandIndex}
           query={commandQuery}
           width={width - 4}
           maxRows={Math.max(1, pickerContentRows - 1)}
