@@ -6,6 +6,10 @@ import {
   ConnectionTargetStore,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
   EnvironmentCacheStore,
+  ORCHESTRATION_CACHE_SCHEMA_VERSION,
+  StoredOrchestrationShellSnapshot,
+  StoredOrchestrationThreadSnapshot,
+  decodeOrDiscardOrchestrationCache,
   registerConnectionInCatalog,
   removeCatalogValue,
   removeConnectionFromCatalog,
@@ -17,14 +21,7 @@ import {
   CredentialStore,
   ProfileStore,
 } from "@t3tools/client-runtime/connection";
-import {
-  EnvironmentId,
-  OrchestrationShellSnapshot,
-  OrchestrationThreadDetailSnapshot,
-  ServerConfig,
-  ThreadId,
-  VcsListRefsResult,
-} from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -41,14 +38,9 @@ const THREAD_STORE_NAME = "thread";
 const SERVER_CONFIG_STORE_NAME = "server-config";
 const VCS_REFS_STORE_NAME = "vcs-refs";
 const CATALOG_KEY = "document";
-const SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION = 1;
-
-const StoredShellSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION),
-  environmentId: EnvironmentId,
-  snapshot: OrchestrationShellSnapshot,
-});
+const StoredShellSnapshot = StoredOrchestrationShellSnapshot;
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
+<<<<<<< HEAD
 // v2 stores the snapshot sequence alongside the thread so a warm cache can
 // resume via `afterSequence` instead of re-downloading the full thread body.
 // v3 adds windowed (paginated) snapshots carrying `page` metadata. The bump
@@ -61,6 +53,9 @@ const StoredThreadSnapshot = Schema.Struct({
   threadId: ThreadId,
   snapshot: OrchestrationThreadDetailSnapshot,
 });
+=======
+const StoredThreadSnapshot = StoredOrchestrationThreadSnapshot;
+>>>>>>> 79c36e6204 (Complete orchestration V2 frontend cutover)
 const StoredThreadSnapshotJson = Schema.fromJsonString(StoredThreadSnapshot);
 const StoredServerConfig = Schema.Struct({
   schemaVersion: Schema.Literal(1),
@@ -472,25 +467,24 @@ export const connectionStorageLayer = Layer.effectContext(
             if (typeof raw !== "string") {
               return Effect.succeed(Option.none());
             }
-            return decodeStoredShellSnapshot(raw).pipe(
-              Effect.mapError((cause) => persistenceError("load-shell", cause)),
-              Effect.map((stored) =>
-                stored.environmentId === environmentId
-                  ? Option.some(stored.snapshot)
-                  : Option.none(),
+            return decodeOrDiscardOrchestrationCache(
+              decodeStoredShellSnapshot(raw).pipe(
+                Effect.mapError((cause) => persistenceError("load-shell", cause)),
+                Effect.map((stored) =>
+                  stored.environmentId === environmentId
+                    ? Option.some(stored.snapshot)
+                    : Option.none(),
+                ),
               ),
+              removeDatabaseValue(database, SHELL_STORE_NAME, environmentId),
             );
           }),
-          Effect.mapError((cause) =>
-            cause._tag === "ConnectionPersistenceError"
-              ? cause
-              : persistenceError("load-shell", cause),
-          ),
+          Effect.mapError((cause) => persistenceError("load-shell", cause)),
         ),
       saveShell: (environmentId, snapshot) =>
         Effect.gen(function* () {
           const encoded = yield* encodeStoredShellSnapshot({
-            schemaVersion: SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION,
+            schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
             environmentId,
             snapshot,
           }).pipe(Effect.mapError((cause) => persistenceError("save-shell", cause)));
@@ -546,33 +540,40 @@ export const connectionStorageLayer = Layer.effectContext(
             if (typeof raw !== "string") {
               return Effect.succeed(Option.none());
             }
-            return decodeStoredThreadSnapshot(raw).pipe(
-              Effect.mapError((cause) => persistenceError("load-thread", cause)),
-              Effect.map((stored) =>
-                stored.environmentId === environmentId && stored.threadId === threadId
-                  ? Option.some(stored.snapshot)
-                  : Option.none(),
+            return decodeOrDiscardOrchestrationCache(
+              decodeStoredThreadSnapshot(raw).pipe(
+                Effect.mapError((cause) => persistenceError("load-thread", cause)),
+                Effect.map((stored) =>
+                  stored.environmentId === environmentId && stored.threadId === threadId
+                    ? Option.some(stored.thread)
+                    : Option.none(),
+                ),
+              ),
+              removeDatabaseValue(
+                database,
+                THREAD_STORE_NAME,
+                threadCacheKey(environmentId, threadId),
               ),
             );
           }),
-          Effect.mapError((cause) =>
-            cause._tag === "ConnectionPersistenceError"
-              ? cause
-              : persistenceError("load-thread", cause),
-          ),
+          Effect.mapError((cause) => persistenceError("load-thread", cause)),
         ),
       saveThread: (environmentId, snapshot) =>
         Effect.gen(function* () {
           const encoded = yield* encodeStoredThreadSnapshot({
+<<<<<<< HEAD
             schemaVersion: 3,
+=======
+            schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
+>>>>>>> 79c36e6204 (Complete orchestration V2 frontend cutover)
             environmentId,
-            threadId: snapshot.thread.id,
-            snapshot,
+            threadId: thread.thread.id,
+            thread,
           }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
           yield* writeDatabaseValue(
             database,
             THREAD_STORE_NAME,
-            threadCacheKey(environmentId, snapshot.thread.id),
+            threadCacheKey(environmentId, thread.thread.id),
             encoded,
           );
         }).pipe(

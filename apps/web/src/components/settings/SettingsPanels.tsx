@@ -12,6 +12,11 @@ import {
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+<<<<<<< HEAD
+=======
+import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+>>>>>>> 79c36e6204 (Complete orchestration V2 frontend cutover)
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -3560,10 +3565,7 @@ export function ArchivedThreadsPanel() {
       ),
     );
     const threads = archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
-      snapshot.threads.map((thread) => ({
-        ...thread,
-        environmentId,
-      })),
+      snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
     );
 
     const archivedProjects = Array.from(projectsByEnvironmentAndId.values());

@@ -7,13 +7,14 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import type { Thread } from "../types";
+import { makeThreadFixture } from "../test-fixtures";
 import { getLatestThreadForProject, sortThreads } from "./threadSort";
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-1");
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
-  return {
+  return makeThreadFixture({
     id: ThreadId.make("thread-1"),
     environmentId: LOCAL_ENVIRONMENT_ID,
     projectId: PROJECT_ID,
@@ -21,7 +22,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: "default",
-    session: null,
+    runtime: null,
     messages: [],
     proposedPlans: [],
     createdAt: "2026-03-09T10:00:00.000Z",
@@ -30,13 +31,11 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     settledAt: null,
     deletedAt: null,
     updatedAt: "2026-03-09T10:00:00.000Z",
-    latestTurn: null,
+    latestRun: null,
     branch: null,
     worktreePath: null,
-    checkpoints: [],
-    activities: [],
     ...overrides,
-  };
+  });
 }
 
 describe("sortThreads", () => {
@@ -51,7 +50,7 @@ describe("sortThreads", () => {
               id: "message-1" as never,
               role: "user",
               text: "older",
-              turnId: null,
+              runId: null,
               createdAt: "2026-03-09T10:01:00.000Z",
               updatedAt: "2026-03-09T10:01:00.000Z",
               streaming: false,
@@ -67,7 +66,7 @@ describe("sortThreads", () => {
               id: "message-2" as never,
               role: "user",
               text: "newer",
-              turnId: null,
+              runId: null,
               createdAt: "2026-03-09T10:06:00.000Z",
               updatedAt: "2026-03-09T10:06:00.000Z",
               streaming: false,
@@ -95,7 +94,7 @@ describe("sortThreads", () => {
               id: "message-1" as never,
               role: "assistant",
               text: "assistant only",
-              turnId: null,
+              runId: null,
               createdAt: "2026-03-09T10:02:00.000Z",
               updatedAt: "2026-03-09T10:02:00.000Z",
               streaming: false,

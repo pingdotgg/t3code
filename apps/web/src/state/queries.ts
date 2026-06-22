@@ -9,15 +9,8 @@ import {
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
-import type {
-  EnvironmentId,
-  OrchestrationThread,
-  ProjectContentMatch,
-  ProjectEntryKind,
-  ThreadId,
-  VcsListRefsResult,
-  VcsRef,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId, VcsListRefsResult, VcsRef } from "@t3tools/contracts";
+import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -56,7 +49,7 @@ const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
 });
 
 export interface ThreadDetailView {
-  readonly data: OrchestrationThread | null;
+  readonly data: EnvironmentThread | null;
   readonly error: string | null;
   readonly isPending: boolean;
   readonly isDeleted: boolean;

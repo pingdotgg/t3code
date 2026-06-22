@@ -3,13 +3,14 @@ import type {
   EnvironmentProject,
   EnvironmentThread,
   EnvironmentThreadShell,
+  ThreadConversationMessage,
+  ThreadProposedPlan,
+  ThreadRuntimeSummary,
+  ThreadWorkEntry,
 } from "@t3tools/client-runtime/state/shell";
-import {
-  type EnvironmentThreadStatus,
-  mergeEnvironmentThread,
-} from "@t3tools/client-runtime/state/threads";
+import { mergeEnvironmentThread } from "@t3tools/client-runtime/state/threads";
 import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, OrchestrationV2ProjectedTurnItem, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -22,6 +23,10 @@ import {
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 
 const EMPTY_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
+const EMPTY_MESSAGES: ReadonlyArray<ThreadConversationMessage> = Object.freeze([]);
+const EMPTY_WORK_ENTRIES: ReadonlyArray<ThreadWorkEntry> = Object.freeze([]);
+const EMPTY_PROPOSED_PLANS: ReadonlyArray<ThreadProposedPlan> = Object.freeze([]);
+const EMPTY_VISIBLE_TURN_ITEMS: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = Object.freeze([]);
 
 const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
   Atom.withLabel("web-project:empty"),
@@ -37,6 +42,21 @@ const EMPTY_THREAD_DETAIL_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
 );
 const EMPTY_THREAD_STATUS_ATOM = Atom.make<EnvironmentThreadStatus>("empty").pipe(
   Atom.withLabel("web-thread-status:empty"),
+);
+const EMPTY_MESSAGES_ATOM = Atom.make(EMPTY_MESSAGES).pipe(
+  Atom.withLabel("web-thread-messages:empty"),
+);
+const EMPTY_WORK_ENTRIES_ATOM = Atom.make(EMPTY_WORK_ENTRIES).pipe(
+  Atom.withLabel("web-thread-work-entries:empty"),
+);
+const EMPTY_PROPOSED_PLANS_ATOM = Atom.make(EMPTY_PROPOSED_PLANS).pipe(
+  Atom.withLabel("web-thread-proposed-plans:empty"),
+);
+const EMPTY_VISIBLE_TURN_ITEMS_ATOM = Atom.make(EMPTY_VISIBLE_TURN_ITEMS).pipe(
+  Atom.withLabel("web-thread-visible-turn-items:empty"),
+);
+const EMPTY_RUNTIME_ATOM = Atom.make<ThreadRuntimeSummary | null>(null).pipe(
+  Atom.withLabel("web-thread-runtime:empty"),
 );
 
 export const activeEnvironmentIdAtom = Atom.make<EnvironmentId | null>(null).pipe(
@@ -144,6 +164,44 @@ export function useThread(
     }),
   );
   return useMemo(() => mergeEnvironmentThread(detail, shell), [detail, shell]);
+}
+
+export function useThreadMessages(
+  ref: ScopedThreadRef | null,
+): ReadonlyArray<ThreadConversationMessage> {
+  return useAtomValue(
+    ref === null ? EMPTY_MESSAGES_ATOM : environmentThreadDetails.messagesAtom(ref),
+  );
+}
+
+export function useThreadWorkEntries(ref: ScopedThreadRef | null): ReadonlyArray<ThreadWorkEntry> {
+  return useAtomValue(
+    ref === null ? EMPTY_WORK_ENTRIES_ATOM : environmentThreadDetails.workEntriesAtom(ref),
+  );
+}
+
+export function useThreadProposedPlans(
+  ref: ScopedThreadRef | null,
+): ReadonlyArray<ThreadProposedPlan> {
+  return useAtomValue(
+    ref === null ? EMPTY_PROPOSED_PLANS_ATOM : environmentThreadDetails.proposedPlansAtom(ref),
+  );
+}
+
+export function useThreadVisibleTurnItems(
+  ref: ScopedThreadRef | null,
+): ReadonlyArray<OrchestrationV2ProjectedTurnItem> {
+  return useAtomValue(
+    ref === null
+      ? EMPTY_VISIBLE_TURN_ITEMS_ATOM
+      : environmentThreadDetails.visibleTurnItemsAtom(ref),
+  );
+}
+
+export function useThreadRuntime(ref: ScopedThreadRef | null): ThreadRuntimeSummary | null {
+  return useAtomValue(
+    ref === null ? EMPTY_RUNTIME_ATOM : environmentThreadDetails.runtimeAtom(ref),
+  );
 }
 
 export function readProject(ref: ScopedProjectRef): EnvironmentProject | null {

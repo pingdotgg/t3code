@@ -2,6 +2,11 @@ import {
   ConnectionPersistenceError,
   ConnectionRegistrationStore,
   ConnectionTargetStore,
+  EnvironmentCacheStore,
+  ORCHESTRATION_CACHE_SCHEMA_VERSION,
+  StoredOrchestrationShellSnapshot,
+  StoredOrchestrationThreadSnapshot,
+  decodeOrDiscardOrchestrationCache,
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
   removeCatalogValue,
@@ -13,11 +18,88 @@ import {
   CredentialStore,
   ProfileStore,
 } from "@t3tools/client-runtime/connection";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as CatalogStore from "./catalog-store";
+import * as Schema from "effect/Schema";
+import * as SecureStore from "expo-secure-store";
+
+import { makeCatalogStore, type SecureCatalogStorage } from "./catalog-store";
+
+const SHELL_SNAPSHOT_CACHE_DIRECTORY = "connection-shell-snapshots";
+const LEGACY_SHELL_SNAPSHOT_CACHE_DIRECTORY = "shell-snapshots";
+const THREAD_SNAPSHOT_CACHE_DIRECTORY = "connection-thread-snapshots";
+
+const StoredShellSnapshot = StoredOrchestrationShellSnapshot;
+const StoredThreadSnapshot = StoredOrchestrationThreadSnapshot;
+const decodeStoredShellSnapshot = Schema.decodeUnknownResult(StoredShellSnapshot);
+const encodeStoredShellSnapshot = Schema.encodeUnknownResult(StoredShellSnapshot);
+const decodeStoredThreadSnapshot = Schema.decodeUnknownResult(StoredThreadSnapshot);
+const encodeStoredThreadSnapshot = Schema.encodeUnknownResult(StoredThreadSnapshot);
+
+function catalogError(operation: string, cause: unknown) {
+  return new ConnectionTransientError({
+    reason: "remote-unavailable",
+    detail: `Could not ${operation} the local connection catalog: ${String(cause)}`,
+  });
+}
+
+function shellPersistenceError(
+  operation:
+    | "load-shell"
+    | "save-shell"
+    | "load-thread"
+    | "save-thread"
+    | "remove-thread"
+    | "clear-environment",
+  cause: unknown,
+) {
+  return new ConnectionPersistenceError({
+    operation,
+    message: `Could not ${operation.replaceAll("-", " ")}: ${String(cause)}`,
+  });
+}
+
+function threadSnapshotFileName(threadId: ThreadId): string {
+  return `${encodeURIComponent(threadId)}.json`;
+}
+
+const threadSnapshotDirectory = Effect.fn("mobile.connectionStorage.threadSnapshotDirectory")(
+  function* (
+    environmentId: EnvironmentId,
+    operation: "load-thread" | "save-thread" | "remove-thread" | "clear-environment",
+  ) {
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const { Directory, Paths } = await import("expo-file-system");
+        const directory = new Directory(
+          Paths.document,
+          THREAD_SNAPSHOT_CACHE_DIRECTORY,
+          encodeURIComponent(environmentId),
+        );
+        if (operation !== "clear-environment") {
+          directory.create({ idempotent: true, intermediates: true });
+        }
+        return directory;
+      },
+      catch: (cause) => shellPersistenceError(operation, cause),
+    });
+  },
+);
+
+const threadSnapshotFile = Effect.fn("mobile.connectionStorage.threadSnapshotFile")(function* (
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  operation: "load-thread" | "save-thread" | "remove-thread",
+) {
+  const { File } = yield* Effect.promise(() => import("expo-file-system"));
+  return new File(
+    yield* threadSnapshotDirectory(environmentId, operation),
+    threadSnapshotFileName(threadId),
+  );
+});
 
 function targetPersistenceError(
   operation: "list-targets" | "register-connection" | "remove-connection",
@@ -128,6 +210,172 @@ export const connectionStorageLayer = Layer.effectContext(
           ),
         })),
     });
+    const cacheStore = EnvironmentCacheStore.of({
+      loadShell: (environmentId) =>
+        Effect.gen(function* () {
+          const file = yield* shellSnapshotFile(environmentId, "load-shell");
+          if (file.exists) {
+            const raw = yield* Effect.tryPromise({
+              try: () => file.text(),
+              catch: (cause) => shellPersistenceError("load-shell", cause),
+            });
+            const parsed = yield* Effect.try({
+              try: () => JSON.parse(raw) as unknown,
+              catch: (cause) => shellPersistenceError("load-shell", cause),
+            });
+            const stored = yield* Effect.fromResult(decodeStoredShellSnapshot(parsed)).pipe(
+              Effect.mapError((cause) => shellPersistenceError("load-shell", cause)),
+            );
+            return stored.environmentId === environmentId
+              ? Option.some(stored.snapshot)
+              : Option.none();
+          }
+
+          const legacyFile = yield* legacyShellSnapshotFile(environmentId, "load-shell");
+          if (legacyFile.exists) {
+            yield* Effect.try({
+              try: () => legacyFile.delete(),
+              catch: (cause) => shellPersistenceError("load-shell", cause),
+            });
+          }
+
+          return Option.none();
+        }).pipe((decode) =>
+          decodeOrDiscardOrchestrationCache(
+            decode,
+            shellSnapshotFile(environmentId, "load-shell").pipe(
+              Effect.flatMap((file) =>
+                Effect.try({
+                  try: () => {
+                    if (file.exists) file.delete();
+                  },
+                  catch: (cause) => shellPersistenceError("load-shell", cause),
+                }),
+              ),
+              Effect.catch(() => Effect.void),
+            ),
+          ),
+        ),
+      saveShell: (environmentId, snapshot) =>
+        Effect.gen(function* () {
+          const file = yield* shellSnapshotFile(environmentId, "save-shell");
+          const stored = {
+            schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
+            environmentId,
+            snapshot,
+          } as const;
+          const encoded = yield* Effect.fromResult(encodeStoredShellSnapshot(stored)).pipe(
+            Effect.mapError((cause) => shellPersistenceError("save-shell", cause)),
+          );
+          yield* Effect.try({
+            try: () => {
+              if (!file.exists) {
+                file.create({ intermediates: true, overwrite: true });
+              }
+              file.write(JSON.stringify(encoded));
+            },
+            catch: (cause) => shellPersistenceError("save-shell", cause),
+          });
+        }),
+      loadThread: (environmentId, threadId) =>
+        Effect.gen(function* () {
+          const file = yield* threadSnapshotFile(environmentId, threadId, "load-thread");
+          if (!file.exists) {
+            return Option.none();
+          }
+          const raw = yield* Effect.tryPromise({
+            try: () => file.text(),
+            catch: (cause) => shellPersistenceError("load-thread", cause),
+          });
+          const parsed = yield* Effect.try({
+            try: () => JSON.parse(raw) as unknown,
+            catch: (cause) => shellPersistenceError("load-thread", cause),
+          });
+          const stored = yield* Effect.fromResult(decodeStoredThreadSnapshot(parsed)).pipe(
+            Effect.mapError((cause) => shellPersistenceError("load-thread", cause)),
+          );
+          return stored.environmentId === environmentId && stored.threadId === threadId
+            ? Option.some(stored.thread)
+            : Option.none();
+        }).pipe((decode) =>
+          decodeOrDiscardOrchestrationCache(
+            decode,
+            threadSnapshotFile(environmentId, threadId, "load-thread").pipe(
+              Effect.flatMap((file) =>
+                Effect.try({
+                  try: () => {
+                    if (file.exists) file.delete();
+                  },
+                  catch: (cause) => shellPersistenceError("load-thread", cause),
+                }),
+              ),
+              Effect.catch(() => Effect.void),
+            ),
+          ),
+        ),
+      saveThread: (environmentId, thread) =>
+        Effect.gen(function* () {
+          const file = yield* threadSnapshotFile(environmentId, thread.thread.id, "save-thread");
+          const encoded = yield* Effect.fromResult(
+            encodeStoredThreadSnapshot({
+              schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
+              environmentId,
+              threadId: thread.thread.id,
+              thread,
+            }),
+          ).pipe(Effect.mapError((cause) => shellPersistenceError("save-thread", cause)));
+          yield* Effect.try({
+            try: () => {
+              if (!file.exists) {
+                file.create({ intermediates: true, overwrite: true });
+              }
+              file.write(JSON.stringify(encoded));
+            },
+            catch: (cause) => shellPersistenceError("save-thread", cause),
+          });
+        }),
+      removeThread: (environmentId, threadId) =>
+        Effect.gen(function* () {
+          const file = yield* threadSnapshotFile(environmentId, threadId, "remove-thread");
+          if (file.exists) {
+            file.delete();
+          }
+        }).pipe(
+          Effect.mapError((cause) =>
+            cause._tag === "ConnectionPersistenceError"
+              ? cause
+              : shellPersistenceError("remove-thread", cause),
+          ),
+        ),
+      clear: (environmentId) =>
+        Effect.gen(function* () {
+          const file = yield* shellSnapshotFile(environmentId, "clear-environment");
+          if (file.exists) {
+            yield* Effect.try({
+              try: () => file.delete(),
+              catch: (cause) => shellPersistenceError("clear-environment", cause),
+            });
+          }
+          const legacyFile = yield* legacyShellSnapshotFile(environmentId, "clear-environment");
+          if (legacyFile.exists) {
+            yield* Effect.try({
+              try: () => legacyFile.delete(),
+              catch: (cause) => shellPersistenceError("clear-environment", cause),
+            });
+          }
+          const threadDirectory = yield* threadSnapshotDirectory(
+            environmentId,
+            "clear-environment",
+          );
+          if (threadDirectory.exists) {
+            yield* Effect.try({
+              try: () => threadDirectory.delete(),
+              catch: (cause) => shellPersistenceError("clear-environment", cause),
+            });
+          }
+        }),
+    });
+
     return Context.make(ConnectionTargetStore, targetStore).pipe(
       Context.add(ConnectionRegistrationStore, registrationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),

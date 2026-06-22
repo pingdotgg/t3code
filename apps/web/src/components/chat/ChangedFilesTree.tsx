@@ -1,4 +1,4 @@
-import { type TurnId } from "@t3tools/contracts";
+import { type RunId } from "@t3tools/contracts";
 import { memo, useCallback, useMemo, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import {
@@ -23,15 +23,15 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
 export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
-  turnId: TurnId;
+  runId: RunId;
   files: ReadonlyArray<TurnDiffFileChange>;
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
   onToggleAllDirectories: () => void;
-  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
 }) {
   const {
-    turnId,
+    runId,
     files,
     allDirectoriesExpanded,
     resolvedTheme,
@@ -110,26 +110,73 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           </Tooltip>
         </div>
       </div>
-      <ChangedFilesTree
-        key={`${turnId}:${allDirectoriesExpanded}`}
-        turnId={turnId}
-        files={files}
-        allDirectoriesExpanded={allDirectoriesExpanded}
-        resolvedTheme={resolvedTheme}
-        onOpenTurnDiff={onOpenTurnDiff}
-      />
+      {expanded ? (
+        <ChangedFilesTree
+          key={`changed-files-tree:${runId}`}
+          runId={runId}
+          files={files}
+          allDirectoriesExpanded={allDirectoriesExpanded}
+          resolvedTheme={resolvedTheme}
+          onOpenTurnDiff={onOpenTurnDiff}
+        />
+      ) : compactPreviewVisible ? (
+        <div className="px-2 pb-1.5 pt-1">
+          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted-foreground">
+            {scopeSummary.map((scope, index) => (
+              <span key={scope.label} className="inline-flex items-center gap-1">
+                {index > 0 ? <span aria-hidden="true">·</span> : null}
+                <span className="font-mono text-foreground/75">{scope.label}</span>
+                <span>
+                  {scope.fileCount} file{scope.fileCount === 1 ? "" : "s"}
+                </span>
+              </span>
+            ))}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {previewFiles.map((file) => (
+              <Tooltip key={file.path}>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/70 bg-background/45 px-1.5 py-1 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={() => onOpenTurnDiff(turnId, file.path)}
+                    />
+                  }
+                >
+                  <PierreEntryIcon
+                    pathValue={file.path}
+                    kind="file"
+                    theme={resolvedTheme}
+                    className="size-3 shrink-0 text-muted-foreground/70"
+                  />
+                  <span className="truncate">{changedFileName(file.path)}</span>
+                </TooltipTrigger>
+                <TooltipPopup side="top">{file.path}</TooltipPopup>
+              </Tooltip>
+            ))}
+            <button
+              type="button"
+              className="rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => onExpandedChange(true)}
+            >
+              Show all {files.length} files
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 });
 
 export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
-  turnId: TurnId;
+  runId: RunId;
   files: ReadonlyArray<TurnDiffFileChange>;
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
-  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
 }) {
-  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId } = props;
+  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, runId } = props;
   const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
   const directoryPathsKey = useMemo(
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
@@ -213,7 +260,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
         type="button"
         className="group flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
-        onClick={() => onOpenTurnDiff(turnId, node.path)}
+        onClick={() => onOpenTurnDiff(runId, node.path)}
       >
         {hasDirectoryNodes || depth > 0 ? (
           <span aria-hidden="true" className="size-3.5 shrink-0" />

@@ -8,16 +8,29 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   attachmentFileExtension,
   createAttachmentId,
+<<<<<<< HEAD
   createPendingAttachmentId,
   parseAttachmentUuid,
   parseAttachmentFileExtension,
   planAttachmentClaim,
+=======
+  createDeterministicAttachmentId,
+>>>>>>> aedd7c58a2 (Complete orchestration V2 frontend cutover)
   parseThreadSegmentFromAttachmentId,
   resolveAttachmentPathById,
-  sweepStalePendingAttachments,
 } from "./attachmentStore.ts";
 
 describe("attachmentStore", () => {
+  it("derives stable attachment ids for idempotent message retries", () => {
+    const first = createDeterministicAttachmentId("thread-1", "message-1:0");
+    const retry = createDeterministicAttachmentId("thread-1", "message-1:0");
+    const next = createDeterministicAttachmentId("thread-1", "message-1:1");
+
+    expect(first).toBe(retry);
+    expect(next).not.toBe(first);
+    expect(first && parseThreadSegmentFromAttachmentId(first)).toBe("thread-1");
+  });
+
   it("sanitizes thread ids when creating attachment ids", () => {
     const attachmentId = createAttachmentId("thread.folder/unsafe space");
     expect(attachmentId).toBeTruthy();
@@ -50,6 +63,7 @@ describe("attachmentStore", () => {
     expect(parseThreadSegmentFromAttachmentId(attachmentId)).toBe("thread-foo");
   });
 
+<<<<<<< HEAD
   it("reserves the pending attachment segment", () => {
     const pendingId = createPendingAttachmentId();
     expect(parseThreadSegmentFromAttachmentId(pendingId)).toBe("pending");
@@ -75,6 +89,8 @@ describe("attachmentStore", () => {
     expect(createAttachmentId("x".repeat(80), ".abcdefghij")?.length).toBeLessThanOrEqual(128);
   });
 
+=======
+>>>>>>> aedd7c58a2 (Complete orchestration V2 frontend cutover)
   it("resolves attachment path by id using the extension that exists on disk", () => {
     const attachmentsDir = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3code-attachment-store-"),
@@ -108,6 +124,7 @@ describe("attachmentStore", () => {
       NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
     }
   });
+<<<<<<< HEAD
 
   it("resolves generic attachments without scanning the attachment directory", () => {
     const attachmentsDir = NodeFS.mkdtempSync(
@@ -196,4 +213,6 @@ describe("attachmentStore", () => {
       NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
     }
   });
+=======
+>>>>>>> aedd7c58a2 (Complete orchestration V2 frontend cutover)
 });

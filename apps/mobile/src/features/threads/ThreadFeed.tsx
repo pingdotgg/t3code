@@ -1,32 +1,7 @@
 import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
-import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
-import type {
-  ChatAttachment,
-  ChatFileAttachment,
-  ChatImageAttachment,
-  EnvironmentId,
-  MessageId,
-  ThreadId,
-  TurnId,
-} from "@t3tools/contracts";
-import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
-import {
-  codexArtifactTemplatePresentationLabel,
-  type CodexArtifactTemplate,
-} from "@t3tools/client-runtime/codex-artifact-templates";
-import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
-import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import {
-  classifyMarkdownImageSource,
-  markdownImageSourceFragment,
-} from "@t3tools/client-runtime/markdown-images";
-import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
-import {
-  renderCodexFileCitationsAsMarkdown,
-  splitCodexArtifactTemplateMarkdown,
-} from "@t3tools/client-runtime/codex-markdown-directives";
+import { type LegendListRef } from "@legendapp/list/react-native";
+import type { EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
@@ -76,7 +51,6 @@ import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reani
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useFontFamily } from "../../lib/useFontFamily";
-import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
@@ -85,7 +59,6 @@ import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import {
   hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
-  type MarkdownImageRenderer,
   type NativeMarkdownTextStyle,
   type SelectableMarkdownSkill,
 } from "../../native/SelectableMarkdownText";
@@ -114,12 +87,7 @@ import {
 } from "../review/nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "../review/reviewModel";
 import { cn } from "../../lib/cn";
-import {
-  deriveCenteredContentHorizontalPadding,
-  deriveThreadFeedInitialContentInset,
-  deriveThreadWorkLogSizing,
-  type LayoutVariant,
-} from "../../lib/layout";
+import { deriveCenteredContentHorizontalPadding, type LayoutVariant } from "../../lib/layout";
 import {
   resolveMarkdownFontSizes,
   resolveNativeMarkdownTypography,
@@ -137,14 +105,9 @@ import {
 import {
   deriveThreadFeedPresentation,
   type ThreadFeedEntry,
-  type ThreadFeedLatestTurn,
+  type ThreadFeedLatestRun,
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
-import {
-  resolveThreadFeedLiveFollow,
-  type ThreadFeedLiveFollowEvent,
-  type ThreadWorkGroupScrollPosition,
-} from "./thread-feed-live-follow";
 import {
   collapsedWorkLogHeight,
   ThreadDisclosureChevron,
@@ -153,22 +116,8 @@ import {
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
-import {
-  assetEnvironment,
-  useAssetUrl,
-  useAssetUrlState,
-  useRefreshAssetUrl,
-} from "../../state/assets";
-import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
-import { usePreparedConnection } from "../../state/session";
-import * as Option from "effect/Option";
-import {
-  basename,
-  fileRoutePathSegments,
-  isAbsolutePath,
-  resolveWorkspaceRelativeFilePath,
-} from "../files/filePath";
-import { MARKDOWN_IMAGE_MAX_WIDTH, resolveMarkdownImageDisplaySize } from "./markdownImageSize";
+import { useAssetUrl } from "../../state/assets";
+import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // Native iOS blockquotes and adjacent selectable text are separate layout
@@ -216,12 +165,10 @@ export interface ThreadFeedProps {
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly contentPresentation: ThreadContentPresentation;
   readonly agentLabel: string;
-  readonly latestTurn: ThreadFeedLatestTurn | null;
-  readonly activeWorkStartedAt: string | null;
+  readonly latestRun: ThreadFeedLatestRun | null;
   readonly listRef: RefObject<LegendListRef | null>;
   readonly freeze: SharedValue<boolean>;
   readonly anchorMessageId: MessageId | null;
-  readonly submittedMessageId: MessageId | null;
   readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
@@ -229,7 +176,6 @@ export interface ThreadFeedProps {
   readonly layoutVariant?: LayoutVariant;
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
-  readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   /** Non-null when older turns exist beyond the loaded window. */
@@ -468,220 +414,6 @@ function MessageAttachmentUnknown(props: { readonly name: string }) {
         {props.name}
       </Text>
     </View>
-  );
-}
-
-function ThreadMarkdownImageView(props: {
-  readonly uri: string | null;
-  readonly sourceKey: string;
-  readonly unavailable: boolean;
-  readonly alt: string | null;
-  readonly actionsSource?: MediaActionsSource;
-  readonly onPressPreview: (source: FilePreviewSource) => void;
-}) {
-  const sourceIdentifier = useId();
-  const mediaActions = useMediaActions(props.actionsSource);
-  const [availableWidth, setAvailableWidth] = useState(0);
-  const [sourceSize, setSourceSize] = useState<{ width: number; height: number } | null>(null);
-  const [failedUri, setFailedUri] = useState<string | null>(null);
-
-  useEffect(() => {
-    setSourceSize(null);
-  }, [props.sourceKey]);
-
-  useEffect(() => {
-    setFailedUri(null);
-  }, [props.uri]);
-
-  const displaySize =
-    sourceSize === null
-      ? null
-      : resolveMarkdownImageDisplaySize({
-          sourceWidth: sourceSize.width,
-          sourceHeight: sourceSize.height,
-          availableWidth,
-        });
-  const failed = props.unavailable || (props.uri !== null && failedUri === props.uri);
-  const placeholderWidth: ViewStyle["width"] =
-    availableWidth > 0 ? Math.min(availableWidth, MARKDOWN_IMAGE_MAX_WIDTH) : "100%";
-  const frameStyle: ViewStyle = displaySize ?? { width: placeholderWidth, aspectRatio: 16 / 9 };
-
-  return (
-    <View
-      onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width)}
-      style={{ alignSelf: "stretch", gap: 6 }}
-    >
-      {props.uri === null || failed ? (
-        <View
-          className="items-center justify-center rounded-[10px] bg-md-code-bg"
-          style={{
-            ...frameStyle,
-          }}
-        >
-          {failed ? (
-            <Text className="text-xs text-foreground-muted">Image unavailable</Text>
-          ) : (
-            <ActivityIndicator />
-          )}
-          {props.actionsSource ? (
-            <View className="absolute right-1 top-1">
-              <MediaActionsMenu media={mediaActions} />
-            </View>
-          ) : null}
-        </View>
-      ) : (
-        <PresentationSource identifier={sourceIdentifier} style={{ alignSelf: "flex-start" }}>
-          <View>
-            <MediaActionsMenu media={mediaActions}>
-              <Pressable
-                accessibilityRole="imagebutton"
-                accessibilityLabel={props.alt ?? "Markdown image"}
-                onPress={() =>
-                  props.onPressPreview({
-                    kind: "image",
-                    uri: props.uri!,
-                    name: props.alt ?? "Image",
-                    sourceIdentifier,
-                    actionsSource: props.actionsSource,
-                  })
-                }
-                style={{ alignSelf: "flex-start" }}
-              >
-                <View
-                  className="items-center justify-center overflow-hidden rounded-[10px] bg-md-code-bg"
-                  style={{
-                    ...frameStyle,
-                  }}
-                >
-                  <ThreadMarkdownImageRequest
-                    key={props.uri}
-                    uri={props.uri}
-                    onLoad={setSourceSize}
-                    onError={() => setFailedUri(props.uri)}
-                  />
-                </View>
-              </Pressable>
-            </MediaActionsMenu>
-            {props.actionsSource ? (
-              <View className="absolute right-1 top-1">
-                <MediaActionsMenu media={mediaActions} />
-              </View>
-            ) : null}
-          </View>
-        </PresentationSource>
-      )}
-      {props.alt ? (
-        <Text selectable className="text-xs text-foreground-muted">
-          {props.alt}
-        </Text>
-      ) : null}
-    </View>
-  );
-}
-
-function ThreadMarkdownImageRequest(props: {
-  readonly uri: string;
-  readonly onLoad: (sourceSize: { width: number; height: number }) => void;
-  readonly onError: () => void;
-}) {
-  const [loaded, setLoaded] = useState(false);
-
-  return (
-    <>
-      <Image
-        source={{ uri: props.uri }}
-        resizeMode="contain"
-        accessible={false}
-        onLoad={(event) => {
-          setLoaded(true);
-          props.onLoad(event.nativeEvent.source);
-        }}
-        onError={props.onError}
-        style={{ width: "100%", height: "100%", opacity: loaded ? 1 : 0 }}
-      />
-      {loaded ? null : (
-        <View
-          pointerEvents="none"
-          style={[StyleSheet.absoluteFill, { alignItems: "center", justifyContent: "center" }]}
-        >
-          <Text className="text-xs text-foreground-muted">Loading image…</Text>
-        </View>
-      )}
-    </>
-  );
-}
-
-/** Environment-hosted image that loads through a signed asset URL. */
-function ThreadMarkdownImage(props: {
-  readonly environmentId: EnvironmentId;
-  readonly resource: Extract<AssetResource, { readonly _tag: "attachment" | "media-file" }>;
-  readonly alt: string | null;
-  readonly srcFragment?: string;
-  readonly actionsSource?: MediaActionsSource;
-  readonly onPressPreview: (source: FilePreviewSource) => void;
-}) {
-  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
-
-  return (
-    <ThreadMarkdownImageView
-      uri={assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null}
-      sourceKey={
-        props.resource._tag === "attachment"
-          ? `attachment:${props.resource.attachmentId}`
-          : `workspace:${props.resource.path}`
-      }
-      unavailable={assetUrl._tag === "Failure"}
-      alt={props.alt}
-      actionsSource={props.actionsSource}
-      onPressPreview={props.onPressPreview}
-    />
-  );
-}
-
-const ThreadMediaVisibleContext = createContext(false);
-// LegendList only computes hook visibility when the list has a viewability config.
-const THREAD_MEDIA_VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 0 };
-
-function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
-  const [visible, setVisible] = useState(false);
-  useViewabilityAmount<ThreadFeedEntry>(
-    useCallback((token) => setVisible(token.sizeVisible > 0), []),
-  );
-  return <ThreadMediaVisibleContext value={visible}>{props.children}</ThreadMediaVisibleContext>;
-}
-
-function ThreadMarkdownVideo(props: {
-  readonly source: MediaVideoPreviewSource;
-  readonly onExpand: (source: MediaVideoPreviewSource) => void;
-}) {
-  const { source } = props;
-  const visible = useContext(ThreadMediaVisibleContext);
-  const thumbnailKey = mediaVideoThumbnailKey(source);
-  const asset = useAssetUrlState(
-    "environmentId" in source ? source.environmentId : null,
-    "resource" in source ? source.resource : null,
-  );
-  const refreshAssetUrl = useRefreshAssetUrl(
-    "environmentId" in source ? source.environmentId : null,
-    "resource" in source ? source.resource : null,
-  );
-  const uri = mediaVideoPreviewUri(source, asset._tag === "Success" ? asset.url : null);
-  return (
-    <MediaVideoPlayer
-      key={thumbnailKey}
-      uri={uri}
-      resolvePlaybackUri={
-        "resource" in source
-          ? async () => mediaVideoPreviewUri(source, await refreshAssetUrl())
-          : undefined
-      }
-      name={source.name}
-      thumbnailKey={thumbnailKey}
-      thumbnailVisible={visible}
-      unavailable={"resource" in source && asset._tag === "Failure"}
-      actionsSource={source.actionsSource}
-      onExpand={() => props.onExpand(source)}
-    />
   );
 }
 
@@ -1038,10 +770,7 @@ function useReviewCommentColors(): ReviewCommentColors {
   );
 }
 
-function useMarkdownStyles(
-  onLinkPress: (href: string) => void,
-  renderImage: MarkdownImageRenderer,
-): MarkdownStyleSets {
+function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSets {
   const { appearance, themeAppearance } = useAppearancePreferences();
   const markdownFontSizes = useMemo(
     () => resolveMarkdownFontSizes(appearance.baseFontSize),
@@ -1252,24 +981,21 @@ function useMarkdownStyles(
           })}
         </View>
       ),
-      image: ({ node }) =>
-        node.href
-          ? (renderImage({
-              href: node.href,
-              alt: node.alt ?? null,
-              title: node.title ?? null,
-            }) ?? undefined)
-          : undefined,
-      code_inline: ({ content }) => (
-        <MarkdownInlineCode
-          content={content ?? ""}
-          textColor={inlineTextColor}
-          codeColor={inlineCodeTextColor}
-          fontSize={markdownFontSizes.codeBlockFontSize}
-          lineHeight={markdownFontSizes.bodyLineHeight}
-          onLinkPress={onLinkPress}
-        />
-      ),
+      code_inline: ({ content }) => {
+        const value = content ?? "";
+        return (
+          <NativeText
+            className="font-mono"
+            style={{
+              color: inlineCodeTextColor,
+              fontSize: markdownFontSizes.codeBlockFontSize,
+              lineHeight: markdownFontSizes.bodyLineHeight,
+            }}
+          >
+            {value}
+          </NativeText>
+        );
+      },
       ...(preserveSoftBreaks
         ? {
             soft_break: () => <NativeText>{"\n"}</NativeText>,
@@ -1428,7 +1154,6 @@ function useMarkdownStyles(
     nativeMarkdownTypography,
     onLinkPress,
     regularFontFamily,
-    renderImage,
     themeMode,
     userBubbleForegroundMuted,
     userBubbleSkillForeground,
@@ -1443,16 +1168,13 @@ function renderFeedEntry(
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
     readonly workGroupScrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
-    readonly unsettledTurnId: TurnId | null;
+    readonly unsettledTurnId: RunId | null;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
-    readonly onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
-    readonly onToggleWorkRow: (rowId: string, anchorKey: string) => void;
-    readonly onToggleTurnFold: (turnId: TurnId) => void;
-    readonly onPressPreview: (source: FilePreviewSource) => void;
-    readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
+    readonly onToggleWorkGroup: (groupId: string) => void;
+    readonly onToggleWorkRow: (rowId: string) => void;
+    readonly onToggleTurnFold: (runId: RunId) => void;
+    readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
     readonly onMarkdownLinkPress: (href: string) => void;
-    readonly renderMarkdownImage: MarkdownImageRenderer;
-    readonly renderViewedImage: MarkdownImageRenderer;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly userBubbleColor: string | import("react-native").ColorValue;
     readonly markdownStyles: MarkdownStyleSets;
@@ -1464,16 +1186,12 @@ function renderFeedEntry(
   const entry = info.item;
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
 
-  if (entry.type === "working") {
-    return <WorkingTimelineRow startedAt={entry.createdAt} />;
-  }
-
-  if (entry.type === "turn-fold") {
+  if (entry.type === "run-fold") {
     return (
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: entry.expanded }}
-        onPress={() => props.onToggleTurnFold(entry.turnId)}
+        onPress={() => props.onToggleTurnFold(entry.runId)}
         hitSlop={4}
         className="mb-1 min-h-11 flex-row items-center gap-2 border-b border-adaptive-neutral-200-a80-white-a8 px-2"
         style={{
@@ -1526,7 +1244,7 @@ function renderFeedEntry(
     const assistantTurnStillInProgress =
       message.role === "assistant" &&
       props.unsettledTurnId !== null &&
-      message.turnId === props.unsettledTurnId;
+      message.runId === props.unsettledTurnId;
     const showAssistantMeta =
       message.role === "assistant" &&
       props.terminalAssistantMessageIds.has(message.id) &&
@@ -1559,7 +1277,6 @@ function renderFeedEntry(
                 reviewCommentColors={props.reviewCommentColors}
                 skills={props.skills}
                 onLinkPress={props.onMarkdownLinkPress}
-                renderImage={props.renderMarkdownImage}
               />
             ) : null}
             {attachments.map((attachment) => {
@@ -1615,15 +1332,24 @@ function renderFeedEntry(
         className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-1 px-1")}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
-        {renderedText.trim().length > 0 ? (
-          <AssistantMarkdownContent
-            markdown={renderedText}
-            markdownStyles={styles}
-            onLinkPress={props.onMarkdownLinkPress}
-            onUseArtifactTemplate={props.onUseArtifactTemplate}
-            renderImage={props.renderMarkdownImage}
-            skills={props.skills}
-          />
+        {message.text.trim().length > 0 ? (
+          hasNativeSelectableMarkdownText() ? (
+            <SelectableMarkdownText
+              markdown={message.text}
+              skills={props.skills}
+              textStyle={styles.nativeTextStyle}
+              onLinkPress={props.onMarkdownLinkPress}
+            />
+          ) : (
+            <Markdown
+              options={{ gfm: true }}
+              renderers={styles.renderers}
+              styles={styles.styles}
+              theme={styles.theme}
+            >
+              {message.text}
+            </Markdown>
+          )
         ) : null}
         {attachments.map((attachment) => {
           return isImageAttachment(attachment) ? (
@@ -1716,7 +1442,6 @@ function UserMessageContent(props: {
   readonly reviewCommentColors: ReviewCommentColors;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onLinkPress: (href: string) => void;
-  readonly renderImage: MarkdownImageRenderer;
 }) {
   const segments = parseReviewCommentMessageSegments(props.text);
   const hasReviewComment = segments.some((segment) => segment.kind === "review-comment");
@@ -1729,7 +1454,6 @@ function UserMessageContent(props: {
           textStyle={props.markdownStyles.nativeTextStyle}
           preserveSoftBreaks
           onLinkPress={props.onLinkPress}
-          renderImage={props.renderImage}
         />
       );
     }
@@ -1771,7 +1495,6 @@ function UserMessageContent(props: {
             textStyle={props.markdownStyles.nativeTextStyle}
             preserveSoftBreaks
             onLinkPress={props.onLinkPress}
-            renderImage={props.renderImage}
           />
         ) : (
           <Markdown
@@ -1985,50 +1708,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const foldSettleFrameRef = useRef<number | null>(null);
   const foldSettleSecondFrameRef = useRef<number | null>(null);
-  const disclosureAnchorKeyRef = useRef<string | null>(null);
-  const headerMaterialVisibleRef = useRef(false);
-  const previousLatestTurnRef = useRef(props.latestTurn);
-  const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { width: windowWidth } = useWindowDimensions();
-  const { appearance } = useAppearancePreferences();
-  const [viewportWidth, setViewportWidth] = useState(() =>
-    props.layoutVariant === "split" ? 0 : windowWidth,
-  );
-  const [viewportHeight, setViewportHeight] = useState(0);
-  const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
-  // Live-follow latch. LegendList's maintainScrollAtEnd alone re-pins the feed
-  // whenever the viewport drifts back inside its geometric threshold, which
-  // yanked users off history they were reading every time a stream chunk grew
-  // a row. Scrolling away or expanding a disclosure above the end breaks
-  // follow; reaching the end (or sending / switching threads) re-arms it.
-  const [endFollowEnabled, setEndFollowEnabled] = useState(true);
-  const endFollowEnabledRef = useRef(true);
-  // A "user scroll session" spans from drag start through the end of its
-  // momentum; scroll events only break follow inside that session, so MVCP
-  // compensations and programmatic scrolls never strand a follower.
-  const userScrollSessionRef = useRef(false);
-  const setEndFollow = useCallback(
-    (enabled: boolean) => {
-      if (endFollowEnabledRef.current === enabled) {
-        return;
-      }
-      endFollowEnabledRef.current = enabled;
-      setEndFollowEnabled(enabled);
-      props.onEndFollowEnabledChange?.(enabled);
-    },
-    [props.onEndFollowEnabledChange],
-  );
-  const transitionEndFollow = useCallback(
-    (event: ThreadFeedLiveFollowEvent) => {
-      setEndFollow(resolveThreadFeedLiveFollow(endFollowEnabledRef.current, event));
-    },
-    [setEndFollow],
-  );
+  const previousLatestTurnRef = useRef(props.latestRun);
+  const { width: viewportWidth } = useWindowDimensions();
+  const [foldToggleSettling, setFoldToggleSettling] = useState(false);
   const [interactionState, setInteractionState] = useState<{
     readonly copiedRowId: string | null;
     readonly expandedWorkGroups: Record<string, boolean>;
     readonly expandedWorkRows: Record<string, boolean>;
-    readonly expandedTurnIds: ReadonlySet<TurnId>;
+    readonly expandedTurnIds: ReadonlySet<RunId>;
   }>({
     copiedRowId: null,
     expandedWorkGroups: {},
@@ -2056,11 +1743,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const bottomContentInset = props.contentBottomInset ?? 18;
   const usesNativeAutomaticInsets =
     props.usesAutomaticContentInsets === true && Platform.OS === "ios";
-  const initialContentInset = deriveThreadFeedInitialContentInset({
-    platform: Platform.OS,
-    usesNativeAutomaticInsets,
-    bottomContentInset,
-  });
   // With automatic insets the header inset lives in UIKit's adjustedContentInset,
   // which LegendList's JS anchoring math cannot see — it measures the anchored
   // end space from the scroll view's frame top. Fold the header height back into
@@ -2168,89 +1850,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     },
     [props.environmentId, props.threadId, props.workspaceRoot, navigation],
   );
-  const renderMarkdownImage = useCallback<MarkdownImageRenderer>(
-    (image) => {
-      const media = resolveMarkdownMediaPreview(image.href, {
-        environmentId: props.environmentId,
-        threadId: props.threadId,
-        workspaceRoot: props.workspaceRoot,
-        imageEmbed: true,
-      });
-      if (media?.kind === "video") {
-        return (
-          <ThreadMarkdownVideo
-            key={image.href}
-            source={{ ...media.source, name: image.alt ?? media.source.name }}
-            onExpand={(source) => setExpandedVideo((current) => current ?? source)}
-          />
-        );
-      }
-      const imageSource = classifyMarkdownImageSource(image.href, props.workspaceRoot ?? null);
-      if (imageSource._tag === "Direct") {
-        return (
-          <ThreadMarkdownImageView
-            uri={normalizeNativeMarkdownUrl(imageSource.uri)}
-            sourceKey={imageSource.uri}
-            unavailable={false}
-            alt={image.alt}
-            actionsSource={media?.source.actionsSource}
-            onPressPreview={(source) => setExpandedFile((current) => current ?? source)}
-          />
-        );
-      }
-      if (imageSource._tag === "Blocked") {
-        return <ThreadMarkdownImageUnavailable alt={image.alt} />;
-      }
-      return (
-        <ThreadMarkdownImage
-          environmentId={props.environmentId}
-          resource={{
-            _tag: "media-file",
-            threadId: props.threadId,
-            path: imageSource.path,
-          }}
-          alt={image.alt}
-          srcFragment={markdownImageSourceFragment(image.href)}
-          actionsSource={media?.source.actionsSource}
-          onPressPreview={(source) => setExpandedFile((current) => current ?? source)}
-        />
-      );
-    },
-    [props.environmentId, props.threadId, props.workspaceRoot],
-  );
-  const renderViewedImage = useCallback<MarkdownImageRenderer>(
-    (image) => {
-      const viewedImage = resolveViewedImageAsset(image.href, {
-        threadId: props.threadId,
-        workspaceRoot: props.workspaceRoot,
-      });
-      const media = viewedImage
-        ? resolveMarkdownMediaPreview(image.href, {
-            environmentId: props.environmentId,
-            threadId: props.threadId,
-            workspaceRoot: props.workspaceRoot,
-            imageEmbed: true,
-          })
-        : null;
-      const actionsSource = media?.source.actionsSource;
-      return viewedImage ? (
-        <ThreadMarkdownImage
-          environmentId={props.environmentId}
-          resource={viewedImage.resource}
-          alt={viewedImage.alt}
-          srcFragment={viewedImage.srcFragment}
-          actionsSource={
-            actionsSource && "resource" in actionsSource
-              ? { ...actionsSource, resource: viewedImage.resource }
-              : undefined
-          }
-          onPressPreview={(source) => setExpandedFile((current) => current ?? source)}
-        />
-      ) : null;
-    },
-    [props.environmentId, props.threadId, props.workspaceRoot],
-  );
-  const markdownStyles = useMarkdownStyles(onMarkdownLinkPress, renderMarkdownImage);
+  const markdownStyles = useMarkdownStyles(onMarkdownLinkPress);
   const reviewCommentColors = useReviewCommentColors();
   // LegendList does not invalidate visible rows when only the renderItem closure changes.
   // Keep row-local interaction props in extraData so disclosures and copy feedback repaint.
@@ -2276,15 +1876,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       viewportWidth,
     ],
   );
-  const reportHeaderMaterialVisibility = useCallback(
-    (visible: boolean) => {
-      if (headerMaterialVisibleRef.current === visible) {
-        return;
-      }
-      headerMaterialVisibleRef.current = visible;
-      props.onHeaderMaterialVisibilityChange?.(visible);
-    },
-    [props.onHeaderMaterialVisibilityChange],
+  const presentedFeed = useMemo(
+    () => deriveThreadFeedPresentation(props.feed, props.latestRun, expandedTurnIds),
+    [expandedTurnIds, props.feed, props.latestRun],
   );
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -2293,72 +1887,40 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       // UIKit's adjustedContentInset, so topContentInset is 0 here). Add the
       // header height back or the material toggles a full header too late.
       reportHeaderMaterialVisibility(event.nativeEvent.contentOffset.y + anchorTopInset > 6);
-      // LegendList recomputes its inset-aware end distance before invoking
-      // this handler, so getState() is current. Only the actual end re-arms
-      // follow: its broader maintain-scroll threshold is large enough for a
-      // streaming chunk to pull a user back before their upward drag escapes.
-      // A live user-scroll session still wins even if the first scroll event
-      // remains inside LegendList's at-end tolerance.
+      // Latch bookkeeping. LegendList recomputes its inset-aware end distance
+      // before invoking this handler, so getState() is current. Returning to
+      // the end re-arms follow no matter who scrolled (the user, or our own
+      // scroll-to-end); moving away breaks it only during a user-initiated
+      // scroll session, so MVCP compensations and programmatic repositioning
+      // can never strand a follower.
       const listState = props.listRef.current?.getState();
       if (listState) {
-        transitionEndFollow({
-          type: "scroll",
-          isAtEnd: listState.isAtEnd,
-          userScrollSessionActive: userScrollSessionRef.current,
-        });
+        if (listState.isWithinMaintainScrollAtEndThreshold) {
+          setEndFollow(true);
+        } else if (userScrollSessionRef.current) {
+          setEndFollow(false);
+        }
       }
     },
-    [reportHeaderMaterialVisibility, anchorTopInset, props.listRef, transitionEndFollow],
+    [reportHeaderMaterialVisibility, anchorTopInset, props.listRef, setEndFollow],
   );
-  const clearUserScrollSettle = useCallback(() => {
-    if (userScrollSettleTimerRef.current !== null) {
-      clearTimeout(userScrollSettleTimerRef.current);
-      userScrollSettleTimerRef.current = null;
+  const handleScrollBeginDrag = useCallback(() => {
+    userScrollSessionRef.current = true;
+  }, []);
+  // The session must survive past finger-lift so momentum that carries the
+  // user away from the end still breaks follow; a drag released with no
+  // momentum ends its session at the release itself, otherwise at momentum
+  // end. Leaving a session open would let a later animated maintain-scroll
+  // read as user motion and break follow spuriously.
+  const handleScrollEndDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const velocity = event.nativeEvent.velocity?.y ?? 0;
+    if (Math.abs(velocity) < 0.05) {
+      userScrollSessionRef.current = false;
     }
   }, []);
-  const handleScrollBeginDrag = useCallback(() => {
-    clearUserScrollSettle();
-    userScrollSessionRef.current = true;
-    // Pause before the first scroll event. Otherwise a stream update can run
-    // maintainScrollAtEnd between touch-down and the drag leaving its threshold.
-    transitionEndFollow({ type: "user-scroll-begin" });
-  }, [clearUserScrollSettle, transitionEndFollow]);
-  const finishUserScroll = useCallback(
-    (releaseIsAtEnd?: boolean) => {
-      clearUserScrollSettle();
-      const userScrollSessionActive = userScrollSessionRef.current;
-      userScrollSessionRef.current = false;
-      transitionEndFollow({
-        type: "user-scroll-end",
-        // With no momentum, preserve the finger-release position. Streaming
-        // growth during the native momentum-detection window must not turn a
-        // release at the live edge into an opt-out from follow.
-        isAtEnd: releaseIsAtEnd ?? props.listRef.current?.getState().isAtEnd ?? false,
-        userScrollSessionActive,
-      });
-    },
-    [clearUserScrollSettle, props.listRef, transitionEndFollow],
-  );
-  // Finger-lift velocity is not a reliable momentum signal: a gentle fling
-  // can report zero and still decelerate. Give native momentum a short window
-  // to announce itself; if it does, onMomentumScrollBegin cancels this fallback
-  // and the session survives until the settled momentum-end position. This
-  // mirrors the native-event handoff used by the home thread list's scroll gate.
-  const handleScrollEndDrag = useCallback(() => {
-    clearUserScrollSettle();
-    const releaseIsAtEnd = props.listRef.current?.getState().isAtEnd ?? false;
-    userScrollSettleTimerRef.current = setTimeout(() => finishUserScroll(releaseIsAtEnd), 160);
-  }, [clearUserScrollSettle, finishUserScroll, props.listRef]);
-  const handleMomentumScrollBegin = useCallback(() => {
-    if (userScrollSessionRef.current) {
-      clearUserScrollSettle();
-    }
-  }, [clearUserScrollSettle]);
   const handleMomentumScrollEnd = useCallback(() => {
-    finishUserScroll();
-  }, [finishUserScroll]);
-
-  useEffect(() => clearUserScrollSettle, [clearUserScrollSettle]);
+    userScrollSessionRef.current = false;
+  }, []);
 
   const handleViewportLayout = useCallback((event: LayoutChangeEvent) => {
     const nextWidth = Math.round(event.nativeEvent.layout.width);
@@ -2367,36 +1929,23 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     setViewportHeight((current) => (Math.abs(current - nextHeight) > 1 ? nextHeight : current));
   }, []);
 
-  // Thread identity is env-scoped: two environments can hold the same
-  // ThreadId, and keying resets (or the list mount) on the bare id would
-  // carry stale scroll/follow state across an environment switch.
-  const feedThreadKey = scopedThreadKey(props.environmentId, props.threadId);
-  // Virtualized groups can unmount without losing the reader's place. This cache
-  // belongs to this thread view only and never causes per-scroll React updates.
-  const workGroupScrollPositions = useMemo(
-    () => new Map<string, ThreadWorkGroupScrollPosition>(),
-    [feedThreadKey],
-  );
-
   useEffect(() => {
     reportHeaderMaterialVisibility(false);
-  }, [feedThreadKey, reportHeaderMaterialVisibility]);
+  }, [props.threadId, reportHeaderMaterialVisibility]);
 
   // A thread switch opens pinned to the end; a send explicitly returns to the
   // live edge (ThreadDetailScreen scrolls the new message into place). Both
   // re-arm follow regardless of where the user had scrolled before.
   useEffect(() => {
-    clearUserScrollSettle();
     userScrollSessionRef.current = false;
-    transitionEndFollow({ type: "reset" });
-  }, [clearUserScrollSettle, feedThreadKey, transitionEndFollow]);
+    setEndFollow(true);
+  }, [props.threadId, setEndFollow]);
   useEffect(() => {
-    if (props.submittedMessageId !== null) {
-      clearUserScrollSettle();
+    if (props.anchorMessageId !== null) {
       userScrollSessionRef.current = false;
-      transitionEndFollow({ type: "reset" });
+      setEndFollow(true);
     }
-  }, [clearUserScrollSettle, props.submittedMessageId, transitionEndFollow]);
+  }, [props.anchorMessageId, setEndFollow]);
 
   const expandedWorkGroupIds = useMemo(() => {
     const ids = new Set<string>();
@@ -2428,11 +1977,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // The empty↔filled key below remounts the list, which resets its imperative
   // content-inset override — and useKeyboardChatComposerInset (mounted above
   // the remount boundary) deduplicates by height, so it never re-reports the
-  // composer inset to the fresh instance. Re-report the measured overlay height
-  // (composer plus any pending approval / user-input card) so the remounted
-  // list's scroll math gets the true value; on Android the declarative
-  // contentInset floor below covers the window before this effect lands.
-  const listMountKey = `${feedThreadKey}:${props.feed.length === 0 ? "empty" : "filled"}`;
+  // composer inset to the fresh instance. Without this, the remounted list's
+  // initial scroll-to-end computes with a zero end inset and rests one
+  // composer-height short of the end. Layout effect: it must land before the
+  // list's first positioning tick or the one-shot initial scroll misses it.
+  const listMountKey = `${props.threadId}:${props.feed.length === 0 ? "empty" : "filled"}`;
   useLayoutEffect(() => {
     const bottom = props.contentInsetEndAdjustment.value;
     if (bottom > 0) {
@@ -2445,35 +1994,35 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       resolveChatListAnchoredEndSpace(
         presentedFeed,
         props.anchorMessageId,
-        (entry) => (entry.type === "message" && entry.message.role === "user" ? entry.id : null),
+        (entry) => (entry.type === "message" ? entry.id : null),
         { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
       ),
     [presentedFeed, props.anchorMessageId, anchorTopInset],
   );
   const terminalAssistantMessageIds = useMemo(() => {
-    const terminalIdsByTurn = new Map<TurnId, string>();
+    const terminalIdsByTurn = new Map<RunId, string>();
     for (const entry of props.feed) {
-      if (entry.type === "message" && entry.message.role === "assistant" && entry.message.turnId) {
-        terminalIdsByTurn.set(entry.message.turnId, entry.message.id);
+      if (entry.type === "message" && entry.message.role === "assistant" && entry.message.runId) {
+        terminalIdsByTurn.set(entry.message.runId, entry.message.id);
       }
     }
     return new Set(terminalIdsByTurn.values());
   }, [props.feed]);
   const unsettledTurnId =
-    props.latestTurn &&
-    (props.latestTurn.completedAt === null || props.latestTurn.state === "running")
-      ? props.latestTurn.turnId
+    props.latestRun &&
+    (props.latestRun.completedAt === null || props.latestRun.status === "running")
+      ? props.latestRun.runId
       : null;
 
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
-    previousLatestTurnRef.current = props.latestTurn;
-    if (!props.latestTurn || !previous) {
+    previousLatestTurnRef.current = props.latestRun;
+    if (!props.latestRun || !previous) {
       return;
     }
-    if (props.latestTurn.turnId === previous.turnId) {
-      if (previous.state === "running" && props.latestTurn.state === "interrupted") {
-        const interruptedTurnId = props.latestTurn.turnId;
+    if (props.latestRun.runId === previous.runId) {
+      if (previous.status === "running" && props.latestRun.status === "interrupted") {
+        const interruptedTurnId = props.latestRun.runId;
         setInteractionState((current) => ({
           ...current,
           expandedTurnIds: new Set(current.expandedTurnIds).add(interruptedTurnId),
@@ -2482,14 +2031,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       return;
     }
     setInteractionState((current) => {
-      if (!current.expandedTurnIds.has(previous.turnId)) {
+      if (!current.expandedTurnIds.has(previous.runId)) {
         return current;
       }
       const next = new Set(current.expandedTurnIds);
-      next.delete(previous.turnId);
+      next.delete(previous.runId);
       return { ...current, expandedTurnIds: next };
     });
-  }, [props.latestTurn]);
+  }, [props.latestRun]);
 
   useEffect(() => {
     return () => {
@@ -2583,17 +2132,28 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [suspendEndScrollMaintenanceForDisclosure],
   );
 
-  const onToggleTurnFold = useCallback(
-    (turnId: TurnId) => {
-      suspendEndScrollMaintenanceForDisclosure(`turn-fold:${turnId}`);
-      setInteractionState((current) => {
-        const next = new Set(current.expandedTurnIds);
-        if (next.has(turnId)) {
-          next.delete(turnId);
-        } else {
-          next.add(turnId);
-        }
-        return { ...current, expandedTurnIds: next };
+  const onToggleTurnFold = useCallback((runId: RunId) => {
+    setFoldToggleSettling(true);
+    if (foldSettleFrameRef.current !== null) {
+      cancelAnimationFrame(foldSettleFrameRef.current);
+    }
+    if (foldSettleSecondFrameRef.current !== null) {
+      cancelAnimationFrame(foldSettleSecondFrameRef.current);
+    }
+    setInteractionState((current) => {
+      const next = new Set(current.expandedTurnIds);
+      if (next.has(runId)) {
+        next.delete(runId);
+      } else {
+        next.add(runId);
+      }
+      return { ...current, expandedTurnIds: next };
+    });
+    foldSettleFrameRef.current = requestAnimationFrame(() => {
+      foldSettleSecondFrameRef.current = requestAnimationFrame(() => {
+        setFoldToggleSettling(false);
+        foldSettleFrameRef.current = null;
+        foldSettleSecondFrameRef.current = null;
       });
     },
     [suspendEndScrollMaintenanceForDisclosure],
@@ -2668,7 +2228,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         onToggleTurnFold,
         onPressImage,
         onMarkdownLinkPress,
-        renderMarkdownImage,
         iconSubtleColor,
         userBubbleColor,
         markdownStyles,
@@ -2700,8 +2259,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.environmentId,
       props.onUseArtifactTemplate,
       props.skills,
-      renderMarkdownImage,
-      renderViewedImage,
     ],
   );
 
@@ -2762,17 +2319,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // ThreadDetailScreen); this tells LegendList's scroll math about the
             // extra so programmatic end scrolls land at the true resting offset.
             contentInsetEndStaticAdjustment={usesNativeAutomaticInsets ? insets.bottom : 0}
-            // Android: the composer overlay only exists as the keyboard
-            // integration's animated bottom padding, which the list's scroll
-            // math cannot see until the inset reports above land — and those
-            // arrive via runOnJS, racing the remounted list's one-shot initial
-            // scroll-at-end. Seed the estimated overlay height as a declarative
-            // contentInset floor: LegendList consumes it in JS math only
-            // (Android's ScrollView has no native contentInset prop) and the
-            // first reported override REPLACES it instead of adding to it.
-            // Not on iOS: there the prop would reach UIKit and inset natively
-            // on top of the animated padding.
-            {...(initialContentInset ? { contentInset: initialContentInset } : {})}
             // The keyboard integration's offset math (end pinning, max scroll)
             // must add the same UIKit-added extra, or its keyboard-open end
             // targets land one safe-area short of the true resting offset.
@@ -2837,7 +2383,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onScroll={handleScroll}
             onScrollBeginDrag={handleScrollBeginDrag}
             onScrollEndDrag={handleScrollEndDrag}
-            onMomentumScrollBegin={handleMomentumScrollBegin}
             onMomentumScrollEnd={handleMomentumScrollEnd}
             scrollEventThrottle={16}
             ListHeaderComponent={

@@ -1,9 +1,16 @@
-import { ModelSelection, OrchestrationV2AppThread, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  ModelSelection,
+  OrchestrationV2AppThread,
+  ProjectId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as ProjectionProjects from "../persistence/Services/ProjectionProjects.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2RuntimePolicy as ProviderAdapterV2RuntimePolicyType,
@@ -15,12 +22,13 @@ import {
 export class RuntimePolicyResolveError extends Schema.TaggedErrorClass<RuntimePolicyResolveError>()(
   "RuntimePolicyResolveError",
   {
-    driver: ProviderDriverKind,
+    projectId: ProjectId,
+    providerInstanceId: ProviderInstanceId,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to resolve runtime policy for ${this.driver}.`;
+    return `Failed to resolve runtime policy for provider instance ${this.providerInstanceId} in project ${this.projectId}.`;
   }
 }
 
@@ -60,6 +68,51 @@ export const layer: Layer.Layer<RuntimePolicyV2> = Layer.succeed(RuntimePolicyV2
       cwd: input.thread.worktreePath,
     }),
 });
+
+export const layerFromProjectRepository: Layer.Layer<
+  RuntimePolicyV2,
+  never,
+  ProjectionProjects.ProjectionProjectRepository
+> = Layer.effect(
+  RuntimePolicyV2,
+  Effect.gen(function* () {
+    const projects = yield* ProjectionProjects.ProjectionProjectRepository;
+    return RuntimePolicyV2.of({
+      resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
+        const cwd =
+          input.thread.worktreePath ??
+          (yield* projects.getById({ projectId: input.thread.projectId }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new RuntimePolicyResolveError({
+                  projectId: input.thread.projectId,
+                  providerInstanceId: input.modelSelection.instanceId,
+                  cause,
+                }),
+            ),
+            Effect.flatMap(
+              Option.match({
+                onNone: () =>
+                  Effect.fail(
+                    new RuntimePolicyResolveError({
+                      projectId: input.thread.projectId,
+                      providerInstanceId: input.modelSelection.instanceId,
+                      cause: "Project not found.",
+                    }),
+                  ),
+                onSome: (project) => Effect.succeed(project.workspaceRoot),
+              }),
+            ),
+          ));
+        return ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: input.thread.runtimeMode,
+          interactionMode: input.thread.interactionMode,
+          cwd,
+        });
+      }),
+    });
+  }),
+);
 
 export function layerWithOverride(
   override: RuntimePolicyV2Override,

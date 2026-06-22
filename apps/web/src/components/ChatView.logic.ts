@@ -5,7 +5,6 @@ import {
   type EnvironmentId,
   isProviderDriverKind,
   ProjectId,
-  type MessageId,
   type ModelSelection,
   type ProviderInteractionMode,
   type ProviderDriverKind,
@@ -13,26 +12,11 @@ import {
   type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadId,
-  type TurnId,
+  type RunId,
 } from "@t3tools/contracts";
-import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
-import {
-  squashAtomCommandFailure,
-  type AtomCommandResult,
-} from "@t3tools/client-runtime/state/runtime";
-import { videoMimeType } from "@t3tools/shared/video";
-import {
-  appendCodexArtifactTemplateUsePrompt,
-  codexArtifactTemplateUsePrompt,
-  type CodexArtifactTemplate,
-} from "@t3tools/client-runtime/codex-artifact-templates";
-import {
-  type ChatMessage,
-  isImageAttachment,
-  type SessionPhase,
-  type Thread,
-  type ThreadShell,
-} from "../types";
+import * as DateTime from "effect/DateTime";
+import { presentThread } from "@t3tools/client-runtime/state/shell";
+import { type ChatMessage, type SessionPhase, type Thread } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -43,8 +27,6 @@ import {
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
-import type { ComposerSubmissionIntent } from "../composer-logic";
-import type { TimelineEntry } from "../session-logic";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -52,94 +34,6 @@ export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
-
-export function shouldDockDraftHeroForSubmission(input: {
-  isDraftHeroState: boolean;
-  activeThreadKey: string | null;
-  submissionIntent: ComposerSubmissionIntent;
-}): boolean {
-  return (
-    input.submissionIntent === "foreground" &&
-    input.isDraftHeroState &&
-    input.activeThreadKey !== null
-  );
-}
-
-export function shouldReleaseTimelineAnchorForToolActivity(input: {
-  anchorMessageId: MessageId | null;
-  liveFollowEnabled: boolean;
-  runningTurnId: TurnId | null;
-  timelineEntries: ReadonlyArray<TimelineEntry>;
-}): boolean {
-  if (input.anchorMessageId === null || !input.liveFollowEnabled || input.runningTurnId === null) {
-    return false;
-  }
-
-  return input.timelineEntries.some((timelineEntry) => {
-    if (timelineEntry.kind !== "work" || timelineEntry.entry.turnId !== input.runningTurnId) {
-      return false;
-    }
-
-    const entry = timelineEntry.entry;
-    return (
-      entry.tone === "tool" ||
-      entry.itemType !== undefined ||
-      entry.requestKind !== undefined ||
-      (entry.command?.trim().length ?? 0) > 0
-    );
-  });
-}
-
-export function toolGroupConsumesUpwardNavigation(target: EventTarget | null): boolean {
-  const elementTarget = target instanceof Element ? target : null;
-  const group = elementTarget?.closest<HTMLElement>("[data-tool-group-scroll]");
-  if (!group) return false;
-
-  // A nested result or the group itself can consume an upward scroll.
-  for (let element = elementTarget; element; element = element.parentElement) {
-    if (element.scrollTop > 0) {
-      const overflowY = getComputedStyle(element).overflowY;
-      if (overflowY === "auto" || overflowY === "scroll") return true;
-    }
-    if (element === group) break;
-  }
-  return false;
-}
-
-export function resolveDraftHeroState(input: {
-  isLocalDraftThread: boolean;
-  hasTimelineEntries: boolean;
-  isWorking: boolean;
-  draftHeroDockRequested: boolean;
-  backgroundSubmissionPending: boolean;
-}): boolean {
-  if (input.backgroundSubmissionPending) {
-    return true;
-  }
-  return (
-    input.isLocalDraftThread &&
-    !input.hasTimelineEntries &&
-    !input.isWorking &&
-    !input.draftHeroDockRequested
-  );
-}
-
-export function resolveDraftPromotionNavigationTarget(input: {
-  serverThreadRef: ScopedThreadRef | null;
-  serverThread: Pick<Thread, "latestTurn" | "session"> | null | undefined;
-  backgroundSubmissionPending: boolean;
-}): ScopedThreadRef | null {
-  if (input.backgroundSubmissionPending) {
-    return null;
-  }
-  const sessionStatus = input.serverThread?.session?.status;
-  const turnStarted = input.serverThread?.latestTurn?.startedAt != null;
-  const startupStopped =
-    sessionStatus === "error" || sessionStatus === "stopped" || sessionStatus === "interrupted";
-  // Keep local preparation feedback mounted until the server can render the
-  // running turn or its startup error on the canonical thread route.
-  return turnStarted || startupStopped ? input.serverThreadRef : null;
-}
 
 export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {
   const timeoutId = globalThis.setTimeout(showWarning, ENVIRONMENT_RECONNECT_WARNING_GRACE_MS);
@@ -195,29 +89,46 @@ export function buildLocalDraftThread(
   draftThread: DraftThreadState,
   fallbackModelSelection: ModelSelection,
 ): Thread {
-  return {
-    id: threadId,
-    environmentId: draftThread.environmentId,
-    projectId: draftThread.projectId,
-    title: "New thread",
-    modelSelection: fallbackModelSelection,
-    runtimeMode: draftThread.runtimeMode,
-    interactionMode: draftThread.interactionMode,
-    session: null,
+  const timestamp = DateTime.makeUnsafe(draftThread.createdAt);
+  return presentThread(draftThread.environmentId, {
+    thread: {
+      id: threadId,
+      projectId: draftThread.projectId,
+      title: "New thread",
+      providerInstanceId: fallbackModelSelection.instanceId,
+      modelSelection: fallbackModelSelection,
+      runtimeMode: draftThread.runtimeMode,
+      interactionMode: draftThread.interactionMode,
+      branch: draftThread.branch,
+      worktreePath: draftThread.worktreePath,
+      activeProviderThreadId: null,
+      lineage: { rootThreadId: threadId, parentThreadId: null, relationshipToParent: null },
+      forkedFrom: null,
+      createdBy: "user",
+      creationSource: "web",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      archivedAt: null,
+      deletedAt: null,
+    },
+    runs: [],
+    attempts: [],
+    nodes: [],
+    subagents: [],
+    providerSessions: [],
+    providerThreads: [],
+    providerTurns: [],
+    runtimeRequests: [],
     messages: [],
-    createdAt: draftThread.createdAt,
-    updatedAt: draftThread.createdAt,
-    archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    deletedAt: null,
-    latestTurn: null,
-    branch: draftThread.branch,
-    worktreePath: draftThread.worktreePath,
+    plans: [],
+    turnItems: [],
+    checkpointScopes: [],
     checkpoints: [],
-    activities: [],
-    proposedPlans: [],
-  };
+    contextHandoffs: [],
+    contextTransfers: [],
+    visibleTurnItems: [],
+    updatedAt: timestamp,
+  });
 }
 
 export function buildLoadingThreadFromShell(shell: ThreadShell): Thread {
@@ -406,24 +317,6 @@ export function resolveSendEnvMode(input: {
   return input.isGitRepo ? input.requestedEnvMode : "local";
 }
 
-export function resolveBackgroundDraftWorkspaceOptions(input: {
-  envMode: DraftThreadEnvMode;
-  branch: string | null;
-  startFromOrigin: boolean;
-}): {
-  envMode: DraftThreadEnvMode;
-  branch: string | null;
-  worktreePath: null;
-  startFromOrigin: boolean;
-} {
-  return {
-    envMode: input.envMode,
-    branch: input.branch,
-    worktreePath: null,
-    startFromOrigin: input.envMode === "worktree" && input.startFromOrigin,
-  };
-}
-
 export function cloneComposerImageForRetry(
   image: ComposerImageAttachment,
 ): ComposerImageAttachment {
@@ -549,7 +442,7 @@ export function isBranchMismatchDismissedForSession(key: string | null): boolean
 
 export function threadHasStarted(thread: Thread | null | undefined): boolean {
   return Boolean(
-    thread && (thread.latestTurn !== null || thread.messages.length > 0 || thread.session !== null),
+    thread && (thread.latestRun !== null || thread.messages.length > 0 || thread.runtime !== null),
   );
 }
 
@@ -573,7 +466,7 @@ export function deriveLockedProvider(input: {
   if (!threadHasStarted(input.thread)) {
     return null;
   }
-  const sessionProvider = input.thread?.session?.providerName ?? null;
+  const sessionProvider = input.thread?.runtime?.providerName ?? null;
   if (sessionProvider && isProviderDriverKind(sessionProvider)) {
     return sessionProvider;
   }
@@ -674,46 +567,37 @@ export async function waitForStartedServerThread(
 export interface LocalDispatchSnapshot {
   startedAt: string;
   preparingWorktree: boolean;
-  submissionIntent: ComposerSubmissionIntent;
-  latestUserMessageId: ChatMessage["id"] | null;
-  latestTurnTurnId: TurnId | null;
-  latestTurnRequestedAt: string | null;
-  latestTurnStartedAt: string | null;
-  latestTurnCompletedAt: string | null;
-  sessionStatus: NonNullable<Thread["session"]>["status"] | null;
-  sessionUpdatedAt: string | null;
+  latestRunId: RunId | null;
+  latestRunRequestedAt: string | null;
+  latestRunStartedAt: string | null;
+  latestRunCompletedAt: string | null;
+  runtimeStatus: NonNullable<Thread["runtime"]>["status"] | null;
+  runtimeUpdatedAt: string | null;
 }
 
 export function createLocalDispatchSnapshot(
   activeThread: Thread | undefined,
-  options?: {
-    preparingWorktree?: boolean;
-    submissionIntent?: ComposerSubmissionIntent;
-  },
+  options?: { preparingWorktree?: boolean },
 ): LocalDispatchSnapshot {
-  const latestTurn = activeThread?.latestTurn ?? null;
-  const session = activeThread?.session ?? null;
-  const latestUserMessage = activeThread?.messages.findLast((message) => message.role === "user");
+  const latestRun = activeThread?.latestRun ?? null;
+  const runtime = activeThread?.runtime ?? null;
   return {
     startedAt: new Date().toISOString(),
     preparingWorktree: Boolean(options?.preparingWorktree),
-    submissionIntent: options?.submissionIntent ?? "foreground",
-    latestUserMessageId: latestUserMessage?.id ?? null,
-    latestTurnTurnId: latestTurn?.turnId ?? null,
-    latestTurnRequestedAt: latestTurn?.requestedAt ?? null,
-    latestTurnStartedAt: latestTurn?.startedAt ?? null,
-    latestTurnCompletedAt: latestTurn?.completedAt ?? null,
-    sessionStatus: session?.status ?? null,
-    sessionUpdatedAt: session?.updatedAt ?? null,
+    latestRunId: latestRun?.runId ?? null,
+    latestRunRequestedAt: latestRun?.requestedAt ?? null,
+    latestRunStartedAt: latestRun?.startedAt ?? null,
+    latestRunCompletedAt: latestRun?.completedAt ?? null,
+    runtimeStatus: runtime?.status ?? null,
+    runtimeUpdatedAt: runtime?.updatedAt ?? null,
   };
 }
 
 export function hasServerAcknowledgedLocalDispatch(input: {
   localDispatch: LocalDispatchSnapshot | null;
   phase: SessionPhase;
-  latestTurn: Thread["latestTurn"] | null;
-  latestUserMessageId: ChatMessage["id"] | null;
-  session: Thread["session"] | null;
+  latestRun: Thread["latestRun"] | null;
+  runtime: Thread["runtime"] | null;
   hasPendingApproval: boolean;
   hasPendingUserInput: boolean;
   threadError: string | null | undefined;
@@ -724,38 +608,26 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   if (input.hasPendingApproval || input.hasPendingUserInput || Boolean(input.threadError)) {
     return true;
   }
-  if (input.phase === "connecting") {
-    return false;
-  }
 
-  const latestTurn = input.latestTurn ?? null;
-  const session = input.session ?? null;
-  const latestUserMessageChanged =
-    input.localDispatch.latestUserMessageId !== input.latestUserMessageId;
-  const latestTurnChanged =
-    input.localDispatch.latestTurnTurnId !== (latestTurn?.turnId ?? null) ||
-    input.localDispatch.latestTurnRequestedAt !== (latestTurn?.requestedAt ?? null) ||
-    input.localDispatch.latestTurnStartedAt !== (latestTurn?.startedAt ?? null) ||
-    input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null);
+  const latestRun = input.latestRun ?? null;
+  const runtime = input.runtime ?? null;
+  const latestRunChanged =
+    input.localDispatch.latestRunId !== (latestRun?.runId ?? null) ||
+    input.localDispatch.latestRunRequestedAt !== (latestRun?.requestedAt ?? null) ||
+    input.localDispatch.latestRunStartedAt !== (latestRun?.startedAt ?? null) ||
+    input.localDispatch.latestRunCompletedAt !== (latestRun?.completedAt ?? null);
 
   if (input.phase === "running") {
-    // Steering adds a user message to the current running turn without
-    // necessarily changing any of the turn timestamps. Treat that projected
-    // message as the server acknowledgment so the composer does not remain
-    // stuck in its local "Sending" state until the turn settles.
-    if (latestUserMessageChanged) {
-      return true;
-    }
-    if (!latestTurnChanged) {
+    if (!latestRunChanged) {
       return false;
     }
-    if (latestTurn?.startedAt === null || latestTurn === null) {
+    if (latestRun?.startedAt === null || latestRun === null) {
       return false;
     }
     if (
-      session?.activeTurnId !== null &&
-      session?.activeTurnId !== undefined &&
-      latestTurn?.turnId !== session.activeTurnId
+      runtime?.activeRunId !== null &&
+      runtime?.activeRunId !== undefined &&
+      latestRun?.runId !== runtime.activeRunId
     ) {
       return false;
     }
@@ -763,8 +635,8 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   }
 
   return (
-    latestTurnChanged ||
-    input.localDispatch.sessionStatus !== (session?.status ?? null) ||
-    input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
+    latestRunChanged ||
+    input.localDispatch.runtimeStatus !== (runtime?.status ?? null) ||
+    input.localDispatch.runtimeUpdatedAt !== (runtime?.updatedAt ?? null)
   );
 }

@@ -20,9 +20,15 @@ function removeVisibleItem(
   rows: OrchestrationV2ThreadProjection["visibleTurnItems"],
   sourceItemId: OrchestrationV2TurnItem["id"],
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
-  return rows
-    .filter((row) => row.sourceItemId !== sourceItemId)
-    .map((row, position) => ({ ...row, position }));
+  const index = rows.findIndex((row) => row.sourceItemId === sourceItemId);
+  if (index === -1) return rows;
+  return renumberVisibleItems([...rows.slice(0, index), ...rows.slice(index + 1)]);
+}
+
+function renumberVisibleItems(
+  rows: OrchestrationV2ThreadProjection["visibleTurnItems"],
+): OrchestrationV2ThreadProjection["visibleTurnItems"] {
+  return rows.map((row, position) => (row.position === position ? row : { ...row, position }));
 }
 
 function shouldShowLocalTurnItem(
@@ -39,9 +45,18 @@ function shouldShowLocalTurnItem(
 function activeVisibleTurnItems(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
-  return projection.visibleTurnItems
-    .filter((row) => row.visibility !== "local" || shouldShowLocalTurnItem(projection, row.item))
-    .map((row, position) => ({ ...row, position }));
+  const rows = projection.visibleTurnItems;
+  let next: Array<(typeof rows)[number]> | null = null;
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    const keep = row.visibility !== "local" || shouldShowLocalTurnItem(projection, row.item);
+    if (!keep) {
+      next ??= rows.slice(0, index);
+      continue;
+    }
+    next?.push(row);
+  }
+  return next === null ? rows : renumberVisibleItems(next);
 }
 
 function upsertVisibleTurnItem(
@@ -57,9 +72,19 @@ function upsertVisibleTurnItem(
     sourceItemId: item.id,
     item,
   };
-  return index === -1
-    ? [...rows, next]
-    : rows.map((row, rowIndex) => (rowIndex === index ? next : row));
+  if (index === -1) return [...rows, next];
+  const previous = rows[index]!;
+  if (
+    previous.visibility === next.visibility &&
+    previous.sourceThreadId === next.sourceThreadId &&
+    previous.sourceItemId === next.sourceItemId &&
+    previous.item === item
+  ) {
+    return rows;
+  }
+  const updated = [...rows];
+  updated[index] = next;
+  return updated;
 }
 
 /** Applies one committed event to a matching thread projection. */
