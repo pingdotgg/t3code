@@ -1,6 +1,8 @@
 import { RGBA } from "@opentui/core";
 import type { IBufferCell, Terminal } from "@xterm/headless";
 
+import { indexedColor } from "./theme.ts";
+
 /** A cell colour: a truecolor hex string, or an ANSI palette slot the terminal themes itself. */
 export type TermColor = string | RGBA;
 
@@ -27,10 +29,10 @@ function cellColor(cell: IBufferCell, foreground: boolean): TermColor | undefine
   if (foreground ? cell.isFgRGB() : cell.isBgRGB()) {
     return `#${(value & 0xffffff).toString(16).padStart(6, "0")}`;
   }
-  // ANSI palette slot (0–255). Emit an indexed colour so the host terminal
-  // renders it with ITS OWN theme — matching the rest of the UI — instead of a
-  // baked-in palette that ignores the user's colours.
-  return RGBA.fromIndex(value);
+  // ANSI palette slot (0–255). Use the detected-palette snapshot so the cell
+  // renders with the user's terminal theme (matching the rest of the UI) instead
+  // of OpenTUI's baked-in palette when compositing on our transparent background.
+  return indexedColor(value);
 }
 
 /** Stable string key for a cell colour (used to coalesce same-styled runs). */

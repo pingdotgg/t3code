@@ -206,7 +206,14 @@ const ANSI_INDEX: Record<string, number> = {
 // the snapshot, making indexed/default intents render as the USER's theme.
 let detected: TerminalColors | null = null;
 
-function indexedColor(index: number): RGBA {
+/**
+ * An indexed-intent RGBA carrying the user's detected colour for that ANSI slot as
+ * its compositing snapshot (so it renders as their theme on our transparent
+ * background). Falls back to OpenTUI's built-in palette for slots we haven't
+ * detected (extended 16–255). Exported so the embedded terminal themes its cells
+ * the same way the rest of the UI does.
+ */
+export function indexedColor(index: number): RGBA {
   const snapshot = detected?.palette[index];
   return snapshot ? RGBA.fromIndex(index, snapshot) : RGBA.fromIndex(index);
 }
