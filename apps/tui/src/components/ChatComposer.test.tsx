@@ -23,12 +23,24 @@ const base = {
   newField: "message",
   editorRows: 3,
   composerEpoch: 0,
+  controls: {
+    interactionMode: "default",
+    runtimeMode: "full-access",
+    model: "gpt-5",
+    reasoning: "high",
+  },
+  working: false,
   onReplyInput: noop,
   onReplySubmit: noop,
   onDraftInput: noop,
   onBranchInput: noop,
   onWorktreeInput: noop,
   onAuxInput: noop,
+  onTogglePlan: noop,
+  onOpenAccess: noop,
+  onOpenModel: noop,
+  onOpenReasoning: noop,
+  onStop: noop,
 } as const;
 
 async function frameOf(node: React.ReactNode): Promise<string> {
@@ -48,6 +60,23 @@ describe("ChatComposer", () => {
   it("Given compose mode with focus, when rendered, then the ^P hint is gone (input is mounted)", async () => {
     const frame = await frameOf(<ChatComposer {...base} mode="compose" inputFocused />);
     expect(frame).not.toContain("^P to type a reply");
+  });
+
+  it("Given compose mode, then the controls render inside the composer box, model first", async () => {
+    const t = await testRender(<ChatComposer {...base} mode="compose" inputFocused />, {
+      width: 72,
+      height: 8,
+    });
+    await t.renderOnce();
+    const lines = t.captureCharFrame().split("\n");
+    // The controls sit on a row framed by the composer's left/right border cells.
+    const controlsRow = lines.find((line) => line.includes("model gpt-5")) ?? "";
+    expect(controlsRow).toContain("model gpt-5");
+    expect(controlsRow).toContain("reasoning high");
+    expect(controlsRow.trimStart().startsWith("│") || controlsRow.includes("│")).toBe(true);
+    // model precedes the plan/build (^B) chip — matches the web footer order.
+    expect(controlsRow.indexOf("model")).toBeLessThan(controlsRow.indexOf("^B"));
+    t.renderer.destroy();
   });
 
   it("Given rename mode, when rendered, then it shows the rename label and hint", async () => {

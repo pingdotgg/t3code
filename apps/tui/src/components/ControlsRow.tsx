@@ -65,15 +65,10 @@ export const ControlsRow = React.memo(function ControlsRow({
   readonly onOpenReasoning: () => void;
   readonly onStop: () => void;
 }): React.ReactNode {
+  // Order mirrors the web composer footer (model first, then reasoning, mode,
+  // access). Rendered inside the composer's bordered box, so no own padding.
   return (
-    <box flexDirection="row" paddingLeft={1} paddingRight={1} flexShrink={0}>
-      <Chip
-        keyHint="^B"
-        label={interactionModeLabel(controls.interactionMode)}
-        active={controls.interactionMode === "plan"}
-        onClick={onTogglePlan}
-      />
-      <Chip keyHint="^O" label={runtimeModeLabel(controls.runtimeMode)} onClick={onOpenAccess} />
+    <box flexDirection="row" marginTop={1} flexShrink={0}>
       <Chip keyHint="model" label={controls.model ?? "—"} muted={!controls.model} onClick={onOpenModel} />
       <Chip
         keyHint="reasoning"
@@ -81,6 +76,13 @@ export const ControlsRow = React.memo(function ControlsRow({
         muted={!controls.reasoning}
         onClick={onOpenReasoning}
       />
+      <Chip
+        keyHint="^B"
+        label={interactionModeLabel(controls.interactionMode)}
+        active={controls.interactionMode === "plan"}
+        onClick={onTogglePlan}
+      />
+      <Chip keyHint="^O" label={runtimeModeLabel(controls.runtimeMode)} onClick={onOpenAccess} />
       {working ? (
         <>
           <box flexGrow={1} />

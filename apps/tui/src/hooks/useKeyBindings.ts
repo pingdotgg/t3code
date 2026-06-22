@@ -205,7 +205,9 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     if (key.name === "pageup") return actions.onScrollUp();
     if (key.name === "pagedown") return actions.onScrollDown();
     if (key.ctrl && key.name === "n") return actions.onNewThread();
+    // ^B and Shift+Tab both toggle plan/build — Shift+Tab matches the web composer.
     if (key.ctrl && key.name === "b") return actions.onTogglePlanMode();
+    if (key.shift && key.name === "tab") return actions.onTogglePlanMode();
     if (key.ctrl && key.name === "y") return actions.onImplementPlan();
     if (key.ctrl && key.name === "u") return actions.onReopenUserInput();
     if (key.ctrl && key.name === "k") return actions.onOpenActions();

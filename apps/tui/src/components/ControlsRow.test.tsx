@@ -48,8 +48,12 @@ describe("ControlsRow", () => {
     );
     await t.renderOnce();
     await t.flush();
-    // The "^B Build" chip starts at the left padding (col 1), row 0.
-    await t.mockMouse.click(3, 0);
+    // The plan/build chip is no longer first (model leads now), and the row sits
+    // one line down (marginTop) — locate "^B" instead of assuming a fixed cell.
+    const lines = t.captureCharFrame().split("\n");
+    const row = lines.findIndex((line) => line.includes("^B"));
+    const col = (lines[row] ?? "").indexOf("^B") + 1;
+    await t.mockMouse.click(col, row);
     await t.flush();
     expect(toggled).toBe(true);
     t.renderer.destroy();
@@ -87,10 +91,11 @@ describe("ControlsRow", () => {
     await t.flush();
     const frame = t.captureCharFrame();
     expect(frame).toContain("■ Stop");
-    // The stop button is right-aligned; click within its label near the right edge.
-    const row = frame.split("\n").find((line) => line.includes("Stop")) ?? "";
-    const col = row.indexOf("■");
-    await t.mockMouse.click(col + 1, 0);
+    // The stop button is right-aligned; the row sits one line down (marginTop).
+    const lines = frame.split("\n");
+    const rowIndex = lines.findIndex((line) => line.includes("Stop"));
+    const col = (lines[rowIndex] ?? "").indexOf("■");
+    await t.mockMouse.click(col + 1, rowIndex);
     await t.flush();
     expect(stopped).toBe(true);
     t.renderer.destroy();

@@ -26,7 +26,6 @@ import { ChatComposer } from "./ChatComposer.tsx";
 import { type DiffStatus, type DiffView, DiffViewer } from "./DiffViewer.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
 import { SelectOverlay, type SelectStatus } from "./SelectOverlay.tsx";
-import { ControlsRow } from "./ControlsRow.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { RevertMenu, ThreadActionsMenu } from "./ThreadActionsMenu.tsx";
 import { UserInputForm } from "./UserInputForm.tsx";
@@ -374,14 +373,14 @@ export function ChatView({
   // UP into the space above (the panes shrink) instead of overflowing off-screen.
   // Cap it so the panes always keep at least a few rows. Each option ≈ 2 rows
   // (name + description) plus the title + border.
-  const aroundReserve = terminalDrawerHeight + 2; // controls row + footer hint
+  const aroundReserve = terminalDrawerHeight + 1; // footer hint (controls now live in the composer)
   const bottomSlotCap = Math.max(4, height - aroundReserve - 4);
   const pickerWanted = picker
     ? Math.min(Math.max(picker.options.length, 1) * 2 + 3, Math.floor(height * 0.6))
     : 0;
   const bottomSlot = Math.min(picker ? pickerWanted : composerHeight, bottomSlotCap);
   const pickerContentRows = Math.max(2, bottomSlot - 3);
-  const bottomReserve = terminalDrawerHeight + bottomSlot + 2;
+  const bottomReserve = terminalDrawerHeight + bottomSlot + 1;
   const panesHeight = Math.max(4, height - bottomReserve);
   const listViewport = Math.max(1, panesHeight - 3);
   const termCols = Math.max(2, width - 4);
@@ -931,16 +930,6 @@ export function ChatView({
         />
       ) : null}
 
-      <ControlsRow
-        controls={controls}
-        working={working}
-        onTogglePlan={togglePlanMode}
-        onOpenAccess={openRuntimePicker}
-        onOpenModel={openModelPicker}
-        onOpenReasoning={openReasoningPicker}
-        onStop={stopTurn}
-      />
-
       {picker ? (
         <SelectOverlay
           title={picker.title}
@@ -985,12 +974,19 @@ export function ChatView({
           editorRows={promptLines}
           inputFocused={!terminalFocused && !diffOpen && !picker && focus !== "filter"}
           composerEpoch={composerEpoch}
+          controls={controls}
+          working={working}
           onReplyInput={setReply}
           onReplySubmit={sendReply}
           onDraftInput={(value) => setDraft(value.replace(/\t/g, ""))}
           onBranchInput={(value) => setNewBranch(value.replace(/\t/g, ""))}
           onWorktreeInput={(value) => setNewWorktree(value.replace(/\t/g, ""))}
           onAuxInput={setRenameDraft}
+          onTogglePlan={togglePlanMode}
+          onOpenAccess={openRuntimePicker}
+          onOpenModel={openModelPicker}
+          onOpenReasoning={openReasoningPicker}
+          onStop={stopTurn}
         />
       )}
 

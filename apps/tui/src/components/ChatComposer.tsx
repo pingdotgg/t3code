@@ -1,7 +1,9 @@
 import { defaultTextareaKeyBindings, type TextareaRenderable } from "@opentui/core";
 import * as React from "react";
 
+import type { ComposerControls } from "../controls.ts";
 import { usePalette } from "../theme.ts";
+import { ControlsRow } from "./ControlsRow.tsx";
 
 // Reply key map. The textarea ALWAYS merges these over its defaults, so we can't
 // remove a default by omission — we override it. Two concerns:
@@ -99,12 +101,19 @@ export const ChatComposer = React.memo(function ChatComposer({
   editorRows,
   inputFocused,
   composerEpoch,
+  controls,
+  working,
   onReplyInput,
   onReplySubmit,
   onDraftInput,
   onBranchInput,
   onWorktreeInput,
   onAuxInput,
+  onTogglePlan,
+  onOpenAccess,
+  onOpenModel,
+  onOpenReasoning,
+  onStop,
 }: {
   readonly mode: "compose" | "new" | "rename" | "filter";
   readonly reply: string;
@@ -127,12 +136,20 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly inputFocused: boolean;
   /** Bumped by the parent to remount (clear) the reply editor after send/clear. */
   readonly composerEpoch: number;
+  /** Composer controls shown inside the box (compose mode only), mirroring web. */
+  readonly controls: ComposerControls;
+  readonly working: boolean;
   readonly onReplyInput: (value: string) => void;
   readonly onReplySubmit: () => void;
   readonly onDraftInput: (value: string) => void;
   readonly onBranchInput: (value: string) => void;
   readonly onWorktreeInput: (value: string) => void;
   readonly onAuxInput: (value: string) => void;
+  readonly onTogglePlan: () => void;
+  readonly onOpenAccess: () => void;
+  readonly onOpenModel: () => void;
+  readonly onOpenReasoning: () => void;
+  readonly onStop: () => void;
 }): React.ReactNode {
   const palette = usePalette();
   const replyRef = React.useRef<TextareaRenderable | null>(null);
@@ -233,7 +250,7 @@ export const ChatComposer = React.memo(function ChatComposer({
 
   return (
     <box
-      flexDirection="row"
+      flexDirection="column"
       border
       borderStyle="rounded"
       borderColor={inputFocused ? palette.accent : palette.dim}
@@ -241,10 +258,11 @@ export const ChatComposer = React.memo(function ChatComposer({
       paddingRight={1}
       flexShrink={0}
     >
-      <text>
-        <span fg={palette.accent}>{"› "}</span>
-      </text>
-      {inputFocused ? (
+      <box flexDirection="row" flexShrink={0}>
+        <text>
+          <span fg={palette.accent}>{"› "}</span>
+        </text>
+        {inputFocused ? (
         // Multiline editor: Enter sends, Shift+Enter newlines, paste inserts the
         // full clipboard (no single-line cap). Uncontrolled — remounted via
         // `composerEpoch` to clear after send; content mirrored out via onContentChange.
@@ -268,15 +286,25 @@ export const ChatComposer = React.memo(function ChatComposer({
           onContentChange={() => onReplyInput(replyRef.current?.plainText ?? "")}
           onSubmit={onReplySubmit}
         />
-      ) : (
-        <text>
-          {reply.length > 0 ? (
-            <span fg={palette.text}>{reply}</span>
-          ) : (
-            <span fg={palette.dim}>^P to type a reply</span>
-          )}
-        </text>
-      )}
+        ) : (
+          <text>
+            {reply.length > 0 ? (
+              <span fg={palette.text}>{reply}</span>
+            ) : (
+              <span fg={palette.dim}>^P to type a reply</span>
+            )}
+          </text>
+        )}
+      </box>
+      <ControlsRow
+        controls={controls}
+        working={working}
+        onTogglePlan={onTogglePlan}
+        onOpenAccess={onOpenAccess}
+        onOpenModel={onOpenModel}
+        onOpenReasoning={onOpenReasoning}
+        onStop={onStop}
+      />
     </box>
   );
 });
