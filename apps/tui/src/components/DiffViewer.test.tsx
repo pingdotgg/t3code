@@ -10,6 +10,7 @@ async function frameOf(props: {
   diff?: string;
   turnCount?: number;
   fileCount?: number;
+  view?: "unified" | "split";
 }): Promise<string> {
   const ref = React.createRef<null>();
   const t = await testRender(
@@ -18,6 +19,7 @@ async function frameOf(props: {
       fileCount={props.fileCount ?? 1}
       status={props.status}
       diff={props.diff ?? ""}
+      view={props.view ?? "unified"}
       height={16}
       syntaxStyle={SyntaxStyle.create()}
       scrollRef={ref as never}
@@ -48,6 +50,18 @@ describe("DiffViewer", () => {
     const frame = await frameOf({ status: "ready", diff: sampleDiff, turnCount: 4, fileCount: 1 });
     expect(frame).toContain("diff · turn 4");
     expect(frame).toContain("next()");
+  });
+
+  it("Given a loaded diff, then it shows a per-file header with the file's language", async () => {
+    const frame = await frameOf({ status: "ready", diff: sampleDiff });
+    expect(frame).toContain("src/app.ts");
+    expect(frame).toContain("typescript");
+  });
+
+  it("Given the split view, then the header reflects it and offers the stacked toggle", async () => {
+    const frame = await frameOf({ status: "ready", diff: sampleDiff, view: "split" });
+    expect(frame).toContain("split");
+    expect(frame).toContain("s stacked");
   });
 
   it("Given a loading state, then it shows a loading hint", async () => {

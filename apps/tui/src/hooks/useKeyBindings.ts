@@ -60,6 +60,7 @@ export interface KeyBindingActions {
   readonly onDiffNext: () => void;
   readonly onDiffScrollUp: () => void;
   readonly onDiffScrollDown: () => void;
+  readonly onDiffToggleView: () => void;
   readonly onDiffClose: () => void;
   readonly onConfirmDelete: () => void;
   // Checkpoint-revert picker
@@ -147,6 +148,7 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       if (key.name === "down") return actions.onDiffNext();
       if (key.name === "pageup") return actions.onDiffScrollUp();
       if (key.name === "pagedown") return actions.onDiffScrollDown();
+      if (key.name === "s") return actions.onDiffToggleView();
       if (key.name === "escape") return actions.onDiffClose();
       return;
     }

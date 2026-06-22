@@ -23,7 +23,7 @@ import { isWorking, revertableCheckpoints } from "../timeline.ts";
 import { buildUserInputAnswers, derivePendingUserInputs } from "../userInput.ts";
 import { buildRows, selectionEquals } from "./Sidebar.logic.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
-import { type DiffStatus, DiffViewer } from "./DiffViewer.tsx";
+import { type DiffStatus, type DiffView, DiffViewer } from "./DiffViewer.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
 import { SelectOverlay, type SelectStatus } from "./SelectOverlay.tsx";
 import { ControlsRow } from "./ControlsRow.tsx";
@@ -79,6 +79,7 @@ export function ChatView({
   const [diffIndex, setDiffIndex] = React.useState(0);
   const [diffStatus, setDiffStatus] = React.useState<DiffStatus>("loading");
   const [diffText, setDiffText] = React.useState("");
+  const [diffView, setDiffView] = React.useState<DiffView>("unified");
   const diffScrollRef = React.useRef<ScrollBoxRenderable | null>(null);
   // Model picker (^K → m): fetched lazily on open.
   // A native-<select> picker for the composer controls (model / runtime / reasoning).
@@ -755,6 +756,7 @@ export function ChatView({
     onDiffNext: () => setDiffIndex((index) => (index + 1) % Math.max(checkpoints.length, 1)),
     onDiffScrollUp: () => diffScrollRef.current?.scrollBy({ x: 0, y: -SCROLL_STEP }),
     onDiffScrollDown: () => diffScrollRef.current?.scrollBy({ x: 0, y: SCROLL_STEP }),
+    onDiffToggleView: () => setDiffView((view) => (view === "unified" ? "split" : "unified")),
     onDiffClose: () => setDiffOpen(false),
     onActionModel: () => {
       setOverlay("none");
@@ -878,6 +880,7 @@ export function ChatView({
             fileCount={diffCheckpoint.files.length}
             status={diffStatus}
             diff={diffText}
+            view={diffView}
             height={panesHeight}
             syntaxStyle={syntaxStyle}
             scrollRef={diffScrollRef}
