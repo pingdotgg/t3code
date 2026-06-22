@@ -166,6 +166,12 @@ function normalizeCodexTokenUsage(
   }
 
   const maxTokens = usage.modelContextWindow ?? undefined;
+  // Per-turn token counts come from `usage.last` (this turn only); `usage.total`
+  // is the thread-cumulative running total and is used only for
+  // `totalProcessedTokens` above. This split is load-bearing for cost: the cost
+  // estimator (see codexCost.ts) sums one estimate per turn from these fields, so
+  // they MUST stay per-turn. Sourcing them from `usage.total` would N-times-count
+  // the cumulative figure when summed — the over-count the Claude path had to fix.
   const inputTokens = usage.last.inputTokens;
   const cachedInputTokens = usage.last.cachedInputTokens;
   const outputTokens = usage.last.outputTokens;
@@ -1627,6 +1633,19 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     );
   };
 
+  const forkThread: NonNullable<CodexAdapterShape["forkThread"]> = (sourceThreadId) =>
+    requireSession(sourceThreadId).pipe(
+      Effect.flatMap((session) => session.runtime.forkThread()),
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(sourceThreadId, "thread/fork", cause),
+      ),
+      Effect.map((newProviderThreadId) => ({
+        resumeCursor: { threadId: newProviderThreadId },
+      })),
+    );
+
   const respondToRequest: CodexAdapterShape["respondToRequest"] = (threadId, requestId, decision) =>
     requireSession(threadId).pipe(
       Effect.flatMap((session) => session.runtime.respondToRequest(requestId, decision)),
@@ -1714,6 +1733,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     interruptTurn,
     readThread,
     rollbackThread,
+    forkThread,
     respondToRequest,
     respondToUserInput,
     stopSession,

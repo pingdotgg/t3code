@@ -10,6 +10,7 @@ import {
   deriveComposerSendState,
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
+  nextForkThreadTitle,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveSendEnvMode,
@@ -427,5 +428,59 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
+  });
+});
+
+describe("nextForkThreadTitle", () => {
+  const project = { environmentId, projectId };
+  const shell = (
+    title: string,
+    overrides: Partial<{ projectId: ProjectId; archivedAt: string }> = {},
+  ) => ({
+    title,
+    environmentId,
+    projectId: overrides.projectId ?? projectId,
+    archivedAt: overrides.archivedAt ?? null,
+  });
+
+  it("prefixes the predecessor title with 'Fork: '", () => {
+    expect(nextForkThreadTitle("Inspect pnpm dev side pane", project, [])).toBe(
+      "Fork: Inspect pnpm dev side pane",
+    );
+  });
+
+  it("appends (2) when the base fork name already exists", () => {
+    expect(
+      nextForkThreadTitle("Inspect side pane", project, [shell("Fork: Inspect side pane")]),
+    ).toBe("Fork: Inspect side pane (2)");
+  });
+
+  it("picks the next number above the highest existing suffix", () => {
+    expect(
+      nextForkThreadTitle("Task", project, [
+        shell("Fork: Task"),
+        shell("Fork: Task (2)"),
+        shell("Fork: Task (4)"),
+      ]),
+    ).toBe("Fork: Task (5)");
+  });
+
+  it("ignores archived threads and threads in other projects", () => {
+    expect(
+      nextForkThreadTitle("Task", project, [
+        shell("Fork: Task", { archivedAt: now }),
+        shell("Fork: Task", { projectId: ProjectId.make("project-other") }),
+      ]),
+    ).toBe("Fork: Task");
+  });
+
+  it("does not collide on titles that merely share a prefix", () => {
+    expect(nextForkThreadTitle("Task", project, [shell("Fork: Task runner")])).toBe("Fork: Task");
+  });
+
+  it("treats regex-special characters in the name literally", () => {
+    expect(nextForkThreadTitle("Fix (a) [b]", project, [shell("Fork: Fix (a) [b]")])).toBe(
+      "Fork: Fix (a) [b] (2)",
+    );
   });
 });

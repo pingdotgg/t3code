@@ -45,6 +45,7 @@ const THREAD_SHELL = {
   hasActionableProposedPlan: false,
   bookmarked: false,
   pullRequestReview: null,
+  forkedFromThreadId: null,
 } as const;
 
 const SNAPSHOT: OrchestrationShellSnapshot = {

@@ -37,7 +37,11 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
-import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+import {
+  claudePerTurnCostUsd,
+  makeClaudeAdapter,
+  type ClaudeAdapterLiveOptions,
+} from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
@@ -266,6 +270,31 @@ async function readFirstPromptMessage(
 
 const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
+
+describe("claudePerTurnCostUsd", () => {
+  it("returns the full cost on the first turn (delta from 0)", () => {
+    assert.closeTo(claudePerTurnCostUsd(0.1, 0) ?? Number.NaN, 0.1, 1e-9);
+  });
+
+  it("returns the per-turn delta against the running cumulative total", () => {
+    // The SDK reports a session-cumulative total per turn (0.10, then 0.25,
+    // then 0.40). Each turn's contribution is the delta, not the cumulative —
+    // summing deltas (0.10 + 0.15 + 0.15 = 0.40) recovers the true total, while
+    // summing the cumulatives would over-count (0.10 + 0.25 + 0.40 = 0.75).
+    assert.closeTo(claudePerTurnCostUsd(0.25, 0.1) ?? Number.NaN, 0.15, 1e-9);
+    assert.closeTo(claudePerTurnCostUsd(0.4, 0.25) ?? Number.NaN, 0.15, 1e-9);
+  });
+
+  it("clamps to 0 if the cumulative total ever decreases", () => {
+    assert.equal(claudePerTurnCostUsd(0.1, 0.25), 0);
+  });
+
+  it("returns undefined when no finite cost is reported", () => {
+    assert.equal(claudePerTurnCostUsd(undefined, 0), undefined);
+    assert.equal(claudePerTurnCostUsd(Number.NaN, 0), undefined);
+    assert.equal(claudePerTurnCostUsd("0.10" as unknown, 0), undefined);
+  });
+});
 
 describe("ClaudeAdapterLive", () => {
   it.effect("returns validation error for non-claude provider on startSession", () => {
@@ -951,6 +980,53 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(String(turnStartedEvents[0]?.turnId), String(turn.turnId));
       assert.equal(turnCompletedEvents.length, 1);
       assert.equal(String(turnCompletedEvents[0]?.turnId), String(turn.turnId));
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("stamps the SDK's cumulative cost as the first turn's cost on turn.completed", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-cost",
+        uuid: "result-cost-1",
+        total_cost_usd: 0.1234,
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnCompleted = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.equal(turnCompleted?.type, "turn.completed");
+      if (turnCompleted?.type === "turn.completed") {
+        // First turn: the cumulative figure is the delta from 0, so it passes
+        // through unchanged. (Subsequent turns emit only their delta — see the
+        // claudePerTurnCostUsd unit tests, which cover the over-count regression.)
+        assert.equal(turnCompleted.payload.totalCostUsd, 0.1234);
+      }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

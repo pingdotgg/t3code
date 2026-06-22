@@ -115,6 +115,16 @@ export interface ProviderAdapterShape<TError> {
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
 
   /**
+   * Branch `sourceThreadId`'s provider session into a NEW session (native fork)
+   * and return the resume cursor the forked thread should persist, so its first
+   * turn resumes the branched session with full prior context. Optional — only
+   * providers with native fork implement it; absent means "no native fork".
+   */
+  readonly forkThread?: (
+    sourceThreadId: ThreadId,
+  ) => Effect.Effect<{ readonly resumeCursor: unknown }, TError>;
+
+  /**
    * Stop all sessions owned by this adapter.
    */
   readonly stopAll: () => Effect.Effect<void, TError>;

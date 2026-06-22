@@ -215,6 +215,7 @@ const PersistedDraftThreadState = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
   titleSeed: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  forkedFromThreadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -296,6 +297,9 @@ export interface DraftSessionState {
   /** Optional pre-seeded thread title (e.g. "Review PR #123"). Wins over the
    * first message when promoting the draft to a server thread. */
   titleSeed?: string | null;
+  /** When this draft was created by forking another conversation, the id of the
+   * predecessor thread it branched from. Drives the linked-fork sidebar UI. */
+  forkedFromThreadId?: ThreadId | null;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -360,6 +364,7 @@ interface ComposerDraftStoreState {
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       titleSeed?: string | null;
+      forkedFromThreadId?: ThreadId | null;
     },
   ) => void;
   /** Creates or updates the draft session tracked for a concrete project ref. */
@@ -1323,6 +1328,7 @@ function createDraftThreadState(
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
     titleSeed?: string | null;
+    forkedFromThreadId?: ThreadId | null;
   },
 ): DraftThreadState {
   const projectChanged =
@@ -1360,6 +1366,7 @@ function createDraftThreadState(
           ? "local"
           : (existingThread?.envMode ?? "local")),
     titleSeed: options?.titleSeed ?? existingThread?.titleSeed ?? null,
+    forkedFromThreadId: options?.forkedFromThreadId ?? existingThread?.forkedFromThreadId ?? null,
     promotedTo: null,
   };
 }
@@ -1533,6 +1540,11 @@ function normalizePersistedDraftThreads(
         branch: typeof branch === "string" ? branch : null,
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
+        forkedFromThreadId:
+          typeof candidateDraftThread.forkedFromThreadId === "string" &&
+          candidateDraftThread.forkedFromThreadId.length > 0
+            ? (candidateDraftThread.forkedFromThreadId as ThreadId)
+            : null,
         promotedTo,
       };
     }

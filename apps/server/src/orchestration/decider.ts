@@ -1,5 +1,6 @@
 import {
   EventId,
+  MessageId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -260,6 +261,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           branch: command.branch,
           worktreePath: command.worktreePath,
           pullRequestReview,
+          forkedFromThreadId: command.forkedFromThreadId ?? null,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -743,6 +745,43 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           turnCount: command.turnCount,
         },
       };
+    }
+
+    case "thread.fork.seed": {
+      // Copy the source thread's conversation into the freshly-created fork by
+      // re-emitting each carried message as a finalized message-sent event on the
+      // new thread. Activities (incl. cost) are intentionally NOT copied, so the
+      // fork starts at $0.00 and carries only the conversation. New message ids
+      // are minted to avoid cross-thread collisions; original timestamps are
+      // preserved so ordering matches the source. The caller only dispatches this
+      // when there is at least one message, so this always emits at least one event.
+      yield* requireThread({ readModel, command, threadId: command.threadId });
+      const crypto = yield* Crypto.Crypto;
+      const events: PlannedOrchestrationEvent[] = [];
+      for (const message of command.messages) {
+        const messageId = MessageId.make(yield* crypto.randomUUIDv4);
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: message.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.message-sent",
+          payload: {
+            threadId: command.threadId,
+            messageId,
+            role: message.role,
+            text: message.text,
+            ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+            turnId: null,
+            streaming: false,
+            createdAt: message.createdAt,
+            updatedAt: message.updatedAt,
+          },
+        });
+      }
+      return events;
     }
 
     case "thread.activity.append": {

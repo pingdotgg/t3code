@@ -434,6 +434,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           hasActionableProposedPlan: false,
           bookmarked: false,
           pullRequestReview: null,
+          forkedFromThreadId: null,
         },
       ]);
 

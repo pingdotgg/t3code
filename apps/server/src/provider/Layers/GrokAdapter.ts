@@ -957,6 +957,19 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         });
       });
 
+    const forkThread: NonNullable<GrokAdapterShape["forkThread"]> = (sourceThreadId) =>
+      requireSession(sourceThreadId).pipe(
+        Effect.flatMap((ctx) => ctx.acp.forkSession()),
+        Effect.mapError((cause) =>
+          cause._tag === "ProviderAdapterSessionNotFoundError"
+            ? cause
+            : mapAcpToAdapterError(PROVIDER, sourceThreadId, "session/fork", cause),
+        ),
+        Effect.map((newSessionId) => ({
+          resumeCursor: { schemaVersion: GROK_RESUME_VERSION, sessionId: newSessionId },
+        })),
+      );
+
     const stopSession: GrokAdapterShape["stopSession"] = (threadId) =>
       withThreadLock(
         threadId,
@@ -995,6 +1008,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       interruptTurn,
       readThread,
       rollbackThread,
+      forkThread,
       respondToRequest,
       respondToUserInput,
       stopSession,

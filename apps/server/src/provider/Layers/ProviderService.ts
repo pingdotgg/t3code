@@ -74,6 +74,11 @@ const ProviderRollbackConversationInput = Schema.Struct({
   numTurns: NonNegativeInt,
 });
 
+const ProviderForkConversationInput = Schema.Struct({
+  sourceThreadId: ThreadId,
+  targetThreadId: ThreadId,
+});
+
 function toValidationError(
   operation: string,
   issue: string,
@@ -999,6 +1004,44 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  const forkConversation: ProviderServiceShape["forkConversation"] = Effect.fn("forkConversation")(
+    function* (rawInput) {
+      const input = yield* decodeInputOrValidationError({
+        operation: "ProviderService.forkConversation",
+        schema: ProviderForkConversationInput,
+        payload: rawInput,
+      });
+      const routed = yield* resolveRoutableSession({
+        threadId: input.sourceThreadId,
+        operation: "ProviderService.forkConversation",
+        allowRecovery: true,
+      });
+      // Providers without a native fork: leave the target with no binding — its
+      // first turn starts a fresh session. The fork still shows the copied
+      // history (display); continuation lands when that provider's fork is wired.
+      const forkThread = routed.adapter.forkThread;
+      if (!forkThread) {
+        return;
+      }
+      const sourceBinding = Option.getOrUndefined(
+        yield* directory.getBinding(input.sourceThreadId),
+      );
+      const { resumeCursor } = yield* forkThread(routed.threadId);
+      // Persist the forked thread's resume cursor BEFORE its first turn so that
+      // turn resumes the branched provider session (with full prior context).
+      yield* directory.upsert({
+        threadId: input.targetThreadId,
+        provider: routed.adapter.provider,
+        providerInstanceId: routed.instanceId,
+        ...(sourceBinding?.runtimeMode !== undefined
+          ? { runtimeMode: sourceBinding.runtimeMode }
+          : {}),
+        status: "stopped",
+        resumeCursor,
+      });
+    },
+  );
+
   const runStopAll = Effect.fn("runStopAll")(function* () {
     const threadIds = yield* directory.listThreadIds();
     const currentAdapters = yield* getAdapterEntries;
@@ -1068,6 +1111,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     getCapabilities,
     getInstanceInfo,
     rollbackConversation,
+    forkConversation,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.

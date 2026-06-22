@@ -42,6 +42,7 @@ const stubThread = {
   hasActionableProposedPlan: false,
   bookmarked: false,
   pullRequestReview: null,
+  forkedFromThreadId: null,
   session: null,
 } as const;
 

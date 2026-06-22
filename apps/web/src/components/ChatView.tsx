@@ -97,6 +97,7 @@ import {
   type Thread,
   type TurnDiffSummary,
 } from "../types";
+import { useForkThread } from "../hooks/useForkThread";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteContext";
@@ -184,8 +185,10 @@ import {
   useProject,
   useProjects,
   useThread,
+  useThreadMessages,
   useThreadProposedPlans,
   useThreadRefs,
+  useThreadShell,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -1189,19 +1192,41 @@ function ChatViewContent(props: ChatViewProps) {
       ? null
       : ((draftId ? localDraftErrorsByDraftId[draftId] : null) ?? null);
   const localServerError = localServerErrorsByThreadKey[routeThreadKey] ?? null;
+  // For a fork draft, read the predecessor's messages so the conversation shows
+  // immediately (the server copies the same history on send via thread.fork.seed).
+  const forkSourceRef = useMemo(
+    () =>
+      draftThread?.forkedFromThreadId
+        ? scopeThreadRef(draftThread.environmentId, draftThread.forkedFromThreadId)
+        : null,
+    [draftThread],
+  );
+  const forkSourceMessages = useThreadMessages(forkSourceRef);
+  const forkSourceShell = useThreadShell(forkSourceRef);
   const localDraftThread = useMemo(
     () =>
       draftThread
         ? buildLocalDraftThread(
             threadId,
             draftThread,
-            fallbackDraftProject?.defaultModelSelection ?? {
-              instanceId: ProviderInstanceId.make("codex"),
-              model: DEFAULT_MODEL,
-            },
+            // A fork inherits the source thread's model/provider — use it so the
+            // draft (and the derived locked provider) stay on the source provider
+            // instead of falling back to the Codex default.
+            forkSourceShell?.modelSelection ??
+              fallbackDraftProject?.defaultModelSelection ?? {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: DEFAULT_MODEL,
+              },
+            forkSourceMessages,
           )
         : undefined,
-    [draftThread, fallbackDraftProject?.defaultModelSelection, threadId],
+    [
+      draftThread,
+      forkSourceShell?.modelSelection,
+      fallbackDraftProject?.defaultModelSelection,
+      threadId,
+      forkSourceMessages,
+    ],
   );
   const isServerThread = routeKind === "server" && serverThread !== null;
   const activeThread = isServerThread ? serverThread : localDraftThread;
@@ -1484,8 +1509,11 @@ function ChatViewContent(props: ChatViewProps) {
         activeProject,
         projectGroupingSettings,
       );
+      // A fork draft must not be reused as the project's generic draft (it would
+      // carry its fork identity into this worktree/PR thread); fall through to
+      // mint a fresh draft instead.
       const storedDraftSession = getDraftSessionByLogicalProjectKey(logicalProjectKey);
-      if (storedDraftSession) {
+      if (storedDraftSession && storedDraftSession.forkedFromThreadId == null) {
         setDraftThreadContext(storedDraftSession.draftId, input);
         setLogicalProjectDraftThreadId(
           logicalProjectKey,
@@ -1509,6 +1537,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (
         !isServerThread &&
         activeDraftSession?.logicalProjectKey === logicalProjectKey &&
+        activeDraftSession.forkedFromThreadId == null &&
         draftId
       ) {
         setDraftThreadContext(draftId, input);
@@ -1550,6 +1579,13 @@ function ChatViewContent(props: ChatViewProps) {
       setLogicalProjectDraftThreadId,
     ],
   );
+
+  const forkThread = useForkThread();
+  const handleForkConversation = useCallback(() => {
+    if (activeThread && isServerThread) {
+      void forkThread(activeThread);
+    }
+  }, [activeThread, isServerThread, forkThread]);
 
   const handlePreparedPullRequestThread = useCallback(
     async (input: { branch: string; worktreePath: string | null }) => {
@@ -1690,9 +1726,12 @@ function ChatViewContent(props: ChatViewProps) {
     () => sumThreadApiCostUsd(threadActivities),
     [threadActivities],
   );
-  // Claude reports a real SDK cost; everything else (e.g. Codex) is a
-  // token×price estimate, so label non-Claude threads accordingly.
-  const activeThreadCostEstimated = (selectedProvider as string) !== "claudeAgent";
+  // Whether the active conversation is a fork. The lineage lives on the draft
+  // session before promotion and on the server shell after — check both.
+  const activeThreadShellForFork = useThreadShell(activeThreadRef);
+  const activeThreadIsFork =
+    (draftThread?.forkedFromThreadId ?? null) !== null ||
+    (activeThreadShellForFork?.forkedFromThreadId ?? null) !== null;
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -3904,6 +3943,7 @@ function ChatViewContent(props: ChatViewProps) {
                       interactionMode,
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
+                      forkedFromThreadId: draftThread?.forkedFromThreadId ?? null,
                       createdAt: activeThread.createdAt,
                     },
                   }
@@ -4787,7 +4827,7 @@ function ChatViewContent(props: ChatViewProps) {
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
             activeThreadCostUsd={activeThreadApiCostUsd}
-            activeThreadCostEstimated={activeThreadCostEstimated}
+            activeThreadIsFork={activeThreadIsFork}
             activeProjectName={activeProject?.title}
             openInCwd={gitCwd}
             activeProjectScripts={activeProject?.scripts}
@@ -4903,6 +4943,9 @@ function ChatViewContent(props: ChatViewProps) {
                     planSidebarOpen={planSidebarOpen}
                     runtimeMode={runtimeMode}
                     interactionMode={interactionMode}
+                    onForkConversation={
+                      isServerThread && activeProject ? handleForkConversation : undefined
+                    }
                     lockedProvider={lockedProvider}
                     providerStatuses={providerStatuses as ServerProvider[]}
                     activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}

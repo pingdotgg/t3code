@@ -1125,6 +1125,19 @@ export function makeCursorAdapter(
         return { threadId, turns: ctx.turns };
       });
 
+    const forkThread: NonNullable<CursorAdapterShape["forkThread"]> = (sourceThreadId) =>
+      requireSession(sourceThreadId).pipe(
+        Effect.flatMap((ctx) => ctx.acp.forkSession()),
+        Effect.mapError((cause) =>
+          cause._tag === "ProviderAdapterSessionNotFoundError"
+            ? cause
+            : mapAcpToAdapterError(PROVIDER, sourceThreadId, "session/fork", cause),
+        ),
+        Effect.map((newSessionId) => ({
+          resumeCursor: { schemaVersion: CURSOR_RESUME_VERSION, sessionId: newSessionId },
+        })),
+      );
+
     const stopSession: CursorAdapterShape["stopSession"] = (threadId) =>
       withThreadLock(
         threadId,
@@ -1166,6 +1179,7 @@ export function makeCursorAdapter(
       interruptTurn,
       readThread,
       rollbackThread,
+      forkThread,
       respondToRequest,
       respondToUserInput,
       stopSession,

@@ -39,6 +39,7 @@ function makeThread(
     hasActionableProposedPlan: false,
     bookmarked: false,
     pullRequestReview: null,
+    forkedFromThreadId: null,
     ...input,
   };
 }

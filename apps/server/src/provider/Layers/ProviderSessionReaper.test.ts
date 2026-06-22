@@ -107,6 +107,7 @@ function makeReadModel(
       hasActionableProposedPlan: false,
       bookmarked: false,
       pullRequestReview: null,
+      forkedFromThreadId: null,
       latestTurn: null,
       messages: [],
       session: thread.session,
@@ -175,6 +176,7 @@ describe("ProviderSessionReaper", () => {
         });
       },
       rollbackConversation: () => unsupported(),
+      forkConversation: () => unsupported(),
       streamEvents: Stream.empty,
     };
 

@@ -98,6 +98,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         bookmarked: 0,
         pullRequestNumber: null,
         pullRequestRemote: null,
+        forkedFromThreadId: null,
         deletedAt: null,
       });
 

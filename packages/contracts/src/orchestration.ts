@@ -420,6 +420,10 @@ export const OrchestrationThreadShell = Schema.Struct({
   pullRequestReview: Schema.NullOr(ThreadPullRequestReview).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  // Set when this thread was created by forking another; drives the linked-fork UI.
+  forkedFromThreadId: Schema.NullOr(ThreadId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 
@@ -517,6 +521,7 @@ const ThreadCreateCommand = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   pullRequestReview: Schema.optional(Schema.NullOr(ThreadPullRequestReview)),
+  forkedFromThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   createdAt: IsoDateTime,
 });
 
@@ -574,6 +579,7 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   pullRequestReview: Schema.optional(Schema.NullOr(ThreadPullRequestReview)),
+  forkedFromThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   createdAt: IsoDateTime,
 });
 
@@ -778,6 +784,19 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+// Internal: copy a source thread's messages into a freshly-created fork thread.
+// Emitted right after a fork's `thread.create` (server-side only). Carries the
+// source messages directly (the command read model the decider sees does not
+// load message bodies). Copies the conversation but not activities — so the
+// fork starts at $0.00 cost. Only dispatched when there are messages to copy.
+const ThreadForkSeedCommand = Schema.Struct({
+  type: Schema.Literal("thread.fork.seed"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messages: Schema.Array(OrchestrationMessage),
+  createdAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -786,6 +805,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ThreadForkSeedCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -863,6 +883,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   pullRequestReview: Schema.optional(Schema.NullOr(ThreadPullRequestReview)),
+  forkedFromThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   isProviderDriverKind,
+  type OrchestrationMessage,
   ProjectId,
   type ModelSelection,
   type ProviderDriverKind,
@@ -21,6 +22,45 @@ import {
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
+const FORK_TITLE_PREFIX = "Fork: ";
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Build the title for a new fork: `Fork: <name>`, deduped against existing
+ * non-archived threads in the same project with the standard ` (N)` suffix —
+ * the same scheme PR-review threads ("Review PR #N (2)") use.
+ */
+export function nextForkThreadTitle(
+  baseName: string,
+  project: { environmentId: EnvironmentId; projectId: ProjectId },
+  threads: ReadonlyArray<{
+    title: string;
+    environmentId: EnvironmentId;
+    projectId: ProjectId;
+    archivedAt: string | null;
+  }>,
+): string {
+  const base = `${FORK_TITLE_PREFIX}${baseName}`;
+  const pattern = new RegExp(`^${escapeRegExp(base)}(?: \\((\\d+)\\))?$`);
+  let highest = 0;
+  for (const thread of threads) {
+    if (
+      thread.archivedAt !== null ||
+      thread.environmentId !== project.environmentId ||
+      thread.projectId !== project.projectId
+    ) {
+      continue;
+    }
+    const match = pattern.exec(thread.title);
+    if (!match) continue;
+    highest = Math.max(highest, match[1] ? Number(match[1]) : 1);
+  }
+  return highest === 0 ? base : `${base} (${highest + 1})`;
+}
+
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
@@ -31,17 +71,26 @@ export function buildLocalDraftThread(
   threadId: ThreadId,
   draftThread: DraftThreadState,
   fallbackModelSelection: ModelSelection,
+  // For a fork draft, the predecessor's messages — shown read-only above the
+  // composer so the conversation appears immediately. On send the server copies
+  // the same history into the promoted thread (thread.fork.seed).
+  forkSourceMessages: ReadonlyArray<OrchestrationMessage> = [],
 ): Thread {
   return {
     id: threadId,
     environmentId: draftThread.environmentId,
     projectId: draftThread.projectId,
-    title: "New thread",
+    // A seeded draft (a fork -> "Fork: <name>", a PR review -> "Review PR #123")
+    // shows its seed name; an ordinary new draft falls back to "New thread".
+    title:
+      draftThread.titleSeed && draftThread.titleSeed.trim().length > 0
+        ? draftThread.titleSeed
+        : "New thread",
     modelSelection: fallbackModelSelection,
     runtimeMode: draftThread.runtimeMode,
     interactionMode: draftThread.interactionMode,
     session: null,
-    messages: [],
+    messages: forkSourceMessages,
     createdAt: draftThread.createdAt,
     updatedAt: draftThread.createdAt,
     archivedAt: null,

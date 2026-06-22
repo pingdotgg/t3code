@@ -144,6 +144,8 @@ export interface CodexSessionRuntimeShape {
   readonly rollbackThread: (
     numTurns: number,
   ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
+  /** Fork this thread's Codex session into a new one; returns the new provider thread id. */
+  readonly forkThread: () => Effect.Effect<string, CodexSessionRuntimeError>;
   readonly respondToRequest: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -1344,6 +1346,17 @@ export const makeCodexSessionRuntime = (
             activeTurnId: undefined,
           });
           return parseThreadSnapshot(response);
+        }),
+      forkThread: () =>
+        Effect.gen(function* () {
+          // Codex loads the source thread from disk by id and forks it into a new
+          // thread that carries the full history; the new id becomes the forked
+          // T3 thread's resume cursor. We don't touch this (source) session.
+          const providerThreadId = yield* readProviderThreadId;
+          const response = yield* client.request("thread/fork", {
+            threadId: providerThreadId,
+          });
+          return response.thread.id;
         }),
       respondToRequest: (requestId, decision) =>
         Effect.gen(function* () {

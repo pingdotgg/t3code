@@ -12,10 +12,14 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 /**
- * Sum the per-turn API cost (USD) recorded for a thread. Each completed turn that
- * reports a dollar cost contributes one activity; summing them yields the thread
- * total. Only some providers (Claude) report a cost today — threads on providers
- * that don't return 0.
+ * Sum the per-turn API cost (USD) recorded for a thread. Each completed turn
+ * that reports a dollar cost contributes one activity carrying *that turn's*
+ * cost, so summing them yields the thread total. The server is responsible for
+ * making each activity a per-turn figure — notably Claude's SDK reports a
+ * session-cumulative `total_cost_usd`, which the adapter converts to a per-turn
+ * delta before emitting (see ClaudeAdapter `completeTurn`). These figures are
+ * estimates, not authoritative billing. Threads on providers that report no cost
+ * sum to 0.
  */
 export function sumThreadApiCostUsd(
   activities: ReadonlyArray<OrchestrationThreadActivity>,

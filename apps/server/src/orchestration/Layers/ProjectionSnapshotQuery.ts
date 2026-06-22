@@ -340,6 +340,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           bookmarked,
           pull_request_number AS "pullRequestNumber",
           pull_request_remote AS "pullRequestRemote",
+          forked_from_thread_id AS "forkedFromThreadId",
           deleted_at AS "deletedAt"
         FROM projection_threads
         ORDER BY created_at ASC, thread_id ASC
@@ -371,6 +372,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           bookmarked,
           pull_request_number AS "pullRequestNumber",
           pull_request_remote AS "pullRequestRemote",
+          forked_from_thread_id AS "forkedFromThreadId",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE deleted_at IS NULL
@@ -404,6 +406,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           bookmarked,
           pull_request_number AS "pullRequestNumber",
           pull_request_remote AS "pullRequestRemote",
+          forked_from_thread_id AS "forkedFromThreadId",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE deleted_at IS NULL
@@ -769,6 +772,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           bookmarked,
           pull_request_number AS "pullRequestNumber",
           pull_request_remote AS "pullRequestRemote",
+          forked_from_thread_id AS "forkedFromThreadId",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -1534,6 +1538,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                         row.pullRequestNumber !== null && row.pullRequestRemote !== null
                           ? { prNumber: row.pullRequestNumber, remote: row.pullRequestRemote }
                           : null,
+                      forkedFromThreadId: row.forkedFromThreadId,
                     } satisfies OrchestrationThreadShell)
                   : Result.failVoid,
               ),
@@ -1673,6 +1678,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     row.pullRequestNumber !== null && row.pullRequestRemote !== null
                       ? { prNumber: row.pullRequestNumber, remote: row.pullRequestRemote }
                       : null,
+                  forkedFromThreadId: row.forkedFromThreadId,
                 }),
               ),
               updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
@@ -1921,6 +1927,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 remote: threadRow.value.pullRequestRemote,
               }
             : null,
+        forkedFromThreadId: threadRow.value.forkedFromThreadId,
       } satisfies OrchestrationThreadShell);
     });
 

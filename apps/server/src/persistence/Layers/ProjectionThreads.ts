@@ -50,6 +50,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           bookmarked,
           pull_request_number,
           pull_request_remote,
+          forked_from_thread_id,
           deleted_at
         )
         VALUES (
@@ -72,6 +73,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.bookmarked},
           ${row.pullRequestNumber},
           ${row.pullRequestRemote},
+          ${row.forkedFromThreadId},
           ${row.deletedAt}
         )
         ON CONFLICT (thread_id)
@@ -94,6 +96,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           bookmarked = excluded.bookmarked,
           pull_request_number = excluded.pull_request_number,
           pull_request_remote = excluded.pull_request_remote,
+          forked_from_thread_id = excluded.forked_from_thread_id,
           deleted_at = excluded.deleted_at
       `,
   });
@@ -123,6 +126,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           bookmarked,
           pull_request_number AS "pullRequestNumber",
           pull_request_remote AS "pullRequestRemote",
+          forked_from_thread_id AS "forkedFromThreadId",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -154,6 +158,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           bookmarked,
           pull_request_number AS "pullRequestNumber",
           pull_request_remote AS "pullRequestRemote",
+          forked_from_thread_id AS "forkedFromThreadId",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE project_id = ${projectId}

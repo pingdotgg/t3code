@@ -303,7 +303,16 @@ function retainProjectionActivitiesAfterRevert(
       .flatMap((turn) => (turn.turnId === null ? [] : [turn.turnId])),
   );
   return activities.filter(
-    (activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId),
+    (activity) =>
+      // API cost is money already spent — the `turn.api-cost` activity records a
+      // completed turn's estimated cost (emitted in ProviderRuntimeIngestion;
+      // literal kept in sync there and in apps/web threadCost.ts). Keep these
+      // across reverts so the thread's running cost never decreases when turns are
+      // rewound; they aren't rendered in the work log, so retaining stale ones is
+      // invisible except in the cost sum.
+      activity.kind === "turn.api-cost" ||
+      activity.turnId === null ||
+      retainedTurnIds.has(activity.turnId),
   );
 }
 
@@ -614,6 +623,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             bookmarked: 0,
             pullRequestNumber: event.payload.pullRequestReview?.prNumber ?? null,
             pullRequestRemote: event.payload.pullRequestReview?.remote ?? null,
+            forkedFromThreadId: event.payload.forkedFromThreadId ?? null,
             deletedAt: null,
           });
           return;

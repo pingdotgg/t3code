@@ -110,6 +110,8 @@ export interface AcpSessionRuntimeShape {
   readonly setSessionModel: (
     modelId: string,
   ) => Effect.Effect<EffectAcpSchema.SetSessionModelResponse, EffectAcpErrors.AcpError>;
+  /** Branch this session into a new one (native ACP session/fork); returns the new session id. */
+  readonly forkSession: () => Effect.Effect<string, EffectAcpErrors.AcpError>;
   readonly request: (
     method: string,
     payload: unknown,
@@ -570,6 +572,31 @@ const makeAcpSessionRuntime = (
             );
           }),
         ),
+      forkSession: () =>
+        Effect.gen(function* () {
+          const started = yield* getStartedState;
+          // session/fork is UNSTABLE and capability-gated; bail if the agent
+          // doesn't advertise it so callers can degrade to a display-only fork.
+          const supportsFork =
+            started.initializeResult.agentCapabilities?.sessionCapabilities?.fork != null;
+          if (!supportsFork) {
+            return yield* new EffectAcpErrors.AcpRequestError({
+              code: -32601,
+              errorMessage: "Agent does not support session/fork",
+            });
+          }
+          const requestPayload = {
+            sessionId: started.sessionId,
+            cwd: options.cwd,
+            mcpServers: options.mcpServers ?? [],
+          } satisfies EffectAcpSchema.ForkSessionRequest;
+          const response = yield* runLoggedRequest(
+            "session/fork",
+            requestPayload,
+            acp.agent.forkSession(requestPayload),
+          );
+          return response.sessionId;
+        }),
       request: (method, payload) =>
         runLoggedRequest(method, payload, acp.raw.request(method, payload)),
       notify: acp.raw.notify,

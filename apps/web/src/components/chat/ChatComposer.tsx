@@ -94,6 +94,7 @@ import { toastManager } from "../ui/toast";
 import {
   BotIcon,
   CircleAlertIcon,
+  GitForkIcon,
   ListTodoIcon,
   PencilRulerIcon,
   type LucideIcon,
@@ -345,6 +346,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   isEnvironmentUnavailable: boolean;
   hasSendableContent: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
+  onForkConversation?: (() => void) | undefined;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -359,6 +361,33 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
       ) : null}
       {props.isPreparingWorktree ? (
         <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
+      ) : null}
+      {/* Fork conversation — shown only alongside the send button (not while running /
+          answering / refining) and only when a fork handler is available (server threads). */}
+      {props.onForkConversation &&
+      !props.isRunning &&
+      !props.pendingAction &&
+      !props.showPlanFollowUpPrompt ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon"
+                type="button"
+                className="shrink-0 rounded-full text-muted-foreground/70 hover:text-foreground/80"
+                disabled={props.isEnvironmentUnavailable}
+                aria-label="Fork conversation"
+                onClick={() => {
+                  props.onForkConversation?.();
+                }}
+              />
+            }
+          >
+            <GitForkIcon />
+          </TooltipTrigger>
+          <TooltipPopup side="top">Fork conversation</TooltipPopup>
+        </Tooltip>
       ) : null}
       <ComposerPrimaryActions
         compact={props.compact}
@@ -478,6 +507,9 @@ export interface ChatComposerProps {
   // Mode
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
+  /** Fork the current conversation into a fresh draft with the same settings.
+   * Provided only for server-backed threads; absent hides the fork button. */
+  onForkConversation?: (() => void) | undefined;
 
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
@@ -2564,6 +2596,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   isPreparingWorktree={isPreparingWorktree}
                   hasSendableContent={composerSendState.hasSendableContent}
                   preserveComposerFocusOnPointerDown={isMobileViewport}
+                  onForkConversation={props.onForkConversation}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}
                   onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}

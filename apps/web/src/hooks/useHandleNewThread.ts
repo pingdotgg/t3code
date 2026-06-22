@@ -71,11 +71,18 @@ export function useNewThreadHandler() {
       const storedDraftThreadRef = storedDraftThread
         ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
         : null;
+      // A fork draft (from "Fork conversation") is special: it carries a
+      // forkedFromThreadId and a "Fork: <name>" title. It must NOT be reused as
+      // the project's generic new-thread draft, or a normal new thread would
+      // inherit the fork identity. Skip it so a fresh draft is minted instead
+      // (which reclaims the abandoned fork draft).
+      const storedDraftPromoted =
+        storedDraftThreadRef !== null && readThreadShell(storedDraftThreadRef) !== null;
       const reusableStoredDraftThread =
-        storedDraftThreadRef && readThreadShell(storedDraftThreadRef) !== null
+        storedDraftPromoted || storedDraftThread?.forkedFromThreadId != null
           ? null
           : storedDraftThread;
-      if (storedDraftThreadRef && reusableStoredDraftThread === null) {
+      if (storedDraftThreadRef && storedDraftPromoted) {
         markPromotedDraftThreadByRef(storedDraftThreadRef);
       }
       const latestActiveDraftThread: DraftThreadState | null = currentRouteTarget
@@ -121,7 +128,8 @@ export function useNewThreadHandler() {
         latestActiveDraftThread &&
         currentRouteTarget?.kind === "draft" &&
         latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
-        latestActiveDraftThread.promotedTo == null
+        latestActiveDraftThread.promotedTo == null &&
+        latestActiveDraftThread.forkedFromThreadId == null
       ) {
         if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption || hasTitleSeedOption) {
           setDraftThreadContext(currentRouteTarget.draftId, {

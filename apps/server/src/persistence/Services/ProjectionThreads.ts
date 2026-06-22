@@ -45,6 +45,8 @@ export const ProjectionThread = Schema.Struct({
   bookmarked: NonNegativeInt,
   pullRequestNumber: Schema.NullOr(Schema.Int),
   pullRequestRemote: Schema.NullOr(Schema.String),
+  // Predecessor thread id when this thread was created by forking; null otherwise.
+  forkedFromThreadId: Schema.NullOr(ThreadId),
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;

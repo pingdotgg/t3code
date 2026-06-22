@@ -2398,6 +2398,219 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       ]);
     }),
   );
+
+  it.effect("retains turn.api-cost activities across a revert while pruning other turn activities", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+        eventStore
+          .append(event)
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+      yield* appendAndProject({
+        type: "project.created",
+        eventId: EventId.make("evt-cost-revert-1"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.make("project-cost-revert"),
+        occurredAt: "2026-02-26T12:00:00.000Z",
+        commandId: CommandId.make("cmd-cost-revert-1"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-cost-revert-1"),
+        metadata: {},
+        payload: {
+          projectId: ProjectId.make("project-cost-revert"),
+          title: "Project Cost Revert",
+          workspaceRoot: "/tmp/project-cost-revert",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-02-26T12:00:00.000Z",
+          updatedAt: "2026-02-26T12:00:00.000Z",
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.created",
+        eventId: EventId.make("evt-cost-revert-2"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-cost-revert"),
+        occurredAt: "2026-02-26T12:00:01.000Z",
+        commandId: CommandId.make("cmd-cost-revert-2"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-cost-revert-2"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-cost-revert"),
+          projectId: ProjectId.make("project-cost-revert"),
+          title: "Thread Cost Revert",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-opus-4-6",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: "2026-02-26T12:00:01.000Z",
+          updatedAt: "2026-02-26T12:00:01.000Z",
+        },
+      });
+
+      // Turn 1 (kept by the revert) with its cost activity.
+      yield* appendAndProject({
+        type: "thread.turn-diff-completed",
+        eventId: EventId.make("evt-cost-revert-3"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-cost-revert"),
+        occurredAt: "2026-02-26T12:00:02.000Z",
+        commandId: CommandId.make("cmd-cost-revert-3"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-cost-revert-3"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-cost-revert"),
+          turnId: TurnId.make("turn-1"),
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-cost-revert/turn/1"),
+          status: "ready",
+          files: [],
+          assistantMessageId: MessageId.make("assistant-cost-1"),
+          completedAt: "2026-02-26T12:00:02.000Z",
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-cost-revert-4"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-cost-revert"),
+        occurredAt: "2026-02-26T12:00:02.100Z",
+        commandId: CommandId.make("cmd-cost-revert-4"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-cost-revert-4"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-cost-revert"),
+          activity: {
+            id: EventId.make("activity-cost-turn-1"),
+            tone: "info",
+            kind: "turn.api-cost",
+            summary: "Turn API cost",
+            payload: { totalCostUsd: 0.1 },
+            turnId: TurnId.make("turn-1"),
+            createdAt: "2026-02-26T12:00:02.100Z",
+          },
+        },
+      });
+
+      // Turn 2 (reverted away) with both a cost activity and a tool activity.
+      yield* appendAndProject({
+        type: "thread.turn-diff-completed",
+        eventId: EventId.make("evt-cost-revert-5"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-cost-revert"),
+        occurredAt: "2026-02-26T12:00:03.000Z",
+        commandId: CommandId.make("cmd-cost-revert-5"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-cost-revert-5"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-cost-revert"),
+          turnId: TurnId.make("turn-2"),
+          checkpointTurnCount: 2,
+          checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-cost-revert/turn/2"),
+          status: "ready",
+          files: [],
+          assistantMessageId: MessageId.make("assistant-cost-2"),
+          completedAt: "2026-02-26T12:00:03.000Z",
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-cost-revert-6"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-cost-revert"),
+        occurredAt: "2026-02-26T12:00:03.100Z",
+        commandId: CommandId.make("cmd-cost-revert-6"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-cost-revert-6"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-cost-revert"),
+          activity: {
+            id: EventId.make("activity-cost-turn-2"),
+            tone: "info",
+            kind: "turn.api-cost",
+            summary: "Turn API cost",
+            payload: { totalCostUsd: 0.05 },
+            turnId: TurnId.make("turn-2"),
+            createdAt: "2026-02-26T12:00:03.100Z",
+          },
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-cost-revert-7"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-cost-revert"),
+        occurredAt: "2026-02-26T12:00:03.200Z",
+        commandId: CommandId.make("cmd-cost-revert-7"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-cost-revert-7"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-cost-revert"),
+          activity: {
+            id: EventId.make("activity-tool-turn-2"),
+            tone: "tool",
+            kind: "tool.completed",
+            summary: "Tool finished",
+            payload: {},
+            turnId: TurnId.make("turn-2"),
+            createdAt: "2026-02-26T12:00:03.200Z",
+          },
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.reverted",
+        eventId: EventId.make("evt-cost-revert-8"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-cost-revert"),
+        occurredAt: "2026-02-26T12:00:04.000Z",
+        commandId: CommandId.make("cmd-cost-revert-8"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-cost-revert-8"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-cost-revert"),
+          turnCount: 1,
+        },
+      });
+
+      const activityRows = yield* sql<{
+        readonly activityId: string;
+        readonly turnId: string | null;
+        readonly kind: string;
+      }>`
+        SELECT
+          activity_id AS "activityId",
+          turn_id AS "turnId",
+          kind
+        FROM projection_thread_activities
+        WHERE thread_id = 'thread-cost-revert'
+        ORDER BY created_at ASC, activity_id ASC
+      `;
+      // Both cost activities survive (money already spent never decreases), while
+      // the reverted turn's non-cost activity is pruned.
+      assert.deepEqual(activityRows, [
+        { activityId: "activity-cost-turn-1", turnId: "turn-1", kind: "turn.api-cost" },
+        { activityId: "activity-cost-turn-2", turnId: "turn-2", kind: "turn.api-cost" },
+      ]);
+    }),
+  );
 });
 
 it.effect("restores pending turn-start metadata across projection pipeline restart", () =>

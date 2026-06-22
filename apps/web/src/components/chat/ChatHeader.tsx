@@ -26,8 +26,8 @@ interface ChatHeaderProps {
   activeThreadTitle: string;
   /** Cumulative API cost (USD) for this thread, shown after the title. */
   activeThreadCostUsd?: number | null;
-  /** Whether the cost is a token×price estimate (e.g. Codex) vs a real figure (Claude). */
-  activeThreadCostEstimated?: boolean;
+  /** Whether this thread was created by forking another — annotates the cost as "(fork, …)". */
+  activeThreadIsFork?: boolean;
   activeProjectName: string | undefined;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
@@ -63,7 +63,7 @@ export const ChatHeader = memo(function ChatHeader({
   draftId,
   activeThreadTitle,
   activeThreadCostUsd,
-  activeThreadCostEstimated,
+  activeThreadIsFork,
   activeProjectName,
   openInCwd,
   activeProjectScripts,
@@ -83,12 +83,17 @@ export const ChatHeader = memo(function ChatHeader({
     activeThreadEnvironmentId,
     primaryEnvironmentId,
   });
-  // API cost (USD) for this thread. Hidden until it rounds to at least a cent so
-  // brand-new threads (and providers that report no cost) stay clean. Claude is a
-  // real SDK figure; Codex et al. are token×price estimates, prefixed "est.".
-  const costLabel =
-    typeof activeThreadCostUsd === "number" && activeThreadCostUsd >= 0.005
-      ? `${activeThreadCostEstimated ? "est. " : ""}$${activeThreadCostUsd.toFixed(2)}`
+  // API cost (USD) for this thread, rounded to the nearest cent. Every provider's
+  // figure is an estimate — Claude's SDK `total_cost_usd` is a client-side
+  // price-table estimate, Codex et al. are token×price — so always prefix "est.".
+  // Normal threads hide the label until it rounds to a cent (so brand-new threads
+  // stay clean). A fork always shows "(fork, est. $X.XX)" — starting at $0.00 on
+  // creation — so it's clear it's a branch with its own (initially zero) spend.
+  const roundedCostUsd = typeof activeThreadCostUsd === "number" ? activeThreadCostUsd : 0;
+  const costLabel = activeThreadIsFork
+    ? `fork, est. $${roundedCostUsd.toFixed(2)}`
+    : roundedCostUsd >= 0.005
+      ? `est. $${roundedCostUsd.toFixed(2)}`
       : null;
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">

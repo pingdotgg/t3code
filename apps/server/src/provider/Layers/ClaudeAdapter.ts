@@ -118,6 +118,10 @@ interface ClaudeResumeState {
   readonly resume?: string;
   readonly resumeSessionAt?: string;
   readonly turnCount?: number;
+  /** When set, the next session start forks the resumed session (Claude `forkSession`)
+   * into a new one instead of continuing it in place. Set once at fork creation;
+   * cleared after the first turn (updateResumeCursor never re-writes it). */
+  readonly fork?: boolean;
 }
 
 interface ClaudeTurnState {
@@ -197,6 +201,15 @@ interface ClaudeSessionContext {
   lastKnownContextWindow: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
   lastKnownTotalProcessedTokens: number | undefined;
+  /**
+   * The SDK's `total_cost_usd` is cumulative across all turns of a single
+   * `query()` call (this whole session is one streaming-input query). We emit a
+   * per-turn delta against this running total so downstream sums stay correct
+   * instead of N-times-counting the cumulative figure. Reset to 0 per session,
+   * so a resumed thread (a fresh `query()` whose cost restarts at 0) deltas
+   * correctly too.
+   */
+  lastTurnTotalCostUsd: number;
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
   stopped: boolean;
@@ -432,6 +445,26 @@ function claudeTotalProcessedTokens(value: unknown): number | undefined {
   return total > 0 ? total : undefined;
 }
 
+/**
+ * The Claude Agent SDK's `total_cost_usd` is cumulative across every turn of a
+ * single streaming-input `query()` call (this adapter runs one `query()` per
+ * session). Convert it to *this* turn's cost by subtracting the previous
+ * cumulative total, so downstream consumers that sum per-turn costs don't
+ * N-times-count the running figure. Returns `undefined` when no finite cost is
+ * reported. Clamps to >= 0 defensively: cost is monotonic within a call, and a
+ * resumed thread is a fresh `query()` whose running total restarts at 0
+ * alongside a reset `previousCumulativeCostUsd`, so deltas stay correct.
+ */
+export function claudePerTurnCostUsd(
+  cumulativeCostUsd: unknown,
+  previousCumulativeCostUsd: number,
+): number | undefined {
+  if (typeof cumulativeCostUsd !== "number" || !Number.isFinite(cumulativeCostUsd)) {
+    return undefined;
+  }
+  return Math.max(0, cumulativeCostUsd - previousCumulativeCostUsd);
+}
+
 function makeClaudeTokenUsageSnapshot(input: {
   readonly activeTokens: number;
   readonly inputTokens?: number;
@@ -592,6 +625,7 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     sessionId?: unknown;
     resumeSessionAt?: unknown;
     turnCount?: unknown;
+    fork?: unknown;
   };
 
   const threadIdCandidate = typeof cursor.threadId === "string" ? cursor.threadId : undefined;
@@ -617,6 +651,7 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     ...(turnCountValue !== undefined && Number.isInteger(turnCountValue) && turnCountValue >= 0
       ? { turnCount: turnCountValue }
       : {}),
+    ...(cursor.fork === true ? { fork: true } : {}),
   };
 }
 
@@ -1916,6 +1951,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       context.lastKnownTotalProcessedTokens = accumulatedTotalProcessedTokens;
     }
 
+    // `result.total_cost_usd` is the SDK's cumulative estimate across every turn
+    // of this session's single streaming-input `query()` call. Emit only this
+    // turn's delta against the running total so downstream consumers, which sum
+    // the per-turn `turn.api-cost` activities, don't N-times-count it. (Note: the
+    // SDK figure is itself a client-side price-table estimate, not billing data.)
+    const turnCostUsd = claudePerTurnCostUsd(result?.total_cost_usd, context.lastTurnTotalCostUsd);
+    if (turnCostUsd !== undefined) {
+      context.lastTurnTotalCostUsd = result?.total_cost_usd as number;
+    }
+
     const contextUsageSnapshot = yield* queryCurrentContextUsage(
       context,
       accumulatedTotalProcessedTokens ?? context.lastKnownTotalProcessedTokens,
@@ -1994,9 +2039,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(result?.stop_reason !== undefined ? { stopReason: result.stop_reason } : {}),
           ...(result?.usage ? { usage: result.usage } : {}),
           ...(result?.modelUsage ? { modelUsage: result.modelUsage } : {}),
-          ...(typeof result?.total_cost_usd === "number"
-            ? { totalCostUsd: result.total_cost_usd }
-            : {}),
+          ...(turnCostUsd !== undefined && turnCostUsd > 0 ? { totalCostUsd: turnCostUsd } : {}),
           ...(errorMessage ? { errorMessage } : {}),
         },
         providerRefs: {},
@@ -2069,9 +2112,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(result?.stop_reason !== undefined ? { stopReason: result.stop_reason } : {}),
         ...(result?.usage ? { usage: result.usage } : {}),
         ...(result?.modelUsage ? { modelUsage: result.modelUsage } : {}),
-        ...(typeof result?.total_cost_usd === "number"
-          ? { totalCostUsd: result.total_cost_usd }
-          : {}),
+        ...(turnCostUsd !== undefined && turnCostUsd > 0 ? { totalCostUsd: turnCostUsd } : {}),
         ...(errorMessage ? { errorMessage } : {}),
       },
       providerRefs: nativeProviderRefs(context),
@@ -3100,6 +3141,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const existingResumeSessionId = resumeState?.resume;
       const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
       const sessionId = existingResumeSessionId ?? newSessionId;
+      // Fork: branch the resumed session into a new one on this query. The SDK
+      // assigns a fresh session id (captured from the init message), so the
+      // resumed (source) session stays untouched.
+      const shouldForkSession = resumeState?.fork === true && existingResumeSessionId !== undefined;
 
       const runtimeContext = yield* Effect.context<never>();
       const runFork = Effect.runForkWith(runtimeContext);
@@ -3467,6 +3512,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
+        ...(shouldForkSession ? { forkSession: true } : {}),
         includePartialMessages: true,
         canUseTool,
         env: claudeEnvironment,
@@ -3564,6 +3610,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastKnownContextWindow: initialContextWindow,
         lastKnownTokenUsage: undefined,
         lastKnownTotalProcessedTokens: undefined,
+        lastTurnTotalCostUsd: 0,
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
         stopped: false,
@@ -3775,6 +3822,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   );
 
+  const forkThread: NonNullable<ClaudeAdapterShape["forkThread"]> = Effect.fn("forkThread")(
+    function* (sourceThreadId) {
+      const context = yield* requireSession(sourceThreadId);
+      const sourceSessionId = context.resumeSessionId;
+      if (!sourceSessionId) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "forkThread",
+          issue: "Cannot fork a Claude session before it has a session id.",
+        });
+      }
+      // The forked thread resumes the source session with forkSession=true, so its
+      // first turn branches into a fresh session id without touching the source.
+      return { resumeCursor: { resume: sourceSessionId, fork: true } };
+    },
+  );
+
   const respondToRequest: ClaudeAdapterShape["respondToRequest"] = Effect.fn("respondToRequest")(
     function* (threadId, requestId, decision) {
       const context = yield* requireSession(threadId);
@@ -3863,6 +3927,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     interruptTurn,
     readThread,
     rollbackThread,
+    forkThread,
     respondToRequest,
     respondToUserInput,
     stopSession,

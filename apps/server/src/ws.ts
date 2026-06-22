@@ -69,6 +69,7 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
+import { ProviderService } from "./provider/Services/ProviderService.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
@@ -269,6 +270,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry;
+      const providerService = yield* ProviderService;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const config = yield* ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents;
@@ -693,9 +695,53 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                 ...(bootstrap.createThread.pullRequestReview !== undefined
                   ? { pullRequestReview: bootstrap.createThread.pullRequestReview }
                   : {}),
+                ...(bootstrap.createThread.forkedFromThreadId !== undefined
+                  ? { forkedFromThreadId: bootstrap.createThread.forkedFromThreadId }
+                  : {}),
                 createdAt: bootstrap.createThread.createdAt,
               });
               createdThread = true;
+
+              // Fork: copy the source thread's conversation into the new thread
+              // before its first turn runs, so the fork shows the prior messages.
+              if (bootstrap.createThread.forkedFromThreadId) {
+                const forkSourceThreadId = bootstrap.createThread.forkedFromThreadId;
+                // Read the full source detail — the decider's command read model
+                // doesn't carry message bodies, so we pass them in explicitly.
+                // Best-effort: a read failure just means no copied history.
+                const forkSourceDetail = yield* projectionSnapshotQuery
+                  .getThreadDetailById(forkSourceThreadId)
+                  .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+                const forkSourceMessages = Option.match(forkSourceDetail, {
+                  onNone: () => [],
+                  onSome: (thread) => thread.messages,
+                });
+                if (forkSourceMessages.length > 0) {
+                  yield* orchestrationEngine.dispatch({
+                    type: "thread.fork.seed",
+                    commandId: yield* serverCommandId("bootstrap-fork-seed"),
+                    threadId: command.threadId,
+                    messages: forkSourceMessages,
+                    createdAt: bootstrap.createThread.createdAt,
+                  });
+                }
+                // Branch the provider session so the first turn continues with the
+                // source's full context. Must run before the turn (below) persists
+                // the resume cursor. Best-effort: on failure the fork still shows
+                // the copied history; only continuation degrades (fresh session).
+                yield* providerService
+                  .forkConversation({
+                    sourceThreadId: forkSourceThreadId,
+                    targetThreadId: command.threadId,
+                  })
+                  .pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning("fork: failed to branch provider session", {
+                        detail: cause.message,
+                      }),
+                    ),
+                  );
+              }
             }
 
             if (bootstrap?.prepareWorktree) {
