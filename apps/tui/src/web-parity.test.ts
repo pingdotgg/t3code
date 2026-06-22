@@ -86,9 +86,13 @@ describe.skip("Composer: provider-traits + plan-sidebar toggle + compact menu", 
 // Commit-message dialog: SHIPPED — choosing a commit-bearing action opens the
 // "commit ▸" composer mode (ChatComposer.test) which runs the action with the
 // typed message (store.runGitAction(action, message)).
-describe.skip("Right panel: Browser / Files surfaces + publish repo", () => {
-  it("Given a repo with no remote, then a 'Publish repository' flow is offered", () => {});
-  it("Given the panel, then Browser and Files surfaces can be opened (web RightPanelTabs)", () => {});
+// Files surface: SHIPPED — the command palette "Browse files" opens a workspace
+// file browser (FilesView.test) backed by projects.listEntries + readFile.
+// Publish-repo is surfaced as a terminal hint (it needs a provider/visibility
+// dialog); the Browser surface is ~N/A in a terminal.
+describe.skip("Right panel: Browser surface + full publish-repo flow", () => {
+  it("Given a repo with no remote, then a guided 'Publish repository' flow runs in-app", () => {});
+  it("Given the panel, then a Browser surface can be opened (web RightPanelTabs)", () => {});
 });
 
 describe.skip("Settings overlay", () => {

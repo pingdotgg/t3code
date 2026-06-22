@@ -20,9 +20,11 @@ import { describe, it } from "bun:test";
 // "Worked for" fold, the right-side source-control panel (^L: branch + PR
 // status, Push & create PR / Commit / View PR), thread next/prev + jump (Alt+↑/↓,
 // Alt+1…9), the command palette (^K — fuzzy commands folding in the thread
-// actions), the right-panel Pull action, and multiple terminals per thread
-// (terminal tabs — the TUI form of the web's terminal groups). See
-// web-parity.test.ts for the keyboard parity table + remaining backlog.
+// actions), the right-panel Pull action, multiple terminals per thread
+// (terminal tabs — the TUI form of the web's terminal groups), image
+// attachments shown as links, and a workspace file browser (palette → Browse
+// files, projects.listEntries + readFile). See web-parity.test.ts for the
+// keyboard parity table + remaining backlog.
 
 // Image attachments: shown as a resolved link to the file (MessagesTimeline.test)
 // until OpenTUI's inline-image PR lands; INLINE rendering is the only part still

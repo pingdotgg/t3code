@@ -16,6 +16,7 @@ import { useKeyboard } from "@opentui/react";
 export type KeyBindingMode =
   | "terminal"
   | "command"
+  | "files"
   | "confirmDelete"
   | "revert"
   | "diff"
@@ -44,6 +45,13 @@ export interface KeyBindingActions {
   readonly onCommandNext: () => void;
   readonly onCommandRun: () => void;
   readonly onCommandClose: () => void;
+  // File browser: ↑/↓ select (or scroll a viewed file), Enter open/expand, Esc back/close.
+  readonly onFilesUp: () => void;
+  readonly onFilesDown: () => void;
+  readonly onFilesActivate: () => void;
+  readonly onFilesBack: () => void;
+  readonly onFilesScrollUp: () => void;
+  readonly onFilesScrollDown: () => void;
   readonly onCloseOverlay: () => void;
   // Model picker
   // Select pickers (model / runtime / reasoning): ↑/↓ move, Enter applies, Esc
@@ -150,6 +158,15 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       if (key.name === "pagedown") return actions.onDiffScrollDown();
       if (key.name === "s") return actions.onDiffToggleView();
       if (key.name === "escape") return actions.onDiffClose();
+      return;
+    }
+    if (actions.mode === "files") {
+      if (key.name === "up") return actions.onFilesUp();
+      if (key.name === "down") return actions.onFilesDown();
+      if (key.name === "pageup") return actions.onFilesScrollUp();
+      if (key.name === "pagedown") return actions.onFilesScrollDown();
+      if (key.name === "return" || key.name === "enter") return actions.onFilesActivate();
+      if (key.name === "escape") return actions.onFilesBack();
       return;
     }
     if (actions.mode === "confirmDelete") {

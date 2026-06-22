@@ -25,7 +25,9 @@ import { buildRows, selectionEquals } from "./Sidebar.logic.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import { type DiffStatus, type DiffView, DiffViewer } from "./DiffViewer.tsx";
 import { type Command, filterCommands } from "../commands.ts";
+import { buildFileTree, flattenFileTree } from "../fileTree.ts";
 import { CommandPalette } from "./CommandPalette.tsx";
+import { FilesView, type FilesStatus, type ViewingFile } from "./FilesView.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
 import { RightPanel } from "./RightPanel.tsx";
 import { SelectOverlay, type SelectStatus } from "./SelectOverlay.tsx";
@@ -103,6 +105,19 @@ export function ChatView({
   // When a single changed file was clicked, scope the diff to it (cleared on turn nav).
   const [diffFocusPath, setDiffFocusPath] = React.useState<string | null>(null);
   const diffScrollRef = React.useRef<ScrollBoxRenderable | null>(null);
+  // The workspace file browser (palette → Browse files): the entry index, the
+  // selected row, collapsed dirs, and the currently-open file's contents.
+  const [filesOpen, setFilesOpen] = React.useState(false);
+  const [filesStatus, setFilesStatus] = React.useState<FilesStatus>("loading");
+  const [fileEntries, setFileEntries] = React.useState<
+    ReadonlyArray<{ readonly path: string; readonly kind: "file" | "directory" }>
+  >([]);
+  const [filesIndex, setFilesIndex] = React.useState(0);
+  const [filesCollapsedDirs, setFilesCollapsedDirs] = React.useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [viewingFile, setViewingFile] = React.useState<ViewingFile | null>(null);
+  const filesScrollRef = React.useRef<ScrollBoxRenderable | null>(null);
   // Model picker (^K → m): fetched lazily on open.
   // A native-<select> picker for the composer controls (model / runtime / reasoning).
   const [picker, setPicker] = React.useState<{
@@ -494,7 +509,8 @@ export function ChatView({
   const termCols = Math.max(2, width - 4);
   // header + tab bar + frame + border(2) = frame rows + 4.
   const termRows = Math.max(2, terminalDrawerHeight - 4);
-  const rightPanelVisible = rightPanelOpen && width >= RIGHT_PANEL_MIN_TERMINAL_WIDTH && !diffOpen;
+  const rightPanelVisible =
+    rightPanelOpen && width >= RIGHT_PANEL_MIN_TERMINAL_WIDTH && !diffOpen && !filesOpen;
   const rightWidth = rightPanelVisible ? RIGHT_PANEL_WIDTH : 0;
   const chatWidth = Math.max(20, width - listWidth - rightWidth - 4);
 
@@ -648,6 +664,80 @@ export function ChatView({
       setTerminalOpen(false);
       setTerminalFocused(false);
     }
+  };
+
+  // ── Workspace file browser ─────────────────────────────────────────────────
+  // The flattened, collapse-aware tree built from the file entries (dirs inferred
+  // from paths; reuses the changed-files tree machinery).
+  const fileRows = React.useMemo(
+    () =>
+      flattenFileTree(
+        buildFileTree(
+          fileEntries
+            .filter((entry) => entry.kind === "file")
+            .map((entry) => ({ path: entry.path, additions: 0, deletions: 0 })),
+        ),
+        filesCollapsedDirs,
+      ),
+    [fileEntries, filesCollapsedDirs],
+  );
+
+  const openFiles = () => {
+    setFilesOpen(true);
+    setViewingFile(null);
+    setFilesIndex(0);
+    setFilesCollapsedDirs(new Set());
+    setFilesStatus("loading");
+    setFileEntries([]);
+    void client
+      .listEntries(terminalCwd)
+      .then((entries) => {
+        setFileEntries(entries);
+        setFilesStatus(entries.length === 0 ? "empty" : "ready");
+      })
+      .catch(() => setFilesStatus("error"));
+  };
+  const closeFiles = () => {
+    setFilesOpen(false);
+    setViewingFile(null);
+  };
+  const filesScroll = (dir: 1 | -1) =>
+    filesScrollRef.current?.scrollBy({ x: 0, y: dir * SCROLL_STEP });
+  const filesMove = (delta: 1 | -1) => {
+    if (viewingFile) {
+      filesScroll(delta);
+      return;
+    }
+    setFilesIndex((index) => Math.min(Math.max(0, index + delta), Math.max(0, fileRows.length - 1)));
+  };
+  const filesActivate = () => {
+    if (viewingFile) return;
+    const row = fileRows[filesIndex];
+    if (!row) return;
+    if (row.kind === "dir") {
+      setFilesCollapsedDirs((prev) => {
+        const next = new Set(prev);
+        if (next.has(row.path)) next.delete(row.path);
+        else next.add(row.path);
+        return next;
+      });
+      return;
+    }
+    setViewingFile({ path: row.path, status: "loading", content: "" });
+    void client
+      .readFile(terminalCwd, row.path)
+      .then((content) =>
+        setViewingFile(
+          content === null
+            ? { path: row.path, status: "error", content: "" }
+            : { path: row.path, status: "ready", content },
+        ),
+      )
+      .catch(() => setViewingFile({ path: row.path, status: "error", content: "" }));
+  };
+  const filesBack = () => {
+    if (viewingFile) setViewingFile(null);
+    else closeFiles();
   };
 
   const toggleFocus = () => {
@@ -834,6 +924,14 @@ export function ChatView({
       keywords: "search",
       run: () => runCommand(() => setFocus("filter")),
     });
+    if (detail) {
+      list.push({
+        id: "files",
+        title: "Browse files",
+        keywords: "workspace open file",
+        run: () => runCommand(openFiles),
+      });
+    }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, checkpoints.length, activeTerminal, detailTabs, terminalOpen, rightPanelOpen, actionablePlan]);
@@ -850,7 +948,9 @@ export function ChatView({
   const keyMode =
     activeTerminal && terminalFocused
       ? "terminal"
-      : diffOpen
+      : filesOpen
+        ? "files"
+        : diffOpen
         ? "diff"
         : picker
           ? "select"
@@ -967,6 +1067,12 @@ export function ChatView({
       ),
     onCommandRun: () => filteredCommands[safeCommandIndex]?.run(),
     onCommandClose: () => setOverlay("none"),
+    onFilesUp: () => filesMove(-1),
+    onFilesDown: () => filesMove(1),
+    onFilesActivate: filesActivate,
+    onFilesBack: filesBack,
+    onFilesScrollUp: () => filesScroll(-1),
+    onFilesScrollDown: () => filesScroll(1),
     onRevertPrev: () =>
       setRevertIndex((index) => (index <= 0 ? checkpoints.length - 1 : index - 1)),
     onRevertNext: () => setRevertIndex((index) => (index + 1) % Math.max(checkpoints.length, 1)),
@@ -1169,7 +1275,19 @@ export function ChatView({
           onSearchInput={store.setFilter}
           onFocusSearch={() => setFocus("filter")}
         />
-        {diffOpen ? (
+        {filesOpen ? (
+          <FilesView
+            cwdLabel={terminalCwd}
+            status={filesStatus}
+            rows={fileRows}
+            selectedIndex={filesIndex}
+            viewing={viewingFile}
+            width={chatWidth}
+            height={panesHeight}
+            syntaxStyle={syntaxStyle}
+            scrollRef={filesScrollRef}
+          />
+        ) : diffOpen ? (
           <DiffViewer
             scopeLabel={diffScopeLabel}
             status={diffStatus}

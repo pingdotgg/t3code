@@ -382,6 +382,12 @@ export interface TuiClient {
   readonly terminalClose: (threadId: ThreadId, terminalId: string) => Promise<void>;
   /** Resolve a message image attachment to an absolute URL, or null on failure. */
   readonly getAttachmentUrl: (attachmentId: string) => Promise<string | null>;
+  /** List the workspace's files + directories (bounded index) for the file browser. */
+  readonly listEntries: (
+    cwd: string,
+  ) => Promise<ReadonlyArray<{ readonly path: string; readonly kind: "file" | "directory" }>>;
+  /** Read a workspace file's contents, or null on failure. */
+  readonly readFile: (cwd: string, relativePath: string) => Promise<string | null>;
   readonly dispose: () => Promise<void>;
 }
 
@@ -814,6 +820,22 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
           Effect.asVoid,
         ),
       ),
+
+    listEntries: (cwd) =>
+      runtime
+        .runPromise(
+          request(WS_METHODS.projectsListEntries, { cwd }).pipe(Effect.map((r) => r.entries)),
+        )
+        .catch(() => []),
+
+    readFile: (cwd, relativePath) =>
+      runtime
+        .runPromise(
+          request(WS_METHODS.projectsReadFile, { cwd, relativePath }).pipe(
+            Effect.map((r) => r.contents),
+          ),
+        )
+        .catch(() => null),
 
     getAttachmentUrl: (attachmentId) =>
       runtime
