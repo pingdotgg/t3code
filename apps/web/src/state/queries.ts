@@ -9,14 +9,8 @@ import {
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
-import type {
-  EnvironmentId,
-  OrchestrationThread,
-  ProjectContentMatch,
-  ProjectEntryKind,
-  VcsListRefsResult,
-  VcsRef,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId, VcsListRefsResult, VcsRef } from "@t3tools/contracts";
+import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -27,6 +21,7 @@ import { orchestrationEnvironment } from "./orchestration";
 import { isPaginatedBranchesNextPagePending } from "./paginatedBranches";
 import { projectContentSearch, projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
+import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
 
 const PROJECT_PATH_SEARCH_DEBOUNCE_MS = 120;
@@ -54,7 +49,7 @@ const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
 });
 
 export interface ThreadDetailView {
-  readonly data: OrchestrationThread | null;
+  readonly data: EnvironmentThread | null;
   readonly error: string | null;
   readonly isPending: boolean;
   readonly isDeleted: boolean;
@@ -99,6 +94,35 @@ export function useThreadSearch(
     matches: isDebouncing ? EMPTY_THREAD_SEARCH_MATCHES : result.matches,
     isPending: canSearch && (isDebouncing || result.isLoading),
   };
+}
+
+export function useThreadDetail(
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
+): ThreadDetailView {
+  const state = useEnvironmentThread(environmentId, threadId);
+  return {
+    data: Option.getOrNull(state.data),
+    error: Option.getOrNull(state.error),
+    isPending: state.status === "synchronizing",
+    isDeleted: state.status === "deleted",
+  };
+}
+
+export function useBranches(target: VcsRefTarget) {
+  const query = target.query?.trim() ?? "";
+  return useEnvironmentQuery(
+    target.environmentId !== null && target.cwd !== null
+      ? vcsEnvironment.listRefs({
+          environmentId: target.environmentId,
+          input: {
+            cwd: target.cwd,
+            ...(query.length > 0 ? { query } : {}),
+            limit: VCS_REF_LIST_LIMIT,
+          },
+        })
+      : null,
+  );
 }
 
 export function usePaginatedBranches(target: VcsRefTarget) {
