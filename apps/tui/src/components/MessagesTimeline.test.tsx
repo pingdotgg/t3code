@@ -227,17 +227,32 @@ describe("MessagesTimeline body", () => {
     t.renderer.destroy();
   });
 
-  it("Given messages across two turns, then a numbered turn separator is shown", async () => {
+  it("Given a settled turn, then its tool work folds behind a 'Worked for' row", async () => {
     const frame = await bodyFrame({
       messages: [
-        { id: "m1", role: "user", text: "first", turnId: "t1", createdAt: "2026-06-19T00:00:00.000Z", streaming: false },
-        { id: "m2", role: "user", text: "second", turnId: "t2", createdAt: "2026-06-19T00:00:02.000Z", streaming: false },
+        { id: "u1", role: "user", text: "go", turnId: "t1", createdAt: "2026-06-19T00:00:00.000Z", updatedAt: "2026-06-19T00:00:00.000Z", streaming: false },
+        { id: "m1", role: "assistant", text: "done", turnId: "t1", createdAt: "2026-06-19T00:00:05.000Z", updatedAt: "2026-06-19T00:00:05.000Z", streaming: false },
+      ] as never,
+      activities: [
+        {
+          id: "a1",
+          tone: "tool",
+          kind: "tool.completed",
+          summary: "step",
+          payload: { itemType: "command_execution", title: "cmd-folded", detail: "do x" },
+          turnId: "t1",
+          sequence: 1,
+          createdAt: "2026-06-19T00:00:01.000Z",
+        },
       ] as never,
     });
-    expect(frame).toContain("turn 2");
+    // The settled turn's work collapses behind a "Worked for" summary; the tool
+    // row itself is hidden until the fold is expanded.
+    expect(frame).toContain("Worked for");
+    expect(frame).not.toContain("cmd-folded");
   });
 
-  it("Given a run of tool calls, then only the most recent shows with a '+N previous tool calls' expander", async () => {
+  it("Given a run of tool calls in the active turn, then only the most recent shows with a '+N previous tool calls' expander", async () => {
     const activities = Array.from({ length: 6 }, (_, i) => ({
       id: `a${i}`,
       tone: "tool",
@@ -248,7 +263,16 @@ describe("MessagesTimeline body", () => {
       sequence: i,
       createdAt: `2026-06-19T00:00:0${i}.000Z`,
     })) as never;
-    const frame = await bodyFrame({ activities });
+    // A running turn stays unfolded, so the work group's own collapsing shows.
+    const frame = await bodyFrame({
+      activities,
+      latestTurn: {
+        turnId: "t1",
+        state: "running",
+        startedAt: "2026-06-19T00:00:00.000Z",
+        completedAt: null,
+      } as never,
+    });
     // Only the most recent tool call is visible; the rest collapse behind a count.
     expect(frame).toContain("cmd-5");
     expect(frame).not.toContain("cmd-0");

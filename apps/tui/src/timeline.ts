@@ -7,16 +7,27 @@ import type { OrchestrationThread } from "./connection.ts";
 import { deriveWorkLogEntries, type WorkLogEntry } from "./worklog.ts";
 
 // Build the conversation timeline the way the web UI does: messages interleaved
-// with the derived work log, where CONSECUTIVE tool calls collapse into one
-// "work" group that shows its most recent entry plus a "+N previous tool calls"
-// expander (per-group). Plus the changed-files + working-indicator helpers. All
-// pure, so the ordering is unit-tested without a renderer.
+// with the derived work log, then collapsed at two levels.
+//   1. CONSECUTIVE tool calls collapse into one "work" group that shows its most
+//      recent entry plus a "+N previous tool calls" expander (per-group).
+//   2. Every SETTLED turn folds its commentary + tool work behind a single
+//      "Worked for <duration>" row, leaving only the final assistant message
+//      visible; the latest unsettled (running) turn stays fully expanded so its
+//      work streams live.
+// Plus the changed-files + working-indicator helpers. All pure, so the ordering
+// and folding are unit-tested without a renderer.
 
 /** Most-recent work-log entries shown per group before "+N previous tool calls". */
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 
-export type TimelineRow =
-  | { readonly kind: "message"; readonly id: string; readonly message: OrchestrationMessage }
+/** Rows that can live both at top level and inside a collapsed turn fold. */
+export type FoldableRow =
+  | {
+      readonly kind: "message";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly message: OrchestrationMessage;
+    }
   | {
       readonly kind: "work";
       readonly id: string;
@@ -24,61 +35,231 @@ export type TimelineRow =
       readonly groupedEntries: ReadonlyArray<WorkLogEntry>;
     };
 
-export type TimelineEntry =
-  | TimelineRow
-  | { readonly kind: "separator"; readonly id: string; readonly turnNumber: number };
+export type TimelineRow =
+  | FoldableRow
+  | {
+      readonly kind: "turn-fold";
+      readonly id: string;
+      readonly turnId: string;
+      readonly createdAt: string;
+      readonly label: string;
+      readonly hiddenRows: ReadonlyArray<FoldableRow>;
+    };
 
-function rowTurnId(row: TimelineRow): string | null {
-  return row.kind === "message" ? row.message.turnId : (row.groupedEntries[0]?.turnId ?? null);
-}
-
-/**
- * Insert a separator before the first row of each turn after the first, numbering
- * turns 1..N in order — so the conversation reads as distinct turns.
- */
-export function withTurnSeparators(rows: ReadonlyArray<TimelineRow>): TimelineEntry[] {
-  const out: TimelineEntry[] = [];
-  let lastTurnId: string | null = null;
-  let turnNumber = 0;
-  for (const row of rows) {
-    const turnId = rowTurnId(row);
-    if (turnId !== null && turnId !== lastTurnId) {
-      turnNumber += 1;
-      if (lastTurnId !== null) {
-        out.push({ kind: "separator", id: `sep:${turnId}:${turnNumber}`, turnNumber });
-      }
-      lastTurnId = turnId;
-    }
-    out.push(row);
-  }
-  return out;
-}
+type LatestTurn = OrchestrationThread["latestTurn"];
 
 interface OrderedItem {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly turnId: string | null;
   readonly message: OrchestrationMessage | null;
   readonly entry: WorkLogEntry | null;
-  readonly createdAt: string;
+}
+
+/** Whole/partial-second elapsed label, matching the web's formatDuration buckets. */
+export function formatDuration(durationMs: number): string {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return "0ms";
+  if (durationMs < 1_000) return `${Math.max(1, Math.round(durationMs))}ms`;
+  if (durationMs < 10_000) {
+    const tenths = Math.round(durationMs / 100) / 10;
+    return tenths >= 10 ? "10s" : `${tenths.toFixed(1)}s`;
+  }
+  if (durationMs < 60_000) return `${Math.round(durationMs / 1_000)}s`;
+  const minutes = Math.floor(durationMs / 60_000);
+  const seconds = Math.round((durationMs % 60_000) / 1_000);
+  if (seconds === 0) return `${minutes}m`;
+  if (seconds === 60) return `${minutes + 1}m`;
+  return `${minutes}m ${seconds}s`;
+}
+
+function computeElapsedMs(startIso: string, endIso: string): number | null {
+  const start = Date.parse(startIso);
+  const end = Date.parse(endIso);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return Math.max(0, end - start);
+}
+
+function maxIso(a: string | null, b: string): string {
+  if (a === null) return b;
+  const aMs = Date.parse(a);
+  const bMs = Date.parse(b);
+  if (!Number.isFinite(aMs)) return b;
+  if (!Number.isFinite(bMs)) return a;
+  return bMs > aMs ? b : a;
+}
+
+/** The latest turn is unsettled while it is still running or hasn't recorded a completion. */
+function unsettledTurnId(latestTurn: LatestTurn): string | null {
+  if (!latestTurn) return null;
+  const settled = latestTurn.completedAt !== null && latestTurn.state !== "running";
+  return settled ? null : latestTurn.turnId;
+}
+
+/** The last assistant message of each turn (keyed by turnId, or by position for null-turn replies). */
+function terminalAssistantMessageIds(ordered: ReadonlyArray<OrderedItem>): Set<string> {
+  const lastByResponseKey = new Map<string, string>();
+  let nullTurnIndex = 0;
+  for (const item of ordered) {
+    if (!item.message) continue;
+    if (item.message.role === "user") {
+      nullTurnIndex += 1;
+      continue;
+    }
+    if (item.message.role !== "assistant") continue;
+    const key = item.turnId ? `turn:${item.turnId}` : `unkeyed:${nullTurnIndex}`;
+    lastByResponseKey.set(key, item.message.id);
+  }
+  return new Set(lastByResponseKey.values());
+}
+
+/** Group a contiguous run of ordered items into rows, merging consecutive work entries. */
+function groupRows(items: ReadonlyArray<OrderedItem>): FoldableRow[] {
+  const rows: FoldableRow[] = [];
+  let index = 0;
+  while (index < items.length) {
+    const item = items[index];
+    if (!item) {
+      index += 1;
+      continue;
+    }
+    if (item.message) {
+      rows.push({ kind: "message", id: item.id, createdAt: item.createdAt, message: item.message });
+      index += 1;
+      continue;
+    }
+    const group: WorkLogEntry[] = [];
+    let cursor = index;
+    while (cursor < items.length && items[cursor]?.entry) {
+      const entry = items[cursor]?.entry;
+      if (entry) group.push(entry);
+      cursor += 1;
+    }
+    const first = group[0];
+    if (first) rows.push({ kind: "work", id: first.id, createdAt: first.createdAt, groupedEntries: group });
+    index = cursor;
+  }
+  return rows;
+}
+
+interface TurnFold {
+  readonly turnId: string;
+  readonly label: string;
+  readonly hiddenIds: ReadonlySet<string>;
+  readonly hiddenRows: ReadonlyArray<FoldableRow>;
 }
 
 /**
- * Interleave messages and work-log entries by createdAt, then group consecutive
- * work entries into a single "work" row (mirrors the web's deriveTimelineEntries
- * + work-group collapsing). Stable: on a timestamp tie, messages sort first.
+ * For each settled turn, fold everything but its terminal assistant message
+ * behind a "Worked for <duration>" row anchored at the turn's first entry.
+ */
+function deriveTurnFolds(
+  ordered: ReadonlyArray<OrderedItem>,
+  latestTurn: LatestTurn,
+): Map<string, TurnFold> {
+  const terminalIds = terminalAssistantMessageIds(ordered);
+  const unsettled = unsettledTurnId(latestTurn);
+
+  interface Group {
+    items: OrderedItem[];
+    startBoundary: string | null;
+    terminalId: string | null;
+    hasStreaming: boolean;
+  }
+  const groups = new Map<string, Group>();
+  let pendingUserBoundary: string | null = null;
+  for (const item of ordered) {
+    if (item.message?.role === "user") {
+      pendingUserBoundary = item.createdAt;
+      continue;
+    }
+    if (!item.turnId) continue;
+    let group = groups.get(item.turnId);
+    if (!group) {
+      group = { items: [], startBoundary: pendingUserBoundary, terminalId: null, hasStreaming: false };
+      pendingUserBoundary = null;
+      groups.set(item.turnId, group);
+    }
+    group.items.push(item);
+    if (item.message) {
+      if (terminalIds.has(item.message.id)) group.terminalId = item.message.id;
+      if (item.message.streaming) group.hasStreaming = true;
+    }
+  }
+
+  const folds = new Map<string, TurnFold>();
+  for (const [turnId, group] of groups) {
+    if (turnId === unsettled || group.hasStreaming) continue;
+    const hidden = group.items.filter((item) => item.message?.id !== group.terminalId);
+    if (hidden.length === 0) continue;
+    const first = group.items[0];
+    const last = group.items.at(-1);
+    if (!first || !last) continue;
+
+    const lastEnd = last.message ? last.message.updatedAt : last.createdAt;
+    const terminalUpdatedAt =
+      group.items.find((item) => item.message?.id === group.terminalId)?.message?.updatedAt ?? null;
+    const elapsedMs =
+      latestTurn?.turnId === turnId && latestTurn.startedAt && latestTurn.completedAt
+        ? computeElapsedMs(latestTurn.startedAt, latestTurn.completedAt)
+        : computeElapsedMs(group.startBoundary ?? first.createdAt, maxIso(terminalUpdatedAt, lastEnd));
+    const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
+    const interrupted = latestTurn?.turnId === turnId && latestTurn.state === "interrupted";
+    const label = interrupted
+      ? duration
+        ? `You stopped after ${duration}`
+        : "You stopped this response"
+      : duration
+        ? `Worked for ${duration}`
+        : "Worked";
+
+    folds.set(first.id, {
+      turnId,
+      label,
+      hiddenIds: new Set(hidden.map((item) => item.id)),
+      hiddenRows: groupRows(hidden),
+    });
+  }
+  return folds;
+}
+
+/**
+ * Interleave messages and work-log entries by createdAt, group consecutive tool
+ * calls, and fold settled turns behind a "Worked for <duration>" row. Stable: on
+ * a timestamp tie, messages sort before work entries.
  */
 export function deriveTimelineEntries(
   messages: ReadonlyArray<OrchestrationMessage>,
   activities: OrchestrationThread["activities"],
+  latestTurn: LatestTurn = null,
 ): TimelineRow[] {
   const ordered: OrderedItem[] = [
     ...messages.map(
-      (message): OrderedItem => ({ message, entry: null, createdAt: message.createdAt }),
+      (message): OrderedItem => ({
+        id: message.id,
+        createdAt: message.createdAt,
+        turnId: message.turnId,
+        message,
+        entry: null,
+      }),
     ),
     ...deriveWorkLogEntries(activities).map(
-      (entry): OrderedItem => ({ message: null, entry, createdAt: entry.createdAt }),
+      (entry): OrderedItem => ({
+        id: entry.id,
+        createdAt: entry.createdAt,
+        turnId: entry.turnId,
+        message: null,
+        entry,
+      }),
     ),
   ];
   // Stable sort: equal timestamps keep messages (added first) before work entries.
   ordered.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+  const folds = deriveTurnFolds(ordered, latestTurn);
+  const collapsed = new Set<string>();
+  for (const fold of folds.values()) {
+    for (const id of fold.hiddenIds) collapsed.add(id);
+  }
 
   const rows: TimelineRow[] = [];
   let index = 0;
@@ -88,24 +269,42 @@ export function deriveTimelineEntries(
       index += 1;
       continue;
     }
-    if (item.message) {
-      rows.push({ kind: "message", id: item.message.id, message: item.message });
+    const fold = folds.get(item.id);
+    if (fold) {
+      rows.push({
+        kind: "turn-fold",
+        id: `turn-fold:${fold.turnId}`,
+        turnId: fold.turnId,
+        createdAt: item.createdAt,
+        label: fold.label,
+        hiddenRows: fold.hiddenRows,
+      });
+    }
+    if (collapsed.has(item.id)) {
       index += 1;
       continue;
     }
-    // Gather consecutive work entries into one group.
+    if (item.message) {
+      rows.push({ kind: "message", id: item.id, createdAt: item.createdAt, message: item.message });
+      index += 1;
+      continue;
+    }
+    // Gather consecutive, non-collapsed work entries into one group.
     const group: WorkLogEntry[] = [];
     let cursor = index;
-    while (cursor < ordered.length && ordered[cursor]?.entry) {
-      const entry = ordered[cursor]?.entry;
-      if (entry) group.push(entry);
+    while (cursor < ordered.length) {
+      const next = ordered[cursor];
+      if (!next?.entry || collapsed.has(next.id) || folds.has(next.id)) break;
+      group.push(next.entry);
       cursor += 1;
     }
     const first = group[0];
     if (first) {
       rows.push({ kind: "work", id: first.id, createdAt: first.createdAt, groupedEntries: group });
+      index = cursor;
+    } else {
+      index += 1;
     }
-    index = cursor;
   }
   return rows;
 }

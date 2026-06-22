@@ -10,27 +10,47 @@ import {
   changedFilesByMessage,
   deriveTimelineEntries,
   diffStat,
+  formatDuration,
   isWorking,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
   revertableCheckpoints,
-  withTurnSeparators,
   workingElapsedSeconds,
 } from "./timeline.ts";
 
-const message = (id: string, role: string, createdAt: string, text = "hi"): OrchestrationMessage =>
-  ({ id, role, text, createdAt, streaming: false }) as unknown as OrchestrationMessage;
+const message = (
+  id: string,
+  role: string,
+  createdAt: string,
+  opts: { turnId?: string | null; text?: string; updatedAt?: string; streaming?: boolean } = {},
+): OrchestrationMessage =>
+  ({
+    id,
+    role,
+    text: opts.text ?? "hi",
+    createdAt,
+    updatedAt: opts.updatedAt ?? createdAt,
+    turnId: opts.turnId ?? null,
+    streaming: opts.streaming ?? false,
+  }) as unknown as OrchestrationMessage;
 
-const toolActivity = (id: string, createdAt: string): OrchestrationThreadActivity =>
+const toolActivity = (
+  id: string,
+  createdAt: string,
+  turnId: string | null = null,
+): OrchestrationThreadActivity =>
   ({
     id,
     tone: "tool",
     kind: "tool.completed",
     summary: "Ran command",
     payload: { itemType: "command_execution", detail: "ls" },
-    turnId: null,
+    turnId,
     sequence: Number(id.replace(/\D/g, "")) || 0,
     createdAt,
   }) as OrchestrationThreadActivity;
+
+const latestTurn = (over: Record<string, unknown>): OrchestrationThread["latestTurn"] =>
+  over as unknown as OrchestrationThread["latestTurn"];
 
 describe("deriveTimelineEntries", () => {
   it("Given messages and tool activities, then they interleave in chronological order", () => {
@@ -87,31 +107,66 @@ describe("deriveTimelineEntries", () => {
   });
 });
 
-describe("withTurnSeparators", () => {
-  const msgRow = (id: string, turnId: string | null) =>
-    ({ kind: "message", id, message: { id, turnId } }) as never;
-  const workRow = (id: string, turnId: string | null) =>
-    ({ kind: "work", id, createdAt: "t", groupedEntries: [{ id, turnId }] }) as never;
-
-  it("Given rows across two turns, then a numbered separator precedes the second turn", () => {
-    const entries = withTurnSeparators([
-      msgRow("m1", "t1"),
-      workRow("a1", "t1"),
-      msgRow("m2", "t2"),
-    ]);
-    expect(entries.map((e) => e.kind)).toEqual(["message", "work", "separator", "message"]);
-    const separator = entries.find((e) => e.kind === "separator");
-    expect(separator).toMatchObject({ kind: "separator", turnNumber: 2 });
+describe("turn folds", () => {
+  it("folds a settled turn's work + commentary behind a 'Worked for' row, keeping the final message", () => {
+    const rows = deriveTimelineEntries(
+      [
+        message("u1", "user", "2026-06-19T00:00:00.000Z", { turnId: "t1" }),
+        message("c1", "assistant", "2026-06-19T00:00:04.000Z", { turnId: "t1", text: "thinking" }),
+        message("m1", "assistant", "2026-06-19T00:00:05.000Z", {
+          turnId: "t1",
+          text: "done",
+          updatedAt: "2026-06-19T00:00:05.000Z",
+        }),
+      ],
+      [
+        toolActivity("a1", "2026-06-19T00:00:01.000Z", "t1"),
+        toolActivity("a2", "2026-06-19T00:00:03.000Z", "t1"),
+      ],
+    );
+    expect(rows.map((r) => r.kind)).toEqual(["message", "turn-fold", "message"]);
+    const fold = rows.find((r) => r.kind === "turn-fold");
+    if (fold?.kind !== "turn-fold") throw new Error("expected a turn-fold row");
+    expect(fold.turnId).toBe("t1");
+    expect(fold.label).toBe("Worked for 5.0s");
+    // The hidden rows: the grouped tool work, then the commentary message.
+    expect(fold.hiddenRows.map((r) => r.kind)).toEqual(["work", "message"]);
+    // The terminal assistant message is NOT hidden — it stays visible below.
+    expect(rows.at(-1)).toMatchObject({ kind: "message", id: "m1" });
   });
 
-  it("Given a single turn, then no separator is inserted", () => {
-    const entries = withTurnSeparators([msgRow("m1", "t1"), workRow("a1", "t1")]);
-    expect(entries.some((e) => e.kind === "separator")).toBe(false);
+  it("does not fold the latest unsettled (running) turn", () => {
+    const rows = deriveTimelineEntries(
+      [
+        message("u1", "user", "2026-06-19T00:00:00.000Z", { turnId: "t1" }),
+        message("c1", "assistant", "2026-06-19T00:00:02.000Z", { turnId: "t1" }),
+      ],
+      [toolActivity("a1", "2026-06-19T00:00:01.000Z", "t1")],
+      latestTurn({ turnId: "t1", state: "running", startedAt: "2026-06-19T00:00:00.000Z", completedAt: null }),
+    );
+    expect(rows.some((r) => r.kind === "turn-fold")).toBe(false);
+    expect(rows.map((r) => r.kind)).toEqual(["message", "work", "message"]);
   });
 
-  it("Given a null turnId, then it does not start a new turn", () => {
-    const entries = withTurnSeparators([msgRow("m0", null), msgRow("m1", "t1"), msgRow("m2", "t1")]);
-    expect(entries.some((e) => e.kind === "separator")).toBe(false);
+  it("does not fold a turn that is only a terminal message (nothing to hide)", () => {
+    const rows = deriveTimelineEntries(
+      [
+        message("u1", "user", "2026-06-19T00:00:00.000Z", { turnId: "t1" }),
+        message("m1", "assistant", "2026-06-19T00:00:01.000Z", { turnId: "t1", text: "hi" }),
+      ],
+      [],
+    );
+    expect(rows.some((r) => r.kind === "turn-fold")).toBe(false);
+    expect(rows.map((r) => r.kind)).toEqual(["message", "message"]);
+  });
+});
+
+describe("formatDuration", () => {
+  it("renders sub-minute and minute buckets like the web", () => {
+    expect(formatDuration(5_000)).toBe("5.0s");
+    expect(formatDuration(22_000)).toBe("22s");
+    expect(formatDuration(299_000)).toBe("4m 59s");
+    expect(formatDuration(120_000)).toBe("2m");
   });
 });
 

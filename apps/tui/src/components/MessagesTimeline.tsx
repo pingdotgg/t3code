@@ -16,9 +16,9 @@ import {
   changedFilesByMessage,
   deriveTimelineEntries,
   diffStat,
+  type FoldableRow,
   isWorking,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
-  withTurnSeparators,
   workingStartedAt,
 } from "../timeline.ts";
 import { ansi, type Palette, relativeTime, sessionStatusColor, usePalette } from "../theme.ts";
@@ -106,6 +106,115 @@ function WorkGroupSection({
           </text>
         </box>
       ) : null}
+    </box>
+  );
+}
+
+/** Everything a foldable row needs to paint, threaded through from the timeline. */
+interface RowRenderContext {
+  readonly palette: Palette;
+  readonly width: number;
+  readonly syntaxStyle: SyntaxStyle;
+  readonly mdClient: Record<string, never>;
+  readonly checkpointByMessage: Map<string, OrchestrationCheckpointSummary>;
+  readonly onOpenDiff?: (turnCount: number) => void;
+}
+
+/**
+ * Render one foldable row (a message or a work group). User text sits in an
+ * accent-bordered rounded box on the right; the assistant (and any other role)
+ * renders plain on the left — mirroring the web chat layout. The bubble needs a
+ * DEFINITE width for <markdown> to render (it reports no intrinsic width), so it
+ * is sized to its longest line + chrome, capped at ~72% of the pane.
+ */
+function FoldableRowView({
+  row,
+  ctx,
+}: {
+  readonly row: FoldableRow;
+  readonly ctx: RowRenderContext;
+}): React.ReactNode {
+  const { palette, width, syntaxStyle, mdClient, checkpointByMessage, onOpenDiff } = ctx;
+  if (row.kind === "work") {
+    return <WorkGroupSection groupedEntries={row.groupedEntries} palette={palette} width={width} />;
+  }
+  const message = row.message;
+  const body = message.text.trim().length > 0 ? message.text : "…";
+  const checkpoint = checkpointByMessage.get(message.id);
+  if (message.role === "user") {
+    const maxBubble = Math.max(16, Math.floor(width * 0.72));
+    const longestLine = body.split("\n").reduce((max, line) => Math.max(max, line.length), 1);
+    const bubbleWidth = Math.min(maxBubble, longestLine + 4);
+    // Right-align by putting the bubble in a row whose width is the DEFINITE
+    // scrollbox content width (= the `width` prop). Inside a scrollbox the
+    // cross-size is auto, so "100%"/alignSelf/marginLeft:auto all collapse —
+    // only a concrete width gives flex-end a reference to push against.
+    return (
+      <box
+        flexDirection="row"
+        width={width}
+        justifyContent="flex-end"
+        marginTop={1}
+        marginBottom={1}
+      >
+        <box
+          flexDirection="column"
+          width={bubbleWidth}
+          flexShrink={0}
+          border
+          borderStyle="rounded"
+          borderColor={palette.accent}
+          paddingLeft={1}
+          paddingRight={1}
+        >
+          <markdown
+            content={body}
+            syntaxStyle={syntaxStyle}
+            streaming={message.streaming}
+            {...mdClient}
+          />
+        </box>
+      </box>
+    );
+  }
+  return (
+    <box flexDirection="column" marginTop={1} marginBottom={1}>
+      <markdown content={body} syntaxStyle={syntaxStyle} streaming={message.streaming} {...mdClient} />
+      {checkpoint ? (
+        <ChangedFiles
+          checkpoint={checkpoint}
+          palette={palette}
+          width={width}
+          {...(onOpenDiff ? { onOpenDiff } : {})}
+        />
+      ) : null}
+    </box>
+  );
+}
+
+/**
+ * A settled turn's commentary + tool work, folded behind a clickable
+ * "Worked for <duration>" row (mirrors the web turn fold). Clicking reveals the
+ * hidden rows in place; the turn's final assistant message stays visible below.
+ */
+function TurnFoldSection({
+  label,
+  hiddenRows,
+  ctx,
+}: {
+  readonly label: string;
+  readonly hiddenRows: ReadonlyArray<FoldableRow>;
+  readonly ctx: RowRenderContext;
+}): React.ReactNode {
+  const [expanded, setExpanded] = React.useState(false);
+  return (
+    <box flexDirection="column" marginTop={1}>
+      <box onMouseDown={() => setExpanded((value) => !value)}>
+        <text fg={ctx.palette.dim}>{`${expanded ? "▾" : "▸"} ${label}`}</text>
+      </box>
+      {expanded
+        ? hiddenRows.map((row) => <FoldableRowView key={row.id} row={row} ctx={ctx} />)
+        : null}
     </box>
   );
 }
@@ -243,18 +352,30 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   const timeline = React.useMemo(
     () =>
       detail
-        ? withTurnSeparators(deriveTimelineEntries(detail.messages, detail.activities))
+        ? deriveTimelineEntries(detail.messages, detail.activities, detail.latestTurn)
         : [],
     [detail],
   );
   const checkpointByMessage = React.useMemo(
-    () => (detail ? changedFilesByMessage(detail.checkpoints) : new Map()),
+    () =>
+      detail
+        ? changedFilesByMessage(detail.checkpoints)
+        : new Map<string, OrchestrationCheckpointSummary>(),
     [detail],
   );
   const proposedPlan = React.useMemo(
     () => (detail ? latestActionableProposedPlan(detail) : null),
     [detail],
   );
+
+  const rowCtx: RowRenderContext = {
+    palette,
+    width,
+    syntaxStyle,
+    mdClient,
+    checkpointByMessage,
+    ...(onOpenDiff ? { onOpenDiff } : {}),
+  };
 
   if (!detail) {
     return (
@@ -314,88 +435,17 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
         style={{ rootOptions: { backgroundColor: "transparent" } }}
       >
         {timeline.map((row) => {
-          if (row.kind === "separator") {
-            const head = `── turn ${row.turnNumber} `;
+          if (row.kind === "turn-fold") {
             return (
-              <box key={row.id} marginBottom={1}>
-                <text fg={palette.dim}>{head + "─".repeat(Math.max(0, width - head.length))}</text>
-              </box>
-            );
-          }
-          if (row.kind === "work") {
-            return (
-              <WorkGroupSection
+              <TurnFoldSection
                 key={row.id}
-                groupedEntries={row.groupedEntries}
-                palette={palette}
-                width={width}
+                label={row.label}
+                hiddenRows={row.hiddenRows}
+                ctx={rowCtx}
               />
             );
           }
-          const message = row.message;
-          const body = message.text.trim().length > 0 ? message.text : "…";
-          const checkpoint = checkpointByMessage.get(message.id);
-          // User text sits in an accent-bordered rounded box on the right; the
-          // assistant (and any other role) renders plain on the left — mirroring
-          // the web chat layout. The box needs a DEFINITE width for <markdown> to
-          // render (it's block-level and reports no intrinsic width), so size it
-          // to the content's longest line + box chrome, capped at ~72% of the pane.
-          if (message.role === "user") {
-            const maxBubble = Math.max(16, Math.floor(width * 0.72));
-            const longestLine = body.split("\n").reduce((max, line) => Math.max(max, line.length), 1);
-            const bubbleWidth = Math.min(maxBubble, longestLine + 4);
-            // Right-align by putting the bubble in a row whose width is the
-            // DEFINITE scrollbox content width (= the `width` prop). Inside a
-            // scrollbox the cross-size is auto, so "100%"/alignSelf/marginLeft:auto
-            // all collapse to nothing — only a concrete width gives flex-end a
-            // reference to push against.
-            return (
-              <box
-                key={message.id}
-                flexDirection="row"
-                width={width}
-                justifyContent="flex-end"
-                marginTop={1}
-                marginBottom={1}
-              >
-                <box
-                  flexDirection="column"
-                  width={bubbleWidth}
-                  flexShrink={0}
-                  border
-                  borderStyle="rounded"
-                  borderColor={palette.accent}
-                  paddingLeft={1}
-                  paddingRight={1}
-                >
-                  <markdown
-                    content={body}
-                    syntaxStyle={syntaxStyle}
-                    streaming={message.streaming}
-                    {...mdClient}
-                  />
-                </box>
-              </box>
-            );
-          }
-          return (
-            <box key={message.id} flexDirection="column" marginTop={1} marginBottom={1}>
-              <markdown
-                content={body}
-                syntaxStyle={syntaxStyle}
-                streaming={message.streaming}
-                {...mdClient}
-              />
-              {checkpoint ? (
-                <ChangedFiles
-                  checkpoint={checkpoint}
-                  palette={palette}
-                  width={width}
-                  {...(onOpenDiff ? { onOpenDiff } : {})}
-                />
-              ) : null}
-            </box>
-          );
+          return <FoldableRowView key={row.id} row={row} ctx={rowCtx} />;
         })}
         {proposedPlan ? (
           <ProposedPlanCard plan={proposedPlan} palette={palette} syntaxStyle={syntaxStyle} />
