@@ -138,3 +138,40 @@ describe("buildRows — filter (^F)", () => {
     expect(rows.find((r) => r.kind === "project")).toMatchObject({ expanded: true });
   });
 });
+
+describe("buildRows — project ordering", () => {
+  const ts = (iso: string) => iso;
+  const richShell = () =>
+    ({
+      projects: [
+        { id: "old", title: "Old", createdAt: ts("2026-01-01T00:00:00.000Z"), updatedAt: ts("2026-01-01T00:00:00.000Z") },
+        { id: "new", title: "New", createdAt: ts("2026-01-01T00:00:00.000Z"), updatedAt: ts("2026-01-01T00:00:00.000Z") },
+        { id: "empty", title: "Empty", createdAt: ts("2026-03-01T00:00:00.000Z"), updatedAt: ts("2026-03-01T00:00:00.000Z") },
+      ],
+      threads: [
+        { id: "t-old", projectId: "old", title: "t", updatedAt: ts("2026-02-01T00:00:00.000Z") },
+        { id: "t-new", projectId: "new", title: "t", updatedAt: ts("2026-04-01T00:00:00.000Z") },
+      ],
+    }) as unknown as OrchestrationShellSnapshot;
+
+  it("Given projects, then they sort by their most recent thread, newest first", () => {
+    const rows = buildRows(richShell(), new Set(), new Set(), null);
+    const projectIds = rows.filter((r) => r.kind === "project").map((r) => r.id);
+    // new (thread @ Apr) > empty (no threads, project @ Mar) > old (thread @ Feb).
+    expect(projectIds).toEqual(["new", "empty", "old"]);
+  });
+
+  it("Given equal activity, then it breaks ties by title", () => {
+    const flat = {
+      projects: [
+        { id: "b", title: "Bravo", createdAt: ts("2026-01-01T00:00:00.000Z"), updatedAt: ts("2026-05-01T00:00:00.000Z") },
+        { id: "a", title: "Alpha", createdAt: ts("2026-01-01T00:00:00.000Z"), updatedAt: ts("2026-05-01T00:00:00.000Z") },
+      ],
+      threads: [],
+    } as unknown as OrchestrationShellSnapshot;
+    const projectIds = buildRows(flat, new Set(), new Set(), null)
+      .filter((r) => r.kind === "project")
+      .map((r) => r.id);
+    expect(projectIds).toEqual(["a", "b"]);
+  });
+});

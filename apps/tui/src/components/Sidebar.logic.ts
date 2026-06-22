@@ -77,6 +77,7 @@ export function buildRows(
   const projectTitles = new Map<string, string>(
     shell.projects.map((project) => [project.id, project.title]),
   );
+  const projectsById = new Map(shell.projects.map((project) => [project.id as string, project]));
   const byProject = new Map<string, OrchestrationThreadShell[]>();
   for (const thread of shell.threads) {
     const list = byProject.get(thread.projectId);
@@ -84,12 +85,32 @@ export function buildRows(
     else byProject.set(thread.projectId, [thread]);
   }
 
+  // Sort key: a project's most-recently-updated thread, falling back to the
+  // project's own updatedAt/createdAt — so projects order by latest activity
+  // (most recent first), matching how the web sidebar sorts them. ISO timestamps
+  // compare chronologically as strings; "" (no activity) sorts last.
+  const sortKey = (id: string): string => {
+    const threads = byProject.get(id);
+    if (threads && threads.length > 0) {
+      let key = "";
+      for (const thread of threads) if (thread.updatedAt > key) key = thread.updatedAt;
+      return key;
+    }
+    const project = projectsById.get(id);
+    return project?.updatedAt ?? project?.createdAt ?? "";
+  };
+
   // All catalogue projects (so the list matches the "N project(s)" count and an
-  // empty project is still visible/selectable), then any orphaned project ids.
+  // empty project is still visible/selectable), then any orphaned project ids,
+  // sorted by latest activity with title/id as the tie-breaker.
   const orderedIds: string[] = [
     ...shell.projects.map((project) => project.id as string),
     ...[...byProject.keys()].filter((id) => !projectTitles.has(id)),
-  ];
+  ].toSorted((a, b) => {
+    const byTime = sortKey(b).localeCompare(sortKey(a));
+    if (byTime !== 0) return byTime;
+    return (projectTitles.get(a) ?? a).localeCompare(projectTitles.get(b) ?? b) || a.localeCompare(b);
+  });
 
   const rows: Row[] = [];
   for (const id of orderedIds) {
