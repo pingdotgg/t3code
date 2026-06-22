@@ -14,7 +14,12 @@ import { describe, it } from "bun:test";
 // plan/build badge on the prompt, pending user-input form,
 // new-thread runtime-mode + plan/build options, turn diff viewer (^K → g),
 // model/provider picker (^K → m, via server config + updateThreadMetadata),
-// new-thread branch/worktree fields (Tab cycles).
+// new-thread branch/worktree fields (Tab cycles), composer controls in the box
+// (model-first), Shift+Tab plan/build alias, single-column icon glyphs mapped to
+// web lucide icons, changed-files directory tree with collapse-all, settled-turn
+// "Worked for" fold, and the right-side source-control panel (^L: branch + PR
+// status, Push & create PR / Commit / View PR). See web-parity.test.ts for the
+// keyboard parity table + remaining parity backlog.
 
 describe.skip("Non-goal: image / file attachments", () => {
   it("is an explicit TUI non-goal — kept here only to document the decision", () => {});
