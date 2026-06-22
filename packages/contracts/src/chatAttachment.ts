@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { MessageId, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
 export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
@@ -39,3 +39,23 @@ export type ChatAttachment = typeof ChatAttachment.Type;
 
 export const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
 export type UploadChatAttachment = typeof UploadChatAttachment.Type;
+
+export const PersistChatAttachmentsInput = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  attachments: Schema.Array(UploadChatAttachment),
+});
+export type PersistChatAttachmentsInput = typeof PersistChatAttachmentsInput.Type;
+
+export const PersistChatAttachmentsResult = Schema.Struct({
+  attachments: Schema.Array(ChatAttachment),
+});
+export type PersistChatAttachmentsResult = typeof PersistChatAttachmentsResult.Type;
+
+export class PersistChatAttachmentsError extends Schema.TaggedErrorClass<PersistChatAttachmentsError>()(
+  "PersistChatAttachmentsError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}

@@ -1,14 +1,7 @@
-import { imageMimeType } from "@t3tools/shared/image";
 import type {
   ChatFileAttachment as ContractChatFileAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
   ChatUnknownAttachment as ContractChatUnknownAttachment,
-  OrchestrationCheckpointFile,
-  OrchestrationCheckpointSummary,
-  OrchestrationLatestTurn,
-  OrchestrationMessage,
-  OrchestrationProposedPlan,
-  OrchestrationSession,
   ProjectScript as ContractProjectScript,
   ProviderInteractionMode,
   RuntimeMode,
@@ -17,6 +10,11 @@ import type {
   EnvironmentProject,
   EnvironmentThread,
   EnvironmentThreadShell,
+  ThreadCheckpointSummary,
+  ThreadConversationMessage,
+  ThreadProposedPlan,
+  ThreadRunSummary,
+  ThreadRuntimeSummary,
 } from "@t3tools/client-runtime/state/shell";
 import { videoMimeType } from "@t3tools/shared/video";
 
@@ -56,39 +54,28 @@ export type ChatAttachment = ChatImageAttachment | ChatFileAttachment | ChatUnkn
 // The union has an open member (`type: string`), so a literal comparison does
 // not narrow. Use these guards wherever type-specific fields are read.
 export function isImageAttachment(attachment: ChatAttachment): attachment is ChatImageAttachment {
-  // Messages sent before pictures were typed by content carry `file`; they are still
-  // pictures, and reading them as such is what lets them render instead of listing. Only
-  // `file` is reclassified: an attachment type this client does not know yet is not a
-  // picture by default, whatever its name says.
-  if (attachment.type === "image") return true;
-  return attachment.type === "file" && imageMimeType(attachment) !== null;
+  return attachment.type === "image";
 }
 
 export function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAttachment {
-  // Disjoint from `isImageAttachment` on purpose: a legacy `file` carrying an image reads as a
-  // picture, and callers filter both sets independently, so overlap renders it twice.
-  return attachment.type === "file" && !isImageAttachment(attachment);
+  return attachment.type === "file";
 }
 
-export function isVideoAttachment(attachment: ChatFileAttachment): boolean {
-  return videoMimeType(attachment) !== null;
-}
-
-export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
+export interface ChatMessage extends Omit<ThreadConversationMessage, "attachments"> {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
 }
 
-export type ProposedPlan = OrchestrationProposedPlan;
-export type TurnDiffFileChange = OrchestrationCheckpointFile;
-export type TurnDiffSummary = OrchestrationCheckpointSummary;
+export type ProposedPlan = ThreadProposedPlan;
+export type TurnDiffFileChange = ThreadCheckpointSummary["files"][number];
+export type TurnDiffSummary = ThreadCheckpointSummary;
 
 export type Project = EnvironmentProject;
 export type Thread = EnvironmentThread;
 export type ThreadShell = EnvironmentThreadShell;
 
 export interface ThreadTurnState {
-  latestTurn: OrchestrationLatestTurn | null;
+  latestRun: ThreadRunSummary | null;
 }
 
 export type SidebarThreadSummary = EnvironmentThreadShell;
-export type ThreadSession = OrchestrationSession;
+export type ThreadSession = ThreadRuntimeSummary;
