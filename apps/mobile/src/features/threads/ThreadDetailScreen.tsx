@@ -65,6 +65,9 @@ export interface ThreadDetailScreenProps {
   /** Message sync status for the selected thread (drives the composer status pill). */
   readonly threadSyncStatus?: EnvironmentThreadStatus;
   readonly activeThreadBusy: boolean;
+  readonly hasMoreOlderActivities: boolean;
+  readonly loadingOlderActivities: boolean;
+  readonly onLoadOlderActivities: () => void;
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
   readonly threadCwd: string | null;
@@ -422,6 +425,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             usesAutomaticContentInsets={props.usesAutomaticContentInsets}
             onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
             skills={selectedProviderSkills}
+            hasMoreOlder={props.hasMoreOlderActivities}
+            loadingOlder={props.loadingOlderActivities}
+            onLoadOlder={props.onLoadOlderActivities}
           />
         </View>
       ) : (
