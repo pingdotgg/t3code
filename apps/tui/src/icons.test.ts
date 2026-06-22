@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { allIconGlyphs, STATUS_ICONS, TOOL_ICONS } from "./icons.ts";
+import { allIconGlyphs, fileTypeColor, STATUS_ICONS, TOOL_ICONS } from "./icons.ts";
 import { THREAD_STATUS_GLYPHS } from "./theme.ts";
 
 describe("icon registry", () => {
@@ -33,5 +33,13 @@ describe("icon registry", () => {
     expect(STATUS_ICONS.failure.webIcon).toBe("x");
     expect(STATUS_ICONS.progress.webIcon).toBe("loader");
     expect(STATUS_ICONS.neutral.webIcon).toBe("minus");
+  });
+
+  it("Given a file path, then fileTypeColor maps its extension (and dims the unknown)", () => {
+    expect(fileTypeColor("src/app.ts")).toBe("blue");
+    expect(fileTypeColor("README.md")).toBe("cyan");
+    expect(fileTypeColor("style.css")).toBe("magenta");
+    expect(fileTypeColor("Makefile")).toBeNull();
+    expect(fileTypeColor("weird.unknownext")).toBeNull();
   });
 });

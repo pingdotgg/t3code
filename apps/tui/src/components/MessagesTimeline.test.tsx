@@ -131,6 +131,48 @@ describe("MessagesTimeline body", () => {
     expect(frame).toContain("-2");
   });
 
+  it("Given a file row, then clicking it opens the diff scoped to that file", async () => {
+    const opened: Array<[number, string | undefined]> = [];
+    const full = {
+      ...detail("default"),
+      messages: [
+        { id: "m1", role: "assistant", text: "done", createdAt: "2026-06-19T00:00:00.000Z", streaming: false },
+      ],
+      checkpoints: [
+        {
+          assistantMessageId: "m1",
+          checkpointTurnCount: 7,
+          completedAt: "2026-06-19T00:00:01.000Z",
+          files: [{ path: "src/app.ts", kind: "file", additions: 5, deletions: 2 }],
+        },
+      ],
+    } as unknown as OrchestrationThread;
+    const ref = React.createRef<null>();
+    const t = await testRender(
+      <MessagesTimeline
+        detail={full}
+        approvals={[]}
+        approvalIndex={0}
+        projectHint={null}
+        width={88}
+        height={20}
+        syntaxStyle={SyntaxStyle.create()}
+        scrollRef={ref as never}
+        onOpenDiff={(turnCount, filePath) => opened.push([turnCount, filePath])}
+      />,
+      { width: 92, height: 24 },
+    );
+    await t.renderOnce();
+    await t.flush();
+    const lines = t.captureCharFrame().split("\n");
+    const row = lines.findIndex((line) => line.includes("app.ts"));
+    const col = (lines[row] ?? "").indexOf("app.ts");
+    await t.mockMouse.click(col, row);
+    await t.flush();
+    expect(opened).toEqual([[7, "src/app.ts"]]);
+    t.renderer.destroy();
+  });
+
   it("Given the changed-files tree, then 'collapse all' hides the files under their folders", async () => {
     const full = {
       ...detail("default"),

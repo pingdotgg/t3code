@@ -84,10 +84,9 @@ describe.skip("Composer: provider-traits + plan-sidebar toggle + compact menu", 
   it("Given a narrow terminal, then the controls collapse into a compact menu", () => {});
 });
 
-describe.skip("Changed files: per-file 'View diff' + file-type colored icons", () => {
-  it("Given a file row, when clicked, then it opens the diff scoped to that file", () => {});
-  it("Given a file row, then its icon is colored by file type (web PierreEntryIcon)", () => {});
-});
+// Changed files per-file "View diff" + file-type coloured icons: SHIPPED — see
+// MessagesTimeline.test (clicking a file row opens the scoped diff), DiffViewer.test
+// (focusPath filters to one file), and icons.test (fileTypeColor).
 
 // Commit-message dialog: SHIPPED — choosing a commit-bearing action opens the
 // "commit ▸" composer mode (ChatComposer.test) which runs the action with the

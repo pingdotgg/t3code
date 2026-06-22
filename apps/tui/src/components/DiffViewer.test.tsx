@@ -10,6 +10,7 @@ async function frameOf(props: {
   diff?: string;
   scopeLabel?: string;
   view?: "unified" | "split";
+  focusPath?: string;
 }): Promise<string> {
   const ref = React.createRef<null>();
   const t = await testRender(
@@ -21,6 +22,7 @@ async function frameOf(props: {
       height={16}
       syntaxStyle={SyntaxStyle.create()}
       scrollRef={ref as never}
+      {...(props.focusPath ? { focusPath: props.focusPath } : {})}
     />,
     { width: 80, height: 18 },
   );
@@ -43,6 +45,17 @@ const sampleDiff = [
   " const c = 3;",
 ].join("\n");
 
+const twoFileDiff = [
+  sampleDiff,
+  "diff --git a/README.md b/README.md",
+  "index 333..444 100644",
+  "--- a/README.md",
+  "+++ b/README.md",
+  "@@ -1 +1 @@",
+  "-old docs",
+  "+new docs",
+].join("\n");
+
 describe("DiffViewer", () => {
   it("Given a loaded diff, then it shows the scope header and the changed lines", async () => {
     const frame = await frameOf({ status: "ready", diff: sampleDiff, scopeLabel: "turn 4" });
@@ -53,6 +66,20 @@ describe("DiffViewer", () => {
   it("Given the all-changes scope, then the header says 'all changes'", async () => {
     const frame = await frameOf({ status: "ready", diff: sampleDiff, scopeLabel: "all changes" });
     expect(frame).toContain("diff · all changes");
+  });
+
+  it("Given a focusPath, then only that file's diff is shown (per-file View diff)", async () => {
+    const frame = await frameOf({ status: "ready", diff: twoFileDiff, focusPath: "README.md" });
+    expect(frame).toContain("README.md");
+    expect(frame).toContain("new docs");
+    expect(frame).toContain("1 file");
+    // The other file is filtered out.
+    expect(frame).not.toContain("src/app.ts");
+  });
+
+  it("Given a focusPath not in the diff, then it falls back to showing all files", async () => {
+    const frame = await frameOf({ status: "ready", diff: twoFileDiff, focusPath: "missing.ts" });
+    expect(frame).toContain("2 files");
   });
 
   it("Given a loaded diff, then it shows a per-file header with the file's language", async () => {

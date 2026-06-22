@@ -11,7 +11,7 @@ import {
 } from "../contextWindow.ts";
 import { buildFileTree, collectDirPaths, flattenFileTree } from "../fileTree.ts";
 import { clip } from "../format.ts";
-import { STATUS_ICONS } from "../icons.ts";
+import { fileTypeColor, STATUS_ICONS } from "../icons.ts";
 import { type ActionableProposedPlan, latestActionableProposedPlan } from "../proposedPlan.ts";
 import { WorkingIndicator } from "./WorkingIndicator.tsx";
 import {
@@ -121,7 +121,7 @@ interface RowRenderContext {
   readonly syntaxStyle: SyntaxStyle;
   readonly mdClient: Record<string, never>;
   readonly checkpointByMessage: Map<string, OrchestrationCheckpointSummary>;
-  readonly onOpenDiff?: (turnCount: number) => void;
+  readonly onOpenDiff?: (turnCount: number, filePath?: string) => void;
 }
 
 /**
@@ -240,7 +240,7 @@ function ChangedFilesTree({
   readonly palette: Palette;
   readonly width: number;
   /** Open the diff viewer scoped to this turn (clicking the header). */
-  readonly onOpenDiff?: (turnCount: number) => void;
+  readonly onOpenDiff?: (turnCount: number, filePath?: string) => void;
 }): React.ReactNode {
   const files = checkpoint.files;
   const tree = React.useMemo(() => buildFileTree(files), [files]);
@@ -297,12 +297,21 @@ function ChangedFilesTree({
             </box>
           );
         }
+        // A file row: a type-coloured glyph + name, clickable to open the diff
+        // scoped to just this file (the per-file "View diff").
+        const typeColor = fileTypeColor(row.path);
+        const openThisFile = onOpenDiff
+          ? () => onOpenDiff(checkpoint.checkpointTurnCount, row.path)
+          : undefined;
         return (
-          <text key={`f:${row.path}`}>
-            <span fg={palette.text}>{`${indent}${clip(row.name, nameRoom)}`}</span>
-            <span fg={ansi("green")}>{`  +${row.additions}`}</span>
-            <span fg={ansi("red")}>{` -${row.deletions}`}</span>
-          </text>
+          <box key={`f:${row.path}`} {...(openThisFile ? { onMouseDown: openThisFile } : {})}>
+            <text>
+              <span fg={typeColor ? ansi(typeColor) : palette.dim}>{`${indent}◦ `}</span>
+              <span fg={palette.text}>{clip(row.name, nameRoom)}</span>
+              <span fg={ansi("green")}>{`  +${row.additions}`}</span>
+              <span fg={ansi("red")}>{` -${row.deletions}`}</span>
+            </text>
+          </box>
         );
       })}
       {rows.length > CHANGED_FILES_ROW_CAP ? (
@@ -381,7 +390,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   readonly syntaxStyle: SyntaxStyle;
   readonly scrollRef: React.MutableRefObject<ScrollBoxRenderable | null>;
   /** Open the diff viewer scoped to a turn (clicking its changed-files summary). */
-  readonly onOpenDiff?: (turnCount: number) => void;
+  readonly onOpenDiff?: (turnCount: number, filePath?: string) => void;
   /** Test seam: inject a tree-sitter client so <markdown> can paint in tests. */
   readonly treeSitterClient?: unknown;
 }): React.ReactNode {

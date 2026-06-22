@@ -22,6 +22,7 @@ export const DiffViewer = React.memo(function DiffViewer({
   height,
   syntaxStyle,
   scrollRef,
+  focusPath,
 }: {
   /** What this diff covers — e.g. "all changes" or "turn 5". */
   readonly scopeLabel: string;
@@ -31,13 +32,18 @@ export const DiffViewer = React.memo(function DiffViewer({
   readonly height: number;
   readonly syntaxStyle: SyntaxStyle;
   readonly scrollRef: React.MutableRefObject<ScrollBoxRenderable | null>;
+  /** When set (and present), show only this file's diff — the per-file "View diff". */
+  readonly focusPath?: string;
 }): React.ReactNode {
   const palette = usePalette();
   const bodyHeight = Math.max(1, height - 3);
-  const files = React.useMemo(
+  const allFiles = React.useMemo(
     () => (status === "ready" ? splitUnifiedDiff(diff) : []),
     [status, diff],
   );
+  // Scope to the clicked file when it's part of this diff; otherwise show all.
+  const focused = focusPath ? allFiles.filter((file) => file.path === focusPath) : [];
+  const files = focused.length > 0 ? focused : allFiles;
   const fileCount = files.length;
   return (
     <box

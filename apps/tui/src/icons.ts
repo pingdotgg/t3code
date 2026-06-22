@@ -43,3 +43,40 @@ export const STATUS_ICONS = {
 export function allIconGlyphs(): ReadonlyArray<IconGlyph> {
   return [...Object.values(TOOL_ICONS), ...Object.values(STATUS_ICONS)];
 }
+
+// File-type → named ANSI colour for the changed-files tree's file glyph, echoing
+// the web's PierreEntryIcon colouring at terminal-palette fidelity (a coarse map;
+// unknown extensions fall back to the muted default).
+const FILE_TYPE_COLORS: Record<string, string> = {
+  ts: "blue",
+  tsx: "blue",
+  js: "yellow",
+  jsx: "yellow",
+  mjs: "yellow",
+  cjs: "yellow",
+  json: "yellow",
+  css: "magenta",
+  scss: "magenta",
+  html: "red",
+  md: "cyan",
+  mdx: "cyan",
+  py: "blue",
+  rs: "red",
+  go: "cyan",
+  zig: "yellow",
+  sh: "green",
+  bash: "green",
+  yml: "magenta",
+  yaml: "magenta",
+  toml: "magenta",
+  lock: "gray",
+  sql: "cyan",
+};
+
+/** Named ANSI colour for a path's file type, or null when unknown (caller dims it). */
+export function fileTypeColor(path: string): string | null {
+  const base = path.split("/").pop() ?? path;
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0) return null;
+  return FILE_TYPE_COLORS[base.slice(dot + 1).toLowerCase()] ?? null;
+}
