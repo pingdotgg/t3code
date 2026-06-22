@@ -91,6 +91,13 @@ describe("ChatComposer", () => {
     expect(frame).toContain("Enter keep");
   });
 
+  it("Given commit mode, when rendered, then it shows the commit label, message, and hint", async () => {
+    const frame = await frameOf(<ChatComposer {...base} mode="commit" auxValue="fix the bug" inputFocused />);
+    expect(frame).toContain("commit");
+    expect(frame).toContain("fix the bug");
+    expect(frame).toContain("Enter commit");
+  });
+
   it("Given new-thread mode, when rendered, then it shows the dialog, project, and options", async () => {
     const frame = await frameOf(
       <ChatComposer {...base} mode="new" newRuntimeMode="approval-required" interactionMode="plan" inputFocused />,

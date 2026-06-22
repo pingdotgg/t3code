@@ -86,8 +86,10 @@ describe.skip("Changed files: per-file 'View diff' + file-type colored icons", (
   it("Given a file row, then its icon is colored by file type (web PierreEntryIcon)", () => {});
 });
 
-describe.skip("Right panel: Browser / Files surfaces + commit-message dialog + publish repo", () => {
-  it("Given the commit action, when chosen, then a message prompt collects the commit message", () => {});
+// Commit-message dialog: SHIPPED — choosing a commit-bearing action opens the
+// "commit ▸" composer mode (ChatComposer.test) which runs the action with the
+// typed message (store.runGitAction(action, message)).
+describe.skip("Right panel: Browser / Files surfaces + publish repo", () => {
   it("Given a repo with no remote, then a 'Publish repository' flow is offered", () => {});
   it("Given the panel, then Browser and Files surfaces can be opened (web RightPanelTabs)", () => {});
 });

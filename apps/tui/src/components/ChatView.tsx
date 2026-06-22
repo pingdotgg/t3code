@@ -1,6 +1,7 @@
 import { type ScrollBoxRenderable, type SelectOption, SyntaxStyle } from "@opentui/core";
 import {
   DEFAULT_TERMINAL_ID,
+  type GitStackedAction,
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
@@ -38,6 +39,7 @@ import {
   RUNTIME_MODES,
   runtimeModeLabel,
 } from "../controls.ts";
+import { gitActionNeedsCommitMessage } from "../gitActions.logic.ts";
 
 /** Default width of the thread-list pane. */
 const LIST_PANE_WIDTH = 34;
@@ -71,7 +73,9 @@ export function ChatView({
     return () => store.stop();
   }, [store]);
 
-  const [focus, setFocus] = React.useState<"compose" | "new" | "rename" | "filter">("compose");
+  const [focus, setFocus] = React.useState<"compose" | "new" | "rename" | "filter" | "commit">(
+    "compose",
+  );
   // Transient key-driven overlay over the composer (thread actions / delete confirm / revert).
   const [overlay, setOverlay] = React.useState<"none" | "actions" | "confirmDelete" | "revert">(
     "none",
@@ -103,6 +107,10 @@ export function ChatView({
   const [composerEpoch, setComposerEpoch] = React.useState(0);
   const [draft, setDraft] = React.useState("");
   const [renameDraft, setRenameDraft] = React.useState("");
+  // The commit-message dialog: the draft + which commit-bearing action to run on submit.
+  const [commitDraft, setCommitDraft] = React.useState("");
+  const [pendingCommitAction, setPendingCommitAction] =
+    React.useState<GitStackedAction | null>(null);
   const [projectIndex, setProjectIndex] = React.useState(0);
   // Options for the new-thread dialog (^O cycles runtime, ^B toggles plan/build).
   const [newRuntimeMode, setNewRuntimeMode] = React.useState<RuntimeMode>("full-access");
@@ -207,6 +215,18 @@ export function ChatView({
     const next = detail.interactionMode === "plan" ? "default" : "plan";
     void client.setInteractionMode(detail.id, next).catch(() => {});
     store.setStatus(next === "plan" ? "Plan mode." : "Build mode.", "success");
+  };
+
+  // Right-panel git actions: commit-bearing ones open the commit-message dialog
+  // first, then run with the typed message; the rest run immediately.
+  const onRunGitAction = (action: GitStackedAction) => {
+    if (gitActionNeedsCommitMessage(action)) {
+      setPendingCommitAction(action);
+      setCommitDraft("");
+      setFocus("commit");
+      return;
+    }
+    store.runGitAction(action);
   };
 
   // Interrupt the running turn — the red stop button and Esc both call this.
@@ -369,7 +389,11 @@ export function ChatView({
   const autoPromptLines = Math.min(Math.max(reply.split("\n").length, 1), 8);
   const promptLines = Math.min(promptHeight ?? autoPromptLines, maxPromptLines);
   const composerHeight =
-    focus === "new" ? 9 : focus === "rename" || focus === "filter" ? 5 : promptLines + 4;
+    focus === "new"
+      ? 9
+      : focus === "rename" || focus === "filter" || focus === "commit"
+        ? 5
+        : promptLines + 4;
   const defaultTerminalHeight = Math.floor(height * 0.4);
   const maxTerminalHeight = Math.max(6, height - composerHeight - 6);
   const terminalDrawerHeight = activeTerminal
@@ -565,9 +589,11 @@ export function ChatView({
               ? "rename"
               : focus === "filter"
                 ? "filter"
-                : userInputActive
-                  ? "userInput"
-                  : "compose";
+                : focus === "commit"
+                  ? "commit"
+                  : userInputActive
+                    ? "userInput"
+                    : "compose";
 
   useKeyBindings({
     mode: keyMode,
@@ -832,6 +858,19 @@ export function ChatView({
       store.setFilter("");
       setFocus("compose");
     },
+    onSubmitCommit: () => {
+      const message = commitDraft.trim();
+      const action = pendingCommitAction;
+      if (action && message.length > 0) store.runGitAction(action, message);
+      setCommitDraft("");
+      setPendingCommitAction(null);
+      setFocus("compose");
+    },
+    onCancelCommit: () => {
+      setCommitDraft("");
+      setPendingCommitAction(null);
+      setFocus("compose");
+    },
     onInterrupt: stopTurn,
     onApprove: () => {
       const approval = approvals[activeApprovalIndex];
@@ -933,7 +972,7 @@ export function ChatView({
             busy={state.gitBusy}
             width={rightWidth}
             height={panesHeight}
-            onRunAction={store.runGitAction}
+            onRunAction={onRunGitAction}
             onOpenUrl={(url) => store.setStatus(url, "info")}
           />
         ) : null}
@@ -983,7 +1022,7 @@ export function ChatView({
           mode={focus === "filter" ? "compose" : focus}
           reply={reply}
           draft={draft}
-          auxValue={focus === "rename" ? renameDraft : ""}
+          auxValue={focus === "rename" ? renameDraft : focus === "commit" ? commitDraft : ""}
           placeholder={placeholder}
           projectName={projects[activeProjectIndex]?.title ?? "(none)"}
           interactionMode={focus === "new" ? newInteractionMode : (detail?.interactionMode ?? "default")}
@@ -1001,7 +1040,7 @@ export function ChatView({
           onDraftInput={(value) => setDraft(value.replace(/\t/g, ""))}
           onBranchInput={(value) => setNewBranch(value.replace(/\t/g, ""))}
           onWorktreeInput={(value) => setNewWorktree(value.replace(/\t/g, ""))}
-          onAuxInput={setRenameDraft}
+          onAuxInput={focus === "commit" ? setCommitDraft : setRenameDraft}
           onTogglePlan={togglePlanMode}
           onOpenAccess={openRuntimePicker}
           onOpenModel={openModelPicker}

@@ -24,6 +24,7 @@ export type KeyBindingMode =
   | "new"
   | "rename"
   | "filter"
+  | "commit"
   | "compose";
 
 export interface KeyBindingActions {
@@ -80,6 +81,8 @@ export interface KeyBindingActions {
   readonly onOpenFilter: () => void;
   readonly onCommitFilter: () => void;
   readonly onCancelFilter: () => void;
+  readonly onSubmitCommit: () => void;
+  readonly onCancelCommit: () => void;
   // New-thread mode
   readonly onCancelNew: () => void;
   readonly onProjectPrev: () => void;
@@ -194,6 +197,11 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     if (actions.mode === "filter") {
       if (key.name === "return" || key.name === "enter") return actions.onCommitFilter();
       if (key.name === "escape") return actions.onCancelFilter();
+      return;
+    }
+    if (actions.mode === "commit") {
+      if (key.name === "return" || key.name === "enter") return actions.onSubmitCommit();
+      if (key.name === "escape") return actions.onCancelCommit();
       return;
     }
 

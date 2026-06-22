@@ -115,7 +115,7 @@ export const ChatComposer = React.memo(function ChatComposer({
   onOpenReasoning,
   onStop,
 }: {
-  readonly mode: "compose" | "new" | "rename" | "filter";
+  readonly mode: "compose" | "new" | "rename" | "filter" | "commit";
   readonly reply: string;
   readonly draft: string;
   /** Value for the single-line rename/filter inputs. */
@@ -161,10 +161,20 @@ export const ChatComposer = React.memo(function ChatComposer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [composerEpoch]);
 
-  if (mode === "rename" || mode === "filter") {
-    const label = mode === "rename" ? "rename ▸ " : "find ▸ ";
-    const hint = mode === "rename" ? "Enter rename · Esc cancel" : "Enter keep · Esc clear";
-    const inputPlaceholder = mode === "rename" ? "New thread title…" : "Filter by title…";
+  if (mode === "rename" || mode === "filter" || mode === "commit") {
+    const label = mode === "rename" ? "rename ▸ " : mode === "commit" ? "commit ▸ " : "find ▸ ";
+    const hint =
+      mode === "rename"
+        ? "Enter rename · Esc cancel"
+        : mode === "commit"
+          ? "Enter commit · Esc cancel"
+          : "Enter keep · Esc clear";
+    const inputPlaceholder =
+      mode === "rename"
+        ? "New thread title…"
+        : mode === "commit"
+          ? "Commit message…"
+          : "Filter by title…";
     return (
       <box
         flexDirection="column"

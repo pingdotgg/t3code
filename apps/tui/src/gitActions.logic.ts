@@ -50,6 +50,13 @@ export interface GitMenuItem {
   readonly openUrl?: string;
 }
 
+const COMMIT_BEARING = new Set<GitStackedAction>(["commit", "commit_push", "commit_push_pr"]);
+
+/** Whether a stacked action creates a commit and therefore needs a message. */
+export function gitActionNeedsCommitMessage(action: GitStackedAction): boolean {
+  return COMMIT_BEARING.has(action);
+}
+
 /** The single most-relevant action for the current branch state. */
 export function resolveGitQuickAction(
   status: VcsStatusResult | null,

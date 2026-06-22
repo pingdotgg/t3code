@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 
 import type { OrchestrationShellSnapshot, OrchestrationThread, TuiClient } from "./connection.ts";
+import { gitActionNeedsCommitMessage } from "./gitActions.logic.ts";
 import {
   buildRows,
   type Row,
@@ -49,8 +50,8 @@ export interface Store {
   readonly loadMore: (id: string) => void;
   readonly setStatus: (status: string, kind?: StatusKind) => void;
   readonly setFilter: (filter: string) => void;
-  /** Run a git stacked action on the selected thread's worktree. */
-  readonly runGitAction: (action: GitStackedAction) => void;
+  /** Run a git stacked action on the selected thread's worktree (commitMessage for commit-bearing actions). */
+  readonly runGitAction: (action: GitStackedAction, commitMessage?: string) => void;
 }
 
 export function createStore(client: TuiClient): Store {
@@ -73,9 +74,6 @@ export function createStore(client: TuiClient): Store {
   // The worktree currently subscribed for git status, so we only resubscribe on change.
   let vcsCwd: string | null = null;
 
-  // Commit-bearing actions need a message the TUI can't yet collect; route them
-  // to the terminal instead of running an empty-message commit.
-  const COMMIT_ACTIONS = new Set<GitStackedAction>(["commit", "commit_push", "commit_push_pr"]);
 
   const selectedThreadId = () => (state.selection?.kind === "thread" ? state.selection.id : null);
   const rowsNow = () =>
@@ -207,10 +205,11 @@ export function createStore(client: TuiClient): Store {
       ensureValidSelection(rowsNow());
       emit();
     },
-    runGitAction: (action) => {
+    runGitAction: (action, commitMessage) => {
       if (state.gitBusy) return;
-      if (COMMIT_ACTIONS.has(action)) {
-        set({ status: "Commit needs a message — use the terminal (^E) to commit.", statusKind: "info" });
+      const message = commitMessage?.trim();
+      if (gitActionNeedsCommitMessage(action) && !message) {
+        set({ status: "Commit needs a message.", statusKind: "error" });
         return;
       }
       const cwd = currentCwd();
@@ -220,7 +219,7 @@ export function createStore(client: TuiClient): Store {
       }
       set({ gitBusy: true, status: `Running ${action}…`, statusKind: "busy" });
       client
-        .runGitStackedAction({ cwd, action })
+        .runGitStackedAction({ cwd, action, ...(message ? { commitMessage: message } : {}) })
         .then(() => set({ gitBusy: false, status: "Git action complete.", statusKind: "success" }))
         .catch((error: unknown) =>
           set({ gitBusy: false, status: `Git failed: ${String(error)}`, statusKind: "error" }),
