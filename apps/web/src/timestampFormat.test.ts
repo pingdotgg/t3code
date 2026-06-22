@@ -111,6 +111,14 @@ describe("invalid timestamp inputs", () => {
   it("returns an empty elapsed duration instead of a NaN label", () => {
     expect(formatElapsedDurationLabel("not-a-date")).toBe("");
   });
+
+  it("returns an empty relative time until label instead of a NaN label", () => {
+    expect(formatRelativeTimeUntilLabel("not-a-date")).toBe("");
+  });
+
+  it("returns an empty expires-in label instead of a NaN label", () => {
+    expect(formatExpiresInLabel("not-a-date")).toBe("");
+  });
 });
 
 describe("formatElapsedDurationLabel", () => {
