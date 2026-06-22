@@ -120,6 +120,10 @@ export const Sidebar = React.memo(function Sidebar({
       paddingRight={1}
     >
       <text>
+        <strong>T3</strong>
+        <span fg={palette.dim}> Code</span>
+      </text>
+      <text>
         <span fg={palette.accent}>Projects</span>
         {moreAbove ? <span fg={palette.dim}>{"  ↑ more"}</span> : null}
       </text>
