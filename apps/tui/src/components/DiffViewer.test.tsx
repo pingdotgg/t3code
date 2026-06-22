@@ -8,15 +8,13 @@ import { DiffViewer, type DiffStatus } from "./DiffViewer.tsx";
 async function frameOf(props: {
   status: DiffStatus;
   diff?: string;
-  turnCount?: number;
-  fileCount?: number;
+  scopeLabel?: string;
   view?: "unified" | "split";
 }): Promise<string> {
   const ref = React.createRef<null>();
   const t = await testRender(
     <DiffViewer
-      turnCount={props.turnCount ?? 3}
-      fileCount={props.fileCount ?? 1}
+      scopeLabel={props.scopeLabel ?? "turn 3"}
       status={props.status}
       diff={props.diff ?? ""}
       view={props.view ?? "unified"}
@@ -46,10 +44,15 @@ const sampleDiff = [
 ].join("\n");
 
 describe("DiffViewer", () => {
-  it("Given a loaded diff, then it shows the turn header and the changed lines", async () => {
-    const frame = await frameOf({ status: "ready", diff: sampleDiff, turnCount: 4, fileCount: 1 });
+  it("Given a loaded diff, then it shows the scope header and the changed lines", async () => {
+    const frame = await frameOf({ status: "ready", diff: sampleDiff, scopeLabel: "turn 4" });
     expect(frame).toContain("diff · turn 4");
     expect(frame).toContain("next()");
+  });
+
+  it("Given the all-changes scope, then the header says 'all changes'", async () => {
+    const frame = await frameOf({ status: "ready", diff: sampleDiff, scopeLabel: "all changes" });
+    expect(frame).toContain("diff · all changes");
   });
 
   it("Given a loaded diff, then it shows a per-file header with the file's language", async () => {

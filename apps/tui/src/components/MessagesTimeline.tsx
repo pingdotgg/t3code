@@ -74,19 +74,29 @@ function ChangedFiles({
   checkpoint,
   palette,
   width,
+  onOpenDiff,
 }: {
   readonly checkpoint: OrchestrationCheckpointSummary;
   readonly palette: Palette;
   readonly width: number;
+  /** Open the diff viewer scoped to this turn (clicking the summary). */
+  readonly onOpenDiff?: (turnCount: number) => void;
 }): React.ReactNode {
   const { additions, deletions } = diffStat(checkpoint.files);
   return (
-    <box flexDirection="column" marginTop={1}>
+    <box
+      flexDirection="column"
+      marginTop={1}
+      {...(onOpenDiff
+        ? { onMouseDown: () => onOpenDiff(checkpoint.checkpointTurnCount) }
+        : {})}
+    >
       <text>
         <span fg={palette.dim}>{`changed files (${checkpoint.files.length})  `}</span>
         <span fg={ansi("green")}>{`+${additions}`}</span>
         <span fg={palette.dim}>{" "}</span>
         <span fg={ansi("red")}>{`-${deletions}`}</span>
+        {onOpenDiff ? <span fg={palette.dim}>{"   ▸ diff"}</span> : null}
       </text>
       {checkpoint.files.slice(0, 12).map((file) => (
         <text key={file.path}>
@@ -160,6 +170,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   height,
   syntaxStyle,
   scrollRef,
+  onOpenDiff,
 }: {
   readonly detail: OrchestrationThread | null;
   readonly approvals: ReadonlyArray<PendingApproval>;
@@ -171,6 +182,8 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   readonly height: number;
   readonly syntaxStyle: SyntaxStyle;
   readonly scrollRef: React.MutableRefObject<ScrollBoxRenderable | null>;
+  /** Open the diff viewer scoped to a turn (clicking its changed-files summary). */
+  readonly onOpenDiff?: (turnCount: number) => void;
 }): React.ReactNode {
   const palette = usePalette();
   const contextWindow = React.useMemo(
@@ -302,7 +315,12 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
               </text>
               <markdown content={body} syntaxStyle={syntaxStyle} streaming={message.streaming} />
               {checkpoint ? (
-                <ChangedFiles checkpoint={checkpoint} palette={palette} width={width} />
+                <ChangedFiles
+                  checkpoint={checkpoint}
+                  palette={palette}
+                  width={width}
+                  {...(onOpenDiff ? { onOpenDiff } : {})}
+                />
               ) : null}
             </box>
           );

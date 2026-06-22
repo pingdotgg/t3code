@@ -150,16 +150,32 @@ export function ChatView({
     () => (detail ? revertableCheckpoints(detail.checkpoints) : []),
     [detail],
   );
-  const diffCheckpoint = diffOpen ? checkpoints[Math.min(diffIndex, checkpoints.length - 1)] : null;
-  const diffTurnCount = diffCheckpoint?.checkpointTurnCount ?? null;
-  // Fetch the selected turn's diff whenever the viewer opens or the turn changes.
+  // Diff viewer entries: index 0 = "all changes" (the cumulative full-thread diff,
+  // matching the web's default), 1..N = the per-turn checkpoint diffs.
+  const diffEntryCount = checkpoints.length + 1;
+  const latestTurnCount = checkpoints.reduce(
+    (max, checkpoint) => Math.max(max, checkpoint.checkpointTurnCount),
+    0,
+  );
+  const diffCheckpoint =
+    diffOpen && diffIndex > 0 ? checkpoints[Math.min(diffIndex - 1, checkpoints.length - 1)] : null;
+  const diffScopeLabel =
+    diffIndex === 0 ? "all changes" : `turn ${diffCheckpoint?.checkpointTurnCount ?? "?"}`;
+  // Fetch the selected scope's diff whenever the viewer opens or the selection changes.
+  const diffSelectedTurnCount = diffCheckpoint?.checkpointTurnCount ?? null;
   React.useEffect(() => {
-    if (!diffOpen || !detail || diffTurnCount === null) return;
+    if (!diffOpen || !detail) return;
+    const fetchDiff =
+      diffIndex === 0
+        ? client.getFullThreadDiff(detail.id, latestTurnCount)
+        : diffSelectedTurnCount !== null
+          ? client.getTurnDiff(detail.id, diffSelectedTurnCount)
+          : null;
+    if (!fetchDiff) return;
     let cancelled = false;
     setDiffStatus("loading");
     setDiffText("");
-    void client
-      .getTurnDiff(detail.id, diffTurnCount)
+    void fetchDiff
       .then((diff) => {
         if (cancelled) return;
         setDiffText(diff);
@@ -171,7 +187,17 @@ export function ChatView({
     return () => {
       cancelled = true;
     };
-  }, [client, diffOpen, detail?.id, diffTurnCount]);
+  }, [client, diffOpen, detail?.id, diffIndex, diffSelectedTurnCount, latestTurnCount]);
+
+  // Open the diff viewer scoped to a specific turn (clicking a changed-files row).
+  const openDiffAtTurn = (turnCount: number) => {
+    const index = checkpoints.findIndex(
+      (checkpoint) => checkpoint.checkpointTurnCount === turnCount,
+    );
+    setOverlay("none");
+    setDiffIndex(index >= 0 ? index + 1 : 0);
+    setDiffOpen(true);
+  };
 
   const togglePlanMode = () => {
     if (!detail) return;
@@ -751,9 +777,8 @@ export function ChatView({
       setDiffIndex(0);
       setDiffOpen(true);
     },
-    onDiffPrev: () =>
-      setDiffIndex((index) => (index <= 0 ? checkpoints.length - 1 : index - 1)),
-    onDiffNext: () => setDiffIndex((index) => (index + 1) % Math.max(checkpoints.length, 1)),
+    onDiffPrev: () => setDiffIndex((index) => (index <= 0 ? diffEntryCount - 1 : index - 1)),
+    onDiffNext: () => setDiffIndex((index) => (index + 1) % Math.max(diffEntryCount, 1)),
     onDiffScrollUp: () => diffScrollRef.current?.scrollBy({ x: 0, y: -SCROLL_STEP }),
     onDiffScrollDown: () => diffScrollRef.current?.scrollBy({ x: 0, y: SCROLL_STEP }),
     onDiffToggleView: () => setDiffView((view) => (view === "unified" ? "split" : "unified")),
@@ -874,10 +899,9 @@ export function ChatView({
           onSearchInput={store.setFilter}
           onFocusSearch={() => setFocus("filter")}
         />
-        {diffOpen && diffCheckpoint ? (
+        {diffOpen ? (
           <DiffViewer
-            turnCount={diffCheckpoint.checkpointTurnCount}
-            fileCount={diffCheckpoint.files.length}
+            scopeLabel={diffScopeLabel}
             status={diffStatus}
             diff={diffText}
             view={diffView}
@@ -896,6 +920,7 @@ export function ChatView({
             height={panesHeight}
             syntaxStyle={syntaxStyle}
             scrollRef={scrollRef}
+            onOpenDiff={openDiffAtTurn}
           />
         )}
       </box>

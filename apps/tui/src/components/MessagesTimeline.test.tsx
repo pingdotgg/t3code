@@ -130,6 +130,50 @@ describe("MessagesTimeline body", () => {
     expect(frame).toContain("-2");
   });
 
+  it("Given onOpenDiff, then the changed-files summary is clickable and opens that turn", async () => {
+    let opened: number | null = null;
+    const full = {
+      ...detail("default"),
+      messages: [
+        { id: "m1", role: "assistant", text: "done", createdAt: "2026-06-19T00:00:00.000Z", streaming: false },
+      ],
+      checkpoints: [
+        {
+          assistantMessageId: "m1",
+          checkpointTurnCount: 7,
+          completedAt: "2026-06-19T00:00:01.000Z",
+          files: [{ path: "src/app.ts", kind: "file", additions: 5, deletions: 2 }],
+        },
+      ],
+    } as unknown as OrchestrationThread;
+    const ref = React.createRef<null>();
+    const t = await testRender(
+      <MessagesTimeline
+        detail={full}
+        approvals={[]}
+        approvalIndex={0}
+        workLogCollapsed={false}
+        projectHint={null}
+        width={88}
+        height={20}
+        syntaxStyle={SyntaxStyle.create()}
+        scrollRef={ref as never}
+        onOpenDiff={(turnCount) => (opened = turnCount)}
+      />,
+      { width: 92, height: 24 },
+    );
+    await t.renderOnce();
+    await t.flush();
+    const lines = t.captureCharFrame().split("\n");
+    expect(lines.some((line) => line.includes("▸ diff"))).toBe(true);
+    const row = lines.findIndex((line) => line.includes("changed files"));
+    expect(row).toBeGreaterThanOrEqual(0);
+    await t.mockMouse.click(3, row);
+    await t.flush();
+    expect(opened).toBe(7);
+    t.renderer.destroy();
+  });
+
   it("Given messages across two turns, then a numbered turn separator is shown", async () => {
     const frame = await bodyFrame({
       messages: [

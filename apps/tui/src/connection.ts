@@ -335,6 +335,8 @@ export interface TuiClient {
   readonly revertCheckpoint: (threadId: ThreadId, turnCount: number) => Promise<void>;
   /** Fetch the unified diff for the turn that produced the given checkpoint. */
   readonly getTurnDiff: (threadId: ThreadId, toTurnCount: number) => Promise<string>;
+  /** Fetch the cumulative diff of all changes in the thread up to `toTurnCount`. */
+  readonly getFullThreadDiff: (threadId: ThreadId, toTurnCount: number) => Promise<string>;
   /** The selectable models reported by the server's configured providers. */
   readonly listModels: () => Promise<ModelOption[]>;
   readonly setModel: (threadId: ThreadId, instanceId: string, model: string) => Promise<void>;
@@ -665,6 +667,14 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
         request(ORCHESTRATION_WS_METHODS.getTurnDiff, {
           threadId,
           fromTurnCount: NonNegativeInt.make(Math.max(0, toTurnCount - 1)),
+          toTurnCount: NonNegativeInt.make(toTurnCount),
+        }).pipe(Effect.map((result) => result.diff)),
+      ),
+
+  getFullThreadDiff: (threadId, toTurnCount) =>
+    runtime.runPromise(
+      request(ORCHESTRATION_WS_METHODS.getFullThreadDiff, {
+          threadId,
           toTurnCount: NonNegativeInt.make(toTurnCount),
         }).pipe(Effect.map((result) => result.diff)),
       ),

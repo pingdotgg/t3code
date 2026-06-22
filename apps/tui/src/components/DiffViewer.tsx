@@ -15,8 +15,7 @@ export type DiffStatus = "loading" | "ready" | "empty" | "error";
 export type DiffView = "unified" | "split";
 
 export const DiffViewer = React.memo(function DiffViewer({
-  turnCount,
-  fileCount,
+  scopeLabel,
   status,
   diff,
   view,
@@ -24,8 +23,8 @@ export const DiffViewer = React.memo(function DiffViewer({
   syntaxStyle,
   scrollRef,
 }: {
-  readonly turnCount: number;
-  readonly fileCount: number;
+  /** What this diff covers — e.g. "all changes" or "turn 5". */
+  readonly scopeLabel: string;
   readonly status: DiffStatus;
   readonly diff: string;
   readonly view: DiffView;
@@ -39,6 +38,7 @@ export const DiffViewer = React.memo(function DiffViewer({
     () => (status === "ready" ? splitUnifiedDiff(diff) : []),
     [status, diff],
   );
+  const fileCount = files.length;
   return (
     <box
       flexDirection="column"
@@ -51,9 +51,9 @@ export const DiffViewer = React.memo(function DiffViewer({
       paddingRight={1}
     >
       <text>
-        <span fg={palette.accent}>{`diff · turn ${turnCount}`}</span>
+        <span fg={palette.accent}>{`diff · ${scopeLabel}`}</span>
         <span fg={palette.dim}>
-          {`  ${fileCount} file${fileCount === 1 ? "" : "s"} · ${view} · ↑/↓ turn · s ${
+          {`  ${fileCount} file${fileCount === 1 ? "" : "s"} · ${view} · ↑/↓ view · s ${
             view === "unified" ? "split" : "stacked"
           } · PgUp/PgDn scroll · Esc close`}
         </span>
