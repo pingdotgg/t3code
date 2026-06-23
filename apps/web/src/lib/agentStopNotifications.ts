@@ -48,23 +48,30 @@ export interface AgentStopDecisionResult {
   readonly nextStatuses: Map<string, OrchestrationSessionStatus>;
 }
 
-// Statuses that count as an agent finishing/erroring (vs. a user-initiated
-// stop/interrupt, which surfaces as "stopped"/"interrupted" and is excluded here).
+// Statuses that count as an agent finishing/erroring. A user-initiated session
+// *stop* surfaces as "stopped"/"interrupted" and is excluded by being absent here.
 //
-// KNOWN LIMITATION: a user *turn interrupt* (the chat stop button) does NOT
-// surface as "interrupted" in the shell snapshot. The provider-ingestion layer
-// maps an interrupted `turn.completed` to session status "ready" (only "failed"
-// is special-cased — see apps/server/.../ProviderRuntimeIngestion.ts), and the
-// projector derives latestTurn.state "completed" from that "ready". So an
-// interrupted turn is indistinguishable from a natural completion here, and the
-// observer fires a false "finished" notification when a user interrupts a thread
-// they are NOT currently viewing (foreground + focused interrupts are suppressed
-// by the active-thread check). The correct fix is upstream: record interrupted/
-// cancelled turns as session status "interrupted" (or surface the real turn
-// outcome in the shell), then gate on it here. Tracked as a follow-up.
+// KNOWN LIMITATION (accepted for v1): a user *turn interrupt* (the chat stop
+// button) is indistinguishable from a natural completion in the shell snapshot,
+// so the observer fires a false "finished" when a user interrupts a thread they
+// are NOT currently viewing (foreground/active-thread interrupts are suppressed
+// by the focus check). Why indistinguishable: on interrupt the Codex provider
+// reports `turn.completed` with an interrupted (not "failed") status, so
+// ProviderRuntimeIngestion settles the session to "ready"
+// (apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts), and the
+// turn-diff-completed projection overwrites the turn row's transient
+// "interrupted" state back to "completed"
+// (apps/server/src/orchestration/Layers/ProjectionPipeline.ts ~line 1263). End
+// state in the shell: session.status "ready", latestTurn.state "completed" —
+// byte-for-byte a natural completion. (Provider caveat: OpenCode emits a
+// distinct turn.aborted, so its shape may differ.)
 //
-// Do NOT "fix" this by removing "ready" from this set: natural completions also
-// land on "ready", so dropping it would suppress the legitimate notification.
+// Do NOT "fix" this by removing "ready": natural completions also land on
+// "ready", so dropping it suppresses the legitimate notification. Gating on
+// `latestTurn.state` does NOT work either (it is "completed" at completion time).
+// A correct fix must capture the interrupt at its source — client-side, record
+// the user's interrupt at ChatView.onInterrupt and suppress within a time
+// window; or server-side, stop overwriting the interrupted turn state. Follow-up.
 const STOP_STATUSES: ReadonlySet<OrchestrationSessionStatus> = new Set([
   "idle",
   "ready",
@@ -81,7 +88,7 @@ function statusLabel(thread: ThreadShellLike): AgentStopStatusLabel {
  * Pure decision core. Given the previously-seen per-thread statuses and the
  * current shell snapshot, returns the notifications to emit and the new
  * status map. Fires once on a `running -> idle/ready/error` edge per thread;
- * never on first sighting (baseline), never on user-initiated stop/interrupt,
+ * never on first sighting (baseline), never on a user-initiated session stop (surfaces as "stopped"); a user turn *interrupt* is a known false-positive for background threads (see the STOP_STATUSES note),
  * and never when the user is already focused on that exact thread.
  * `nextStatuses` is always fully rebuilt so removed threads drop out.
  */
