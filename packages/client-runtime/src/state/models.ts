@@ -7,6 +7,8 @@ import type {
   MessageId,
   OrchestrationProjectShell,
   OrchestrationV2PlanArtifact,
+  OrchestrationV2Actor,
+  OrchestrationV2CreationSource,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2RunStatus,
   OrchestrationV2ShellSnapshot,
@@ -83,6 +85,8 @@ export interface ThreadConversationMessage {
   readonly attachments?: ReadonlyArray<ChatAttachment>;
   readonly runId: RunId | null;
   readonly streaming: boolean;
+  readonly createdBy?: OrchestrationV2Actor;
+  readonly creationSource?: OrchestrationV2CreationSource;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -371,10 +375,16 @@ function summarizeWorkItem(item: OrchestrationV2TurnItem): {
       };
     case "fork":
       return { label: title ?? "Thread forked", detail: item.targetThreadId, toolData: item };
+    case "thread_created":
+      return {
+        label: title ?? "Thread created",
+        detail: `${item.targetProviderInstanceId} · ${item.targetModel}`,
+        toolData: item,
+      };
     case "subagent":
       return {
         label: title ?? "Subagent",
-        detail: item.result ?? item.prompt,
+        detail: item.result ?? item.progress ?? item.prompt,
         toolTitle: title ?? "Subagent",
         toolData: item,
       };
@@ -535,6 +545,8 @@ function presentMessages(
     attachments: message.attachments,
     runId: message.runId,
     streaming: message.streaming,
+    createdBy: message.createdBy,
+    creationSource: message.creationSource,
     createdAt: iso(message.createdAt),
     updatedAt: iso(message.updatedAt),
   }));

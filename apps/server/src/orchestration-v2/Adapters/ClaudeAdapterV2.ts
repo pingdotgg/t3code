@@ -1769,6 +1769,8 @@ interface ActiveClaudeSubagent {
   readonly turnItemId: OrchestrationV2TurnItem["id"];
   readonly turnItemOrdinal: number;
   nextChildItemOrdinal: number;
+  progressItemOrdinal: number | null;
+  progressStartedAt: DateTime.Utc | null;
   resultItemOrdinal: number | null;
 }
 
@@ -2038,6 +2040,7 @@ export function makeClaudeAdapterV2(
           readonly toolUseId?: string;
           readonly prompt?: string;
           readonly title?: string;
+          readonly progress?: string;
           readonly result?: string;
           readonly status: Extract<
             OrchestrationV2ExecutionNode["status"],
@@ -2052,6 +2055,8 @@ export function makeClaudeAdapterV2(
           if (existingSubagent === undefined && input.status !== "running") {
             return;
           }
+          const lifecycleChanged =
+            existingSubagent === undefined || existingSubagent.task.status !== input.status;
 
           const now = yield* DateTime.now;
           const nativeItemId = `task:${input.taskId}`;
@@ -2105,6 +2110,7 @@ export function makeClaudeAdapterV2(
             status: input.status,
             ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
             ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.progress === undefined ? {} : { progress: input.progress }),
             ...(input.result === undefined ? {} : { result: input.result }),
             completedAt: input.status === "running" ? null : now,
             updatedAt: now,
@@ -2121,6 +2127,8 @@ export function makeClaudeAdapterV2(
               }),
             turnItemOrdinal,
             nextChildItemOrdinal: existingSubagent?.nextChildItemOrdinal ?? 100,
+            progressItemOrdinal: existingSubagent?.progressItemOrdinal ?? null,
+            progressStartedAt: existingSubagent?.progressStartedAt ?? null,
             resultItemOrdinal: existingSubagent?.resultItemOrdinal ?? null,
           } satisfies ActiveClaudeSubagent;
           input.context.subagentsByTaskId.set(input.taskId, subagent);
@@ -2153,52 +2161,54 @@ export function makeClaudeAdapterV2(
             });
           }
 
-          yield* emitProviderEvent({
-            type: "node.updated",
-            driver: CLAUDE_PROVIDER,
-            node: {
-              id: nodeId,
-              threadId: input.context.input.threadId,
-              runId: input.context.input.runId,
-              parentNodeId: input.context.input.rootNodeId,
-              rootNodeId: input.context.input.rootNodeId,
-              kind: "subagent",
-              status: input.status,
-              countsForRun: false,
-              providerThreadId: input.context.input.providerThread.id,
-              providerTurnId: input.context.providerTurnId,
-              nativeItemRef: {
-                driver: CLAUDE_PROVIDER,
-                nativeId: input.taskId,
-                strength: "strong",
+          if (lifecycleChanged) {
+            yield* emitProviderEvent({
+              type: "node.updated",
+              driver: CLAUDE_PROVIDER,
+              node: {
+                id: nodeId,
+                threadId: input.context.input.threadId,
+                runId: input.context.input.runId,
+                parentNodeId: input.context.input.rootNodeId,
+                rootNodeId: input.context.input.rootNodeId,
+                kind: "subagent",
+                status: input.status,
+                countsForRun: false,
+                providerThreadId: input.context.input.providerThread.id,
+                providerTurnId: input.context.providerTurnId,
+                nativeItemRef: {
+                  driver: CLAUDE_PROVIDER,
+                  nativeId: input.taskId,
+                  strength: "strong",
+                },
+                runtimeRequestId: null,
+                checkpointScopeId: null,
+                startedAt: task.startedAt,
+                completedAt: input.status === "running" ? null : now,
               },
-              runtimeRequestId: null,
-              checkpointScopeId: null,
-              startedAt: task.startedAt,
-              completedAt: input.status === "running" ? null : now,
-            },
-          });
-          yield* emitProviderEvent({
-            type: "node.updated",
-            driver: CLAUDE_PROVIDER,
-            node: {
-              id: childRootNodeId,
-              threadId: childThreadId,
-              runId: null,
-              parentNodeId: null,
-              rootNodeId: childRootNodeId,
-              kind: "root_turn",
-              status: input.status,
-              countsForRun: false,
-              providerThreadId: null,
-              providerTurnId: null,
-              nativeItemRef: task.nativeTaskRef,
-              runtimeRequestId: null,
-              checkpointScopeId: null,
-              startedAt: task.startedAt,
-              completedAt: input.status === "running" ? null : now,
-            },
-          });
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              driver: CLAUDE_PROVIDER,
+              node: {
+                id: childRootNodeId,
+                threadId: childThreadId,
+                runId: null,
+                parentNodeId: null,
+                rootNodeId: childRootNodeId,
+                kind: "root_turn",
+                status: input.status,
+                countsForRun: false,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: task.nativeTaskRef,
+                runtimeRequestId: null,
+                checkpointScopeId: null,
+                startedAt: task.startedAt,
+                completedAt: input.status === "running" ? null : now,
+              },
+            });
+          }
           if (existingSubagent === undefined) {
             const promptNativeItemId = `${nativeItemId}:prompt`;
             const promptArtifacts = makeSubagentConversationArtifacts({
@@ -2265,9 +2275,54 @@ export function makeClaudeAdapterV2(
               providerInstanceId: task.providerInstanceId,
               childThreadId: task.childThreadId,
               prompt: task.prompt,
+              ...(task.progress === undefined ? {} : { progress: task.progress }),
               result: task.result,
             },
           });
+
+          const progress = task.progress?.trim();
+          if (
+            progress !== undefined &&
+            progress.length > 0 &&
+            (input.progress !== undefined || (lifecycleChanged && input.status !== "running"))
+          ) {
+            const progressNativeItemId = `${nativeItemId}:progress`;
+            const progressItemOrdinal =
+              subagent.progressItemOrdinal ?? ++subagent.nextChildItemOrdinal;
+            const progressStartedAt = subagent.progressStartedAt ?? now;
+            subagent.progressItemOrdinal = progressItemOrdinal;
+            subagent.progressStartedAt = progressStartedAt;
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CLAUDE_PROVIDER,
+                  nativeItemId: progressNativeItemId,
+                }),
+                threadId: childThreadId,
+                runId: null,
+                nodeId: childRootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: {
+                  driver: CLAUDE_PROVIDER,
+                  nativeId: progressNativeItemId,
+                  strength: "strong",
+                },
+                parentItemId: null,
+                ordinal: progressItemOrdinal,
+                status: input.status,
+                title: "Subagent progress",
+                startedAt: progressStartedAt,
+                completedAt: input.status === "running" ? null : now,
+                updatedAt: now,
+                type: "reasoning",
+                text: progress,
+                streaming: input.status === "running",
+              },
+            });
+          }
 
           if (
             input.result !== undefined &&
@@ -2668,6 +2723,19 @@ export function makeClaudeAdapterV2(
               title: message.description,
               status: "running",
             });
+          }
+
+          if (message.type === "system" && message.subtype === "task_progress") {
+            const progress = message.description.trim();
+            if (progress.length > 0) {
+              yield* updateClaudeSubagentNode({
+                context,
+                taskId: message.task_id,
+                ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+                progress,
+                status: "running",
+              });
+            }
           }
 
           if (message.type === "system" && message.subtype === "task_notification") {
