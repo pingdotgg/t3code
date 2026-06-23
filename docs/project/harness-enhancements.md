@@ -54,6 +54,7 @@ Relevant upstream changes to build on:
 | P1       | Action-specific prompts                          | Not started     | Makes UI actions such as review, PR creation, fix checks, and handoff more consistent.                                          |
 | P1       | Source-control action target resolution          | Partial         | Structured VCS/provider context exists; a canonical active-workspace target resolver is still needed.                           |
 | P1       | Fork sync command and drift monitor              | Complete        | Keeps a fork close to upstream with a repeatable checked command and scheduled drift alerts.                                    |
+| P1       | Fork release policy                              | Complete        | Defines when a fork build should become a tagged prerelease or stable release instead of staying as local/dev work.             |
 | P1       | Workspace lifecycle dashboard                    | Not started     | Makes the workspace/worktree/branch/terminal/diff/PR lifecycle visible as one unit of work.                                     |
 | P1       | Integrated file editor and review surface        | Partial         | In-app file preview/editing exists; default review navigation and review-specific workflows need completion.                    |
 | P1       | File diff review improvements                    | Partial         | Turn selection, file selection, and some collapse behavior exist; filters, review states, comments, and summaries remain.       |
@@ -700,6 +701,65 @@ Initial implementation notes:
 - A Codex/Claude skill can wrap the same command for agent-assisted conflict resolution.
 - If automatic PR creation becomes useful, create a sync branch and PR instead of pushing directly to `main`.
 
+## P1: Fork Release Policy
+
+Define when this fork should publish a GitHub Release instead of staying as synced development work.
+
+Default rule:
+
+- Do not create a fork release after every upstream sync.
+- Treat upstream syncs as maintenance, not release events.
+- Create a fork release only when there is a concrete install/test/distribution reason.
+
+Create a fork prerelease when:
+
+- A harness feature needs desktop dogfooding outside `vp run dev:sandbox`.
+- Another machine or tester needs an installable app artifact.
+- A migration or workspace/data behavior needs validation against packaged desktop state.
+- The release/update pipeline itself needs a smoke test.
+- A milestone has a coherent user-visible improvement, such as workspace identity plus sidebar polish,
+  `.context` v1, durable task list v1, setup/file-copy v1, or review-surface v1.
+
+Create a fork stable release only when:
+
+- The fork is intended to be the user's daily-driver build for a while.
+- The branch is synced with upstream and `0` commits behind.
+- `vp check`, `vp run typecheck`, and relevant tests pass.
+- The release workflow/secrets are configured for the fork, or unsupported publish/deploy steps are disabled.
+- Data compatibility is understood, especially for workspace migrations and app-data changes.
+- There is a clear rollback path to the previous fork release or upstream release.
+
+Do not create a fork release when:
+
+- The change is docs-only or planning-only.
+- The fork is behind upstream and the release is not explicitly testing the conflict window.
+- There is active unreviewed migration work.
+- The only purpose is "we synced upstream."
+- Local dev or a sandbox build is enough.
+
+Recommended fork release shape:
+
+- Prefer GitHub prereleases for harness work until the feature set is stable.
+- Use semver prerelease tags such as `vX.Y.Z-harness.N` or `vX.Y.Z-dev.N` for fork-specific builds,
+  rather than plain `vX.Y.Z` tags that look like upstream stable releases.
+- Use plain stable tags only for deliberate daily-driver releases.
+- Release notes should state:
+  - upstream base commit
+  - fork-only harness changes
+  - migration/data compatibility notes
+  - known risks
+  - rollback instructions
+
+Pre-release checklist:
+
+1. Run `pnpm run sync:upstream`.
+2. Confirm `git rev-list --left-right --count HEAD...upstream/main` ends with `0` behind.
+3. Run `vp check`.
+4. Run `vp run typecheck`.
+5. Run tests relevant to changed areas.
+6. Run `node scripts/release-smoke.ts` before touching release workflow behavior.
+7. Create a prerelease tag only after the above is green.
+
 ## P1: Workspace Lifecycle Dashboard
 
 Create a workspace-level overview that makes each active thread feel like one shippable unit.
@@ -923,10 +983,11 @@ Next implementation sequence:
 11. Add deterministic context and task updates after turn completion.
 12. Add action-specific prompts for review and PR creation.
 13. Add source-control target resolution for commit, push, and PR actions.
-14. Make changed-file clicks use the current integrated review surface by default.
-15. Add diff grouping, filters, collapse state, clearer turn labels, and per-file review state.
-16. Build the workspace lifecycle dashboard.
-17. Add the merge readiness checks panel.
-18. Persist structured review comments.
-19. Add issue/PR fanout.
-20. Design and build Spotlight-style root runner.
+14. Keep fork releases as intentional prerelease/stable checkpoints, not automatic sync events.
+15. Make changed-file clicks use the current integrated review surface by default.
+16. Add diff grouping, filters, collapse state, clearer turn labels, and per-file review state.
+17. Build the workspace lifecycle dashboard.
+18. Add the merge readiness checks panel.
+19. Persist structured review comments.
+20. Add issue/PR fanout.
+21. Design and build Spotlight-style root runner.
