@@ -8,8 +8,6 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import * as Arr from "effect/Array";
-import * as Order from "effect/Order";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
@@ -23,22 +21,11 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import { AppText as Text } from "../../components/AppText";
 import { StatusPill } from "../../components/StatusPill";
 import { useProjects, useThreadShells } from "../../state/entities";
-import { groupProjectsByRepository } from "../../lib/repositoryGroups";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
 import { threadStatusTone } from "./threadPresentation";
-import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-
-const threadActivityOrder = Order.mapInput(
-  Order.Struct({
-    activityAt: Order.flip(Order.Number),
-    title: Order.String,
-  }),
-  (thread: EnvironmentThreadShell) => ({
-    activityAt: new Date(thread.updatedAt ?? thread.createdAt).getTime(),
-    title: thread.title,
-  }),
-);
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { buildThreadNavigationGroups } from "./thread-navigation-groups";
 
 export function ThreadNavigationDrawer(props: {
   readonly visible: boolean;
@@ -192,24 +179,9 @@ function ThreadNavigationDrawerContent(props: {
 }) {
   const projects = useProjects();
   const threads = useThreadShells();
-  const repositoryGroups = useMemo(
-    () => groupProjectsByRepository({ projects, threads }),
-    [projects, threads],
-  );
   const groupedThreads = useMemo(
-    () =>
-      repositoryGroups.map((group) => {
-        const threads: EnvironmentThreadShell[] = [];
-        for (const projectGroup of group.projects) {
-          threads.push(...projectGroup.threads);
-        }
-        return {
-          key: group.key,
-          title: group.projects[0]?.project.title ?? group.title,
-          threads: Arr.sort(threads, threadActivityOrder),
-        };
-      }),
-    [repositoryGroups],
+    () => buildThreadNavigationGroups({ projects, threads }),
+    [projects, threads],
   );
 
   return (

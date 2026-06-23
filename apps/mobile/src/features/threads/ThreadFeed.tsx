@@ -25,6 +25,7 @@ import {
   ActivityIndicator,
   Image,
   Linking,
+  type LayoutChangeEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -1111,7 +1112,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const foldSettleFrameRef = useRef<number | null>(null);
   const foldSettleSecondFrameRef = useRef<number | null>(null);
   const previousLatestTurnRef = useRef(props.latestTurn);
-  const { width: viewportWidth } = useWindowDimensions();
+  const { width: windowWidth } = useWindowDimensions();
+  const [viewportWidth, setViewportWidth] = useState(windowWidth);
   const [foldToggleSettling, setFoldToggleSettling] = useState(false);
   const [interactionState, setInteractionState] = useState<{
     readonly copiedRowId: string | null;
@@ -1136,6 +1138,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const insets = useSafeAreaInsets();
   const topContentInset = props.contentTopInset ?? insets.top + 44;
   const bottomContentInset = props.contentBottomInset ?? 18;
+
+  const handleViewportLayout = useCallback((event: LayoutChangeEvent) => {
+    const nextWidth = Math.round(event.nativeEvent.layout.width);
+    setViewportWidth((current) => (Math.abs(current - nextWidth) > 1 ? nextWidth : current));
+  }, []);
 
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
   const userBubbleColor = useThemeColor("--color-user-bubble");
@@ -1399,7 +1406,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   return (
     <>
-      <View style={{ flex: 1 }}>
+      <View style={{ flex: 1 }} onLayout={handleViewportLayout}>
         <KeyboardAwareLegendList
           ref={props.listRef}
           key={props.threadId}

@@ -26,6 +26,7 @@ import {
   useClerkSettingsSheetDetent,
 } from "../features/cloud/ClerkSettingsSheetDetent";
 import { useAgentNotificationNavigation } from "../features/agent-awareness/notificationNavigation";
+import { AdaptiveWorkspaceLayout } from "../features/layout/AdaptiveWorkspaceLayout";
 import { useThemeColor } from "../lib/useThemeColor";
 
 function AppNavigator() {
@@ -92,33 +93,35 @@ function AppNavigatorContent() {
         backgroundColor={String(statusBarBg)}
         translucent
       />
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen
-          name="index"
-          options={{
-            contentStyle: { backgroundColor: "transparent" },
-            headerShown: true,
-            headerTransparent: true,
-            headerShadowVisible: false,
-          }}
-        />
-        <Stack.Screen
-          name="settings"
-          listeners={{ transitionEnd: handleSettingsTransitionEnd }}
-          options={settingsSheetScreenOptions}
-        />
-        <Stack.Screen name="connections" options={connectionSheetScreenOptions} />
-        <Stack.Screen name="new" options={newTaskScreenOptions} />
-        <Stack.Screen
-          name="threads/[environmentId]/[threadId]"
-          options={{
-            animation: "slide_from_right",
-            contentStyle: { backgroundColor: "transparent" },
-            gestureEnabled: true,
-            headerShown: false,
-          }}
-        />
-      </Stack>
+      <AdaptiveWorkspaceLayout>
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen
+            name="index"
+            options={{
+              contentStyle: { backgroundColor: "transparent" },
+              headerShown: true,
+              headerTransparent: true,
+              headerShadowVisible: false,
+            }}
+          />
+          <Stack.Screen
+            name="settings"
+            listeners={{ transitionEnd: handleSettingsTransitionEnd }}
+            options={settingsSheetScreenOptions}
+          />
+          <Stack.Screen name="connections" options={connectionSheetScreenOptions} />
+          <Stack.Screen name="new" options={newTaskScreenOptions} />
+          <Stack.Screen
+            name="threads/[environmentId]/[threadId]"
+            options={{
+              animation: "slide_from_right",
+              contentStyle: { backgroundColor: "transparent" },
+              gestureEnabled: true,
+              headerShown: false,
+            }}
+          />
+        </Stack>
+      </AdaptiveWorkspaceLayout>
     </>
   );
 }

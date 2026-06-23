@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import * as Option from "effect/Option";
 import { EnvironmentId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
@@ -47,6 +47,7 @@ import { useSelectedThreadWorktree } from "../../state/use-selected-thread-workt
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
+import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
@@ -61,6 +62,7 @@ function OpeningThreadLoadingScreen() {
 }
 
 export function ThreadRouteScreen() {
+  const { layout } = useAdaptiveWorkspaceLayout();
   const { state: workspaceState } = useWorkspaceState();
   const { connectionState } = useRemoteConnectionStatus();
   const { onReconnectEnvironment } = useRemoteConnections();
@@ -145,8 +147,16 @@ export function ThreadRouteScreen() {
   const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
 
   const handleOpenDrawer = useCallback(() => {
-    setDrawerVisible(true);
-  }, []);
+    if (!layout.usesSplitView) {
+      setDrawerVisible(true);
+    }
+  }, [layout.usesSplitView]);
+
+  useEffect(() => {
+    if (layout.usesSplitView) {
+      setDrawerVisible(false);
+    }
+  }, [layout.usesSplitView]);
 
   const handleOpenConnectionEditor = useCallback(() => {
     void router.push("/connections");
@@ -328,6 +338,7 @@ export function ThreadRouteScreen() {
           headerStyle: { backgroundColor: "transparent" },
           headerShadowVisible: false,
           headerTintColor: iconColor,
+          headerBackVisible: !layout.usesSplitView,
           headerBackTitle: "",
           headerTitle: () => (
             <Pressable
@@ -405,6 +416,7 @@ export function ThreadRouteScreen() {
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
           threadCwd={selectedThreadCwd}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
+          layoutVariant={layout.variant}
           onOpenDrawer={handleOpenDrawer}
           onOpenConnectionEditor={handleOpenConnectionEditor}
           onChangeDraftMessage={composer.onChangeDraftMessage}
@@ -424,15 +436,17 @@ export function ThreadRouteScreen() {
           onSubmitUserInput={requests.onSubmitUserInput}
         />
 
-        <ThreadNavigationDrawer
-          visible={drawerVisible}
-          selectedThreadKey={selectedThreadKey}
-          onClose={() => setDrawerVisible(false)}
-          onSelectThread={(thread) => {
-            router.replace(buildThreadRoutePath(thread));
-          }}
-          onStartNewTask={() => router.push("/new")}
-        />
+        {layout.usesSplitView ? null : (
+          <ThreadNavigationDrawer
+            visible={drawerVisible}
+            selectedThreadKey={selectedThreadKey}
+            onClose={() => setDrawerVisible(false)}
+            onSelectThread={(thread) => {
+              router.replace(buildThreadRoutePath(thread));
+            }}
+            onStartNewTask={() => router.push("/new")}
+          />
+        )}
       </View>
     </>
   );

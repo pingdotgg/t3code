@@ -64,7 +64,7 @@ const config: ExpoConfig = {
   runtimeVersion: {
     policy: process.env.MOBILE_VERSION_POLICY ?? "appVersion",
   },
-  orientation: "portrait",
+  orientation: "default",
   icon: "./assets/icon.png",
   userInterfaceStyle: "automatic",
   updates: {

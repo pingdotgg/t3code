@@ -10,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
-import { useRouter } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 
 import { useProjects, useThreadShells } from "../state/entities";
@@ -21,6 +21,8 @@ import { HomeScreen } from "../features/home/HomeScreen";
 import { HomeHeader } from "../features/home/HomeHeader";
 import type { HomeProjectSortOrder } from "../features/home/homeThreadList";
 import { useThreadListActions } from "../features/home/useThreadListActions";
+import { useAdaptiveWorkspaceLayout } from "../features/layout/AdaptiveWorkspaceLayout";
+import { WorkspaceEmptyDetail } from "../features/layout/WorkspaceEmptyDetail";
 
 interface HomeListOptions {
   readonly selectedEnvironmentId: EnvironmentId | null;
@@ -32,6 +34,7 @@ interface HomeListOptions {
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
 export default function HomeRouteScreen() {
+  const { layout } = useAdaptiveWorkspaceLayout();
   const projects = useProjects();
   const threads = useThreadShells();
   const { state: catalogState } = useWorkspaceState();
@@ -79,6 +82,22 @@ export default function HomeRouteScreen() {
   const setProjectGroupingMode = useCallback((projectGroupingMode: SidebarProjectGroupingMode) => {
     setListOptions((current) => ({ ...current, projectGroupingMode }));
   }, []);
+
+  if (layout.usesSplitView) {
+    return (
+      <>
+        <Stack.Screen
+          options={{
+            headerShown: true,
+            headerTransparent: true,
+            headerShadowVisible: false,
+            headerTitle: "",
+          }}
+        />
+        <WorkspaceEmptyDetail />
+      </>
+    );
+  }
 
   return (
     <>
