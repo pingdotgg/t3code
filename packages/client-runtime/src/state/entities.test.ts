@@ -65,7 +65,12 @@ describe("V2 client presentation", () => {
     expect(thread.runtime?.status).toBe("running");
     expect(thread.runs).toHaveLength(1);
     expect(thread.availableActions.canInterrupt).toBe(true);
-    expect(thread.messages[0]).toMatchObject({ text: "Hello", runId });
+    expect(thread.messages[0]).toMatchObject({
+      text: "Hello",
+      runId,
+      createdBy: "user",
+      creationSource: "web",
+    });
   });
 
   it("keeps the complete payload for generic V2 work-item rendering", () => {

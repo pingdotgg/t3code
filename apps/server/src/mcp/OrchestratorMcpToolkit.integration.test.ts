@@ -730,6 +730,35 @@ describe("orchestrator MCP toolkit", () => {
                 .filter((message) => message.role === "user")
                 .map((message) => message.text),
             ).toEqual([createdThreadPrompt]);
+            const createdThreadItems = (yield* orchestrator.getThreadProjection(
+              parentThreadId,
+            )).visibleTurnItems
+              .map((row) => row.item)
+              .filter((item) => item.type === "thread_created");
+            expect(
+              createdThreadItems.map((item) => ({
+                targetThreadId: item.targetThreadId,
+                targetRunId: item.targetRunId,
+                title: item.title,
+                providerInstanceId: item.targetProviderInstanceId,
+                model: item.targetModel,
+              })),
+            ).toEqual([
+              {
+                targetThreadId: emptyThread.threadId,
+                targetRunId: null,
+                title: emptyThread.title,
+                providerInstanceId: codexInstanceId,
+                model: codexModel,
+              },
+              {
+                targetThreadId: promptedThread.threadId,
+                targetRunId: promptedThread.runId,
+                title: promptedThread.title,
+                providerInstanceId: claudeInstanceId,
+                model: claudeModel,
+              },
+            ]);
 
             const repeatedCreateCall = yield* invoke("create_threads", createInput);
             const repeatedCreated = yield* decodeCreateThreadsResult(
@@ -738,6 +767,15 @@ describe("orchestrator MCP toolkit", () => {
             expect(repeatedCreated.threads.map((thread) => thread.threadId)).toEqual(
               created.threads.map((thread) => thread.threadId),
             );
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).visibleTurnItems.filter(
+                (row) => {
+                  if (row.item.type !== "thread_created") return false;
+                  const targetThreadId = row.item.targetThreadId;
+                  return created.threads.some((thread) => thread.threadId === targetThreadId);
+                },
+              ),
+            ).toHaveLength(2);
 
             const promptedReadCall = yield* invoke("t3_thread_read", {
               threadId: promptedThread.threadId,
@@ -814,6 +852,22 @@ describe("orchestrator MCP toolkit", () => {
             const activeThread = yield* decodeCreatedThread(
               activeThreadCall.structuredContent,
             ).pipe(Effect.orDie);
+            const activeThreadItem = (yield* orchestrator.getThreadProjection(
+              parentThreadId,
+            )).visibleTurnItems
+              .map((row) => row.item)
+              .find(
+                (item) =>
+                  item.type === "thread_created" && item.targetThreadId === activeThread.threadId,
+              );
+            expect(activeThreadItem).toMatchObject({
+              type: "thread_created",
+              title: "Managed active thread",
+              targetThreadId: activeThread.threadId,
+              targetRunId: activeThread.runId,
+              targetProviderInstanceId: codexInstanceId,
+              targetModel: codexModel,
+            });
             const activeProjection = yield* waitForProjection(
               orchestrator,
               activeThread.threadId,
