@@ -1,10 +1,16 @@
 import {
   MessageId,
+  NodeId,
   PlanId,
+  ProviderInstanceId,
+  ProviderThreadId,
+  RunAttemptId,
   RunId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ExecutionNode,
+  type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -196,12 +202,24 @@ describe("V2 session presentation", () => {
         { id: "step-2", text: "Second", status: "pending" as const },
       ],
     } satisfies OrchestrationV2TurnItem;
+    const errorItem = {
+      ...base("item-error", 5),
+      status: "failed" as const,
+      type: "error" as const,
+      failure: {
+        class: "validation_error" as const,
+        message: "Invalid reasoning effort.",
+        code: "invalid_request",
+        retryable: false,
+      },
+    } satisfies OrchestrationV2TurnItem;
     const visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = [
       userItem,
       requestItem,
       commandItem,
       resultItem,
       todoItem,
+      errorItem,
     ].map((item, position) => ({
       position,
       visibility: "local" as const,
@@ -221,6 +239,7 @@ describe("V2 session presentation", () => {
       ["work", commandItem.id],
       ["event", resultItem.id],
       ["work", todoItem.id],
+      ["event", errorItem.id],
     ]);
     const commandEntry = entries[2];
     const userEntry = entries[0];
@@ -240,5 +259,138 @@ describe("V2 session presentation", () => {
       expect(todoEntry.entry.label).toBe("Updated tasks");
       expect(todoEntry.entry.detail).toBe("1/2 completed");
     }
+    const errorEntry = entries[5];
+    expect(errorEntry?.kind).toBe("event");
+    if (errorEntry?.kind === "event") {
+      expect(errorEntry.projectedItem).toBe(visibleTurnItems[5]);
+      expect(errorEntry.projectedItem.item.type).toBe("error");
+      if (errorEntry.projectedItem.item.type === "error") {
+        expect(errorEntry.projectedItem.item.failure.message).toBe("Invalid reasoning effort.");
+      }
+    }
+  });
+
+  it("resolves attempt identity through V2 execution nodes", () => {
+    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+    const threadId = ThreadId.make("thread-attempts");
+    const runId = RunId.make("run-steered");
+    const supersededRootNodeId = NodeId.make("node-attempt-1-root");
+    const supersededChildNodeId = NodeId.make("node-attempt-1-child");
+    const activeRootNodeId = NodeId.make("node-attempt-2-root");
+    const supersededAttemptId = RunAttemptId.make("attempt-1");
+    const activeAttemptId = RunAttemptId.make("attempt-2");
+    const providerInstanceId = ProviderInstanceId.make("codex-default");
+    const providerThreadId = ProviderThreadId.make("provider-thread-attempts");
+    const attempts: ReadonlyArray<OrchestrationV2RunAttempt> = [
+      {
+        id: supersededAttemptId,
+        runId,
+        attemptOrdinal: 1,
+        rootNodeId: supersededRootNodeId,
+        providerInstanceId,
+        providerThreadId,
+        providerTurnId: null,
+        reason: "initial",
+        status: "superseded",
+        startedAt: now,
+        completedAt: now,
+      },
+      {
+        id: activeAttemptId,
+        runId,
+        attemptOrdinal: 2,
+        rootNodeId: activeRootNodeId,
+        providerInstanceId,
+        providerThreadId,
+        providerTurnId: null,
+        reason: "steering_restart",
+        status: "running",
+        startedAt: now,
+        completedAt: null,
+      },
+    ];
+    const node = (
+      id: OrchestrationV2ExecutionNode["id"],
+      rootNodeId: OrchestrationV2ExecutionNode["rootNodeId"],
+      parentNodeId: OrchestrationV2ExecutionNode["parentNodeId"],
+    ): OrchestrationV2ExecutionNode => ({
+      id,
+      threadId,
+      runId,
+      parentNodeId,
+      rootNodeId,
+      kind: id === rootNodeId ? "root_turn" : "assistant_message",
+      status: "running",
+      countsForRun: true,
+      providerThreadId,
+      providerTurnId: null,
+      nativeItemRef: null,
+      runtimeRequestId: null,
+      checkpointScopeId: null,
+      startedAt: now,
+      completedAt: null,
+    });
+    const nodes = [
+      node(supersededRootNodeId, supersededRootNodeId, null),
+      node(supersededChildNodeId, supersededRootNodeId, supersededRootNodeId),
+      node(activeRootNodeId, activeRootNodeId, null),
+    ];
+    const assistantItem = (
+      id: string,
+      messageId: string,
+      nodeId: NodeId,
+      text: string,
+      ordinal: number,
+    ): OrchestrationV2TurnItem => ({
+      id: TurnItemId.make(id),
+      threadId,
+      runId,
+      nodeId,
+      providerThreadId,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal,
+      status: "running",
+      title: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      type: "assistant_message",
+      messageId: MessageId.make(messageId),
+      text,
+      streaming: true,
+    });
+    const items = [
+      assistantItem(
+        "item-superseded",
+        "message-superseded",
+        supersededChildNodeId,
+        "Partial old response",
+        0,
+      ),
+      assistantItem("item-active", "message-active", activeRootNodeId, "Current response", 1),
+    ];
+    const visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = items.map(
+      (item, position) => ({
+        position,
+        visibility: "local",
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        item,
+      }),
+    );
+
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems,
+      optimisticMessages: [],
+      attempts,
+      nodes,
+    });
+
+    expect(entries.map((entry) => [entry.attempt?.id, entry.attempt?.status])).toEqual([
+      [supersededAttemptId, "superseded"],
+      [activeAttemptId, "running"],
+    ]);
   });
 });

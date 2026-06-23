@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderSwitch from "./ProviderSwitchService.ts";
 
@@ -50,7 +51,21 @@ function projection(): OrchestrationV2ThreadProjection {
 }
 
 function testLayer(metadata: Readonly<Record<string, { continuationKey: string }>>) {
+  const adapter = (instanceId: ProviderInstanceId): ProviderAdapterV2Shape => ({
+    instanceId,
+    driver,
+    getCapabilities: () => Effect.succeed(capabilitiesWithoutModelSwitch),
+    planSelectionTransition: () => Effect.succeed({ type: "restart_session" }),
+    openSession: () => Effect.die("ProviderSwitchService tests do not open sessions."),
+  });
   const registry = Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+    get: (instanceId) =>
+      metadata[instanceId] === undefined
+        ? Effect.fail(
+            new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({ instanceId }),
+          )
+        : Effect.succeed(adapter(instanceId)),
+    list: () => Effect.succeed(Object.keys(metadata).map((id) => ProviderInstanceId.make(id))),
     getMetadata: (instanceId) => {
       const value = metadata[instanceId];
       return value === undefined

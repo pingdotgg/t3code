@@ -1,7 +1,10 @@
 import {
   CommandId,
+  type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
+  RunAttemptId,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -82,6 +85,20 @@ export interface EventSinkV2Shape {
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<PendingOrchestrationEffectV2>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
+  readonly writeIfRunCurrent: (input: {
+    readonly commandId?: CommandId;
+    readonly threadId: ThreadId;
+    readonly runId: RunId;
+    readonly activeAttemptId: RunAttemptId;
+    readonly expectedStatus: OrchestrationV2Run["status"];
+    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  }) => Effect.Effect<
+    {
+      readonly committed: boolean;
+      readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
+    },
+    EventSinkV2Error
+  >;
   readonly commitCommand: (input: {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
@@ -230,6 +247,58 @@ const baseLayer: Layer.Layer<
       return storedEvents;
     });
 
+    const writeIfRunCurrentEffect = Effect.fn("orchestrationV2.EventSink.writeIfRunCurrent")(
+      function* (input: Parameters<EventSinkV2Shape["writeIfRunCurrent"]>[0]) {
+        yield* Effect.annotateCurrentSpan({
+          "orchestration_v2.command_id": input.commandId ?? null,
+          "orchestration_v2.event_count": input.events.length,
+          "orchestration_v2.run_id": input.runId,
+          "orchestration_v2.thread_id": input.threadId,
+        });
+
+        const result = yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const rows = yield* sql<{
+              readonly status: string;
+              readonly active_attempt_id: string | null;
+            }>`
+            SELECT
+              status,
+              json_extract(payload_json, '$.activeAttemptId') AS active_attempt_id
+            FROM orchestration_v2_projection_runs
+            WHERE run_id = ${input.runId}
+              AND thread_id = ${input.threadId}
+            LIMIT 1
+          `;
+            const current = rows[0];
+            if (
+              current === undefined ||
+              current.status !== input.expectedStatus ||
+              current.active_attempt_id !== input.activeAttemptId
+            ) {
+              return {
+                committed: false as const,
+                storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
+              };
+            }
+
+            const normalized = yield* normalizeEvents(input.events);
+            const storedEvents = yield* eventStore.append({
+              ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+              events: normalized,
+            });
+            yield* applyStoredEvents(storedEvents);
+            return { committed: true as const, storedEvents };
+          }),
+        );
+        if (result.committed) {
+          yield* eventStore.publishCommitted(result.storedEvents);
+          yield* PubSub.publishAll(liveEvents, result.storedEvents);
+        }
+        return result;
+      },
+    );
+
     const existingCommandResult = (commandId: CommandId) =>
       Effect.gen(function* () {
         const existing = yield* commandReceipts.getByCommandId(commandId);
@@ -261,7 +330,7 @@ const baseLayer: Layer.Layer<
           });
           if (!reserved) {
             const existing = yield* existingCommandResult(input.commandId);
-            return { ...existing, committed: false as const, cancelledEffectCount: 0 };
+            return { ...existing, committed: false as const, cancelledEffectIds: [] };
           }
 
           const normalized = yield* normalizeEvents(input.events);
@@ -287,16 +356,17 @@ const baseLayer: Layer.Layer<
             error: null,
           };
           yield* commandReceipts.upsert(receipt);
-          const cancelledEffectCount =
+          const cancelledEffectIds =
             input.cancelUnsettledEffects === undefined
-              ? 0
+              ? []
               : yield* effectOutbox.cancelUnsettled({
                   threadId: input.threadId,
                   ...input.cancelUnsettledEffects,
                 });
-          return { receipt, storedEvents, committed: true as const, cancelledEffectCount };
+          return { receipt, storedEvents, committed: true as const, cancelledEffectIds };
         }),
       );
+      yield* effectOutbox.signalCancellations(result.cancelledEffectIds);
       if (input.effects.length > 0) {
         yield* effectOutbox.notifyAvailable;
       }
@@ -304,7 +374,12 @@ const baseLayer: Layer.Layer<
         yield* eventStore.publishCommitted(result.storedEvents);
         yield* PubSub.publishAll(liveEvents, result.storedEvents);
       }
-      return result;
+      return {
+        receipt: result.receipt,
+        storedEvents: result.storedEvents,
+        committed: result.committed,
+        cancelledEffectCount: result.cancelledEffectIds.length,
+      };
     });
 
     const commitRejectedCommandEffect = Effect.fn(
@@ -402,6 +477,17 @@ const baseLayer: Layer.Layer<
         ),
       writeWithEffects: (input) =>
         writeEffect(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new EventSinkWriteError({
+                eventCount: input.events.length,
+                ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+                cause,
+              }),
+          ),
+        ),
+      writeIfRunCurrent: (input) =>
+        writeIfRunCurrentEffect(input).pipe(
           Effect.mapError(
             (cause) =>
               new EventSinkWriteError({

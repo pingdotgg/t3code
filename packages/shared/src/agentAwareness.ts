@@ -125,6 +125,7 @@ function resolveThreadAwarenessPhaseV2(
     return "waiting_for_approval";
   }
   switch (thread.status) {
+    case "preparing":
     case "starting":
       return "starting";
     case "running":

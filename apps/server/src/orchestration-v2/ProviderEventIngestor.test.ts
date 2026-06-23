@@ -27,6 +27,7 @@ import {
   ProviderEventIngestorV2,
   layer as providerEventIngestorLayer,
 } from "./ProviderEventIngestor.ts";
+import { makeProviderFailure } from "./ProviderFailure.ts";
 
 const TestDatabaseLayer = SqlitePersistenceMemory;
 const TestStoresLayer = Layer.merge(eventStoreLayer, projectionStoreLayer).pipe(
@@ -187,7 +188,7 @@ layer("ProviderEventIngestorV2", (it) => {
   );
 
   it.effect(
-    "treats provider terminal markers as orchestration control signals, not persisted domain events",
+    "treats successful provider terminal markers as non-persisted orchestration control signals",
     () =>
       Effect.gen(function* () {
         const ingestor = yield* ProviderEventIngestorV2;
@@ -210,16 +211,84 @@ layer("ProviderEventIngestorV2", (it) => {
           event: {
             type: "turn.terminal",
             driver: CODEX_DRIVER,
+            providerThreadId: idAllocator.derive.providerThread({
+              driver: CODEX_DRIVER,
+              nativeThreadId: "native-thread",
+            }),
             providerTurnId: idAllocator.derive.providerTurn({
               driver: CODEX_DRIVER,
               nativeTurnId: "native-turn",
             }),
+            runOrdinal: 1,
             status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
           },
         });
 
         assert.deepEqual(normalized, []);
       }),
+  );
+
+  it.effect("persists a failed provider terminal as one expected error item", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const providerThreadId = idAllocator.derive.providerThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: "native-thread-failed",
+      });
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: CODEX_DRIVER,
+        nativeTurnId: "native-turn-failed",
+      });
+
+      yield* eventSink.write({ events: [threadEvent] });
+      const stored = yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        event: {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId,
+          providerTurnId,
+          runOrdinal: 1,
+          failureItemOrdinal: 102,
+          status: "failed",
+          failure: makeProviderFailure({
+            message: "Invalid reasoning effort.",
+            code: "invalid_request",
+            class: "validation_error",
+          }),
+          threadDisposition: "reusable",
+        },
+      });
+
+      const projection = yield* projectionStore.getThreadProjection(threadEvent.threadId);
+      const errorItems = projection.visibleTurnItems.filter(
+        (candidate) => candidate.item.type === "error",
+      );
+
+      assert.equal(stored.length, 1);
+      assert.equal(stored[0]?.event.type, "turn-item.updated");
+      assert.equal(errorItems.length, 1);
+      const errorItem = errorItems[0]?.item;
+      assert.equal(errorItem?.type, "error");
+      if (errorItem?.type !== "error") return;
+      assert.equal(errorItem.failure.message, "Invalid reasoning effort.");
+      assert.equal(errorItem.failure.code, "invalid_request");
+      assert.equal(errorItem.providerThreadId, providerThreadId);
+      assert.equal(errorItem.providerTurnId, providerTurnId);
+    }),
   );
 
   it.effect("routes provider-owned child artifacts to their child app thread", () =>

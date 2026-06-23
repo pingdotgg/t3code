@@ -541,6 +541,143 @@ describe("deriveMessagesTimelineRows", () => {
     ).toBeDefined();
   });
 
+  it("collapses only output from a superseded V2 attempt within the active logical run", () => {
+    const runId = "run-steered" as never;
+    const supersededAttemptId = "attempt-1" as never;
+    const activeAttemptId = "attempt-2" as never;
+    const supersededAttempt = {
+      id: supersededAttemptId,
+      runId,
+      attemptOrdinal: 1,
+      rootNodeId: "node-attempt-1" as never,
+      status: "superseded" as const,
+    };
+    const activeAttempt = {
+      id: activeAttemptId,
+      runId,
+      attemptOrdinal: 2,
+      rootNodeId: "node-attempt-2" as never,
+      status: "running" as const,
+    };
+    const timelineEntries = [
+      {
+        id: "initial-user-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:00Z",
+        attempt: supersededAttempt,
+        message: {
+          id: "initial-user" as never,
+          role: "user" as const,
+          text: "Build it",
+          runId,
+          inputIntent: "turn_start" as const,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "superseded-assistant-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:02Z",
+        attempt: supersededAttempt,
+        message: {
+          id: "superseded-assistant" as never,
+          role: "assistant" as const,
+          text: "Partial old response",
+          runId,
+          createdAt: "2026-01-01T00:00:02Z",
+          updatedAt: "2026-01-01T00:00:03Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "superseded-work-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:04Z",
+        attempt: supersededAttempt,
+        entry: {
+          id: "superseded-work",
+          createdAt: "2026-01-01T00:00:04Z",
+          runId,
+          label: "Old command",
+          tone: "tool" as const,
+        },
+      },
+      {
+        id: "steer-user-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:05Z",
+        attempt: activeAttempt,
+        message: {
+          id: "steer-user" as never,
+          role: "user" as const,
+          text: "Change direction",
+          runId,
+          inputIntent: "steer" as const,
+          createdAt: "2026-01-01T00:00:05Z",
+          updatedAt: "2026-01-01T00:00:05Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "active-assistant-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:06Z",
+        attempt: activeAttempt,
+        message: {
+          id: "active-assistant" as never,
+          role: "assistant" as const,
+          text: "Current response",
+          runId,
+          createdAt: "2026-01-01T00:00:06Z",
+          updatedAt: "2026-01-01T00:00:07Z",
+          streaming: true,
+        },
+      },
+    ];
+    const common = {
+      timelineEntries,
+      latestRun: {
+        runId,
+        status: "running" as const,
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    };
+
+    const collapsedRows = deriveMessagesTimelineRows(common);
+    expect(collapsedRows.map((row) => row.id)).toEqual([
+      "initial-user-entry",
+      `attempt-fold:${supersededAttemptId}`,
+      "steer-user-entry",
+      "active-assistant-entry",
+    ]);
+    expect(collapsedRows.find((row) => row.kind === "attempt-fold")).toMatchObject({
+      attemptId: supersededAttemptId,
+      runId,
+      label: "Superseded attempt",
+      expanded: false,
+    });
+
+    const expandedRows = deriveMessagesTimelineRows({
+      ...common,
+      expandedAttemptIds: new Set([supersededAttemptId]),
+    });
+    expect(expandedRows.map((row) => row.id)).toEqual([
+      "initial-user-entry",
+      `attempt-fold:${supersededAttemptId}`,
+      "superseded-assistant-entry",
+      "superseded-work-entry",
+      "steer-user-entry",
+      "active-assistant-entry",
+    ]);
+  });
+
   it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {
     // A steer ends the previous turn early: its only message completes the
     // instant it is created, and trailing work entries land after it. The

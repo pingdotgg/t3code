@@ -24,7 +24,10 @@ import {
   type OrchestratorV2ProviderReplayHarness,
 } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
-import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
+import {
+  decodeProviderReplayNdjson,
+  materializeReplayTranscriptWorkspace,
+} from "./ReplayTranscriptNdjson.ts";
 
 const readTranscript = Effect.fn("readOrchestratorReplayTranscript")(function* (file: URL) {
   const fs = yield* FileSystem.FileSystem;
@@ -60,8 +63,12 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   readonly enableAssistantStreaming?: boolean;
 }) {
   const rawTranscript = yield* readTranscript(input.driver.transcriptFile);
-  const transcript = yield* input.harness.decodeTranscript(rawTranscript);
   const workspace = yield* checkpointWorkspace(input.fixtureName);
+  const transcript = yield* input.harness.decodeTranscript(
+    input.driver.driver === "codex"
+      ? materializeReplayTranscriptWorkspace(rawTranscript, workspace)
+      : rawTranscript,
+  );
   const materialized = yield* materializeFixtureInput({
     scenario: input.fixtureName,
     fixtureInput: input.buildInput(),

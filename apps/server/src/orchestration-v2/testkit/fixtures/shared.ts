@@ -596,6 +596,11 @@ export function materializeFixtureInput(input: {
           }
           break;
         case "interrupt":
+          steps.push({
+            type: "await_run_steerable",
+            threadId: ids.threadId,
+            runId: runIdFor(step.targetRunIndex),
+          });
           if (step.waitForTurnItemType !== undefined) {
             steps.push({
               type: "await_run_turn_item",
@@ -691,6 +696,7 @@ export function assertBaseProjection(input: {
   assert.isAtLeast(
     projection.providerTurns.length,
     input.providerTurnCountAtLeast ?? input.runCount,
+    `expected provider turns; runs=${projection.runs.map((run) => `${run.id}:${run.status}`).join(",")}; sessions=${projection.providerSessions.map((session) => `${session.id}:${session.status}`).join(",")}; items=${projection.turnItems.map((item) => (item.type === "error" ? `${item.type}:${item.failure.message}` : item.type)).join(",")}`,
   );
   assert.isAtLeast(input.result.domainEvents.length, 1);
   assert.deepEqual(

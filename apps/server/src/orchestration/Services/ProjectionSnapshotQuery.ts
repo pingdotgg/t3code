@@ -86,6 +86,17 @@ export interface ProjectionSnapshotQueryShape {
   >;
 
   /**
+   * Read the shell snapshot with null optional repository metadata.
+   *
+   * Transactional callers use this method and enrich the returned projects
+   * only after their transaction has closed.
+   */
+  readonly getShellSnapshotWithoutEnrichment: () => Effect.Effect<
+    OrchestrationShellSnapshot,
+    ProjectionRepositoryError
+  >;
+
+  /**
    * Read archived thread shell summaries for the archive page.
    *
    * This query is separate from the main shell snapshot so archived threads

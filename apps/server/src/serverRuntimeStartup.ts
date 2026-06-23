@@ -26,7 +26,6 @@ import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
-import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
@@ -329,7 +328,6 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const keybindings = yield* Keybindings.Keybindings;
   const projectionMaintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-  const orchestrator = yield* Orchestrator.OrchestratorV2;
   const providerRuntimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
   const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
@@ -418,10 +416,6 @@ export const make = Effect.gen(function* () {
           const workerFiber = yield* EffectWorker.runDaemon.pipe(Effect.forkScoped);
           yield* Ref.set(effectWorkerFiber, workerFiber);
           yield* agentAwarenessRelay.start();
-          const resumedQueuedRuns = yield* orchestrator.resumeQueuedRuns;
-          if (resumedQueuedRuns > 0) {
-            yield* Effect.logInfo("V2 queued runs resumed", { resumedQueuedRuns });
-          }
         }),
       ),
       autoBootstrap: (serverConfig.autoBootstrapProjectFromCwd

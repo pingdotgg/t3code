@@ -1,6 +1,8 @@
 import {
   ProviderDriverKind,
+  type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
   type PlanId,
   type RunId,
@@ -83,7 +85,12 @@ export interface LatestProposedPlanState {
   readonly status: ThreadProposedPlan["status"];
 }
 
-export type TimelineEntry =
+export type TimelineAttempt = Pick<
+  OrchestrationV2RunAttempt,
+  "id" | "runId" | "attemptOrdinal" | "rootNodeId" | "status"
+>;
+
+export type TimelineEntry = (
   | {
       readonly id: string;
       readonly kind: "message";
@@ -108,7 +115,11 @@ export type TimelineEntry =
       readonly kind: "event";
       readonly createdAt: string;
       readonly projectedItem: OrchestrationV2ProjectedTurnItem;
-    };
+    }
+) & {
+  /** V2 identity resolved from the item's execution node, when locally available. */
+  readonly attempt?: TimelineAttempt;
+};
 
 export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
   return (
@@ -169,6 +180,7 @@ export function isLatestRunSettled(
 ): boolean {
   if (latestRun === null) return false;
   if (
+    latestRun.status === "preparing" ||
     latestRun.status === "starting" ||
     latestRun.status === "running" ||
     latestRun.status === "waiting"
@@ -320,6 +332,7 @@ export function deriveTimelineEntries(
 const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"]["type"]>([
   "approval_request",
   "compaction",
+  "error",
   "fork",
   "handoff",
   "run_interrupt_request",
@@ -429,6 +442,13 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         changedFiles: item.files.map((file) => file.path),
         toolData: item,
       };
+    case "error":
+      return {
+        ...common,
+        label: title ?? "Provider error",
+        detail: item.failure.message,
+        toolData: item,
+      };
     case "todo_list": {
       const completed = item.steps.filter((step) => step.status === "completed").length;
       return {
@@ -463,13 +483,38 @@ export function deriveTimelineEntriesFromVisibleTurnItems(input: {
   readonly visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly optimisticMessages: ReadonlyArray<ChatMessage>;
   readonly attachmentUrlById?: ReadonlyMap<string, string>;
+  readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
+  readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
 }): TimelineEntry[] {
   const committedMessageIds = new Set<string>();
   const entries: TimelineEntry[] = [];
+  const attemptByRootNodeId = new Map(
+    (input.attempts ?? []).map((attempt) => [attempt.rootNodeId, attempt] as const),
+  );
+  const nodeById = new Map((input.nodes ?? []).map((node) => [node.id, node] as const));
+
+  const resolveAttempt = (item: OrchestrationV2TurnItem): TimelineAttempt | undefined => {
+    if (item.nodeId === null || item.runId === null) return undefined;
+    let nodeId: OrchestrationV2ExecutionNode["id"] | null = item.nodeId;
+    const visited = new Set<OrchestrationV2ExecutionNode["id"]>();
+    while (nodeId !== null && !visited.has(nodeId)) {
+      visited.add(nodeId);
+      const directAttempt = attemptByRootNodeId.get(nodeId);
+      if (directAttempt?.runId === item.runId) return directAttempt;
+      const node = nodeById.get(nodeId);
+      if (node === undefined) return undefined;
+      const rootAttempt = attemptByRootNodeId.get(node.rootNodeId);
+      if (rootAttempt?.runId === item.runId) return rootAttempt;
+      nodeId = node.parentNodeId;
+    }
+    return undefined;
+  };
 
   for (const row of input.visibleTurnItems) {
     const { item } = row;
     const createdAt = projectedItemCreatedAt(row);
+    const attempt = resolveAttempt(item);
+    const attemptMetadata = attempt === undefined ? {} : { attempt };
     if (item.type === "user_message" || item.type === "assistant_message") {
       const message: ChatMessage = {
         id: item.messageId,
@@ -490,7 +535,14 @@ export function deriveTimelineEntriesFromVisibleTurnItems(input: {
         ...(item.type === "user_message" ? { inputIntent: item.inputIntent } : {}),
       };
       committedMessageIds.add(message.id);
-      entries.push({ id: message.id, kind: "message", createdAt, message, projectedItem: row });
+      entries.push({
+        id: message.id,
+        kind: "message",
+        createdAt,
+        message,
+        projectedItem: row,
+        ...attemptMetadata,
+      });
       continue;
     }
 
@@ -505,16 +557,34 @@ export function deriveTimelineEntriesFromVisibleTurnItems(input: {
         createdAt,
         updatedAt: DateTime.formatIso(item.updatedAt),
       };
-      entries.push({ id: item.id, kind: "proposed-plan", createdAt, proposedPlan });
+      entries.push({
+        id: item.id,
+        kind: "proposed-plan",
+        createdAt,
+        proposedPlan,
+        ...attemptMetadata,
+      });
       continue;
     }
 
     if (STANDALONE_V2_ITEM_TYPES.has(item.type)) {
-      entries.push({ id: item.id, kind: "event", createdAt, projectedItem: row });
+      entries.push({
+        id: item.id,
+        kind: "event",
+        createdAt,
+        projectedItem: row,
+        ...attemptMetadata,
+      });
       continue;
     }
 
-    entries.push({ id: item.id, kind: "work", createdAt, entry: projectedWorkEntry(row) });
+    entries.push({
+      id: item.id,
+      kind: "work",
+      createdAt,
+      entry: projectedWorkEntry(row),
+      ...attemptMetadata,
+    });
   }
 
   for (const message of input.optimisticMessages) {
@@ -567,7 +637,12 @@ export function deriveRevertTurnCountByUserMessageId(input: {
 
 export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase {
   if (runtime === null) return "disconnected";
-  if (runtime.status === "starting" || runtime.status === "queued") return "connecting";
+  if (
+    runtime.status === "preparing" ||
+    runtime.status === "starting" ||
+    runtime.status === "queued"
+  )
+    return "connecting";
   if (runtime.status === "running" || runtime.status === "waiting") return "running";
   return "ready";
 }

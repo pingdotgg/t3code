@@ -1,10 +1,12 @@
 import { CodexSettings, defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type {
   ChatAttachment,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
+  ModelSelection,
   OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderSession,
@@ -28,6 +30,7 @@ import * as CodexSchema from "effect-codex-app-server/schema";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -36,10 +39,12 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS } from "../../provider/CodexDeveloperInstructions.ts";
 import {
@@ -57,6 +62,8 @@ import {
   type ProviderAdapterDriver,
 } from "../ProviderAdapterDriver.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
+import { makeProviderFailure } from "../ProviderFailure.ts";
+import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
   ProviderAdapterEnsureThreadError,
   ProviderAdapterForkThreadError,
@@ -88,6 +95,7 @@ const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({});
+const CODEX_ASSISTANT_DELTA_FLUSH_INTERVAL_MS = 50;
 const CODEX_CLIENT_INFO = {
   name: "t3code_desktop",
   title: "T3 Code Desktop",
@@ -465,6 +473,12 @@ const CodexTurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.
 );
 type CodexTurnStartParamsWithCollaborationMode =
   typeof CodexTurnStartParamsWithCollaborationMode.Type;
+const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffect(
+  CodexTurnStartParamsWithCollaborationMode,
+);
+const isProviderAdapterRuntimeRequestResponseError = Schema.is(
+  ProviderAdapterRuntimeRequestResponseError,
+);
 
 function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
   readonly approvalPolicy: CodexSchema.V2TurnStartParams__AskForApproval;
@@ -499,7 +513,7 @@ export function buildCodexTurnStartParams(input: {
   readonly nativeThreadId: string;
   readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
-  readonly model: string;
+  readonly modelSelection: ModelSelection;
 }) {
   return Effect.gen(function* () {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
@@ -511,28 +525,34 @@ export function buildCodexTurnStartParams(input: {
       input.runtimePolicy.sandboxPolicy === undefined
         ? runtimeModeDefaults.sandboxPolicy
         : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
+    const selectedEffort = getModelSelectionStringOptionValue(
+      input.modelSelection,
+      "reasoningEffort",
+    );
     const effort =
-      input.runtimePolicy.reasoningEffort === undefined
-        ? undefined
-        : yield* decodeTurnReasoningEffort(input.runtimePolicy.reasoningEffort);
-    const collaborationMode: CodexSchema.V2TurnStartParams__CollaborationMode | undefined =
+      selectedEffort === undefined ? undefined : yield* decodeTurnReasoningEffort(selectedEffort);
+    const serviceTier = getCodexServiceTierOptionValue(input.modelSelection);
+    const collaborationMode: CodexSchema.ClientRequest__CollaborationMode | undefined =
       input.runtimePolicy.interactionMode === "plan"
         ? {
             mode: "plan",
             settings: {
-              model: input.model,
+              model: input.modelSelection.model,
               reasoning_effort: effort ?? "medium",
               developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
             },
           }
         : undefined;
 
-    return yield* Schema.decodeUnknownEffect(CodexTurnStartParamsWithCollaborationMode)({
+    return yield* decodeCodexTurnStartParamsWithCollaborationMode({
       threadId: input.nativeThreadId,
       input: input.codexInput,
+      cwd: input.runtimePolicy.cwd,
+      model: input.modelSelection.model,
       ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
       ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
       ...(effort === undefined ? {} : { effort }),
+      ...(serviceTier === undefined ? {} : { serviceTier }),
       ...(collaborationMode === undefined ? {} : { collaborationMode }),
     });
   });
@@ -755,6 +775,145 @@ export type CodexDynamicToolItem = Extract<
   | CodexSchema.V2ItemCompletedNotification__ThreadItem,
   { readonly type: "mcpToolCall" | "dynamicToolCall" }
 >;
+
+export interface CodexAgentMessageDeltaUpdate {
+  readonly turnId: string;
+  readonly itemId: string;
+  readonly text: string;
+  readonly completed: boolean;
+}
+
+export interface CodexAgentMessageDeltaCoalescer {
+  readonly append: (input: {
+    readonly turnId: string;
+    readonly itemId: string;
+    readonly delta: string;
+  }) => Effect.Effect<void>;
+  readonly complete: (input: {
+    readonly turnId: string;
+    readonly itemId: string;
+    readonly finalText?: string;
+  }) => Effect.Effect<string>;
+  readonly flushTurn: (turnId: string) => Effect.Effect<void>;
+}
+
+interface BufferedCodexAgentMessage {
+  readonly turnId: string;
+  readonly itemId: string;
+  readonly text: string;
+  readonly dirty: boolean;
+}
+
+function codexAgentMessageBufferKey(turnId: string, itemId: string): string {
+  return `${turnId}\u0000${itemId}`;
+}
+
+export const makeCodexAgentMessageDeltaCoalescer = Effect.fn(
+  "CodexAdapterV2.makeCodexAgentMessageDeltaCoalescer",
+)(function* (input: {
+  readonly flushIntervalMs: number;
+  readonly emit: (update: CodexAgentMessageDeltaUpdate) => Effect.Effect<void>;
+}): Effect.fn.Return<CodexAgentMessageDeltaCoalescer, never, Scope.Scope> {
+  const buffered = yield* Ref.make(new Map<string, BufferedCodexAgentMessage>());
+  const flushScheduled = yield* Ref.make(false);
+  const flushLock = yield* Semaphore.make(1);
+  const coalescerScope = yield* Effect.scope;
+
+  const drain = (options: {
+    readonly predicate: (message: BufferedCodexAgentMessage) => boolean;
+    readonly completed: boolean;
+    readonly onlyDirty: boolean;
+    readonly releaseSchedule?: boolean;
+  }) =>
+    flushLock.withPermit(
+      Effect.gen(function* () {
+        const updates = yield* Ref.modify(buffered, (current) => {
+          const next = new Map(current);
+          const pending: Array<CodexAgentMessageDeltaUpdate> = [];
+          for (const [key, message] of current) {
+            if (!options.predicate(message) || (options.onlyDirty && !message.dirty)) {
+              continue;
+            }
+            pending.push({
+              turnId: message.turnId,
+              itemId: message.itemId,
+              text: message.text,
+              completed: options.completed,
+            });
+            if (options.completed) {
+              next.delete(key);
+            } else {
+              next.set(key, { ...message, dirty: false });
+            }
+          }
+          return [pending, next] as const;
+        });
+        if (options.releaseSchedule === true) {
+          yield* Ref.set(flushScheduled, false);
+        }
+        yield* Effect.forEach(updates, input.emit, { discard: true });
+      }),
+    );
+
+  const flushDirty = drain({
+    predicate: () => true,
+    completed: false,
+    onlyDirty: true,
+    releaseSchedule: true,
+  });
+
+  return {
+    append: ({ turnId, itemId, delta }) =>
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          const shouldSchedule = yield* flushLock.withPermit(
+            Effect.gen(function* () {
+              yield* Ref.update(buffered, (current) => {
+                const key = codexAgentMessageBufferKey(turnId, itemId);
+                const existing = current.get(key);
+                const next = new Map(current);
+                next.set(key, {
+                  turnId,
+                  itemId,
+                  text: `${existing?.text ?? ""}${delta}`,
+                  dirty: true,
+                });
+                return next;
+              });
+              return yield* Ref.modify(flushScheduled, (scheduled) => [!scheduled, true]);
+            }),
+          );
+          if (shouldSchedule) {
+            yield* Effect.sleep(Duration.millis(Math.max(1, input.flushIntervalMs))).pipe(
+              Effect.andThen(flushDirty),
+              Effect.interruptible,
+              Effect.forkIn(coalescerScope),
+            );
+          }
+        }),
+      ),
+    complete: ({ turnId, itemId, finalText }) =>
+      flushLock.withPermit(
+        Effect.gen(function* () {
+          const text = yield* Ref.modify(buffered, (current) => {
+            const key = codexAgentMessageBufferKey(turnId, itemId);
+            const existing = current.get(key);
+            const next = new Map(current);
+            next.delete(key);
+            return [finalText && finalText.length > 0 ? finalText : (existing?.text ?? ""), next];
+          });
+          yield* input.emit({ turnId, itemId, text, completed: true });
+          return text;
+        }),
+      ),
+    flushTurn: (turnId) =>
+      drain({
+        predicate: (message) => message.turnId === turnId,
+        completed: true,
+        onlyDirty: false,
+      }),
+  };
+});
 
 export interface CodexAppServerClientFactoryShape {
   readonly open: (input: {
@@ -1070,6 +1229,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
     instanceId: adapterOptions.instanceId,
     driver: CODEX_PROVIDER,
     getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+    planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
     openSession: (input) =>
       Effect.gen(function* () {
         const client = yield* clientFactory.open({
@@ -1113,7 +1273,6 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         const nextProviderTurnOrdinals = yield* Ref.make(new Map<string, number>());
         const itemOrdinals = yield* Ref.make(new Map<string, number>());
         const nextItemOrdinalsByTurn = yield* Ref.make(new Map<string, number>());
-        const agentMessageDeltas = yield* Ref.make(new Map<string, string>());
         const planDeltas = yield* Ref.make(new Map<string, string>());
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
         const pendingRuntimeRequests = yield* Ref.make(
@@ -2376,13 +2535,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
         const buildAgentMessageArtifacts = (
           context: ActiveCodexTurnContext,
-          item: Extract<
-            CodexSchema.V2ItemCompletedNotification__ThreadItem,
-            { type: "agentMessage" }
-          >,
+          item: { readonly id: string; readonly text: string },
+          completed: boolean,
         ) =>
           Effect.gen(function* () {
-            const completedAt = yield* DateTime.now;
+            const updatedAt = yield* DateTime.now;
+            const completedAt = completed ? updatedAt : null;
             const nodeId = idAllocator.derive.nodeFromProviderItem({
               driver: CODEX_PROVIDER,
               nativeItemId: item.id,
@@ -2403,7 +2561,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               parentNodeId: context.itemParentNodeId,
               rootNodeId: context.rootNodeId,
               kind: "assistant_message",
-              status: "completed",
+              status: completed ? "completed" : "running",
               countsForRun: false,
               providerThreadId: context.providerThread.id,
               providerTurnId: context.providerTurnId,
@@ -2423,9 +2581,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               role: "assistant",
               text: item.text,
               attachments: [],
-              streaming: false,
-              createdAt: completedAt,
-              updatedAt: completedAt,
+              streaming: !completed,
+              createdAt: context.startedAt,
+              updatedAt,
             };
             const turnItem: OrchestrationV2TurnItem = {
               id: turnItemId,
@@ -2437,18 +2595,49 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               nativeItemRef: codexNativeItemRef(item.id),
               parentItemId: null,
               ordinal,
-              status: "completed",
+              status: completed ? "completed" : "running",
               title: null,
               startedAt: context.startedAt,
               completedAt,
-              updatedAt: completedAt,
+              updatedAt,
               type: "assistant_message",
               messageId,
               text: item.text,
-              streaming: false,
+              streaming: !completed,
             };
             return { node, message, turnItem };
           });
+
+        const agentMessageDeltas = yield* makeCodexAgentMessageDeltaCoalescer({
+          flushIntervalMs: CODEX_ASSISTANT_DELTA_FLUSH_INTERVAL_MS,
+          emit: (update) =>
+            Effect.gen(function* () {
+              const context = yield* awaitActiveTurn(update.turnId);
+              if (context === undefined) {
+                return;
+              }
+              const artifacts = yield* buildAgentMessageArtifacts(
+                context,
+                { id: update.itemId, text: update.text },
+                update.completed,
+              );
+              yield* emitProviderEvent({
+                type: "node.updated",
+                driver: CODEX_PROVIDER,
+                node: artifacts.node,
+              });
+              yield* emitProviderEvent({
+                type: "message.updated",
+                driver: CODEX_PROVIDER,
+                message: artifacts.message,
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CODEX_PROVIDER,
+                turnItem: artifacts.turnItem,
+              });
+            }),
+        });
 
         const emitSubagentUserMessage = (
           context: ActiveCodexTurnContext,
@@ -3069,10 +3258,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           });
 
         yield* client.handleServerNotification("item/agentMessage/delta", (payload) =>
-          Ref.update(agentMessageDeltas, (current) => {
-            const updated = new Map(current);
-            updated.set(payload.itemId, `${updated.get(payload.itemId) ?? ""}${payload.delta}`);
-            return updated;
+          agentMessageDeltas.append({
+            turnId: payload.turnId,
+            itemId: payload.itemId,
+            delta: payload.delta,
           }),
         );
 
@@ -3381,29 +3570,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               return;
             }
 
-            const deltas = yield* Ref.get(agentMessageDeltas);
-            const text =
-              payload.item.text.length > 0
-                ? payload.item.text
-                : (deltas.get(payload.item.id) ?? "");
-            const artifacts = yield* buildAgentMessageArtifacts(context, {
-              ...payload.item,
-              text,
-            });
-            yield* emitProviderEvent({
-              type: "node.updated",
-              driver: CODEX_PROVIDER,
-              node: artifacts.node,
-            });
-            yield* emitProviderEvent({
-              type: "message.updated",
-              driver: CODEX_PROVIDER,
-              message: artifacts.message,
-            });
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver: CODEX_PROVIDER,
-              turnItem: artifacts.turnItem,
+            const text = yield* agentMessageDeltas.complete({
+              turnId: payload.turnId,
+              itemId: payload.item.id,
+              finalText: payload.item.text,
             });
             if (
               context.subagent !== null &&
@@ -3792,6 +3962,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             if (context === undefined) {
               return;
             }
+            yield* agentMessageDeltas.flushTurn(payload.turn.id);
             const completedAt = codexTimestamp(payload.turn.completedAt);
             const status = mapCodexTurnStatus(payload.turn.status);
             yield* emitProviderEvent({
@@ -3875,12 +4046,37 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               }
             }
             if (context.subagent === null) {
-              yield* emitProviderEvent({
-                type: "turn.terminal",
-                driver: CODEX_PROVIDER,
-                providerTurnId: context.providerTurnId,
-                status: providerTurnStatusToTerminal(status),
-              });
+              const terminalStatus = providerTurnStatusToTerminal(status);
+              yield* emitProviderEvent(
+                terminalStatus === "failed"
+                  ? {
+                      type: "turn.terminal",
+                      driver: CODEX_PROVIDER,
+                      providerThreadId: context.providerThread.id,
+                      providerTurnId: context.providerTurnId,
+                      runOrdinal: context.input.runOrdinal,
+                      failureItemOrdinal: yield* resolveItemOrdinal(
+                        context,
+                        `terminal-failure:${context.providerTurnId}`,
+                      ),
+                      status: terminalStatus,
+                      failure: makeProviderFailure({
+                        message: payload.turn.error?.message,
+                        class: "provider_error",
+                      }),
+                      threadDisposition: "reusable",
+                    }
+                  : {
+                      type: "turn.terminal",
+                      driver: CODEX_PROVIDER,
+                      providerThreadId: context.providerThread.id,
+                      providerTurnId: context.providerTurnId,
+                      runOrdinal: context.input.runOrdinal,
+                      status: terminalStatus,
+                      failure: null,
+                      threadDisposition: "reusable",
+                    },
+              );
             }
             const waiter = (yield* Ref.get(turnWaiters)).get(payload.turn.id);
             if (waiter !== undefined) {
@@ -3899,7 +4095,6 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           driver: CODEX_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
-          rawEvents: Stream.empty,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ensureThread: (threadInput) =>
             ensureInitialized.pipe(
@@ -3989,7 +4184,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 nativeThreadId: threadId,
                 codexInput,
                 runtimePolicy: turnInput.runtimePolicy,
-                model: turnInput.modelSelection.model,
+                modelSelection: turnInput.modelSelection,
               });
               yield* Ref.update(pendingRootTurns, (current) => {
                 const updated = new Map(current);
@@ -4232,7 +4427,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               yield* Deferred.succeed(pending.decision, requestInput.decision);
             }).pipe(
               Effect.mapError((cause) =>
-                Schema.is(ProviderAdapterRuntimeRequestResponseError)(cause)
+                isProviderAdapterRuntimeRequestResponseError(cause)
                   ? cause
                   : new ProviderAdapterRuntimeRequestResponseError({
                       driver: CODEX_PROVIDER,

@@ -29,7 +29,7 @@ import {
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
   ORCHESTRATION_WS_METHODS,
-  type ProjectId,
+  type OrchestrationProjectShell,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
@@ -99,6 +99,7 @@ import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
+import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -420,6 +421,21 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+      const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+      const enrichProjectShells = Effect.fn("ws.orchestrationV2.enrichProjectShells")(
+        (projects: ReadonlyArray<OrchestrationProjectShell>) =>
+          Effect.forEach(
+            projects,
+            (project) =>
+              projectEnrichment.getAvailable(project.workspaceRoot).pipe(
+                Effect.map((enrichment) => ({
+                  ...project,
+                  repositoryIdentity: enrichment.repositoryIdentity,
+                })),
+              ),
+            { concurrency: 16 },
+          ),
+      );
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const projectService = yield* ProjectService.ProjectService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -625,10 +641,11 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
 
       const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subscribeShell")(
         function* () {
-          const snapshot = yield* sql
-            .withTransaction(
+          const enrichmentChanges = yield* projectEnrichment.subscribeChanges;
+          const loadSnapshot = Effect.fn("ws.orchestrationV2.loadShellSnapshot")(function* () {
+            const base = yield* sql.withTransaction(
               Effect.gen(function* () {
-                const projects = yield* projectionSnapshotQuery.getShellSnapshot();
+                const projects = yield* projectionSnapshotQuery.getShellSnapshotWithoutEnrichment();
                 const threads = yield* threadManagement.getShellSnapshot();
                 return {
                   schemaVersion: threads.schemaVersion,
@@ -638,16 +655,19 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                   archivedThreads: threads.archivedThreads,
                 } as const;
               }),
-            )
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationV2GetShellSnapshotError({
-                    message: "Failed to load the application shell snapshot",
-                    cause,
-                  }),
-              ),
             );
+            const projects = yield* enrichProjectShells(base.projects);
+            return { ...base, projects };
+          });
+          const snapshot = yield* loadSnapshot().pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetShellSnapshotError({
+                  message: "Failed to load the application shell snapshot",
+                  cause,
+                }),
+            ),
+          );
 
           const live = applicationEvents
             .streamApplicationEvents({ afterSequence: snapshot.snapshotSequence })
@@ -691,7 +711,17 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               ),
             );
 
-          return Stream.concat(Stream.make({ kind: "snapshot" as const, snapshot }), live).pipe(
+          const enrichmentRefreshes = Stream.fromSubscription(enrichmentChanges).pipe(
+            Stream.filter((change) => change.repositoryIdentityResolved),
+            Stream.debounce("25 millis"),
+            Stream.mapEffect(() => loadSnapshot()),
+            Stream.map((snapshot) => ({ kind: "snapshot" as const, snapshot })),
+          );
+
+          return Stream.merge(
+            Stream.concat(Stream.make({ kind: "snapshot" as const, snapshot }), live),
+            enrichmentRefreshes,
+          ).pipe(
             Stream.mapError(
               (cause) =>
                 new OrchestrationV2GetShellSnapshotError({
@@ -706,7 +736,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const getOrchestrationV2ArchivedShellSnapshot = sql
         .withTransaction(
           Effect.gen(function* () {
-            const projects = yield* projectionSnapshotQuery.getShellSnapshot();
+            const projects = yield* projectionSnapshotQuery.getShellSnapshotWithoutEnrichment();
             const threads = yield* threadManagement.getShellSnapshot();
             return {
               schemaVersion: threads.schemaVersion,
@@ -717,6 +747,11 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
           }),
         )
         .pipe(
+          Effect.flatMap((snapshot) =>
+            enrichProjectShells(snapshot.projects).pipe(
+              Effect.map((projects) => ({ ...snapshot, projects })),
+            ),
+          ),
           Effect.mapError(
             (cause) =>
               new OrchestrationV2GetShellSnapshotError({

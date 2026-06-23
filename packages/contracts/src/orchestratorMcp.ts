@@ -128,6 +128,7 @@ export type OrchestratorMcpCreateThreadsInput = typeof OrchestratorMcpCreateThre
 
 export const OrchestratorMcpCreatedThreadStatus = Schema.Union([
   Schema.Literal("idle"),
+  Schema.Literal("preparing"),
   Schema.Literal("starting"),
   OrchestratorMcpDelegatedTaskStatus,
   Schema.Literal("rolled_back"),

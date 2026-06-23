@@ -2645,6 +2645,7 @@ function formatDurationShort(diffMs: number): string | undefined {
 }
 
 const ACTIVE_RUN_STATUSES: ReadonlySet<OrchestrationV2RunStatus> = new Set([
+  "preparing",
   "starting",
   "running",
   "waiting",
@@ -3150,6 +3151,13 @@ function workLogRowContent(item: OrchestrationV2TurnItem): WorkLogRowContent {
         glyph: "!",
         label: "Run interrupted",
         preview: item.message,
+        tone: "red",
+      };
+    case "error":
+      return {
+        glyph: "!",
+        label: "Provider error",
+        preview: clipOneLine(item.failure.message, 160),
         tone: "red",
       };
     case "compaction":

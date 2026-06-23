@@ -14,7 +14,9 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -227,14 +229,21 @@ function makeProviderAdapter(
     readonly mcpConfigs?: Ref.Ref<
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
     >;
+    readonly beforeOpen?: (input: {
+      readonly providerSessionId: ProviderSessionId;
+    }) => Effect.Effect<void>;
   } = {},
 ): ProviderAdapterV2Shape {
   return {
     instanceId: ProviderInstanceId.make("codex"),
     driver: CODEX_DRIVER,
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
+    planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (input) =>
       Effect.gen(function* () {
+        if (options.beforeOpen !== undefined) {
+          yield* options.beforeOpen({ providerSessionId: input.providerSessionId });
+        }
         if (options.mcpConfigs !== undefined) {
           yield* Ref.update(options.mcpConfigs, (configs) => [
             ...configs,
@@ -269,7 +278,6 @@ function makeProviderAdapter(
           driver: CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
-          rawEvents: Stream.empty,
           events: options.failEventStream
             ? Stream.fail(
                 new ProviderAdapterEventStreamError({
@@ -309,6 +317,9 @@ function makeTestLayer(input: {
   readonly mcpConfigs?: Ref.Ref<
     ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
   >;
+  readonly beforeOpen?: (input: {
+    readonly providerSessionId: ProviderSessionId;
+  }) => Effect.Effect<void>;
   readonly failReleaseEventWrites?: boolean;
 }) {
   const configuredEventSinkLayer = input.failReleaseEventWrites
@@ -319,6 +330,7 @@ function makeTestLayer(input: {
       failEventStream: input.failEventStream ?? false,
       ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
       ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
+      ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
     }),
   );
   return Layer.mergeAll(
@@ -466,6 +478,143 @@ function makePendingRuntimeRequestEvents(input: {
     ] satisfies ReadonlyArray<OrchestrationV2DomainEvent>;
   });
 }
+
+it.effect("ProviderSessionManagerV2 opens independent sessions concurrently", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const openStartedCount = yield* Ref.make(0);
+    const firstOpenStarted = yield* Deferred.make<void>();
+    const secondOpenStarted = yield* Deferred.make<void>();
+    const releaseOpens = yield* Deferred.make<void>();
+    const beforeOpen = () =>
+      Effect.gen(function* () {
+        const openNumber = yield* Ref.modify(openStartedCount, (count) => [count + 1, count + 1]);
+        yield* Deferred.succeed(openNumber === 1 ? firstOpenStarted : secondOpenStarted, undefined);
+        yield* Deferred.await(releaseOpens);
+      });
+
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const firstThreadId = ThreadId.make("thread-provider-session-manager-concurrent-a");
+      const secondThreadId = ThreadId.make("thread-provider-session-manager-concurrent-b");
+      const firstProviderSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: firstThreadId,
+      });
+      const secondProviderSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: secondThreadId,
+      });
+
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator, threadId: firstThreadId, now }),
+          yield* makeThreadCreatedEvent({ idAllocator, threadId: secondThreadId, now }),
+        ],
+      });
+      const firstFiber = yield* manager
+        .open({
+          threadId: firstThreadId,
+          providerSessionId: firstProviderSessionId,
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(firstOpenStarted);
+      const secondFiber = yield* manager
+        .open({
+          threadId: secondThreadId,
+          providerSessionId: secondProviderSessionId,
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.forkScoped);
+
+      yield* Deferred.await(secondOpenStarted);
+      assert.equal(yield* Ref.get(openStartedCount), 2);
+      yield* Deferred.succeed(releaseOpens, undefined);
+      const [firstRuntime, secondRuntime] = yield* Effect.all([
+        Fiber.join(firstFiber),
+        Fiber.join(secondFiber),
+      ]);
+      assert.notStrictEqual(firstRuntime, secondRuntime);
+      assert.equal((yield* Ref.get(state)).openCount, 2);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 60_000,
+          beforeOpen,
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const openStartedCount = yield* Ref.make(0);
+    const firstOpenStarted = yield* Deferred.make<void>();
+    const releaseOpen = yield* Deferred.make<void>();
+    const beforeOpen = () =>
+      Ref.updateAndGet(openStartedCount, (count) => count + 1).pipe(
+        Effect.tap(() => Deferred.succeed(firstOpenStarted, undefined)),
+        Effect.andThen(Deferred.await(releaseOpen)),
+      );
+
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-single-flight");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const open = manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const firstFiber = yield* open.pipe(Effect.forkScoped);
+      yield* Deferred.await(firstOpenStarted);
+      const secondFiber = yield* open.pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      assert.equal(yield* Ref.get(openStartedCount), 1);
+
+      yield* Deferred.succeed(releaseOpen, undefined);
+      const [firstRuntime, secondRuntime] = yield* Effect.all([
+        Fiber.join(firstFiber),
+        Fiber.join(secondFiber),
+      ]);
+      assert.strictEqual(firstRuntime, secondRuntime);
+      assert.equal((yield* Ref.get(state)).openCount, 1);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 60_000,
+          beforeOpen,
+        }),
+      ),
+    );
+  }),
+);
 
 it.effect("ProviderSessionManagerV2 releases live sessions when its layer shuts down", () =>
   Effect.gen(function* () {
@@ -661,6 +810,76 @@ it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persist
   }),
 );
 
+it.effect("ProviderSessionManagerV2 duplicate detach preserves replacement MCP credentials", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-replacement-mcp");
+      const oldSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const replacementSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* manager.open({
+        threadId,
+        providerSessionId: oldSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* manager.detach({ providerSessionId: oldSessionId, threadId });
+      yield* manager.open({
+        threadId,
+        providerSessionId: replacementSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+
+      const replacement = (yield* Ref.get(mcpConfigs)).at(-1);
+      assert.isDefined(replacement);
+      const replacementToken = replacement?.authorizationHeader.replace(/^Bearer\s+/, "");
+      assert.isDefined(replacementToken);
+      assert.equal(
+        McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
+        replacement?.providerSessionId,
+      );
+
+      yield* manager.detach({ providerSessionId: oldSessionId, threadId });
+
+      assert.equal(
+        McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
+        replacement?.providerSessionId,
+      );
+      assert.equal((yield* registry.resolve(replacementToken!))?.threadId, threadId);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 1_000,
+          capabilities: ExclusiveCapabilities,
+          mcpConfigs,
+        }),
+      ),
+    );
+  }),
+);
+
 it.effect("ProviderSessionManagerV2 releases idle sessions without sweeping all sessions", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -785,8 +1004,12 @@ it.effect(
         yield* Queue.offer(queue!, {
           type: "turn.terminal",
           driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
           providerTurnId,
+          runOrdinal: 1,
           status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
         });
         yield* TestClock.adjust("1 second");
         yield* Effect.yieldNow;
@@ -1091,8 +1314,12 @@ it.effect(
         yield* Queue.offer(queue!, {
           type: "turn.terminal",
           driver: CODEX_DRIVER,
+          providerThreadId: firstProviderThread.id,
           providerTurnId: firstProviderTurnId,
+          runOrdinal: 1,
           status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
         });
         yield* TestClock.adjust("2 seconds");
         yield* Effect.yieldNow;
@@ -1101,8 +1328,12 @@ it.effect(
         yield* Queue.offer(queue!, {
           type: "turn.terminal",
           driver: CODEX_DRIVER,
+          providerThreadId: secondProviderThread.id,
           providerTurnId: secondProviderTurnId,
+          runOrdinal: 1,
           status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
         });
         yield* TestClock.adjust("1 second");
         yield* Effect.yieldNow;

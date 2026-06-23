@@ -29,7 +29,10 @@ import {
   THREAD_FORK_NATIVE_TARGET_PROMPT,
 } from "./fixtures/shared.ts";
 import { runOrchestratorV2ProviderReplayScenario } from "./ProviderReplayHarness.ts";
-import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
+import {
+  decodeProviderReplayNdjson,
+  materializeReplayTranscriptWorkspace,
+} from "./ReplayTranscriptNdjson.ts";
 
 const CODEX_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -400,12 +403,14 @@ describe("orchestration V2 thread fork", () => {
     () =>
       Effect.gen(function* () {
         const rawTranscript = yield* readTranscript();
-        const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(rawTranscript);
         const cwd = yield* Effect.acquireRelease(makeCheckpointWorkspace, (directory) =>
           Effect.service(FileSystem.FileSystem).pipe(
             Effect.flatMap((fs) => fs.remove(directory, { recursive: true, force: true })),
             Effect.orDie,
           ),
+        );
+        const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
+          materializeReplayTranscriptWorkspace(rawTranscript, cwd),
         );
 
         const materialized = yield* Effect.gen(function* () {
@@ -714,12 +719,14 @@ describe("orchestration V2 thread fork", () => {
     () =>
       Effect.gen(function* () {
         const rawTranscript = yield* readTranscript(PRIOR_TURN_TRANSCRIPT_PATH);
-        const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(rawTranscript);
         const cwd = yield* Effect.acquireRelease(makeCheckpointWorkspace, (directory) =>
           Effect.service(FileSystem.FileSystem).pipe(
             Effect.flatMap((fs) => fs.remove(directory, { recursive: true, force: true })),
             Effect.orDie,
           ),
+        );
+        const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
+          materializeReplayTranscriptWorkspace(rawTranscript, cwd),
         );
 
         const materialized = yield* Effect.gen(function* () {
@@ -1068,6 +1075,7 @@ describe("orchestration V2 thread fork", () => {
           "thread-fork-native-prior-turn-source-rollback-target",
         );
         const firstRunId = ids.derive.run({ threadId: sourceThreadId, ordinal: 1 });
+        const secondRunId = ids.derive.run({ threadId: sourceThreadId, ordinal: 2 });
         const checkpointScopeId = yield* ids.allocate.checkpointScope({
           threadId: sourceThreadId,
           name: "root",
@@ -1169,6 +1177,7 @@ describe("orchestration V2 thread fork", () => {
         return {
           sourceThreadId,
           targetThreadId,
+          secondRunId,
           commands,
         };
       }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
@@ -1189,6 +1198,12 @@ describe("orchestration V2 thread fork", () => {
             { type: "dispatch", command: materialized.commands[4]!, await: true },
             { type: "await_thread_idle", threadId: materialized.targetThreadId },
             { type: "dispatch", command: materialized.commands[5]!, await: true },
+            {
+              type: "await_run_status",
+              threadId: materialized.sourceThreadId,
+              runId: materialized.secondRunId,
+              status: "rolled_back",
+            },
           ],
           projectionThreadIds: [materialized.sourceThreadId, materialized.targetThreadId],
           runtimePolicyOverride: { cwd },
