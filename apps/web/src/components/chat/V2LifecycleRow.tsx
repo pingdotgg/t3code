@@ -1,9 +1,17 @@
 import type { OrchestrationV2TurnItem, ThreadId } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
-import { GitForkIcon, HammerIcon, MinusIcon, XIcon, ZapIcon } from "lucide-react";
+import {
+  ExternalLinkIcon,
+  GitForkIcon,
+  HammerIcon,
+  MessageSquareIcon,
+  MinusIcon,
+  XIcon,
+  ZapIcon,
+} from "lucide-react";
 
-import { cn } from "~/lib/utils";
 import { formatShortTimestamp } from "../../timestampFormat";
+import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
 const LIFECYCLE_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "run_interrupt_request",
@@ -12,6 +20,7 @@ const LIFECYCLE_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "handoff",
   "fork",
   "subagent",
+  "thread_created",
 ]);
 
 export function isV2LifecycleItem(item: OrchestrationV2TurnItem): boolean {
@@ -46,7 +55,12 @@ export function V2LifecycleRow(props: {
   }
   if (item.type === "run_interrupt_result") {
     return (
-      <SystemDivider label="Run interrupted" detail={item.message} tone="danger" icon={XIcon} />
+      <TimelineSystemDivider
+        label="Run interrupted"
+        detail={item.message}
+        tone="danger"
+        icon={XIcon}
+      />
     );
   }
   if (item.type === "compaction") {
@@ -55,7 +69,7 @@ export function V2LifecycleRow(props: {
         ? null
         : `${item.beforeTokenCount ?? "?"} → ${item.afterTokenCount ?? "?"} tokens`;
     return (
-      <SystemDivider
+      <TimelineSystemDivider
         label="Context compacted"
         detail={item.summary ?? tokenDetail}
         icon={MinusIcon}
@@ -64,7 +78,7 @@ export function V2LifecycleRow(props: {
   }
   if (item.type === "handoff") {
     return (
-      <SystemDivider
+      <TimelineSystemDivider
         label="Context handoff"
         icon={ZapIcon}
         tone={item.status === "failed" ? "danger" : "neutral"}
@@ -78,7 +92,7 @@ export function V2LifecycleRow(props: {
   if (item.type === "fork") {
     const relatedThreadId = item.source.type === "run" ? item.source.threadId : item.targetThreadId;
     return (
-      <SystemDivider
+      <TimelineSystemDivider
         label={item.source.type === "run" ? "Forked from conversation" : "Conversation fork"}
         icon={GitForkIcon}
         actionLabel={item.source.type === "run" ? "Open source conversation" : "Open fork"}
@@ -86,75 +100,76 @@ export function V2LifecycleRow(props: {
       />
     );
   }
-  if (item.type === "subagent") {
-    const content = (
-      <>
-        <HammerIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium">
-          {item.title ?? "Subagent"}
-        </span>
-        <span className="max-w-[50%] truncate text-xs text-muted-foreground">
-          {item.result ?? item.prompt}
-        </span>
-        <span className="rounded-full border border-border/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-          {item.status}
-        </span>
-      </>
+  if (item.type === "thread_created") {
+    return (
+      <RelatedThreadCard
+        itemType={item.type}
+        icon={MessageSquareIcon}
+        title={item.title ?? "Created thread"}
+        detail={`${item.targetProviderInstanceId} · ${item.targetModel}`}
+        badge="created"
+        threadId={item.targetThreadId}
+        onOpenThread={props.onOpenThread}
+      />
     );
-    return item.childThreadId === null ? (
-      <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-card/30 px-3 py-2">
-        {content}
-      </div>
-    ) : (
-      <button
-        type="button"
-        onClick={() => item.childThreadId && props.onOpenThread(item.childThreadId)}
-        className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-card/30 px-3 py-2 text-left transition-colors hover:bg-muted/50"
-      >
-        {content}
-      </button>
+  }
+  if (item.type === "subagent") {
+    return (
+      <RelatedThreadCard
+        itemType={item.type}
+        icon={HammerIcon}
+        title={item.title ?? "Subagent"}
+        detail={item.result ?? item.progress ?? item.prompt}
+        badge={item.status}
+        threadId={item.childThreadId}
+        onOpenThread={props.onOpenThread}
+      />
     );
   }
   return null;
 }
 
-function SystemDivider(props: {
-  readonly label: string;
-  readonly detail?: string | null;
-  readonly tone?: "neutral" | "danger";
-  readonly icon?: typeof GitForkIcon;
-  readonly actionLabel?: string;
-  readonly onAction?: () => void;
+function RelatedThreadCard(props: {
+  readonly itemType: "subagent" | "thread_created";
+  readonly icon: typeof HammerIcon;
+  readonly title: string;
+  readonly detail: string;
+  readonly badge: string;
+  readonly threadId: ThreadId | null;
+  readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
   const Icon = props.icon;
+  const threadId = props.threadId;
   const content = (
     <>
-      {Icon ? <Icon className="size-3 shrink-0" /> : null}
-      <span className="font-medium">{props.label}</span>
-      {props.detail ? <span className="max-w-80 truncate opacity-70">· {props.detail}</span> : null}
+      <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate text-xs font-medium">{props.title}</span>
+      <span className="max-w-[50%] truncate text-xs text-muted-foreground">{props.detail}</span>
+      <span className="rounded-full border border-border/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+        {props.badge}
+      </span>
+      {threadId === null ? null : (
+        <ExternalLinkIcon className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+      )}
     </>
   );
-  return (
+
+  return threadId === null ? (
     <div
-      className={cn(
-        "flex min-w-0 items-center gap-2 py-2 text-[11px] text-muted-foreground",
-        props.tone === "danger" && "text-destructive",
-      )}
+      data-v2-item-type={props.itemType}
+      className="flex min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-card/30 px-3 py-2"
     >
-      <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
-      {props.onAction ? (
-        <button
-          type="button"
-          onClick={props.onAction}
-          className="flex min-w-0 items-center gap-1.5 rounded-full border border-border/70 bg-background px-2.5 py-1 transition-colors hover:bg-muted"
-          title={props.actionLabel}
-        >
-          {content}
-        </button>
-      ) : (
-        <span className="flex min-w-0 items-center gap-1.5 rounded-full px-2 py-1">{content}</span>
-      )}
-      <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
+      {content}
     </div>
+  ) : (
+    <button
+      type="button"
+      data-v2-item-type={props.itemType}
+      aria-label={`Open ${props.title}`}
+      onClick={() => props.onOpenThread(threadId)}
+      className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-card/30 px-3 py-2 text-left transition-colors hover:bg-muted/50"
+    >
+      {content}
+    </button>
   );
 }

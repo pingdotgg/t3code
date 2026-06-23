@@ -145,7 +145,7 @@ describe("V2 session presentation", () => {
     expect(targets.has(steerMessageId)).toBe(false);
   });
 
-  it("uses visible turn item order and keeps interruption lifecycle entries standalone", () => {
+  it("uses visible turn item order and keeps lifecycle resource entries standalone", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const threadId = ThreadId.make("thread-visible");
     const runId = RunId.make("run-visible");
@@ -213,6 +213,15 @@ describe("V2 session presentation", () => {
         retryable: false,
       },
     } satisfies OrchestrationV2TurnItem;
+    const threadCreatedItem = {
+      ...base("item-thread-created", 6),
+      type: "thread_created" as const,
+      title: "Follow-up thread",
+      targetThreadId: ThreadId.make("thread-follow-up"),
+      targetRunId: RunId.make("run-follow-up"),
+      targetProviderInstanceId: ProviderInstanceId.make("claude-default"),
+      targetModel: "claude-sonnet-4-6",
+    } satisfies OrchestrationV2TurnItem;
     const visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = [
       userItem,
       requestItem,
@@ -220,6 +229,7 @@ describe("V2 session presentation", () => {
       resultItem,
       todoItem,
       errorItem,
+      threadCreatedItem,
     ].map((item, position) => ({
       position,
       visibility: "local" as const,
@@ -240,6 +250,7 @@ describe("V2 session presentation", () => {
       ["event", resultItem.id],
       ["work", todoItem.id],
       ["event", errorItem.id],
+      ["event", threadCreatedItem.id],
     ]);
     const commandEntry = entries[2];
     const userEntry = entries[0];
@@ -247,6 +258,8 @@ describe("V2 session presentation", () => {
     if (userEntry?.kind === "message") {
       expect(userEntry.projectedItem).toBe(visibleTurnItems[0]);
       expect(userEntry.message.inputIntent).toBe("turn_start");
+      expect(userEntry.message.createdBy).toBe("user");
+      expect(userEntry.message.creationSource).toBe("web");
     }
     expect(commandEntry?.kind).toBe("work");
     if (commandEntry?.kind === "work") {
@@ -267,6 +280,11 @@ describe("V2 session presentation", () => {
       if (errorEntry.projectedItem.item.type === "error") {
         expect(errorEntry.projectedItem.item.failure.message).toBe("Invalid reasoning effort.");
       }
+    }
+    const threadCreatedEntry = entries[6];
+    expect(threadCreatedEntry?.kind).toBe("event");
+    if (threadCreatedEntry?.kind === "event") {
+      expect(threadCreatedEntry.projectedItem.item.type).toBe("thread_created");
     }
   });
 

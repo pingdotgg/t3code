@@ -338,8 +338,21 @@ const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"
   "run_interrupt_request",
   "run_interrupt_result",
   "subagent",
+  "thread_created",
   "user_input_request",
 ]);
+
+const PERSISTENT_RESOURCE_V2_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
+  "fork",
+  "subagent",
+  "thread_created",
+]);
+
+export function timelineEntryIsPersistentResourceCard(entry: TimelineEntry): boolean {
+  return (
+    entry.kind === "event" && PERSISTENT_RESOURCE_V2_ITEM_TYPES.has(entry.projectedItem.item.type)
+  );
+}
 
 function projectedItemCreatedAt(row: OrchestrationV2ProjectedTurnItem): string {
   return DateTime.formatIso(row.item.startedAt ?? row.item.updatedAt);
@@ -530,6 +543,9 @@ export function deriveTimelineEntriesFromVisibleTurnItems(input: {
           : {}),
         runId: item.runId,
         streaming: item.type === "assistant_message" && item.streaming,
+        ...(item.type === "user_message"
+          ? { createdBy: item.createdBy, creationSource: item.creationSource }
+          : {}),
         createdAt,
         updatedAt: DateTime.formatIso(item.updatedAt),
         ...(item.type === "user_message" ? { inputIntent: item.inputIntent } : {}),

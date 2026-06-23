@@ -193,6 +193,7 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "provider.switch":
       return command.threadId;
     case "delegated_task.request":
+    case "thread.created.record":
       return command.parentThreadId;
     case "thread.fork":
     case "thread.merge_back":
@@ -3691,6 +3692,108 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const dispatchCreatedThreadRecord = Effect.fn("orchestrationV2.dispatch.createdThreadRecord")(
+    function* (
+      command: Extract<OrchestrationV2Command, { readonly type: "thread.created.record" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const parentProjection = yield* projectionStore
+        .getThreadProjection(command.parentThreadId)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorProjectionError({
+                threadId: command.parentThreadId,
+                cause,
+              }),
+          ),
+        );
+      const targetProjection = yield* projectionStore
+        .getThreadProjection(command.targetThreadId)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorProjectionError({
+                threadId: command.targetThreadId,
+                cause,
+              }),
+          ),
+        );
+      const parentRun = parentProjection.runs.find(
+        (candidate) => candidate.id === command.parentRunId,
+      );
+      const parentNode = parentProjection.nodes.find(
+        (candidate) => candidate.id === command.parentNodeId,
+      );
+      if (
+        parentRun === undefined ||
+        parentNode === undefined ||
+        parentNode.runId !== command.parentRunId ||
+        parentRun.rootNodeId !== command.parentNodeId
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Parent node ${command.parentNodeId} is not the root of run ${command.parentRunId}.`,
+        });
+      }
+      if (parentProjection.thread.projectId !== targetProjection.thread.projectId) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Target thread ${command.targetThreadId} belongs to another project.`,
+        });
+      }
+      if (
+        command.targetRunId !== null &&
+        !targetProjection.runs.some((candidate) => candidate.id === command.targetRunId)
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Target run ${command.targetRunId} does not belong to thread ${command.targetThreadId}.`,
+        });
+      }
+
+      const now = yield* DateTime.now;
+      const parentProviderTurn = providerTurnForRun(parentProjection, parentRun);
+      const turnItem: OrchestrationV2TurnItem = {
+        id: idAllocator.derive.createdThreadTurnItem({ commandId: command.commandId }),
+        threadId: command.parentThreadId,
+        runId: command.parentRunId,
+        nodeId: command.parentNodeId,
+        providerThreadId: parentRun.providerThreadId,
+        providerTurnId: parentProviderTurn?.id ?? null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: nextTurnItemOrdinal(parentProjection),
+        status: "completed",
+        title: targetProjection.thread.title,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "thread_created",
+        targetThreadId: command.targetThreadId,
+        targetRunId: command.targetRunId,
+        targetProviderInstanceId: targetProjection.thread.modelSelection.instanceId,
+        targetModel: targetProjection.thread.modelSelection.model,
+      };
+
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "turn-item.updated",
+        threadId: command.parentThreadId,
+        runId: command.parentRunId,
+        nodeId: command.parentNodeId,
+        providerInstanceId: parentRun.providerInstanceId,
+        occurredAt: now,
+        payload: turnItem,
+      });
+    },
+  );
+
   const dispatchRuntimeRequestRespond = (
     command: Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -4919,6 +5022,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "delegated_task.request":
         yield* dispatchDelegatedTaskRequest(command, events, effects);
+        break;
+      case "thread.created.record":
+        yield* dispatchCreatedThreadRecord(command, events);
         break;
       default:
         return yield* dispatchUnsupported(command);

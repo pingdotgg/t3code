@@ -3183,11 +3183,18 @@ function workLogRowContent(item: OrchestrationV2TurnItem): WorkLogRowContent {
         preview: `→ ${compactId(item.targetThreadId) ?? item.targetThreadId}`,
         tone: "muted",
       };
+    case "thread_created":
+      return {
+        glyph: "↗",
+        label: item.title ?? "Thread created",
+        preview: `${item.targetProviderInstanceId} · ${item.targetModel}`,
+        tone: "emerald",
+      };
     case "subagent":
       return {
         glyph: "↳",
         label: item.title ?? "Subagent",
-        preview: clipOneLine(item.result ?? item.prompt, 120),
+        preview: clipOneLine(item.result ?? item.progress ?? item.prompt, 120),
         tone: item.status === "completed" ? "emerald" : "sky",
       };
     case "user_message":
@@ -3647,7 +3654,7 @@ function ChatSubagentItem(props: {
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
   const label = props.item.title ?? "Subagent";
-  const detail = props.item.result ?? props.item.prompt;
+  const detail = props.item.result ?? props.item.progress ?? props.item.prompt;
   const content = (
     <>
       <ToolKindPill kind="AGENT" />

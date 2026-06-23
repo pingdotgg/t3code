@@ -885,7 +885,8 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
               "orchestration_v2.thread_id":
                 command.type === "thread.fork" || command.type === "thread.merge_back"
                   ? command.targetThreadId
-                  : command.type === "delegated_task.request"
+                  : command.type === "delegated_task.request" ||
+                      command.type === "thread.created.record"
                     ? command.parentThreadId
                     : command.threadId,
               ...(command.type === "thread.fork" || command.type === "thread.merge_back"
