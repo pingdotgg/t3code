@@ -48,10 +48,11 @@ const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
-const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
+const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.minutes(1);
 
-const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
+const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(30);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
+const TEMPORARY_PACK_FILE_PREFIX = "tmp_pack_";
 const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
@@ -920,23 +921,149 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
   });
 
-  const fetchRemoteForStatus = (
+  const readTemporaryPackFiles = Effect.fn("GitVcsDriver.readTemporaryPackFiles")(function* (
+    gitCommonDir: string,
+  ): Effect.fn.Return<ReadonlySet<string> | null> {
+    const packDir = path.join(gitCommonDir, "objects", "pack");
+    const entries = yield* fileSystem.readDirectory(packDir, { recursive: false }).pipe(
+      Effect.map((entries) => entries as ReadonlyArray<string>),
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed([] as ReadonlyArray<string>)
+            : Effect.logWarning("Unable to inspect temporary Git pack files", {
+                reason: error.reason._tag,
+              }).pipe(Effect.as(null)),
+      }),
+    );
+    if (entries === null) {
+      return null;
+    }
+    return new Set(entries.filter((entry) => entry.startsWith(TEMPORARY_PACK_FILE_PREFIX)));
+  });
+
+  const listFetchHeadLockPaths = Effect.fn("GitVcsDriver.listFetchHeadLockPaths")(function* (
+    gitCommonDir: string,
+  ): Effect.fn.Return<ReadonlyArray<string> | null> {
+    const worktreesDir = path.join(gitCommonDir, "worktrees");
+    const worktreeEntries = yield* fileSystem
+      .readDirectory(worktreesDir, { recursive: false })
+      .pipe(
+        Effect.map((entries) => entries as ReadonlyArray<string>),
+        Effect.catchTags({
+          PlatformError: (error) =>
+            error.reason._tag === "NotFound"
+              ? Effect.succeed([] as ReadonlyArray<string>)
+              : Effect.logWarning("Unable to inspect linked worktree fetch locks", {
+                  reason: error.reason._tag,
+                }).pipe(Effect.as(null)),
+        }),
+      );
+    if (worktreeEntries === null) {
+      return null;
+    }
+    return [
+      path.join(gitCommonDir, "FETCH_HEAD.lock"),
+      ...worktreeEntries.map((entry) => path.join(worktreesDir, entry, "FETCH_HEAD.lock")),
+    ];
+  });
+
+  const hasActiveFetchLock = Effect.fn("GitVcsDriver.hasActiveFetchLock")(function* (
+    gitCommonDir: string,
+  ): Effect.fn.Return<boolean> {
+    const lockPaths = yield* listFetchHeadLockPaths(gitCommonDir);
+    if (lockPaths === null) {
+      return true;
+    }
+    for (const lockPath of lockPaths) {
+      const exists = yield* fileSystem.exists(lockPath).pipe(
+        Effect.catchTags({
+          PlatformError: (error) =>
+            Effect.logWarning("Unable to inspect a Git fetch lock", {
+              reason: error.reason._tag,
+            }).pipe(Effect.as(true)),
+        }),
+      );
+      if (exists) {
+        return true;
+      }
+    }
+    return false;
+  });
+
+  const removeNewTemporaryPackFiles = Effect.fn("GitVcsDriver.removeNewTemporaryPackFiles")(
+    function* (gitCommonDir: string, filesBeforeFetch: ReadonlySet<string> | null) {
+      if (filesBeforeFetch === null) {
+        return;
+      }
+      const filesAfterFetch = yield* readTemporaryPackFiles(gitCommonDir);
+      if (filesAfterFetch === null) {
+        return;
+      }
+      const newFiles = [...filesAfterFetch].filter((entry) => !filesBeforeFetch.has(entry));
+      if (newFiles.length === 0) {
+        return;
+      }
+      if (yield* hasActiveFetchLock(gitCommonDir)) {
+        yield* Effect.logWarning(
+          "Skipped temporary Git pack cleanup while a fetch lock is active",
+          {
+            temporaryPackCount: newFiles.length,
+          },
+        );
+        return;
+      }
+
+      const packDir = path.join(gitCommonDir, "objects", "pack");
+      const removalResults = yield* Effect.forEach(
+        newFiles,
+        (entry) =>
+          fileSystem.remove(path.join(packDir, entry), { force: true }).pipe(
+            Effect.as(true),
+            Effect.catchTags({
+              PlatformError: () => Effect.succeed(false),
+            }),
+          ),
+        { concurrency: 1 },
+      );
+      const removedCount = removalResults.filter(Boolean).length;
+      if (removedCount > 0) {
+        yield* Effect.logWarning("Removed temporary Git pack files after a failed fetch", {
+          temporaryPackCount: removedCount,
+        });
+      }
+      if (removedCount < newFiles.length) {
+        yield* Effect.logWarning("Failed to remove some temporary Git pack files", {
+          temporaryPackCount: newFiles.length - removedCount,
+        });
+      }
+    },
+  );
+
+  const fetchRemoteForStatus = Effect.fn("GitVcsDriver.fetchRemoteForStatus")(function* (
     gitCommonDir: string,
     remoteName: string,
-  ): Effect.Effect<void, GitCommandError> => {
+  ) {
     const fetchCwd =
       path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-    return executeGit(
+    const temporaryPackFilesBeforeFetch = yield* readTemporaryPackFiles(gitCommonDir);
+    yield* executeGit(
       "GitVcsDriver.fetchRemoteForStatus",
       fetchCwd,
       ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", remoteName],
       {
-        allowNonZeroExit: true,
         env: STATUS_UPSTREAM_REFRESH_ENV,
+        fallbackErrorDetail: "Background Git fetch failed.",
         timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
       },
-    ).pipe(Effect.asVoid);
-  };
+    ).pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.void
+          : removeNewTemporaryPackFiles(gitCommonDir, temporaryPackFilesBeforeFetch),
+      ),
+    );
+  });
 
   const resolveGitCommonDir = Effect.fn("resolveGitCommonDir")(function* (cwd: string) {
     const gitCommonDir = yield* runGitStdout("GitVcsDriver.resolveGitCommonDir", cwd, [
@@ -976,6 +1103,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     );
   });
+
+  const refreshStatusUpstream: GitVcsDriver.GitVcsDriver["Service"]["refreshStatusUpstream"] =
+    Effect.fn("refreshStatusUpstream")(function* (cwd) {
+      yield* refreshStatusUpstreamIfStale(cwd);
+    });
 
   const resolveDefaultBranchName = (
     cwd: string,
@@ -2535,6 +2667,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetails,
     statusDetailsLocal,
     statusDetailsRemote,
+    refreshStatusUpstream,
     prepareCommitContext,
     commit,
     pushCurrentBranch,

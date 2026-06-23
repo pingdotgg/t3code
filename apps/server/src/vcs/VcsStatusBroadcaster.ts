@@ -358,9 +358,10 @@ export const make = Effect.gen(function* () {
     options?: { readonly refreshUpstream?: boolean },
   ) {
     if (options?.refreshUpstream !== false) {
+      yield* workflow.refreshStatusUpstream(cwd);
       yield* workflow.invalidateRemoteStatus(cwd);
     }
-    const remote = yield* workflow.remoteStatus({ cwd }, options);
+    const remote = yield* workflow.remoteStatus({ cwd }, { refreshUpstream: false });
     return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
   });
 

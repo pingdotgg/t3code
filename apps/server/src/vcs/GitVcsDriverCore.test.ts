@@ -58,6 +58,48 @@ const git = (
     return result.stdout.trim();
   });
 
+function withProcessEnvironment<A, E, R>(
+  updates: Readonly<Record<string, string | undefined>>,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> {
+  return Effect.suspend(() => {
+    const previous = new Map(Object.keys(updates).map((key) => [key, process.env[key]] as const));
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    return effect.pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          for (const [key, value] of previous) {
+            if (value === undefined) delete process.env[key];
+            else process.env[key] = value;
+          }
+        }),
+      ),
+    );
+  });
+}
+
+const configureFailingSshUpstream = Effect.fn("configureFailingSshUpstream")(function* (input: {
+  readonly cwd: string;
+  readonly scriptDir: string;
+  readonly initialBranch: string;
+}) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const pathService = yield* Path.Path;
+  const sshWrapperPath = pathService.join(input.scriptDir, "ssh-wrapper.sh");
+  yield* fileSystem.writeFileString(
+    sshWrapperPath,
+    ["#!/bin/sh", 'printf "leaked\\n" > "$T3_TEST_TMP_PACK_PATH"', "exit 1", ""].join("\n"),
+  );
+  yield* fileSystem.chmod(sshWrapperPath, 0o755);
+  yield* git(input.cwd, ["remote", "add", "origin", "ssh://example.invalid/repo.git"]);
+  yield* git(input.cwd, ["update-ref", `refs/remotes/origin/${input.initialBranch}`, "HEAD"]);
+  yield* git(input.cwd, ["branch", "--set-upstream-to", `origin/${input.initialBranch}`]);
+  return sshWrapperPath;
+});
+
 const initRepoWithCommit = (
   cwd: string,
 ): Effect.Effect<
@@ -458,6 +500,84 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
             }),
           ),
         );
+      }),
+    );
+
+    it.effect("removes newly-created temporary packs after a failed upstream refresh", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const scriptDir = yield* makeTmpDir("git-vcs-driver-failed-fetch-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const gitCommonDir = pathService.join(cwd, ".git");
+        const packDir = pathService.join(gitCommonDir, "objects", "pack");
+        const existingTemporaryPack = pathService.join(packDir, "tmp_pack_existing");
+        const leakedTemporaryPack = pathService.join(packDir, "tmp_pack_new");
+
+        yield* fileSystem.makeDirectory(packDir, { recursive: true });
+        yield* fileSystem.writeFileString(existingTemporaryPack, "existing\n");
+        const sshWrapperPath = yield* configureFailingSshUpstream({
+          cwd,
+          scriptDir,
+          initialBranch,
+        });
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const error = yield* withProcessEnvironment(
+          {
+            GIT_SSH: sshWrapperPath,
+            GIT_SSH_COMMAND: undefined,
+            T3_TEST_TMP_PACK_PATH: leakedTemporaryPack,
+          },
+          driver.refreshStatusUpstream(cwd).pipe(Effect.flip),
+        );
+
+        assert.equal(error.operation, "GitVcsDriver.fetchRemoteForStatus");
+        assert.isTrue(yield* fileSystem.exists(existingTemporaryPack));
+        assert.isFalse(yield* fileSystem.exists(leakedTemporaryPack));
+      }),
+    );
+
+    it.effect("preserves new temporary packs while a linked worktree fetch lock is active", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const scriptDir = yield* makeTmpDir("git-vcs-driver-locked-fetch-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const gitCommonDir = pathService.join(cwd, ".git");
+        const packDir = pathService.join(gitCommonDir, "objects", "pack");
+        const leakedTemporaryPack = pathService.join(packDir, "tmp_pack_new");
+        const linkedWorktreeLock = pathService.join(
+          gitCommonDir,
+          "worktrees",
+          "other",
+          "FETCH_HEAD.lock",
+        );
+
+        yield* fileSystem.makeDirectory(packDir, { recursive: true });
+        yield* fileSystem.makeDirectory(pathService.dirname(linkedWorktreeLock), {
+          recursive: true,
+        });
+        yield* fileSystem.writeFileString(linkedWorktreeLock, "locked\n");
+        const sshWrapperPath = yield* configureFailingSshUpstream({
+          cwd,
+          scriptDir,
+          initialBranch,
+        });
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* withProcessEnvironment(
+          {
+            GIT_SSH: sshWrapperPath,
+            GIT_SSH_COMMAND: undefined,
+            T3_TEST_TMP_PACK_PATH: leakedTemporaryPack,
+          },
+          driver.refreshStatusUpstream(cwd).pipe(Effect.flip),
+        );
+
+        assert.isTrue(yield* fileSystem.exists(leakedTemporaryPack));
       }),
     );
 

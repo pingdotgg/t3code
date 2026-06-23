@@ -114,6 +114,33 @@ describe("GitWorkflowService", () => {
     }).pipe(Effect.provide(testLayer));
   });
 
+  it.effect("routes explicit upstream refreshes through the Git driver", () => {
+    const refreshStatusUpstream = vi.fn(() => Effect.void);
+    const testLayer = GitWorkflowService.layer.pipe(
+      Layer.provide(
+        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+          detect: () =>
+            Effect.succeed({
+              kind: "git",
+            } as VcsDriverRegistry.VcsDriverHandle),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          refreshStatusUpstream,
+        }),
+      ),
+      Layer.provide(Layer.mock(GitManager.GitManager)({})),
+    );
+
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      yield* workflow.refreshStatusUpstream("/repo");
+
+      assert.deepStrictEqual(refreshStatusUpstream.mock.calls, [["/repo"]]);
+    }).pipe(Effect.provide(testLayer));
+  });
+
   it.effect("returns an empty ref list when no VCS repository is detected", () =>
     Effect.gen(function* () {
       const workflow = yield* GitWorkflowService.GitWorkflowService;
