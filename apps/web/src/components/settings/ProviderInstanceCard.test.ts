@@ -178,6 +178,39 @@ describe("mergeEnvironmentDraftRowsForPersistedUpdate", () => {
     ]);
   });
 
+  it("consumes a new sensitive row when its persisted save echo is redacted", () => {
+    const rows = mergeEnvironmentDraftRowsForPersistedUpdate({
+      rows: [
+        {
+          id: "provider-env-1",
+          name: "API_KEY",
+          value: "typed-secret",
+          sensitive: true,
+          valueRedacted: false,
+        },
+      ],
+      previousEnvironment: [],
+      nextEnvironment: [
+        {
+          name: "API_KEY",
+          value: "",
+          sensitive: true,
+          valueRedacted: true,
+        },
+      ],
+    });
+
+    expect(rows).toEqual([
+      {
+        id: "0:API_KEY",
+        name: "API_KEY",
+        value: "",
+        sensitive: true,
+        valueRedacted: true,
+      },
+    ]);
+  });
+
   it("preserves a local deletion when a stale persisted echo still contains the row", () => {
     const previousEnvironment: ReadonlyArray<ProviderInstanceEnvironmentVariable> = [
       {
@@ -220,6 +253,64 @@ describe("mergeEnvironmentDraftRowsForPersistedUpdate", () => {
         id: "0:BASE_URL",
         name: "BASE_URL",
         value: "https://example.test",
+        sensitive: false,
+      },
+    ]);
+  });
+
+  it("keeps reordered persisted rows when another variable has a local edit", () => {
+    const rows = mergeEnvironmentDraftRowsForPersistedUpdate({
+      rows: [
+        {
+          id: "0:A",
+          name: "A",
+          value: "local-edit",
+          sensitive: false,
+        },
+        {
+          id: "1:B",
+          name: "B",
+          value: "b",
+          sensitive: false,
+        },
+      ],
+      previousEnvironment: [
+        {
+          name: "A",
+          value: "a",
+          sensitive: false,
+        },
+        {
+          name: "B",
+          value: "b",
+          sensitive: false,
+        },
+      ],
+      nextEnvironment: [
+        {
+          name: "B",
+          value: "b",
+          sensitive: false,
+        },
+        {
+          name: "A",
+          value: "a",
+          sensitive: false,
+        },
+      ],
+    });
+
+    expect(rows).toEqual([
+      {
+        id: "0:B",
+        name: "B",
+        value: "b",
+        sensitive: false,
+      },
+      {
+        id: "0:A",
+        name: "A",
+        value: "local-edit",
         sensitive: false,
       },
     ]);

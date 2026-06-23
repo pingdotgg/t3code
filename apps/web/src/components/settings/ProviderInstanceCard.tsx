@@ -101,9 +101,26 @@ function isEnvironmentDraftRowEqualToPersisted(
   );
 }
 
+function isEnvironmentDraftRowAcknowledgedByPersisted(
+  row: EnvironmentDraftRow,
+  variable: ProviderInstanceEnvironmentVariable,
+  previousVariable: ProviderInstanceEnvironmentVariable | undefined,
+): boolean {
+  if (isEnvironmentDraftRowEqualToPersisted(row, variable)) return true;
+  return (
+    previousVariable === undefined &&
+    row.name === variable.name &&
+    row.sensitive === true &&
+    variable.sensitive === true &&
+    variable.value === "" &&
+    variable.valueRedacted === true &&
+    row.valueRedacted !== true
+  );
+}
+
 function isSameEnvironmentVariable(
-  previousVariable: ProviderInstanceEnvironmentVariable,
-  nextVariable: ProviderInstanceEnvironmentVariable,
+  previousVariable: Pick<ProviderInstanceEnvironmentVariable, "name">,
+  nextVariable: Pick<ProviderInstanceEnvironmentVariable, "name">,
 ): boolean {
   return previousVariable.name === nextVariable.name;
 }
@@ -126,10 +143,22 @@ export function mergeEnvironmentDraftRowsForPersistedUpdate(input: {
   const consumeRow = (row: EnvironmentDraftRow) => {
     consumedRowIds.add(row.id);
   };
-  const findMatchingCurrentRow = (variable: ProviderInstanceEnvironmentVariable) =>
-    input.rows.find(
-      (row) => !consumedRowIds.has(row.id) && isEnvironmentDraftRowEqualToPersisted(row, variable),
-    );
+  const findAcknowledgedCurrentRow = (variable: ProviderInstanceEnvironmentVariable) =>
+    input.rows.find((row) => {
+      if (consumedRowIds.has(row.id)) return false;
+      return isEnvironmentDraftRowAcknowledgedByPersisted(row, variable, previousById.get(row.id));
+    });
+  const findChangedCurrentRowForSameVariable = (variable: ProviderInstanceEnvironmentVariable) =>
+    input.rows.find((row) => {
+      if (consumedRowIds.has(row.id) || !isSameEnvironmentVariable(row, variable)) {
+        return false;
+      }
+      const previousVariable = previousById.get(row.id);
+      return (
+        previousVariable !== undefined &&
+        isEnvironmentDraftRowChangedFromPersisted(row, previousVariable)
+      );
+    });
 
   const nextRows = input.nextEnvironment.flatMap((variable, index) => {
     const nextRow = makeEnvironmentDraftRow(variable, index);
@@ -146,7 +175,9 @@ export function mergeEnvironmentDraftRowsForPersistedUpdate(input: {
       isEnvironmentDraftRowChangedFromPersisted(currentRow, previousVariable)
     ) {
       consumeRow(currentRow);
-      return isEnvironmentDraftRowEqualToPersisted(currentRow, variable) ? [nextRow] : [currentRow];
+      return isEnvironmentDraftRowAcknowledgedByPersisted(currentRow, variable, previousVariable)
+        ? [nextRow]
+        : [currentRow];
     }
 
     if (currentRow !== undefined) {
@@ -154,25 +185,16 @@ export function mergeEnvironmentDraftRowsForPersistedUpdate(input: {
       return [nextRow];
     }
 
-    if (
-      currentRowAtPreviousIndex !== undefined &&
-      previousRowAtIndex !== undefined &&
-      !consumedRowIds.has(currentRowAtPreviousIndex.id) &&
-      isEnvironmentDraftRowChangedFromPersisted(
-        currentRowAtPreviousIndex,
-        previousById.get(previousRowAtIndex.id) ?? variable,
-      )
-    ) {
-      consumeRow(currentRowAtPreviousIndex);
-      return isEnvironmentDraftRowEqualToPersisted(currentRowAtPreviousIndex, variable)
-        ? [nextRow]
-        : [currentRowAtPreviousIndex];
+    const acknowledgedCurrentRow = findAcknowledgedCurrentRow(variable);
+    if (acknowledgedCurrentRow !== undefined) {
+      consumeRow(acknowledgedCurrentRow);
+      return [nextRow];
     }
 
-    const matchingCurrentRow = findMatchingCurrentRow(variable);
-    if (matchingCurrentRow !== undefined) {
-      consumeRow(matchingCurrentRow);
-      return [nextRow];
+    const changedCurrentRow = findChangedCurrentRowForSameVariable(variable);
+    if (changedCurrentRow !== undefined) {
+      consumeRow(changedCurrentRow);
+      return [changedCurrentRow];
     }
 
     if (
