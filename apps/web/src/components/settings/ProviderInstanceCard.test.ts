@@ -4,6 +4,7 @@ import type { ProviderInstanceEnvironmentVariable, ServerProviderModel } from "@
 import {
   deriveProviderModelsForDisplay,
   getProviderEnvironmentContentKey,
+  isPublishedProviderEnvironmentAcknowledgedByPersisted,
   mergeEnvironmentDraftRowsForPersistedUpdate,
 } from "./ProviderInstanceCard";
 
@@ -250,6 +251,65 @@ describe("mergeEnvironmentDraftRowsForPersistedUpdate", () => {
     ]);
   });
 
+  it("consumes an acknowledged sensitive save when persisted content stays redacted", () => {
+    const previousEnvironment: ReadonlyArray<ProviderInstanceEnvironmentVariable> = [
+      {
+        name: "API_KEY",
+        value: "",
+        sensitive: true,
+        valueRedacted: true,
+      },
+    ];
+    const publishedEnvironment: ReadonlyArray<ProviderInstanceEnvironmentVariable> = [
+      {
+        name: "API_KEY",
+        value: "updated-secret",
+        sensitive: true,
+        valueRedacted: false,
+      },
+    ];
+    const redactedSaveEcho: ReadonlyArray<ProviderInstanceEnvironmentVariable> = [
+      {
+        name: "API_KEY",
+        value: "",
+        sensitive: true,
+        valueRedacted: true,
+      },
+    ];
+
+    expect(
+      isPublishedProviderEnvironmentAcknowledgedByPersisted({
+        publishedEnvironment,
+        persistedEnvironment: redactedSaveEcho,
+      }),
+    ).toBe(true);
+
+    const rows = mergeEnvironmentDraftRowsForPersistedUpdate({
+      rows: [
+        {
+          id: "0:API_KEY",
+          name: "API_KEY",
+          value: "updated-secret",
+          sensitive: true,
+          valueRedacted: false,
+        },
+      ],
+      previousEnvironment,
+      nextEnvironment: redactedSaveEcho,
+      publishedEnvironment,
+    });
+
+    expect(rows).toEqual([
+      {
+        id: "0:API_KEY",
+        name: "API_KEY",
+        value: "",
+        sensitive: true,
+        valueRedacted: true,
+      },
+    ]);
+  });
+
   it("keeps a sensitive plaintext draft when a sibling persisted row changes", () => {
     const rows = mergeEnvironmentDraftRowsForPersistedUpdate({
       rows: [
@@ -341,10 +401,52 @@ describe("mergeEnvironmentDraftRowsForPersistedUpdate", () => {
           sensitive: true,
         },
       ],
-      locallyDeletedEnvironmentVariableNames: new Set(["API_KEY"]),
+      locallyDeletedEnvironmentVariables: new Map([
+        [
+          "API_KEY",
+          {
+            name: "API_KEY",
+            value: "old",
+            sensitive: true,
+          },
+        ],
+      ]),
     });
 
     expect(rows).toEqual([]);
+  });
+
+  it("keeps a same-name server re-add when it differs from the deleted variable", () => {
+    const rows = mergeEnvironmentDraftRowsForPersistedUpdate({
+      rows: [],
+      previousEnvironment: [],
+      nextEnvironment: [
+        {
+          name: "API_KEY",
+          value: "new",
+          sensitive: true,
+        },
+      ],
+      locallyDeletedEnvironmentVariables: new Map([
+        [
+          "API_KEY",
+          {
+            name: "API_KEY",
+            value: "old",
+            sensitive: true,
+          },
+        ],
+      ]),
+    });
+
+    expect(rows).toEqual([
+      {
+        id: "0:API_KEY",
+        name: "API_KEY",
+        value: "new",
+        sensitive: true,
+      },
+    ]);
   });
 
   it("keeps a new persisted row when a different previous-index draft row was deleted", () => {
