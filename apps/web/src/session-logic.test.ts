@@ -85,7 +85,67 @@ describe("V2 session presentation", () => {
     expect(entries.map((entry) => entry.kind)).toEqual(["message"]);
   });
 
-  it("uses visible turn item order and keeps interruption lifecycle entries standalone", () => {
+  it("assigns run rollback to the turn-start message instead of a later steer", () => {
+    const runId = RunId.make("run-steered");
+    const turnStartMessageId = MessageId.make("message-turn-start");
+    const steerMessageId = MessageId.make("message-steer");
+    const assistantMessageId = MessageId.make("message-assistant");
+    const timelineEntries = deriveTimelineEntries(
+      [
+        {
+          id: turnStartMessageId,
+          role: "user",
+          text: "Start",
+          runId,
+          inputIntent: "turn_start",
+          streaming: false,
+          createdAt: "2026-06-20T00:00:00.000Z",
+          updatedAt: "2026-06-20T00:00:00.000Z",
+        },
+        {
+          id: steerMessageId,
+          role: "user",
+          text: "Steer",
+          runId,
+          inputIntent: "steer",
+          streaming: false,
+          createdAt: "2026-06-20T00:00:01.000Z",
+          updatedAt: "2026-06-20T00:00:01.000Z",
+        },
+        {
+          id: assistantMessageId,
+          role: "assistant",
+          text: "Done",
+          runId,
+          streaming: false,
+          createdAt: "2026-06-20T00:00:02.000Z",
+          updatedAt: "2026-06-20T00:00:02.000Z",
+        },
+      ],
+      [],
+      [],
+    );
+
+    const targets = deriveRevertTurnCountByUserMessageId({
+      timelineEntries,
+      checkpoints: [
+        {
+          runId,
+          checkpointTurnCount: 1,
+          checkpointRef: "checkpoint-run-1" as never,
+          status: "ready",
+          files: [],
+          assistantMessageId,
+          completedAt: "2026-06-20T00:00:03.000Z",
+        },
+      ],
+    });
+
+    expect([...targets]).toEqual([[turnStartMessageId, 0]]);
+    expect(targets.has(steerMessageId)).toBe(false);
+  });
+
+  it("uses visible turn item order and keeps lifecycle resource entries standalone", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const threadId = ThreadId.make("thread-visible");
     const runId = RunId.make("run-visible");
@@ -153,6 +213,15 @@ describe("V2 session presentation", () => {
         retryable: false,
       },
     } satisfies OrchestrationV2TurnItem;
+    const threadCreatedItem = {
+      ...base("item-thread-created", 6),
+      type: "thread_created" as const,
+      title: "Follow-up thread",
+      targetThreadId: ThreadId.make("thread-follow-up"),
+      targetRunId: RunId.make("run-follow-up"),
+      targetProviderInstanceId: ProviderInstanceId.make("claude-default"),
+      targetModel: "claude-sonnet-4-6",
+    } satisfies OrchestrationV2TurnItem;
     const visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = [
       userItem,
       requestItem,
@@ -160,6 +229,7 @@ describe("V2 session presentation", () => {
       resultItem,
       todoItem,
       errorItem,
+      threadCreatedItem,
     ].map((item, position) => ({
       position,
       visibility: "local" as const,
@@ -180,8 +250,17 @@ describe("V2 session presentation", () => {
       ["event", resultItem.id],
       ["work", todoItem.id],
       ["event", errorItem.id],
+      ["event", threadCreatedItem.id],
     ]);
     const commandEntry = entries[2];
+    const userEntry = entries[0];
+    expect(userEntry?.kind).toBe("message");
+    if (userEntry?.kind === "message") {
+      expect(userEntry.projectedItem).toBe(visibleTurnItems[0]);
+      expect(userEntry.message.inputIntent).toBe("turn_start");
+      expect(userEntry.message.createdBy).toBe("user");
+      expect(userEntry.message.creationSource).toBe("web");
+    }
     expect(commandEntry?.kind).toBe("work");
     if (commandEntry?.kind === "work") {
       expect(commandEntry.entry.projectedItem).toBe(visibleTurnItems[2]);
@@ -201,6 +280,11 @@ describe("V2 session presentation", () => {
       if (errorEntry.projectedItem.item.type === "error") {
         expect(errorEntry.projectedItem.item.failure.message).toBe("Invalid reasoning effort.");
       }
+    }
+    const threadCreatedEntry = entries[6];
+    expect(threadCreatedEntry?.kind).toBe("event");
+    if (threadCreatedEntry?.kind === "event") {
+      expect(threadCreatedEntry.projectedItem.item.type).toBe("thread_created");
     }
   });
 

@@ -1,4 +1,4 @@
-import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -439,7 +439,49 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("rounded-2xl bg-message p-3");
   });
 
-  it("preserves arbitrary XML-like tags and comparisons in rendered user messages", async () => {
+  it("identifies user-role messages sent by another agent", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const entry = buildUserTimelineEntry("Review this area");
+    const agentMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...entry,
+            message: { ...entry.message, createdBy: "agent", creationSource: "provider" },
+          },
+        ]}
+      />,
+    );
+    const userMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(agentMarkup).toContain('data-user-message-attribution="agent"');
+    expect(agentMarkup).toContain("Sent by another agent");
+    expect(userMarkup).not.toContain("Sent by another agent");
+  });
+
+  it("keeps a subagent parent-thread link at the top of an empty timeline", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[]}
+        parentThreadLink={{
+          threadId: ThreadId.make("thread-parent"),
+          title: "Architecture audit",
+        }}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Open parent thread"');
+    expect(markup).toContain("Subagent of");
+    expect(markup).toContain("Architecture audit");
+    expect(markup).not.toContain("Send a message to start the conversation");
+  });
+
+  it("keeps steer intent visible on committed user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -778,6 +820,108 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-v2-structured-details="true"');
     expect(markup).toContain("Structured details");
     expect(markup).toContain("&quot;type&quot;: &quot;run_interrupt_request&quot;");
+  });
+
+  it("renders created threads as linked cards outside the work log", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "thread-created",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "thread-created",
+              item: {
+                id: "thread-created",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: "node-1",
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "completed",
+                title: "Claude research thread",
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "thread_created",
+                targetThreadId: "thread-2",
+                targetRunId: "run-2",
+                targetProviderInstanceId: "claude-default",
+                targetModel: "claude-sonnet-4-6",
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-v2-item-type="thread_created"');
+    expect(markup).toContain('aria-label="Open Claude research thread"');
+    expect(markup).toContain("Claude research thread");
+    expect(markup).toContain("claude-default · claude-sonnet-4-6");
+    expect(markup).not.toContain("Work Log");
+  });
+
+  it("renders live subagent progress on the persistent linked card", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "subagent-progress",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "subagent-progress",
+              item: {
+                id: "subagent-progress",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: "node-subagent-1",
+                providerThreadId: "provider-thread-1",
+                providerTurnId: "provider-turn-1",
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "running",
+                title: "Package audit",
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "subagent",
+                subagentId: "node-subagent-1",
+                origin: "provider_native",
+                driver: "claudeAgent",
+                providerInstanceId: "claudeAgent",
+                childThreadId: "thread-subagent-1",
+                prompt: "Inspect the package",
+                progress: "Reading src/index.ts",
+                result: null,
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-v2-item-type="subagent"');
+    expect(markup).toContain('aria-label="Open Package audit"');
+    expect(markup).toContain("Reading src/index.ts");
+    expect(markup).not.toContain("Inspect the package");
+    expect(markup).not.toContain("Work Log");
   });
 
   it("renders V2 provider failures as standalone error rows", async () => {

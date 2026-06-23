@@ -394,14 +394,17 @@ export const make = Effect.gen(function* () {
           Effect.tap((verification) =>
             verification.valid
               ? Effect.void
-              : Effect.logWarning("V2 orchestration projections are stale; rebuilding", {
-                  expectedSequence: verification.expectedSequence,
-                  projectionSequence: verification.projectionSequence,
-                  schemaVersion: verification.schemaVersion,
-                  missingThreadCount: verification.missingThreadIds.length,
-                  unexpectedThreadCount: verification.unexpectedThreadIds.length,
-                  differingThreadCount: verification.differingThreadIds.length,
-                }),
+              : Effect.logWarning(
+                  "V2 orchestration projection metadata or structure is invalid; rebuilding",
+                  {
+                    expectedSequence: verification.expectedSequence,
+                    projectionSequence: verification.projectionSequence,
+                    schemaVersion: verification.schemaVersion,
+                    missingThreadCount: verification.missingThreadIds.length,
+                    unexpectedThreadCount: verification.unexpectedThreadIds.length,
+                    unreadableThreadCount: verification.unreadableThreadIds.length,
+                  },
+                ),
           ),
         ),
       ),
