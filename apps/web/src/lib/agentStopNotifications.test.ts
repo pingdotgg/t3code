@@ -59,7 +59,10 @@ describe("decideAgentStopNotifications", () => {
 
   it("fires 'errored' on running -> error", () => {
     const result = run(new Map([["thread-1", "running"]]), [thread("error")]);
-    expect(result.notifications[0]).toMatchObject({ body: "Lucentive · errored", status: "errored" });
+    expect(result.notifications[0]).toMatchObject({
+      body: "Lucentive · errored",
+      status: "errored",
+    });
   });
 
   it("fires 'finished' on running -> ready", () => {
@@ -91,7 +94,9 @@ describe("decideAgentStopNotifications", () => {
 
   it("does NOT fire on user-initiated stop or interrupt", () => {
     expect(run(new Map([["thread-1", "running"]]), [thread("stopped")]).notifications).toEqual([]);
-    expect(run(new Map([["thread-1", "running"]]), [thread("interrupted")]).notifications).toEqual([]);
+    expect(run(new Map([["thread-1", "running"]]), [thread("interrupted")]).notifications).toEqual(
+      [],
+    );
   });
 
   it("suppresses when focused on that exact thread", () => {
@@ -165,6 +170,9 @@ describe("decideAgentStopNotifications", () => {
     const result = run(new Map([["thread-1", "running"]]), [
       thread("error", { hasPendingUserInput: true }),
     ]);
-    expect(result.notifications[0]).toMatchObject({ status: "errored", body: "Lucentive · errored" });
+    expect(result.notifications[0]).toMatchObject({
+      status: "errored",
+      body: "Lucentive · errored",
+    });
   });
 });

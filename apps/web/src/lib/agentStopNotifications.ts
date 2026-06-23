@@ -72,11 +72,7 @@ export interface AgentStopDecisionResult {
 // A correct fix must capture the interrupt at its source — client-side, record
 // the user's interrupt at ChatView.onInterrupt and suppress within a time
 // window; or server-side, stop overwriting the interrupted turn state. Follow-up.
-const STOP_STATUSES: ReadonlySet<OrchestrationSessionStatus> = new Set([
-  "idle",
-  "ready",
-  "error",
-]);
+const STOP_STATUSES: ReadonlySet<OrchestrationSessionStatus> = new Set(["idle", "ready", "error"]);
 
 function statusLabel(thread: ThreadShellLike): AgentStopStatusLabel {
   if (thread.session?.status === "error") return "errored";

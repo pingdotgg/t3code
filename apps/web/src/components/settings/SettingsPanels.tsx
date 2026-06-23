@@ -965,7 +965,8 @@ export function GeneralSettingsPanel() {
             title="Agent-stop pop-up"
             description="Show a system notification when an agent finishes or errors."
             resetAction={
-              settings.notifyOnAgentStopPopup !== DEFAULT_UNIFIED_SETTINGS.notifyOnAgentStopPopup ? (
+              settings.notifyOnAgentStopPopup !==
+              DEFAULT_UNIFIED_SETTINGS.notifyOnAgentStopPopup ? (
                 <SettingResetButton
                   label="agent-stop pop-up"
                   onClick={() =>
@@ -990,7 +991,8 @@ export function GeneralSettingsPanel() {
             title="Agent-stop sound"
             description="Play a sound when an agent finishes or errors."
             resetAction={
-              settings.notifyOnAgentStopSound !== DEFAULT_UNIFIED_SETTINGS.notifyOnAgentStopSound ? (
+              settings.notifyOnAgentStopSound !==
+              DEFAULT_UNIFIED_SETTINGS.notifyOnAgentStopSound ? (
                 <SettingResetButton
                   label="agent-stop sound"
                   onClick={() =>
