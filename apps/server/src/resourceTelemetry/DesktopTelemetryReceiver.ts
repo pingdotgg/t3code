@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFileSystem from "node:fs";
+import * as NodeFS from "node:fs";
 
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import {
@@ -239,7 +239,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
             const payload = Buffer.from(`${encoded}\n`);
             let offset = 0;
             while (offset < payload.byteLength) {
-              const written = NodeFileSystem.writeSync(fd, payload, offset);
+              const written = NodeFS.writeSync(fd, payload, offset);
               if (written <= 0) throw new Error("desktop telemetry control pipe accepted no bytes");
               offset += written;
             }
@@ -267,7 +267,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
     const readable = yield* Effect.acquireRelease(
       Effect.try({
         try: () =>
-          NodeFileSystem.createReadStream("", {
+          NodeFS.createReadStream("", {
             fd,
             autoClose: true,
           }),

@@ -256,6 +256,20 @@ export class BuildCommandFailedError extends Schema.TaggedErrorClass<BuildComman
   }
 }
 
+export class ResourceMonitorBuildOutputMissingError extends Schema.TaggedErrorClass<ResourceMonitorBuildOutputMissingError>()(
+  "ResourceMonitorBuildOutputMissingError",
+  {
+    binaryPath: Schema.String,
+    rustTarget: Schema.String,
+    platform: BuildPlatform,
+    arch: BuildArch,
+  },
+) {
+  override get message(): string {
+    return `Resource monitor build for ${this.rustTarget} did not produce ${this.binaryPath}.`;
+  }
+}
+
 const desktopIconPlatformNames = {
   mac: "macOS",
   linux: "Linux",
@@ -1186,8 +1200,11 @@ const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* (input:
       executableName,
     );
     if (!(yield* fs.exists(binaryPath))) {
-      return yield* new BuildScriptError({
-        message: `Resource monitor build did not produce ${binaryPath}.`,
+      return yield* new ResourceMonitorBuildOutputMissingError({
+        binaryPath,
+        rustTarget,
+        platform: input.platform,
+        arch: input.arch,
       });
     }
     builtBinaries.push(binaryPath);

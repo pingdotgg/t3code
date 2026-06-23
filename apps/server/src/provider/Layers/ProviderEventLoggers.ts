@@ -1,6 +1,6 @@
 /**
- * ProviderEventLoggers — single observability service that owns the two
- * shared NDJSON streams the provider runtime writes:
+ * ProviderEventLoggers — single observability service that owns the shared
+ * provider event log store and exposes its two runtime views:
  *
  *   - `native`    — provider-protocol events as the SDK emits them, written
  *                   from inside each `<X>Adapter` factory.
@@ -13,17 +13,14 @@
  *     not at the boot Layer. There is no longer a single `make<X>AdapterLive(options)`
  *     call site where we can hand an `EventNdjsonLogger` in by hand.
  *   - Multiple driver instances per kind (`codex_personal`, `codex_work`)
- *     should share one underlying log writer per stream — opening N writers
- *     against the same rotating file would race the rotation logic. Owning
- *     the loggers on a single tag keeps that invariant intact.
+ *     must share one underlying log store — opening N writers against the
+ *     same rotating file would race the rotation logic. Owning the loggers on
+ *     a single tag keeps that invariant intact.
  *   - Tests can swap one (or both) loggers with in-memory recorders by
  *     `Layer.succeed(ProviderEventLoggers, { native, canonical })` instead of
  *     juggling per-Layer option threading.
  *
- * Both fields are optional. `makeEventNdjsonLogger` returns `undefined` when
- * the target directory cannot be created; we forward that as `undefined`
- * rather than failing the boot Layer, matching the previous best-effort
- * behavior of `server.ts`.
+ * Both fields are optional because observability must not prevent startup.
  *
  * @module provider/Layers/ProviderEventLoggers
  */
@@ -33,11 +30,11 @@ import * as Layer from "effect/Layer";
 
 import { ServerConfig } from "../../config.ts";
 import * as ResourceAttribution from "../../resourceTelemetry/ResourceAttribution.ts";
-import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import * as EventNdjsonLogger from "./EventNdjsonLogger.ts";
 
 export interface ProviderEventLoggersShape {
-  readonly native: EventNdjsonLogger | undefined;
-  readonly canonical: EventNdjsonLogger | undefined;
+  readonly native: EventNdjsonLogger.EventNdjsonLogger | undefined;
+  readonly canonical: EventNdjsonLogger.EventNdjsonLogger | undefined;
 }
 
 /**
@@ -45,8 +42,8 @@ export interface ProviderEventLoggersShape {
  *
  * Service value is intentionally a struct of two optional loggers rather
  * than two parallel tags. Construction site is one place
- * (`ProviderEventLoggersLive`); consumers (drivers, `ProviderService`) read
- * one tag and pluck the field they need.
+ * (`layer`); consumers (drivers, `ProviderService`) read one tag and pluck the
+ * field they need.
  */
 export class ProviderEventLoggers extends Context.Service<
   ProviderEventLoggers,
@@ -64,26 +61,32 @@ export const NoOpProviderEventLoggers: ProviderEventLoggersShape = {
 };
 
 /**
- * Live Layer that builds both loggers from `ServerConfig.providerEventLogPath`.
- * If the directory create fails for either stream, the corresponding field
- * is `undefined` and writes from that stream become no-ops downstream.
+ * Builds both stream views over one shared store. Setup failures are logged
+ * and downgraded to the no-op service so diagnostics never block startup.
  */
-export const ProviderEventLoggersLive = Layer.effect(
-  ProviderEventLoggers,
-  Effect.gen(function* () {
-    const { providerEventLogPath } = yield* ServerConfig;
-    const attribution = yield* ResourceAttribution.ResourceAttribution;
-    const native = yield* makeEventNdjsonLogger(providerEventLogPath, {
-      stream: "native",
-      attribution,
-    });
-    const canonical = yield* makeEventNdjsonLogger(providerEventLogPath, {
-      stream: "canonical",
-      attribution,
-    });
-    return {
-      native,
-      canonical,
-    } satisfies ProviderEventLoggersShape;
-  }),
-);
+export const make = Effect.gen(function* () {
+  const { providerEventLogPath } = yield* ServerConfig;
+  const attribution = yield* ResourceAttribution.ResourceAttribution;
+  const store = yield* EventNdjsonLogger.makeEventNdjsonLogStore(providerEventLogPath, {
+    attribution,
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning(error.message, { error }).pipe(
+        Effect.annotateLogs({ scope: "provider-observability" }),
+        Effect.as<EventNdjsonLogger.EventNdjsonLogStore | undefined>(undefined),
+      ),
+    ),
+  );
+
+  if (!store) {
+    return ProviderEventLoggers.of(NoOpProviderEventLoggers);
+  }
+
+  yield* Effect.addFinalizer(() => store.close());
+  return ProviderEventLoggers.of({
+    native: store.logger("native"),
+    canonical: store.logger("canonical"),
+  });
+});
+
+export const layer = Layer.effect(ProviderEventLoggers, make);

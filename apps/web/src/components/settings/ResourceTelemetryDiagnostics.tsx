@@ -198,6 +198,9 @@ function LastSampleLabel({ sampledAt }: { sampledAt: DateTime.Utc | null }) {
     return <span className="text-[11px] text-muted-foreground/55">Waiting for sample</span>;
   }
   const relative = formatRelativeTime(DateTime.formatIso(sampledAt));
+  if (!relative) {
+    return <span className="text-[11px] text-muted-foreground/55">Waiting for sample</span>;
+  }
   return (
     <span className="text-[11px] text-muted-foreground/60">
       Updated <span className="font-mono tabular-nums">{relative.value}</span>

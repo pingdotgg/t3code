@@ -361,7 +361,9 @@ const buildAppUnderTest = (options?: {
     relayClient?: Partial<RelayClient.RelayClient["Service"]>;
     cloudCliTokenManager?: Partial<CloudCliTokenManager.CloudCliTokenManager["Service"]>;
     nativeTelemetryClient?: Partial<NativeTelemetryClient.NativeTelemetryClient["Service"]>;
-    desktopTelemetryReceiver?: Partial<DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]>;
+    desktopTelemetryReceiver?: Partial<
+      DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]
+    >;
   };
 }) =>
   Effect.gen(function* () {

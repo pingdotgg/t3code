@@ -17,6 +17,14 @@ const providedConnectionPlatformLayer = connectionPlatformLayer.pipe(
 
 const snapshotLoaderLayer = Layer.merge(threadSnapshotLoaderLayer, shellSnapshotLoaderLayer);
 
+type ConnectionLayerSource =
+  | typeof Connection.layer
+  | typeof snapshotLoaderLayer
+  | typeof runtimeContextLayer
+  | typeof connectionPlatformLayer
+  | typeof backgroundActivityObserverLayer
+  | typeof backgroundActivityReporterLayer;
+
 const providedClientConnectionLayer = Layer.merge(Connection.layer, snapshotLoaderLayer).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
@@ -27,11 +35,9 @@ const providedClientConnectionLayer = Layer.merge(Connection.layer, snapshotLoad
   ),
 );
 
-export const connectionLayer = backgroundActivityReporterLayer.pipe(
+const connectionLayer = backgroundActivityReporterLayer.pipe(
   Layer.provideMerge(providedClientConnectionLayer),
 );
-
-type ConnectionLayerSource = typeof connectionLayer;
 
 export const connectionAtomRuntime: Atom.AtomRuntime<
   Layer.Success<ConnectionLayerSource>,

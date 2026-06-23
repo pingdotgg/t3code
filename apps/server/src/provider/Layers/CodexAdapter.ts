@@ -1646,7 +1646,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       ),
     );
 
-  const writeNativeEvent = Effect.fn("writeNativeEvent")(function* (event: ProviderEvent) {
+  const writeNativeEvent = Effect.fnUntraced(function* (event: ProviderEvent) {
     if (!nativeEventLogger) {
       return;
     }

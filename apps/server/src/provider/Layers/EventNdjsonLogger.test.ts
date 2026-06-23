@@ -5,12 +5,14 @@ import * as NodePath from "node:path";
 
 import { ThreadId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ResourceAttribution from "../../resourceTelemetry/ResourceAttribution.ts";
-import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { makeEventNdjsonLogger, makeEventNdjsonLogStore } from "./EventNdjsonLogger.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
 
@@ -149,6 +151,100 @@ describe("EventNdjsonLogger", () => {
       }),
   );
 
+  it.effect("shares one thread writer across native and canonical streams", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
+        const native = store.logger("native");
+        const canonical = store.logger("canonical");
+        const threadId = ThreadId.make("thread-shared");
+
+        yield* native.write({ id: "native-event" }, threadId);
+        yield* canonical.write({ type: "item.completed", id: "canonical-event" }, threadId);
+        yield* store.close();
+
+        const lines = NodeFS.readFileSync(NodePath.join(tempDir, "thread-shared.log"), "utf8")
+          .trim()
+          .split("\n")
+          .map(parseLogLine);
+
+        assert.deepEqual(
+          lines.map(({ stream, payload }) => ({ stream, payload })),
+          [
+            { stream: "NTIVE", payload: '{"id":"native-event"}' },
+            {
+              stream: "CANON",
+              payload: '{"type":"item.completed","id":"canonical-event"}',
+            },
+          ],
+        );
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("flushes an active batch without a permanent polling loop", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const threadPath = NodePath.join(tempDir, "thread-batched.log");
+
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 1_000 });
+        yield* store
+          .logger("native")
+          .write({ id: "batched-event" }, ThreadId.make("thread-batched"));
+
+        assert.equal(NodeFS.existsSync(threadPath), false);
+        yield* TestClock.adjust(1_000);
+        assert.equal(NodeFS.existsSync(threadPath), true);
+        yield* store.close();
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("drops transient canonical events before serialization", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
+        const canonical = store.logger("canonical");
+        const native = store.logger("native");
+        const threadId = ThreadId.make("thread-filtered");
+        const circularDelta: Record<string, unknown> = { type: "content.delta" };
+        circularDelta["self"] = circularDelta;
+
+        yield* canonical.write(circularDelta, threadId);
+        yield* canonical.write({ type: "item.completed", id: "final" }, threadId);
+        yield* native.write({ type: "content.delta", id: "native-delta" }, threadId);
+        yield* store.close();
+
+        const lines = NodeFS.readFileSync(NodePath.join(tempDir, "thread-filtered.log"), "utf8")
+          .trim()
+          .split("\n")
+          .map(parseLogLine);
+
+        assert.deepEqual(
+          lines.map(({ stream, payload }) => ({ stream, payload })),
+          [
+            { stream: "CANON", payload: '{"type":"item.completed","id":"final"}' },
+            { stream: "NTIVE", payload: '{"type":"content.delta","id":"native-delta"}' },
+          ],
+        );
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("serializes concurrent first writes for the same segment", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
@@ -197,19 +293,19 @@ describe("EventNdjsonLogger", () => {
       const basePath = NodePath.join(tempDir, "provider-native.ndjson");
 
       try {
-        const logger = yield* makeEventNdjsonLogger(basePath, {
-          stream: "native",
+        const store = yield* makeEventNdjsonLogStore(basePath, {
           maxBytes: 120,
           maxFiles: 2,
+          batchWindowMs: 0,
         });
-        assert.notEqual(logger, undefined);
-        if (!logger) {
-          return;
-        }
+        const native = store.logger("native");
+        const canonical = store.logger("canonical");
 
         for (let index = 0; index < 10; index += 1) {
+          const logger = index % 2 === 0 ? native : canonical;
           yield* logger.write(
             {
+              type: "session.started",
               threadId: "provider-thread-rotate",
               id: `evt-${index}`,
               payload: "x".repeat(40),
@@ -217,7 +313,7 @@ describe("EventNdjsonLogger", () => {
             ThreadId.make("thread-rotate"),
           );
         }
-        yield* logger.close();
+        yield* store.close();
 
         const fileStem = "thread-rotate.log";
         const matchingFiles = NodeFS.readdirSync(tempDir)
@@ -242,11 +338,44 @@ describe("EventNdjsonLogger", () => {
     }),
   );
 
+  it.effect("enforces aggregate age and byte retention on startup", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const expiredPath = NodePath.join(tempDir, "expired.log");
+      const oldPath = NodePath.join(tempDir, "old.log");
+      const newPath = NodePath.join(tempDir, "new.log");
+      const ignoredPath = NodePath.join(tempDir, "ignored.txt");
+
+      try {
+        yield* TestClock.setTime(1_800_000_000_000);
+        const now = yield* Clock.currentTimeMillis;
+        for (const filePath of [expiredPath, oldPath, newPath, ignoredPath]) {
+          NodeFS.writeFileSync(filePath, "x".repeat(40));
+        }
+        NodeFS.utimesSync(expiredPath, (now - 20_000) / 1_000, (now - 20_000) / 1_000);
+        NodeFS.utimesSync(oldPath, (now - 5_000) / 1_000, (now - 5_000) / 1_000);
+        NodeFS.utimesSync(newPath, now / 1_000, now / 1_000);
+
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          maxAgeMs: 10_000,
+          maxTotalBytes: 60,
+        });
+        yield* store.close();
+
+        assert.equal(NodeFS.existsSync(expiredPath), false);
+        assert.equal(NodeFS.existsSync(oldPath), false);
+        assert.equal(NodeFS.existsSync(newPath), true);
+        assert.equal(NodeFS.existsSync(ignoredPath), true);
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("reports logical provider log writes to resource attribution", () =>
     Effect.gen(function* () {
-      const tempDir = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"),
-      );
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
       const basePath = NodePath.join(tempDir, "provider-native.ndjson");
 
       try {
