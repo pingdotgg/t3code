@@ -175,6 +175,7 @@ function taskStatusForRun(
       return "cancelled";
     case "interrupted":
       return "interrupted";
+    case "preparing":
     case "starting":
     case "running":
     case undefined:
@@ -436,6 +437,8 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
     case "run_interrupt_request":
     case "run_interrupt_result":
       return item.message;
+    case "error":
+      return item.failure.message;
     case "compaction":
       return item.summary ?? null;
     case "handoff":

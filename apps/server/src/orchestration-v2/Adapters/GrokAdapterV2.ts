@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -14,6 +15,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
 import { ServerConfig } from "../../config.ts";
+import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
 import {
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
@@ -27,6 +29,7 @@ import {
 } from "../../provider/acp/XAiAcpExtension.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
 import { IdAllocatorV2 } from "../IdAllocator.ts";
 import { ProviderAdapterV2 } from "../ProviderAdapter.ts";
 import {
@@ -81,6 +84,7 @@ export interface GrokAdapterV2Options {
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2["Service"];
   readonly serverConfig: ServerConfig["Service"];
+  readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly makeRuntime?: (
     input: AcpAdapterV2RuntimeInput,
   ) => Effect.Effect<
@@ -144,13 +148,16 @@ export function makeGrokAdapterV2(options: GrokAdapterV2Options) {
     fileSystem: options.fileSystem,
     idAllocator: options.idAllocator,
     serverConfig: options.serverConfig,
+    ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
   });
 }
 
 export type GrokAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
   | FileSystem.FileSystem
   | IdAllocatorV2
+  | ProviderEventLoggers
   | ServerConfig;
 
 export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapterV2DriverEnv> = {
@@ -163,7 +170,9 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
+      const providerEventLoggers = yield* ProviderEventLoggers;
       const serverConfig = yield* ServerConfig;
+      const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
       return makeGrokAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
@@ -172,6 +181,12 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
         fileSystem,
         idAllocator,
         serverConfig,
+        nativeLogging: (threadId) =>
+          makeNativeLogger({
+            nativeEventLogger: providerEventLoggers.native,
+            provider: GROK_PROVIDER,
+            threadId,
+          }),
       });
     },
     (effect, input) =>
@@ -192,7 +207,12 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
 export const layer: Layer.Layer<
   ProviderAdapterV2,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | IdAllocatorV2 | ServerConfig
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
+  | FileSystem.FileSystem
+  | IdAllocatorV2
+  | ProviderEventLoggers
+  | ServerConfig
 > = Layer.effect(
   ProviderAdapterV2,
   Effect.gen(function* () {
@@ -200,7 +220,9 @@ export const layer: Layer.Layer<
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
     const idAllocator = yield* IdAllocatorV2;
+    const providerEventLoggers = yield* ProviderEventLoggers;
     const serverConfig = yield* ServerConfig;
+    const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
     return makeGrokAdapterV2({
       instanceId: GROK_DEFAULT_INSTANCE_ID,
       settings: DEFAULT_GROK_SETTINGS,
@@ -209,6 +231,12 @@ export const layer: Layer.Layer<
       fileSystem,
       idAllocator,
       serverConfig,
+      nativeLogging: (threadId) =>
+        makeNativeLogger({
+          nativeEventLogger: providerEventLoggers.native,
+          provider: GROK_PROVIDER,
+          threadId,
+        }),
     });
   }),
 );

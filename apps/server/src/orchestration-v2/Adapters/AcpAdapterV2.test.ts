@@ -2,11 +2,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   MessageId,
+  type ModelSelection,
   NodeId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderThreadId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -19,9 +21,12 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import type * as EffectAcpProtocol from "effect-acp/protocol";
 
 import { ServerConfig } from "../../config.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
@@ -42,17 +47,32 @@ const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
 
 const testLayer = Layer.mergeAll(NodeServices.layer, idAllocatorLayer, serverConfigLayer);
 const ACP_TEST_DRIVER = ProviderDriverKind.make("acp-test");
+const decodeUnknownJson = Schema.decodeUnknownOption(Schema.UnknownFromJsonString);
 
 function makeMockRuntime(input: {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly mockAgentPath: string;
   readonly environment?: Readonly<Record<string, string>>;
+  readonly protocolEvents?: Queue.Queue<EffectAcpProtocol.AcpProtocolLogEvent>;
 }): AcpAdapterV2Flavor["makeRuntime"] {
   return (runtimeInput) =>
     Effect.gen(function* () {
+      const protocolEvents = input.protocolEvents;
+      const protocolLogging =
+        protocolEvents === undefined
+          ? runtimeInput.protocolLogging
+          : {
+              ...runtimeInput.protocolLogging,
+              logger: (event: EffectAcpProtocol.AcpProtocolLogEvent) =>
+                Queue.offer(protocolEvents, event).pipe(
+                  Effect.andThen(runtimeInput.protocolLogging.logger?.(event) ?? Effect.void),
+                  Effect.asVoid,
+                ),
+            };
       const context = yield* Layer.build(
         AcpSessionRuntime.layer({
           ...runtimeInput,
+          protocolLogging,
           spawn: {
             command: process.execPath,
             args: [input.mockAgentPath],
@@ -72,6 +92,20 @@ function makeMockRuntime(input: {
     });
 }
 
+function rawProtocolMethod(event: EffectAcpProtocol.AcpProtocolLogEvent): string | undefined {
+  if (event.stage !== "raw" || typeof event.payload !== "string") return undefined;
+  for (const line of event.payload.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    const decoded = Option.getOrUndefined(decodeUnknownJson(trimmed));
+    if (typeof decoded === "object" && decoded !== null && "method" in decoded) {
+      const method = (decoded as { readonly method?: unknown }).method;
+      if (typeof method === "string") return method;
+    }
+  }
+  return undefined;
+}
+
 function makeTurnInput(input: {
   readonly threadId: ThreadId;
   readonly providerThread: OrchestrationV2ProviderThread;
@@ -79,10 +113,12 @@ function makeTurnInput(input: {
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly now: DateTime.Utc;
   readonly ordinal?: number;
+  readonly modelSelection?: ModelSelection;
 }): ProviderAdapterV2TurnInput {
   const ordinal = input.ordinal ?? 1;
   const suffix = `${input.threadId}:${ordinal}`;
-  const modelSelection = { instanceId: input.instanceId, model: "default" } as const;
+  const modelSelection =
+    input.modelSelection ?? ({ instanceId: input.instanceId, model: "default" } as const);
   return {
     appThread: {
       createdBy: "user",
@@ -187,6 +223,156 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
+  it.effect("rejects requested options that the active ACP session does not expose", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath }),
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+      });
+      const threadId = ThreadId.make("thread-acp-unsupported-option");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const error = yield* adapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-unsupported-option"),
+          modelSelection: {
+            instanceId,
+            model: "default",
+            options: [{ id: "missing-option", value: "high" }],
+          },
+          runtimePolicy,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "ProviderAdapterOpenSessionError");
+      assert.include(String(error.cause), "does not expose requested configuration option(s)");
+      assert.include(String(error.cause), "missing-option");
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("reconfigures a loaded ACP session from its own active setup metadata", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents }),
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+      });
+      const firstThreadId = ThreadId.make("thread-acp-active-setup:first");
+      const secondThreadId = ThreadId.make("thread-acp-active-setup:second");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const initialSelection = { instanceId, model: "default" } satisfies ModelSelection;
+      const alternateSelection = {
+        instanceId,
+        model: "grok-mock-alt",
+      } satisfies ModelSelection;
+      const originalSelection = { instanceId, model: "grok-build" } satisfies ModelSelection;
+      const runtime = yield* adapter.openSession({
+        threadId: firstThreadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-active-setup"),
+        modelSelection: initialSelection,
+        runtimePolicy,
+      });
+      const firstProviderThread = yield* runtime.ensureThread({
+        threadId: firstThreadId,
+        modelSelection: initialSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId: firstThreadId,
+          providerThread: firstProviderThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: alternateSelection,
+          now,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+
+      const secondProviderThread: OrchestrationV2ProviderThread = {
+        ...firstProviderThread,
+        id: ProviderThreadId.make("provider-thread-acp-active-setup:second"),
+        appThreadId: secondThreadId,
+        nativeThreadRef: {
+          driver: ACP_TEST_DRIVER,
+          nativeId: "mock-session-2",
+          strength: "strong",
+        },
+        status: "idle",
+      };
+      yield* runtime.resumeThread({
+        providerThread: secondProviderThread,
+        modelSelection: alternateSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId: secondThreadId,
+          providerThread: secondProviderThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: originalSelection,
+          now,
+          ordinal: 2,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+
+      const setModelRequests = Array.from(yield* Queue.takeAll(protocolEvents)).filter(
+        (event) =>
+          event.direction === "outgoing" && rawProtocolMethod(event) === "session/set_model",
+      );
+      assert.lengthOf(setModelRequests, 2);
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   it.effect("cancels pending permission requests while interrupting an ACP turn", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -283,6 +469,7 @@ describe("AcpAdapterV2", () => {
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
       const instanceId = ProviderInstanceId.make("acp-test");
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
       const adapter = makeAcpAdapterV2({
         instanceId,
         flavor: {
@@ -292,6 +479,7 @@ describe("AcpAdapterV2", () => {
             childProcessSpawner,
             mockAgentPath,
             environment: { T3_ACP_PROMPT_DELAY_MS: "5000" },
+            protocolEvents,
           }),
         },
         fileSystem,
@@ -325,9 +513,10 @@ describe("AcpAdapterV2", () => {
         now,
       });
       yield* runtime.startTurn(firstTurn);
-      yield* runtime.rawEvents.pipe(
+      yield* Stream.fromQueue(protocolEvents).pipe(
         Stream.filter(
-          (event) => event.direction === "outgoing" && event.method === "session/prompt",
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt",
         ),
         Stream.runHead,
       );
@@ -338,9 +527,10 @@ describe("AcpAdapterV2", () => {
       const interruptFiber = yield* runtime
         .interruptTurn({ providerThread, providerTurnId })
         .pipe(Effect.flip, Effect.forkScoped);
-      yield* runtime.rawEvents.pipe(
+      yield* Stream.fromQueue(protocolEvents).pipe(
         Stream.filter(
-          (event) => event.direction === "outgoing" && event.method === "session/cancel",
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/cancel",
         ),
         Stream.runHead,
       );

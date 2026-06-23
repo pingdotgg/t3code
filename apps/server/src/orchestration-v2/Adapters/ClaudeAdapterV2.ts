@@ -17,11 +17,16 @@ import {
 import type { WebSearchOutput } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
 import {
+  type ChatAttachment,
+  ClaudeSettings,
+  defaultInstanceIdForDriver,
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
@@ -43,6 +48,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -51,6 +57,8 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { makeClaudeEnvironment } from "../../provider/Drivers/ClaudeHome.ts";
 import {
@@ -60,6 +68,8 @@ import {
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
+import { makeProviderFailure } from "../ProviderFailure.ts";
+import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
   ProviderAdapterEnsureThreadError,
   ProviderAdapterForkThreadError,
@@ -316,6 +326,8 @@ export interface ClaudeAgentSdkLoggedQueryOptions {
   readonly allowedTools?: ClaudeAgentSdkQueryOptions["allowedTools"];
   readonly disallowedTools?: ClaudeAgentSdkQueryOptions["disallowedTools"];
   readonly settings?: ClaudeAgentSdkQueryOptions["settings"];
+  readonly effort?: ClaudeAgentSdkQueryOptions["effort"];
+  readonly includePartialMessages?: true;
   readonly pathToClaudeCodeExecutable?: ClaudeAgentSdkQueryOptions["pathToClaudeCodeExecutable"];
   readonly extraArgs?: ClaudeAgentSdkQueryOptions["extraArgs"];
   readonly allowDangerouslySkipPermissions?: true;
@@ -404,6 +416,8 @@ export function loggedClaudeQueryOptions(
     ...(options.allowedTools === undefined ? {} : { allowedTools: options.allowedTools }),
     ...(options.disallowedTools === undefined ? {} : { disallowedTools: options.disallowedTools }),
     ...(options.settings === undefined ? {} : { settings: options.settings }),
+    ...(options.effort === undefined ? {} : { effort: options.effort }),
+    ...(options.includePartialMessages === true ? { includePartialMessages: true } : {}),
     ...(options.pathToClaudeCodeExecutable === undefined
       ? {}
       : { pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable }),
@@ -618,16 +632,33 @@ export function makeClaudeQueryOptions(input: {
   readonly canUseTool?: CanUseTool;
   readonly allowDangerouslySkipPermissions?: boolean;
 }): ClaudeAgentSdkQueryOptions {
+  const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const extraArgs =
     input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
   const threadIdentity: ClaudeAgentSdkThreadIdentity = input.resume
     ? { resume: input.nativeThreadId }
     : { sessionId: input.nativeThreadId };
   const selectedTools = input.tools ?? CLAUDE_CODE_PRESET_TOOLS;
+  const selectionSettings =
+    Object.keys(compiledSelection.settings).length === 0
+      ? undefined
+      : (compiledSelection.settings as ClaudeSdkSettings);
+  const querySettings =
+    selectionSettings === undefined
+      ? input.sdkSettings
+      : typeof input.sdkSettings === "object" && input.sdkSettings !== null
+        ? ({ ...input.sdkSettings, ...selectionSettings } as ClaudeSdkSettings)
+        : selectionSettings;
   const options: ClaudeAgentSdkQueryOptions = {
-    model: input.modelSelection.model,
+    model: compiledSelection.apiModelId,
     tools: claudeAgentSdkQueryToolsForSdk(selectedTools),
     permissionMode: input.permissionMode ?? "default",
+    includePartialMessages: true,
+    ...(compiledSelection.effort === undefined
+      ? {}
+      : {
+          effort: compiledSelection.effort as NonNullable<ClaudeQueryOptions["effort"]>,
+        }),
     ...threadIdentity,
     ...(input.resumeSessionAt === undefined ? {} : { resumeSessionAt: input.resumeSessionAt }),
     ...(input.allowedTools === undefined ? {} : { allowedTools: [...input.allowedTools] }),
@@ -636,7 +667,7 @@ export function makeClaudeQueryOptions(input: {
     ...(input.allowDangerouslySkipPermissions === true
       ? { allowDangerouslySkipPermissions: true }
       : {}),
-    ...(input.sdkSettings === undefined ? {} : { settings: input.sdkSettings }),
+    ...(querySettings === undefined ? {} : { settings: querySettings }),
     ...(input.settings?.binaryPath
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
@@ -884,6 +915,24 @@ const resolveClaudeRollbackResumeSessionAt = Effect.fn(
   }
 });
 
+type ClaudeUserContent = SDKUserMessage["message"]["content"];
+type ClaudeUserContentBlock = Exclude<ClaudeUserContent, string>[number];
+
+const SUPPORTED_CLAUDE_IMAGE_MIME_TYPES = [
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const;
+type SupportedClaudeImageMimeType = (typeof SUPPORTED_CLAUDE_IMAGE_MIME_TYPES)[number];
+const supportedClaudeImageMimeTypes = new Set<string>(SUPPORTED_CLAUDE_IMAGE_MIME_TYPES);
+
+function isSupportedClaudeImageMimeType(
+  mimeType: string,
+): mimeType is SupportedClaudeImageMimeType {
+  return supportedClaudeImageMimeTypes.has(mimeType);
+}
+
 export function makeClaudeUserMessage(input: {
   readonly text: string;
   readonly priority?: SDKUserMessage["priority"];
@@ -899,6 +948,75 @@ export function makeClaudeUserMessage(input: {
   };
 }
 
+const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly priority?: SDKUserMessage["priority"];
+  readonly attachmentsDir: string;
+  readonly fileSystem: FileSystem.FileSystem;
+}) {
+  if (input.attachments.length === 0) {
+    return makeClaudeUserMessage({
+      text: input.text,
+      ...(input.priority === undefined ? {} : { priority: input.priority }),
+    });
+  }
+
+  const content: Array<ClaudeUserContentBlock> = [];
+  if (input.text.length > 0) {
+    content.push({ type: "text", text: input.text });
+  }
+
+  for (const attachment of input.attachments) {
+    if (!isSupportedClaudeImageMimeType(attachment.mimeType)) {
+      return yield* new ProviderAdapterProtocolError({
+        driver: CLAUDE_PROVIDER,
+        detail: `Unsupported Claude image attachment type '${attachment.mimeType}'`,
+      });
+    }
+
+    const attachmentPath = resolveAttachmentPath({
+      attachmentsDir: input.attachmentsDir,
+      attachment,
+    });
+    if (attachmentPath === null) {
+      return yield* new ProviderAdapterProtocolError({
+        driver: CLAUDE_PROVIDER,
+        detail: `Invalid attachment id '${attachment.id}'`,
+      });
+    }
+
+    const bytes = yield* input.fileSystem.readFile(attachmentPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterProtocolError({
+            driver: CLAUDE_PROVIDER,
+            detail: `Failed to read attachment '${attachment.id}'`,
+            payload: cause,
+          }),
+      ),
+    );
+    content.push({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: attachment.mimeType,
+        data: Buffer.from(bytes).toString("base64"),
+      },
+    });
+  }
+
+  return {
+    type: "user",
+    message: {
+      role: "user",
+      content,
+    },
+    parent_tool_use_id: null,
+    ...(input.priority === undefined ? {} : { priority: input.priority }),
+  } satisfies SDKUserMessage;
+});
+
 type ClaudeAssistantContentBlock = SDKAssistantMessage["message"]["content"][number];
 type ClaudeToolUseContentBlock = Extract<
   ClaudeAssistantContentBlock,
@@ -908,8 +1026,6 @@ type ClaudeToolUseContentBlock = Extract<
     readonly input: unknown;
   }
 >;
-type ClaudeUserContent = SDKUserMessage["message"]["content"];
-type ClaudeUserContentBlock = Exclude<ClaudeUserContent, string>[number];
 type ClaudeAssistantToolResultContentBlock = Extract<
   ClaudeAssistantContentBlock,
   {
@@ -1660,8 +1776,8 @@ interface ClaudeLiveQueryContext {
   readonly nativeThreadId: string;
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
+  readonly selectionKey: string;
   readonly closed: Deferred.Deferred<void, never>;
-  currentModel: string;
 }
 
 interface ActiveClaudeToolCall {
@@ -1687,6 +1803,8 @@ export interface ClaudeAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: ClaudeSettings;
   readonly environment: NodeJS.ProcessEnv;
+  readonly attachmentsDir: string;
+  readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2Shape;
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
 }
@@ -1694,12 +1812,13 @@ export interface ClaudeAdapterV2Options {
 export function makeClaudeAdapterV2(
   adapterOptions: ClaudeAdapterV2Options,
 ): ProviderAdapterV2Shape {
-  const { idAllocator, queryRunner } = adapterOptions;
+  const { attachmentsDir, fileSystem, idAllocator, queryRunner } = adapterOptions;
 
   return ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
     driver: CLAUDE_PROVIDER,
     getCapabilities: () => Effect.succeed(ClaudeProviderCapabilitiesV2),
+    planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
     openSession: Effect.fn("ClaudeAdapterV2.openSession")(
       function* (input: ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
@@ -1744,7 +1863,7 @@ export function makeClaudeAdapterV2(
             updated.set(context.nativeTurnId, next);
             return [next, updated];
           });
-          const nextOrdinal = context.input.runOrdinal * 100 + nextWithinTurn;
+          const nextOrdinal = context.input.providerTurnOrdinal * 100 + nextWithinTurn;
           yield* Ref.update(itemOrdinals, (current) => {
             const updated = new Map(current);
             updated.set(nativeItemId, nextOrdinal);
@@ -2351,6 +2470,8 @@ export function makeClaudeAdapterV2(
             "completed" | "interrupted" | "failed" | "cancelled"
           >;
           readonly completedAt: DateTime.Utc;
+          readonly failure?: OrchestrationV2ProviderFailure;
+          readonly threadDisposition?: "reusable" | "broken";
         }) {
           for (const toolCall of input.context.toolCalls.values()) {
             const artifacts = buildToolCallArtifacts({
@@ -2410,6 +2531,33 @@ export function makeClaudeAdapterV2(
             );
           }
 
+          const threadDisposition = input.threadDisposition ?? "reusable";
+          const terminalEvent: ProviderAdapterV2Event =
+            input.status === "failed"
+              ? {
+                  type: "turn.terminal",
+                  driver: CLAUDE_PROVIDER,
+                  providerThreadId: input.context.input.providerThread.id,
+                  providerTurnId: input.context.providerTurnId,
+                  runOrdinal: input.context.input.runOrdinal,
+                  failureItemOrdinal: yield* resolveItemOrdinal(
+                    input.context,
+                    `terminal-failure:${input.context.providerTurnId}`,
+                  ),
+                  status: input.status,
+                  failure: input.failure ?? makeProviderFailure({ class: "provider_error" }),
+                  threadDisposition,
+                }
+              : {
+                  type: "turn.terminal",
+                  driver: CLAUDE_PROVIDER,
+                  providerThreadId: input.context.input.providerThread.id,
+                  providerTurnId: input.context.providerTurnId,
+                  runOrdinal: input.context.input.runOrdinal,
+                  status: input.status,
+                  failure: null,
+                  threadDisposition,
+                };
           yield* Effect.all(
             [
               emitProviderEvent({
@@ -2431,7 +2579,7 @@ export function makeClaudeAdapterV2(
                         ...input.context.input.providerThread,
                         providerSessionId: session.id,
                         nativeConversationHeadRef: null,
-                        status: "idle" as const,
+                        status: "active" as const,
                         firstRunOrdinal:
                           input.context.input.providerThread.firstRunOrdinal ??
                           input.context.input.runOrdinal,
@@ -2441,12 +2589,7 @@ export function makeClaudeAdapterV2(
                     }),
                   ]
                 : []),
-              emitProviderEvent({
-                type: "turn.terminal",
-                driver: CLAUDE_PROVIDER,
-                providerTurnId: input.context.providerTurnId,
-                status: input.status,
-              }),
+              emitProviderEvent(terminalEvent),
             ],
             { concurrency: 1 },
           );
@@ -2460,7 +2603,9 @@ export function makeClaudeAdapterV2(
           });
         });
 
-        const finalizeActiveTurnAfterQueryExit = Effect.fnUntraced(function* (cause?: unknown) {
+        const finalizeActiveTurnAfterQueryExit = Effect.fnUntraced(function* (
+          cause?: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
+        ) {
           const context = yield* Ref.get(activeTurn);
           if (context === null) {
             return;
@@ -2471,6 +2616,14 @@ export function makeClaudeAdapterV2(
             context,
             status: interrupted ? "interrupted" : "failed",
             completedAt,
+            ...(interrupted
+              ? {}
+              : {
+                  failure: makeProviderFailure({
+                    cause: cause === undefined ? undefined : Cause.squash(cause),
+                    class: "transport_error",
+                  }),
+                }),
           });
           yield* Ref.update(interruptedTurns, (current) => {
             const next = new Set(current);
@@ -2622,6 +2775,15 @@ export function makeClaudeAdapterV2(
               context,
               status: interrupted ? "interrupted" : terminalStatusFromResult(message),
               completedAt,
+              ...(message.subtype === "success" || interrupted
+                ? {}
+                : {
+                    failure: makeProviderFailure({
+                      message: message.errors.join("\n"),
+                      code: message.subtype,
+                      class: "provider_error",
+                    }),
+                  }),
             });
           }
         });
@@ -2736,17 +2898,15 @@ export function makeClaudeAdapterV2(
               : { allowedTools: queryPolicy.allowedTools }),
           });
           const queryPolicyKey = claudeRuntimeQueryPolicyKey(queryPolicy);
+          const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
-            existing.queryPolicyKey === queryPolicyKey
+            existing.queryPolicyKey === queryPolicyKey &&
+            existing.selectionKey === compiledSelection.queryIdentity
           ) {
-            if (existing.currentModel !== turnInput.modelSelection.model) {
-              yield* existing.query.setModel(turnInput.modelSelection.model);
-              existing.currentModel = turnInput.modelSelection.model;
-            }
             return existing;
           }
 
@@ -2789,8 +2949,8 @@ export function makeClaudeAdapterV2(
             nativeThreadId,
             query: querySession,
             queryPolicyKey,
+            selectionKey: compiledSelection.queryIdentity,
             closed,
-            currentModel: turnInput.modelSelection.model,
           };
           yield* Ref.set(queryContext, context);
           yield* querySession.messages.pipe(
@@ -2847,6 +3007,15 @@ export function makeClaudeAdapterV2(
               subagentsByToolUseId: new Map(),
               subagentNodesByTaskId: new Map(),
             };
+            const userMessage = yield* makeClaudeUserMessageWithAttachments({
+              text: applyClaudePromptEffortPrefix(
+                turnInput.message.text,
+                compileClaudeModelSelection(turnInput.modelSelection).promptEffort,
+              ),
+              attachments: turnInput.message.attachments,
+              attachmentsDir,
+              fileSystem,
+            });
             const querySession = yield* openQuery(turnInput, nativeThreadId);
             yield* Ref.set(activeTurn, context);
             yield* emitProviderEvent({
@@ -2858,9 +3027,7 @@ export function makeClaudeAdapterV2(
                 completedAt: null,
               }),
             });
-            yield* querySession.query.offer(
-              makeClaudeUserMessage({ text: turnInput.message.text }),
-            );
+            yield* querySession.query.offer(userMessage);
           },
           (effect, turnInput) =>
             effect.pipe(
@@ -2953,14 +3120,22 @@ export function makeClaudeAdapterV2(
                 detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
               });
             }
+            const userMessage = yield* makeClaudeUserMessageWithAttachments({
+              text: applyClaudePromptEffortPrefix(
+                turnInput.message.text,
+                compileClaudeModelSelection(currentTurn.input.modelSelection).promptEffort,
+              ),
+              attachments: turnInput.message.attachments,
+              priority: "now",
+              attachmentsDir,
+              fileSystem,
+            });
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);
               next.add(turnInput.providerTurnId);
               return next;
             });
-            yield* existing.query.offer(
-              makeClaudeUserMessage({ text: turnInput.message.text, priority: "now" }),
-            );
+            yield* existing.query.offer(userMessage);
           },
           (effect, turnInput) =>
             effect.pipe(
@@ -3022,7 +3197,6 @@ export function makeClaudeAdapterV2(
           driver: CLAUDE_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
-          rawEvents: Stream.empty,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ensureThread: Effect.fn("ClaudeAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapterV2EnsureThreadInput) {
@@ -3274,7 +3448,12 @@ export function makeClaudeAdapterV2(
   });
 }
 
-export type ClaudeAdapterV2DriverEnv = ClaudeAgentSdkQueryRunner | IdAllocatorV2 | Path.Path;
+export type ClaudeAdapterV2DriverEnv =
+  | ClaudeAgentSdkQueryRunner
+  | FileSystem.FileSystem
+  | IdAllocatorV2
+  | Path.Path
+  | ServerConfig;
 
 export const ClaudeAdapterV2Driver: ProviderAdapterDriver<
   ClaudeSettings,
@@ -3286,15 +3465,19 @@ export const ClaudeAdapterV2Driver: ProviderAdapterDriver<
   create: Effect.fn("ClaudeAdapterV2Driver.create")(
     function* (input: ProviderAdapterDriverCreateInput<ClaudeSettings>) {
       const { instanceId, environment, enabled, config } = input;
+      const fileSystem = yield* FileSystem.FileSystem;
       const hostEnvironment = yield* HostProcessEnvironment;
       const idAllocator = yield* IdAllocatorV2;
       const queryRunner = yield* ClaudeAgentSdkQueryRunner;
+      const serverConfig = yield* ServerConfig;
       const baseEnvironment = mergeProviderInstanceEnvironment(environment, hostEnvironment);
       const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
       return makeClaudeAdapterV2({
         instanceId,
         settings: { ...config, enabled },
         environment: claudeEnvironment,
+        attachmentsDir: serverConfig.attachmentsDir,
+        fileSystem,
         idAllocator,
         queryRunner,
       });
@@ -3315,14 +3498,18 @@ export const ClaudeAdapterV2Driver: ProviderAdapterDriver<
 };
 
 const makeDefaultClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2.layer")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
   const hostEnvironment = yield* HostProcessEnvironment;
   const idAllocator = yield* IdAllocatorV2;
   const queryRunner = yield* ClaudeAgentSdkQueryRunner;
+  const serverConfig = yield* ServerConfig;
 
   return makeClaudeAdapterV2({
     instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
     settings: DEFAULT_CLAUDE_SETTINGS,
     environment: hostEnvironment,
+    attachmentsDir: serverConfig.attachmentsDir,
+    fileSystem,
     idAllocator,
     queryRunner,
   });
@@ -3331,5 +3518,5 @@ const makeDefaultClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2.layer")(function* 
 export const layer: Layer.Layer<
   ProviderAdapterV2,
   never,
-  ClaudeAgentSdkQueryRunner | IdAllocatorV2
+  ClaudeAgentSdkQueryRunner | FileSystem.FileSystem | IdAllocatorV2 | ServerConfig
 > = Layer.effect(ProviderAdapterV2, makeDefaultClaudeAdapterV2());

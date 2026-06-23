@@ -68,7 +68,11 @@ export function threadRuntimeIsActive(runtime: ThreadRuntimeSummary | null | und
 
 export function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolean {
   return (
-    status === "queued" || status === "starting" || status === "running" || status === "waiting"
+    status === "preparing" ||
+    status === "queued" ||
+    status === "starting" ||
+    status === "running" ||
+    status === "waiting"
   );
 }
 
@@ -347,6 +351,12 @@ function summarizeWorkItem(item: OrchestrationV2TurnItem): {
       return { label: title ?? "Interrupt requested", detail: item.message, toolData: item };
     case "run_interrupt_result":
       return { label: title ?? "Run interrupted", detail: item.message, toolData: item };
+    case "error":
+      return {
+        label: title ?? "Provider error",
+        detail: item.failure.message,
+        toolData: item,
+      };
     case "compaction":
       return {
         label: title ?? "Context compacted",
@@ -659,7 +669,11 @@ export function presentThread(
       )?.id ?? null,
     activeRunId:
       projection.runs.findLast(
-        (run) => run.status === "starting" || run.status === "running" || run.status === "waiting",
+        (run) =>
+          run.status === "preparing" ||
+          run.status === "starting" ||
+          run.status === "running" ||
+          run.status === "waiting",
       )?.id ?? null,
     status: presentLatestRun(projection)?.status ?? "idle",
     pendingRuntimeRequest:

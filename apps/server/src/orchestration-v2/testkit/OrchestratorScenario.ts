@@ -50,6 +50,12 @@ export type OrchestratorV2ScenarioStep =
       readonly runId: OrchestrationV2Run["id"];
     }
   | {
+      readonly type: "await_run_status";
+      readonly threadId: ThreadId;
+      readonly runId: OrchestrationV2Run["id"];
+      readonly status: OrchestrationV2Run["status"];
+    }
+  | {
       readonly type: "await_run_turn_item";
       readonly threadId: ThreadId;
       readonly runId: OrchestrationV2Run["id"];
@@ -101,6 +107,9 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.model-selection.set":
     case "provider-session.detach":
     case "message.dispatch":
+    case "prepared-run.release":
+    case "prepared-run.progress":
+    case "prepared-run.fail":
     case "run.interrupt":
     case "queued-message.promote-to-steer":
     case "queued-run.reorder":
@@ -139,7 +148,9 @@ const findPendingRuntimeRequest = (projection: OrchestrationV2ThreadProjection) 
   projection.runtimeRequests.find((request) => request.status === "pending");
 
 const hasActiveRun = (projection: OrchestrationV2ThreadProjection) =>
-  projection.runs.some((run) => ["queued", "starting", "running", "waiting"].includes(run.status));
+  projection.runs.some((run) =>
+    ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+  );
 
 const SCENARIO_WAIT_ATTEMPTS = 10_000;
 
@@ -242,7 +253,9 @@ export function runOrchestratorV2Scenario(
           }
           if (attemptsRemaining <= 0) {
             const activeRuns = projection.runs
-              .filter((run) => ["queued", "starting", "running", "waiting"].includes(run.status))
+              .filter((run) =>
+                ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+              )
               .map((run) => `${run.id}:${run.status}`)
               .join(",");
             const pendingRequests = projection.runtimeRequests
@@ -283,6 +296,28 @@ export function runOrchestratorV2Scenario(
           }
           yield* yieldToRuntime;
           return yield* waitForRunSteerable(threadId, runId, attemptsRemaining - 1);
+        });
+
+      const waitForRunStatus = (
+        threadId: ThreadId,
+        runId: OrchestrationV2Run["id"],
+        status: OrchestrationV2Run["status"],
+        attemptsRemaining = SCENARIO_WAIT_ATTEMPTS,
+      ): Effect.Effect<void, OrchestratorV2Error | OrchestratorV2ScenarioStepError, never> =>
+        Effect.gen(function* () {
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          const run = projection.runs.find((candidate) => candidate.id === runId);
+          if (run?.status === status) {
+            return;
+          }
+          if (attemptsRemaining <= 0) {
+            return yield* new OrchestratorV2ScenarioStepError({
+              scenario: scenario.name,
+              step: `await_run_status:${runId}:${status}:actual=${run?.status ?? "missing"}`,
+            });
+          }
+          yield* yieldToRuntime;
+          return yield* waitForRunStatus(threadId, runId, status, attemptsRemaining - 1);
         });
 
       const waitForRunTurnItem = (
@@ -345,6 +380,9 @@ export function runOrchestratorV2Scenario(
             break;
           case "await_run_steerable":
             yield* waitForRunSteerable(step.threadId, step.runId);
+            break;
+          case "await_run_status":
+            yield* waitForRunStatus(step.threadId, step.runId, step.status);
             break;
           case "await_run_turn_item":
             yield* waitForRunTurnItem(step.threadId, step.runId, step.itemType);
