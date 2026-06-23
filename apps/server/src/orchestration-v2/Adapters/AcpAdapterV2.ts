@@ -6,10 +6,10 @@ import {
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2PlanStep,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
-  type OrchestrationV2RawProviderEvent,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserInputQuestion,
@@ -21,6 +21,8 @@ import {
   type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -31,7 +33,6 @@ import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -50,6 +51,8 @@ import type {
 } from "../../provider/acp/AcpSessionRuntime.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
+import { makeProviderFailure } from "../ProviderFailure.ts";
+import { acpSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
   ProviderAdapterEnsureThreadError,
   ProviderAdapterForkThreadError,
@@ -80,8 +83,14 @@ export interface AcpAdapterV2RuntimeInput {
   readonly mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly clientCapabilities: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: AcpSessionRuntimeOptions["clientInfo"];
+  readonly requestLogger?: NonNullable<AcpSessionRuntimeOptions["requestLogger"]>;
   readonly protocolLogging: NonNullable<AcpSessionRuntimeOptions["protocolLogging"]>;
 }
+
+export type AcpAdapterV2NativeLogging = Pick<
+  AcpSessionRuntimeOptions,
+  "requestLogger" | "protocolLogging"
+>;
 
 export interface AcpAdapterV2UserInputRequest {
   readonly nativeItemId: string;
@@ -119,6 +128,7 @@ export interface AcpAdapterV2Options {
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2Shape;
   readonly serverConfig: ServerConfig["Service"];
+  readonly nativeLogging?: (threadId: ThreadId) => AcpAdapterV2NativeLogging;
 }
 
 export const AcpProviderCapabilitiesV2 = {
@@ -489,12 +499,6 @@ export function acpPermissionDisposition(
   }
 }
 
-function jsonRpcId(value: unknown): string | number | null {
-  return (typeof value === "string" && value.length > 0) || typeof value === "number"
-    ? value
-    : null;
-}
-
 function elicitationContent(
   answers: ProviderUserInputAnswers,
   allowedKeys: ReadonlySet<string>,
@@ -509,32 +513,6 @@ function elicitationContent(
     }
   }
   return content;
-}
-
-function rawJsonRpcMessages(payload: unknown): ReadonlyArray<Record<string, unknown>> {
-  if (typeof payload !== "string") {
-    return [];
-  }
-  const messages: Array<Record<string, unknown>> = [];
-  for (const line of payload.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
-    try {
-      const decoded: unknown = JSON.parse(trimmed);
-      if (Array.isArray(decoded)) {
-        for (const entry of decoded) {
-          const record = unknownRecord(entry);
-          if (record !== undefined) messages.push(record);
-        }
-      } else {
-        const record = unknownRecord(decoded);
-        if (record !== undefined) messages.push(record);
-      }
-    } catch {
-      messages.push({ raw: trimmed });
-    }
-  }
-  return messages;
 }
 
 interface ActiveTextSegment {
@@ -589,19 +567,6 @@ interface SnapshotMessageState {
   loadingIndex: number;
 }
 
-interface RawProtocolState {
-  readonly pendingMethods: Map<string, string>;
-  sequence: number;
-}
-
-function requestKey(direction: "incoming" | "outgoing", id: string | number): string {
-  return `${direction}:${String(id)}`;
-}
-
-function oppositeDirection(direction: "incoming" | "outgoing"): "incoming" | "outgoing" {
-  return direction === "incoming" ? "outgoing" : "incoming";
-}
-
 export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV2Shape {
   const { flavor, fileSystem, idAllocator, serverConfig } = options;
   const driver = flavor.driver;
@@ -610,17 +575,15 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
     instanceId: options.instanceId,
     driver,
     getCapabilities: () => Effect.succeed(flavor.capabilities),
+    planSelectionTransition: (input) => Effect.succeed(acpSelectionTransition(input)),
     openSession: Effect.fn("AcpAdapterV2.openSession")(
       function* (input: ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
         const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
-        const rawEvents = yield* Queue.unbounded<OrchestrationV2RawProviderEvent>();
-        const rawState = yield* Ref.make<RawProtocolState>({
-          pendingMethods: new Map(),
-          sequence: 0,
-        });
         const activeTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
         const activeSessionId = yield* Ref.make<string | null>(null);
+        const activeSessionSetup = yield* Ref.make<AcpSessionRuntimeStartResult | null>(null);
+        const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const pendingRuntimeRequests = yield* Ref.make(new Map<string, PendingRuntimeRequest>());
         const nextElicitationOrdinal = yield* Ref.make(0);
         const itemOrdinals = yield* Ref.make(new Map<string, number>());
@@ -636,61 +599,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         const emitProviderEvent = (event: ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
 
-        const protocolLogger = (
-          event: EffectAcpProtocol.AcpProtocolLogEvent,
-        ): Effect.Effect<void, never> =>
-          Effect.gen(function* () {
-            if (event.stage !== "raw") return;
-            for (const message of rawJsonRpcMessages(event.payload)) {
-              const methodValue = message.method;
-              const id = jsonRpcId(message.id);
-              let method = typeof methodValue === "string" ? methodValue : null;
-              let messageKind: OrchestrationV2RawProviderEvent["messageKind"];
-              if (method !== null) {
-                messageKind = id === null ? "notification" : "request";
-              } else if ("error" in message) {
-                messageKind = "error";
-              } else {
-                messageKind = "response";
-              }
-              const state = yield* Ref.get(rawState);
-              if (method !== null && id !== null) {
-                state.pendingMethods.set(requestKey(event.direction, id), method);
-              } else if (id !== null) {
-                method =
-                  state.pendingMethods.get(requestKey(oppositeDirection(event.direction), id)) ??
-                  null;
-                state.pendingMethods.delete(requestKey(oppositeDirection(event.direction), id));
-              }
-              state.sequence += 1;
-              const now = yield* DateTime.now;
-              const rawEventId = yield* idAllocator.allocate.rawEvent({
-                providerSessionId: input.providerSessionId,
-                method,
-              });
-              yield* Queue.offer(rawEvents, {
-                id: rawEventId,
-                driver,
-                providerInstanceId: options.instanceId,
-                providerSessionId: input.providerSessionId,
-                sequence: state.sequence,
-                direction: event.direction,
-                messageKind,
-                method,
-                jsonRpcId: id,
-                payload: message,
-                observedAt: now,
-              });
-            }
-          }).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("orchestration-v2.acp-raw-event-failed", {
-                driver,
-                providerSessionId: input.providerSessionId,
-                cause,
-              }),
-            ),
-          );
+        const nativeLogging = options.nativeLogging?.(input.threadId);
 
         const runtime = yield* flavor.makeRuntime({
           cwd: input.runtimePolicy.cwd ?? process.cwd(),
@@ -701,10 +610,13 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             elicitation: { form: {} },
           },
           clientInfo: { name: "t3-code", version: "0.0.0" },
-          protocolLogging: {
+          ...(nativeLogging?.requestLogger === undefined
+            ? {}
+            : { requestLogger: nativeLogging.requestLogger }),
+          protocolLogging: nativeLogging?.protocolLogging ?? {
             logIncoming: true,
             logOutgoing: true,
-            logger: protocolLogger,
+            logger: () => Effect.void,
           },
         });
 
@@ -720,7 +632,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             updated.set(context.nativeTurnId, next);
             return [next, updated] as const;
           });
-          const ordinal = context.input.runOrdinal * 100 + nextWithinTurn;
+          const ordinal = context.input.providerTurnOrdinal * 100 + nextWithinTurn;
           yield* Ref.update(itemOrdinals, (current) => {
             const updated = new Map(current);
             updated.set(nativeItemId, ordinal);
@@ -1633,6 +1545,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
 
         const started = yield* runtime.start();
         yield* Ref.set(activeSessionId, started.sessionId);
+        yield* Ref.set(activeSessionSetup, started);
         const capabilities = negotiatedCapabilities(flavor.capabilities, started);
         const canLoadSession = started.initializeResult.agentCapabilities?.loadSession === true;
         const canResumeSession =
@@ -1678,10 +1591,18 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             }
           }
           const configOptions = yield* runtime.getConfigOptions;
+          const availableConfigIds = new Set(configOptions.map((option) => option.id));
+          const unsupportedConfigIds = (modelSelection.options ?? [])
+            .map((selection) => selection.id)
+            .filter((id) => !availableConfigIds.has(id));
+          if (unsupportedConfigIds.length > 0) {
+            return yield* new ProviderAdapterProtocolError({
+              driver,
+              detail: `ACP session ${startResult.sessionId} does not expose requested configuration option(s): ${unsupportedConfigIds.join(", ")}`,
+            });
+          }
           for (const selection of modelSelection.options ?? []) {
-            if (configOptions.some((option) => option.id === selection.id)) {
-              yield* runtime.setConfigOption(selection.id, selection.value);
-            }
+            yield* runtime.setConfigOption(selection.id, selection.value);
           }
           const modeState = yield* runtime.getModeState;
           if (runtimePolicy.interactionMode === "plan" && modeState !== undefined) {
@@ -1693,6 +1614,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         });
 
         yield* configureSession(started, input.modelSelection, input.runtimePolicy);
+        yield* Ref.set(activeSelection, input.modelSelection);
         const createdAt = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: input.providerSessionId,
@@ -1730,6 +1652,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         const finalizeTurn = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           status: "completed" | "interrupted" | "failed" | "cancelled",
+          failure?: OrchestrationV2ProviderFailure,
         ) {
           if (context.finalized) return;
           context.finalized = true;
@@ -1753,19 +1676,40 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             providerThread: {
               ...context.input.providerThread,
               providerSessionId: input.providerSessionId,
-              status: "idle",
+              status: "active",
               lastRunOrdinal: context.input.runOrdinal,
               firstRunOrdinal:
                 context.input.providerThread.firstRunOrdinal ?? context.input.runOrdinal,
               updatedAt: now,
             },
           });
-          yield* emitProviderEvent({
-            type: "turn.terminal",
-            driver,
-            providerTurnId: context.providerTurnId,
-            status,
-          });
+          yield* emitProviderEvent(
+            status === "failed"
+              ? {
+                  type: "turn.terminal",
+                  driver,
+                  providerThreadId: context.input.providerThread.id,
+                  providerTurnId: context.providerTurnId,
+                  runOrdinal: context.input.runOrdinal,
+                  failureItemOrdinal: yield* resolveItemOrdinal(
+                    context,
+                    `terminal-failure:${context.providerTurnId}`,
+                  ),
+                  status,
+                  failure: failure ?? makeProviderFailure({ class: "provider_error" }),
+                  threadDisposition: "reusable",
+                }
+              : {
+                  type: "turn.terminal",
+                  driver,
+                  providerThreadId: context.input.providerThread.id,
+                  providerTurnId: context.providerTurnId,
+                  runOrdinal: context.input.runOrdinal,
+                  status,
+                  failure: null,
+                  threadDisposition: "reusable",
+                },
+          );
           yield* Ref.set(activeTurn, null);
           yield* Deferred.succeed(context.completed, undefined).pipe(Effect.ignore);
         });
@@ -1832,7 +1776,29 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             if ((yield* Ref.get(activeSessionId)) !== requestedSessionId) {
               const activated = yield* activateSession(requestedSessionId);
               yield* Ref.set(activeSessionId, activated.sessionId);
+              yield* Ref.set(activeSessionSetup, activated);
               yield* configureSession(activated, turnInput.modelSelection, turnInput.runtimePolicy);
+              yield* Ref.set(activeSelection, turnInput.modelSelection);
+            } else {
+              const configuredSelection = yield* Ref.get(activeSelection);
+              if (
+                configuredSelection === null ||
+                !modelSelectionsEqual(configuredSelection, turnInput.modelSelection)
+              ) {
+                const currentSessionSetup = yield* Ref.get(activeSessionSetup);
+                if (currentSessionSetup === null) {
+                  return yield* new ProviderAdapterProtocolError({
+                    driver,
+                    detail: `ACP session ${requestedSessionId} has no active setup metadata`,
+                  });
+                }
+                yield* configureSession(
+                  currentSessionSetup,
+                  turnInput.modelSelection,
+                  turnInput.runtimePolicy,
+                );
+                yield* Ref.set(activeSelection, turnInput.modelSelection);
+              }
             }
             const prompt = yield* resolvePromptParts(turnInput);
             const startedAt = yield* DateTime.now;
@@ -1901,7 +1867,14 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 return finalizeTurn(context, status);
               }),
               Effect.catchCause((cause) =>
-                finalizeTurn(context, context.interrupted ? "interrupted" : "failed").pipe(
+                finalizeTurn(
+                  context,
+                  context.interrupted ? "interrupted" : "failed",
+                  makeProviderFailure({
+                    cause: Cause.squash(cause),
+                    class: "provider_error",
+                  }),
+                ).pipe(
                   Effect.andThen(
                     Effect.logWarning("orchestration-v2.acp-prompt-failed", {
                       driver,
@@ -1958,7 +1931,6 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           driver,
           providerSessionId: input.providerSessionId,
           providerSession,
-          rawEvents: Stream.fromEffectRepeat(Queue.take(rawEvents)),
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ensureThread: Effect.fn("AcpAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapterV2EnsureThreadInput) {
@@ -1993,7 +1965,11 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               ),
           ),
           resumeThread: Effect.fn("AcpAdapterV2.resumeThread")(
-            function* (threadInput: { readonly providerThread: OrchestrationV2ProviderThread }) {
+            function* (threadInput: {
+              readonly providerThread: OrchestrationV2ProviderThread;
+              readonly modelSelection?: ModelSelection;
+              readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
+            }) {
               const sessionId = nativeThreadId(driver, threadInput.providerThread);
               if ((yield* Ref.get(activeSessionId)) !== sessionId) {
                 yield* Ref.set(snapshot, {
@@ -2004,7 +1980,14 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 });
                 const activated = yield* activateSession(sessionId);
                 yield* Ref.set(activeSessionId, activated.sessionId);
-                yield* configureSession(activated, input.modelSelection, input.runtimePolicy);
+                yield* Ref.set(activeSessionSetup, activated);
+                const nextSelection = threadInput.modelSelection ?? input.modelSelection;
+                yield* configureSession(
+                  activated,
+                  nextSelection,
+                  threadInput.runtimePolicy ?? input.runtimePolicy,
+                );
+                yield* Ref.set(activeSelection, nextSelection);
               }
               const now = yield* DateTime.now;
               return {
@@ -2119,6 +2102,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 });
                 const activated = yield* runtime.loadSession(sessionId);
                 yield* Ref.set(activeSessionId, activated.sessionId);
+                yield* Ref.set(activeSessionSetup, activated);
+                yield* Ref.set(activeSelection, null);
               }
               const state = yield* Ref.get(snapshot);
               const now = yield* DateTime.now;
@@ -2176,6 +2161,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               const sourceSessionId = nativeThreadId(driver, forkInput.sourceProviderThread);
               const forked = yield* runtime.forkSession(sourceSessionId);
               yield* Ref.set(activeSessionId, forked.sessionId);
+              yield* Ref.set(activeSessionSetup, forked);
+              yield* Ref.set(activeSelection, null);
               const now = yield* DateTime.now;
               return makeProviderThread({
                 driver,

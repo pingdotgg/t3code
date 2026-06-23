@@ -263,6 +263,7 @@ function maxIsoTimestamp(left: string | null, right: string | null): string | nu
 function unsettledRunId(latestRun: ThreadFeedLatestRun | null): RunId | null {
   if (!latestRun) return null;
   return latestRun.completedAt === null ||
+    latestRun.status === "preparing" ||
     latestRun.status === "starting" ||
     latestRun.status === "running" ||
     latestRun.status === "waiting"

@@ -4,6 +4,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
@@ -15,6 +16,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -34,6 +36,7 @@ import type {
   ProviderAdapterV2TurnMessage,
 } from "./ProviderAdapter.ts";
 import { ProviderEventIngestorV2 } from "./ProviderEventIngestor.ts";
+import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -47,6 +50,14 @@ export interface ProviderEventRouteIdentity {
   readonly runId: OrchestrationV2Run["id"];
   readonly attemptId: RunAttemptId;
   readonly providerThreadId: ProviderThreadId;
+}
+
+type ProviderTerminalEvent = Extract<ProviderAdapterV2Event, { readonly type: "turn.terminal" }>;
+
+export function finalProviderThreadStatus(
+  disposition: ProviderTerminalEvent["threadDisposition"],
+): OrchestrationV2ProviderThread["status"] {
+  return disposition === "broken" ? "error" : "idle";
 }
 
 export function makeProviderEventRoutingState(input: {
@@ -207,6 +218,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly providerTurnOrdinal: number;
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
+  readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, never>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
@@ -271,16 +283,14 @@ export const layer: Layer.Layer<
       readonly providerThread: OrchestrationV2ProviderThread;
       readonly attempt: OrchestrationV2RunAttempt;
       readonly shouldFinalizeRun?: () => Effect.Effect<boolean, never>;
-      readonly status: Extract<
-        OrchestrationV2Run["status"],
-        "completed" | "interrupted" | "failed" | "cancelled"
-      >;
+      readonly terminal: ProviderTerminalEvent;
+      readonly failureItemPersisted: boolean;
     }) =>
       Effect.gen(function* () {
         const completedAt = yield* DateTime.now;
         const finalizedAttempt: OrchestrationV2RunAttempt | null = {
           ...input.attempt,
-          status: input.status,
+          status: input.terminal.status,
           completedAt,
         };
         const shouldFinalizeRun =
@@ -289,7 +299,7 @@ export const layer: Layer.Layer<
           // A newer attempt already owns the run and the command that created
           // it terminalized this attempt as superseded. Preserve that domain
           // status while retaining the provider's interruption artifact.
-          if (input.status === "interrupted") {
+          if (input.terminal.status === "interrupted") {
             yield* eventSink.write({
               events: [
                 {
@@ -313,21 +323,22 @@ export const layer: Layer.Layer<
           }
           return;
         }
-        const persistedStatus = input.status === "completed" ? "waiting" : input.status;
+        const persistedStatus =
+          input.terminal.status === "completed" ? "waiting" : input.terminal.status;
         const finalizedRun: OrchestrationV2Run = {
           ...input.run,
           status: persistedStatus,
-          completedAt: input.status === "completed" ? null : completedAt,
+          completedAt: input.terminal.status === "completed" ? null : completedAt,
         };
         const finalizedRootNode: OrchestrationV2ExecutionNode = {
           ...input.rootNode,
           status: persistedStatus,
-          completedAt: input.status === "completed" ? null : completedAt,
+          completedAt: input.terminal.status === "completed" ? null : completedAt,
           checkpointScopeId: input.checkpointScope.id,
         };
         const finalizedProviderThread: OrchestrationV2ProviderThread = {
           ...input.providerThread,
-          status: "idle",
+          status: finalProviderThreadStatus(input.terminal.threadDisposition),
           updatedAt: completedAt,
         };
         const runEventId = yield* idAllocator.allocate.event({ threadId: input.run.threadId });
@@ -340,7 +351,7 @@ export const layer: Layer.Layer<
         );
         yield* eventSink.writeWithEffects({
           effects:
-            input.status === "completed"
+            input.terminal.status === "completed"
               ? [
                   {
                     id: `effect:checkpoint.capture:${input.run.id}`,
@@ -369,7 +380,7 @@ export const layer: Layer.Layer<
                     payload: finalizedAttempt,
                   },
                 ]),
-            ...(input.status === "interrupted"
+            ...(input.terminal.status === "interrupted"
               ? [
                   {
                     id: yield* idAllocator.allocate.event({ threadId: input.run.threadId }),
@@ -385,6 +396,31 @@ export const layer: Layer.Layer<
                       rootNode: input.rootNode,
                       providerThread: input.providerThread,
                       completedAt,
+                    }),
+                  },
+                ]
+              : []),
+            ...(input.terminal.status === "failed" && !input.failureItemPersisted
+              ? [
+                  {
+                    id: yield* idAllocator.allocate.event({ threadId: input.run.threadId }),
+                    type: "turn-item.updated" as const,
+                    threadId: input.run.threadId,
+                    runId: input.run.id,
+                    nodeId: input.rootNode.id,
+                    providerInstanceId: input.run.providerInstanceId,
+                    occurredAt: completedAt,
+                    payload: makeProviderFailureTurnItem({
+                      idAllocator,
+                      driver: input.terminal.driver,
+                      threadId: input.run.threadId,
+                      runId: input.run.id,
+                      nodeId: input.rootNode.id,
+                      providerThreadId: input.terminal.providerThreadId,
+                      providerTurnId: input.terminal.providerTurnId,
+                      itemOrdinal: input.terminal.failureItemOrdinal,
+                      failure: input.terminal.failure,
+                      occurredAt: completedAt,
                     }),
                   },
                 ]
@@ -450,10 +486,33 @@ export const layer: Layer.Layer<
                   }),
               ),
             );
-          const terminalStatus = yield* Ref.make<Extract<
-            OrchestrationV2Run["status"],
-            "completed" | "interrupted" | "failed" | "cancelled"
-          > | null>(null);
+          if (
+            input.shouldStartProviderTurn !== undefined &&
+            !(yield* input.shouldStartProviderTurn())
+          ) {
+            return;
+          }
+          const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
+          const makeFailedTerminalEvent = (
+            failure: OrchestrationV2ProviderFailure,
+            failureItemOrdinal: number,
+          ): ProviderTerminalEvent => ({
+            type: "turn.terminal",
+            driver: input.providerThread.driver,
+            providerThreadId: input.providerThread.id,
+            providerTurnId:
+              input.attempt.providerTurnId ??
+              idAllocator.derive.providerTurn({
+                driver: input.providerThread.driver,
+                nativeTurnId: `failed:${input.attempt.id}`,
+              }),
+            runOrdinal: input.run.ordinal,
+            failureItemOrdinal,
+            status: "failed",
+            failure,
+            threadDisposition: "reusable",
+          });
+          const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
           const latestProviderThread = yield* Ref.make(input.providerThread);
           const routeIdentity: ProviderEventRouteIdentity = {
             threadId: input.run.threadId,
@@ -484,31 +543,52 @@ export const layer: Layer.Layer<
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runForEach((event) =>
               Effect.gen(function* () {
+                let storedEventCount = 0;
                 if (shouldDeliverProviderEvent(event, assistantStreamingEnabled)) {
-                  yield* providerEventIngestor.ingestNormalized({
+                  const storedEvents = yield* providerEventIngestor.ingestNormalized({
                     providerSessionId: input.providerSessionId,
                     providerInstanceId: input.run.providerInstanceId,
                     threadId: input.run.threadId,
                     runId: input.run.id,
                     nodeId: input.rootNode.id,
                     event,
+                    ...(event.type === "provider_thread.updated" &&
+                    event.providerThread.id === input.providerThread.id
+                      ? {
+                          writeIfRunCurrent: {
+                            runId: input.run.id,
+                            activeAttemptId: input.attempt.id,
+                            expectedStatus: "running" as const,
+                          },
+                        }
+                      : {}),
                   });
+                  storedEventCount = storedEvents.length;
                 }
                 if (event.type === "provider_thread.updated") {
-                  if (event.providerThread.id === input.providerThread.id) {
+                  if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
                     yield* Ref.set(latestProviderThread, event.providerThread);
                   }
                 }
+                if (
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.providerTurnId ===
+                    (yield* Ref.get(eventRouting)).rootProviderTurnId
+                ) {
+                  yield* Ref.update(latestTurnItemOrdinal, (current) =>
+                    Math.max(current, event.turnItem.ordinal),
+                  );
+                }
                 if (event.type === "turn.terminal") {
-                  yield* Ref.set(terminalStatus, event.status);
+                  yield* Ref.set(terminalEvent, event);
                 }
               }),
             ),
             Effect.mapError((cause) => new RunExecutionIngestError({ runId: input.run.id, cause })),
             Effect.flatMap(() =>
               Effect.gen(function* () {
-                const status = yield* Ref.get(terminalStatus);
-                if (status === null) {
+                const terminal = yield* Ref.get(terminalEvent);
+                if (terminal === null) {
                   return;
                 }
                 const providerThread = yield* Ref.get(latestProviderThread);
@@ -521,7 +601,8 @@ export const layer: Layer.Layer<
                   ...(input.shouldFinalizeRun === undefined
                     ? {}
                     : { shouldFinalizeRun: input.shouldFinalizeRun }),
-                  status,
+                  terminal,
+                  failureItemPersisted: terminal.status === "failed",
                 }).pipe(
                   Effect.mapError(
                     (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
@@ -536,17 +617,28 @@ export const layer: Layer.Layer<
               }).pipe(
                 Effect.andThen(Ref.get(latestProviderThread)),
                 Effect.flatMap((providerThread) =>
-                  writeFinalRunEvents({
-                    run: input.run,
-                    rootNode: input.rootNode,
-                    checkpointScope: input.checkpointScope,
-                    providerThread,
-                    attempt: input.attempt,
-                    ...(input.shouldFinalizeRun === undefined
-                      ? {}
-                      : { shouldFinalizeRun: input.shouldFinalizeRun }),
-                    status: "failed",
-                  }),
+                  Ref.get(latestTurnItemOrdinal).pipe(
+                    Effect.flatMap((latestItemOrdinal) =>
+                      writeFinalRunEvents({
+                        run: input.run,
+                        rootNode: input.rootNode,
+                        checkpointScope: input.checkpointScope,
+                        providerThread,
+                        attempt: input.attempt,
+                        ...(input.shouldFinalizeRun === undefined
+                          ? {}
+                          : { shouldFinalizeRun: input.shouldFinalizeRun }),
+                        terminal: makeFailedTerminalEvent(
+                          makeProviderFailure({
+                            cause: Cause.squash(cause),
+                            class: "unknown",
+                          }),
+                          latestItemOrdinal + 1,
+                        ),
+                        failureItemPersisted: false,
+                      }),
+                    ),
+                  ),
                 ),
                 Effect.mapError(
                   (writeCause) =>
@@ -560,6 +652,14 @@ export const layer: Layer.Layer<
             Effect.ensuring(eventSubscription.close),
             Effect.forkDetach,
           );
+
+          if (
+            input.shouldStartProviderTurn !== undefined &&
+            !(yield* input.shouldStartProviderTurn())
+          ) {
+            yield* Fiber.interrupt(providerEventFiber);
+            return;
+          }
 
           yield* input.session
             .startTurn({
@@ -584,17 +684,28 @@ export const layer: Layer.Layer<
                   Effect.andThen(Fiber.interrupt(providerEventFiber)),
                   Effect.andThen(Ref.get(latestProviderThread)),
                   Effect.flatMap((providerThread) =>
-                    writeFinalRunEvents({
-                      run: input.run,
-                      rootNode: input.rootNode,
-                      checkpointScope: input.checkpointScope,
-                      providerThread,
-                      attempt: input.attempt,
-                      ...(input.shouldFinalizeRun === undefined
-                        ? {}
-                        : { shouldFinalizeRun: input.shouldFinalizeRun }),
-                      status: "failed",
-                    }),
+                    Ref.get(latestTurnItemOrdinal).pipe(
+                      Effect.flatMap((latestItemOrdinal) =>
+                        writeFinalRunEvents({
+                          run: input.run,
+                          rootNode: input.rootNode,
+                          checkpointScope: input.checkpointScope,
+                          providerThread,
+                          attempt: input.attempt,
+                          ...(input.shouldFinalizeRun === undefined
+                            ? {}
+                            : { shouldFinalizeRun: input.shouldFinalizeRun }),
+                          terminal: makeFailedTerminalEvent(
+                            makeProviderFailure({
+                              cause: Cause.squash(cause),
+                              class: "provider_error",
+                            }),
+                            latestItemOrdinal + 1,
+                          ),
+                          failureItemPersisted: false,
+                        }),
+                      ),
+                    ),
                   ),
                   Effect.mapError(
                     (writeCause) =>

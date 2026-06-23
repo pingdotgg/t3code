@@ -136,6 +136,7 @@ function makeDeterministicAdapter(input: {
     instanceId: input.instanceId,
     driver: input.driver,
     getCapabilities: () => Effect.succeed(input.capabilities),
+    planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
         const events = yield* PubSub.unbounded<ProviderAdapterV2Event>();
@@ -157,13 +158,13 @@ function makeDeterministicAdapter(input: {
           Effect.forEach(providerEvents, (event) => PubSub.publish(events, event), {
             discard: true,
           });
+        const runOrdinals = new Map<ProviderTurnId, number>();
 
         return {
           instanceId: input.instanceId,
           driver: input.driver,
           providerSessionId: sessionInput.providerSessionId,
           providerSession,
-          rawEvents: Stream.empty,
           events: Stream.fromPubSub(events),
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
@@ -206,6 +207,7 @@ function makeDeterministicAdapter(input: {
               const providerTurnId = ProviderTurnId.make(
                 `provider-turn:${input.instanceId}:${turnInput.threadId}:${turnInput.runOrdinal}`,
               );
+              runOrdinals.set(providerTurnId, turnInput.runOrdinal);
               yield* publish([
                 {
                   type: "provider_turn.updated",
@@ -282,18 +284,26 @@ function makeDeterministicAdapter(input: {
                 {
                   type: "turn.terminal",
                   driver: input.driver,
+                  providerThreadId: turnInput.providerThread.id,
                   providerTurnId,
+                  runOrdinal: turnInput.runOrdinal,
                   status: "completed",
+                  failure: null,
+                  threadDisposition: "reusable",
                 },
               ]);
             }),
           steerTurn: () => Effect.void,
-          interruptTurn: ({ providerTurnId }) =>
+          interruptTurn: ({ providerThread, providerTurnId }) =>
             PubSub.publish(events, {
               type: "turn.terminal",
               driver: input.driver,
+              providerThreadId: providerThread.id,
               providerTurnId,
+              runOrdinal: runOrdinals.get(providerTurnId) ?? 1,
               status: "interrupted",
+              failure: null,
+              threadDisposition: "reusable",
             }).pipe(Effect.asVoid),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () =>
