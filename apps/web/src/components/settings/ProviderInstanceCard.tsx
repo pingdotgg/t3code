@@ -101,6 +101,13 @@ function isEnvironmentDraftRowEqualToPersisted(
   );
 }
 
+function isSameEnvironmentVariable(
+  previousVariable: ProviderInstanceEnvironmentVariable,
+  nextVariable: ProviderInstanceEnvironmentVariable,
+): boolean {
+  return previousVariable.name === nextVariable.name;
+}
+
 export function mergeEnvironmentDraftRowsForPersistedUpdate(input: {
   readonly rows: ReadonlyArray<EnvironmentDraftRow>;
   readonly previousEnvironment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
@@ -170,7 +177,9 @@ export function mergeEnvironmentDraftRowsForPersistedUpdate(input: {
 
     if (
       previousVariable !== undefined ||
-      (previousRowAtIndex !== undefined && currentRowAtPreviousIndex === undefined)
+      (previousRowAtIndex !== undefined &&
+        currentRowAtPreviousIndex === undefined &&
+        isSameEnvironmentVariable(previousRowAtIndex, variable))
     ) {
       return [];
     }

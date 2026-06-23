@@ -226,6 +226,35 @@ describe("mergeEnvironmentDraftRowsForPersistedUpdate", () => {
     expect(rows).toEqual([]);
   });
 
+  it("keeps a new persisted row when a different previous-index draft row was deleted", () => {
+    const rows = mergeEnvironmentDraftRowsForPersistedUpdate({
+      rows: [],
+      previousEnvironment: [
+        {
+          name: "API_KEY",
+          value: "old",
+          sensitive: true,
+        },
+      ],
+      nextEnvironment: [
+        {
+          name: "BASE_URL",
+          value: "https://example.test",
+          sensitive: false,
+        },
+      ],
+    });
+
+    expect(rows).toEqual([
+      {
+        id: "0:BASE_URL",
+        name: "BASE_URL",
+        value: "https://example.test",
+        sensitive: false,
+      },
+    ]);
+  });
+
   it("matches a renamed variable save echo without duplicating the draft row", () => {
     const rows = mergeEnvironmentDraftRowsForPersistedUpdate({
       rows: [
