@@ -67,10 +67,14 @@ export function assertClaudeSubagentOutput(
     ),
   );
   for (const subagent of projection.subagents) {
+    const expectedProgress = subagent.prompt.includes("package.json")
+      ? "Summarizing package.json"
+      : "Reading tsconfig.json";
     assert.equal(subagent.origin, "provider_native");
     assert.equal(subagent.createdBy, "agent");
     assert.equal(subagent.driver, "claudeAgent");
     assert.equal(subagent.status, "completed");
+    assert.equal(subagent.progress, expectedProgress);
     assert.isNull(subagent.providerThreadId);
     assert.isNotNull(subagent.childThreadId);
     assert.isNotNull(subagent.nativeTaskRef);
@@ -88,7 +92,12 @@ export function assertClaudeSubagentOutput(
     assert.lengthOf(childProjection.providerThreads, 0);
     assert.lengthOf(childProjection.providerTurns, 0);
     assertExecutionNodeKinds(childProjection, ["root_turn", "tool_call"]);
-    assertTurnItemTypes(childProjection, ["user_message", "dynamic_tool", "assistant_message"]);
+    assertTurnItemTypes(childProjection, [
+      "user_message",
+      "reasoning",
+      "dynamic_tool",
+      "assistant_message",
+    ]);
     assertUserMessagesInclude(childProjection, [subagent.prompt]);
     assert.isTrue(
       childProjection.turnItems.some(
@@ -99,5 +108,28 @@ export function assertClaudeSubagentOutput(
       ),
       `child thread ${subagent.childThreadId} must contain the subagent response`,
     );
+    const progressItems = childProjection.turnItems.filter((item) => item.type === "reasoning");
+    assert.lengthOf(
+      progressItems,
+      1,
+      `child thread ${subagent.childThreadId} must coalesce progress into one item`,
+    );
+    const progressItem = progressItems[0];
+    if (progressItem === undefined) {
+      throw new Error(`Missing progress item for subagent ${subagent.id}`);
+    }
+    assert.equal(progressItem.text, expectedProgress);
+    assert.equal(progressItem.status, "completed");
+    assert.isFalse(progressItem.streaming);
+    assert.isNotNull(progressItem.completedAt);
+
+    const parentItem = projection.turnItems.find(
+      (item) => item.type === "subagent" && item.subagentId === subagent.id,
+    );
+    assert.isDefined(parentItem);
+    if (parentItem?.type !== "subagent") {
+      throw new Error(`Missing parent lifecycle item for subagent ${subagent.id}`);
+    }
+    assert.equal(parentItem.progress, expectedProgress);
   }
 }

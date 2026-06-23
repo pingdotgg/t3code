@@ -4,6 +4,7 @@ import {
   CheckpointRef,
   CheckpointScopeId,
   CommandId,
+  ContextTransferId,
   EventId,
   MessageId,
   type ModelSelection,
@@ -255,6 +256,177 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       );
       assert.isTrue((yield* maintenance.verify).valid);
       assert.isTrue((yield* maintenance.rebuild).valid);
+    }),
+  );
+
+  it.effect("verifies and rebuilds projections with cross-thread subagent relations", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const maintenance = yield* ProjectionMaintenanceV2;
+      const now = yield* DateTime.now;
+      const parentThreadId = ThreadId.make("thread:foundation-cross-thread:parent");
+      const childThreadId = ThreadId.make("thread:foundation-cross-thread:child");
+      const childProviderThreadId = ProviderThreadId.make(
+        "provider-thread:foundation-cross-thread:child",
+      );
+      const subagentId = NodeId.make("subagent:foundation-cross-thread");
+      const spawnTransferId = ContextTransferId.make("transfer:foundation-cross-thread:spawn");
+      const resultTransferId = ContextTransferId.make("transfer:foundation-cross-thread:result");
+      const parentThread = makeThread(parentThreadId, now);
+      const childThread = {
+        ...makeThread(childThreadId, now),
+        createdBy: "agent" as const,
+        creationSource: "provider" as const,
+        lineage: {
+          parentThreadId,
+          relationshipToParent: "subagent" as const,
+          rootThreadId: parentThreadId,
+        },
+      };
+
+      yield* eventSink.write({
+        events: [
+          threadCreatedEvent({
+            id: "event:foundation-cross-thread:parent",
+            thread: parentThread,
+            now,
+          }),
+          threadCreatedEvent({
+            id: "event:foundation-cross-thread:child",
+            thread: childThread,
+            now,
+          }),
+          {
+            id: EventId.make("event:foundation-cross-thread:subagent"),
+            type: "subagent.updated",
+            threadId: parentThreadId,
+            nodeId: subagentId,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: subagentId,
+              threadId: parentThreadId,
+              runId: null,
+              parentNodeId: NodeId.make("node:foundation-cross-thread:parent"),
+              origin: "app_owned",
+              createdBy: "agent",
+              driver: providerDriver,
+              providerInstanceId,
+              providerThreadId: childProviderThreadId,
+              childThreadId,
+              nativeTaskRef: null,
+              prompt: "Inspect the child flow",
+              title: "Cross-thread child",
+              model: modelSelection.model,
+              status: "completed",
+              result: "done",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make("event:foundation-cross-thread:spawn-transfer"),
+            type: "context-transfer.created",
+            threadId: childThreadId,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: spawnTransferId,
+              type: "subagent_spawn",
+              sourceThreadId: parentThreadId,
+              targetThreadId: childThreadId,
+              sourcePoint: { threadId: parentThreadId },
+              basePoint: null,
+              sourceProviderInstanceId: providerInstanceId,
+              targetProviderInstanceId: providerInstanceId,
+              targetRunId: null,
+              status: "consumed",
+              resolution: null,
+              createdBy: "agent",
+              error: null,
+              createdAt: now,
+              updatedAt: now,
+              consumedAt: now,
+            },
+          },
+          {
+            id: EventId.make("event:foundation-cross-thread:provider-thread"),
+            type: "provider-thread.updated",
+            threadId: parentThreadId,
+            driver: providerDriver,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: childProviderThreadId,
+              driver: providerDriver,
+              providerInstanceId,
+              providerSessionId: null,
+              appThreadId: childThreadId,
+              ownerNodeId: null,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: 1,
+              lastRunOrdinal: 1,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make("event:foundation-cross-thread:result-transfer"),
+            type: "context-transfer.created",
+            threadId: parentThreadId,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: resultTransferId,
+              type: "subagent_result",
+              sourceThreadId: childThreadId,
+              targetThreadId: parentThreadId,
+              sourcePoint: { threadId: childThreadId },
+              basePoint: null,
+              sourceProviderInstanceId: providerInstanceId,
+              targetProviderInstanceId: providerInstanceId,
+              targetRunId: null,
+              status: "consumed",
+              resolution: null,
+              createdBy: "system",
+              error: null,
+              createdAt: now,
+              updatedAt: now,
+              consumedAt: now,
+            },
+          },
+        ],
+      });
+
+      const assertCrossThreadProjection = Effect.gen(function* () {
+        const parent = yield* projectionStore.getThreadProjection(parentThreadId);
+        const child = yield* projectionStore.getThreadProjection(childThreadId);
+        const expectedTransferIds = [spawnTransferId, resultTransferId].toSorted();
+        assert.deepEqual(
+          parent.contextTransfers.map((transfer) => transfer.id).toSorted(),
+          expectedTransferIds,
+        );
+        assert.deepEqual(
+          child.contextTransfers.map((transfer) => transfer.id).toSorted(),
+          expectedTransferIds,
+        );
+        assert.deepEqual(
+          parent.providerThreads.map((providerThread) => providerThread.id),
+          [childProviderThreadId],
+        );
+        assert.equal(child.thread.activeProviderThreadId, childProviderThreadId);
+      });
+
+      yield* assertCrossThreadProjection;
+      assert.isTrue((yield* maintenance.verify).valid);
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      yield* assertCrossThreadProjection;
     }),
   );
 
@@ -1138,12 +1310,13 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       assert.equal((yield* maintenance.verify).valid, true);
 
       yield* sql`
-        DELETE FROM orchestration_v2_projection_turn_items
+        UPDATE orchestration_v2_projection_turn_items
+        SET payload_json = '{}'
         WHERE turn_item_id = ${items[75]!.id}
       `;
       const broken = yield* maintenance.verify;
       assert.isFalse(broken.valid);
-      assert.deepEqual(broken.differingThreadIds, [threadId]);
+      assert.deepEqual(broken.unreadableThreadIds, [threadId]);
 
       const rebuilt = yield* maintenance.rebuild;
       assert.isTrue(rebuilt.valid);
