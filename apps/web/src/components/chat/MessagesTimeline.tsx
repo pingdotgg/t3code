@@ -114,6 +114,7 @@ import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestam
 import { V2ItemInspector } from "./V2ItemInspector";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { isV2LifecycleItem, V2LifecycleRow } from "./V2LifecycleRow";
+import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
 import {
   buildInlineTerminalContextText,
@@ -231,6 +232,10 @@ interface MessagesTimelineProps {
   routeThreadKey: string;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
+  parentThreadLink?: {
+    readonly threadId: ThreadId;
+    readonly title: string;
+  } | null;
   onForkFromRun: (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
@@ -285,6 +290,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   routeThreadKey,
   onOpenTurnDiff,
   onOpenThread,
+  parentThreadLink = null,
   onForkFromRun,
   onRollbackCheckpoint,
   revertTurnCountByUserMessageId,
@@ -579,6 +585,23 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }),
     [activeTurnInProgress, isRevertingCheckpoint, isWorking, latestTurn?.turnId, workingStepLabel],
   );
+  const listHeader = useMemo(
+    () =>
+      parentThreadLink === null ? (
+        TIMELINE_LIST_HEADER
+      ) : (
+        <div className="mx-auto w-full min-w-0 max-w-3xl pt-1 sm:pt-2">
+          <TimelineSystemDivider
+            label="Subagent of"
+            detail={parentThreadLink.title}
+            icon={GitForkIcon}
+            actionLabel="Open parent thread"
+            onAction={() => onOpenThread(parentThreadLink.threadId)}
+          />
+        </div>
+      ),
+    [onOpenThread, parentThreadLink],
+  );
 
   // Stable renderItem — no closure deps. Row components read shared state
   // from TimelineRowCtx, which propagates through LegendList's memo.
@@ -591,10 +614,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [],
   );
 
-  if (rows.length === 0 && !isWorking) {
-    if (hideEmptyPlaceholder) {
-      return null;
-    }
+  if (rows.length === 0 && !isWorking && parentThreadLink === null) {
     return (
       <div className="flex h-full items-center justify-center">
         <p className="text-placeholder text-sm">Send a message to start the conversation.</p>
@@ -605,58 +625,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   return (
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
-        <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
-          <LegendList<MessagesTimelineRow>
-            ref={listRef}
-            data={rows}
-            keyExtractor={keyExtractor}
-            getItemType={getItemType}
-            renderItem={renderItem}
-            estimatedItemSize={90}
-            initialScrollAtEnd
-            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-            contentInsetEndAdjustment={contentInsetEndAdjustment}
-            maintainScrollAtEnd={
-              anchoredEndSpace || !liveFollowEnabled || disclosureToggleSettling
-                ? false
-                : TIMELINE_MAINTAIN_SCROLL_AT_END
-            }
-            maintainVisibleContentPosition={maintainVisibleContentPosition}
-            onScroll={handleScroll}
-            className={cn(
-              "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
-              topFadeEnabled && "chat-timeline-scroll-fade",
-            )}
-            ListHeaderComponent={
-              loadEarlier !== null ? (
-                <TimelineLoadEarlierHeader
-                  loading={loadEarlier.loading}
-                  onLoadEarlier={loadEarlier.onLoadEarlier}
-                  fade={topFadeEnabled}
-                />
-              ) : topFadeEnabled ? (
-                TIMELINE_LIST_FADE_HEADER
-              ) : (
-                TIMELINE_LIST_HEADER
-              )
-            }
-            ListFooterComponent={TIMELINE_LIST_FOOTER}
-          />
-          <TimelineMinimap
-            items={minimapItems}
-            hasPersistentGutter={minimapHasPersistentGutter}
-            hitStripWidth={minimapHitStripWidth}
-            stripMap={minimapStripMap}
-            onSelect={(item) => {
-              onManualNavigation();
-              void listRef.current?.scrollToIndex({
-                index: item.rowIndex,
-                animated: true,
-                viewOffset: 24,
-              });
-            }}
-          />
-        </div>
+        <LegendList<MessagesTimelineRow>
+          ref={listRef}
+          data={rows}
+          keyExtractor={keyExtractor}
+          getItemType={getItemType}
+          renderItem={renderItem}
+          estimatedItemSize={90}
+          initialScrollAtEnd
+          {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+          contentInsetEndAdjustment={contentInsetEndAdjustment}
+          maintainScrollAtEnd={!foldToggleSettling}
+          maintainScrollAtEndThreshold={0.1}
+          maintainVisibleContentPosition
+          onScroll={handleScroll}
+          className="scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
+          ListHeaderComponent={listHeader}
+          ListFooterComponent={TIMELINE_LIST_FOOTER}
+        />
       </TimelineRowActivityCtx>
     </TimelineRowCtx>
   );
@@ -745,12 +731,14 @@ function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
 }
 
 function TimelineMinimap({
+  bottomInset,
   hasPersistentGutter,
   hitStripWidth,
   items,
   stripMap,
   onSelect,
 }: {
+  bottomInset: number;
   hasPersistentGutter: boolean;
   hitStripWidth: number;
   items: ReadonlyArray<TimelineMinimapItem>;
@@ -810,16 +798,19 @@ function TimelineMinimap({
     return null;
   }
 
+  const safeBottomInset = Math.max(0, Math.ceil(bottomInset));
+
   return (
     <div
       className={cn(
-        "group/minimap pointer-events-none absolute inset-y-0 left-0 z-40 hidden w-18 [@media(pointer:fine)]:block",
+        "group/minimap pointer-events-none absolute top-0 left-0 z-40 hidden w-18 [@media(pointer:fine)]:block",
         hasPersistentGutter
           ? "opacity-100"
           : "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
       )}
       data-testid="timeline-minimap"
       data-persistent-gutter={hasPersistentGutter ? "true" : "false"}
+      style={{ bottom: safeBottomInset }}
     >
       <div className="relative h-full w-full select-none">
         <button
@@ -1011,7 +1002,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 
   return (
     <div className="group flex flex-col items-end gap-1">
-      <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
+      {row.message.createdBy === "agent" ? (
+        <p
+          className="me-1 text-[11px] text-muted-foreground/70"
+          data-user-message-attribution="agent"
+        >
+          Sent by another agent
+        </p>
+      ) : null}
+      <div className="relative max-w-[80%] rounded-2xl border border-border bg-secondary p-3">
         {regularImages.length > 0 && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
             {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
@@ -1406,7 +1405,7 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
     case "subagent":
       return {
         label: item.title ?? "Subagent",
-        detail: item.result ?? item.prompt,
+        detail: item.result ?? item.progress ?? item.prompt,
         tone:
           item.status === "failed" ? "danger" : item.status === "completed" ? "success" : "muted",
         icon: HammerIcon,

@@ -30,6 +30,7 @@ import {
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
 const decodeOrchestrationV2Command = Schema.decodeUnknownSync(OrchestrationV2Command);
+const decodeOrchestrationV2TurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 
 describe("orchestration V2 contracts", () => {
   it("decodes nested checkpoint scopes without making child scopes advance app run count", () => {
@@ -160,6 +161,50 @@ describe("orchestration V2 contracts", () => {
     expect(command.parentThreadId).toBe(ThreadId.make("thread-parent-1"));
     expect(command.parentRunId).toBe(RunId.make("run-parent-1"));
     expect(command.parentNodeId).toBe(NodeId.make("node-parent-1"));
+  });
+
+  it("decodes durable created-thread timeline records", () => {
+    const command = decodeOrchestrationV2Command({
+      type: "thread.created.record",
+      commandId: "command-thread-record-1",
+      parentThreadId: "thread-parent-1",
+      parentRunId: "run-parent-1",
+      parentNodeId: "node-parent-1",
+      targetThreadId: "thread-child-1",
+      targetRunId: "run-child-1",
+    });
+    const item = decodeOrchestrationV2TurnItem({
+      id: "turn-item-thread-created-1",
+      type: "thread_created",
+      threadId: "thread-parent-1",
+      runId: "run-parent-1",
+      nodeId: "node-parent-1",
+      providerThreadId: "provider-thread-parent-1",
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 4,
+      status: "completed",
+      title: "Child thread",
+      targetThreadId: "thread-child-1",
+      targetRunId: "run-child-1",
+      targetProviderInstanceId: "claude-default",
+      targetModel: "claude-sonnet-4-6",
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    });
+
+    expect(command.type).toBe("thread.created.record");
+    if (command.type !== "thread.created.record") {
+      throw new Error("expected thread.created.record");
+    }
+    expect(command.targetThreadId).toBe(ThreadId.make("thread-child-1"));
+    expect(item.type).toBe("thread_created");
+    if (item.type !== "thread_created") {
+      throw new Error("expected thread_created");
+    }
+    expect(item.targetRunId).toBe(RunId.make("run-child-1"));
   });
 
   it("decodes provider-neutral replay transcripts", () => {
@@ -302,6 +347,7 @@ describe("orchestration V2 contracts", () => {
       title: "Package audit",
       model: "gpt-5.4",
       status: "completed",
+      progress: "Inspecting package metadata",
       result: "Package is private.",
       startedAt: now,
       completedAt: now,
@@ -326,6 +372,7 @@ describe("orchestration V2 contracts", () => {
       providerInstanceId: subagent.providerInstanceId,
       childThreadId: subagent.childThreadId,
       prompt: subagent.prompt,
+      progress: subagent.progress,
       result: subagent.result,
       startedAt: now,
       completedAt: now,
@@ -333,8 +380,11 @@ describe("orchestration V2 contracts", () => {
     });
 
     expect(subagent.origin).toBe("provider_native");
+    expect(subagent.progress).toBe("Inspecting package metadata");
     expect(subagent.childThreadId).toBeNull();
     expect(turnItem.type).toBe("subagent");
+    if (turnItem.type !== "subagent") throw new Error("expected subagent item");
+    expect(turnItem.progress).toBe("Inspecting package metadata");
   });
 
   it("decodes thread projections with an ordered turn item rendering stream", () => {
