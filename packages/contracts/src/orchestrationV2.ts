@@ -316,6 +316,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 
 export const OrchestrationV2RunStatus = Schema.Literals([
+  "preparing",
   "queued",
   "starting",
   "running",
@@ -689,6 +690,37 @@ export const OrchestrationV2TurnItemStatus = Schema.Literals([
 ]);
 export type OrchestrationV2TurnItemStatus = typeof OrchestrationV2TurnItemStatus.Type;
 
+export const OrchestrationV2ProviderFailureClass = Schema.Literals([
+  "provider_error",
+  "transport_error",
+  "permission_error",
+  "validation_error",
+  "unknown",
+]);
+export type OrchestrationV2ProviderFailureClass = typeof OrchestrationV2ProviderFailureClass.Type;
+
+const OrchestrationV2ProviderFailureMessage = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(4_096),
+);
+const OrchestrationV2ProviderFailureCode = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+
+/**
+ * Transport-safe failure information suitable for persistence and display.
+ * Producers must redact credentials before constructing this value. The
+ * schema bounds every provider-controlled string as a second line of defense.
+ */
+export const OrchestrationV2ProviderFailure = Schema.Struct({
+  class: OrchestrationV2ProviderFailureClass,
+  message: OrchestrationV2ProviderFailureMessage,
+  code: Schema.NullOr(OrchestrationV2ProviderFailureCode),
+  retryable: Schema.NullOr(Schema.Boolean),
+});
+export type OrchestrationV2ProviderFailure = typeof OrchestrationV2ProviderFailure.Type;
+
+export const OrchestrationV2ProviderThreadDisposition = Schema.Literals(["reusable", "broken"]);
+export type OrchestrationV2ProviderThreadDisposition =
+  typeof OrchestrationV2ProviderThreadDisposition.Type;
+
 export const OrchestrationV2UserMessageInputIntent = Schema.Literals([
   "turn_start",
   "queued_turn",
@@ -825,6 +857,11 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("run_interrupt_result"),
     message: Schema.String,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("error"),
+    failure: OrchestrationV2ProviderFailure,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1408,6 +1445,11 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("error"),
+    failure: OrchestrationV2ProviderFailure,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("compaction"),
     driver: Schema.NullOr(ProviderDriverKind),
     summary: Schema.optional(Schema.String),
@@ -1683,11 +1725,32 @@ export const OrchestrationV2Command = Schema.Union([
     modelSelection: Schema.optional(ModelSelection),
     sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
     dispatchMode: Schema.Union([
+      Schema.Struct({ type: Schema.Literal("defer_start") }),
       Schema.Struct({ type: Schema.Literal("steer_active"), targetRunId: RunId }),
       Schema.Struct({ type: Schema.Literal("restart_active"), targetRunId: RunId }),
       Schema.Struct({ type: Schema.Literal("queue_after_active") }),
       Schema.Struct({ type: Schema.Literal("start_immediately") }),
     ]),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("prepared-run.release"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("prepared-run.progress"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    phase: Schema.Literals(["worktree", "setup"]),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("prepared-run.fail"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    failure: OrchestrationV2ProviderFailure,
   }),
   Schema.Struct({
     type: Schema.Literal("run.interrupt"),

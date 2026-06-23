@@ -57,9 +57,16 @@ export class ProviderRuntimeRecoveryService extends Context.Service<
 >()("t3/orchestration-v2/ProviderRuntimeRecoveryService") {}
 
 function nonterminalRuns(projection: OrchestrationV2ThreadProjection) {
-  return projection.runs.filter(
-    (run) => run.status === "starting" || run.status === "running" || run.status === "waiting",
-  );
+  return projection.runs.filter((run) => {
+    const status: string = run.status;
+    return (
+      run.status === "queued" ||
+      status === "preparing" ||
+      run.status === "starting" ||
+      run.status === "running" ||
+      run.status === "waiting"
+    );
+  });
 }
 
 export const make = Effect.gen(function* () {
@@ -277,7 +284,7 @@ export const make = Effect.gen(function* () {
       ).length;
       let retiredEffects: number;
       if (events.length === 0) {
-        retiredEffects = yield* outbox
+        const retiredEffectIds = yield* outbox
           .cancelUnsettled({
             threadId: projection.thread.id,
             effectTypes: EffectOutbox.PROCESS_BOUND_EFFECT_TYPES,
@@ -293,6 +300,8 @@ export const make = Effect.gen(function* () {
                 }),
             ),
           );
+        yield* outbox.signalCancellations(retiredEffectIds);
+        retiredEffects = retiredEffectIds.length;
       } else {
         const result = yield* eventSink
           .commitCommand({

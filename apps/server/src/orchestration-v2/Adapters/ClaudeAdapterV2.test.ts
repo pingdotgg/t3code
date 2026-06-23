@@ -1,8 +1,15 @@
+import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  ChatAttachmentId,
+  ChatImageAttachment,
   ClaudeSettings,
   EnvironmentId,
   MessageId,
+  type ModelSelection,
   NodeId,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2ProviderThread,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -14,12 +21,19 @@ import {
 import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { attachmentRelativePath } from "../../attachmentStore.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
-import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import {
+  ProviderAdapterV2RuntimePolicy,
+  type ProviderAdapterV2TurnInput,
+} from "../ProviderAdapter.ts";
 import {
   CLAUDE_AGENT_SDK_QUERY_PROTOCOL,
   CLAUDE_DEFAULT_INSTANCE_ID,
@@ -38,6 +52,76 @@ import {
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
 
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
+const CLAUDE_TEST_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make(CLAUDE_PROVIDER),
+  model: "claude-sonnet-4-6",
+  options: [{ id: "effort", value: "ultrathink" }],
+} satisfies ModelSelection;
+const CLAUDE_TEST_RUNTIME_POLICY = ProviderAdapterV2RuntimePolicy.make({
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  cwd: "/workspace",
+});
+
+function makeClaudeTestAppThread(input: {
+  readonly threadId: ThreadId;
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly now: DateTime.Utc;
+}): OrchestrationV2AppThread {
+  return {
+    createdBy: "user",
+    creationSource: "web",
+    id: input.threadId,
+    projectId: ProjectId.make(`project-${input.threadId}`),
+    title: "Claude attachment test",
+    providerInstanceId: ProviderInstanceId.make(CLAUDE_PROVIDER),
+    modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: input.providerThread.id,
+    lineage: {
+      parentThreadId: null,
+      relationshipToParent: null,
+      rootThreadId: input.threadId,
+    },
+    forkedFrom: null,
+    createdAt: input.now,
+    updatedAt: input.now,
+    archivedAt: null,
+    deletedAt: null,
+  };
+}
+
+function makeClaudeTestTurnInput(input: {
+  readonly threadId: ThreadId;
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly now: DateTime.Utc;
+  readonly attemptId: RunAttemptId;
+  readonly text: string;
+  readonly attachments: ProviderAdapterV2TurnInput["message"]["attachments"];
+}): ProviderAdapterV2TurnInput {
+  return {
+    appThread: makeClaudeTestAppThread(input),
+    threadId: input.threadId,
+    runId: RunId.make(`run-${input.attemptId}`),
+    runOrdinal: 1,
+    providerTurnOrdinal: 1,
+    attemptId: input.attemptId,
+    rootNodeId: NodeId.make(`node-${input.attemptId}`),
+    providerThread: input.providerThread,
+    message: {
+      createdBy: "user",
+      creationSource: "web",
+      messageId: MessageId.make(`message-${input.attemptId}`),
+      text: input.text,
+      attachments: input.attachments,
+    },
+    modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+    runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+  };
+}
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
   it("maps canonical read-only never policy to Claude dontAsk with read-only tools", () => {
@@ -275,6 +359,200 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
   });
 });
 
+describe("ClaudeAdapterV2 attachments", () => {
+  it.effect("forwards persisted images on initial turns and live steering", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocatorV2;
+        const path = yield* Path.Path;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-v2-attachments-",
+        });
+        const offeredMessages: Array<SDKUserMessage> = [];
+        const adapter = makeClaudeAdapterV2({
+          instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          idAllocator,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-attachments"),
+            open: () =>
+              Effect.succeed({
+                messages: Stream.never,
+                offer: (message) =>
+                  Effect.sync(() => {
+                    offeredMessages.push(message);
+                  }),
+                setModel: () => Effect.void,
+                interrupt: Effect.void,
+                close: Effect.void,
+              }),
+            forkSession: () => Effect.die("unused forkSession"),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-attachments");
+        const providerSessionId = ProviderSessionId.make("provider-session-claude-attachments");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const attachment = ChatImageAttachment.make({
+          type: "image",
+          id: ChatAttachmentId.make(
+            "thread-claude-attachments-12345678-1234-1234-1234-123456789abc",
+          ),
+          name: "diagram.png",
+          mimeType: "image/png",
+          sizeBytes: 4,
+        });
+        yield* fileSystem.writeFile(
+          path.join(attachmentsDir, attachmentRelativePath(attachment)),
+          Uint8Array.from([1, 2, 3, 4]),
+        );
+        const attemptId = RunAttemptId.make("attempt-claude-attachments");
+        const now = yield* DateTime.now;
+
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now,
+            attemptId,
+            text: "What's in this image?",
+            attachments: [attachment],
+          }),
+        );
+
+        const expectedImageBlock = {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: "AQIDBA==",
+          },
+        } as const;
+        assert.deepEqual(offeredMessages[0]?.message.content, [
+          { type: "text", text: "Ultrathink:\nWhat's in this image?" },
+          expectedImageBlock,
+        ]);
+
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${attemptId}`,
+        });
+        yield* runtime.steerTurn({
+          threadId,
+          runId: RunId.make("run-claude-attachments"),
+          providerThread,
+          providerTurnId,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-claude-attachments-steer"),
+            text: "Focus on the diagram labels.",
+            attachments: [attachment],
+          },
+        });
+
+        assert.equal(offeredMessages[1]?.priority, "now");
+        assert.deepEqual(offeredMessages[1]?.message.content, [
+          { type: "text", text: "Ultrathink:\nFocus on the diagram labels." },
+          expectedImageBlock,
+        ]);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("rejects unsupported image types before opening a provider query", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocatorV2;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-v2-unsupported-attachment-",
+        });
+        let openCount = 0;
+        const adapter = makeClaudeAdapterV2({
+          instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          idAllocator,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-unsupported-attachment"),
+            open: () =>
+              Effect.sync(() => {
+                openCount += 1;
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                };
+              }),
+            forkSession: () => Effect.die("unused forkSession"),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-unsupported-attachment");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-claude-unsupported-attachment",
+          ),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const attachment = ChatImageAttachment.make({
+          type: "image",
+          id: ChatAttachmentId.make(
+            "thread-claude-unsupported-12345678-1234-1234-1234-123456789abc",
+          ),
+          name: "diagram.svg",
+          mimeType: "image/svg+xml",
+          sizeBytes: 4,
+        });
+        const now = yield* DateTime.now;
+
+        const error = yield* runtime
+          .startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-unsupported-attachment"),
+              text: "Inspect this image.",
+              attachments: [attachment],
+            }),
+          )
+          .pipe(Effect.flip);
+
+        assert.equal(error._tag, "ProviderAdapterTurnStartError");
+        assert.include(String(error.cause), "Unsupported Claude image attachment type");
+        assert.equal(openCount, 0);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+});
+
 describe("ClaudeAdapterV2 native fork", () => {
   it("advertises Claude Agent SDK session forks", () => {
     assert.equal(ClaudeProviderCapabilitiesV2.threads.canForkThread, true);
@@ -284,7 +562,11 @@ describe("ClaudeAdapterV2 native fork", () => {
   it.effect("forks at the source assistant cursor and resumes the forked session", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocatorV2;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-v2-fork-attachments-",
+        });
         const openedQueries: Array<ClaudeAgentSdkQueryOpenInput> = [];
         const forkCalls: Array<{
           readonly sessionId: string;
@@ -296,6 +578,8 @@ describe("ClaudeAdapterV2 native fork", () => {
           instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
+          attachmentsDir,
+          fileSystem,
           idAllocator,
           queryRunner: {
             allocateSessionId: Effect.succeed("source-native-session"),
@@ -441,7 +725,7 @@ describe("ClaudeAdapterV2 native fork", () => {
 
         assert.equal(openedQueries[0]?.options.resume, "forked-native-session");
         assert.equal(openedQueries[0]?.options.sessionId, undefined);
-      }).pipe(Effect.provide(idAllocatorLayer)),
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
     ),
   );
 });

@@ -3,9 +3,11 @@ import {
   CommandId,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
+  type OrchestrationV2Run,
   ProviderInstanceId,
   ProviderSessionId,
   RawEventId,
+  RunAttemptId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -18,6 +20,7 @@ import * as Schema from "effect/Schema";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
+import { makeProviderFailureTurnItem } from "./ProviderFailure.ts";
 
 export class ProviderEventNormalizeError extends Schema.TaggedErrorClass<ProviderEventNormalizeError>()(
   "ProviderEventNormalizeError",
@@ -52,27 +55,34 @@ export const ProviderEventIngestorV2Error = Schema.Union([
 ]);
 export type ProviderEventIngestorV2Error = typeof ProviderEventIngestorV2Error.Type;
 
+export interface ProviderEventIngestInput {
+  readonly providerSessionId: ProviderSessionId;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly commandId?: CommandId;
+  readonly threadId: ThreadId;
+  readonly runId?: RunId;
+  readonly nodeId?: NodeId;
+  readonly rawEventId?: RawEventId;
+  readonly event: ProviderAdapterV2Event;
+}
+
 export interface ProviderEventIngestorV2Shape {
-  readonly normalize: (input: {
-    readonly providerSessionId: ProviderSessionId;
-    readonly providerInstanceId: ProviderInstanceId;
-    readonly commandId?: CommandId;
-    readonly threadId: ThreadId;
-    readonly runId?: RunId;
-    readonly nodeId?: NodeId;
-    readonly rawEventId?: RawEventId;
-    readonly event: ProviderAdapterV2Event;
-  }) => Effect.Effect<ReadonlyArray<OrchestrationV2DomainEvent>, ProviderEventIngestorV2Error>;
-  readonly ingestNormalized: (input: {
-    readonly providerSessionId: ProviderSessionId;
-    readonly providerInstanceId: ProviderInstanceId;
-    readonly commandId?: CommandId;
-    readonly threadId: ThreadId;
-    readonly runId?: RunId;
-    readonly nodeId?: NodeId;
-    readonly rawEventId?: RawEventId;
-    readonly event: ProviderAdapterV2Event;
-  }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, ProviderEventIngestorV2Error>;
+  readonly normalize: (
+    input: ProviderEventIngestInput,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2DomainEvent>, ProviderEventIngestorV2Error>;
+  readonly ingestNormalized: (
+    input: ProviderEventIngestInput & {
+      /**
+       * Atomically reject mutable provider state emitted by an attempt that
+       * lost ownership while the adapter event was in flight.
+       */
+      readonly writeIfRunCurrent?: {
+        readonly runId: RunId;
+        readonly activeAttemptId: RunAttemptId;
+        readonly expectedStatus: OrchestrationV2Run["status"];
+      };
+    },
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, ProviderEventIngestorV2Error>;
 }
 
 export class ProviderEventIngestorV2 extends Context.Service<
@@ -84,6 +94,8 @@ function compactUndefined<T extends Record<string, unknown>>(record: T): T {
   return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T;
 }
 
+const decodeDomainEvent = Schema.decodeUnknownEffect(OrchestrationV2DomainEvent);
+
 export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | IdAllocatorV2> =
   Layer.effect(
     ProviderEventIngestorV2,
@@ -92,16 +104,7 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
       const idAllocator = yield* IdAllocatorV2;
 
       const makeDomainEvent = (
-        input: {
-          readonly providerSessionId: ProviderSessionId;
-          readonly providerInstanceId: ProviderInstanceId;
-          readonly commandId?: CommandId;
-          readonly threadId: ThreadId;
-          readonly runId?: RunId;
-          readonly nodeId?: NodeId;
-          readonly rawEventId?: RawEventId;
-          readonly event: ProviderAdapterV2Event;
-        },
+        input: ProviderEventIngestInput,
         payloadInput: {
           readonly type: OrchestrationV2DomainEvent["type"];
           readonly payload: OrchestrationV2DomainEvent["payload"];
@@ -117,7 +120,7 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
             providerSessionId: input.providerSessionId,
           });
           const occurredAt = yield* DateTime.now;
-          return yield* Schema.decodeUnknownEffect(OrchestrationV2DomainEvent)(
+          return yield* decodeDomainEvent(
             compactUndefined({
               id: eventId,
               type: payloadInput.type,
@@ -228,7 +231,27 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
                 }),
               ];
             case "turn.terminal":
-              return [];
+              if (input.event.status !== "failed") {
+                return [];
+              }
+              const occurredAt = yield* DateTime.now;
+              return [
+                yield* makeDomainEvent(input, {
+                  type: "turn-item.updated",
+                  payload: makeProviderFailureTurnItem({
+                    idAllocator,
+                    driver: input.event.driver,
+                    threadId: input.threadId,
+                    runId: input.runId ?? null,
+                    nodeId: input.nodeId ?? null,
+                    providerThreadId: input.event.providerThreadId,
+                    providerTurnId: input.event.providerTurnId,
+                    itemOrdinal: input.event.failureItemOrdinal,
+                    failure: input.event.failure,
+                    occurredAt,
+                  }),
+                }),
+              ];
           }
         }).pipe(
           Effect.mapError(
@@ -250,21 +273,29 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
             if (events.length === 0) {
               return [];
             }
-            return yield* eventSink
-              .write({
+            const mapWriteError = (cause: unknown) =>
+              new ProviderEventPublishError({
+                providerSessionId: input.providerSessionId,
+                eventCount: events.length,
+                cause,
+              });
+            if (input.writeIfRunCurrent === undefined) {
+              return yield* eventSink
+                .write({
+                  ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+                  events,
+                })
+                .pipe(Effect.mapError(mapWriteError));
+            }
+            const result = yield* eventSink
+              .writeIfRunCurrent({
                 ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+                threadId: input.threadId,
+                ...input.writeIfRunCurrent,
                 events,
               })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderEventPublishError({
-                      providerSessionId: input.providerSessionId,
-                      eventCount: events.length,
-                      cause,
-                    }),
-                ),
-              );
+              .pipe(Effect.mapError(mapWriteError));
+            return result.storedEvents;
           }),
       });
     }),
