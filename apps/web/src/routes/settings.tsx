@@ -20,6 +20,7 @@ const ESCAPE_EDITABLE_TARGET_SELECTOR = [
   "input",
   "textarea",
   "select",
+  '[data-slot="select-trigger"]',
   '[contenteditable]:not([contenteditable="false"])',
   '[role="textbox"]',
 ].join(",");
