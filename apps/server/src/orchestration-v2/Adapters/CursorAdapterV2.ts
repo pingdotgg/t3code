@@ -19,6 +19,7 @@ import {
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2PlanStep,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
@@ -44,6 +45,8 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { cursorSdkParameterId } from "../../provider/cursorSdkModel.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
+import { makeProviderFailure } from "../ProviderFailure.ts";
+import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
   ProviderAdapterEnsureThreadError,
   ProviderAdapterForkThreadError,
@@ -831,6 +834,7 @@ export function makeCursorAdapterV2(
     instanceId: adapterOptions.instanceId,
     driver: CURSOR_PROVIDER,
     getCapabilities: () => Effect.succeed(CursorProviderCapabilitiesV2),
+    planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
     openSession: Effect.fn("CursorAdapterV2.openSession")(
       function* (input: ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
@@ -866,7 +870,7 @@ export function makeCursorAdapterV2(
             updated.set(context.run.runId, next);
             return [next, updated];
           });
-          const ordinal = context.input.runOrdinal * 100 + nextWithinTurn;
+          const ordinal = context.input.providerTurnOrdinal * 100 + nextWithinTurn;
           yield* Ref.update(itemOrdinals, (current) => {
             const updated = new Map(current);
             updated.set(nativeItemId, ordinal);
@@ -1885,6 +1889,8 @@ export function makeCursorAdapterV2(
             OrchestrationV2ProviderTurn["status"],
             "completed" | "interrupted" | "failed" | "cancelled"
           >;
+          readonly failure?: OrchestrationV2ProviderFailure;
+          readonly threadDisposition?: "reusable" | "broken";
         }) {
           if (input.context.finalized) {
             return;
@@ -1912,7 +1918,7 @@ export function makeCursorAdapterV2(
             providerThread: {
               ...input.context.input.providerThread,
               providerSessionId: session.id,
-              status: input.status === "failed" ? "error" : "idle",
+              status: "active",
               firstRunOrdinal:
                 input.context.input.providerThread.firstRunOrdinal ??
                 input.context.input.runOrdinal,
@@ -1920,12 +1926,34 @@ export function makeCursorAdapterV2(
               updatedAt: completedAt,
             },
           });
-          yield* emitProviderEvent({
-            type: "turn.terminal",
-            driver: CURSOR_PROVIDER,
-            providerTurnId: input.context.providerTurnId,
-            status: input.status,
-          });
+          const threadDisposition = input.threadDisposition ?? "reusable";
+          yield* emitProviderEvent(
+            input.status === "failed"
+              ? {
+                  type: "turn.terminal",
+                  driver: CURSOR_PROVIDER,
+                  providerThreadId: input.context.input.providerThread.id,
+                  providerTurnId: input.context.providerTurnId,
+                  runOrdinal: input.context.input.runOrdinal,
+                  failureItemOrdinal: yield* resolveItemOrdinal(
+                    input.context,
+                    `terminal-failure:${input.context.providerTurnId}`,
+                  ),
+                  status: input.status,
+                  failure: input.failure ?? makeProviderFailure({ class: "provider_error" }),
+                  threadDisposition,
+                }
+              : {
+                  type: "turn.terminal",
+                  driver: CURSOR_PROVIDER,
+                  providerThreadId: input.context.input.providerThread.id,
+                  providerTurnId: input.context.providerTurnId,
+                  runOrdinal: input.context.input.runOrdinal,
+                  status: input.status,
+                  failure: null,
+                  threadDisposition,
+                },
+          );
           yield* Ref.update(activeTurn, (current) =>
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
@@ -2142,9 +2170,18 @@ export function makeCursorAdapterV2(
                     });
                   }
                   if (context !== null) {
+                    const status = terminalStatus(context, result);
                     yield* finalizeTurn({
                       context,
-                      status: terminalStatus(context, result),
+                      status,
+                      ...(status === "failed"
+                        ? {
+                            failure: makeProviderFailure({
+                              cause: (result as { readonly error?: unknown }).error,
+                              class: "provider_error",
+                            }),
+                          }
+                        : {}),
                     });
                   }
                 }),
@@ -2155,6 +2192,11 @@ export function makeCursorAdapterV2(
                     yield* finalizeTurn({
                       context,
                       status: context.interrupted ? "interrupted" : "failed",
+                      ...(context.interrupted
+                        ? {}
+                        : {
+                            failure: makeProviderFailure({ cause, class: "transport_error" }),
+                          }),
                     });
                   }
                   yield* Effect.logWarning("orchestration-v2.cursor-run-failed", {
@@ -2205,7 +2247,6 @@ export function makeCursorAdapterV2(
           driver: CURSOR_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
-          rawEvents: Stream.empty,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ensureThread: Effect.fn("CursorAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapterV2EnsureThreadInput) {

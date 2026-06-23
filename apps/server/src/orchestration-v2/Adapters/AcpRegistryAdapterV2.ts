@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -20,6 +21,8 @@ import {
   type AcpRegistryResolverShape,
 } from "../../provider/acp/AcpRegistrySupport.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
+import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { IdAllocatorV2 } from "../IdAllocator.ts";
 import {
@@ -50,6 +53,7 @@ export interface AcpRegistryAdapterV2Options {
   readonly idAllocator: IdAllocatorV2["Service"];
   readonly resolver: AcpRegistryResolverShape;
   readonly serverConfig: ServerConfig["Service"];
+  readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly makeRuntime?: (
     input: AcpAdapterV2RuntimeInput,
   ) => Effect.Effect<
@@ -110,15 +114,18 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
     fileSystem: options.fileSystem,
     idAllocator: options.idAllocator,
     serverConfig: options.serverConfig,
+    ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
   });
 }
 
 export type AcpRegistryAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | IdAllocatorV2
   | Path.Path
+  | ProviderEventLoggers
   | ServerConfig;
 
 export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
@@ -134,7 +141,9 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
+      const providerEventLoggers = yield* ProviderEventLoggers;
       const serverConfig = yield* ServerConfig;
+      const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
       const resolver = yield* makeAcpRegistryResolver({
         cacheDir: serverConfig.providerStatusCacheDir,
       });
@@ -147,6 +156,12 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
         idAllocator,
         resolver,
         serverConfig,
+        nativeLogging: (threadId) =>
+          makeNativeLogger({
+            nativeEventLogger: providerEventLoggers.native,
+            provider: ACP_REGISTRY_PROVIDER,
+            threadId,
+          }),
       });
     },
     (effect, input) =>

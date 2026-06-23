@@ -8,23 +8,27 @@ import {
   type OrchestrationV2ThreadProjection,
   type ProviderInteractionMode,
   ProjectId,
+  type RunId,
   type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as Scope from "effect/Scope";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
+import { makeProviderFailure } from "./ProviderFailure.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
@@ -73,15 +77,15 @@ export class ThreadLaunchError extends Schema.TaggedErrorClass<ThreadLaunchError
   {
     operation: Schema.Literals([
       "resolve-project",
-      "load-workflow",
-      "persist-workflow",
+      "read-receipt",
       "generate-metadata",
       "provision-worktree",
       "run-setup-script",
       "create-thread",
       "update-thread",
       "dispatch-message",
-      "compensate-worktree",
+      "release-run",
+      "fail-run",
     ]),
     commandId: CommandId,
     projectId: ProjectId,
@@ -94,19 +98,6 @@ export class ThreadLaunchError extends Schema.TaggedErrorClass<ThreadLaunchError
   }
 }
 
-type WorkflowRow = {
-  readonly command_id: string;
-  readonly thread_id: string;
-  readonly project_id: string;
-  readonly status: string;
-  readonly title: string;
-  readonly worktree_path: string | null;
-  readonly branch: string | null;
-  readonly setup_committed: number;
-  readonly thread_committed: number;
-  readonly message_committed: number;
-};
-
 export class ThreadLaunchService extends Context.Service<
   ThreadLaunchService,
   {
@@ -116,15 +107,38 @@ export class ThreadLaunchService extends Context.Service<
   }
 >()("t3/orchestration-v2/ThreadLaunchService") {}
 
+const isThreadLaunchError = Schema.is(ThreadLaunchError);
+
+function fallbackBranchName(threadId: ThreadId): string {
+  const suffix = String(threadId)
+    .split(":")
+    .at(-1)
+    ?.replace(/[^a-zA-Z0-9-]+/gu, "-")
+    .replace(/^-+|-+$/gu, "")
+    .slice(0, 16);
+  return `thread-${suffix || "new"}`;
+}
+
+function failureDetail(error: unknown): string {
+  if (isThreadLaunchError(error)) {
+    const cause = error.cause;
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    return `Workspace preparation failed during ${error.operation.replaceAll("-", " ")}: ${detail}`;
+  }
+  return `Workspace preparation failed: ${error instanceof Error ? error.message : String(error)}`;
+}
+
 export const make = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
   const projects = yield* ProjectService.ProjectService;
   const git = yield* GitWorkflow.GitWorkflowService;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const textGeneration = yield* TextGeneration.TextGeneration;
+  const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
-  const launchSemaphore = yield* Semaphore.make(1);
+  const preparationScope = yield* Scope.make("sequential");
+  const scheduledLaunches = yield* Ref.make<ReadonlySet<CommandId>>(new Set());
+  yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
 
   const mapError =
     (input: ThreadLaunchInput, operation: ThreadLaunchError["operation"], threadId?: ThreadId) =>
@@ -137,163 +151,110 @@ export const make = Effect.gen(function* () {
         cause,
       });
 
-  const loadWorkflow = Effect.fn("ThreadLaunchService.loadWorkflow")(function* (
+  const readReceipt = (input: ThreadLaunchInput, commandId: CommandId) =>
+    receipts
+      .getByCommandId(commandId)
+      .pipe(Effect.mapError(mapError(input, "read-receipt", input.threadId)));
+
+  const validateReusableThread = Effect.fn("ThreadLaunchService.validateReusableThread")(function* (
     input: ThreadLaunchInput,
+    threadId: ThreadId,
   ) {
-    const rows = yield* sql<WorkflowRow>`
-      SELECT * FROM orchestration_v2_thread_launch_workflows
-      WHERE command_id = ${input.commandId}
-    `.pipe(Effect.mapError(mapError(input, "load-workflow")));
-    return rows[0] ?? null;
+    const projection = yield* threads
+      .getThreadProjection(threadId)
+      .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
+    if (
+      projection.thread.projectId !== input.projectId ||
+      projection.thread.archivedAt !== null ||
+      projection.thread.deletedAt !== null ||
+      projection.messages.length > 0 ||
+      projection.runs.length > 0
+    ) {
+      return yield* mapError(
+        input,
+        "update-thread",
+        threadId,
+      )("Only an empty active thread in the target project can change workspace during launch.");
+    }
   });
 
-  const saveWorkflow = Effect.fn("ThreadLaunchService.saveWorkflow")(function* (
+  const prepareInBackground = Effect.fn("ThreadLaunchService.prepareInBackground")(function* (
     input: ThreadLaunchInput,
-    row: {
-      readonly threadId: ThreadId;
-      readonly status: string;
-      readonly title: string;
-      readonly worktreePath: string | null;
-      readonly branch: string | null;
-      readonly setupCommitted: boolean;
-      readonly threadCommitted: boolean;
-      readonly messageCommitted: boolean;
-      readonly lastError?: string | null;
-    },
+    threadId: ThreadId,
+    runId: RunId | null,
   ) {
-    const now = DateTime.formatIso(yield* DateTime.now);
-    yield* sql`
-      INSERT INTO orchestration_v2_thread_launch_workflows (
-        command_id, thread_id, project_id, status, title, worktree_path, branch, setup_committed,
-        thread_committed, message_committed, last_error, created_at, updated_at
-      ) VALUES (
-        ${input.commandId}, ${row.threadId}, ${input.projectId}, ${row.status}, ${row.title},
-        ${row.worktreePath}, ${row.branch}, ${row.setupCommitted ? 1 : 0}, ${row.threadCommitted ? 1 : 0},
-        ${row.messageCommitted ? 1 : 0}, ${row.lastError ?? null}, ${now}, ${now}
-      ) ON CONFLICT(command_id) DO UPDATE SET
-        status = excluded.status,
-        title = excluded.title,
-        worktree_path = excluded.worktree_path,
-        branch = excluded.branch,
-        setup_committed = excluded.setup_committed,
-        thread_committed = excluded.thread_committed,
-        message_committed = excluded.message_committed,
-        last_error = excluded.last_error,
-        updated_at = excluded.updated_at
-    `.pipe(Effect.mapError(mapError(input, "persist-workflow", row.threadId)));
-  });
-
-  const launchWorkflow: ThreadLaunchService["Service"]["launch"] = Effect.fn(
-    "ThreadLaunchService.launch",
-  )(function* (input) {
     const project = yield* projects.getById(input.projectId).pipe(
-      Effect.mapError(mapError(input, "resolve-project")),
+      Effect.mapError(mapError(input, "resolve-project", threadId)),
       Effect.flatMap(
         Option.match({
-          onNone: () => Effect.fail(mapError(input, "resolve-project")("Project not found.")),
+          onNone: () =>
+            Effect.fail(mapError(input, "resolve-project", threadId)("Project no longer exists.")),
           onSome: Effect.succeed,
         }),
       ),
     );
-    const stored = yield* loadWorkflow(input);
-    if (input.reuseExistingThread === true && input.threadId === undefined) {
-      return yield* mapError(
-        input,
-        "update-thread",
-      )("Reusing an existing thread requires a thread id.");
-    }
-    const threadId =
-      stored === null
-        ? (input.threadId ??
-          (yield* ids.allocate
-            .thread({ projectId: input.projectId })
-            .pipe(Effect.mapError(mapError(input, "persist-workflow")))))
-        : ThreadId.make(stored.thread_id);
-    if (stored?.status === "completed") {
-      return {
-        threadId,
-        projection: yield* threads
-          .getThreadProjection(threadId)
-          .pipe(Effect.mapError(mapError(input, "create-thread", threadId))),
-        resumed: true,
-      };
-    }
 
-    const validateReusableThread = Effect.fn("ThreadLaunchService.validateReusableThread")(
-      function* () {
-        const projection = yield* threads
-          .getThreadProjection(threadId)
-          .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
-        if (
-          projection.thread.projectId !== input.projectId ||
-          projection.thread.archivedAt !== null ||
-          projection.thread.deletedAt !== null ||
-          projection.messages.length > 0 ||
-          projection.runs.length > 0
-        ) {
-          return yield* mapError(
-            input,
-            "update-thread",
-            threadId,
-          )(
-            "Only an empty active thread in the target project can change workspace during launch.",
-          );
-        }
-        return projection;
-      },
-    );
-    if (input.reuseExistingThread === true && stored?.thread_committed !== 1) {
-      yield* validateReusableThread();
+    if (input.title === "New thread" && input.initialMessage !== undefined) {
+      yield* textGeneration
+        .generateThreadTitle({
+          cwd: project.workspaceRoot,
+          message: input.initialMessage.text,
+          attachments: input.initialMessage.attachments,
+          modelSelection: input.modelSelection,
+        })
+        .pipe(
+          Effect.flatMap((result) =>
+            threads.dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make(`${input.commandId}:title`),
+              threadId,
+              title: result.title,
+            }),
+          ),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Thread title generation failed", {
+              commandId: input.commandId,
+              threadId,
+              cause,
+            }),
+          ),
+          Effect.forkIn(preparationScope),
+        );
     }
 
     let branch =
-      stored?.branch ??
-      (input.workspaceStrategy.type === "worktree"
-        ? null
-        : (input.workspaceStrategy.branch ?? null));
-    let title = stored?.title ?? input.title;
-    if (input.initialMessage !== undefined) {
-      if (title === "New thread") {
-        title = yield* textGeneration
-          .generateThreadTitle({
-            cwd: project.workspaceRoot,
-            message: input.initialMessage.text,
-            attachments: input.initialMessage.attachments,
-            modelSelection: input.modelSelection,
-          })
-          .pipe(
-            Effect.map((result) => result.title),
-            Effect.mapError(mapError(input, "generate-metadata", threadId)),
-          );
-      }
-      if (input.workspaceStrategy.type === "worktree" && branch === null) {
-        branch = yield* textGeneration
-          .generateBranchName({
-            cwd: project.workspaceRoot,
-            message: input.initialMessage.text,
-            attachments: input.initialMessage.attachments,
-            modelSelection: input.modelSelection,
-          })
-          .pipe(
-            Effect.map((result) => result.branch),
-            Effect.mapError(mapError(input, "generate-metadata", threadId)),
-          );
-      }
-    }
-    if (input.workspaceStrategy.type === "worktree") {
-      branch = branch ?? input.workspaceStrategy.branch ?? `thread-${threadId}`;
-    }
-
+      input.workspaceStrategy.type === "worktree" &&
+      input.workspaceStrategy.branch === undefined &&
+      input.initialMessage !== undefined
+        ? yield* textGeneration
+            .generateBranchName({
+              cwd: project.workspaceRoot,
+              message: input.initialMessage.text,
+              attachments: input.initialMessage.attachments,
+              modelSelection: input.modelSelection,
+            })
+            .pipe(
+              Effect.map((result) => result.branch),
+              Effect.mapError(mapError(input, "generate-metadata", threadId)),
+            )
+        : (input.workspaceStrategy.branch ??
+          (input.workspaceStrategy.type === "worktree" ? fallbackBranchName(threadId) : null));
     let worktreePath =
-      stored?.worktree_path ??
-      (input.workspaceStrategy.type === "existing_worktree"
+      input.workspaceStrategy.type === "existing_worktree"
         ? input.workspaceStrategy.worktreePath
-        : null);
-    const ownsProvisionedWorktree = input.workspaceStrategy.type === "worktree";
-    const threadCommitted = stored?.thread_committed === 1;
-    let setupCommitted = stored?.setup_committed === 1;
-    let messageCommitted = stored?.message_committed === 1;
-    if (input.workspaceStrategy.type === "worktree" && worktreePath === null) {
+        : null;
+    if (input.workspaceStrategy.type === "worktree") {
+      if (runId !== null) {
+        yield* threads
+          .dispatch({
+            type: "prepared-run.progress",
+            commandId: CommandId.make(`${input.commandId}:progress:worktree`),
+            threadId,
+            runId,
+            phase: "worktree",
+          })
+          .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
+      }
       let startRef = input.workspaceStrategy.baseRef;
       if (input.workspaceStrategy.startFromOrigin === true) {
         yield* git
@@ -321,184 +282,272 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
       worktreePath = worktree.worktree.path;
       branch = worktree.worktree.refName;
-      yield* saveWorkflow(input, {
-        threadId,
-        status: "workspace_ready",
-        title,
-        worktreePath,
-        branch,
-        setupCommitted,
-        threadCommitted,
-        messageCommitted,
-      });
     }
+
+    yield* threads
+      .dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make(`${input.commandId}:workspace`),
+        threadId,
+        branch,
+        worktreePath,
+      })
+      .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
+
     const cwd = worktreePath ?? project.workspaceRoot;
-
-    if (!setupCommitted) {
-      const setupExit = yield* Effect.exit(
-        setupScripts.runForThread({
+    if (runId !== null) {
+      yield* threads
+        .dispatch({
+          type: "prepared-run.progress",
+          commandId: CommandId.make(`${input.commandId}:progress:setup`),
           threadId,
-          projectId: input.projectId,
-          projectCwd: project.workspaceRoot,
-          worktreePath: cwd,
-          project: {
-            workspaceRoot: project.workspaceRoot,
-            scripts: project.scripts,
-          },
-        }),
-      );
-      if (setupExit._tag === "Failure") {
-        if (ownsProvisionedWorktree && worktreePath !== null && !threadCommitted) {
-          yield* git
-            .removeWorktree({ cwd: project.workspaceRoot, path: worktreePath })
-            .pipe(Effect.mapError(mapError(input, "compensate-worktree", threadId)));
-          worktreePath = null;
-        }
-        yield* saveWorkflow(input, {
-          threadId,
-          status: "setup_failed",
-          title,
-          worktreePath,
-          branch,
-          setupCommitted: false,
-          threadCommitted,
-          messageCommitted,
-          lastError: "Project setup script failed.",
-        });
-        return yield* Effect.failCause(setupExit.cause).pipe(
-          Effect.mapError(mapError(input, "run-setup-script", threadId)),
-        );
-      }
-      setupCommitted = true;
-      yield* saveWorkflow(input, {
-        threadId,
-        status: "setup_ready",
-        title,
-        worktreePath,
-        branch,
-        setupCommitted,
-        threadCommitted,
-        messageCommitted,
-      });
+          runId,
+          phase: "setup",
+        })
+        .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
     }
+    yield* setupScripts
+      .runForThread({
+        threadId,
+        projectId: input.projectId,
+        projectCwd: project.workspaceRoot,
+        worktreePath: cwd,
+        project: {
+          workspaceRoot: project.workspaceRoot,
+          scripts: project.scripts,
+        },
+      })
+      .pipe(Effect.mapError(mapError(input, "run-setup-script", threadId)));
 
-    if (!threadCommitted) {
-      const commitThread =
-        input.reuseExistingThread === true
-          ? Effect.gen(function* () {
-              yield* validateReusableThread();
-              return yield* threads.dispatch({
-                type: "thread.metadata.update",
+    if (runId !== null) {
+      yield* threads
+        .dispatch({
+          type: "prepared-run.release",
+          commandId: CommandId.make(`${input.commandId}:release`),
+          threadId,
+          runId,
+        })
+        .pipe(Effect.mapError(mapError(input, "release-run", threadId)));
+    }
+  });
+
+  const failPreparedRun = (
+    input: ThreadLaunchInput,
+    threadId: ThreadId,
+    runId: RunId | null,
+    cause: unknown,
+  ) =>
+    runId === null
+      ? Effect.logWarning("Thread workspace preparation failed", {
+          commandId: input.commandId,
+          threadId,
+          cause,
+        })
+      : threads
+          .dispatch({
+            type: "prepared-run.fail",
+            commandId: CommandId.make(`${input.commandId}:fail`),
+            threadId,
+            runId,
+            failure: makeProviderFailure({
+              cause,
+              message: failureDetail(cause),
+              class: "validation_error",
+              retryable: false,
+            }),
+          })
+          .pipe(
+            Effect.mapError(mapError(input, "fail-run", threadId)),
+            Effect.catchCause((persistCause) =>
+              Effect.logWarning("Failed to persist thread workspace preparation failure", {
                 commandId: input.commandId,
                 threadId,
-                title,
-                branch,
-                worktreePath,
-              });
-            })
-          : threads.dispatch({
-              type: "thread.create",
-              commandId: input.commandId,
-              threadId,
-              projectId: input.projectId,
-              title,
-              modelSelection: input.modelSelection,
-              runtimeMode: input.runtimeMode,
-              interactionMode: input.interactionMode,
-              branch,
-              worktreePath,
-              createdBy: input.createdBy,
-              creationSource: input.creationSource,
-            });
-      const createExit = yield* Effect.exit(commitThread);
-      if (createExit._tag === "Failure") {
-        if (ownsProvisionedWorktree && worktreePath !== null) {
-          yield* git
-            .removeWorktree({ cwd: project.workspaceRoot, path: worktreePath })
-            .pipe(Effect.mapError(mapError(input, "compensate-worktree", threadId)));
-          worktreePath = null;
-          setupCommitted = false;
+                cause,
+                persistCause,
+              }),
+            ),
+          );
+
+  const reservePreparation = (commandId: CommandId) =>
+    Ref.modify(scheduledLaunches, (scheduled) => {
+      if (scheduled.has(commandId)) return [false, scheduled] as const;
+      const next = new Set(scheduled);
+      next.add(commandId);
+      return [true, next] as const;
+    });
+
+  const releasePreparation = (commandId: CommandId) =>
+    Ref.update(scheduledLaunches, (scheduled) => {
+      const next = new Set(scheduled);
+      next.delete(commandId);
+      return next;
+    });
+
+  const schedulePreparation = Effect.fn("ThreadLaunchService.schedulePreparation")(function* (
+    input: ThreadLaunchInput,
+    threadId: ThreadId,
+    runId: RunId | null,
+  ) {
+    yield* prepareInBackground(input, threadId, runId).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.void
+          : failPreparedRun(input, threadId, runId, Cause.squash(cause)),
+      ),
+      Effect.ensuring(releasePreparation(input.commandId)),
+      Effect.forkIn(preparationScope),
+    );
+  });
+
+  const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
+    function* (input) {
+      const project = yield* projects.getById(input.projectId).pipe(
+        Effect.mapError(mapError(input, "resolve-project")),
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.fail(mapError(input, "resolve-project")("Project not found.")),
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
+      if (input.reuseExistingThread === true && input.threadId === undefined) {
+        return yield* mapError(
+          input,
+          "update-thread",
+        )("Reusing an existing thread requires a thread id.");
+      }
+
+      const launchReceipt = yield* readReceipt(input, input.commandId);
+      return yield* Effect.gen(function* () {
+        const candidateThreadId =
+          input.threadId ??
+          (yield* ids.allocate
+            .thread({ projectId: input.projectId })
+            .pipe(Effect.mapError(mapError(input, "create-thread"))));
+
+        if (input.reuseExistingThread === true && Option.isNone(launchReceipt)) {
+          yield* validateReusableThread(input, candidateThreadId);
         }
-        yield* saveWorkflow(input, {
-          threadId,
-          status:
-            input.reuseExistingThread === true ? "thread_update_failed" : "thread_create_failed",
-          title,
-          worktreePath,
-          branch,
-          setupCommitted,
-          threadCommitted: false,
-          messageCommitted,
-          lastError:
-            input.reuseExistingThread === true
-              ? "Thread workspace update failed."
-              : "Thread creation failed.",
-        });
-        return yield* Effect.failCause(createExit.cause).pipe(
+
+        const initialBranch = input.workspaceStrategy.branch ?? null;
+        const initialWorktreePath =
+          input.workspaceStrategy.type === "existing_worktree"
+            ? input.workspaceStrategy.worktreePath
+            : null;
+        const claimDispatch =
+          input.reuseExistingThread === true
+            ? threads.dispatch({
+                type: "thread.metadata.update",
+                commandId: input.commandId,
+                threadId: candidateThreadId,
+              })
+            : threads.dispatch({
+                type: "thread.create",
+                commandId: input.commandId,
+                threadId: candidateThreadId,
+                projectId: input.projectId,
+                title: input.title,
+                modelSelection: input.modelSelection,
+                runtimeMode: input.runtimeMode,
+                interactionMode: input.interactionMode,
+                branch: initialBranch,
+                worktreePath: initialWorktreePath,
+                createdBy: input.createdBy,
+                creationSource: input.creationSource,
+              });
+        const claimed = yield* claimDispatch.pipe(
           Effect.mapError(
             mapError(
               input,
               input.reuseExistingThread === true ? "update-thread" : "create-thread",
-              threadId,
+              candidateThreadId,
             ),
           ),
         );
-      }
-      yield* saveWorkflow(input, {
-        threadId,
-        status: "thread_created",
-        title,
-        worktreePath,
-        branch,
-        setupCommitted,
-        threadCommitted: true,
-        messageCommitted,
-      });
-    }
+        const threadId =
+          claimed.storedEvents.find((stored) => stored.event.type.startsWith("thread."))?.event
+            .threadId ?? candidateThreadId;
+        if (project.id !== input.projectId) {
+          return yield* mapError(input, "resolve-project", threadId)("Project identity changed.");
+        }
 
-    if (input.initialMessage !== undefined && !messageCommitted) {
-      const messageId =
-        input.initialMessage.messageId ??
-        (yield* ids.allocate
-          .message({ threadId, ordinal: 1 })
-          .pipe(Effect.mapError(mapError(input, "dispatch-message", threadId))));
-      yield* threads
-        .sendToThread({
-          projectId: input.projectId,
-          commandId: CommandId.make(`${input.commandId}:initial-message`),
+        let runId: RunId | null = null;
+        let messageWasAlreadyAccepted = false;
+        if (input.initialMessage !== undefined) {
+          const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
+          const messageReceipt = yield* readReceipt(input, messageCommandId);
+          messageWasAlreadyAccepted = Option.isSome(messageReceipt);
+          const messageId =
+            input.initialMessage.messageId ??
+            (yield* ids.allocate
+              .message({ threadId, ordinal: 1 })
+              .pipe(Effect.mapError(mapError(input, "dispatch-message", threadId))));
+          const dispatched = yield* threads
+            .dispatch({
+              type: "message.dispatch",
+              commandId: messageCommandId,
+              threadId,
+              messageId,
+              text: input.initialMessage.text,
+              attachments: input.initialMessage.attachments,
+              modelSelection: input.modelSelection,
+              dispatchMode: { type: "defer_start" },
+              createdBy: input.createdBy,
+              creationSource: input.creationSource,
+            })
+            .pipe(Effect.mapError(mapError(input, "dispatch-message", threadId)));
+          const runCreated = dispatched.storedEvents.find(
+            (stored) => stored.event.type === "run.created",
+          );
+          runId = runCreated?.event.type === "run.created" ? runCreated.event.payload.id : null;
+          if (runId === null) {
+            return yield* mapError(
+              input,
+              "dispatch-message",
+              threadId,
+            )("Initial message was accepted without a durable run.");
+          }
+        }
+
+        const projection = yield* threads
+          .getThreadProjection(threadId)
+          .pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
+        const runIsPreparing =
+          runId !== null &&
+          projection.runs.some((run) => run.id === runId && run.status === "preparing");
+        const shouldSchedule = runId === null ? Option.isNone(launchReceipt) : runIsPreparing;
+        if (shouldSchedule) {
+          const ownsPreparation = yield* reservePreparation(input.commandId);
+          if (ownsPreparation) {
+            yield* Effect.gen(function* () {
+              const preparationStillRequired =
+                runId === null
+                  ? true
+                  : yield* threads.getThreadProjection(threadId).pipe(
+                      Effect.map((current) =>
+                        current.runs.some((run) => run.id === runId && run.status === "preparing"),
+                      ),
+                      Effect.mapError(mapError(input, "update-thread", threadId)),
+                    );
+              if (preparationStillRequired) {
+                yield* schedulePreparation(input, threadId, runId);
+              } else {
+                yield* releasePreparation(input.commandId);
+              }
+            }).pipe(Effect.onError(() => releasePreparation(input.commandId)));
+          }
+        }
+
+        return {
           threadId,
-          messageId,
-          text: input.initialMessage.text,
-          attachments: input.initialMessage.attachments,
-          mode: "auto",
-          createdBy: input.createdBy,
-          creationSource: input.creationSource,
-        })
-        .pipe(Effect.mapError(mapError(input, "dispatch-message", threadId)));
-      messageCommitted = true;
-    }
-    yield* saveWorkflow(input, {
-      threadId,
-      status: "completed",
-      title,
-      worktreePath,
-      branch,
-      setupCommitted,
-      threadCommitted: true,
-      messageCommitted,
-    });
-    return {
-      threadId,
-      projection: yield* threads
-        .getThreadProjection(threadId)
-        .pipe(Effect.mapError(mapError(input, "create-thread", threadId))),
-      resumed: stored !== null,
-    };
-  });
+          projection,
+          resumed: Option.isSome(launchReceipt) || messageWasAlreadyAccepted,
+        };
+      });
+    },
+  );
 
-  return ThreadLaunchService.of({
-    launch: (input) => launchSemaphore.withPermit(launchWorkflow(input)),
-  });
+  return ThreadLaunchService.of({ launch });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);

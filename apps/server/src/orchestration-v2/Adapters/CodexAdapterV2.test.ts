@@ -16,6 +16,8 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
+import { TestClock } from "effect/testing";
 import { ChildProcess } from "effect/unstable/process";
 
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -24,11 +26,101 @@ import {
   buildCodexTurnStartParams,
   CODEX_DRIVER_KIND,
   codexThreadRuntimeParams,
+  type CodexAgentMessageDeltaUpdate,
+  makeCodexAgentMessageDeltaCoalescer,
   makeCodexAppServerProtocolLogger,
   makeCodexAppServerSpawnCommand,
   projectCodexDynamicToolItem,
   resolveCodexRollbackTurnCount,
 } from "./CodexAdapterV2.ts";
+
+describe("CodexAdapterV2 assistant message streaming", () => {
+  it.effect("makes accumulated assistant text visible after the bounded flush interval", () =>
+    Effect.gen(function* () {
+      const updates = yield* Ref.make<
+        ReadonlyArray<{
+          readonly turnId: string;
+          readonly itemId: string;
+          readonly text: string;
+          readonly completed: boolean;
+        }>
+      >([]);
+      const coalescer = yield* makeCodexAgentMessageDeltaCoalescer({
+        flushIntervalMs: 50,
+        emit: (update) => Ref.update(updates, (current) => [...current, update]),
+      });
+
+      yield* coalescer.append({ turnId: "turn-1", itemId: "message-1", delta: "partial" });
+      assert.deepEqual(yield* Ref.get(updates), []);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("50 millis");
+      yield* Effect.yieldNow;
+
+      assert.deepEqual(yield* Ref.get(updates), [
+        {
+          turnId: "turn-1",
+          itemId: "message-1",
+          text: "partial",
+          completed: false,
+        },
+      ]);
+    }),
+  );
+
+  it.effect("coalesces multiple token deltas into one assistant update per interval", () =>
+    Effect.gen(function* () {
+      const updates = yield* Ref.make<ReadonlyArray<CodexAgentMessageDeltaUpdate>>([]);
+      const coalescer = yield* makeCodexAgentMessageDeltaCoalescer({
+        flushIntervalMs: 50,
+        emit: (update) => Ref.update(updates, (current) => [...current, update]),
+      });
+
+      yield* coalescer.append({ turnId: "turn-1", itemId: "message-1", delta: "one" });
+      yield* coalescer.append({ turnId: "turn-1", itemId: "message-1", delta: " two" });
+      yield* coalescer.append({ turnId: "turn-1", itemId: "message-1", delta: " three" });
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("50 millis");
+      yield* Effect.yieldNow;
+
+      assert.deepEqual(yield* Ref.get(updates), [
+        {
+          turnId: "turn-1",
+          itemId: "message-1",
+          text: "one two three",
+          completed: false,
+        },
+      ]);
+    }),
+  );
+
+  it.effect("flushes buffered text synchronously before item and turn completion", () =>
+    Effect.gen(function* () {
+      const updates = yield* Ref.make<ReadonlyArray<CodexAgentMessageDeltaUpdate>>([]);
+      const coalescer = yield* makeCodexAgentMessageDeltaCoalescer({
+        flushIntervalMs: 50,
+        emit: (update) => Ref.update(updates, (current) => [...current, update]),
+      });
+
+      yield* coalescer.append({ turnId: "turn-1", itemId: "message-1", delta: "item final" });
+      const completedText = yield* coalescer.complete({
+        turnId: "turn-1",
+        itemId: "message-1",
+      });
+      yield* coalescer.append({ turnId: "turn-1", itemId: "message-2", delta: "turn final" });
+      yield* coalescer.flushTurn("turn-1");
+
+      assert.equal(completedText, "item final");
+      assert.deepEqual(yield* Ref.get(updates), [
+        { turnId: "turn-1", itemId: "message-1", text: "item final", completed: true },
+        { turnId: "turn-1", itemId: "message-2", text: "turn final", completed: true },
+      ]);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("50 millis");
+      yield* Effect.yieldNow;
+      assert.equal((yield* Ref.get(updates)).length, 2);
+    }),
+  );
+});
 
 describe("CodexAdapterV2 runtime policy", () => {
   it.effect("derives concrete Codex turn policies from every T3 runtime mode", () =>
@@ -42,7 +134,10 @@ describe("CodexAdapterV2 runtime policy", () => {
             interactionMode: "default",
             cwd: null,
           },
-          model: "gpt-5.4",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+          },
         });
 
       const approvalRequired = yield* build("approval-required");
@@ -72,11 +167,44 @@ describe("CodexAdapterV2 runtime policy", () => {
             type: "readOnly",
           },
         },
-        model: "gpt-5.4",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
       });
 
       assert.equal(params.approvalPolicy, "on-request");
       assert.equal(params.sandboxPolicy?.type, "readOnly");
+    }),
+  );
+
+  it.effect("compiles per-turn Codex model options and cwd from their owning inputs", () =>
+    Effect.gen(function* () {
+      const params = yield* buildCodexTurnStartParams({
+        nativeThreadId: "native-model-options",
+        codexInput: [{ type: "text", text: "test" }],
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "plan",
+          cwd: "/workspace/model-options",
+          reasoningEffort: "low",
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+          options: [
+            { id: "reasoningEffort", value: "xhigh" },
+            { id: "serviceTier", value: "priority" },
+          ],
+        },
+      });
+
+      assert.equal(params.model, "gpt-5.4");
+      assert.equal(params.effort, "xhigh");
+      assert.equal(params.serviceTier, "priority");
+      assert.equal(params.cwd, "/workspace/model-options");
+      assert.equal(params.collaborationMode?.settings.model, "gpt-5.4");
+      assert.equal(params.collaborationMode?.settings.reasoning_effort, "xhigh");
     }),
   );
 });
