@@ -36,6 +36,8 @@ export class ProviderTurnControlError extends Schema.TaggedErrorClass<ProviderTu
   },
 ) {}
 
+const isProviderTurnControlError = Schema.is(ProviderTurnControlError);
+
 export interface ProviderTurnControlServiceV2Shape {
   readonly interrupt: (input: {
     readonly threadId: ThreadId;
@@ -53,6 +55,7 @@ export interface ProviderTurnControlServiceV2Shape {
   readonly interruptAndAwaitTerminal: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
+    readonly replacementProviderSessionId?: ProviderSessionId;
     readonly providerThreadId: ProviderThreadId;
     readonly providerTurnId: ProviderTurnId;
     readonly interruptedAttemptId: RunAttemptId;
@@ -77,6 +80,7 @@ export const layer: Layer.Layer<
     const load = (input: {
       readonly threadId: ThreadId;
       readonly providerSessionId: ProviderSessionId;
+      readonly replacementProviderSessionId?: ProviderSessionId;
       readonly providerThreadId: ProviderThreadId;
       readonly providerTurnId: ProviderTurnId;
       readonly operation: "interrupt" | "restart" | "steer";
@@ -89,10 +93,16 @@ export const layer: Layer.Layer<
         const providerTurn = projection.providerTurns.find(
           (candidate) => candidate.id === input.providerTurnId,
         );
+        const targetsRecordedSession =
+          providerThread?.providerSessionId === input.providerSessionId;
+        const targetsCommittedReplacement =
+          input.operation === "restart" &&
+          input.replacementProviderSessionId !== undefined &&
+          providerThread?.providerSessionId === input.replacementProviderSessionId;
         if (
           providerThread === undefined ||
           providerTurn === undefined ||
-          providerThread.providerSessionId !== input.providerSessionId ||
+          (!targetsRecordedSession && !targetsCommittedReplacement) ||
           providerTurn.providerThreadId !== providerThread.id
         ) {
           return yield* new ProviderTurnControlError({
@@ -102,8 +112,20 @@ export const layer: Layer.Layer<
             cause: "The recorded provider execution target is no longer valid.",
           });
         }
+        // A restart-session command commits the replacement binding before its
+        // process-bound effect runs. The old live runtime must still receive
+        // the interrupt, but only when the projection matches the exact
+        // replacement captured by that same durable effect.
+        const interruptProviderThread = targetsRecordedSession
+          ? providerThread
+          : { ...providerThread, providerSessionId: input.providerSessionId };
         if (providerTurn.status !== "running") {
-          return { projection, providerThread, providerTurn, session: Option.none() };
+          return {
+            projection,
+            providerThread: interruptProviderThread,
+            providerTurn,
+            session: Option.none(),
+          };
         }
         const session = yield* sessions.get(input.providerSessionId);
         if (Option.isNone(session)) {
@@ -114,7 +136,7 @@ export const layer: Layer.Layer<
             cause: `Provider session ${input.providerSessionId} is not active.`,
           });
         }
-        return { projection, providerThread, providerTurn, session };
+        return { projection, providerThread: interruptProviderThread, providerTurn, session };
       });
 
     return ProviderTurnControlServiceV2.of({
@@ -128,7 +150,7 @@ export const layer: Layer.Layer<
           });
         }).pipe(
           Effect.mapError((cause) =>
-            Schema.is(ProviderTurnControlError)(cause)
+            isProviderTurnControlError(cause)
               ? cause
               : new ProviderTurnControlError({
                   threadId: input.threadId,
@@ -178,7 +200,7 @@ export const layer: Layer.Layer<
           });
         }).pipe(
           Effect.mapError((cause) =>
-            Schema.is(ProviderTurnControlError)(cause)
+            isProviderTurnControlError(cause)
               ? cause
               : new ProviderTurnControlError({
                   threadId: input.threadId,
@@ -221,7 +243,7 @@ export const layer: Layer.Layer<
           });
         }).pipe(
           Effect.mapError((cause) =>
-            Schema.is(ProviderTurnControlError)(cause)
+            isProviderTurnControlError(cause)
               ? cause
               : new ProviderTurnControlError({
                   threadId: input.threadId,

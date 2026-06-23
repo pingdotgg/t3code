@@ -10,9 +10,9 @@ import {
   OrchestrationV2ProviderSession,
   OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderCapabilities,
+  OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
-  OrchestrationV2RawProviderEvent,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
@@ -20,6 +20,7 @@ import {
   ProviderInteractionMode,
   ProviderDriverKind,
   ProviderInstanceId,
+  PositiveInt,
   ProviderUserInputAnswers,
   ProviderSessionId,
   ProviderThreadId,
@@ -35,6 +36,11 @@ import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
+
+import type {
+  ProviderSelectionTransitionInput,
+  ProviderSelectionTransitionPlan,
+} from "./ProviderSelectionTransition.ts";
 
 export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   runtimeMode: RuntimeMode,
@@ -121,8 +127,23 @@ export const ProviderAdapterV2Event = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("turn.terminal"),
     driver: ProviderDriverKind,
+    providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
-    status: Schema.Literals(["completed", "interrupted", "failed", "cancelled"]),
+    runOrdinal: PositiveInt,
+    status: Schema.Literals(["completed", "interrupted", "cancelled"]),
+    failure: Schema.Null,
+    threadDisposition: Schema.Literals(["reusable", "broken"]),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("turn.terminal"),
+    driver: ProviderDriverKind,
+    providerThreadId: ProviderThreadId,
+    providerTurnId: ProviderTurnId,
+    runOrdinal: PositiveInt,
+    failureItemOrdinal: PositiveInt,
+    status: Schema.Literal("failed"),
+    failure: OrchestrationV2ProviderFailure,
+    threadDisposition: Schema.Literals(["reusable", "broken"]),
   }),
 ]);
 export type ProviderAdapterV2Event = typeof ProviderAdapterV2Event.Type;
@@ -446,12 +467,11 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly driver: ProviderDriverKind;
   readonly providerSessionId: ProviderSessionId;
   readonly providerSession: OrchestrationV2ProviderSession;
-  readonly rawEvents: Stream.Stream<OrchestrationV2RawProviderEvent, ProviderAdapterV2Error>;
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   /**
    * Manager-owned runtimes expose a synchronous subscription so concurrent
    * provider threads receive independent copies of the process event stream.
-   * Adapter runtimes may omit this and expose only their raw single-consumer stream.
+   * Adapter runtimes may omit this and expose only their single-consumer event stream.
    */
   readonly subscribeEvents?: Effect.Effect<ProviderAdapterV2EventSubscription>;
   readonly ensureThread: (
@@ -493,6 +513,9 @@ export interface ProviderAdapterV2Shape {
     OrchestrationV2ProviderCapabilities,
     ProviderAdapterV2Error
   >;
+  readonly planSelectionTransition: (
+    input: ProviderSelectionTransitionInput,
+  ) => Effect.Effect<ProviderSelectionTransitionPlan, ProviderAdapterV2Error>;
   readonly openSession: (
     input: ProviderAdapterV2OpenSessionInput,
   ) => Effect.Effect<ProviderAdapterV2SessionRuntime, ProviderAdapterV2Error, Scope.Scope>;

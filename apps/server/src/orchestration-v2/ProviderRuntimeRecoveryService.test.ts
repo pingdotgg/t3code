@@ -227,7 +227,8 @@ it.effect("preserves a waiting run while its replay-safe checkpoint capture is u
                 status: "running",
               },
             ] as never),
-          cancelUnsettled: () => Effect.succeed(0),
+          cancelUnsettled: () => Effect.succeed([]),
+          signalCancellations: () => Effect.void,
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 1, cancelled: 0 }),
         }),
       ),
@@ -302,6 +303,94 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
     assert.equal(summary.terminalizedRuns, 1);
     const runEvent = committedInput?.events.find((event) => event.type === "run.updated");
     assert.equal(runEvent?.type === "run.updated" ? runEvent.payload.status : null, "cancelled");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("cancels accepted queued work instead of replaying it after restart", () => {
+  const threadId = ThreadId.make("thread_queued_restart");
+  const runId = RunId.make("run_queued_restart");
+  const attemptId = RunAttemptId.make("attempt_queued_restart");
+  const rootNodeId = NodeId.make("node_queued_restart");
+  let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
+    null;
+  const projection = {
+    thread: { id: threadId },
+    runtimeRequests: [],
+    providerSessions: [],
+    providerThreads: [],
+    providerTurns: [],
+    runs: [
+      {
+        id: runId,
+        status: "queued",
+        queuePosition: 1,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      },
+    ],
+    attempts: [
+      {
+        id: attemptId,
+        runId,
+        rootNodeId,
+        status: "pending",
+      },
+    ],
+    nodes: [
+      {
+        id: rootNodeId,
+        runId,
+        status: "pending",
+      },
+    ],
+    subagents: [],
+    messages: [],
+    turnItems: [],
+  } as unknown as OrchestrationV2ThreadProjection;
+  const layer = ProviderRuntimeRecovery.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getShellSnapshot: () =>
+            Effect.succeed({
+              schemaVersion: 2,
+              snapshotSequence: 0,
+              threads: [{ id: threadId }],
+              archivedThreads: [],
+            } as never),
+          getThreadProjection: () => Effect.succeed(projection),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          commitCommand: (input) => {
+            committedInput = input;
+            return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+          },
+        }),
+        IdAllocator.layer,
+        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({ runOnce: Effect.succeed(false) }),
+        Layer.mock(EffectOutbox.EffectOutboxV2)({
+          reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+        }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const summary =
+      yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
+    assert.equal(summary.terminalizedRuns, 1);
+    const command = committedInput;
+    assert.isNotNull(command);
+    if (command === null) return;
+    const runEvent = command.events.find((event) => event.type === "run.updated");
+    const attemptEvent = command.events.find((event) => event.type === "run-attempt.updated");
+    const nodeEvent = command.events.find((event) => event.type === "node.updated");
+    assert.equal(runEvent?.type === "run.updated" ? runEvent.payload.status : null, "cancelled");
+    assert.equal(runEvent?.type === "run.updated" ? runEvent.payload.queuePosition : 1, null);
+    assert.equal(
+      attemptEvent?.type === "run-attempt.updated" ? attemptEvent.payload.status : null,
+      "cancelled",
+    );
+    assert.equal(nodeEvent?.type === "node.updated" ? nodeEvent.payload.status : null, "cancelled");
   }).pipe(Effect.provide(layer));
 });
 

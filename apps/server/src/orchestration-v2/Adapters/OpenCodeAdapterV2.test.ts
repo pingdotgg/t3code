@@ -1,10 +1,18 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
   NodeId,
+  ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  ThreadId,
   type OrchestrationV2ProviderTurn,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
+import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
 
 import {
   openCodeBoundaryAfterProviderTurn,
@@ -12,10 +20,13 @@ import {
   openCodePermissionRules,
   openCodePermissionRequestKind,
   openCodeToolProjectionKind,
+  makeOpenCodeProtocolLogger,
   OPENCODE_PROVIDER,
   OpenCodeProviderCapabilitiesV2,
 } from "./OpenCodeAdapterV2.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+
+const encodeUnknownJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
 
 function runtimePolicy(
   runtimeMode: ProviderAdapterV2RuntimePolicy["runtimeMode"],
@@ -56,6 +67,39 @@ function providerTurn(input: {
 }
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect("logs bounded structural protocol diagnostics without native payload values", () =>
+    Effect.gen(function* () {
+      const idAllocator = yield* IdAllocatorV2;
+      const records: Array<unknown> = [];
+      const nativeEventLogger: EventNdjsonLogger = {
+        filePath: "/tmp/provider-native.ndjson",
+        write: (event) => Effect.sync(() => void records.push(event)),
+        close: () => Effect.void,
+      };
+      const logProtocolEvent = makeOpenCodeProtocolLogger({
+        nativeEventLogger,
+        idAllocator,
+        providerInstanceId: ProviderInstanceId.make("opencode-test"),
+        providerSessionId: ProviderSessionId.make("provider-session-opencode-test"),
+        threadId: ThreadId.make("thread-opencode-test"),
+      });
+      const secret = "secret-opencode-prompt";
+
+      yield* logProtocolEvent({
+        direction: "outgoing",
+        messageKind: "request",
+        method: "session.prompt",
+        payload: { prompt: secret, nested: { token: secret } },
+      });
+
+      const serialized = encodeUnknownJson(records);
+      assert.notInclude(serialized, secret);
+      assert.include(serialized, '"protocol":"opencode-sdk.sse"');
+      assert.include(serialized, '"method":"session.prompt"');
+      assert.include(serialized, '"fieldCount":2');
+    }).pipe(Effect.provide(idAllocatorLayer)),
+  );
+
   it("advertises the identity strengths exposed by the SDK boundary", () => {
     assert.equal(OpenCodeProviderCapabilitiesV2.identity.nativeThreadIds, "strong");
     assert.equal(OpenCodeProviderCapabilitiesV2.identity.nativeTurnIds, "weak");

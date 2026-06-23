@@ -133,8 +133,29 @@ export const executorLayer: Layer.Layer<
                 providerThreadId: effect.request.providerThreadId,
                 providerTurnId: effect.request.providerTurnId,
                 interruptedAttemptId: effect.request.interruptedAttemptId,
+                ...(effect.request.sessionTransition?.type === "replace"
+                  ? {
+                      replacementProviderSessionId:
+                        effect.request.sessionTransition.replacementProviderSessionId,
+                    }
+                  : {}),
               })
               .pipe(
+                Effect.andThen(
+                  effect.request.sessionTransition?.type === "replace"
+                    ? providerSessions.detach({
+                        providerSessionId: effect.request.providerSessionId,
+                        threadId: effect.threadId,
+                        detail: "Selection change requires a provider session restart.",
+                      })
+                    : effect.request.sessionTransition?.type === "detach"
+                      ? providerSessions.detach({
+                          providerSessionId: effect.request.providerSessionId,
+                          threadId: effect.threadId,
+                          detail: "Provider thread handoff replaced this session binding.",
+                        })
+                      : Effect.void,
+                ),
                 Effect.andThen(
                   providerTurnStart.start({
                     threadId: effect.threadId,
@@ -245,6 +266,8 @@ export class OrchestrationEffectWorkerError extends Schema.TaggedErrorClass<Orch
   },
 ) {}
 
+const isOrchestrationEffectWorkerError = Schema.is(OrchestrationEffectWorkerError);
+
 export interface OrchestrationEffectWorkerV2Shape {
   readonly awaitWork: Effect.Effect<void>;
   readonly runOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
@@ -277,6 +300,15 @@ export const layerWithOptions = (
       const workerId = options.workerId ?? `orchestration-v2:${process.pid}`;
       const leaseDurationMs = Math.max(1, options.leaseDurationMs ?? 30_000);
       const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
+      const wasCancelled = (effectId: string) =>
+        outbox.get(effectId).pipe(
+          Effect.map(
+            Option.match({
+              onNone: () => false,
+              onSome: (effect) => effect.status === "cancelled",
+            }),
+          ),
+        );
 
       const runOnce = Effect.gen(function* () {
         const claimed = yield* outbox.claimNext({ workerId, leaseDurationMs });
@@ -284,10 +316,28 @@ export const layerWithOptions = (
           return false;
         }
         const effect = claimed.value;
-        const exit = yield* Effect.exit(executor.execute(effect));
+        // Cancellation can commit after the durable claim but before the
+        // process-local Deferred is registered. Re-read the authoritative row
+        // once before starting external work; later cancellations use the
+        // Deferred raced below.
+        if (yield* wasCancelled(effect.id)) {
+          yield* outbox.clearCancellation(effect.id);
+          return true;
+        }
+        const execution = executor.execute(effect).pipe(Effect.as("executed" as const));
+        const cancellation = outbox
+          .awaitCancellation(effect.id)
+          .pipe(Effect.as("cancelled" as const));
+        const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
+          Effect.ensuring(outbox.clearCancellation(effect.id)),
+        );
+        if (Exit.isSuccess(exit) && exit.value === "cancelled") {
+          return true;
+        }
         if (Exit.isSuccess(exit)) {
           const completed = yield* outbox.succeed({ effectId: effect.id, workerId });
           if (!completed) {
+            if (yield* wasCancelled(effect.id)) return true;
             return yield* new OrchestrationEffectWorkerError({
               operation: "complete",
               effectId: effect.id,
@@ -314,6 +364,7 @@ export const layerWithOptions = (
                 delayMs: Math.min(30_000, 100 * 2 ** Math.max(0, effect.attemptCount - 1)),
               });
         if (!updated) {
+          if (yield* wasCancelled(effect.id)) return true;
           return yield* new OrchestrationEffectWorkerError({
             operation: "reschedule",
             effectId: effect.id,
@@ -323,7 +374,7 @@ export const layerWithOptions = (
         return true;
       }).pipe(
         Effect.mapError((cause) =>
-          Schema.is(OrchestrationEffectWorkerError)(cause)
+          isOrchestrationEffectWorkerError(cause)
             ? cause
             : new OrchestrationEffectWorkerError({ operation: "run", cause }),
         ),
@@ -346,21 +397,48 @@ export const layerWithOptions = (
 
 export const layer = layerWithOptions();
 
-export const runDaemon = Effect.gen(function* () {
-  const worker = yield* OrchestrationEffectWorkerV2;
-  return yield* Effect.forever(
-    worker.runOnce.pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Orchestration effect worker failed", cause).pipe(Effect.as(false)),
-      ),
-      Effect.flatMap((worked) =>
-        worked
-          ? Effect.yieldNow
-          : Effect.raceFirst(worker.awaitWork, Effect.sleep(Duration.millis(50))),
-      ),
-    ),
+export interface OrchestrationEffectDaemonOptions {
+  readonly concurrency?: number;
+}
+
+export const DEFAULT_EFFECT_WORKER_CONCURRENCY = 4;
+
+export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions = {}) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const worker = yield* OrchestrationEffectWorkerV2;
+      const requestedConcurrency = options.concurrency ?? DEFAULT_EFFECT_WORKER_CONCURRENCY;
+      const concurrency = Number.isFinite(requestedConcurrency)
+        ? Math.max(1, Math.floor(requestedConcurrency))
+        : DEFAULT_EFFECT_WORKER_CONCURRENCY;
+      // Notifications only reduce latency; the durable outbox remains authoritative.
+      // Every slot polls after a bounded delay so a missed or coalesced wakeup can
+      // never strand committed work. Consuming the outbox signal directly also
+      // avoids lifecycle coupling between a separate fan-out fiber and subscribers.
+      const runWorker = Effect.forever(
+        worker.runOnce.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Orchestration effect worker failed", cause).pipe(Effect.as(false)),
+          ),
+          Effect.flatMap((worked) =>
+            worked
+              ? Effect.yieldNow
+              : Effect.raceFirst(worker.awaitWork, Effect.sleep(Duration.millis(50))),
+          ),
+        ),
+      );
+
+      return yield* Effect.all(
+        Array.from({ length: concurrency }, () => runWorker),
+        {
+          concurrency: "unbounded",
+          discard: true,
+        },
+      );
+    }),
   );
-});
+
+export const runDaemon = runDaemonWithOptions();
 
 export const daemonLayer: Layer.Layer<never, never, OrchestrationEffectWorkerV2> =
   Layer.effectDiscard(runDaemon.pipe(Effect.forkScoped));
