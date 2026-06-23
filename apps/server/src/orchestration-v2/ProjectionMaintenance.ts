@@ -1,8 +1,4 @@
-import {
-  type OrchestrationV2StoredEvent,
-  type OrchestrationV2ThreadProjection,
-  ThreadId,
-} from "@t3tools/contracts";
+import { type OrchestrationV2StoredEvent, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -13,8 +9,6 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { EventStoreV2 } from "./EventStore.ts";
 import {
-  applyToProjectionReplayState,
-  makeProjectionReplayState,
   ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
   ProjectionStoreV2,
 } from "./ProjectionStore.ts";
@@ -24,7 +18,7 @@ export interface ProjectionVerificationV2 {
   readonly schemaVersion: number;
   readonly expectedSequence: number;
   readonly projectionSequence: number;
-  readonly differingThreadIds: ReadonlyArray<ThreadId>;
+  readonly unreadableThreadIds: ReadonlyArray<ThreadId>;
   readonly missingThreadIds: ReadonlyArray<ThreadId>;
   readonly unexpectedThreadIds: ReadonlyArray<ThreadId>;
 }
@@ -51,45 +45,6 @@ type ProjectionMetadataRow = {
   readonly schema_version: number;
   readonly last_sequence: number;
 };
-
-function sortedProjection(projection: OrchestrationV2ThreadProjection): unknown {
-  const sortById = <A extends { readonly id: string }>(values: ReadonlyArray<A>) =>
-    values.toSorted((left, right) => left.id.localeCompare(right.id));
-  return {
-    ...projection,
-    runs: sortById(projection.runs),
-    attempts: sortById(projection.attempts),
-    nodes: sortById(projection.nodes),
-    subagents: sortById(projection.subagents),
-    providerSessions: sortById(projection.providerSessions),
-    providerThreads: sortById(projection.providerThreads),
-    providerTurns: sortById(projection.providerTurns),
-    runtimeRequests: sortById(projection.runtimeRequests),
-    messages: sortById(projection.messages),
-    plans: sortById(projection.plans),
-    turnItems: sortById(projection.turnItems),
-    checkpointScopes: sortById(projection.checkpointScopes),
-    checkpoints: sortById(projection.checkpoints),
-    contextHandoffs: sortById(projection.contextHandoffs),
-    contextTransfers: sortById(projection.contextTransfers),
-    // This is a derived lineage view. Its source entities are compared above.
-    visibleTurnItems: [],
-  };
-}
-
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(",")}]`;
-  }
-  if (typeof value === "object" && value !== null) {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record)
-      .toSorted()
-      .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
 
 export const layer: Layer.Layer<
   ProjectionMaintenanceV2,
@@ -120,50 +75,49 @@ export const layer: Layer.Layer<
       return events;
     });
 
-    const expectedProjections = (events: ReadonlyArray<OrchestrationV2StoredEvent>) => {
-      const state = makeProjectionReplayState();
-      for (const stored of events) {
-        applyToProjectionReplayState(state, stored.event);
-      }
-      return state.projections;
-    };
-
+    /**
+     * EventSink commits the event, its projection updates, and projection metadata in one SQL
+     * transaction. Startup verification therefore checks that transaction boundary and that every
+     * stored projection can be decoded. It intentionally does not replay domain events through a
+     * second projector: doing so creates another implementation of projection semantics that must
+     * evolve in lockstep with ProjectionStore.
+     */
     const verify = Effect.gen(function* () {
-      const events = yield* readAllEvents;
-      const expected = expectedProjections(events);
+      const expectedThreadRows = yield* sql<{ readonly thread_id: string }>`
+        SELECT DISTINCT stream_id AS thread_id
+        FROM orchestration_events
+        WHERE application_event_version = 2
+          AND aggregate_kind = 'thread'
+          AND event_type = 'thread.created'
+        ORDER BY stream_id ASC
+      `;
       const projectionRows = yield* sql<{ readonly thread_id: string }>`
         SELECT thread_id
         FROM orchestration_v2_projection_threads
         ORDER BY thread_id ASC
       `;
       const actualIds = projectionRows.map((row) => ThreadId.make(row.thread_id));
-      const expectedIds = [...expected.keys()].toSorted((left, right) => left.localeCompare(right));
+      const expectedIds = expectedThreadRows.map((row) => ThreadId.make(row.thread_id));
       const actualSet = new Set(actualIds);
       const expectedSet = new Set(expectedIds);
       const missingThreadIds = expectedIds.filter((threadId) => !actualSet.has(threadId));
       const unexpectedThreadIds = actualIds.filter((threadId) => !expectedSet.has(threadId));
-      const differingThreadIds: Array<ThreadId> = [];
-      for (const threadId of expectedIds) {
-        if (!actualSet.has(threadId)) {
-          continue;
-        }
-        const actual = yield* projectionStore.getThreadProjection(threadId);
-        const expectedProjection = expected.get(threadId);
-        if (
-          expectedProjection === undefined ||
-          stableStringify(sortedProjection(actual)) !==
-            stableStringify(sortedProjection(expectedProjection))
-        ) {
-          differingThreadIds.push(threadId);
-        }
-      }
+      const unreadableThreadIds = (yield* Effect.forEach(
+        actualIds,
+        (threadId) =>
+          projectionStore.getThreadProjection(threadId).pipe(
+            Effect.as<ThreadId | null>(null),
+            Effect.orElseSucceed((): ThreadId | null => threadId),
+          ),
+        { concurrency: 8 },
+      )).filter((threadId): threadId is ThreadId => threadId !== null);
       const metadata = yield* sql<ProjectionMetadataRow>`
         SELECT schema_version, last_sequence
         FROM orchestration_v2_projection_metadata
         WHERE projection_name = 'thread-projections'
         LIMIT 1
       `;
-      const expectedSequence = events.at(-1)?.sequence ?? 0;
+      const expectedSequence = yield* eventStore.latestSequence();
       const schemaVersion = metadata[0]?.schema_version ?? 0;
       const projectionSequence = metadata[0]?.last_sequence ?? 0;
       return {
@@ -172,11 +126,11 @@ export const layer: Layer.Layer<
           projectionSequence === expectedSequence &&
           missingThreadIds.length === 0 &&
           unexpectedThreadIds.length === 0 &&
-          differingThreadIds.length === 0,
+          unreadableThreadIds.length === 0,
         schemaVersion,
         expectedSequence,
         projectionSequence,
-        differingThreadIds,
+        unreadableThreadIds,
         missingThreadIds,
         unexpectedThreadIds,
       } satisfies ProjectionVerificationV2;
