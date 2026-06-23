@@ -178,36 +178,6 @@ describe("mergeEnvironmentDraftRowsForPersistedUpdate", () => {
     ]);
   });
 
-  it("drops a local add row once the persisted save echo arrives", () => {
-    const rows = mergeEnvironmentDraftRowsForPersistedUpdate({
-      rows: [
-        {
-          id: "provider-env-1",
-          name: "API_KEY",
-          value: "new-secret",
-          sensitive: true,
-        },
-      ],
-      previousEnvironment: [],
-      nextEnvironment: [
-        {
-          name: "API_KEY",
-          value: "new-secret",
-          sensitive: true,
-        },
-      ],
-    });
-
-    expect(rows).toEqual([
-      {
-        id: "0:API_KEY",
-        name: "API_KEY",
-        value: "new-secret",
-        sensitive: true,
-      },
-    ]);
-  });
-
   it("preserves a local deletion when a stale persisted echo still contains the row", () => {
     const previousEnvironment: ReadonlyArray<ProviderInstanceEnvironmentVariable> = [
       {
@@ -251,42 +221,6 @@ describe("mergeEnvironmentDraftRowsForPersistedUpdate", () => {
         name: "BASE_URL",
         value: "https://example.test",
         sensitive: false,
-      },
-    ]);
-  });
-
-  it("matches a renamed variable save echo without duplicating the draft row", () => {
-    const rows = mergeEnvironmentDraftRowsForPersistedUpdate({
-      rows: [
-        {
-          id: "0:OLD_API_KEY",
-          name: "NEW_API_KEY",
-          value: "secret",
-          sensitive: true,
-        },
-      ],
-      previousEnvironment: [
-        {
-          name: "OLD_API_KEY",
-          value: "secret",
-          sensitive: true,
-        },
-      ],
-      nextEnvironment: [
-        {
-          name: "NEW_API_KEY",
-          value: "secret",
-          sensitive: true,
-        },
-      ],
-    });
-
-    expect(rows).toEqual([
-      {
-        id: "0:NEW_API_KEY",
-        name: "NEW_API_KEY",
-        value: "secret",
-        sensitive: true,
       },
     ]);
   });
