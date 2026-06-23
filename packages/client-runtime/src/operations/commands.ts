@@ -450,7 +450,11 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
 
   const projection = yield* getProjection(input.threadId);
   const activeRun = projection.runs.findLast(
-    (run) => run.status === "starting" || run.status === "running" || run.status === "waiting",
+    (run) =>
+      run.status === "preparing" ||
+      run.status === "starting" ||
+      run.status === "running" ||
+      run.status === "waiting",
   );
   const requestedMode = input.dispatchMode ?? "auto";
   const activeProviderThread =
@@ -504,7 +508,11 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
     input.runId ??
     (input.turnId as RunId | undefined) ??
     projection.runs.findLast(
-      (run) => run.status === "starting" || run.status === "running" || run.status === "waiting",
+      (run) =>
+        run.status === "preparing" ||
+        run.status === "starting" ||
+        run.status === "running" ||
+        run.status === "waiting",
     )?.id;
   if (runId === undefined) return { sequence: 0 };
   return yield* dispatch({

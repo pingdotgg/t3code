@@ -31,7 +31,7 @@ export function threadStatusTone(thread: EnvironmentThreadShell): StatusTone {
       pulse: false,
     };
   }
-  if (status === "queued" || status === "starting") {
+  if (status === "preparing" || status === "queued" || status === "starting") {
     return {
       kind: "working",
       label: "Working",

@@ -3,7 +3,10 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
+import {
+  decodeProviderReplayNdjson,
+  materializeReplayTranscriptWorkspace,
+} from "./ReplayTranscriptNdjson.ts";
 
 const encodeParseError = Schema.encodeUnknownEffect(ProviderReplayNdjsonParseError);
 
@@ -67,6 +70,30 @@ describe("decodeProviderReplayNdjson", () => {
       assert.equal(causeRecord.name, "SchemaError");
       assert.equal(causeRecord._tag, "SchemaError");
       assert.doesNotThrow(() => JSON.stringify(encoded));
+    }),
+  );
+
+  it.effect("materializes outbound workspace placeholders without weakening replay frames", () =>
+    Effect.gen(function* () {
+      const transcript = yield* decodeProviderReplayNdjson(`
+        {"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"workspace"}
+        {"type":"expect_outbound","frame":{"method":"turn/start","params":{"cwd":"<workspace>","nested":["<workspace>"]}}}
+        {"type":"emit_inbound","frame":{"method":"item/completed","params":{"text":"<workspace>"}}}
+      `);
+
+      const materialized = materializeReplayTranscriptWorkspace(transcript, "/tmp/workspace");
+
+      assert.deepEqual(materialized.entries[0], {
+        type: "expect_outbound",
+        frame: {
+          method: "turn/start",
+          params: { cwd: "/tmp/workspace", nested: ["/tmp/workspace"] },
+        },
+      });
+      assert.deepEqual(materialized.entries[1], {
+        type: "emit_inbound",
+        frame: { method: "item/completed", params: { text: "<workspace>" } },
+      });
     }),
   );
 });

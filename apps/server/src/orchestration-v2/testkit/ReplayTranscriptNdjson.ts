@@ -47,6 +47,47 @@ export type ProviderReplayNdjsonParseError = typeof ProviderReplayNdjsonParseErr
 
 export type ProviderReplayTranscriptMetadata = Omit<ProviderReplayTranscript, "entries">;
 
+export const REPLAY_TRANSCRIPT_WORKSPACE_PLACEHOLDER = "<workspace>";
+
+function materializeWorkspacePlaceholder(value: unknown, workspace: string): unknown {
+  if (value === REPLAY_TRANSCRIPT_WORKSPACE_PLACEHOLDER) {
+    return workspace;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => materializeWorkspacePlaceholder(entry, workspace));
+  }
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      materializeWorkspacePlaceholder(entry, workspace),
+    ]),
+  );
+}
+
+/**
+ * Resolves portable fixture placeholders before a replay driver sees the transcript.
+ * The resulting outbound frames still use exact structural equality during replay.
+ */
+export function materializeReplayTranscriptWorkspace(
+  transcript: ProviderReplayTranscript,
+  workspace: string,
+): ProviderReplayTranscript {
+  return {
+    ...transcript,
+    entries: transcript.entries.map((entry) =>
+      entry.type === "expect_outbound"
+        ? {
+            ...entry,
+            frame: materializeWorkspacePlaceholder(entry.frame, workspace),
+          }
+        : entry,
+    ),
+  };
+}
+
 const decodeReplayRecord = Schema.decodeUnknownSync(
   Schema.fromJsonString(ProviderReplayNdjsonRecord),
 );

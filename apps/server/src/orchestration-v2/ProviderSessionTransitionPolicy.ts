@@ -5,8 +5,10 @@ import type {
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 
 import type { ProviderContinuationIdentity } from "../provider/ProviderDriver.ts";
+import type { ProviderSelectionTransitionPlan } from "./ProviderSelectionTransition.ts";
 
 export type ProviderSessionTransition =
   | { readonly type: "reuse" }
@@ -32,6 +34,7 @@ export interface ProviderSessionTransitionTarget extends ProviderSessionTransiti
 export function decideProviderSessionTransition(input: {
   readonly current: ProviderSessionTransitionState | null;
   readonly target: ProviderSessionTransitionTarget;
+  readonly selectionTransition?: ProviderSelectionTransitionPlan;
 }): ProviderSessionTransition {
   if (!input.target.available) {
     return { type: "reject", reason: "The target provider instance is unavailable." };
@@ -56,11 +59,23 @@ export function decideProviderSessionTransition(input: {
     return { type: "restart_and_resume" };
   }
 
-  const modelChanged = current.modelSelection.model !== target.modelSelection.model;
-  if (modelChanged) {
-    return target.capabilities.sessions.supportsModelSwitchInSession
-      ? { type: "switch_model_in_session" }
-      : { type: "restart_and_resume" };
+  const selectionChanged = !modelSelectionsEqual(current.modelSelection, target.modelSelection);
+  if (selectionChanged) {
+    switch (input.selectionTransition?.type) {
+      case "apply_on_next_turn":
+        return { type: "switch_model_in_session" };
+      case "restart_session":
+        return { type: "restart_and_resume" };
+      case "create_with_handoff":
+        return { type: "create_with_handoff" };
+      case "reject":
+        return { type: "reject", reason: input.selectionTransition.reason };
+      case undefined:
+        return {
+          type: "reject",
+          reason: "The provider adapter did not classify the selection change.",
+        };
+    }
   }
 
   // Interaction mode is turn-scoped and is applied when the next turn starts.
