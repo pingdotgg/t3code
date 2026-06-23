@@ -15,8 +15,7 @@ import * as Schema from "effect/Schema";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionProjects from "../persistence/Services/ProjectionProjects.ts";
-import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
-import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
+import { ProjectEnrichmentService, type ProjectEnrichment } from "./ProjectEnrichmentService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export interface ProjectCreateInput {
@@ -75,7 +74,6 @@ export class ProjectOperationError extends Schema.TaggedErrorClass<ProjectOperat
       "read-project",
       "list-projects",
       "dispatch-project-command",
-      "resolve-favicon",
     ]),
     projectId: Schema.optional(ProjectId),
     workspaceRoot: Schema.optional(Schema.String),
@@ -119,37 +117,33 @@ export class ProjectService extends Context.Service<
 export const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
   const projects = yield* ProjectionProjects.ProjectionProjectRepository;
-  const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
-  const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+  const projectEnrichment = yield* ProjectEnrichmentService;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
 
-  const hydrate = Effect.fn("ProjectService.hydrate")(function* (
+  const toProject = (
     row: ProjectionProjects.ProjectionProject,
-  ): Effect.fn.Return<Project, ProjectOperationError> {
-    const repositoryIdentity = yield* repositoryIdentityResolver.resolve(row.workspaceRoot);
-    const faviconPath = yield* faviconResolver.resolvePath(row.workspaceRoot).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProjectOperationError({
-            operation: "resolve-favicon",
-            projectId: row.projectId,
-            workspaceRoot: row.workspaceRoot,
-            cause,
-          }),
-      ),
-    );
-    return {
-      id: row.projectId,
-      title: row.title,
-      workspaceRoot: row.workspaceRoot,
-      repositoryIdentity,
-      faviconPath,
-      defaultModelSelection: row.defaultModelSelection,
-      scripts: row.scripts,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-      deletedAt: row.deletedAt,
-    };
+    enrichment: ProjectEnrichment | null,
+  ): Project => ({
+    id: row.projectId,
+    title: row.title,
+    workspaceRoot: row.workspaceRoot,
+    repositoryIdentity: enrichment?.repositoryIdentity ?? null,
+    faviconPath: enrichment?.faviconPath ?? null,
+    defaultModelSelection: row.defaultModelSelection,
+    scripts: row.scripts,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    deletedAt: row.deletedAt,
+  });
+
+  const hydrateAvailable = Effect.fn("ProjectService.hydrateAvailable")(function* (
+    row: ProjectionProjects.ProjectionProject,
+  ) {
+    const enrichment =
+      row.deletedAt === null
+        ? yield* projectEnrichment.getAvailable(row.workspaceRoot)
+        : yield* projectEnrichment.peek(row.workspaceRoot);
+    return toProject(row, enrichment);
   });
 
   const readRows = Effect.fn("ProjectService.readRows")(function* () {
@@ -174,7 +168,7 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(row) || (row.value.deletedAt !== null && !options?.includeDeleted)) {
         return Option.none();
       }
-      return Option.some(yield* hydrate(row.value));
+      return Option.some(yield* hydrateAvailable(row.value));
     },
   );
 
@@ -196,7 +190,7 @@ export const make = Effect.gen(function* () {
         candidate.workspaceRoot === normalized &&
         (options?.includeDeleted === true || candidate.deletedAt === null),
     );
-    return row === undefined ? Option.none() : Option.some(yield* hydrate(row));
+    return row === undefined ? Option.none() : Option.some(yield* hydrateAvailable(row));
   });
 
   const readCommitted = Effect.fn("ProjectService.readCommitted")(function* (projectId: ProjectId) {
@@ -214,8 +208,11 @@ export const make = Effect.gen(function* () {
         cause: "The accepted project command did not produce a project projection.",
       });
     }
-    return yield* hydrate(row.value);
+    return yield* hydrateAvailable(row.value);
   });
+
+  const invalidateEnrichment = (...workspaceRoots: ReadonlyArray<string>) =>
+    projectEnrichment.invalidate(workspaceRoots);
 
   const dispatch = <A>(
     projectId: ProjectId,
@@ -284,7 +281,7 @@ export const make = Effect.gen(function* () {
           scripts: [...(input.scripts ?? [])],
           createdAt: now,
         },
-        readCommitted(input.projectId),
+        invalidateEnrichment(workspaceRoot).pipe(Effect.andThen(readCommitted(input.projectId))),
       );
     },
   );
@@ -332,7 +329,10 @@ export const make = Effect.gen(function* () {
             : { defaultModelSelection: input.defaultModelSelection }),
           ...(input.scripts === undefined ? {} : { scripts: [...input.scripts] }),
         },
-        readCommitted(input.projectId),
+        (workspaceRoot === existing.value.workspaceRoot
+          ? Effect.void
+          : invalidateEnrichment(existing.value.workspaceRoot, workspaceRoot)
+        ).pipe(Effect.andThen(readCommitted(input.projectId))),
       );
     },
   );
@@ -365,14 +365,16 @@ export const make = Effect.gen(function* () {
           commandId: input.commandId,
           projectId,
         },
-        readCommitted(projectId),
+        invalidateEnrichment(existing.value.workspaceRoot).pipe(
+          Effect.andThen(readCommitted(projectId)),
+        ),
       );
     },
   );
 
   const snapshot = Effect.gen(function* () {
     const rows = (yield* readRows()).filter((row) => row.deletedAt === null);
-    const hydrated = yield* Effect.forEach(rows, hydrate, { concurrency: 8 });
+    const hydrated = yield* Effect.forEach(rows, hydrateAvailable, { concurrency: 8 });
     return {
       projects: hydrated,
       updatedAt: DateTime.formatIso(yield* DateTime.now),

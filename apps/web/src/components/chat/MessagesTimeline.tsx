@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2TurnItem,
+  type RunAttemptId,
   type ScopedThreadRef,
   type ServerProviderSkill,
   type RunId,
@@ -158,6 +159,7 @@ interface TimelineRowSharedState {
     readonly scopeId: string;
   }) => void;
   onToggleTurnFold: (runId: RunId) => void;
+  onToggleAttemptFold: (attemptId: RunAttemptId) => void;
 }
 
 interface TimelineRowActivityState {
@@ -310,6 +312,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   loadEarlier = null,
 }: MessagesTimelineProps) {
   const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(new Set());
+  const [expandedAttemptIds, setExpandedAttemptIds] = useState<ReadonlySet<RunAttemptId>>(
+    new Set(),
+  );
 
   // Toggling a fold inserts/removes rows between the fold row and the final
   // message — everything above the trigger is unchanged, so the trigger stays
@@ -356,35 +361,28 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           }
         });
       });
-    },
-    [listRef, onToolOutputCollapsedAtEnd],
-  );
-
-  const shouldRestoreVisibleContentPosition = useCallback((row: MessagesTimelineRow) => {
-    const disclosureAnchorKey = disclosureAnchorKeyRef.current;
-    return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
+    });
   }, []);
-
-  const maintainVisibleContentPosition = useMemo(
-    () => ({
-      data: true,
-      size: true,
-      shouldRestorePosition: shouldRestoreVisibleContentPosition,
-    }),
-    [shouldRestoreVisibleContentPosition],
-  );
-
-  const onToggleTurnFold = useCallback(
-    (turnId: TurnId) => {
-      suspendEndScrollMaintenanceForDisclosure(`turn-fold:${turnId}`);
-      setExpandedTurnIds((existing) => {
-        const next = new Set(existing);
-        if (next.has(turnId)) {
-          next.delete(turnId);
-        } else {
-          next.add(turnId);
-        }
-        return next;
+  const onToggleAttemptFold = useCallback((attemptId: RunAttemptId) => {
+    setFoldToggleSettling(true);
+    setExpandedAttemptIds((existing) => {
+      const next = new Set(existing);
+      if (next.has(attemptId)) {
+        next.delete(attemptId);
+      } else {
+        next.add(attemptId);
+      }
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    if (!foldToggleSettling) {
+      return;
+    }
+    let secondFrameId: number | null = null;
+    const firstFrameId = window.requestAnimationFrame(() => {
+      secondFrameId = window.requestAnimationFrame(() => {
+        setFoldToggleSettling(false);
       });
     },
     [suspendEndScrollMaintenanceForDisclosure],
@@ -446,6 +444,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         timelineEntries,
         latestRun,
         expandedRunIds,
+        expandedAttemptIds,
         isWorking,
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
@@ -455,6 +454,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       timelineEntries,
       latestRun,
       expandedRunIds,
+      expandedAttemptIds,
       isWorking,
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
@@ -685,9 +685,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onForkFromRun,
       onRollbackCheckpoint,
       onToggleTurnFold,
-      onToggleWorkGroup,
-      agentPanelModel,
-      onOpenAgents,
+      onToggleAttemptFold,
     }),
     [
       timestampFormat,
@@ -704,9 +702,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onForkFromRun,
       onRollbackCheckpoint,
       onToggleTurnFold,
-      onToggleWorkGroup,
-      agentPanelModel,
-      onOpenAgents,
+      onToggleAttemptFold,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -1101,7 +1097,8 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         // they sit closer to the work that follows them.
         (row.kind === "message" && row.message.role === "assistant" && !row.showAssistantMeta) ||
           row.kind === "work" ||
-          row.kind === "event"
+          row.kind === "event" ||
+          row.kind === "attempt-fold"
           ? "pb-2"
           : "pb-4",
         row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
@@ -1114,6 +1111,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
       {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
+      {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
@@ -1326,6 +1324,26 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   );
 }
 
+function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "attempt-fold" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const Icon = row.expanded ? ChevronDownIcon : ChevronRightIcon;
+
+  return (
+    <button
+      type="button"
+      aria-expanded={row.expanded}
+      data-scroll-anchor-ignore
+      data-superseded-attempt-id={row.attemptId}
+      onClick={() => ctx.onToggleAttemptFold(row.attemptId)}
+      className="flex w-full cursor-pointer select-none items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-2.5 py-2 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+    >
+      <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="text-xs font-medium text-foreground/80">{row.label}</span>
+      <span className="text-[11px] text-muted-foreground">Partial output retained</span>
+    </button>
+  );
+}
+
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
@@ -1472,6 +1490,13 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
   readonly icon: typeof CircleAlertIcon;
 } {
   switch (item.type) {
+    case "error":
+      return {
+        label: item.title?.trim() || "Provider error",
+        detail: item.failure.message,
+        tone: "danger",
+        icon: CircleAlertIcon,
+      };
     case "run_interrupt_request":
       return {
         label: "Interrupt requested",

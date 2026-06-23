@@ -172,7 +172,12 @@ export class ThreadManagementService extends Context.Service<
 >()("t3/orchestration-v2/ThreadManagementService") {}
 
 export function isActiveRun(run: OrchestrationV2Run): boolean {
-  return run.status === "starting" || run.status === "running" || run.status === "waiting";
+  return (
+    run.status === "preparing" ||
+    run.status === "starting" ||
+    run.status === "running" ||
+    run.status === "waiting"
+  );
 }
 
 export function isTerminalRunStatus(
@@ -421,7 +426,7 @@ const make = Effect.gen(function* () {
           },
         } as const;
       }
-      const interruptibleRun = latestSteerableRun(target);
+      const interruptibleRun = latestActiveRun(target);
       if (input.runId === undefined && interruptibleRun === undefined) {
         return { type: "no_active_run" } as const;
       }

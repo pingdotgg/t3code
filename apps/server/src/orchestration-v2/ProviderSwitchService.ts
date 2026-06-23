@@ -5,6 +5,7 @@ import {
   ProviderThreadId,
   ThreadId,
 } from "@t3tools/contracts";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -78,50 +79,64 @@ export const layer: Layer.Layer<
                 );
           const currentInstance = yield* Effect.option(getMetadata(current.instanceId));
           const targetInstance = yield* Effect.option(getMetadata(targetModelSelection.instanceId));
+          const targetAdapter = yield* Effect.option(adapters.get(targetModelSelection.instanceId));
           const currentSession = projection.providerSessions
             .filter((session) => session.providerInstanceId === current.instanceId)
             .toSorted(
               (left, right) =>
                 DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
             )[0];
-          const transition = Option.isNone(targetInstance)
-            ? ({
-                type: "reject",
-                reason: "The target provider instance is unavailable.",
-              } as const)
-            : decideProviderSessionTransition({
-                current:
-                  Option.isNone(currentInstance) || currentSession === undefined
-                    ? null
-                    : {
-                        driver: currentInstance.value.driver,
-                        continuationIdentity: {
-                          driverKind: currentInstance.value.driver,
-                          continuationKey: currentInstance.value.continuationKey,
+          const selectionTransition =
+            current.instanceId === targetModelSelection.instanceId &&
+            !modelSelectionsEqual(current, targetModelSelection) &&
+            Option.isSome(targetAdapter) &&
+            currentSession !== undefined
+              ? yield* targetAdapter.value.planSelectionTransition({
+                  current,
+                  target: targetModelSelection,
+                  sessionCapabilities: currentSession.capabilities,
+                })
+              : undefined;
+          const transition =
+            Option.isNone(targetInstance) || Option.isNone(targetAdapter)
+              ? ({
+                  type: "reject",
+                  reason: "The target provider instance is unavailable.",
+                } as const)
+              : decideProviderSessionTransition({
+                  current:
+                    Option.isNone(currentInstance) || currentSession === undefined
+                      ? null
+                      : {
+                          driver: currentInstance.value.driver,
+                          continuationIdentity: {
+                            driverKind: currentInstance.value.driver,
+                            continuationKey: currentInstance.value.continuationKey,
+                          },
+                          modelSelection: current,
+                          runtimeMode: projection.thread.runtimeMode,
+                          interactionMode: projection.thread.interactionMode,
+                          workspace: currentSession.cwd,
+                          capabilities: currentSession.capabilities,
                         },
-                        modelSelection: current,
-                        runtimeMode: projection.thread.runtimeMode,
-                        interactionMode: projection.thread.interactionMode,
-                        workspace: currentSession.cwd,
-                        capabilities: currentSession.capabilities,
-                      },
-                target: {
-                  driver: targetInstance.value.driver,
-                  continuationIdentity: {
-                    driverKind: targetInstance.value.driver,
-                    continuationKey: targetInstance.value.continuationKey,
+                  target: {
+                    driver: targetInstance.value.driver,
+                    continuationIdentity: {
+                      driverKind: targetInstance.value.driver,
+                      continuationKey: targetInstance.value.continuationKey,
+                    },
+                    modelSelection: targetModelSelection,
+                    runtimeMode: projection.thread.runtimeMode,
+                    interactionMode: projection.thread.interactionMode,
+                    workspace:
+                      projection.thread.worktreePath ??
+                      currentSession?.cwd ??
+                      "<unresolved-workspace>",
+                    capabilities: targetInstance.value.capabilities,
+                    available: targetInstance.value.enabled,
                   },
-                  modelSelection: targetModelSelection,
-                  runtimeMode: projection.thread.runtimeMode,
-                  interactionMode: projection.thread.interactionMode,
-                  workspace:
-                    projection.thread.worktreePath ??
-                    currentSession?.cwd ??
-                    "<unresolved-workspace>",
-                  capabilities: targetInstance.value.capabilities,
-                  available: targetInstance.value.enabled,
-                },
-              });
+                  ...(selectionTransition === undefined ? {} : { selectionTransition }),
+                });
           if (transition.type === "reject") {
             return yield* new ProviderSwitchPlanError({
               threadId: projection.thread.id,

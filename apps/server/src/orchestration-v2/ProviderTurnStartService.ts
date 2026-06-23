@@ -33,6 +33,8 @@ export class ProviderTurnStartError extends Schema.TaggedErrorClass<ProviderTurn
   },
 ) {}
 
+const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
+
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
     readonly threadId: ThreadId;
@@ -123,6 +125,18 @@ export const layer: Layer.Layer<
         });
       }
       const providerSessionId = providerThread.providerSessionId;
+      const isCurrentAttemptInStatus = (
+        expectedStatus: OrchestrationV2Run["status"],
+      ): Effect.Effect<boolean, never> =>
+        projectionStore.getThreadProjection(projection.thread.id).pipe(
+          Effect.map((current) => {
+            const currentRun = current.runs.find((candidate) => candidate.id === run.id);
+            return (
+              currentRun?.activeAttemptId === attempt.id && currentRun.status === expectedStatus
+            );
+          }),
+          Effect.catchCause(() => Effect.succeed(false)),
+        );
 
       const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
         thread: projection.thread,
@@ -265,6 +279,9 @@ export const layer: Layer.Layer<
         });
         return replacement;
       });
+      if (!(yield* isCurrentAttemptInStatus("starting"))) {
+        return;
+      }
       const now = yield* DateTime.now;
       const runningProviderThread: OrchestrationV2ProviderThread = {
         ...loadedProviderThread,
@@ -376,7 +393,16 @@ export const layer: Layer.Layer<
           payload: runningRootNode,
         },
       ];
-      yield* eventSink.write({ events });
+      const runningWrite = yield* eventSink.writeIfRunCurrent({
+        threadId: projection.thread.id,
+        runId: run.id,
+        activeAttemptId: attempt.id,
+        expectedStatus: "starting",
+        events,
+      });
+      if (!runningWrite.committed) {
+        return;
+      }
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
@@ -401,6 +427,7 @@ export const layer: Layer.Layer<
               .filter((turn) => turn.providerThreadId === providerThread.id)
               .map((turn) => turn.ordinal),
           ) + 1,
+        shouldStartProviderTurn: () => isCurrentAttemptInStatus("running"),
         shouldFinalizeRun: () =>
           projectionStore.getThreadProjection(projection.thread.id).pipe(
             Effect.map((current) => {
@@ -434,7 +461,7 @@ export const layer: Layer.Layer<
       start: (input) =>
         start(input).pipe(
           Effect.mapError((cause) =>
-            Schema.is(ProviderTurnStartError)(cause)
+            isProviderTurnStartError(cause)
               ? cause
               : new ProviderTurnStartError({ runId: input.runId, cause }),
           ),

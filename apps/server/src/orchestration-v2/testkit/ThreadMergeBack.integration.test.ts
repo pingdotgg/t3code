@@ -35,7 +35,10 @@ import {
 } from "./fixtures/shared.ts";
 import { runOrchestratorV2ProviderReplayScenario } from "./ProviderReplayHarness.ts";
 import { makeCheckpointWorkspace } from "./ReplayFixtureWorkspace.ts";
-import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
+import {
+  decodeProviderReplayNdjson,
+  materializeReplayTranscriptWorkspace,
+} from "./ReplayTranscriptNdjson.ts";
 
 const CODEX_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -349,8 +352,9 @@ describe("orchestration V2 merge-back provider replay", () => {
             ? yield* runOrchestratorV2ProviderReplayScenario(
                 {
                   ...scenario,
-                  transcript:
-                    yield* CodexOrchestratorReplayHarness.decodeTranscript(parameterizedTranscript),
+                  transcript: yield* CodexOrchestratorReplayHarness.decodeTranscript(
+                    materializeReplayTranscriptWorkspace(parameterizedTranscript, cwd),
+                  ),
                 },
                 CodexOrchestratorReplayHarness,
               ).pipe(provideDeterministicTestRuntime)
@@ -602,7 +606,9 @@ describe("orchestration V2 merge-back provider replay", () => {
             ? yield* runOrchestratorV2ProviderReplayScenario(
                 {
                   ...scenario,
-                  transcript: yield* CodexOrchestratorReplayHarness.decodeTranscript(transcript),
+                  transcript: yield* CodexOrchestratorReplayHarness.decodeTranscript(
+                    materializeReplayTranscriptWorkspace(transcript, cwd),
+                  ),
                 },
                 CodexOrchestratorReplayHarness,
               ).pipe(provideDeterministicTestRuntime)

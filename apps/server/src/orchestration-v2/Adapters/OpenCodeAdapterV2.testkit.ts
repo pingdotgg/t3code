@@ -12,6 +12,10 @@ import {
   OpenCodeRuntimeError,
   type OpenCodeRuntimeShape,
 } from "../../provider/opencodeRuntime.ts";
+import {
+  NoOpProviderEventLoggers,
+  ProviderEventLoggers,
+} from "../../provider/Layers/ProviderEventLoggers.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
 import { makeDriverLayer as makeProviderAdapterRegistryDriverLayer } from "../ProviderAdapterRegistry.ts";
@@ -23,10 +27,11 @@ import {
   OPENCODE_DEFAULT_INSTANCE_ID,
   OPENCODE_DRIVER_KIND,
   OPENCODE_PROVIDER,
+  OPENCODE_SDK_PROTOCOL,
   OpenCodeAdapterV2Driver,
 } from "./OpenCodeAdapterV2.ts";
 
-export const OPENCODE_SDK_REPLAY_PROTOCOL = "opencode-sdk.sse" as const;
+export const OPENCODE_SDK_REPLAY_PROTOCOL = OPENCODE_SDK_PROTOCOL;
 
 const OpenCodeSdkReplayTranscript = Schema.Struct({
   provider: Schema.Literal(OPENCODE_PROVIDER),
@@ -353,6 +358,7 @@ export function makeOpenCodeProviderAdapterRegistryReplayLayer(
         serverConfigLayer,
         NodeServices.layer,
         idAllocatorLayer,
+        Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
       ),
     ),
   );
