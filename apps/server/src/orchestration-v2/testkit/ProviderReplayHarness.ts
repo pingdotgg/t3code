@@ -24,16 +24,16 @@ import { layer as commandReceiptStoreLayer } from "../CommandReceiptStore.ts";
 import { layer as contextHandoffServiceLayer } from "../ContextHandoffService.ts";
 import { layer as effectOutboxLayer } from "../EffectOutbox.ts";
 import {
-  daemonLayer as effectWorkerDaemonLayer,
   executorLayer as effectExecutorLayer,
   layer as effectWorkerLayer,
+  runDaemon as runEffectWorkerDaemon,
 } from "../EffectWorker.ts";
 import { layerFromStores as eventSinkLayer } from "../EventSink.ts";
 import { layer as eventStoreLayer } from "../EventStore.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { layer as orchestratorLayer } from "../Orchestrator.ts";
 import { layer as projectionStoreLayer } from "../ProjectionStore.ts";
-import type { OrchestratorV2, OrchestratorV2Error } from "../Orchestrator.ts";
+import { OrchestratorV2, type OrchestratorV2Error } from "../Orchestrator.ts";
 import { ProviderAdapterRegistryV2 } from "../ProviderAdapterRegistry.ts";
 import { layer as providerEventIngestorLayer } from "../ProviderEventIngestor.ts";
 import { layerWithOptions as providerSessionManagerLayerWithOptions } from "../ProviderSessionManager.ts";
@@ -169,6 +169,7 @@ export function runOrchestratorV2ProviderReplayScenario<
       MigrationError | PlatformError.PlatformError | SqlError
     >;
     readonly enableAssistantStreaming?: boolean;
+    readonly runEffectWorker?: boolean;
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
@@ -197,6 +198,7 @@ export function makeOrchestratorV2ProviderReplayLayer<
       MigrationError | PlatformError.PlatformError | SqlError
     >;
     readonly enableAssistantStreaming?: boolean;
+    readonly runEffectWorker?: boolean;
   } = {},
 ): Layer.Layer<OrchestratorV2, Error | MigrationError | PlatformError.PlatformError | SqlError> {
   const registryLayer = harness.makeProviderAdapterRegistryLayer(scenario.transcript);
@@ -212,6 +214,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       MigrationError | PlatformError.PlatformError | SqlError
     >;
     readonly enableAssistantStreaming?: boolean;
+    readonly runEffectWorker?: boolean;
   } = {},
 ): Layer.Layer<OrchestratorV2, Error | MigrationError | PlatformError.PlatformError | SqlError> {
   const serverConfigLayer = Layer.effect(
@@ -344,9 +347,6 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const effectWorkerProvided = effectWorkerLayer.pipe(
     Layer.provide(Layer.merge(storesLayer, effectExecutorProvided)),
   );
-  const effectWorkerDaemonProvided = effectWorkerDaemonLayer.pipe(
-    Layer.provide(effectWorkerProvided),
-  );
   const orchestratorProvided = orchestratorLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -364,5 +364,20 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       ),
     ),
   );
-  return Layer.merge(orchestratorProvided, effectWorkerDaemonProvided);
+  const replayRuntime = Layer.merge(orchestratorProvided, effectWorkerProvided);
+
+  // Build the daemon from the exact worker instance exposed alongside the
+  // orchestrator. Keeping this acquisition in the replay layer makes the
+  // outbox lifecycle explicit and prevents test-only command-side draining.
+  if (options.runEffectWorker === false) {
+    return orchestratorProvided;
+  }
+  return Layer.effect(
+    OrchestratorV2,
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      yield* runEffectWorkerDaemon.pipe(Effect.forkScoped);
+      return orchestrator;
+    }),
+  ).pipe(Layer.provide(replayRuntime));
 }

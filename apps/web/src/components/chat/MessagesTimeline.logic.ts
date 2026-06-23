@@ -25,6 +25,7 @@ import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../..
 import {
   type MessageId,
   type OrchestrationV2ProjectedTurnItem,
+  type RunAttemptId,
   type RunId,
 } from "@t3tools/contracts";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
@@ -210,6 +211,15 @@ export type MessagesTimelineRow =
       expanded: boolean;
     }
   | {
+      kind: "attempt-fold";
+      id: string;
+      createdAt: string;
+      runId: RunId;
+      attemptId: RunAttemptId;
+      label: string;
+      expanded: boolean;
+    }
+  | {
       kind: "message";
       id: string;
       createdAt: string;
@@ -332,6 +342,51 @@ interface TurnFold {
   createdAt: string;
   hiddenEntryIds: ReadonlySet<string>;
   label: string;
+}
+
+interface SupersededAttemptFold {
+  readonly runId: RunId;
+  readonly attemptId: RunAttemptId;
+  readonly anchorEntryId: string;
+  readonly createdAt: string;
+  readonly hiddenEntryIds: ReadonlySet<string>;
+}
+
+/**
+ * Groups only provider output owned by an explicitly superseded V2 attempt.
+ * User messages remain visible because they are inputs to the logical run,
+ * including the steer message that started the replacement attempt.
+ */
+function deriveSupersededAttemptFolds(
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+): ReadonlyMap<string, SupersededAttemptFold> {
+  const entriesByAttemptId = new Map<RunAttemptId, TimelineEntry[]>();
+  for (const entry of timelineEntries) {
+    if (
+      entry.attempt?.status !== "superseded" ||
+      (entry.kind === "message" && entry.message.role === "user")
+    ) {
+      continue;
+    }
+    const entries = entriesByAttemptId.get(entry.attempt.id) ?? [];
+    entries.push(entry);
+    entriesByAttemptId.set(entry.attempt.id, entries);
+  }
+
+  const foldsByAnchorEntryId = new Map<string, SupersededAttemptFold>();
+  for (const entries of entriesByAttemptId.values()) {
+    const firstEntry = entries[0];
+    const attempt = firstEntry?.attempt;
+    if (firstEntry === undefined || attempt === undefined) continue;
+    foldsByAnchorEntryId.set(firstEntry.id, {
+      runId: attempt.runId,
+      attemptId: attempt.id,
+      anchorEntryId: firstEntry.id,
+      createdAt: firstEntry.createdAt,
+      hiddenEntryIds: new Set(entries.map((entry) => entry.id)),
+    });
+  }
+  return foldsByAnchorEntryId;
 }
 
 /**
@@ -510,6 +565,7 @@ export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestRun?: TimelineLatestRun | null;
   expandedRunIds?: ReadonlySet<RunId>;
+  expandedAttemptIds?: ReadonlySet<RunAttemptId>;
   isWorking: boolean;
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
@@ -521,6 +577,7 @@ export function deriveMessagesTimelineRows(input: {
   );
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(input.timelineEntries);
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null);
+  const supersededFoldsByAnchorEntryId = deriveSupersededAttemptFolds(input.timelineEntries);
   const foldsByAnchorEntryId = deriveTurnFolds({
     timelineEntries: input.timelineEntries,
     terminalAssistantMessageIds,
@@ -532,6 +589,14 @@ export function deriveMessagesTimelineRows(input: {
     if (!input.expandedRunIds?.has(fold.runId)) {
       for (const entryId of fold.hiddenEntryIds) {
         collapsedEntryIds.add(entryId);
+      }
+    }
+  }
+  const collapsedSupersededEntryIds = new Set<string>();
+  for (const fold of supersededFoldsByAnchorEntryId.values()) {
+    if (!input.expandedAttemptIds?.has(fold.attemptId)) {
+      for (const entryId of fold.hiddenEntryIds) {
+        collapsedSupersededEntryIds.add(entryId);
       }
     }
   }
@@ -558,6 +623,23 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    const supersededFold = supersededFoldsByAnchorEntryId.get(timelineEntry.id);
+    if (supersededFold) {
+      nextRows.push({
+        kind: "attempt-fold",
+        id: `attempt-fold:${supersededFold.attemptId}`,
+        createdAt: supersededFold.createdAt,
+        runId: supersededFold.runId,
+        attemptId: supersededFold.attemptId,
+        label: "Superseded attempt",
+        expanded: input.expandedAttemptIds?.has(supersededFold.attemptId) ?? false,
+      });
+    }
+
+    if (collapsedSupersededEntryIds.has(timelineEntry.id)) {
+      continue;
+    }
+
     if (timelineEntry.kind === "work") {
       const groupedEntries = [timelineEntry.entry];
       let cursor = index + 1;
@@ -567,7 +649,10 @@ export function deriveMessagesTimelineRows(input: {
           !nextEntry ||
           nextEntry.kind !== "work" ||
           collapsedEntryIds.has(nextEntry.id) ||
-          foldsByAnchorEntryId.has(nextEntry.id)
+          collapsedSupersededEntryIds.has(nextEntry.id) ||
+          foldsByAnchorEntryId.has(nextEntry.id) ||
+          supersededFoldsByAnchorEntryId.has(nextEntry.id) ||
+          nextEntry.attempt?.id !== timelineEntry.attempt?.id
         ) {
           break;
         }
@@ -784,6 +869,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return a.createdAt === (b as typeof a).createdAt;
 
     case "turn-fold": {
+      const bf = b as typeof a;
+      return a.createdAt === bf.createdAt && a.label === bf.label && a.expanded === bf.expanded;
+    }
+
+    case "attempt-fold": {
       const bf = b as typeof a;
       return a.createdAt === bf.createdAt && a.label === bf.label && a.expanded === bf.expanded;
     }

@@ -73,6 +73,7 @@ function makeTestAdapter(input: {
     instanceId: input.instanceId,
     driver: input.driver,
     getCapabilities: () => Effect.succeed(input.capabilities),
+    planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
         const events = yield* PubSub.unbounded<ProviderAdapterV2Event>();
@@ -95,7 +96,6 @@ function makeTestAdapter(input: {
           driver: input.driver,
           providerSessionId: sessionInput.providerSessionId,
           providerSession,
-          rawEvents: Stream.empty,
           events: Stream.fromPubSub(events),
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
@@ -198,8 +198,12 @@ function makeTestAdapter(input: {
                 {
                   type: "turn.terminal",
                   driver: input.driver,
+                  providerThreadId: turnInput.providerThread.id,
                   providerTurnId,
+                  runOrdinal: turnInput.runOrdinal,
                   status: "completed",
+                  failure: null,
+                  threadDisposition: "reusable",
                 },
               ];
               for (const event of providerEvents) {

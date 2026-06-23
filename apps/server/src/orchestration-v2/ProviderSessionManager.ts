@@ -21,13 +21,13 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
+import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
 import {
   ProviderAdapterEventStreamError,
   ProviderAdapterV2RuntimePolicy,
@@ -250,7 +250,7 @@ export const layerWithOptions = (
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
       const nextSubscriberId = yield* Ref.make(0);
-      const openSemaphore = yield* Semaphore.make(1);
+      const sessionOpen = yield* makeKeyedSerialExecutor<ProviderSessionId>();
       const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
       const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
         options.configureMcp === false
@@ -1071,7 +1071,8 @@ export const layerWithOptions = (
       return ProviderSessionManagerV2.of({
         shutdown,
         open: (input) =>
-          openSemaphore.withPermit(
+          sessionOpen.withLock(
+            input.providerSessionId,
             Effect.gen(function* () {
               const key = sessionKey(input.providerSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
@@ -1271,10 +1272,13 @@ export const layerWithOptions = (
               updated.set(key, updatedEntry);
               return [Option.some(updatedEntry), updated] as const;
             });
-            yield* clearMcpSession(input.threadId);
             if (Option.isNone(detached)) {
               return;
             }
+            // Detach effects are retried. Once the old entry is gone, its
+            // retry must not revoke credentials issued by a replacement
+            // session for the same app thread.
+            yield* clearMcpSession(input.threadId);
             if (
               detached.value.attachedThreadIds.size === 0 &&
               !detached.value.supportsMultipleProviderThreads

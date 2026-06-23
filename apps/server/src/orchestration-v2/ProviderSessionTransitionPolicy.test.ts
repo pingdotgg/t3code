@@ -26,7 +26,7 @@ it("reuses compatible sessions and treats interaction mode as turn-scoped", () =
   );
 });
 
-it("switches models in-session only when supported", () => {
+it("uses the adapter's selection transition classification", () => {
   assert.deepEqual(
     decideProviderSessionTransition({
       current: base,
@@ -35,6 +35,7 @@ it("switches models in-session only when supported", () => {
         modelSelection: { ...base.modelSelection, model: "gpt-5.2-codex" },
         available: true,
       },
+      selectionTransition: { type: "apply_on_next_turn" },
     }),
     { type: "switch_model_in_session" },
   );
@@ -56,8 +57,33 @@ it("switches models in-session only when supported", () => {
         modelSelection: { ...base.modelSelection, model: "gpt-5.2-codex" },
         available: true,
       },
+      selectionTransition: { type: "restart_session" },
     }),
     { type: "restart_and_resume" },
+  );
+});
+
+it("treats provider option changes as selection changes", () => {
+  assert.deepEqual(
+    decideProviderSessionTransition({
+      current: {
+        ...base,
+        modelSelection: {
+          ...base.modelSelection,
+          options: [{ id: "reasoningEffort", value: "medium" }],
+        },
+      },
+      target: {
+        ...base,
+        modelSelection: {
+          ...base.modelSelection,
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+        available: true,
+      },
+      selectionTransition: { type: "apply_on_next_turn" },
+    }),
+    { type: "switch_model_in_session" },
   );
 });
 

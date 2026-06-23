@@ -21,6 +21,7 @@ const makeAdapter = (instanceId: ProviderInstanceId): ProviderAdapterV2Shape =>
     instanceId,
     driver,
     getCapabilities: () => Effect.die("capabilities are not used by this registry test"),
+    planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: () => Effect.die("sessions are not used by this registry test"),
   }) as ProviderAdapterV2Shape;
 

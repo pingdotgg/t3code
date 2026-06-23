@@ -796,7 +796,12 @@ export function threadShellFromProjection(
 }
 
 function isBlockingRunForShell(run: OrchestrationV2ThreadProjection["runs"][number]): boolean {
-  return run.status === "starting" || run.status === "running" || run.status === "waiting";
+  return (
+    run.status === "preparing" ||
+    run.status === "starting" ||
+    run.status === "running" ||
+    run.status === "waiting"
+  );
 }
 
 type ShellThreadState = {
@@ -818,6 +823,7 @@ function shellStatusFromStoredRunStatus(status: string | null): OrchestrationV2S
   switch (status) {
     case null:
       return "idle";
+    case "preparing":
     case "queued":
     case "starting":
     case "running":
@@ -2047,7 +2053,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT r.run_id
                 FROM orchestration_v2_projection_runs r
                 WHERE r.thread_id = t.thread_id
-                  AND r.status IN ('starting', 'running', 'waiting')
+                  AND r.status IN ('preparing', 'starting', 'running', 'waiting')
                 ORDER BY r.ordinal DESC, r.run_id DESC
                 LIMIT 1
               ) AS active_run_id,

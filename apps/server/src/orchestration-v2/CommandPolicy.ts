@@ -325,7 +325,11 @@ const decideForkExecution: CommandPolicyV2Shape["decideForkExecution"] = (input)
 
 const decideMessageDispatch: CommandPolicyV2Shape["decideMessageDispatch"] = (input) => {
   const activeRun = input.projection.runs.find(
-    (run) => run.status === "starting" || run.status === "running" || run.status === "waiting",
+    (run) =>
+      run.status === "preparing" ||
+      run.status === "starting" ||
+      run.status === "running" ||
+      run.status === "waiting",
   );
   const modelSelection = input.requestedModelSelection ?? input.projection.thread.modelSelection;
 

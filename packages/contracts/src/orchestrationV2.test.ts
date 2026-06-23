@@ -245,6 +245,42 @@ describe("orchestration V2 contracts", () => {
     expect(dynamicTool.id).toBe(TurnItemId.make("turn-item-dynamic-1"));
   });
 
+  it("decodes bounded provider failures as expected error turn items", () => {
+    const errorItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem)({
+      id: "turn-item-error-1",
+      type: "error",
+      threadId: "thread-1",
+      runId: "run-1",
+      nodeId: "node-root-1",
+      providerThreadId: "provider-thread-1",
+      providerTurnId: "provider-turn-1",
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 199,
+      status: "failed",
+      title: "Provider error",
+      failure: {
+        class: "validation_error",
+        message: "Invalid reasoning effort.",
+        code: "invalid_request",
+        retryable: false,
+      },
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    });
+
+    expect(errorItem.type).toBe("error");
+    if (errorItem.type !== "error") throw new Error("expected error item");
+    expect(errorItem.failure.message).toBe("Invalid reasoning effort.");
+    expect(() =>
+      Schema.decodeUnknownSync(OrchestrationV2TurnItem)({
+        ...errorItem,
+        failure: { ...errorItem.failure, message: "x".repeat(4_097) },
+      }),
+    ).toThrow();
+  });
+
   it("decodes provider-native subagent lifecycle records and timeline items", () => {
     const subagent = Schema.decodeUnknownSync(OrchestrationV2Subagent)({
       id: "node-subagent-1",

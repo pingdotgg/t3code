@@ -37,7 +37,11 @@ export function QueuedRunsControl(props: {
   );
   const activeRun =
     projection?.runs.findLast(
-      (run) => run.status === "starting" || run.status === "running" || run.status === "waiting",
+      (run) =>
+        run.status === "preparing" ||
+        run.status === "starting" ||
+        run.status === "running" ||
+        run.status === "waiting",
     ) ?? null;
 
   if (queued.length === 0) return null;
