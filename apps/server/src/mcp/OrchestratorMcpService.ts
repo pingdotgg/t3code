@@ -445,8 +445,10 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return item.summary ?? `${item.strategy} handoff to ${item.toProviderInstanceId}`;
     case "fork":
       return `Forked to thread ${item.targetThreadId}.`;
+    case "thread_created":
+      return `Created thread ${item.targetThreadId} with ${item.targetProviderInstanceId} (${item.targetModel}).`;
     case "subagent":
-      return item.result ?? item.prompt;
+      return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
       return jsonText({ toolName: item.toolName, input: item.input, output: item.output });
   }
@@ -863,6 +865,18 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
+        const parentRun = latestActiveRun(parent);
+        if (
+          parentRun === undefined ||
+          parentRun.rootNodeId === null ||
+          parentRun.providerInstanceId !== scope.providerInstanceId
+        ) {
+          return yield* failure(
+            "parent_not_active",
+            "Thread creation requires an active run owned by this MCP provider session.",
+          );
+        }
+        const parentNodeId = parentRun.rootNodeId;
         const providers = yield* loadProviders;
         const key = yield* requestKey(input.clientRequestId);
         const created = yield* Effect.forEach(
@@ -955,6 +969,29 @@ const make = Effect.gen(function* () {
               }
               const projection = yield* loadProjection(threadId);
               const run = projection.runs.at(-1);
+              yield* threadManagement
+                .dispatch({
+                  type: "thread.created.record",
+                  commandId: stableCommandId({
+                    scope,
+                    requestKey: key,
+                    operation: "record-created-thread",
+                    index,
+                  }),
+                  parentThreadId: scope.threadId,
+                  parentRunId: parentRun.id,
+                  parentNodeId,
+                  targetThreadId: threadId,
+                  targetRunId: run?.id ?? null,
+                })
+                .pipe(
+                  Effect.mapError((error) =>
+                    failure(
+                      "orchestration_error",
+                      `Unable to record thread ${index + 1} in the parent timeline: ${errorMessage(error)}`,
+                    ),
+                  ),
+                );
               return {
                 threadId,
                 runId: run?.id ?? null,
