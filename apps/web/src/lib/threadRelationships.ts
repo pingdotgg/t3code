@@ -31,6 +31,15 @@ export interface ThreadRelationshipWalkRow {
   readonly edge: ThreadRelationshipEdge;
 }
 
+export function resolveMergeBackTargetThreadId(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread"> | null,
+): ThreadId | null {
+  if (projection?.thread.lineage.relationshipToParent !== "fork") return null;
+  return projection.thread.forkedFrom?.type === "run"
+    ? projection.thread.forkedFrom.threadId
+    : projection.thread.lineage.parentThreadId;
+}
+
 function edgeKey(edge: ThreadRelationshipEdge): string {
   return `${edge.sourceThreadId}\u001f${edge.targetThreadId}\u001f${edge.kind}`;
 }
@@ -133,6 +142,28 @@ export function walkThreadRelationships(
       rows.push({ threadId: relatedId, fromThreadId: current.threadId, depth, edge });
       pending.push({ threadId: relatedId, depth });
     }
+  }
+
+  return rows;
+}
+
+export function immediateThreadRelationships(
+  graph: ThreadRelationshipGraph,
+  threadId: ThreadId,
+): ReadonlyArray<ThreadRelationshipWalkRow> {
+  const visited = new Set<ThreadId>();
+  const rows: ThreadRelationshipWalkRow[] = [];
+
+  for (const edge of graph.edges) {
+    const relatedId =
+      edge.sourceThreadId === threadId
+        ? edge.targetThreadId
+        : edge.targetThreadId === threadId
+          ? edge.sourceThreadId
+          : null;
+    if (relatedId === null || visited.has(relatedId)) continue;
+    visited.add(relatedId);
+    rows.push({ threadId: relatedId, fromThreadId: threadId, depth: 1, edge });
   }
 
   return rows;
