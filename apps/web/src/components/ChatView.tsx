@@ -42,7 +42,7 @@ import { flushSync } from "react-dom";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
-import { usePrimaryEnvironmentId } from "../environments/primary";
+import { usePrimaryEnvironmentId } from "../environments/primary/context";
 import { readEnvironmentApi } from "../environmentApi";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
@@ -82,11 +82,7 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import {
-  selectProjectsAcrossEnvironments,
-  selectThreadsAcrossEnvironments,
-  useStore,
-} from "../store";
+import { selectExistingThreadKeys, selectProjectsAcrossEnvironments, useStore } from "../store";
 import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 import {
@@ -133,7 +129,7 @@ import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
-} from "../environments/runtime";
+} from "../environments/runtime/catalog";
 import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
@@ -766,12 +762,8 @@ function ChatViewBody(
   const storeNewTerminal = useTerminalStateStore((s) => s.newTerminal);
   const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
-  const serverThreadKeys = useStore(
-    useShallow((state) =>
-      selectThreadsAcrossEnvironments(state).map((thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      ),
-    ),
+  const openServerTerminalThreadKeys = useStore(
+    useShallow((state) => selectExistingThreadKeys(state, openTerminalThreadKeys)),
   );
   const storeServerTerminalLaunchContext = useTerminalStateStore(
     (s) => s.terminalLaunchContextByThreadKey[scopedThreadKey(routeThreadRef)] ?? null,
@@ -837,9 +829,13 @@ function ChatViewBody(
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const existingOpenTerminalThreadKeys = useMemo(() => {
-    const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
-    return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
-  }, [draftThreadKeys, openTerminalThreadKeys, serverThreadKeys]);
+    const existingServerThreadKeys = new Set(openServerTerminalThreadKeys);
+    const existingDraftThreadKeys = new Set(draftThreadKeys);
+    return openTerminalThreadKeys.filter(
+      (nextThreadKey) =>
+        existingServerThreadKeys.has(nextThreadKey) || existingDraftThreadKeys.has(nextThreadKey),
+    );
+  }, [draftThreadKeys, openServerTerminalThreadKeys, openTerminalThreadKeys]);
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const threadPlanCatalog = useThreadPlanCatalog(
     useMemo(() => {

@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import {
   CheckpointRef,
   DEFAULT_MODEL,
@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyOrchestrationEvent,
   applyOrchestrationEvents,
+  selectExistingThreadKeys,
   selectEnvironmentState,
   selectProjectsAcrossEnvironments,
   selectThreadByRef,
@@ -373,6 +374,19 @@ describe("thread selection memoization", () => {
       ),
     ).toBe(false);
     expect(selectThreadExistsByRef(state, null)).toBe(false);
+  });
+
+  it("filters existing thread keys without materializing full threads", () => {
+    const thread = makeThread();
+    const state = makeState(thread);
+    const existingKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    const missingKey = scopedThreadKey(
+      scopeThreadRef(thread.environmentId, ThreadId.make("thread-missing")),
+    );
+
+    expect(selectExistingThreadKeys(state, [missingKey, "malformed", existingKey])).toEqual([
+      existingKey,
+    ]);
   });
 });
 

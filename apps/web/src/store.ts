@@ -19,6 +19,7 @@ import type {
   ScopedProjectRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { parseScopedThreadKey } from "@t3tools/client-runtime";
 import { isProviderDriverKind, ProviderDriverKind } from "@t3tools/contracts";
 import type { ThreadId, TurnId } from "@t3tools/contracts";
 import { Schema } from "effect";
@@ -1981,6 +1982,13 @@ export function selectThreadExistsByRef(
   return ref
     ? selectEnvironmentState(state, ref.environmentId).threadShellById[ref.threadId] !== undefined
     : false;
+}
+
+export function selectExistingThreadKeys(state: AppState, threadKeys: readonly string[]): string[] {
+  return threadKeys.filter((threadKey) => {
+    const ref = parseScopedThreadKey(threadKey);
+    return ref ? selectThreadExistsByRef(state, ref) : false;
+  });
 }
 
 export function selectSidebarThreadSummaryByRef(
