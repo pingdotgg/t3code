@@ -41,7 +41,17 @@ import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
 import { useAtomValue } from "@effect/atom-react";
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -51,6 +61,10 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import {
+  liveWindowOldestActivityId,
+  oldestActivityByChronology,
+} from "@t3tools/client-runtime/state/thread-reducer";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
@@ -177,6 +191,7 @@ import {
   primaryServerKeybindingsAtom,
   serverEnvironment,
 } from "../state/server";
+import { orchestrationEnvironment } from "../state/orchestration";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
@@ -1684,7 +1699,167 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
-  const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+
+  // ── Older-history lazy-load ────────────────────────────────────────────────
+  // The detail snapshot windows activities to the most recent page (the server
+  // sets `hasMoreActivities` when older ones exist); older pages are fetched on
+  // demand (infinite scroll-up) and prepended. Messages aren't windowed
+  // server-side, so this just back-fills the older tool activity.
+  const [olderActivities, setOlderActivities] = useState<
+    ReadonlyArray<OrchestrationThreadActivity>
+  >([]);
+  const [olderLoaded, setOlderLoaded] = useState(false);
+  const [olderHasMore, setOlderHasMore] = useState(false);
+  const [loadingOlderActivities, setLoadingOlderActivities] = useState(false);
+  const loadThreadActivities = useAtomCommand(orchestrationEnvironment.loadThreadActivities, {
+    reportFailure: false,
+  });
+  const activeThreadActivityRequestKey = activeThread
+    ? `${activeThread.environmentId}\u0000${activeThread.id}`
+    : null;
+  const liveThreadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  // Order-independent oldest boundary: `activities[0]` shifts when the reducer
+  // re-sorts unsequenced rows on the first live append, which would otherwise
+  // make a plain append look like a window reshape. See helper docs.
+  const liveOldestActivityId = useMemo(
+    () => liveWindowOldestActivityId(liveThreadActivities),
+    [liveThreadActivities],
+  );
+  const liveActivityCount = liveThreadActivities.length;
+  // Bumps on every lazy-load reset so a late in-flight load can't repopulate the
+  // freshly-cleared state (the thread key alone doesn't change on a same-thread
+  // window reshape).
+  const olderActivitiesGenRef = useRef(0);
+  // The request key of an in-flight older-history load — coalesces the duplicate
+  // dispatches a fast scroll-to-top fires before the loading state updates.
+  const inFlightOlderKeyRef = useRef<string | null>(null);
+  // The oldest row we've paged past. Advancing this (not re-deriving from the
+  // merged set) lets an all-overlap page keep paging when the server still
+  // reports `hasMore` — without it a page that dedupes to nothing would either
+  // terminate paging early or re-request the same cursor forever. Reset on reshape.
+  const olderCursorRef = useRef<OrchestrationThreadActivity | null>(null);
+  // Reset the lazy-loaded older pages when the live window is *reshaped* rather
+  // than purely appended-to: a different thread or a re-snapshot (reconnect)
+  // changes its oldest row, and a checkpoint revert removes rows so the count
+  // shrinks. A pure append (same thread, same oldest, larger count) keeps them.
+  const olderWindowRef = useRef({
+    key: activeThreadActivityRequestKey,
+    oldest: liveOldestActivityId,
+    count: liveActivityCount,
+  });
+  // useLayoutEffect (not useEffect) so the cleared state commits before paint:
+  // otherwise the new thread renders one frame with the previous thread's
+  // lazy-loaded pages still merged in, flashing stale work-log/approval rows.
+  useLayoutEffect(() => {
+    const prev = olderWindowRef.current;
+    olderWindowRef.current = {
+      key: activeThreadActivityRequestKey,
+      oldest: liveOldestActivityId,
+      count: liveActivityCount,
+    };
+    const reshaped =
+      activeThreadActivityRequestKey !== prev.key ||
+      liveOldestActivityId !== prev.oldest ||
+      liveActivityCount < prev.count;
+    if (!reshaped) {
+      return;
+    }
+    olderActivitiesGenRef.current += 1;
+    inFlightOlderKeyRef.current = null;
+    olderCursorRef.current = null;
+    setOlderActivities([]);
+    setOlderLoaded(false);
+    setOlderHasMore(false);
+    setLoadingOlderActivities(false);
+  }, [activeThreadActivityRequestKey, liveOldestActivityId, liveActivityCount]);
+
+  const threadActivities = useMemo(
+    () =>
+      olderActivities.length > 0
+        ? [...olderActivities, ...liveThreadActivities]
+        : liveThreadActivities,
+    [olderActivities, liveThreadActivities],
+  );
+  // Latest merged set, read inside the async load handler so dedup runs against
+  // the current state, not the snapshot captured when the load was dispatched.
+  const threadActivitiesRef = useRef(threadActivities);
+  threadActivitiesRef.current = threadActivities;
+  // Before any page is loaded, the server tells us whether older history exists
+  // beyond the windowed snapshot; afterwards the page `hasMore` is authoritative.
+  const hasMoreOlderActivities = olderLoaded
+    ? olderHasMore
+    : (activeThread?.hasMoreActivities ?? false);
+  const loadOlderActivities = useCallback(() => {
+    if (!activeThread || !hasMoreOlderActivities) {
+      return;
+    }
+    // Page from the explicit cursor (the oldest row we've already paged past) or,
+    // before any page, the chronologically-oldest loaded row — not
+    // `threadActivities[0]`: the reducer sorts unsequenced rows to the end, so
+    // index 0 can be a newer sequenced row whose `beforeSequence` cursor would
+    // skip older unsequenced history. This matches the reshape sentinel.
+    const oldestActivity = olderCursorRef.current ?? oldestActivityByChronology(threadActivities);
+    if (!oldestActivity || !activeThreadActivityRequestKey) {
+      return;
+    }
+    if (inFlightOlderKeyRef.current === activeThreadActivityRequestKey) {
+      return; // a load for this thread is already in flight
+    }
+    const cursorInput =
+      oldestActivity.sequence !== undefined
+        ? { beforeSequence: oldestActivity.sequence }
+        : { beforeCreatedAt: oldestActivity.createdAt, beforeActivityId: oldestActivity.id };
+    const requestKey = activeThreadActivityRequestKey;
+    const gen = olderActivitiesGenRef.current;
+    inFlightOlderKeyRef.current = requestKey;
+    setLoadingOlderActivities(true);
+    void loadThreadActivities({
+      environmentId: activeThread.environmentId,
+      input: { threadId: activeThread.id, ...cursorInput },
+    })
+      .then((result) => {
+        // The window/thread was reset while this was in flight — drop the page
+        // so it can't repopulate state cleared by the reset.
+        if (olderActivitiesGenRef.current !== gen) {
+          return;
+        }
+        if (result._tag !== "Success") {
+          return;
+        }
+        const page = result.value;
+        // Advance the cursor to this page's oldest row (pages are ascending, so
+        // [0] is oldest) even if every row dedupes away — the server cursor is
+        // strict, so the cursor strictly decreases and paging can't loop, while
+        // an all-overlap page no longer terminates paging that the server says
+        // has more.
+        const pageOldest = page.activities[0];
+        if (pageOldest) {
+          olderCursorRef.current = pageOldest;
+        }
+        // Dedup against the LATEST merged set (via ref) so a live append or a
+        // prior prepend that settled mid-flight can't leave duplicate ids.
+        const seen = new Set(threadActivitiesRef.current.map((activity) => activity.id));
+        const fresh = page.activities.filter((activity) => !seen.has(activity.id));
+        if (fresh.length > 0) {
+          setOlderActivities((prev) => [...fresh, ...prev]);
+        }
+        setOlderLoaded(true);
+        setOlderHasMore(page.hasMore);
+      })
+      .finally(() => {
+        if (olderActivitiesGenRef.current === gen) {
+          inFlightOlderKeyRef.current = null;
+          setLoadingOlderActivities(false);
+        }
+      });
+  }, [
+    activeThread,
+    activeThreadActivityRequestKey,
+    hasMoreOlderActivities,
+    threadActivities,
+    loadThreadActivities,
+  ]);
+
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
@@ -4733,6 +4908,9 @@ function ChatViewContent(props: ChatViewProps) {
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
+                hasMoreOlder={hasMoreOlderActivities}
+                loadingOlder={loadingOlderActivities}
+                onLoadOlder={loadOlderActivities}
                 latestTurn={activeLatestTurn}
                 turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
                 activeThreadEnvironmentId={activeThread.environmentId}

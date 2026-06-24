@@ -166,6 +166,10 @@ interface MessagesTimelineProps {
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   onIsAtEndChange: (isAtEnd: boolean) => void;
+  /** Older history beyond the live activity window can be lazy-loaded. */
+  hasMoreOlder?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -193,6 +197,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
   onIsAtEndChange,
+  hasMoreOlder = false,
+  loadingOlder = false,
+  onLoadOlder,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
 
@@ -289,8 +296,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const state = listRef.current?.getState?.();
     if (state) {
       onIsAtEndChange(state.isAtEnd);
+      // Reaching the top lazy-loads older history; maintainVisibleContentPosition
+      // (set on the list) keeps the viewport anchored when rows prepend.
+      if (state.isAtStart && hasMoreOlder && !loadingOlder) {
+        onLoadOlder?.();
+      }
     }
-  }, [listRef, onIsAtEndChange]);
+  }, [listRef, onIsAtEndChange, hasMoreOlder, loadingOlder, onLoadOlder]);
 
   const previousRowCountRef = useRef(rows.length);
   useEffect(() => {
@@ -309,6 +321,28 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       window.cancelAnimationFrame(frameId);
     };
   }, [listRef, onIsAtEndChange, rows.length]);
+
+  const listHeader = useMemo(() => {
+    if (loadingOlder) {
+      return (
+        <div className="flex items-center justify-center py-2 text-xs text-muted-foreground">
+          Loading older history…
+        </div>
+      );
+    }
+    if (hasMoreOlder) {
+      return (
+        <button
+          type="button"
+          onClick={onLoadOlder}
+          className="flex w-full cursor-pointer items-center justify-center py-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          Load older history
+        </button>
+      );
+    }
+    return TIMELINE_LIST_HEADER;
+  }, [loadingOlder, hasMoreOlder, onLoadOlder]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -384,7 +418,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           maintainVisibleContentPosition
           onScroll={handleScroll}
           className="scrollbar-gutter-both h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
-          ListHeaderComponent={TIMELINE_LIST_HEADER}
+          ListHeaderComponent={listHeader}
           ListFooterComponent={TIMELINE_LIST_FOOTER}
         />
       </TimelineRowActivityCtx>

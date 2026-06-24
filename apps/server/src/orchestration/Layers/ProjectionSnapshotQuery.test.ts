@@ -342,6 +342,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               createdAt: "2026-02-24T00:00:06.000Z",
             },
           ],
+          hasMoreActivities: false,
           checkpoints: [
             {
               turnId: asTurnId("turn-1"),
@@ -974,6 +975,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.equal(threadDetail._tag, "Some");
       if (threadDetail._tag === "Some") {
         assert.deepEqual(threadDetail.value.activities, snapshot.threads[0]?.activities ?? []);
+        // Well under the window — nothing older to lazy-load.
+        assert.equal(threadDetail.value.hasMoreActivities, false);
       }
 
       assert.deepEqual(snapshot.threads[0]?.activities ?? [], [
@@ -1151,6 +1154,256 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         assert.equal(threadDetail.value.latestTurn?.startedAt, "2026-04-02T00:00:30.000Z");
       }
     }),
+  );
+
+  it.effect(
+    "windows thread-detail activities to the most recent 500 and pages older on demand",
+    () =>
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* sql`DELETE FROM projection_projects`;
+        yield* sql`DELETE FROM projection_threads`;
+        yield* sql`DELETE FROM projection_thread_activities`;
+        yield* sql`DELETE FROM projection_state`;
+
+        yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, default_model_selection_json,
+          scripts_json, created_at, updated_at, deleted_at
+        )
+        VALUES (
+          'project-1', 'Project 1', '/tmp/project-1',
+          '{"provider":"codex","model":"gpt-5-codex"}', '[]',
+          '2026-04-01T00:00:00.000Z', '2026-04-01T00:00:01.000Z', NULL
+        )
+      `;
+
+        yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode,
+          interaction_mode, branch, worktree_path, latest_turn_id,
+          latest_user_message_at, pending_approval_count, pending_user_input_count,
+          has_actionable_proposed_plan, created_at, updated_at, archived_at, deleted_at
+        )
+        VALUES (
+          'thread-1', 'project-1', 'Thread 1',
+          '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+          NULL, NULL, NULL, NULL, 0, 0, 0,
+          '2026-04-01T00:00:02.000Z', '2026-04-01T00:00:03.000Z', NULL, NULL
+        )
+      `;
+
+        // 600 activities (sequence 1..600); the detail load must return only the
+        // most recent 500 (sequence 101..600), re-sorted ascending for display.
+        const total = 600;
+        yield* Effect.forEach(
+          Array.from({ length: total }, (_unused, index) => index + 1),
+          (seq) =>
+            sql`
+            INSERT INTO projection_thread_activities (
+              activity_id, thread_id, turn_id, tone, kind, summary, payload_json,
+              sequence, created_at
+            )
+            VALUES (
+              ${`activity-${String(seq).padStart(4, "0")}`}, 'thread-1', NULL,
+              'info', 'runtime.note', ${`act-${seq}`}, '{}', ${seq},
+              '2026-04-01T00:01:00.000Z'
+            )
+          `,
+          { discard: true },
+        );
+
+        const threadDetail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"));
+        assert.equal(threadDetail._tag, "Some");
+        if (threadDetail._tag === "Some") {
+          const activities = threadDetail.value.activities;
+          assert.equal(activities.length, 500);
+          assert.equal(activities[0]?.summary, "act-101");
+          assert.equal(activities[0]?.sequence, 101);
+          assert.equal(activities.at(-1)?.summary, "act-600");
+          // 600 > window, so the client is told older history can be lazy-loaded.
+          assert.equal(threadDetail.value.hasMoreActivities, true);
+        }
+
+        // Lazy-load the page immediately older than the windowed view (cursor =
+        // oldest loaded sequence, 101): sequences 1..100, ascending, no more left.
+        const olderPage = yield* snapshotQuery.getThreadActivitiesPage({
+          threadId: ThreadId.make("thread-1"),
+          beforeSequence: 101,
+          limit: 500,
+        });
+        assert.equal(olderPage.activities.length, 100);
+        assert.equal(olderPage.activities[0]?.summary, "act-1");
+        assert.equal(olderPage.activities.at(-1)?.summary, "act-100");
+        assert.equal(olderPage.hasMore, false);
+
+        // A bounded page returns the newest `limit` of the older set and reports
+        // that more remain (sequences 401..600, with 1..400 still older).
+        const boundedPage = yield* snapshotQuery.getThreadActivitiesPage({
+          threadId: ThreadId.make("thread-1"),
+          beforeSequence: 601,
+          limit: 200,
+        });
+        assert.equal(boundedPage.activities.length, 200);
+        assert.equal(boundedPage.activities[0]?.summary, "act-401");
+        assert.equal(boundedPage.activities.at(-1)?.summary, "act-600");
+        assert.equal(boundedPage.hasMore, true);
+
+        yield* sql`DELETE FROM projection_thread_activities`;
+
+        // Legacy rows may not have a sequence. They are still windowed in the
+        // detail load and must remain pageable by the deterministic created/id
+        // ordering used by the snapshot query.
+        yield* Effect.forEach(
+          Array.from({ length: total }, (_unused, index) => index + 1),
+          (seq) =>
+            sql`
+            INSERT INTO projection_thread_activities (
+              activity_id, thread_id, turn_id, tone, kind, summary, payload_json,
+              sequence, created_at
+            )
+            VALUES (
+              ${`unsequenced-${String(seq).padStart(4, "0")}`}, 'thread-1', NULL,
+              'info', 'runtime.note', ${`legacy-act-${seq}`}, '{}', NULL,
+              '2026-04-01T00:01:00.000Z'
+            )
+          `,
+          { discard: true },
+        );
+
+        const legacyThreadDetail = yield* snapshotQuery.getThreadDetailById(
+          ThreadId.make("thread-1"),
+        );
+        assert.equal(legacyThreadDetail._tag, "Some");
+        if (legacyThreadDetail._tag === "Some") {
+          const activities = legacyThreadDetail.value.activities;
+          assert.equal(activities.length, 500);
+          assert.equal(activities[0]?.summary, "legacy-act-101");
+          assert.equal(activities[0]?.sequence, undefined);
+          assert.equal(activities.at(-1)?.summary, "legacy-act-600");
+
+          const legacyOlderPage = yield* snapshotQuery.getThreadActivitiesPage({
+            threadId: ThreadId.make("thread-1"),
+            beforeCreatedAt: activities[0]?.createdAt ?? "2026-04-01T00:01:00.000Z",
+            beforeActivityId: activities[0]?.id ?? asEventId("unsequenced-0101"),
+            limit: 500,
+          });
+          assert.equal(legacyOlderPage.activities.length, 100);
+          assert.equal(legacyOlderPage.activities[0]?.summary, "legacy-act-1");
+          assert.equal(legacyOlderPage.activities.at(-1)?.summary, "legacy-act-100");
+          assert.equal(legacyOlderPage.hasMore, false);
+        }
+
+        const legacyBoundedPage = yield* snapshotQuery.getThreadActivitiesPage({
+          threadId: ThreadId.make("thread-1"),
+          beforeCreatedAt: "2026-04-01T00:01:00.000Z",
+          beforeActivityId: asEventId("unsequenced-0601"),
+          limit: 200,
+        });
+        assert.equal(legacyBoundedPage.activities.length, 200);
+        assert.equal(legacyBoundedPage.activities[0]?.summary, "legacy-act-401");
+        assert.equal(legacyBoundedPage.activities.at(-1)?.summary, "legacy-act-600");
+        assert.equal(legacyBoundedPage.hasMore, true);
+      }),
+  );
+
+  it.effect(
+    "unsequenced cursor reaches all older rows without stranding sequenced ones",
+    () =>
+      // Regression for the "unsequenced cursor hides sequenced history" concern:
+      // sequenced rows always sort newer than NULL-sequence (legacy) rows, so when
+      // the oldest loaded row is unsequenced every sequenced row is already in the
+      // window — the `sequence IS NULL` cursor can't strand sequenced rows.
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`DELETE FROM projection_projects`;
+        yield* sql`DELETE FROM projection_threads`;
+        yield* sql`DELETE FROM projection_thread_activities`;
+        yield* sql`DELETE FROM projection_state`;
+        yield* sql`
+          INSERT INTO projection_projects (
+            project_id, title, workspace_root, default_model_selection_json,
+            scripts_json, created_at, updated_at, deleted_at
+          ) VALUES (
+            'project-1', 'Project 1', '/tmp/project-1',
+            '{"provider":"codex","model":"gpt-5-codex"}', '[]',
+            '2026-04-01T00:00:00.000Z', '2026-04-01T00:00:01.000Z', NULL
+          )
+        `;
+        yield* sql`
+          INSERT INTO projection_threads (
+            thread_id, project_id, title, model_selection_json, runtime_mode,
+            interaction_mode, branch, worktree_path, latest_turn_id,
+            latest_user_message_at, pending_approval_count, pending_user_input_count,
+            has_actionable_proposed_plan, created_at, updated_at, archived_at, deleted_at
+          ) VALUES (
+            'thread-1', 'project-1', 'Thread 1',
+            '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+            NULL, NULL, NULL, NULL, 0, 0, 0,
+            '2026-04-01T00:00:02.000Z', '2026-04-01T00:00:03.000Z', NULL, NULL
+          )
+        `;
+        // 600 legacy unsequenced rows (older) + 3 sequenced rows (newer). The
+        // window keeps the 3 sequenced + the most-recent 497 unsequenced, so the
+        // oldest loaded row is unsequenced and 103 older unsequenced remain.
+        yield* Effect.forEach(
+          Array.from({ length: 600 }, (_u, index) => index + 1),
+          (n) =>
+            sql`
+              INSERT INTO projection_thread_activities (
+                activity_id, thread_id, turn_id, tone, kind, summary, payload_json,
+                sequence, created_at
+              ) VALUES (
+                ${`unseq-${String(n).padStart(4, "0")}`}, 'thread-1', NULL,
+                'info', 'runtime.note', ${`unseq-${n}`}, '{}', NULL,
+                ${`2026-04-01T00:00:01.${String(n).padStart(3, "0")}Z`}
+              )
+            `,
+          { discard: true },
+        );
+        yield* Effect.forEach(
+          [1, 2, 3],
+          (seq) =>
+            sql`
+              INSERT INTO projection_thread_activities (
+                activity_id, thread_id, turn_id, tone, kind, summary, payload_json,
+                sequence, created_at
+              ) VALUES (
+                ${`seq-${seq}`}, 'thread-1', NULL, 'info', 'runtime.note',
+                ${`seq-${seq}`}, '{}', ${seq}, ${`2026-04-01T09:00:0${seq}.000Z`}
+              )
+            `,
+          { discard: true },
+        );
+
+        const detail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"));
+        assert.equal(detail._tag, "Some");
+        if (detail._tag !== "Some") return;
+        const windowed = detail.value.activities;
+        assert.equal(windowed.length, 500);
+        // Sequenced rows are the newest (end of the ascending window); the oldest
+        // loaded row is unsequenced — exactly the case the concern is about.
+        assert.equal(windowed.at(-1)?.summary, "seq-3");
+        assert.equal(windowed[0]?.sequence, undefined);
+
+        // The client pages with the unsequenced cursor of the oldest loaded row.
+        const oldest = windowed[0];
+        assert.ok(oldest);
+        const olderPage = yield* snapshotQuery.getThreadActivitiesPage({
+          threadId: ThreadId.make("thread-1"),
+          beforeCreatedAt: oldest.createdAt,
+          beforeActivityId: oldest.id,
+          limit: 500,
+        });
+        // The 103 older unsequenced rows come back, none are sequenced, and no
+        // sequenced row was stranded (all 3 are already in the window).
+        assert.equal(olderPage.activities.length, 103);
+        assert.equal(olderPage.hasMore, false);
+        assert.ok(olderPage.activities.every((a) => a.sequence === undefined));
+      }),
   );
 
   it.effect("uses projection_threads.latest_turn_id for bulk command and shell snapshots", () =>

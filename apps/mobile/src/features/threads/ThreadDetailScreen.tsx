@@ -60,6 +60,9 @@ export interface ThreadDetailScreenProps {
   readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
   readonly activeThreadBusy: boolean;
+  readonly hasMoreOlderActivities: boolean;
+  readonly loadingOlderActivities: boolean;
+  readonly onLoadOlderActivities: () => void;
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
   readonly threadCwd: string | null;
@@ -320,6 +323,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               layoutVariant={layoutVariant}
               composerExpanded={composerExpanded}
               skills={selectedProviderSkills}
+              hasMoreOlder={props.hasMoreOlderActivities}
+              loadingOlder={props.loadingOlderActivities}
+              onLoadOlder={props.onLoadOlderActivities}
             />
           </View>
         ) : (
