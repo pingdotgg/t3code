@@ -189,29 +189,32 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
     transform: [{ translateX: (sidebarProgress.value - 1) * 24 }],
   }));
 
-  const handleSelectThread = (thread: EnvironmentThreadShell) => {
-    const destination = buildThreadRoutePath(thread);
-    const navigationAction = resolveThreadSelectionNavigationAction({
-      usesSplitView: layout.usesSplitView,
-      pathname,
-    });
-    if (navigationAction === "set-params") {
-      // Auxiliary content belongs to the current thread. Close it before
-      // reusing the current native detail screen for a peer thread selection.
-      setFileInspectorPreferredVisible(false);
-      router.setParams({
-        environmentId: String(thread.environmentId),
-        threadId: String(thread.id),
+  const handleSelectThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      const destination = buildThreadRoutePath(thread);
+      const navigationAction = resolveThreadSelectionNavigationAction({
+        usesSplitView: layout.usesSplitView,
+        pathname,
       });
-      return;
-    }
-    if (navigationAction === "replace") {
-      setFileInspectorPreferredVisible(false);
-      router.replace(destination);
-      return;
-    }
-    router.push(destination);
-  };
+      if (navigationAction === "set-params") {
+        // Auxiliary content belongs to the current thread. Close it before
+        // reusing the current native detail screen for a peer thread selection.
+        setFileInspectorPreferredVisible(false);
+        router.setParams({
+          environmentId: String(thread.environmentId),
+          threadId: String(thread.id),
+        });
+        return;
+      }
+      if (navigationAction === "replace") {
+        setFileInspectorPreferredVisible(false);
+        router.replace(destination);
+        return;
+      }
+      router.push(destination);
+    },
+    [layout.usesSplitView, pathname, router],
+  );
 
   return (
     <AdaptiveWorkspaceContext.Provider value={contextValue}>

@@ -1,6 +1,7 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { SymbolView } from "expo-symbols";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
+import type { ColorValue } from "react-native";
 import { Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -16,6 +17,95 @@ import { useThreadListActions } from "../home/useThreadListActions";
 import { buildThreadNavigationGroups } from "./thread-navigation-groups";
 import { SidebarHeaderActions } from "./sidebar-header-actions";
 import { threadStatusTone } from "./threadPresentation";
+
+const ThreadNavigationRow = memo(function ThreadNavigationRow(props: {
+  readonly backgroundColor: ColorValue;
+  readonly fullSwipeWidth: number;
+  readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
+  readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
+  readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
+  readonly onSwipeableClose: (methods: SwipeableMethods) => void;
+  readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
+  readonly pressedBackgroundColor: ColorValue;
+  readonly selected: boolean;
+  readonly selectedBackgroundColor: ColorValue;
+  readonly thread: EnvironmentThreadShell;
+}) {
+  const {
+    backgroundColor,
+    fullSwipeWidth,
+    onArchiveThread,
+    onDeleteThread,
+    onSelectThread,
+    onSwipeableClose,
+    onSwipeableWillOpen,
+    pressedBackgroundColor,
+    selected,
+    selectedBackgroundColor,
+    thread,
+  } = props;
+  const handleArchive = useCallback(() => {
+    onArchiveThread(thread);
+  }, [onArchiveThread, thread]);
+  const handleDelete = useCallback(() => {
+    onDeleteThread(thread);
+  }, [onDeleteThread, thread]);
+  const primaryAction = useMemo(
+    () => ({
+      accessibilityLabel: `Archive ${thread.title}`,
+      icon: "archivebox" as const,
+      label: "Archive",
+      onPress: handleArchive,
+    }),
+    [handleArchive, thread.title],
+  );
+
+  return (
+    <ThreadSwipeable
+      backgroundColor={backgroundColor}
+      containerStyle={styles.threadRowContainer}
+      fullSwipeWidth={fullSwipeWidth}
+      onDelete={handleDelete}
+      onSwipeableClose={onSwipeableClose}
+      onSwipeableWillOpen={onSwipeableWillOpen}
+      primaryAction={primaryAction}
+      threadTitle={thread.title}
+    >
+      {(close) => (
+        <Pressable
+          accessibilityHint="Swipe left for archive and delete actions"
+          accessibilityLabel={thread.title}
+          accessibilityRole="button"
+          accessibilityState={{ selected }}
+          onPress={() => {
+            close();
+            onSelectThread(thread);
+          }}
+          style={({ pressed }) => [
+            styles.threadRow,
+            {
+              backgroundColor: selected
+                ? selectedBackgroundColor
+                : pressed
+                  ? pressedBackgroundColor
+                  : backgroundColor,
+            },
+          ]}
+        >
+          <View style={styles.threadText}>
+            <Text className="text-base font-t3-medium" numberOfLines={1}>
+              {thread.title}
+            </Text>
+            <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+              {relativeTime(thread.updatedAt ?? thread.createdAt)}
+            </Text>
+          </View>
+          <StatusPill {...threadStatusTone(thread)} size="compact" />
+        </Pressable>
+      )}
+    </ThreadSwipeable>
+  );
+});
 
 export function ThreadNavigationSidebar(props: {
   readonly width: number;
@@ -123,55 +213,20 @@ export function ThreadNavigationSidebar(props: {
                     const selected = threadKey === props.selectedThreadKey;
 
                     return (
-                      <ThreadSwipeable
+                      <ThreadNavigationRow
                         key={threadKey}
                         backgroundColor={backgroundColor}
-                        containerStyle={styles.threadRowContainer}
                         fullSwipeWidth={props.width - 20}
-                        onDelete={() => confirmDeleteThread(thread)}
+                        onArchiveThread={archiveThread}
+                        onDeleteThread={confirmDeleteThread}
+                        onSelectThread={props.onSelectThread}
                         onSwipeableClose={handleSwipeableClose}
                         onSwipeableWillOpen={handleSwipeableWillOpen}
-                        primaryAction={{
-                          accessibilityLabel: `Archive ${thread.title}`,
-                          icon: "archivebox",
-                          label: "Archive",
-                          onPress: () => archiveThread(thread),
-                        }}
-                        threadTitle={thread.title}
-                      >
-                        {(close) => (
-                          <Pressable
-                            accessibilityHint="Swipe left for archive and delete actions"
-                            accessibilityLabel={thread.title}
-                            accessibilityRole="button"
-                            accessibilityState={{ selected }}
-                            onPress={() => {
-                              close();
-                              props.onSelectThread(thread);
-                            }}
-                            style={({ pressed }) => [
-                              styles.threadRow,
-                              {
-                                backgroundColor: selected
-                                  ? selectedBackgroundColor
-                                  : pressed
-                                    ? pressedBackgroundColor
-                                    : backgroundColor,
-                              },
-                            ]}
-                          >
-                            <View style={styles.threadText}>
-                              <Text className="text-base font-t3-medium" numberOfLines={1}>
-                                {thread.title}
-                              </Text>
-                              <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-                                {relativeTime(thread.updatedAt ?? thread.createdAt)}
-                              </Text>
-                            </View>
-                            <StatusPill {...threadStatusTone(thread)} size="compact" />
-                          </Pressable>
-                        )}
-                      </ThreadSwipeable>
+                        pressedBackgroundColor={pressedBackgroundColor}
+                        selected={selected}
+                        selectedBackgroundColor={selectedBackgroundColor}
+                        thread={thread}
+                      />
                     );
                   })
                 )}
