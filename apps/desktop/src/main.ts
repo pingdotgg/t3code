@@ -43,6 +43,7 @@ import { DEFAULT_DESKTOP_BACKEND_PORT, resolveDesktopBackendPort } from "./backe
 import {
   DEFAULT_DESKTOP_SETTINGS,
   readDesktopSettings,
+  setDesktopSidebarVibrancyPreference,
   setDesktopServerExposurePreference,
   setDesktopUpdateChannelPreference,
   writeDesktopSettings,
@@ -85,6 +86,7 @@ syncShellEnvironment();
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
 const SET_THEME_CHANNEL = "desktop:set-theme";
+const SET_VIBRANCY_CHANNEL = "desktop:set-vibrancy";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
@@ -1741,6 +1743,24 @@ function registerIpcHandlers(): void {
     nativeTheme.themeSource = theme;
   });
 
+  ipcMain.removeHandler(SET_VIBRANCY_CHANNEL);
+  ipcMain.handle(SET_VIBRANCY_CHANNEL, async (_event, rawEnabled: unknown, rawOptions: unknown) => {
+    if (typeof rawEnabled !== "boolean") {
+      throw new Error("Invalid vibrancy payload.");
+    }
+
+    desktopSettings = setDesktopSidebarVibrancyPreference(desktopSettings, rawEnabled);
+    const shouldPersist =
+      typeof rawOptions === "object" && rawOptions !== null && "persist" in rawOptions
+        ? (rawOptions as { readonly persist?: unknown }).persist !== false
+        : true;
+    if (shouldPersist) {
+      writeDesktopSettings(DESKTOP_SETTINGS_PATH, desktopSettings);
+    }
+    syncAllWindowAppearance();
+    return rawEnabled && (process.platform === "darwin" || process.platform === "win32");
+  });
+
   ipcMain.removeHandler(CONTEXT_MENU_CHANNEL);
   ipcMain.handle(
     CONTEXT_MENU_CHANNEL,
@@ -1918,7 +1938,35 @@ function getIconOption(): { icon: string } | Record<string, never> {
 }
 
 function getInitialWindowBackgroundColor(): string {
+  if (desktopSettings.sidebarVibrancyEnabled) {
+    return "#00000000";
+  }
   return nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
+}
+
+function getWindowVibrancyOptions(): Pick<
+  BrowserWindowConstructorOptions,
+  "backgroundMaterial" | "transparent" | "vibrancy" | "visualEffectState"
+> {
+  if (!desktopSettings.sidebarVibrancyEnabled) {
+    return {};
+  }
+
+  if (process.platform === "darwin") {
+    return {
+      transparent: true,
+      vibrancy: "sidebar",
+      visualEffectState: "active",
+    };
+  }
+
+  if (process.platform === "win32") {
+    return {
+      backgroundMaterial: "acrylic",
+    };
+  }
+
+  return {};
 }
 
 function getWindowTitleBarOptions(): WindowTitleBarOptions {
@@ -1947,6 +1995,11 @@ function syncWindowAppearance(window: BrowserWindow): void {
   }
 
   window.setBackgroundColor(getInitialWindowBackgroundColor());
+  if (process.platform === "darwin") {
+    window.setVibrancy(desktopSettings.sidebarVibrancyEnabled ? "sidebar" : null);
+  } else if (process.platform === "win32") {
+    window.setBackgroundMaterial(desktopSettings.sidebarVibrancyEnabled ? "acrylic" : "none");
+  }
   const { titleBarOverlay } = getWindowTitleBarOptions();
   if (typeof titleBarOverlay === "object") {
     window.setTitleBarOverlay(titleBarOverlay);
@@ -1970,6 +2023,7 @@ function createWindow(): BrowserWindow {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: getInitialWindowBackgroundColor(),
+    ...getWindowVibrancyOptions(),
     ...getIconOption(),
     title: APP_DISPLAY_NAME,
     ...getWindowTitleBarOptions(),

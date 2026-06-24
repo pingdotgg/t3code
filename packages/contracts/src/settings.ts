@@ -34,6 +34,16 @@ export const UiDensity = Schema.Literals(["compact", "default", "spacious"]);
 export type UiDensity = typeof UiDensity.Type;
 export const DEFAULT_UI_DENSITY: UiDensity = "default";
 
+export const SidebarTranslucency = Schema.Literals([
+  "off",
+  "subtle",
+  "medium",
+  "strong",
+  "liquid-glass",
+]);
+export type SidebarTranslucency = typeof SidebarTranslucency.Type;
+export const DEFAULT_SIDEBAR_TRANSLUCENCY: SidebarTranslucency = "off";
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -62,6 +72,9 @@ export const ClientSettingsSchema = Schema.Struct({
   inputFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_INPUT_FONT_SIZE))),
   sidebarFontSize: FontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_FONT_SIZE)),
+  ),
+  sidebarTranslucency: SidebarTranslucency.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_TRANSLUCENCY)),
   ),
   toolFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_TOOL_FONT_SIZE))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -367,6 +380,7 @@ export const ClientSettingsPatch = Schema.Struct({
   codeFontSize: Schema.optionalKey(FontSize),
   inputFontSize: Schema.optionalKey(FontSize),
   sidebarFontSize: Schema.optionalKey(FontSize),
+  sidebarTranslucency: Schema.optionalKey(SidebarTranslucency),
   toolFontSize: Schema.optionalKey(FontSize),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),

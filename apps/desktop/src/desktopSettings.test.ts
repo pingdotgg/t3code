@@ -8,6 +8,7 @@ import {
   DEFAULT_DESKTOP_SETTINGS,
   readDesktopSettings,
   resolveDefaultDesktopSettings,
+  setDesktopSidebarVibrancyPreference,
   setDesktopServerExposurePreference,
   setDesktopUpdateChannelPreference,
   writeDesktopSettings,
@@ -37,6 +38,7 @@ describe("desktopSettings", () => {
       serverExposureMode: "local-only",
       updateChannel: "nightly",
       updateChannelConfiguredByUser: false,
+      sidebarVibrancyEnabled: false,
     });
   });
 
@@ -47,12 +49,14 @@ describe("desktopSettings", () => {
       serverExposureMode: "network-accessible",
       updateChannel: "latest",
       updateChannelConfiguredByUser: true,
+      sidebarVibrancyEnabled: true,
     });
 
     expect(readDesktopSettings(settingsPath, "0.0.17")).toEqual({
       serverExposureMode: "network-accessible",
       updateChannel: "latest",
       updateChannelConfiguredByUser: true,
+      sidebarVibrancyEnabled: true,
     });
   });
 
@@ -63,6 +67,7 @@ describe("desktopSettings", () => {
           serverExposureMode: "local-only",
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
+          sidebarVibrancyEnabled: false,
         },
         "network-accessible",
       ),
@@ -70,6 +75,26 @@ describe("desktopSettings", () => {
       serverExposureMode: "network-accessible",
       updateChannel: "latest",
       updateChannelConfiguredByUser: false,
+      sidebarVibrancyEnabled: false,
+    });
+  });
+
+  it("persists the requested sidebar vibrancy preference", () => {
+    expect(
+      setDesktopSidebarVibrancyPreference(
+        {
+          serverExposureMode: "local-only",
+          updateChannel: "latest",
+          updateChannelConfiguredByUser: false,
+          sidebarVibrancyEnabled: false,
+        },
+        true,
+      ),
+    ).toEqual({
+      serverExposureMode: "local-only",
+      updateChannel: "latest",
+      updateChannelConfiguredByUser: false,
+      sidebarVibrancyEnabled: true,
     });
   });
 
@@ -80,6 +105,7 @@ describe("desktopSettings", () => {
           serverExposureMode: "local-only",
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
+          sidebarVibrancyEnabled: false,
         },
         "nightly",
       ),
@@ -87,6 +113,7 @@ describe("desktopSettings", () => {
       serverExposureMode: "local-only",
       updateChannel: "nightly",
       updateChannelConfiguredByUser: true,
+      sidebarVibrancyEnabled: false,
     });
   });
 
@@ -105,6 +132,7 @@ describe("desktopSettings", () => {
       serverExposureMode: "local-only",
       updateChannel: "nightly",
       updateChannelConfiguredByUser: false,
+      sidebarVibrancyEnabled: false,
     });
   });
 
@@ -123,6 +151,7 @@ describe("desktopSettings", () => {
       serverExposureMode: "local-only",
       updateChannel: "nightly",
       updateChannelConfiguredByUser: false,
+      sidebarVibrancyEnabled: false,
     });
   });
 
@@ -142,6 +171,7 @@ describe("desktopSettings", () => {
       serverExposureMode: "local-only",
       updateChannel: "latest",
       updateChannelConfiguredByUser: true,
+      sidebarVibrancyEnabled: false,
     });
   });
 });

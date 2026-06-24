@@ -24,6 +24,7 @@ import {
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_INPUT_FONT_SIZE,
   DEFAULT_SIDEBAR_FONT_SIZE,
+  DEFAULT_SIDEBAR_TRANSLUCENCY,
   DEFAULT_TOOL_FONT_SIZE,
   DEFAULT_THREAD_COMPLETION_NOTIFICATION_MODE,
   DEFAULT_UI_DENSITY,
@@ -31,6 +32,7 @@ import {
   DEFAULT_UNIFIED_SETTINGS,
   type CodeFont,
   type FontSize,
+  type SidebarTranslucency,
   type ThreadCompletionNotificationMode,
   type UiDensity,
   type UiFont,
@@ -123,6 +125,18 @@ const UI_DENSITY_OPTIONS: ReadonlyArray<{ value: UiDensity; label: string; hint:
   { value: "compact", label: "Compact", hint: "— tighter spacing" },
   { value: "default", label: "Default", hint: "— balanced" },
   { value: "spacious", label: "Spacious", hint: "— more breathing room" },
+];
+
+const SIDEBAR_TRANSLUCENCY_OPTIONS: ReadonlyArray<{
+  value: SidebarTranslucency;
+  label: string;
+  hint: string;
+}> = [
+  { value: "off", label: "Off", hint: "— opaque, fastest" },
+  { value: "subtle", label: "Subtle", hint: "— light frosted tint" },
+  { value: "medium", label: "Medium", hint: "— balanced translucency" },
+  { value: "strong", label: "Strong", hint: "— most see-through" },
+  { value: "liquid-glass", label: "Liquid Glass", hint: "— ultra-clear, highest blur" },
 ];
 
 const THREAD_COMPLETION_NOTIFICATION_OPTIONS: ReadonlyArray<{
@@ -532,6 +546,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Time format"]
         : []),
       ...(settings.uiDensity !== DEFAULT_UNIFIED_SETTINGS.uiDensity ? ["UI density"] : []),
+      ...(settings.sidebarTranslucency !== DEFAULT_UNIFIED_SETTINGS.sidebarTranslucency
+        ? ["Sidebar translucency"]
+        : []),
       ...(settings.uiFont !== DEFAULT_UNIFIED_SETTINGS.uiFont ? ["Interface font"] : []),
       ...(settings.codeFont !== DEFAULT_UNIFIED_SETTINGS.codeFont ? ["Code font"] : []),
       ...(settings.codeFontSize !== DEFAULT_UNIFIED_SETTINGS.codeFontSize
@@ -592,6 +609,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
       settings.sidebarFontSize,
+      settings.sidebarTranslucency,
       settings.threadCompletionNotifications,
       settings.timestampFormat,
       settings.toolFontSize,
@@ -1111,6 +1129,55 @@ export function GeneralSettingsPanel() {
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {UI_DENSITY_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    <div>
+                      <span className="font-medium">{option.label}</span>
+                      <span className="ml-2 text-muted-foreground/70">{option.hint}</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Sidebar translucency"
+          description="Control the sidebar's frosted tint. Desktop builds use native vibrancy when available; browsers fall back to CSS blur."
+          resetAction={
+            settings.sidebarTranslucency !== DEFAULT_SIDEBAR_TRANSLUCENCY ? (
+              <SettingResetButton
+                label="sidebar translucency"
+                onClick={() =>
+                  updateSettings({ sidebarTranslucency: DEFAULT_SIDEBAR_TRANSLUCENCY })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarTranslucency}
+              onValueChange={(value) => {
+                if (
+                  value === "off" ||
+                  value === "subtle" ||
+                  value === "medium" ||
+                  value === "strong" ||
+                  value === "liquid-glass"
+                ) {
+                  updateSettings({ sidebarTranslucency: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar translucency">
+                <SelectValue>
+                  {SIDEBAR_TRANSLUCENCY_OPTIONS.find(
+                    (option) => option.value === settings.sidebarTranslucency,
+                  )?.label ?? "Off"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {SIDEBAR_TRANSLUCENCY_OPTIONS.map((option) => (
                   <SelectItem hideIndicator key={option.value} value={option.value}>
                     <div>
                       <span className="font-medium">{option.label}</span>

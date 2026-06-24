@@ -104,6 +104,9 @@
   --app-sidebar-font-size: 12px;
   --app-tool-font-size: 12px;
   --app-input-font-size: 14px;
+  --sidebar-translucency-alpha: 100%;
+  --sidebar-backdrop-blur: 0px;
+  --sidebar-backdrop-saturation: 1;
 
   /* Density tokens (default, mobile-first) */
   --density-chat-header-px: 0.75rem;
@@ -149,6 +152,7 @@
   --app-chrome-background: var(--background);
   --foreground: var(--color-neutral-800);
   --card: var(--color-white);
+  --sidebar-surface: color-mix(in srgb, var(--card) var(--sidebar-translucency-alpha), transparent);
   --card-foreground: var(--color-neutral-800);
   --popover: var(--color-white);
   --popover-foreground: var(--color-neutral-800);
@@ -178,6 +182,11 @@
     --app-chrome-background: var(--background);
     --foreground: var(--color-neutral-100);
     --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
+    --sidebar-surface: color-mix(
+      in srgb,
+      var(--card) var(--sidebar-translucency-alpha),
+      transparent
+    );
     --card-foreground: var(--color-neutral-100);
     --popover: color-mix(in srgb, var(--background) 98%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
@@ -201,6 +210,66 @@
     --warning: var(--color-amber-500);
     --warning-foreground: var(--color-amber-400);
   }
+}
+
+html[data-sidebar-translucency="subtle"] {
+  --sidebar-translucency-alpha: 88%;
+  --sidebar-backdrop-blur: 8px;
+  --sidebar-backdrop-saturation: 1.08;
+}
+
+html[data-sidebar-translucency="medium"] {
+  --sidebar-translucency-alpha: 76%;
+  --sidebar-backdrop-blur: 12px;
+  --sidebar-backdrop-saturation: 1.12;
+}
+
+html[data-sidebar-translucency="strong"] {
+  --sidebar-translucency-alpha: 64%;
+  --sidebar-backdrop-blur: 16px;
+  --sidebar-backdrop-saturation: 1.16;
+}
+
+html[data-sidebar-translucency="liquid-glass"] {
+  --sidebar-translucency-alpha: 24%;
+  --sidebar-backdrop-blur: 36px;
+  --sidebar-backdrop-saturation: 1.55;
+}
+
+html[data-window-focused="false"] {
+  --sidebar-translucency-alpha: 100%;
+  --sidebar-backdrop-blur: 0px;
+  --sidebar-backdrop-saturation: 1;
+}
+
+html[data-native-vibrancy="true"] {
+  --sidebar-backdrop-blur: 0px;
+  --sidebar-backdrop-saturation: 1;
+}
+
+[data-slot="sidebar-container"],
+[data-slot="sidebar-inner"] {
+  background-color: var(--sidebar-surface);
+}
+
+html[data-sidebar-translucency="liquid-glass"]:not([data-window-focused="false"])
+  [data-slot="sidebar-container"] {
+  box-shadow:
+    inset 1px 0 --alpha(var(--color-white) / 18%),
+    inset -1px 0 --alpha(var(--color-black) / 12%),
+    0 0 0 1px --alpha(var(--color-white) / 6%);
+}
+
+html:is(
+    [data-sidebar-translucency="subtle"],
+    [data-sidebar-translucency="medium"],
+    [data-sidebar-translucency="strong"],
+    [data-sidebar-translucency="liquid-glass"]
+  ):not([data-native-vibrancy="true"]):not([data-window-focused="false"])
+  [data-slot="sidebar-container"] {
+  backdrop-filter: blur(var(--sidebar-backdrop-blur)) saturate(var(--sidebar-backdrop-saturation));
+  -webkit-backdrop-filter: blur(var(--sidebar-backdrop-blur))
+    saturate(var(--sidebar-backdrop-saturation));
 }
 
 html[data-ui-font="geist"] {

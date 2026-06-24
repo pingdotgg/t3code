@@ -54,6 +54,7 @@ const clientSettings: ClientSettings = {
   codeFontSize: 12,
   inputFontSize: 14,
   sidebarFontSize: 12,
+  sidebarTranslucency: "off",
   toolFontSize: 12,
   confirmThreadArchive: true,
   confirmThreadDelete: false,

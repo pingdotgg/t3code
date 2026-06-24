@@ -9,6 +9,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT,
   DEFAULT_SIDEBAR_FONT_SIZE,
+  DEFAULT_SIDEBAR_TRANSLUCENCY,
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
   ServerSettingsPatch,
@@ -40,6 +41,26 @@ describe("ClientSettings.sidebarFontSize", () => {
   it("defaults to the sidebar title font size", () => {
     expect(DEFAULT_CLIENT_SETTINGS.sidebarFontSize).toBe(DEFAULT_SIDEBAR_FONT_SIZE);
     expect(decodeClientSettings({}).sidebarFontSize).toBe(DEFAULT_SIDEBAR_FONT_SIZE);
+  });
+
+  describe("ClientSettings.sidebarTranslucency", () => {
+    it("defaults to the opaque sidebar", () => {
+      expect(DEFAULT_CLIENT_SETTINGS.sidebarTranslucency).toBe(DEFAULT_SIDEBAR_TRANSLUCENCY);
+      expect(decodeClientSettings({}).sidebarTranslucency).toBe(DEFAULT_SIDEBAR_TRANSLUCENCY);
+    });
+
+    it("accepts known sidebar translucency levels in patches", () => {
+      expect(decodeClientSettingsPatch({ sidebarTranslucency: "medium" }).sidebarTranslucency).toBe(
+        "medium",
+      );
+      expect(
+        decodeClientSettingsPatch({ sidebarTranslucency: "liquid-glass" }).sidebarTranslucency,
+      ).toBe("liquid-glass");
+    });
+
+    it("rejects unknown sidebar translucency levels in patches", () => {
+      expect(() => decodeClientSettingsPatch({ sidebarTranslucency: "glass" })).toThrow();
+    });
   });
 
   it("accepts valid sidebar font size patches", () => {

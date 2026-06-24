@@ -82,8 +82,12 @@ export function syncBrowserChromeTheme() {
   const backgroundColor = surfaceColor ?? fallbackColor;
   if (!backgroundColor) return;
 
-  document.documentElement.style.backgroundColor = backgroundColor;
-  document.body.style.backgroundColor = backgroundColor;
+  const useTransparentPageCanvas =
+    document.documentElement.getAttribute("data-native-vibrancy") === "true";
+  document.documentElement.style.backgroundColor = useTransparentPageCanvas
+    ? "transparent"
+    : backgroundColor;
+  document.body.style.backgroundColor = useTransparentPageCanvas ? "transparent" : backgroundColor;
   ensureThemeColorMetaTag().setAttribute("content", backgroundColor);
 }
 

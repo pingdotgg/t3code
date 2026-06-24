@@ -4,21 +4,28 @@ import {
   DEFAULT_CODE_FONT,
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_INPUT_FONT_SIZE,
+  DEFAULT_SIDEBAR_TRANSLUCENCY,
   DEFAULT_SIDEBAR_FONT_SIZE,
   DEFAULT_TOOL_FONT_SIZE,
   DEFAULT_UI_DENSITY,
   DEFAULT_UI_FONT,
   type CodeFont,
   type FontSize,
+  type SidebarTranslucency,
   type UiDensity,
   type UiFont,
 } from "@t3tools/contracts/settings";
 
 import { readBrowserClientSettings } from "../clientPersistenceStorage";
 import { useSettings } from "./useSettings";
+import { syncBrowserChromeTheme } from "./useTheme";
 
 const APP_FONT_ATTRIBUTE = "data-ui-font";
 const CODE_FONT_ATTRIBUTE = "data-code-font";
+const SIDEBAR_TRANSLUCENCY_ATTRIBUTE = "data-sidebar-translucency";
+const NATIVE_VIBRANCY_ATTRIBUTE = "data-native-vibrancy";
+const WINDOW_FOCUSED_ATTRIBUTE = "data-window-focused";
+let nativeVibrancyRequestId = 0;
 
 export const CODE_FONT_STACKS: Record<CodeFont, string> = {
   "system-mono":
@@ -100,11 +107,81 @@ function normalizeUiDensity(value: unknown): UiDensity {
     : DEFAULT_UI_DENSITY;
 }
 
+function normalizeSidebarTranslucency(value: unknown): SidebarTranslucency {
+  return value === "off" ||
+    value === "subtle" ||
+    value === "medium" ||
+    value === "strong" ||
+    value === "liquid-glass"
+    ? value
+    : DEFAULT_SIDEBAR_TRANSLUCENCY;
+}
+
+export function applySidebarTranslucency(translucency: SidebarTranslucency): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  document.documentElement.setAttribute(SIDEBAR_TRANSLUCENCY_ATTRIBUTE, translucency);
+}
+
+function setNativeVibrancyAttribute(enabled: boolean): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  document.documentElement.setAttribute(NATIVE_VIBRANCY_ATTRIBUTE, String(enabled));
+  syncBrowserChromeTheme();
+}
+
+function setWindowFocusedAttribute(focused: boolean): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  document.documentElement.setAttribute(WINDOW_FOCUSED_ATTRIBUTE, String(focused));
+}
+
+function isWindowFocused(): boolean {
+  return typeof document === "undefined" ? true : document.hasFocus();
+}
+
+function syncNativeSidebarVibrancy(enabled: boolean, persist = true): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const requestId = ++nativeVibrancyRequestId;
+  const bridge = window.desktopBridge;
+  if (!bridge) {
+    setNativeVibrancyAttribute(false);
+    return;
+  }
+
+  void bridge
+    .setVibrancy(enabled, { persist })
+    .then((nativeVibrancyEnabled) => {
+      if (requestId !== nativeVibrancyRequestId) {
+        return;
+      }
+      setNativeVibrancyAttribute(enabled && nativeVibrancyEnabled);
+    })
+    .catch((error) => {
+      if (requestId !== nativeVibrancyRequestId) {
+        return;
+      }
+      setNativeVibrancyAttribute(false);
+      console.error("[SIDEBAR_VIBRANCY] sync failed", error);
+    });
+}
+
 if (typeof document !== "undefined") {
   const storedSettings = readBrowserClientSettings();
   applyAppFont(normalizeUiFont(storedSettings?.uiFont));
   applyCodeFont(normalizeCodeFont(storedSettings?.codeFont));
   applyUiDensity(normalizeUiDensity(storedSettings?.uiDensity));
+  applySidebarTranslucency(normalizeSidebarTranslucency(storedSettings?.sidebarTranslucency));
+  setWindowFocusedAttribute(isWindowFocused());
   applyFontSizes({
     codeFontSize: normalizeFontSize(storedSettings?.codeFontSize, DEFAULT_CODE_FONT_SIZE),
     chatFontSize: normalizeFontSize(storedSettings?.chatFontSize, DEFAULT_CHAT_FONT_SIZE),
@@ -123,6 +200,7 @@ export function useAppFont() {
   const toolFontSize = useSettings((settings) => settings.toolFontSize);
   const inputFontSize = useSettings((settings) => settings.inputFontSize);
   const uiDensity = useSettings((settings) => settings.uiDensity);
+  const sidebarTranslucency = useSettings((settings) => settings.sidebarTranslucency);
 
   useEffect(() => {
     applyAppFont(uiFont);
@@ -140,6 +218,30 @@ export function useAppFont() {
     applyUiDensity(uiDensity);
   }, [uiDensity]);
 
+  useEffect(() => {
+    applySidebarTranslucency(sidebarTranslucency);
+  }, [sidebarTranslucency]);
+
+  useEffect(() => {
+    const syncFocusedTranslucency = (persist: boolean) => {
+      const focused = isWindowFocused();
+      setWindowFocusedAttribute(focused);
+      syncNativeSidebarVibrancy(sidebarTranslucency !== "off" && focused, persist);
+    };
+
+    syncFocusedTranslucency(false);
+
+    const onFocusChange = () => {
+      syncFocusedTranslucency(false);
+    };
+    window.addEventListener("focus", onFocusChange);
+    window.addEventListener("blur", onFocusChange);
+    return () => {
+      window.removeEventListener("focus", onFocusChange);
+      window.removeEventListener("blur", onFocusChange);
+    };
+  }, [sidebarTranslucency]);
+
   return {
     uiFont,
     codeFont,
@@ -149,5 +251,6 @@ export function useAppFont() {
     toolFontSize,
     inputFontSize,
     uiDensity,
+    sidebarTranslucency,
   };
 }
