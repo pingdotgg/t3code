@@ -1,10 +1,14 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { ScaleIcon } from "lucide-react";
+import { CloudIcon, MonitorIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import type { EnvironmentOption } from "./BranchToolbar.logic";
-import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
-import { useComposerMenuProps } from "./chat/composerEventScope";
+import { cn } from "../lib/utils";
+import {
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
+  THREAD_DETAILS_PANEL_ROW_CLASS,
+} from "./chat/threadDetailsPanelStyles";
 import {
   Select,
   SelectGroup,
@@ -17,40 +21,31 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface BranchToolbarEnvironmentSelectorProps {
-  autoEnvironmentLabel?: string | undefined;
-  onAutoEnvironment?: (() => void) | undefined;
   envLocked: boolean;
   environmentId: EnvironmentId;
   availableEnvironments: readonly EnvironmentOption[];
-  // Absent when there is only one environment to show: the indicator still
-  // renders (as a static label) so remote projects are always identifiable.
-  onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  onEnvironmentChange: (environmentId: EnvironmentId) => void;
+  displayMode?: "toolbar" | "panel";
 }
 
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
-  autoEnvironmentLabel,
-  onAutoEnvironment,
   envLocked,
   environmentId,
   availableEnvironments,
   onEnvironmentChange,
+  displayMode = "toolbar",
 }: BranchToolbarEnvironmentSelectorProps) {
-  const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment = useMemo(() => {
     return availableEnvironments.find((env) => env.environmentId === environmentId) ?? null;
   }, [availableEnvironments, environmentId]);
 
   const environmentItems = useMemo(
-    () => [
-      ...(onAutoEnvironment
-        ? [{ value: "auto", label: autoEnvironmentLabel ?? "Auto balance" }]
-        : []),
-      ...availableEnvironments.map((env) => ({
+    () =>
+      availableEnvironments.map((env) => ({
         value: env.environmentId,
         label: env.label,
       })),
-    ],
-    [availableEnvironments, autoEnvironmentLabel, onAutoEnvironment],
+    [availableEnvironments],
   );
 
   // The static label carries the xs control's height (h-7 sm:h-6) as well as
@@ -60,97 +55,75 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   // only thing in the strip.
   if (envLocked || onEnvironmentChange === undefined) {
     return (
-      <Tooltip>
-        <TooltipTrigger
-          render={<span />}
-          className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-[calc(--spacing(2)-1px)] font-normal text-muted-foreground/70 text-xs sm:h-6"
-          data-composer-context-control
-        >
-          <EnvironmentMachineIcon
-            kind={activeEnvironment?.machine ?? "server"}
-            className="size-3 shrink-0"
+<<<<<<< HEAD
+      <span className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:h-6 sm:text-xs">
+=======
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs",
+          displayMode === "panel" && THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
+        )}
+      >
+>>>>>>> abd5cc5ff8 (Map thread panel into title bar and sidebar)
+        {activeEnvironment?.isPrimary ? (
+          <MonitorIcon
+            className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
           />
-          <span
-            data-composer-label
-            className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
-          >
-            <span
-              data-composer-label-motion
-              className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
-            >
-              {activeEnvironment?.label ?? "Run on"}
-            </span>
-          </span>
-        </TooltipTrigger>
-        <TooltipPopup>{activeEnvironment?.label ?? "Run on"}</TooltipPopup>
-      </Tooltip>
+        ) : (
+          <CloudIcon
+            className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
+          />
+        )}
+        <span
+          data-composer-label
+          className="min-w-0 max-w-[240px] truncate transition-[max-width,opacity] duration-300 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0"
+        >
+          {activeEnvironment?.label ?? "Run on"}
+        </span>
+      </span>
     );
   }
 
   return (
     <Select
       modal={false}
-      value={autoEnvironmentLabel ? "auto" : environmentId}
-      onValueChange={(value) =>
-        value === "auto" ? onAutoEnvironment?.() : onEnvironmentChange(value as EnvironmentId)
-      }
+      value={environmentId}
+      onValueChange={(value) => onEnvironmentChange(value as EnvironmentId)}
       items={environmentItems}
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <SelectTrigger
-              variant="ghost"
-              size="xs"
-              className="min-w-0 max-w-full font-normal text-xs!"
-              aria-label="Run on"
-              data-composer-shortcut="composer.host"
-              data-composer-context-control
-            />
-          }
+      <SelectTrigger
+        variant="ghost"
+        size={displayMode === "panel" ? "default" : "xs"}
+        className={cn("font-medium", displayMode === "panel" && THREAD_DETAILS_PANEL_ROW_CLASS)}
+        aria-label="Run on"
+      >
+        {activeEnvironment?.isPrimary ? (
+          <MonitorIcon
+            className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
+          />
+        ) : (
+          <CloudIcon
+            className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
+          />
+        )}
+        <span
+          data-composer-label
+          className="min-w-0 max-w-[240px] truncate transition-[max-width,opacity] duration-300 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0"
         >
-          {autoEnvironmentLabel ? (
-            <ScaleIcon className="size-3 shrink-0" aria-hidden="true" />
-          ) : (
-            <EnvironmentMachineIcon
-              kind={activeEnvironment?.machine ?? "server"}
-              className="size-3 shrink-0"
-            />
-          )}
-          <span
-            data-composer-label
-            className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
-          >
-            <span
-              data-composer-label-motion
-              className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
-            >
-              <SelectValue />
-            </span>
-          </span>
-        </TooltipTrigger>
-        <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
-      </Tooltip>
-      <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
+          <SelectValue />
+        </span>
+      </SelectTrigger>
+      <SelectPopup>
         <SelectGroup>
           <SelectGroupLabel>Run on</SelectGroupLabel>
-          {onAutoEnvironment && (
-            <SelectItem
-              value="auto"
-              onClick={() => {
-                if (autoEnvironmentLabel) onAutoEnvironment?.();
-              }}
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <ScaleIcon className="size-3" aria-hidden="true" />
-                {autoEnvironmentLabel ?? "Auto balance"}
-              </span>
-            </SelectItem>
-          )}
           {availableEnvironments.map((env) => (
             <SelectItem key={env.environmentId} value={env.environmentId}>
               <span className="inline-flex items-center gap-1.5">
-                <EnvironmentMachineIcon kind={env.machine} className="size-3" />
+                {env.isPrimary ? (
+                  <MonitorIcon className="size-3" />
+                ) : (
+                  <CloudIcon className="size-3" />
+                )}
                 {env.label}
               </span>
             </SelectItem>
