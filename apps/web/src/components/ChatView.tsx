@@ -87,7 +87,6 @@ import {
   usePendingUserInputDraftStore,
   usePendingUserInputThreadDraft,
 } from "../pendingUserInputDraftStore";
-import { useStore } from "../store";
 import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
@@ -1122,9 +1121,6 @@ function ChatViewContent(props: ChatViewProps) {
     ApprovalRequestId[]
   >([]);
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
-  const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
-  const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
-  const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
@@ -1795,12 +1791,6 @@ function ChatViewContent(props: ChatViewProps) {
     activeThread?.session ?? null,
     localDispatchStartedAt,
   );
-  const isComposerApprovalState = activePendingApproval !== null;
-  const hasComposerHeader =
-    isComposerApprovalState ||
-    pendingUserInputs.length > 0 ||
-    (showPlanFollowUpPrompt && activeProposedPlan !== null);
-  const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
   useEffect(() => {
     if (!activeThread) {
       return;
@@ -5038,7 +5028,6 @@ function ChatViewContent(props: ChatViewProps) {
                     onImplementPlanInNewThread={onImplementPlanInNewThread}
                     onRespondToApproval={onRespondToApproval}
                     onSelectActivePendingUserInputOption={onSelectActivePendingUserInputOption}
-                    onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
                     onPreviousActivePendingUserInputQuestion={
                       onPreviousActivePendingUserInputQuestion
                     }
