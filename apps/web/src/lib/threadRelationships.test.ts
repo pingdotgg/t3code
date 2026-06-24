@@ -3,7 +3,9 @@ import { ThreadId } from "@t3tools/contracts";
 
 import {
   deriveThreadRelationshipGraph,
+  immediateThreadRelationships,
   relatedThreadIds,
+  resolveMergeBackTargetThreadId,
   walkThreadRelationships,
 } from "./threadRelationships";
 
@@ -41,5 +43,54 @@ describe("thread relationships", () => {
       [child, 1],
       [missing, 2],
     ]);
+    expect(immediateThreadRelationships(graph, root).map(({ threadId }) => threadId)).toEqual([
+      child,
+    ]);
+  });
+
+  it("resolves merge-back only for forks and prefers the recorded fork source", () => {
+    const source = ThreadId.make("thread-source");
+    const fallbackParent = ThreadId.make("thread-parent");
+    const fork = ThreadId.make("thread-fork");
+
+    expect(
+      resolveMergeBackTargetThreadId({
+        thread: {
+          id: fork,
+          forkedFrom: { type: "run", threadId: source, runId: "run-source" },
+          lineage: {
+            rootThreadId: source,
+            parentThreadId: fallbackParent,
+            relationshipToParent: "fork",
+          },
+        },
+      } as never),
+    ).toBe(source);
+    expect(
+      resolveMergeBackTargetThreadId({
+        thread: {
+          id: fork,
+          forkedFrom: null,
+          lineage: {
+            rootThreadId: source,
+            parentThreadId: fallbackParent,
+            relationshipToParent: "fork",
+          },
+        },
+      } as never),
+    ).toBe(fallbackParent);
+    expect(
+      resolveMergeBackTargetThreadId({
+        thread: {
+          id: fork,
+          forkedFrom: null,
+          lineage: {
+            rootThreadId: source,
+            parentThreadId: fallbackParent,
+            relationshipToParent: "subagent",
+          },
+        },
+      } as never),
+    ).toBeNull();
   });
 });

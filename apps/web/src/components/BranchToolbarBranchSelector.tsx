@@ -32,9 +32,12 @@ import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
+import {
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_ROW_CLASS,
+} from "./chat/threadDetailsPanelStyles";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
-import { composerFloatingLayerProps } from "./chat/composerEventScope";
 import {
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchTriggerLabel,
@@ -69,6 +72,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface BranchToolbarBranchSelectorProps {
   className?: string;
+  displayMode?: "toolbar" | "panel";
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
@@ -88,6 +92,7 @@ function toBranchActionErrorMessage(error: unknown): string {
 
 export function BranchToolbarBranchSelector({
   className,
+  displayMode = "toolbar",
   environmentId,
   threadId,
   draftId,
@@ -729,8 +734,11 @@ export function BranchToolbarBranchSelector({
       value={resolvedActiveBranch}
     >
       <div
-        className={cn("flex min-w-0 items-center gap-1", className)}
-        data-composer-context-control
+        className={cn(
+          "flex min-w-0 items-center gap-1",
+          displayMode === "panel" && "w-full",
+          className,
+        )}
       >
         {branchPr && branchPrStatus ? (
           <Tooltip>
@@ -747,59 +755,44 @@ export function BranchToolbarBranchSelector({
                 />
               }
             >
-              <ChangeRequestStatusIcon
-                state={branchPr.state}
-                isDraft={branchPr.isDraft}
-                className="size-3"
-              />
-              <span
-                data-composer-label
-                className="min-w-0 max-w-12 overflow-hidden group-data-[compact]/composer-context:max-w-0"
-              >
-                <span
-                  data-composer-label-motion
-                  className="block w-full min-w-0 max-w-12 origin-left truncate transition-[opacity,transform] duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:[transform:translateX(-0.25rem)_scaleX(0.95)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transform-none motion-reduce:transition-opacity"
-                >
-                  #{branchPr.number}
-                </span>
-              </span>
+              <ChangeRequestStatusIcon className="size-3" />
+              <span>#{branchPr.number}</span>
             </TooltipTrigger>
             <TooltipPopup side="top">{branchPrTooltip}</TooltipPopup>
           </Tooltip>
         ) : null}
-        {/* Context menu lives on the wrapper: the disabled Button has
-            pointer-events-none, so the trigger itself never sees right-clicks
-            while refs are loading or a branch action is pending. */}
-        <span
-          className="flex min-w-0"
-          onContextMenu={(event) => handleBranchContextMenu(event, resolvedActiveBranch)}
+        <ComboboxTrigger
+          render={<Button variant="ghost" size={displayMode === "panel" ? "sm" : "xs"} />}
+          className={cn(
+            "min-w-0 text-muted-foreground/70 hover:text-foreground/80",
+            displayMode === "panel" && THREAD_DETAILS_PANEL_ROW_CLASS,
+          )}
+          disabled={isInitialBranchesLoadPending || isBranchActionPending}
         >
-          <ComboboxTrigger
-            render={<Button variant="ghost" size="xs" />}
-            className="min-w-0 max-w-full font-normal text-muted-foreground/70 text-xs! hover:text-foreground/80"
-            disabled={isInitialBranchesLoadPending || isBranchActionPending}
+          <GitBranchIcon
+            className={cn(
+              "size-3 shrink-0 opacity-70",
+              displayMode === "panel" && THREAD_DETAILS_PANEL_ICON_CLASS,
+            )}
+          />
+          <span
+            data-composer-label
+            className={cn(
+              "min-w-0 max-w-[240px] truncate",
+              displayMode === "panel"
+                ? "max-w-none flex-1 text-left"
+                : "transition-[max-width,opacity] duration-300 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0",
+            )}
           >
-            <GitBranchIcon className="size-3 shrink-0 opacity-70" />
-            <span
-              data-composer-label
-              className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
-            >
-              <span
-                data-composer-label-motion
-                className="block w-full min-w-0 max-w-[240px] origin-left truncate transition-[opacity,transform] duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:[transform:translateX(-0.25rem)_scaleX(0.95)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transform-none motion-reduce:transition-opacity"
-              >
-                {triggerLabel}
-              </span>
-            </span>
-            <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
-          </ComboboxTrigger>
-        </span>
+            {triggerLabel}
+          </span>
+          <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
+        </ComboboxTrigger>
       </div>
       <ComboboxPopup
-        align="end"
-        side="top"
+        align={displayMode === "panel" ? "start" : "end"}
+        side={displayMode === "panel" ? "bottom" : "top"}
         className="flex w-80 flex-col"
-        {...composerFloatingLayerProps}
       >
         <div className="shrink-0 px-3 pt-2.5">
           <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
@@ -872,7 +865,7 @@ export function BranchToolbarBranchSelector({
                     <Switch
                       id={startFromOriginSwitchId}
                       checked={startFromOrigin}
-                      size="sm"
+                      className="[--thumb-size:--spacing(3.5)]"
                       aria-label="Start worktree from origin"
                       onCheckedChange={(checked) => onStartFromOriginChange(Boolean(checked))}
                     />

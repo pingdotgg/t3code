@@ -74,10 +74,10 @@ describe("applyShellStreamEvent", () => {
   });
 
   it("leaves unknown future events unchanged", () => {
-    const next = applyShellStreamEvent(
-      v2ShellSnapshot,
-      { kind: "future.event", sequence: 99 } as never,
-    );
+    const next = applyShellStreamEvent(v2ShellSnapshot, {
+      kind: "future.event",
+      sequence: 99,
+    } as never);
 
     expect(next).toBe(v2ShellSnapshot);
   });

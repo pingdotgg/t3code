@@ -31,6 +31,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ProviderModelPicker } from "../components/chat/ProviderModelPicker";
 import { usePrimarySettings } from "../hooks/useSettings";
+import { resolveMergeBackTargetThreadId } from "../lib/threadRelationships";
 import { newCommandId, newMessageId, newProjectId, newThreadId } from "../lib/utils";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../modelSelection";
 import { deriveOrchestrationV2DebugProviderSnapshots } from "../orchestrationV2DebugProviders";
@@ -2715,13 +2716,8 @@ function latestCompletedRunInProjection(
 function deriveMergeBackCandidate(
   projection: OrchestrationV2ThreadProjection | null,
 ): MergeBackCandidate | null {
-  if (projection === null || projection.thread.lineage.relationshipToParent !== "fork") {
-    return null;
-  }
-  const targetThreadId =
-    projection.thread.forkedFrom?.type === "run"
-      ? projection.thread.forkedFrom.threadId
-      : projection.thread.lineage.parentThreadId;
+  if (projection === null) return null;
+  const targetThreadId = resolveMergeBackTargetThreadId(projection);
   if (targetThreadId === null) {
     return null;
   }
