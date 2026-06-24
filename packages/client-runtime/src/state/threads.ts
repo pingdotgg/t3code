@@ -1,7 +1,5 @@
 import {
-  EnvironmentId,
   ORCHESTRATION_WS_METHODS,
-  ThreadId,
   type EnvironmentId as EnvironmentIdType,
   type OrchestrationThread,
   type OrchestrationThreadStreamItem,
@@ -20,7 +18,9 @@ import { connectionProjectionPhase } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribe } from "../rpc/client.ts";
+import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyThreadDetailEvent } from "./threadReducer.ts";
+import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
 export type EnvironmentThreadStatus = "empty" | "cached" | "synchronizing" | "live" | "deleted";
@@ -226,37 +226,24 @@ export function threadStateChanges(environmentId: EnvironmentIdType, threadId: T
   );
 }
 
-function threadAtomKey(environmentId: EnvironmentIdType, threadId: ThreadIdType): string {
-  return `${environmentId}\u0000${threadId}`;
-}
-
-function parseThreadAtomKey(key: string): {
-  readonly environmentId: EnvironmentIdType;
-  readonly threadId: ThreadIdType;
-} {
-  const separator = key.indexOf("\u0000");
-  if (separator < 0) {
-    throw new Error("Invalid environment thread atom key.");
-  }
-  return {
-    environmentId: EnvironmentId.make(key.slice(0, separator)),
-    threadId: ThreadId.make(key.slice(separator + 1)),
-  };
-}
-
 export function createEnvironmentThreadStateAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | EnvironmentCacheStore | R, E>,
 ) {
   const family = Atom.family((key: string) => {
-    const { environmentId, threadId } = parseThreadAtomKey(key);
-    return runtime.atom(threadStateChanges(environmentId, threadId), {
-      initialValue: EMPTY_ENVIRONMENT_THREAD_STATE,
-    });
+    const { environmentId, threadId } = parseThreadKey(key);
+    return runtime
+      .atom(threadStateChanges(environmentId, threadId), {
+        initialValue: EMPTY_ENVIRONMENT_THREAD_STATE,
+      })
+      .pipe(
+        Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
+        Atom.withLabel(`environment-thread-state:${key}`),
+      );
   });
 
   return {
     stateAtom: (environmentId: EnvironmentIdType, threadId: ThreadIdType) =>
-      family(threadAtomKey(environmentId, threadId)),
+      family(threadKey({ environmentId, threadId })),
   };
 }
 

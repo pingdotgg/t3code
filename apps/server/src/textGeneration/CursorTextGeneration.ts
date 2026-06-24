@@ -9,7 +9,7 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shar
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 import { TextGenerationError } from "@t3tools/contracts";
-import { type ThreadTitleGenerationResult, type TextGenerationShape } from "./TextGeneration.ts";
+import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -30,32 +30,7 @@ import {
 
 const CURSOR_TIMEOUT_MS = 180_000;
 
-function mapCursorAcpError(
-  operation:
-    | "generateCommitMessage"
-    | "generatePrContent"
-    | "generateBranchName"
-    | "generateThreadTitle"
-    | "resolveMergeConflict"
-    | "verifyMergeResolution",
-  detail: string,
-  cause: unknown,
-): TextGenerationError {
-  return new TextGenerationError({
-    operation,
-    detail,
-    ...(cause !== undefined ? { cause } : {}),
-  });
-}
-
-function isTextGenerationError(error: unknown): error is TextGenerationError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "_tag" in error &&
-    error._tag === "TextGenerationError"
-  );
-}
+const isTextGenerationError = Schema.is(TextGenerationError);
 
 /**
  * Build a Cursor text-generation closure bound to a specific `CursorSettings`
@@ -117,13 +92,14 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
           model: modelSelection.model,
           selections: modelSelection.options,
           mapError: ({ cause, configId, step }) =>
-            mapCursorAcpError(
+            new TextGenerationError({
               operation,
-              step === "set-config-option"
-                ? `Failed to set Cursor ACP config option "${configId}" for text generation.`
-                : "Failed to set Cursor ACP base model for text generation.",
+              detail:
+                step === "set-config-option"
+                  ? `Failed to set Cursor ACP config option "${configId}" for text generation.`
+                  : "Failed to set Cursor ACP base model for text generation.",
               cause,
-            ),
+            }),
         });
 
         return yield* runtime.prompt({
@@ -146,7 +122,11 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         Effect.mapError((cause) =>
           isTextGenerationError(cause)
             ? cause
-            : mapCursorAcpError(operation, "Cursor ACP request failed.", cause),
+            : new TextGenerationError({
+                operation,
+                detail: "Cursor ACP request failed.",
+                cause,
+              }),
         ),
       );
 
@@ -163,162 +143,161 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 
       const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
       return yield* decodeOutput(extractJsonObject(rawResult)).pipe(
-        Effect.catchTag("SchemaError", (cause) =>
-          Effect.fail(
-            new TextGenerationError({
-              operation,
-              detail: "Cursor Agent returned invalid structured output.",
-              cause,
-            }),
-          ),
-        ),
+        Effect.catchTags({
+          SchemaError: (cause) =>
+            Effect.fail(
+              new TextGenerationError({
+                operation,
+                detail: "Cursor Agent returned invalid structured output.",
+                cause,
+              }),
+            ),
+        }),
       );
     }).pipe(
       Effect.mapError((cause) =>
         isTextGenerationError(cause)
           ? cause
-          : mapCursorAcpError(operation, "Cursor ACP text generation failed.", cause),
+          : new TextGenerationError({
+              operation,
+              detail: "Cursor ACP text generation failed.",
+              cause,
+            }),
       ),
       Effect.scoped,
     );
 
-  const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = Effect.fn(
-    "CursorTextGeneration.generateCommitMessage",
-  )(function* (input) {
-    const { prompt, outputSchema } = buildCommitMessagePrompt({
-      branch: input.branch,
-      stagedSummary: input.stagedSummary,
-      stagedPatch: input.stagedPatch,
-      includeBranch: input.includeBranch === true,
+  const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
+    Effect.fn("CursorTextGeneration.generateCommitMessage")(function* (input) {
+      const { prompt, outputSchema } = buildCommitMessagePrompt({
+        branch: input.branch,
+        stagedSummary: input.stagedSummary,
+        stagedPatch: input.stagedPatch,
+        includeBranch: input.includeBranch === true,
+      });
+
+      const generated = yield* runCursorJson({
+        operation: "generateCommitMessage",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return {
+        subject: sanitizeCommitSubject(generated.subject),
+        body: generated.body.trim(),
+        ...("branch" in generated && typeof generated.branch === "string"
+          ? { branch: sanitizeFeatureBranchName(generated.branch) }
+          : {}),
+      };
     });
 
-    const generated = yield* runCursorJson({
-      operation: "generateCommitMessage",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: outputSchema,
-      modelSelection: input.modelSelection,
+  const generatePrContent: TextGeneration.TextGeneration["Service"]["generatePrContent"] =
+    Effect.fn("CursorTextGeneration.generatePrContent")(function* (input) {
+      const { prompt, outputSchema } = buildPrContentPrompt({
+        baseBranch: input.baseBranch,
+        headBranch: input.headBranch,
+        commitSummary: input.commitSummary,
+        diffSummary: input.diffSummary,
+        diffPatch: input.diffPatch,
+      });
+
+      const generated = yield* runCursorJson({
+        operation: "generatePrContent",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return {
+        title: sanitizePrTitle(generated.title),
+        body: generated.body.trim(),
+      };
     });
 
-    return {
-      subject: sanitizeCommitSubject(generated.subject),
-      body: generated.body.trim(),
-      ...("branch" in generated && typeof generated.branch === "string"
-        ? { branch: sanitizeFeatureBranchName(generated.branch) }
-        : {}),
-    };
-  });
+  const generateBranchName: TextGeneration.TextGeneration["Service"]["generateBranchName"] =
+    Effect.fn("CursorTextGeneration.generateBranchName")(function* (input) {
+      const { prompt, outputSchema } = buildBranchNamePrompt({
+        message: input.message,
+        attachments: input.attachments,
+      });
 
-  const generatePrContent: TextGenerationShape["generatePrContent"] = Effect.fn(
-    "CursorTextGeneration.generatePrContent",
-  )(function* (input) {
-    const { prompt, outputSchema } = buildPrContentPrompt({
-      baseBranch: input.baseBranch,
-      headBranch: input.headBranch,
-      commitSummary: input.commitSummary,
-      diffSummary: input.diffSummary,
-      diffPatch: input.diffPatch,
+      const generated = yield* runCursorJson({
+        operation: "generateBranchName",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return {
+        branch: sanitizeBranchFragment(generated.branch),
+      };
     });
 
-    const generated = yield* runCursorJson({
-      operation: "generatePrContent",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: outputSchema,
-      modelSelection: input.modelSelection,
+  const generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"] =
+    Effect.fn("CursorTextGeneration.generateThreadTitle")(function* (input) {
+      const { prompt, outputSchema } = buildThreadTitlePrompt({
+        message: input.message,
+        attachments: input.attachments,
+      });
+
+      const generated = yield* runCursorJson({
+        operation: "generateThreadTitle",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return {
+        title: sanitizeThreadTitle(generated.title),
+      } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
-    return {
-      title: sanitizePrTitle(generated.title),
-      body: generated.body.trim(),
-    };
-  });
+  const resolveMergeConflict: TextGeneration.TextGeneration["Service"]["resolveMergeConflict"] =
+    Effect.fn("CursorTextGeneration.resolveMergeConflict")(function* (input) {
+      const { prompt, outputSchema } = buildMergeConflictPrompt({
+        path: input.path,
+        conflictedContent: input.conflictedContent,
+      });
 
-  const generateBranchName: TextGenerationShape["generateBranchName"] = Effect.fn(
-    "CursorTextGeneration.generateBranchName",
-  )(function* (input) {
-    const { prompt, outputSchema } = buildBranchNamePrompt({
-      message: input.message,
-      attachments: input.attachments,
+      const generated = yield* runCursorJson({
+        operation: "resolveMergeConflict",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return {
+        resolvedContent: generated.resolvedContent,
+      };
     });
 
-    const generated = yield* runCursorJson({
-      operation: "generateBranchName",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: outputSchema,
-      modelSelection: input.modelSelection,
+  const verifyMergeResolution: TextGeneration.TextGeneration["Service"]["verifyMergeResolution"] =
+    Effect.fn("CursorTextGeneration.verifyMergeResolution")(function* (input) {
+      const { prompt, outputSchema } = buildMergeResolutionVerificationPrompt({
+        path: input.path,
+        conflictedContent: input.conflictedContent,
+        resolvedContent: input.resolvedContent,
+      });
+
+      const generated = yield* runCursorJson({
+        operation: "verifyMergeResolution",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return {
+        ok: generated.ok,
+        reason: generated.reason,
+      };
     });
-
-    return {
-      branch: sanitizeBranchFragment(generated.branch),
-    };
-  });
-
-  const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = Effect.fn(
-    "CursorTextGeneration.generateThreadTitle",
-  )(function* (input) {
-    const { prompt, outputSchema } = buildThreadTitlePrompt({
-      message: input.message,
-      attachments: input.attachments,
-    });
-
-    const generated = yield* runCursorJson({
-      operation: "generateThreadTitle",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: outputSchema,
-      modelSelection: input.modelSelection,
-    });
-
-    return {
-      title: sanitizeThreadTitle(generated.title),
-    } satisfies ThreadTitleGenerationResult;
-  });
-
-  const resolveMergeConflict: TextGenerationShape["resolveMergeConflict"] = Effect.fn(
-    "CursorTextGeneration.resolveMergeConflict",
-  )(function* (input) {
-    const { prompt, outputSchema } = buildMergeConflictPrompt({
-      path: input.path,
-      conflictedContent: input.conflictedContent,
-    });
-
-    const generated = yield* runCursorJson({
-      operation: "resolveMergeConflict",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: outputSchema,
-      modelSelection: input.modelSelection,
-    });
-
-    return {
-      resolvedContent: generated.resolvedContent,
-    };
-  });
-
-  const verifyMergeResolution: TextGenerationShape["verifyMergeResolution"] = Effect.fn(
-    "CursorTextGeneration.verifyMergeResolution",
-  )(function* (input) {
-    const { prompt, outputSchema } = buildMergeResolutionVerificationPrompt({
-      path: input.path,
-      conflictedContent: input.conflictedContent,
-      resolvedContent: input.resolvedContent,
-    });
-
-    const generated = yield* runCursorJson({
-      operation: "verifyMergeResolution",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: outputSchema,
-      modelSelection: input.modelSelection,
-    });
-
-    return {
-      ok: generated.ok,
-      reason: generated.reason,
-    };
-  });
 
   return {
     generateCommitMessage,
@@ -327,5 +306,5 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     generateThreadTitle,
     resolveMergeConflict,
     verifyMergeResolution,
-  } satisfies TextGenerationShape;
+  } satisfies TextGeneration.TextGeneration["Service"];
 });

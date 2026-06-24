@@ -2,12 +2,26 @@ import {
   type EnvironmentProject,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import type {
+  EnvironmentId,
+  SidebarProjectGroupingMode,
+  SidebarThreadSortOrder,
+} from "@t3tools/contracts";
+import * as Haptics from "expo-haptics";
 import { SymbolView } from "expo-symbols";
-import { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from "react-native-gesture-handler/ReanimatedSwipeable";
+import Animated, {
+  Easing,
+  LinearTransition,
+  type ExitAnimationsValues,
+  withDelay,
+  withTiming,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import * as Arr from "effect/Array";
-import * as Order from "effect/Order";
 import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
@@ -15,9 +29,14 @@ import { EmptyState } from "../../components/EmptyState";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { scopedProjectKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
 import { threadStatusTone } from "../threads/threadPresentation";
+import { buildHomeThreadGroups, type HomeProjectSortOrder } from "./homeThreadList";
+import {
+  THREAD_SWIPE_ACTIONS_WIDTH,
+  THREAD_SWIPE_SPRING,
+  ThreadSwipeActions,
+} from "./thread-swipe-actions";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
@@ -27,25 +46,16 @@ interface HomeScreenProps {
   readonly catalogState: WorkspaceState;
   readonly savedConnectionsById: Readonly<Record<string, SavedRemoteConnection>>;
   readonly searchQuery: string;
+  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly projectSortOrder: HomeProjectSortOrder;
+  readonly threadSortOrder: SidebarThreadSortOrder;
+  readonly projectGroupingMode: SidebarProjectGroupingMode;
   readonly onAddConnection: () => void;
   readonly onOpenEnvironments: () => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
+  readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
+  readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
 }
-
-interface ProjectGroup {
-  readonly key: string;
-  readonly project: EnvironmentProject;
-  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
-}
-
-const projectGroupActivityOrder = Order.mapInput(
-  Order.Struct({
-    activityAt: Order.flip(Order.Number),
-  }),
-  (group: ProjectGroup) => ({
-    activityAt: new Date(group.threads[0]!.updatedAt ?? group.threads[0]!.createdAt).getTime(),
-  }),
-);
 
 /* ─── Status indicator colors ────────────────────────────────────────── */
 
@@ -65,6 +75,33 @@ function statusColors(thread: EnvironmentThreadShell): { bg: string; fg: string 
 }
 
 const COLLAPSED_THREAD_LIMIT = 6;
+const THREAD_LAYOUT_TRANSITION = LinearTransition.duration(220).easing(Easing.out(Easing.cubic));
+
+function threadRowExit(values: ExitAnimationsValues) {
+  "worklet";
+
+  return {
+    initialValues: {
+      height: values.currentHeight,
+      opacity: 1,
+      originX: values.currentOriginX,
+    },
+    animations: {
+      height: withDelay(
+        90,
+        withTiming(0, {
+          duration: 170,
+          easing: Easing.inOut(Easing.cubic),
+        }),
+      ),
+      opacity: withDelay(80, withTiming(0, { duration: 100 })),
+      originX: withTiming(values.currentOriginX - values.windowWidth, {
+        duration: 190,
+        easing: Easing.out(Easing.cubic),
+      }),
+    },
+  };
+}
 
 function deriveEmptyState(props: {
   readonly catalogState: WorkspaceState;
@@ -133,6 +170,7 @@ function deriveEmptyState(props: {
 
 function ProjectGroupLabel(props: {
   readonly project: EnvironmentProject;
+  readonly title: string;
   readonly totalThreadCount: number;
   readonly isExpanded: boolean;
   readonly onToggleExpand: () => void;
@@ -148,17 +186,17 @@ function ProjectGroupLabel(props: {
         workspaceRoot={props.project.workspaceRoot}
       />
       <Text
-        className="flex-1 text-[12px] font-t3-medium uppercase text-foreground-muted"
+        className="flex-1 text-xs font-t3-medium uppercase text-foreground-muted"
         style={{ letterSpacing: 0.5 }}
         numberOfLines={1}
       >
-        {props.project.title}
+        {props.title}
       </Text>
 
       {hiddenCount > 0 ? (
         <Pressable onPress={props.onToggleExpand} hitSlop={8}>
           <Text
-            className="text-[12px] font-t3-medium text-foreground-muted"
+            className="text-xs font-t3-medium text-foreground-muted"
             style={{ letterSpacing: 0.4 }}
           >
             {props.isExpanded ? "Show less" : `${hiddenCount} more`}
@@ -175,95 +213,172 @@ function ThreadRow(props: {
   readonly thread: EnvironmentThreadShell;
   readonly environmentLabel: string | null;
   readonly onPress: () => void;
+  readonly onArchive: () => void;
+  readonly onDelete: () => void;
+  readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
+  readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   readonly isLast: boolean;
 }) {
+  const swipeableRef = useRef<SwipeableMethods | null>(null);
+  const fullSwipeArmedRef = useRef(false);
+  const { width: windowWidth } = useWindowDimensions();
   const separatorColor = useThemeColor("--color-separator");
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
+  const cardColor = useThemeColor("--color-card");
+  const fullSwipeThreshold = Math.max(THREAD_SWIPE_ACTIONS_WIDTH + 44, (windowWidth - 32) * 0.58);
   const { bg, fg } = statusColors(props.thread);
   const tone = threadStatusTone(props.thread);
-  const timestamp = relativeTime(props.thread.updatedAt ?? props.thread.createdAt);
+  const timestamp = relativeTime(
+    props.thread.latestUserMessageAt ?? props.thread.updatedAt ?? props.thread.createdAt,
+  );
   const branch = props.thread.branch;
   const subtitleParts = [props.environmentLabel, branch].filter((part): part is string =>
     Boolean(part),
   );
+  const handleFullSwipeArmedChange = useCallback((armed: boolean) => {
+    if (armed && !fullSwipeArmedRef.current && process.env.EXPO_OS === "ios") {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+    fullSwipeArmedRef.current = armed;
+  }, []);
 
   return (
-    <Pressable onPress={props.onPress} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
-      <View
-        style={{
-          flexDirection: "row",
-          paddingLeft: 16,
-          paddingRight: 16,
-          paddingVertical: 10,
-          gap: 12,
-          borderBottomWidth: props.isLast ? 0 : 1,
-          borderBottomColor: separatorColor,
+    <ReanimatedSwipeable
+      ref={swipeableRef}
+      animationOptions={THREAD_SWIPE_SPRING}
+      childrenContainerStyle={{ backgroundColor: cardColor }}
+      containerStyle={{ backgroundColor: cardColor }}
+      dragOffsetFromRightEdge={8}
+      enableTrackpadTwoFingerGesture
+      friction={1}
+      onSwipeableClose={() => {
+        fullSwipeArmedRef.current = false;
+        if (swipeableRef.current) {
+          props.onSwipeableClose(swipeableRef.current);
+        }
+      }}
+      onSwipeableOpenStartDrag={() => {
+        if (swipeableRef.current) {
+          props.onSwipeableWillOpen(swipeableRef.current);
+        }
+      }}
+      onSwipeableWillOpen={() => {
+        const methods = swipeableRef.current;
+        if (!methods) {
+          return;
+        }
+
+        props.onSwipeableWillOpen(methods);
+        if (fullSwipeArmedRef.current) {
+          fullSwipeArmedRef.current = false;
+          methods.close();
+          props.onDelete();
+        }
+      }}
+      overshootFriction={1}
+      overshootRight
+      renderRightActions={(_progress, translation, methods) => (
+        <ThreadSwipeActions
+          backgroundColor={cardColor}
+          fullSwipeThreshold={fullSwipeThreshold}
+          onDelete={props.onDelete}
+          onFullSwipeArmedChange={handleFullSwipeArmedChange}
+          primaryAction={{
+            accessibilityLabel: `Archive ${props.thread.title}`,
+            icon: "archivebox",
+            label: "Archive",
+            onPress: props.onArchive,
+          }}
+          swipeableMethods={methods}
+          threadTitle={props.thread.title}
+          translation={translation}
+        />
+      )}
+      rightThreshold={THREAD_SWIPE_ACTIONS_WIDTH * 0.42}
+    >
+      <Pressable
+        accessibilityHint="Swipe left for archive and delete actions"
+        accessibilityLabel={props.thread.title}
+        accessibilityRole="button"
+        className="bg-card"
+        onPress={() => {
+          swipeableRef.current?.close();
+          props.onPress();
         }}
+        style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
       >
-        {/* Git status indicator */}
         <View
           style={{
-            width: 30,
-            height: 30,
-            borderRadius: 9,
-            backgroundColor: bg,
-            alignItems: "center",
-            justifyContent: "center",
-            marginTop: 2,
+            flexDirection: "row",
+            paddingLeft: 16,
+            paddingRight: 16,
+            paddingVertical: 10,
+            gap: 12,
+            borderBottomWidth: props.isLast ? 0 : 1,
+            borderBottomColor: separatorColor,
           }}
         >
-          <SymbolView name="arrow.triangle.branch" size={13} tintColor={fg} type="monochrome" />
-        </View>
-
-        {/* Content */}
-        <View style={{ flex: 1, gap: 3 }}>
-          {/* Title + Status + Timestamp */}
-          <View className="flex-row items-center justify-between gap-2">
-            <Text
-              className="flex-1 text-[15px] font-t3-bold leading-[20px] text-foreground"
-              numberOfLines={1}
-            >
-              {props.thread.title}
-            </Text>
-            <View className="flex-row items-center gap-2">
-              <View
-                className={tone.pillClassName}
-                style={{ borderRadius: 99, paddingHorizontal: 6, paddingVertical: 2 }}
-              >
-                <Text className={`text-[10px] font-t3-bold ${tone.textClassName}`}>
-                  {tone.label}
-                </Text>
-              </View>
-              <Text
-                className="text-[12px] text-foreground-tertiary"
-                style={{ fontVariant: ["tabular-nums"] }}
-              >
-                {timestamp}
-              </Text>
-            </View>
+          <View
+            style={{
+              width: 30,
+              height: 30,
+              borderRadius: 9,
+              backgroundColor: bg,
+              alignItems: "center",
+              justifyContent: "center",
+              marginTop: 2,
+            }}
+          >
+            <SymbolView name="arrow.triangle.branch" size={13} tintColor={fg} type="monochrome" />
           </View>
 
-          {/* Environment + branch */}
-          {subtitleParts.length > 0 ? (
-            <View className="flex-row items-center gap-1.5" style={{ marginTop: 1 }}>
-              <SymbolView
-                name="arrow.triangle.branch"
-                size={10}
-                tintColor={iconSubtleColor}
-                type="monochrome"
-              />
+          <View style={{ flex: 1, gap: 3 }}>
+            <View className="flex-row items-center justify-between gap-2">
               <Text
-                className="text-[11px] text-foreground-tertiary"
+                className="flex-1 text-base font-t3-bold leading-[20px] text-foreground"
                 numberOfLines={1}
-                style={{ fontFamily: "monospace" }}
               >
-                {subtitleParts.join(" · ")}
+                {props.thread.title}
               </Text>
+              <View className="flex-row items-center gap-2">
+                <View
+                  className={tone.pillClassName}
+                  style={{ borderRadius: 99, paddingHorizontal: 6, paddingVertical: 2 }}
+                >
+                  <Text className={`text-3xs font-t3-bold ${tone.textClassName}`}>
+                    {tone.label}
+                  </Text>
+                </View>
+                <Text
+                  className="text-xs text-foreground-tertiary"
+                  style={{ fontVariant: ["tabular-nums"] }}
+                >
+                  {timestamp}
+                </Text>
+              </View>
             </View>
-          ) : null}
+
+            {subtitleParts.length > 0 ? (
+              <View className="flex-row items-center gap-1.5" style={{ marginTop: 1 }}>
+                <SymbolView
+                  name="arrow.triangle.branch"
+                  size={10}
+                  tintColor={iconSubtleColor}
+                  type="monochrome"
+                />
+                <Text
+                  className="text-2xs text-foreground-tertiary"
+                  numberOfLines={1}
+                  style={{ fontFamily: "monospace" }}
+                >
+                  {subtitleParts.join(" · ")}
+                </Text>
+              </View>
+            ) : null}
+          </View>
         </View>
-      </View>
-    </Pressable>
+      </Pressable>
+    </ReanimatedSwipeable>
   );
 }
 
@@ -314,7 +429,7 @@ function StaleCatalogStatusPill(props: {
           weight="semibold"
         />
       )}
-      <Text className="max-w-[260px] text-[13px] font-t3-bold text-foreground" numberOfLines={1}>
+      <Text className="max-w-[260px] text-sm font-t3-bold text-foreground" numberOfLines={1}>
         {label}
       </Text>
     </Pressable>
@@ -323,6 +438,7 @@ function StaleCatalogStatusPill(props: {
 
 export function HomeScreen(props: HomeScreenProps) {
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set());
+  const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const insets = useSafeAreaInsets();
   const accentColor = useThemeColor("--color-icon-muted");
 
@@ -335,51 +451,50 @@ export function HomeScreen(props: HomeScreenProps) {
     });
   }, []);
 
-  /* Build project title lookup for search */
-  const projectTitleByKey = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const p of props.projects) {
-      map.set(scopedProjectKey(p.environmentId, p.id), p.title);
+  const handleSwipeableWillOpen = useCallback((methods: SwipeableMethods) => {
+    if (openSwipeableRef.current !== methods) {
+      openSwipeableRef.current?.close();
+      openSwipeableRef.current = methods;
     }
-    return map;
-  }, [props.projects]);
+  }, []);
 
-  /* Filter threads by search query */
-  const filteredThreads = useMemo(() => {
-    const q = props.searchQuery.trim().toLowerCase();
-    if (!q) return props.threads;
-    return props.threads.filter((t) => {
-      if (t.title.toLowerCase().includes(q)) return true;
-      const key = scopedProjectKey(t.environmentId, t.projectId);
-      return projectTitleByKey.get(key)?.toLowerCase().includes(q) ?? false;
-    });
-  }, [props.threads, props.searchQuery, projectTitleByKey]);
-
-  /* Group filtered threads by project */
-  const projectGroups = useMemo<ReadonlyArray<ProjectGroup>>(() => {
-    const byProject = new Map<string, EnvironmentThreadShell[]>();
-    for (const thread of filteredThreads) {
-      const key = scopedProjectKey(thread.environmentId, thread.projectId);
-      const existing = byProject.get(key);
-      if (existing) existing.push(thread);
-      else byProject.set(key, [thread]);
+  const handleSwipeableClose = useCallback((methods: SwipeableMethods) => {
+    if (openSwipeableRef.current === methods) {
+      openSwipeableRef.current = null;
     }
+  }, []);
 
-    const groups: ProjectGroup[] = [];
-    for (const project of props.projects) {
-      const key = scopedProjectKey(project.environmentId, project.id);
-      const threads = byProject.get(key);
-      if (threads && threads.length > 0) {
-        groups.push({ key, project, threads });
-      }
-    }
-
-    return Arr.sort(groups, projectGroupActivityOrder);
-  }, [props.projects, filteredThreads]);
+  const projectGroups = useMemo(
+    () =>
+      buildHomeThreadGroups({
+        projects: props.projects,
+        threads: props.threads,
+        environmentId: props.selectedEnvironmentId,
+        searchQuery: props.searchQuery,
+        projectSortOrder: props.projectSortOrder,
+        threadSortOrder: props.threadSortOrder,
+        projectGroupingMode: props.projectGroupingMode,
+      }),
+    [
+      props.projectGroupingMode,
+      props.projects,
+      props.projectSortOrder,
+      props.searchQuery,
+      props.selectedEnvironmentId,
+      props.threadSortOrder,
+      props.threads,
+    ],
+  );
 
   /* Empty states */
-  const hasAnyThreads = props.threads.length > 0;
-  const hasResults = filteredThreads.length > 0;
+  const hasAnyThreads = props.threads.some((thread) => thread.archivedAt === null);
+  const hasResults = projectGroups.length > 0;
+  const selectedEnvironmentLabel =
+    props.selectedEnvironmentId === null
+      ? null
+      : (props.savedConnectionsById[props.selectedEnvironmentId]?.environmentLabel ??
+        "this environment");
+  const hasSearchQuery = props.searchQuery.trim().length > 0;
   const shouldShowConnectionStatus =
     props.catalogState.networkStatus === "offline" ||
     props.catalogState.hasConnectingEnvironment ||
@@ -396,6 +511,7 @@ export function HomeScreen(props: HomeScreenProps) {
         showsVerticalScrollIndicator={false}
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
+        onScrollBeginDrag={() => openSwipeableRef.current?.close()}
         className="flex-1"
         contentContainerStyle={{
           paddingHorizontal: 16,
@@ -418,8 +534,18 @@ export function HomeScreen(props: HomeScreenProps) {
               </View>
             ) : null}
           </View>
-        ) : !hasResults ? (
+        ) : !hasResults && hasSearchQuery ? (
           <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+        ) : !hasResults && selectedEnvironmentLabel ? (
+          <EmptyState
+            title={`No threads in ${selectedEnvironmentLabel}`}
+            detail="Choose another environment or create a new task."
+          />
+        ) : !hasResults ? (
+          <EmptyState
+            title="No threads yet"
+            detail="Create a task to start a new coding session."
+          />
         ) : (
           projectGroups.map((group) => {
             const isExpanded = expandedProjects.has(group.key);
@@ -428,30 +554,52 @@ export function HomeScreen(props: HomeScreenProps) {
               : group.threads.slice(0, COLLAPSED_THREAD_LIMIT);
 
             return (
-              <View key={group.key}>
+              <Animated.View
+                key={group.key}
+                collapsable={false}
+                exiting={threadRowExit}
+                layout={THREAD_LAYOUT_TRANSITION}
+                style={{ overflow: "hidden" }}
+              >
                 <ProjectGroupLabel
-                  project={group.project}
-                  totalThreadCount={group.threads.length}
                   isExpanded={isExpanded}
                   onToggleExpand={() => toggleExpanded(group.key)}
+                  project={group.representative}
+                  title={group.title}
+                  totalThreadCount={group.threads.length}
                 />
                 <View
                   className="overflow-hidden rounded-[20px] bg-card"
                   style={{ borderCurve: "continuous" }}
                 >
-                  {visibleThreads.map((thread, i) => (
-                    <ThreadRow
-                      key={`${thread.environmentId}:${thread.id}`}
-                      thread={thread}
-                      environmentLabel={
-                        props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
-                      }
-                      onPress={() => props.onSelectThread(thread)}
-                      isLast={i === visibleThreads.length - 1}
-                    />
-                  ))}
+                  {visibleThreads.map((thread, i) => {
+                    const threadKey = `${thread.environmentId}:${thread.id}`;
+                    return (
+                      <Animated.View
+                        key={threadKey}
+                        collapsable={false}
+                        exiting={threadRowExit}
+                        layout={THREAD_LAYOUT_TRANSITION}
+                        style={{ overflow: "hidden" }}
+                      >
+                        <ThreadRow
+                          thread={thread}
+                          environmentLabel={
+                            props.savedConnectionsById[thread.environmentId]?.environmentLabel ??
+                            null
+                          }
+                          isLast={i === visibleThreads.length - 1}
+                          onArchive={() => props.onArchiveThread(thread)}
+                          onDelete={() => props.onDeleteThread(thread)}
+                          onPress={() => props.onSelectThread(thread)}
+                          onSwipeableClose={handleSwipeableClose}
+                          onSwipeableWillOpen={handleSwipeableWillOpen}
+                        />
+                      </Animated.View>
+                    );
+                  })}
                 </View>
-              </View>
+              </Animated.View>
             );
           })
         )}

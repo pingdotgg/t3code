@@ -65,9 +65,45 @@ export type RenderablePatch =
       reason: string;
     };
 
+interface RenderablePatchOptions {
+  /**
+   * Pierre's partial-patch parser keeps hunk render starts in source-file
+   * coordinates. Its virtualizer iterates partial patches as compact rows, so
+   * review diffs need compact render starts while retaining collapsedBefore
+   * for the "N unmodified lines" separator.
+   */
+  compactPartialHunkOffsets?: boolean;
+}
+
+export function compactPartialHunkOffsets(file: FileDiffMetadata): FileDiffMetadata {
+  if (!file.isPartial) return file;
+
+  let splitLineStart = 0;
+  let unifiedLineStart = 0;
+  const hunks = file.hunks.map((hunk) => {
+    const compactHunk = {
+      ...hunk,
+      splitLineStart,
+      unifiedLineStart,
+    };
+    splitLineStart += hunk.splitLineCount;
+    unifiedLineStart += hunk.unifiedLineCount;
+    return compactHunk;
+  });
+
+  return {
+    ...file,
+    hunks,
+    splitLineCount: splitLineStart,
+    unifiedLineCount: unifiedLineStart,
+    ...(file.cacheKey ? { cacheKey: `${file.cacheKey}:compact-partial` } : {}),
+  };
+}
+
 export function getRenderablePatch(
   patch: string | undefined,
   cacheScope = "diff-panel",
+  options: RenderablePatchOptions = {},
 ): RenderablePatch | null {
   if (!patch) return null;
   const normalizedPatch = patch.trim();
@@ -78,7 +114,11 @@ export function getRenderablePatch(
       normalizedPatch,
       buildPatchCacheKey(normalizedPatch, cacheScope),
     );
-    const files = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
+    const files = parsedPatches.flatMap((parsedPatch) =>
+      options.compactPartialHunkOffsets
+        ? parsedPatch.files.map(compactPartialHunkOffsets)
+        : parsedPatch.files,
+    );
     if (files.length > 0) {
       return { kind: "files", files };
     }

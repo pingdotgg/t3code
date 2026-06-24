@@ -3,12 +3,11 @@ export interface NativeMarkdownTextStyle {
   readonly strongColor: string;
   readonly mutedColor: string;
   readonly linkColor: string;
+  readonly inlineCodeColor: string;
   readonly codeColor: string;
   readonly codeBackgroundColor: string;
   readonly codeBlockBackgroundColor: string;
-  readonly fileBackgroundColor: string;
   readonly fileTextColor: string;
-  readonly skillBackgroundColor: string;
   readonly skillTextColor: string;
   readonly quoteMarkerColor: string;
   readonly dividerColor: string;
@@ -41,6 +40,8 @@ export interface SelectableMarkdownTextProps {
   readonly textStyle: NativeMarkdownTextStyle;
   readonly highlightCode: MarkdownCodeHighlighter;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly preserveSoftBreaks?: boolean;
+  readonly onLinkPress?: (href: string) => void;
   readonly marginTop?: number;
   readonly marginBottom?: number;
 }

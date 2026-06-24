@@ -30,10 +30,11 @@ import { useThemeColor } from "../lib/useThemeColor";
 
 function AppNavigator() {
   const pathname = usePathname();
-  const clerkRouteIsActive = pathname === "/settings/auth";
+  const expandedSettingsRouteIsActive =
+    pathname === "/settings/archive" || pathname === "/settings/auth";
 
   return (
-    <ClerkSettingsSheetDetentProvider initiallyExpanded={clerkRouteIsActive}>
+    <ClerkSettingsSheetDetentProvider initiallyExpanded={expandedSettingsRouteIsActive}>
       <AppNavigatorContent />
     </ClerkSettingsSheetDetentProvider>
   );

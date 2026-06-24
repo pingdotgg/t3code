@@ -1,9 +1,9 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { AtomRegistry } from "effect/unstable/reactivity";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { createDesktopUpdateStateAtom } from "./desktopUpdate";
+import { createDesktopUpdateStateAtom, DesktopUpdateStateReadError } from "./desktopUpdate";
 
 const baseState: DesktopUpdateState = {
   enabled: true,
@@ -21,6 +21,10 @@ const baseState: DesktopUpdateState = {
   errorContext: null,
   canRetry: false,
 };
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("desktopUpdateStateAtom", () => {
   it("loads once, retains state, and follows desktop update events", async () => {
@@ -91,8 +95,11 @@ describe("desktopUpdateStateAtom", () => {
 
   it("keeps listening when the initial desktop state read fails", async () => {
     let listener: ((state: DesktopUpdateState) => void) | undefined;
+    const cause = new Error("IPC unavailable");
+    const reportError = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const getUpdateState = vi.fn(async () => Promise.reject(cause));
     const atom = createDesktopUpdateStateAtom(() => ({
-      getUpdateState: async () => Promise.reject(new Error("IPC unavailable")),
+      getUpdateState,
       onUpdateState: (nextListener) => {
         listener = nextListener;
         return () => undefined;
@@ -102,6 +109,22 @@ describe("desktopUpdateStateAtom", () => {
     registry.mount(atom);
 
     await vi.waitFor(() => expect(listener).toBeDefined());
+    await vi.waitFor(() => expect(reportError).toHaveBeenCalledOnce());
+    expect(getUpdateState).toHaveBeenCalledTimes(3);
+    const [, errorMessage, errorContext] = reportError.mock.calls[0] ?? [];
+    expect(errorMessage).toBe("Failed to read the initial desktop update state after 3 attempts.");
+    expect(errorContext).toMatchObject({
+      errorTag: "DesktopUpdateStateReadError",
+      attemptCount: 3,
+    });
+    const loggedError = (errorContext as { readonly error: unknown }).error;
+    expect(loggedError).toBeInstanceOf(DesktopUpdateStateReadError);
+    expect(loggedError).toMatchObject({
+      _tag: "DesktopUpdateStateReadError",
+      attemptCount: 3,
+    });
+    expect((loggedError as DesktopUpdateStateReadError).cause).toBe(cause);
+
     listener?.(baseState);
     await vi.waitFor(() => {
       expect(AsyncResult.getOrElse(registry.get(atom), () => null)).toEqual(baseState);

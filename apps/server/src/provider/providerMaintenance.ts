@@ -468,10 +468,21 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
 
 export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
   "enrichProviderSnapshotWithVersionAdvisory",
-)(function* (snapshot: ServerProvider, maintenanceCapabilities?: ProviderMaintenanceCapabilities) {
+)(function* (
+  snapshot: ServerProvider,
+  maintenanceCapabilities?: ProviderMaintenanceCapabilities,
+  options?: {
+    readonly enableProviderUpdateChecks: boolean | undefined;
+  },
+) {
   const capabilities =
     maintenanceCapabilities ?? makeManualProviderMaintenanceCapabilities(snapshot.driver);
-  if (!snapshot.enabled || !snapshot.installed || !snapshot.version) {
+  const shouldResolveLatestVersion =
+    options?.enableProviderUpdateChecks !== false &&
+    snapshot.enabled &&
+    snapshot.installed &&
+    Boolean(snapshot.version);
+  if (!shouldResolveLatestVersion) {
     return {
       ...snapshot,
       versionAdvisory: createProviderVersionAdvisory({

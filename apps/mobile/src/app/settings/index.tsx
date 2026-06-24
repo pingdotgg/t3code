@@ -65,6 +65,8 @@ function LocalSettingsRouteScreen() {
           />
         </SettingsSection>
 
+        <ArchivedThreadsSettingsSection />
+
         <AppSettingsSection />
       </ScrollView>
     </View>
@@ -344,7 +346,7 @@ function ConfiguredSettingsRouteScreen() {
               onPress={openAccount}
             />
           </SettingsSection>
-          <Text className="px-2 text-[13px] leading-[18px] text-foreground-muted">
+          <Text className="px-2 text-sm leading-[18px] text-foreground-muted">
             T3 Code works locally without signing in. Cloud features are optional.
           </Text>
         </View>
@@ -374,6 +376,8 @@ function ConfiguredSettingsRouteScreen() {
           />
         </SettingsSection>
 
+        <ArchivedThreadsSettingsSection />
+
         <AppSettingsSection />
       </ScrollView>
     </View>
@@ -385,7 +389,7 @@ type SymbolName = ComponentProps<typeof SymbolView>["name"];
 function SettingsSection(props: { readonly title: string; readonly children: ReactNode }) {
   return (
     <View className="gap-2">
-      <Text className="px-2 text-[13px] font-t3-medium text-foreground-muted">{props.title}</Text>
+      <Text className="px-2 text-sm font-t3-medium text-foreground-muted">{props.title}</Text>
       <View
         className="overflow-hidden rounded-[28px] bg-card"
         style={{ borderCurve: "continuous" }}
@@ -409,9 +413,17 @@ function AppSettingsSection() {
           type="monochrome"
           weight="regular"
         />
-        <Text className="flex-1 text-[17px] text-foreground">Version</Text>
-        <Text className="text-[17px] text-foreground-muted">Alpha</Text>
+        <Text className="flex-1 text-lg text-foreground">Version</Text>
+        <Text className="text-lg text-foreground-muted">Alpha</Text>
       </View>
+    </SettingsSection>
+  );
+}
+
+function ArchivedThreadsSettingsSection() {
+  return (
+    <SettingsSection title="Threads">
+      <SettingsRow icon="archivebox" label="Archived Threads" href="/settings/archive" />
     </SettingsSection>
   );
 }
@@ -421,7 +433,7 @@ function SettingsRow(props: {
   readonly icon: SymbolName;
   readonly label: string;
   readonly value?: string;
-  readonly href?: "/settings/environments";
+  readonly href?: "/settings/archive" | "/settings/environments";
   readonly onPress?: () => void;
 }) {
   const icon = useThemeColor("--color-icon");
@@ -432,13 +444,13 @@ function SettingsRow(props: {
       style={{ opacity: props.disabled ? 0.45 : 1 }}
     >
       <SymbolView name={props.icon} size={22} tintColor={icon} type="monochrome" weight="regular" />
-      <Text className="shrink-0 text-[17px] text-foreground" numberOfLines={1}>
+      <Text className="shrink-0 text-lg text-foreground" numberOfLines={1}>
         {props.label}
       </Text>
       <View className="min-w-0 flex-1 items-end">
         {props.value ? (
           <Text
-            className="max-w-[180px] text-right text-[16px] text-foreground-muted"
+            className="max-w-[180px] text-right text-base text-foreground-muted"
             ellipsizeMode="middle"
             numberOfLines={1}
           >
@@ -459,7 +471,9 @@ function SettingsRow(props: {
   if (props.href) {
     return (
       <Link href={props.href} asChild>
-        <Pressable>{content}</Pressable>
+        <Pressable accessibilityLabel={props.label} accessibilityRole="button">
+          {content}
+        </Pressable>
       </Link>
     );
   }
@@ -488,7 +502,7 @@ function SettingsSwitchRow(props: {
       style={{ opacity: props.disabled ? 0.45 : 1 }}
     >
       <SymbolView name={props.icon} size={22} tintColor={icon} type="monochrome" weight="regular" />
-      <Text className="flex-1 text-[17px] text-foreground">{props.label}</Text>
+      <Text className="flex-1 text-lg text-foreground">{props.label}</Text>
       <Switch
         disabled={props.disabled}
         ios_backgroundColor={track}

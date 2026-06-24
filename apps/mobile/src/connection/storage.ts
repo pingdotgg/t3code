@@ -8,11 +8,11 @@ import {
   removeCatalogValue,
   replaceCatalogValue,
 } from "@t3tools/client-runtime/platform";
-import { RemoteDpopAccessTokenStore } from "@t3tools/client-runtime/authorization";
+import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
-  ConnectionCredentialStore,
-  ConnectionProfileStore,
   ConnectionTransientError,
+  CredentialStore,
+  ProfileStore,
 } from "@t3tools/client-runtime/connection";
 import {
   EnvironmentId,
@@ -58,7 +58,7 @@ const LegacyStoredShellSnapshot = Schema.Struct({
 function catalogError(operation: string, cause: unknown) {
   return new ConnectionTransientError({
     reason: "remote-unavailable",
-    message: `Could not ${operation} the local connection catalog: ${String(cause)}`,
+    detail: `Could not ${operation} the local connection catalog: ${String(cause)}`,
   });
 }
 
@@ -197,7 +197,7 @@ export const connectionStorageLayer = Layer.effectContext(
           .update((document) => removeConnectionFromCatalog(document, target))
           .pipe(Effect.mapError((error) => targetPersistenceError("remove-connection", error))),
     });
-    const profileStore = ConnectionProfileStore.of({
+    const profileStore = ProfileStore.make({
       get: (connectionId) =>
         catalog.read.pipe(
           Effect.map((document) =>
@@ -221,7 +221,7 @@ export const connectionStorageLayer = Layer.effectContext(
           ),
         })),
     });
-    const credentialStore = ConnectionCredentialStore.of({
+    const credentialStore = CredentialStore.make({
       get: (connectionId) =>
         catalog.read.pipe(
           Effect.map((document) =>
@@ -248,7 +248,7 @@ export const connectionStorageLayer = Layer.effectContext(
           ),
         })),
     });
-    const remoteTokenStore = RemoteDpopAccessTokenStore.of({
+    const remoteTokenStore = TokenStore.make({
       get: (environmentId) =>
         catalog.read.pipe(
           Effect.map((document) =>
@@ -423,9 +423,9 @@ export const connectionStorageLayer = Layer.effectContext(
 
     return Context.make(ConnectionTargetStore, targetStore).pipe(
       Context.add(ConnectionRegistrationStore, registrationStore),
-      Context.add(ConnectionProfileStore, profileStore),
-      Context.add(ConnectionCredentialStore, credentialStore),
-      Context.add(RemoteDpopAccessTokenStore, remoteTokenStore),
+      Context.add(ProfileStore.ConnectionProfileStore, profileStore),
+      Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
+      Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
       Context.add(EnvironmentCacheStore, cacheStore),
     );
   }),

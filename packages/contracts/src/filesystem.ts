@@ -21,10 +21,47 @@ export const FilesystemBrowseResult = Schema.Struct({
 });
 export type FilesystemBrowseResult = typeof FilesystemBrowseResult.Type;
 
+export const FilesystemBrowseFailure = Schema.Literals([
+  "windows_path_unsupported",
+  "current_project_required",
+  "read_directory_failed",
+]);
+export type FilesystemBrowseFailure = typeof FilesystemBrowseFailure.Type;
+
+function decodedFilesystemBrowseErrorMessage(props: object): string | undefined {
+  if (!("message" in props)) return undefined;
+  return typeof props.message === "string" ? props.message : undefined;
+}
+
 export class FilesystemBrowseError extends Schema.TaggedErrorClass<FilesystemBrowseError>()(
   "FilesystemBrowseError",
   {
+    partialPath: Schema.optional(TrimmedNonEmptyString),
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    failure: Schema.optional(FilesystemBrowseFailure),
+    parentPath: Schema.optional(TrimmedNonEmptyString),
+    platform: Schema.optional(TrimmedNonEmptyString),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
-) {}
+) {
+  // Structured diagnostics stay optional for rolling compatibility with legacy message-only
+  // payloads, while new call sites must provide the request context and failure classification.
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: {
+    readonly partialPath: string;
+    readonly cwd?: string | undefined;
+    readonly failure: FilesystemBrowseFailure;
+    readonly parentPath?: string;
+    readonly platform?: string;
+    readonly cause?: unknown;
+  }) {
+    const cwd = props.cwd === undefined ? "" : ` from '${props.cwd}'`;
+    super({
+      ...props,
+      message:
+        decodedFilesystemBrowseErrorMessage(props) ??
+        `Failed to browse filesystem path '${props.partialPath}'${cwd}.`,
+    } as any);
+  }
+}

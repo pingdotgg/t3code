@@ -28,6 +28,24 @@ const snapshot: PreviewSessionSnapshot = {
 beforeEach(resetPreviewStateForTests);
 
 describe("openPreviewSession", () => {
+  it("creates an idle tab without recording a recently visited URL", async () => {
+    const idleSnapshot: PreviewSessionSnapshot = {
+      ...snapshot,
+      tabId: "tab-blank",
+      navStatus: { _tag: "Idle" },
+    };
+    const open = vi.fn(async (_input: PreviewOpenInput) => AsyncResult.success(idleSnapshot));
+
+    await openPreviewSession({
+      openPreview: ({ input }) => open(input),
+      threadRef,
+    });
+
+    expect(open).toHaveBeenCalledWith({ threadId: "thread-1" });
+    expect(readThreadPreviewState(threadRef).snapshot).toEqual(idleSnapshot);
+    expect(readThreadPreviewState(threadRef).recentlySeenUrls).toEqual([]);
+  });
+
   it("applies the RPC response without waiting for a preview event", async () => {
     const open = vi.fn(async (_input: PreviewOpenInput) => AsyncResult.success(snapshot));
 

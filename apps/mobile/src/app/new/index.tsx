@@ -129,10 +129,10 @@ export default function NewTaskRoute() {
         {items.length === 0 ? (
           <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card px-6 py-8">
             {projectEmptyState.loading ? <ActivityIndicator color={accentColor} /> : null}
-            <Text className="text-center text-[17px] font-t3-bold text-foreground">
+            <Text className="text-center text-lg font-t3-bold text-foreground">
               {projectEmptyState.title}
             </Text>
-            <Text className="text-center text-[14px] leading-[20px] text-foreground-muted">
+            <Text className="text-center text-sm leading-[20px] text-foreground-muted">
               {projectEmptyState.detail}
             </Text>
             {!catalogState.hasReadyEnvironment ? (
@@ -140,7 +140,7 @@ export default function NewTaskRoute() {
                 className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
                 onPress={() => router.push("/connections/new")}
               >
-                <Text className="text-[13px] font-t3-bold text-primary-foreground">
+                <Text className="text-sm font-t3-bold text-primary-foreground">
                   Add environment
                 </Text>
               </Pressable>
@@ -149,7 +149,7 @@ export default function NewTaskRoute() {
                 className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
                 onPress={() => router.push("/new/add-project")}
               >
-                <Text className="text-[13px] font-t3-bold text-primary-foreground">
+                <Text className="text-sm font-t3-bold text-primary-foreground">
                   Add new project
                 </Text>
               </Pressable>
@@ -197,9 +197,7 @@ export default function NewTaskRoute() {
                         />
                       </View>
                       <View className="flex-1">
-                        <Text className="text-[16px] leading-[21px] font-t3-bold">
-                          {item.title}
-                        </Text>
+                        <Text className="text-base leading-[21px] font-t3-bold">{item.title}</Text>
                       </View>
                       <SymbolView
                         name="chevron.right"

@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import fs from "node:fs";
-import path from "node:path";
-import { spawnSync } from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -20,27 +20,16 @@ import type {
 } from "@t3tools/contracts";
 
 import { GitCommandError, TextGenerationError } from "@t3tools/contracts";
-import { type GitManagerShape } from "./GitManager.ts";
-import {
-  GitHubCliError,
-  type GitHubCliShape,
-  type GitHubPullRequestSummary,
-  GitHubCli,
-} from "../sourceControl/GitHubCli.ts";
-import { type TextGenerationShape, TextGeneration } from "../textGeneration/TextGeneration.ts";
+import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
-import { makeGitManager } from "./GitManager.ts";
-import { ServerConfig } from "../config.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
-import {
-  ProjectSetupScriptRunner,
-  ProjectSetupScriptRunnerError,
-  type ProjectSetupScriptRunnerInput,
-  type ProjectSetupScriptRunnerShape,
-} from "../project/Services/ProjectSetupScriptRunner.ts";
+import * as ServerConfig from "../config.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as GitManager from "./GitManager.ts";
 
 interface FakeGhScenario {
   prListSequence?: string[];
@@ -60,7 +49,7 @@ interface FakeGhScenario {
     headRepositoryOwnerLogin?: string | null;
   };
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
-  failWith?: GitHubCliError;
+  failWith?: GitHubCli.GitHubCliError;
 }
 
 function fakeGhOutput(stdout: string): VcsProcess.VcsProcessOutput {
@@ -121,7 +110,7 @@ interface FakeGitTextGeneration {
 
 type FakePullRequest = NonNullable<FakeGhScenario["pullRequest"]>;
 
-function normalizeFakePullRequestSummary(raw: unknown): GitHubPullRequestSummary | null {
+function normalizeFakePullRequestSummary(raw: unknown): GitHubCli.GitHubPullRequestSummary | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }
@@ -188,25 +177,15 @@ function normalizeFakePullRequestSummary(raw: unknown): GitHubPullRequestSummary
 }
 
 function runGitSyncForFakeGh(cwd: string, args: readonly string[]): void {
-  const result = spawnSync("git", args, {
+  const result = NodeChildProcess.spawnSync("git", args, {
     cwd,
     encoding: "utf8",
   });
   if (result.status === 0) {
     return;
   }
-  throw new GitHubCliError({
-    operation: "execute",
-    detail: `Failed to simulate gh checkout with git ${args.join(" ")}: ${result.stderr?.trim() || "unknown error"}`,
-  });
-}
-
-function isGitHubCliError(error: unknown): error is GitHubCliError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "_tag" in error &&
-    (error as { _tag?: unknown })._tag === "GitHubCliError"
+  throw new Error(
+    `Failed to simulate gh checkout with git ${args.join(" ")}: ${result.stderr?.trim() || "unknown error"}`,
   );
 }
 
@@ -278,7 +257,7 @@ function initRepo(
     yield* runGit(cwd, ["init", "--initial-branch=main"]);
     yield* runGit(cwd, ["config", "user.email", "test@example.com"]);
     yield* runGit(cwd, ["config", "user.name", "Test User"]);
-    yield* fs.writeFileString(path.join(cwd, "README.md"), "hello\n");
+    yield* fs.writeFileString(NodePath.join(cwd, "README.md"), "hello\n");
     yield* runGit(cwd, ["add", "README.md"]);
     yield* runGit(cwd, ["commit", "-m", "Initial commit"]);
   });
@@ -325,7 +304,9 @@ function configureVisibleRemoteUrlWithLocalRewrite(
   });
 }
 
-function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): TextGenerationShape {
+function createTextGeneration(
+  overrides: Partial<FakeGitTextGeneration> = {},
+): TextGeneration.TextGeneration["Service"] {
   const implementation: FakeGitTextGeneration = {
     generateCommitMessage: (input) =>
       Effect.succeed({
@@ -429,7 +410,7 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
 }
 
 function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
-  service: GitHubCliShape;
+  service: GitHubCli.GitHubCli["Service"];
   ghCalls: string[];
 } {
   const prListQueue = [...(scenario.prListSequence ?? [])];
@@ -441,7 +422,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   );
   const ghCalls: string[] = [];
 
-  const execute: GitHubCliShape["execute"] = (input) => {
+  const execute: GitHubCli.GitHubCli["Service"]["execute"] = (input) => {
     const args = [...input.args];
     ghCalls.push(args.join(" "));
 
@@ -512,7 +493,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
         try: () => {
           const headBranch = scenario.pullRequest?.headRefName;
           if (headBranch) {
-            const existingBranch = spawnSync(
+            const existingBranch = NodeChildProcess.spawnSync(
               "git",
               ["show-ref", "--verify", "--quiet", `refs/heads/${headBranch}`],
               {
@@ -529,14 +510,12 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           return fakeGhOutput("");
         },
         catch: (error) =>
-          isGitHubCliError(error)
+          GitHubCli.isGitHubCliError(error)
             ? error
-            : new GitHubCliError({
-                operation: "execute",
-                detail:
-                  error instanceof Error
-                    ? `Failed to simulate gh checkout: ${error.message}`
-                    : "Failed to simulate gh checkout.",
+            : new GitHubCli.GitHubCliCommandError({
+                command: "gh",
+                cwd: input.cwd,
+                cause: error,
               }),
       });
     }
@@ -547,9 +526,10 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
         const cloneUrls = scenario.repositoryCloneUrls?.[repository];
         if (!cloneUrls) {
           return Effect.fail(
-            new GitHubCliError({
-              operation: "execute",
-              detail: `Unexpected repository lookup: ${repository}`,
+            new GitHubCli.GitHubCliCommandError({
+              command: "gh",
+              cwd: input.cwd,
+              cause: new Error(`Unexpected repository lookup: ${repository}`),
             }),
           );
         }
@@ -567,9 +547,10 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     }
 
     return Effect.fail(
-      new GitHubCliError({
-        operation: "execute",
-        detail: `Unexpected gh command: ${args.join(" ")}`,
+      new GitHubCli.GitHubCliCommandError({
+        command: "gh",
+        cwd: input.cwd,
+        cause: new Error(`Unexpected gh command: ${args.join(" ")}`),
       }),
     );
   };
@@ -597,7 +578,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           Effect.map((raw) =>
             raw
               .map((entry) => normalizeFakePullRequestSummary(entry))
-              .filter((entry): entry is GitHubPullRequestSummary => entry !== null),
+              .filter((entry): entry is GitHubCli.GitHubPullRequestSummary => entry !== null),
           ),
         ),
       listPullRequests: (input) =>
@@ -619,7 +600,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           Effect.map((raw) =>
             raw
               .map((entry) => normalizeFakePullRequestSummary(entry))
-              .filter((entry): entry is GitHubPullRequestSummary => entry !== null),
+              .filter((entry): entry is GitHubCli.GitHubPullRequestSummary => entry !== null),
           ),
         ),
       createPullRequest: (input) =>
@@ -658,7 +639,9 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "--json",
             "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
           ],
-        }).pipe(Effect.map((result) => JSON.parse(result.stdout) as GitHubPullRequestSummary)),
+        }).pipe(
+          Effect.map((result) => JSON.parse(result.stdout) as GitHubCli.GitHubPullRequestSummary),
+        ),
       getPullRequestSummary: (input) =>
         execute({
           cwd: input.cwd,
@@ -670,7 +653,9 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "--json",
             "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,author,isCrossRepository,headRepository,headRepositoryOwner",
           ],
-        }).pipe(Effect.map((result) => JSON.parse(result.stdout) as GitHubPullRequestSummary)),
+        }).pipe(
+          Effect.map((result) => JSON.parse(result.stdout) as GitHubCli.GitHubPullRequestSummary),
+        ),
       getRepositoryCloneUrls: (input) =>
         execute({
           cwd: input.cwd,
@@ -678,9 +663,10 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
         }).pipe(Effect.map((result) => JSON.parse(result.stdout))),
       createRepository: (input) =>
         Effect.fail(
-          new GitHubCliError({
-            operation: "createRepository",
-            detail: `Unexpected repository create: ${input.repository}`,
+          new GitHubCli.GitHubCliCommandError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: new Error(`Unexpected repository create: ${input.repository}`),
           }),
         ),
       checkoutPullRequest: (input) =>
@@ -694,7 +680,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
 }
 
 function runStackedAction(
-  manager: GitManagerShape,
+  manager: GitManager.GitManager["Service"],
   input: {
     cwd: string;
     action: "commit" | "push" | "create_pr" | "commit_push" | "commit_push_pr";
@@ -703,7 +689,7 @@ function runStackedAction(
     featureBranch?: boolean;
     filePaths?: readonly string[];
   },
-  options?: Parameters<GitManagerShape["runStackedAction"]>[1],
+  options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
 ) {
   return manager.runStackedAction(
     {
@@ -714,12 +700,15 @@ function runStackedAction(
   );
 }
 
-function resolvePullRequest(manager: GitManagerShape, input: { cwd: string; reference: string }) {
+function resolvePullRequest(
+  manager: GitManager.GitManager["Service"],
+  input: { cwd: string; reference: string },
+) {
   return manager.resolvePullRequest(input);
 }
 
 function preparePullRequestThread(
-  manager: GitManagerShape,
+  manager: GitManager.GitManager["Service"],
   input: GitPreparePullRequestThreadInput,
 ) {
   return manager.preparePullRequestThread(input);
@@ -728,24 +717,24 @@ function preparePullRequestThread(
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
-  setupScriptRunner?: ProjectSetupScriptRunnerShape;
+  setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
-  const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
+  const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-git-manager-test-",
   });
 
-  const serverSettingsLayer = ServerSettingsService.layerTest();
+  const serverSettingsLayer = ServerSettings.ServerSettingsService.layerTest();
 
   const vcsDriverLayer = GitVcsDriver.layer.pipe(
     Layer.provideMerge(VcsProcess.layer),
     Layer.provideMerge(NodeServices.layer),
-    Layer.provideMerge(ServerConfigLayer),
+    Layer.provideMerge(serverConfigLayer),
   );
   const sourceControlRegistryLayer = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
-    GitHubSourceControlProvider.make().pipe(
+    GitHubSourceControlProvider.make.pipe(
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           get: () => Effect.succeed(provider),
@@ -754,14 +743,14 @@ function makeManager(input?: {
           discover: Effect.succeed([]),
         }),
       ),
-      Effect.provide(Layer.succeed(GitHubCli, gitHubCli)),
+      Effect.provide(Layer.succeed(GitHubCli.GitHubCli, gitHubCli)),
     ),
   );
 
   const managerLayer = Layer.mergeAll(
-    Layer.succeed(TextGeneration, textGeneration),
+    Layer.succeed(TextGeneration.TextGeneration, textGeneration),
     Layer.succeed(
-      ProjectSetupScriptRunner,
+      ProjectSetupScriptRunner.ProjectSetupScriptRunner,
       input?.setupScriptRunner ?? {
         runForThread: () => Effect.succeed({ status: "no-script" as const }),
       },
@@ -770,7 +759,7 @@ function makeManager(input?: {
     serverSettingsLayer,
   ).pipe(Layer.provideMerge(sourceControlRegistryLayer), Layer.provideMerge(NodeServices.layer));
 
-  return makeGitManager().pipe(
+  return GitManager.make.pipe(
     Effect.provide(managerLayer),
     Effect.map((manager) => ({ manager, ghCalls })),
   );
@@ -998,7 +987,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
   it.effect("status returns an explicit non-repo result for deleted directories", () =>
     Effect.gen(function* () {
       const rootDir = yield* makeTempDir("t3code-git-manager-missing-dir-");
-      const cwd = path.join(rootDir, "deleted-repo");
+      const cwd = NodePath.join(rootDir, "deleted-repo");
       yield* makeDirectory(cwd);
       yield* removePath(cwd);
       const { manager } = yield* makeManager();
@@ -1108,7 +1097,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         const forkDir = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
         yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
-        fs.writeFileSync(path.join(repoDir, "fork-pr.txt"), "fork pr\n");
+        NodeFS.writeFileSync(NodePath.join(repoDir, "fork-pr.txt"), "fork pr\n");
         yield* runGit(repoDir, ["add", "fork-pr.txt"]);
         yield* runGit(repoDir, ["commit", "-m", "Fork PR branch"]);
         yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
@@ -1413,9 +1402,10 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCliError({
-            operation: "execute",
-            detail: "GitHub CLI (`gh`) is required but not available on PATH.",
+          failWith: new GitHubCli.GitHubCliUnavailableError({
+            command: "gh",
+            cwd: repoDir,
+            cause: new Error("gh is not available on PATH"),
           }),
         },
       });
@@ -1430,7 +1420,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
-      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\nworld\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nworld\n");
 
       const { manager } = yield* makeManager();
       const result = yield* runStackedAction(manager, {
@@ -1465,7 +1455,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
-      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\ncustom\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\ncustom\n");
       let generatedCount = 0;
 
       const { manager } = yield* makeManager({
@@ -1508,8 +1498,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
-      fs.writeFileSync(path.join(repoDir, "a.txt"), "file a\n");
-      fs.writeFileSync(path.join(repoDir, "b.txt"), "file b\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "a.txt"), "file a\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "b.txt"), "file b\n");
 
       const { manager } = yield* makeManager();
       const result = yield* runStackedAction(manager, {
@@ -1536,7 +1526,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
-      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\nfeature-branch\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nfeature-branch\n");
       let generatedCount = 0;
 
       const { manager } = yield* makeManager({
@@ -1596,7 +1586,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
-      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\ncustom-feature\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\ncustom-feature\n");
       let generatedCount = 0;
 
       const { manager } = yield* makeManager({
@@ -1659,16 +1649,18 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* initRepo(repoDir);
 
       const { manager } = yield* makeManager();
-      const errorMessage = yield* runStackedAction(manager, {
+      const error = yield* runStackedAction(manager, {
         cwd: repoDir,
         action: "commit",
         featureBranch: true,
-      }).pipe(
-        Effect.flip,
-        Effect.map((error) => error.message),
-      );
+      }).pipe(Effect.flip);
 
-      expect(errorMessage).toContain("no changes to commit");
+      expect(error).toMatchObject({
+        _tag: "GitManagerError",
+        operation: "runFeatureBranchStep",
+        cwd: repoDir,
+      });
+      expect(error.message).toContain("no changes to commit");
     }),
   );
 
@@ -1679,7 +1671,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["checkout", "-b", "feature/stacked-flow"]);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      fs.writeFileSync(path.join(repoDir, "feature.txt"), "feature\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
 
       const { manager } = yield* makeManager();
       const result = yield* runStackedAction(manager, {
@@ -1708,7 +1700,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["checkout", "-b", "feature/no-upstream-pr"]);
         const remoteDir = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-        fs.writeFileSync(path.join(repoDir, "feature.txt"), "feature\n");
+        NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
 
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
@@ -1779,7 +1771,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["checkout", "-b", "feature/push-only"]);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      fs.writeFileSync(path.join(repoDir, "push-only.txt"), "push only\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "push-only.txt"), "push only\n");
       yield* runGit(repoDir, ["add", "push-only.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Push only branch"]);
 
@@ -1807,11 +1799,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["checkout", "-b", "feature/push-dirty"]);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      fs.writeFileSync(path.join(repoDir, "push-dirty.txt"), "push dirty\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "push-dirty.txt"), "push dirty\n");
       yield* runGit(repoDir, ["add", "push-dirty.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Push dirty branch"]);
-      fs.mkdirSync(path.join(repoDir, ".vercel"));
-      fs.writeFileSync(path.join(repoDir, ".vercel", "project.json"), "{}\n");
+      NodeFS.mkdirSync(NodePath.join(repoDir, ".vercel"));
+      NodeFS.writeFileSync(NodePath.join(repoDir, ".vercel", "project.json"), "{}\n");
 
       const { manager } = yield* makeManager();
       const result = yield* runStackedAction(manager, {
@@ -1842,7 +1834,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["checkout", "-b", "feature/create-pr-only"]);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      fs.writeFileSync(path.join(repoDir, "create-pr-only.txt"), "create pr\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "create-pr-only.txt"), "create pr\n");
       yield* runGit(repoDir, ["add", "create-pr-only.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Create PR only branch"]);
 
@@ -1887,7 +1879,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       yield* runGit(repoDir, ["checkout", "-b", "feature/provider-fallback"]);
-      fs.writeFileSync(path.join(repoDir, "provider-fallback.txt"), "fallback\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "provider-fallback.txt"), "fallback\n");
       yield* runGit(repoDir, ["add", "provider-fallback.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Provider fallback"]);
       const remoteDir = yield* createBareRemote();
@@ -2064,7 +2056,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["checkout", "main"]);
         yield* runGit(repoDir, ["branch", "-D", "effect-atom"]);
         yield* runGit(repoDir, ["checkout", "--track", "my-org/upstream/effect-atom"]);
-        fs.writeFileSync(path.join(repoDir, "changes.txt"), "change\n");
+        NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
         yield* runGit(repoDir, ["add", "changes.txt"]);
         yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
 
@@ -2282,7 +2274,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["checkout", "-b", "feature-create-pr"]);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      fs.writeFileSync(path.join(repoDir, "changes.txt"), "change\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
       yield* runGit(repoDir, ["add", "changes.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
       yield* runGit(repoDir, ["push", "-u", "origin", "feature-create-pr"]);
@@ -2321,6 +2313,62 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("generates PR content against the remote base when the local base is stale", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(remoteDir, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+      const peerDir = yield* makeTempDir("t3code-git-peer-");
+      yield* runGit(peerDir, ["clone", remoteDir, "."]);
+      yield* runGit(peerDir, ["config", "user.email", "peer@example.com"]);
+      yield* runGit(peerDir, ["config", "user.name", "Peer User"]);
+      NodeFS.writeFileSync(NodePath.join(peerDir, "remote.txt"), "remote\n");
+      yield* runGit(peerDir, ["add", "remote.txt"]);
+      yield* runGit(peerDir, ["commit", "-m", "Remote base commit"]);
+      yield* runGit(peerDir, ["push", "origin", "main"]);
+
+      yield* runGit(repoDir, ["fetch", "origin"]);
+      yield* runGit(repoDir, [
+        "checkout",
+        "--no-track",
+        "-b",
+        "feature/remote-base",
+        "origin/main",
+      ]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+      yield* runGit(repoDir, ["add", "feature.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/remote-base"]);
+      yield* runGit(repoDir, ["config", "branch.feature/remote-base.gh-merge-base", "main"]);
+
+      let generatedCommitSummary = "";
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: ["[]", "[]"],
+        },
+        textGeneration: {
+          generatePrContent: (input) => {
+            generatedCommitSummary = input.commitSummary;
+            return Effect.succeed({ title: "Feature PR", body: "Feature body" });
+          },
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "create_pr",
+      });
+
+      expect(result.pr.status).toBe("created");
+      expect(generatedCommitSummary).toContain("Feature commit");
+      expect(generatedCommitSummary).not.toContain("Remote base commit");
+    }),
+  );
+
   it.effect(
     "creates a new PR instead of reusing an unrelated fork PR with the same head branch",
     () =>
@@ -2330,7 +2378,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["checkout", "-b", "feature/no-fork-match"]);
         const remoteDir = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-        fs.writeFileSync(path.join(repoDir, "changes.txt"), "change\n");
+        NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
         yield* runGit(repoDir, ["add", "changes.txt"]);
         yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
         yield* runGit(repoDir, ["push", "-u", "origin", "feature/no-fork-match"]);
@@ -2402,7 +2450,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const forkDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
       yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
-      fs.writeFileSync(path.join(repoDir, "changes.txt"), "change\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
       yield* runGit(repoDir, ["add", "changes.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
       yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
@@ -2495,9 +2543,10 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCliError({
-            operation: "execute",
-            detail: "GitHub CLI (`gh`) is required but not available on PATH.",
+          failWith: new GitHubCli.GitHubCliUnavailableError({
+            command: "gh",
+            cwd: repoDir,
+            cause: new Error("gh is not available on PATH"),
           }),
         },
       });
@@ -2524,9 +2573,10 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCliError({
-            operation: "execute",
-            detail: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
+          failWith: new GitHubCli.GitHubCliAuthenticationError({
+            command: "gh",
+            cwd: repoDir,
+            cause: new Error("gh is not authenticated"),
           }),
         },
       });
@@ -2582,7 +2632,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-local"]);
-      fs.writeFileSync(path.join(repoDir, "local.txt"), "local\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "local.txt"), "local\n");
       yield* runGit(repoDir, ["add", "local.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Local PR branch"]);
 
@@ -2623,7 +2673,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
         yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
         yield* runGit(repoDir, ["checkout", "-b", "feature/pr-local-upstream"]);
-        fs.writeFileSync(path.join(repoDir, "upstream.txt"), "upstream\n");
+        NodeFS.writeFileSync(NodePath.join(repoDir, "upstream.txt"), "upstream\n");
         yield* runGit(repoDir, ["add", "upstream.txt"]);
         yield* runGit(repoDir, ["commit", "-m", "Local upstream PR branch"]);
         yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-local-upstream"]);
@@ -2681,7 +2731,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
         yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
         yield* runGit(repoDir, ["checkout", "-b", "feature/pr-local-no-head-repo"]);
-        fs.writeFileSync(path.join(repoDir, "no-head-repo.txt"), "upstream\n");
+        NodeFS.writeFileSync(NodePath.join(repoDir, "no-head-repo.txt"), "upstream\n");
         yield* runGit(repoDir, ["add", "no-head-repo.txt"]);
         yield* runGit(repoDir, ["commit", "-m", "Local PR branch without repo metadata"]);
         yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-local-no-head-repo"]);
@@ -2728,7 +2778,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-worktree"]);
-      fs.writeFileSync(path.join(repoDir, "worktree.txt"), "worktree\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "worktree.txt"), "worktree\n");
       yield* runGit(repoDir, ["add", "worktree.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "PR worktree branch"]);
       yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-worktree"]);
@@ -2756,12 +2806,71 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       expect(result.branch).toBe("feature/pr-worktree");
       expect(result.worktreePath).not.toBeNull();
-      expect(fs.existsSync(result.worktreePath as string)).toBe(true);
+      expect(NodeFS.existsSync(result.worktreePath as string)).toBe(true);
       const worktreeBranch = (yield* runGit(result.worktreePath as string, [
         "branch",
         "--show-current",
       ])).stdout.trim();
       expect(worktreeBranch).toBe("feature/pr-worktree");
+    }),
+  );
+
+  it.effect("preserves both branch materialization failures when the fallback also fails", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+
+      const missingForkDir = NodePath.join(repoDir, "missing-fork.git");
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 93,
+            title: "Missing fork branch",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/93",
+            baseRefName: "main",
+            headRefName: "feature/missing-fork-branch",
+            state: "open",
+            isCrossRepository: true,
+            headRepositoryNameWithOwner: "octocat/codething-mvp",
+            headRepositoryOwnerLogin: "octocat",
+          },
+          repositoryCloneUrls: {
+            "octocat/codething-mvp": {
+              url: missingForkDir,
+              sshUrl: missingForkDir,
+            },
+          },
+        },
+      });
+
+      const error = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "93",
+        mode: "worktree",
+      }).pipe(Effect.flip);
+
+      if (error._tag !== "GitPullRequestMaterializationError") {
+        return yield* Effect.die(error);
+      }
+      expect(error).toMatchObject({
+        cwd: repoDir,
+        pullRequestNumber: 93,
+        headRepository: "octocat/codething-mvp",
+        headBranch: "feature/missing-fork-branch",
+        localBranch: "t3code/pr-93/feature/missing-fork-branch",
+      });
+      if (!(error.cause instanceof AggregateError)) {
+        return yield* Effect.die(error.cause);
+      }
+      expect(error.cause.errors).toHaveLength(2);
+      expect(error.cause.errors).toEqual([
+        expect.objectContaining({ _tag: "GitCommandError" }),
+        expect.objectContaining({ _tag: "GitCommandError" }),
+      ]);
+      expect(error.cause.cause).toBe(error.cause.errors[0]);
     }),
   );
 
@@ -2773,14 +2882,14 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-worktree-setup"]);
-      fs.writeFileSync(path.join(repoDir, "setup.txt"), "setup\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "setup.txt"), "setup\n");
       yield* runGit(repoDir, ["add", "setup.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "PR worktree setup branch"]);
       yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-worktree-setup"]);
       yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/177/head"]);
       yield* runGit(repoDir, ["checkout", "main"]);
 
-      const setupCalls: ProjectSetupScriptRunnerInput[] = [];
+      const setupCalls: ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput[] = [];
       const { manager } = yield* makeManager({
         ghScenario: {
           pullRequest: {
@@ -2828,7 +2937,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-fork"]);
-      fs.writeFileSync(path.join(repoDir, "fork.txt"), "fork\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "fork.txt"), "fork\n");
       yield* runGit(repoDir, ["add", "fork.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Fork PR branch"]);
       yield* runGit(repoDir, ["push", "-u", "fork-seed", "feature/pr-fork"]);
@@ -2890,7 +2999,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-local-fork"]);
-      fs.writeFileSync(path.join(repoDir, "local-fork.txt"), "local fork\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "local-fork.txt"), "local fork\n");
       yield* runGit(repoDir, ["add", "local-fork.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Local fork PR branch"]);
       yield* runGit(repoDir, ["push", "-u", "fork-seed", "feature/pr-local-fork"]);
@@ -2943,7 +3052,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["remote", "add", "binbandit-seed", forkDir]);
       yield* runGit(repoDir, ["checkout", "-b", "fix/git-action-default-without-origin"]);
-      fs.writeFileSync(path.join(repoDir, "derived-fork.txt"), "derived fork\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "derived-fork.txt"), "derived fork\n");
       yield* runGit(repoDir, ["add", "derived-fork.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Derived fork PR branch"]);
       yield* runGit(repoDir, [
@@ -2995,14 +3104,18 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-existing-worktree"]);
-      fs.writeFileSync(path.join(repoDir, "existing.txt"), "existing\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "existing.txt"), "existing\n");
       yield* runGit(repoDir, ["add", "existing.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Existing worktree branch"]);
       yield* runGit(repoDir, ["checkout", "main"]);
-      const worktreePath = path.join(repoDir, "..", `pr-existing-${path.basename(repoDir)}`);
+      const worktreePath = NodePath.join(
+        repoDir,
+        "..",
+        `pr-existing-${NodePath.basename(repoDir)}`,
+      );
       yield* runGit(repoDir, ["worktree", "add", worktreePath, "feature/pr-existing-worktree"]);
 
-      const setupCalls: ProjectSetupScriptRunnerInput[] = [];
+      const setupCalls: ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput[] = [];
       const { manager } = yield* makeManager({
         ghScenario: {
           pullRequest: {
@@ -3030,8 +3143,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         threadId: asThreadId("thread-pr-existing-worktree"),
       });
 
-      expect(result.worktreePath && fs.realpathSync.native(result.worktreePath)).toBe(
-        fs.realpathSync.native(worktreePath),
+      expect(result.worktreePath && NodeFS.realpathSync.native(result.worktreePath)).toBe(
+        NodeFS.realpathSync.native(worktreePath),
       );
       expect(result.branch).toBe("feature/pr-existing-worktree");
       expect(setupCalls).toHaveLength(0);
@@ -3050,7 +3163,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
         yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
         yield* runGit(repoDir, ["checkout", "-b", "fork-main-source"]);
-        fs.writeFileSync(path.join(repoDir, "fork-main.txt"), "fork main\n");
+        NodeFS.writeFileSync(NodePath.join(repoDir, "fork-main.txt"), "fork main\n");
         yield* runGit(repoDir, ["add", "fork-main.txt"]);
         yield* runGit(repoDir, ["commit", "-m", "Fork main branch"]);
         yield* runGit(repoDir, ["push", "-u", "fork-seed", "fork-main-source:main"]);
@@ -3110,7 +3223,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
         yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
         yield* runGit(repoDir, ["checkout", "-b", "fork-main-source"]);
-        fs.writeFileSync(path.join(repoDir, "fork-main-second.txt"), "fork main second\n");
+        NodeFS.writeFileSync(NodePath.join(repoDir, "fork-main-second.txt"), "fork main second\n");
         yield* runGit(repoDir, ["add", "fork-main-second.txt"]);
         yield* runGit(repoDir, ["commit", "-m", "Fork main second branch"]);
         yield* runGit(repoDir, ["push", "-u", "fork-seed", "fork-main-source:main"]);
@@ -3168,12 +3281,16 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-reused-fork"]);
-      fs.writeFileSync(path.join(repoDir, "reused-fork.txt"), "reused fork\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "reused-fork.txt"), "reused fork\n");
       yield* runGit(repoDir, ["add", "reused-fork.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Reused fork PR branch"]);
       yield* runGit(repoDir, ["push", "-u", "fork-seed", "feature/pr-reused-fork"]);
       yield* runGit(repoDir, ["checkout", "main"]);
-      const worktreePath = path.join(repoDir, "..", `pr-reused-fork-${path.basename(repoDir)}`);
+      const worktreePath = NodePath.join(
+        repoDir,
+        "..",
+        `pr-reused-fork-${NodePath.basename(repoDir)}`,
+      );
       yield* runGit(repoDir, ["worktree", "add", worktreePath, "feature/pr-reused-fork"]);
       yield* runGit(worktreePath, ["branch", "--unset-upstream"], true);
 
@@ -3205,8 +3322,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         mode: "worktree",
       });
 
-      expect(result.worktreePath && fs.realpathSync.native(result.worktreePath)).toBe(
-        fs.realpathSync.native(worktreePath),
+      expect(result.worktreePath && NodeFS.realpathSync.native(result.worktreePath)).toBe(
+        NodeFS.realpathSync.native(worktreePath),
       );
       expect(
         (yield* runGit(worktreePath, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
@@ -3222,7 +3339,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-setup-failure"]);
-      fs.writeFileSync(path.join(repoDir, "setup-failure.txt"), "setup failure\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "setup-failure.txt"), "setup failure\n");
       yield* runGit(repoDir, ["add", "setup-failure.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "PR setup failure branch"]);
       yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-setup-failure"]);
@@ -3241,8 +3358,15 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           },
         },
         setupScriptRunner: {
-          runForThread: () =>
-            Effect.fail(new ProjectSetupScriptRunnerError({ message: "terminal start failed" })),
+          runForThread: (input) =>
+            Effect.fail(
+              new ProjectSetupScriptRunner.ProjectSetupScriptOperationError({
+                threadId: input.threadId,
+                worktreePath: input.worktreePath,
+                operation: "openTerminal",
+                cause: new Error("terminal start failed"),
+              }),
+            ),
         },
       });
 
@@ -3255,7 +3379,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       expect(result.branch).toBe("feature/pr-setup-failure");
       expect(result.worktreePath).not.toBeNull();
-      expect(fs.existsSync(result.worktreePath as string)).toBe(true);
+      expect(NodeFS.existsSync(result.worktreePath as string)).toBe(true);
     }),
   );
 
@@ -3295,9 +3419,9 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
-      fs.writeFileSync(path.join(repoDir, "hooked.txt"), "hooked\n");
-      fs.writeFileSync(
-        path.join(repoDir, ".git", "hooks", "pre-commit"),
+      NodeFS.writeFileSync(NodePath.join(repoDir, "hooked.txt"), "hooked\n");
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".git", "hooks", "pre-commit"),
         '#!/bin/sh\necho "hook: start" >&2\nsleep 0.05\necho "hook: end" >&2\n',
         { mode: 0o755 },
       );
@@ -3358,9 +3482,9 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
-      fs.writeFileSync(path.join(repoDir, "hook-failure.txt"), "broken\n");
-      fs.writeFileSync(
-        path.join(repoDir, ".git", "hooks", "pre-commit"),
+      NodeFS.writeFileSync(NodePath.join(repoDir, "hook-failure.txt"), "broken\n");
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".git", "hooks", "pre-commit"),
         '#!/bin/sh\necho "hook: fail" >&2\nexit 1\n',
         { mode: 0o755 },
       );
@@ -3388,12 +3512,17 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         Effect.map((error) => error.message),
       );
 
-      expect(errorMessage).toContain("hook: fail");
+      expect(errorMessage).toContain("Git command failed in GitVcsDriver.commit.commit");
+      expect(errorMessage).not.toContain("hook: fail");
       expect(events).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             kind: "hook_started",
             hookName: "pre-commit",
+          }),
+          expect.objectContaining({
+            kind: "hook_output",
+            text: "hook: fail",
           }),
           expect.objectContaining({
             kind: "action_failed",
@@ -3411,7 +3540,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-only-follow-up"]);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      fs.writeFileSync(path.join(repoDir, "pr-only.txt"), "pr only\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "pr-only.txt"), "pr only\n");
       yield* runGit(repoDir, ["add", "pr-only.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "PR only branch"]);
       yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-only-follow-up"]);

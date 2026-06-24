@@ -2,7 +2,7 @@ import { useActiveEnvironmentId } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { useEnvironmentQuery } from "../state/query";
 import { ensureCustomThemeRegistered } from "../lib/shikiThemeRegistry";
-import { useSettings } from "./useSettings";
+import { useClientSettings } from "./useSettings";
 
 export interface CodeBlockThemeState {
   /** The selected VSCode theme id, or `null` when using the default pierre themes. */
@@ -33,7 +33,7 @@ const INACTIVE: CodeBlockThemeState = {
  * `ChatMarkdown` can apply both syntax colors and the code-area background.
  */
 export function useCodeBlockTheme(): CodeBlockThemeState {
-  const codeBlockThemeId = useSettings((settings) => settings.codeBlockThemeId);
+  const codeBlockThemeId = useClientSettings((settings) => settings.codeBlockThemeId);
   const environmentId = useActiveEnvironmentId();
 
   const { data } = useEnvironmentQuery(

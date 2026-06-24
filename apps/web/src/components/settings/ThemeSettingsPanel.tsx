@@ -3,7 +3,7 @@ import { RefreshCwIcon } from "lucide-react";
 import type { VscodeThemeSummary } from "@t3tools/contracts";
 
 import { cn } from "../../lib/utils";
-import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { useActiveEnvironmentId } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
@@ -44,8 +44,8 @@ function describeSource(source: VscodeThemeSummary["source"]): string {
 }
 
 export function ThemeSettingsPanel() {
-  const settings = useSettings();
-  const updateSettings = useUpdateSettings();
+  const settings = useClientSettings();
+  const updateSettings = useUpdateClientSettings();
   const environmentId = useActiveEnvironmentId();
 
   const {

@@ -47,6 +47,26 @@ const stubThread = {
 } as const;
 
 describe("applyShellStreamEvent", () => {
+  it("ignores stale project upserts without mutating the snapshot", () => {
+    const snapshotWithProject: OrchestrationShellSnapshot = {
+      ...baseSnapshot,
+      snapshotSequence: 4,
+      projects: [stubProject],
+    };
+
+    for (const sequence of [3, 4]) {
+      const next = applyShellStreamEvent(snapshotWithProject, {
+        kind: "project-upserted",
+        sequence,
+        project: { ...stubProject, title: "Stale Title" },
+      });
+
+      expect(next).toBe(snapshotWithProject);
+      expect(next.snapshotSequence).toBe(4);
+      expect(next.projects[0]?.title).toBe("Test Project");
+    }
+  });
+
   describe("project-upserted", () => {
     it("adds a new project", () => {
       const event: OrchestrationShellStreamEvent = {

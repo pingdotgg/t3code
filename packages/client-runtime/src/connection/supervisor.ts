@@ -15,12 +15,8 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Tracer from "effect/Tracer";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
-import { Connectivity } from "./connectivity.ts";
-import {
-  ConnectionDriver,
-  type ConnectionDriverProgress,
-  type EnvironmentConnectionLease,
-} from "./driver.ts";
+import * as Connectivity from "./connectivity.ts";
+import * as ConnectionDriver from "./driver.ts";
 import {
   type ConnectionAttemptError,
   type ConnectionTarget,
@@ -29,8 +25,9 @@ import {
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "./model.ts";
-import type { RpcSession } from "../rpc/session.ts";
-import { type ConnectionWakeup, ConnectionWakeups } from "./wakeups.ts";
+import * as RpcSession from "../rpc/session.ts";
+import { safeErrorLogAttributes } from "../errors/safeLog.ts";
+import * as ConnectionWakeups from "./wakeups.ts";
 
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
@@ -47,7 +44,7 @@ type SupervisorSignal =
   | { readonly _tag: "DisconnectRequested" }
   | { readonly _tag: "RetryRequested" }
   | { readonly _tag: "NetworkChanged"; readonly network: NetworkStatus }
-  | { readonly _tag: "Wakeup"; readonly reason: ConnectionWakeup };
+  | { readonly _tag: "Wakeup"; readonly reason: ConnectionWakeups.ConnectionWakeup };
 
 interface PendingRetryTrace {
   readonly previousAttempt: Tracer.Span;
@@ -80,7 +77,7 @@ type EstablishmentEvent =
       readonly exit: Exit.Exit<
         {
           readonly attemptSpan: Option.Option<Tracer.Span>;
-          readonly lease: EnvironmentConnectionLease;
+          readonly lease: ConnectionDriver.EnvironmentConnectionLease;
         },
         TracedAttemptFailure
       >;
@@ -100,16 +97,6 @@ function exitUnlessInterrupted<A, E, R>(
 
 export interface EnvironmentSupervisorOptions {
   readonly initiallyDesired?: boolean;
-}
-
-export interface EnvironmentSupervisorService {
-  readonly target: ConnectionTarget;
-  readonly state: SubscriptionRef.SubscriptionRef<SupervisorConnectionState>;
-  readonly session: SubscriptionRef.SubscriptionRef<Option.Option<RpcSession>>;
-  readonly prepared: SubscriptionRef.SubscriptionRef<Option.Option<PreparedConnection>>;
-  readonly connect: Effect.Effect<void>;
-  readonly disconnect: Effect.Effect<void>;
-  readonly retryNow: Effect.Effect<void>;
 }
 
 function retryDelayMs(failureCount: number): number {
@@ -199,7 +186,7 @@ function failureFromExit<A>(
     failure: {
       error: new ConnectionTransientError({
         reason: "transport",
-        message: `${target.label} connection failed unexpectedly.`,
+        detail: `${target.label} connection failed unexpectedly.`,
       }),
       attemptSpan: Option.none(),
     },
@@ -208,34 +195,34 @@ function failureFromExit<A>(
 
 export class EnvironmentSupervisor extends Context.Service<
   EnvironmentSupervisor,
-  EnvironmentSupervisorService
->()("@t3tools/client-runtime/connection/supervisor/EnvironmentSupervisor") {
-  static layer(
-    entry: ConnectionCatalogEntry,
-    options?: EnvironmentSupervisorOptions,
-  ): Layer.Layer<
-    EnvironmentSupervisor,
-    never,
-    Connectivity | ConnectionDriver | ConnectionWakeups
-  > {
-    return Layer.effect(EnvironmentSupervisor, makeEnvironmentSupervisor(entry, options));
+  {
+    readonly target: ConnectionTarget;
+    readonly state: SubscriptionRef.SubscriptionRef<SupervisorConnectionState>;
+    readonly session: SubscriptionRef.SubscriptionRef<Option.Option<RpcSession.RpcSession>>;
+    readonly prepared: SubscriptionRef.SubscriptionRef<Option.Option<PreparedConnection>>;
+    readonly connect: Effect.Effect<void>;
+    readonly disconnect: Effect.Effect<void>;
+    readonly retryNow: Effect.Effect<void>;
   }
-}
+>()("@t3tools/client-runtime/connection/supervisor/EnvironmentSupervisor") {}
 
-export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")(function* (
+export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   entry: ConnectionCatalogEntry,
   options?: EnvironmentSupervisorOptions,
 ): Effect.fn.Return<
-  EnvironmentSupervisorService,
+  EnvironmentSupervisor["Service"],
   never,
-  Connectivity | ConnectionDriver | Scope.Scope | ConnectionWakeups
+  | Connectivity.Connectivity
+  | ConnectionDriver.ConnectionDriver
+  | Scope.Scope
+  | ConnectionWakeups.ConnectionWakeups
 > {
   const target = entry.target;
   yield* annotateTarget(target);
 
-  const connectivity = yield* Connectivity;
-  const driver = yield* ConnectionDriver;
-  const wakeups = yield* ConnectionWakeups;
+  const connectivity = yield* Connectivity.Connectivity;
+  const driver = yield* ConnectionDriver.ConnectionDriver;
+  const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const initialIntent: SupervisorIntent = {
     desired: options?.initiallyDesired ?? false,
     network: yield* connectivity.status,
@@ -249,7 +236,7 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
         ? offlineState(initialIntent, 0, 0, null)
         : connectingState(initialIntent, 0, 1, null),
   );
-  const session = yield* SubscriptionRef.make<Option.Option<RpcSession>>(Option.none());
+  const session = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(Option.none());
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none());
 
   const clearLease = Effect.all(
@@ -280,7 +267,7 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
     attempt: number,
     generation: number,
     lastFailure: ConnectionAttemptError | null,
-    progress: ConnectionDriverProgress,
+    progress: ConnectionDriver.ConnectionDriverProgress,
   ) {
     if ("prepared" in progress) {
       yield* SubscriptionRef.set(prepared, Option.some(progress.prepared));
@@ -301,7 +288,11 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
   });
 
   const traceRelayEstablishment = (
-    effect: Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, Scope.Scope>,
+    effect: Effect.Effect<
+      ConnectionDriver.EnvironmentConnectionLease,
+      ConnectionAttemptError,
+      Scope.Scope
+    >,
     attempt: number,
     generation: number,
     pendingRetry: Option.Option<PendingRetryTrace>,
@@ -392,7 +383,9 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
     }
   });
 
-  const monitorConnectedLease = Effect.fnUntraced(function* (lease: EnvironmentConnectionLease) {
+  const monitorConnectedLease = Effect.fnUntraced(function* (
+    lease: ConnectionDriver.EnvironmentConnectionLease,
+  ) {
     for (;;) {
       const next = yield* Queue.take(signals);
       switch (next._tag) {
@@ -417,7 +410,7 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
                   Effect.fail(
                     new ConnectionTransientError({
                       reason: "timeout",
-                      message: `${target.label} did not respond to a connection health check.`,
+                      detail: `${target.label} did not respond to a connection health check.`,
                     }),
                   ),
               }),
@@ -499,7 +492,7 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
         failure: {
           error: new ConnectionTransientError({
             reason: "timeout",
-            message: `${target.label} did not respond during connection setup.`,
+            detail: `${target.label} did not respond during connection setup.`,
           }),
           attemptSpan: Option.none(),
         },
@@ -511,11 +504,13 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
         !establishment.exit.cause.reasons.some(Cause.isFailReason);
       const outcome = failureFromExit(target, establishment.exit, false, false);
       if (isUnexpectedDefect) {
+        const defect = establishment.exit.cause.reasons.find(Cause.isDieReason)?.defect;
         yield* Effect.logError("Connection attempt failed with an unexpected defect.").pipe(
           Effect.annotateLogs({
             "environment.id": target.environmentId,
             "environment.label": target.label,
-            cause: Cause.pretty(establishment.exit.cause),
+            "cause.reason_count": establishment.exit.cause.reasons.length,
+            ...safeErrorLogAttributes(defect),
           }),
         );
       }
@@ -722,3 +717,14 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
     retryNow,
   });
 });
+
+export const layer = (
+  entry: ConnectionCatalogEntry,
+  options?: EnvironmentSupervisorOptions,
+): Layer.Layer<
+  EnvironmentSupervisor,
+  never,
+  | Connectivity.Connectivity
+  | ConnectionDriver.ConnectionDriver
+  | ConnectionWakeups.ConnectionWakeups
+> => Layer.effect(EnvironmentSupervisor, make(entry, options));

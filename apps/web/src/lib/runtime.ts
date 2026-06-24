@@ -1,17 +1,12 @@
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { FetchHttpClient } from "effect/unstable/http";
 import * as Socket from "effect/unstable/socket/Socket";
 
 import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
-import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
 import { makeRelayClientTracingLayer } from "@t3tools/shared/relayTracing";
-import {
-  PrimaryEnvironmentHttpClient,
-  primaryEnvironmentHttpClientLive,
-} from "../environments/primary/httpClient";
-import { primaryEnvironmentRequestInit } from "../environments/primary/requestInit";
+import * as PrimaryEnvironmentHttpClient from "../environments/primary/httpClient";
+import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 
 import { browserCryptoLayer } from "../cloud/dpop";
 import { managedRelayClientLayer } from "../cloud/managedRelayLayer";
@@ -29,22 +24,21 @@ const relayTracingLayer = makeRelayClientTracingLayer(resolveRelayTracingConfig(
   client: typeof window !== "undefined" && window.desktopBridge ? "desktop" : "web",
 }).pipe(Layer.provide(httpClientLayer));
 
+type RuntimeLayerSource =
+  | typeof httpClientLayer
+  | typeof browserCryptoLayer
+  | typeof Socket.layerWebSocketConstructorGlobal
+  | typeof relayTracingLayer
+  | ReturnType<typeof managedRelayClientLayer>;
+
 export const remoteHttpRuntime = ManagedRuntime.make(httpClientLayer);
 
 const primaryHttpRuntime = ManagedRuntime.make(
-  primaryEnvironmentHttpClientLive.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        remoteHttpClientLayer((input, init) => globalThis.fetch(input, init)),
-        Layer.succeed(FetchHttpClient.RequestInit, primaryEnvironmentRequestInit),
-        httpHeaderRedactionLayer,
-      ),
-    ),
-  ),
+  PrimaryEnvironmentHttpClient.layer.pipe(Layer.provide(primaryEnvironmentHttpLayer)),
 );
 
 export type PrimaryHttpEffectRunner = <A, E>(
-  effect: Effect.Effect<A, E, PrimaryEnvironmentHttpClient>,
+  effect: Effect.Effect<A, E, PrimaryEnvironmentHttpClient.PrimaryEnvironmentHttpClient>,
 ) => Promise<A>;
 
 const livePrimaryHttpRunner: PrimaryHttpEffectRunner = (effect) =>
@@ -52,14 +46,15 @@ const livePrimaryHttpRunner: PrimaryHttpEffectRunner = (effect) =>
 
 let primaryHttpRunner = livePrimaryHttpRunner;
 
-export const runPrimaryHttp = <A, E>(effect: Effect.Effect<A, E, PrimaryEnvironmentHttpClient>) =>
-  primaryHttpRunner(effect);
+export const runPrimaryHttp = <A, E>(
+  effect: Effect.Effect<A, E, PrimaryEnvironmentHttpClient.PrimaryEnvironmentHttpClient>,
+) => primaryHttpRunner(effect);
 
 export function __setPrimaryHttpRunnerForTests(runner?: PrimaryHttpEffectRunner): void {
   primaryHttpRunner = runner ?? livePrimaryHttpRunner;
 }
 
-export const runtimeLayer = Layer.mergeAll(
+const runtimeLayer = Layer.mergeAll(
   httpClientLayer,
   browserCryptoLayer,
   Socket.layerWebSocketConstructorGlobal,
@@ -69,6 +64,12 @@ export const runtimeLayer = Layer.mergeAll(
   ),
 );
 
-export const runtime = ManagedRuntime.make(runtimeLayer);
+export const runtime: ManagedRuntime.ManagedRuntime<
+  Layer.Success<RuntimeLayerSource>,
+  Layer.Error<RuntimeLayerSource>
+> = ManagedRuntime.make(runtimeLayer);
 
-export const runtimeContextLayer = Layer.effectContext(runtime.contextEffect);
+export const runtimeContextLayer: Layer.Layer<
+  Layer.Success<RuntimeLayerSource>,
+  Layer.Error<RuntimeLayerSource>
+> = Layer.effectContext(runtime.contextEffect);

@@ -69,7 +69,7 @@ export function GitBranchesSheet() {
     >
       <View className="gap-2 rounded-[18px] border border-border bg-card px-4 py-4">
         <Text
-          className="text-foreground-secondary text-[11px] font-t3-bold uppercase"
+          className="text-foreground-secondary text-2xs font-t3-bold uppercase"
           style={{ letterSpacing: 1 }}
         >
           New branch
@@ -78,7 +78,7 @@ export function GitBranchesSheet() {
           value={newBranchName}
           onChangeText={setNewBranchName}
           placeholder="feature/mobile-polish"
-          className="rounded-[18px] px-3.5 py-3 font-sans text-[15px]"
+          className="rounded-[18px] px-3.5 py-3 font-sans text-base"
           style={{
             borderWidth: 1,
             borderColor: inputBorderColor,
@@ -104,7 +104,7 @@ export function GitBranchesSheet() {
 
       <View className="gap-2 rounded-[18px] border border-border bg-card px-4 py-4">
         <Text
-          className="text-foreground-secondary text-[11px] font-t3-bold uppercase"
+          className="text-foreground-secondary text-2xs font-t3-bold uppercase"
           style={{ letterSpacing: 1 }}
         >
           New worktree
@@ -113,7 +113,7 @@ export function GitBranchesSheet() {
           value={worktreeBaseBranch}
           onChangeText={setWorktreeBaseBranch}
           placeholder="main"
-          className="rounded-[18px] px-3.5 py-3 font-sans text-[15px]"
+          className="rounded-[18px] px-3.5 py-3 font-sans text-base"
           style={{
             borderWidth: 1,
             borderColor: inputBorderColor,
@@ -125,7 +125,7 @@ export function GitBranchesSheet() {
           value={worktreeBranchName}
           onChangeText={setWorktreeBranchName}
           placeholder="feature/mobile-thread"
-          className="rounded-[18px] px-3.5 py-3 font-sans text-[15px]"
+          className="rounded-[18px] px-3.5 py-3 font-sans text-base"
           style={{
             borderWidth: 1,
             borderColor: inputBorderColor,
@@ -154,18 +154,16 @@ export function GitBranchesSheet() {
 
       <View className="gap-2">
         <Text
-          className="text-foreground-secondary text-[11px] font-t3-bold uppercase"
+          className="text-foreground-secondary text-2xs font-t3-bold uppercase"
           style={{ letterSpacing: 1 }}
         >
           Existing branches
         </Text>
         {branchesLoading ? (
-          <Text className="text-foreground-secondary text-[13px] font-medium">
-            Loading branches...
-          </Text>
+          <Text className="text-foreground-secondary text-sm font-medium">Loading branches...</Text>
         ) : null}
         {!branchesLoading && availableBranches.length === 0 ? (
-          <Text className="text-foreground-secondary text-[13px] font-medium">
+          <Text className="text-foreground-secondary text-sm font-medium">
             No local branches found.
           </Text>
         ) : null}
@@ -195,8 +193,8 @@ export function GitBranchesSheet() {
               }}
             >
               <View className="absolute inset-0 rounded-[18px] bg-card" />
-              <Text className="text-foreground text-[15px] font-t3-bold">{branch.name}</Text>
-              <Text className="text-foreground-secondary text-[12px] font-medium">{subtitle}</Text>
+              <Text className="text-foreground text-base font-t3-bold">{branch.name}</Text>
+              <Text className="text-foreground-secondary text-xs font-medium">{subtitle}</Text>
             </Pressable>
           );
         })}

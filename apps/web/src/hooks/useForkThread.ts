@@ -18,7 +18,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { readProject, readThreadShells } from "../state/entities";
-import { useSettings } from "./useSettings";
+import { useClientSettings } from "./useSettings";
 
 /** The minimal thread shape needed to fork — satisfied by both `Thread` and `EnvironmentThreadShell`. */
 export interface ForkableThread {
@@ -44,7 +44,7 @@ export interface ForkableThread {
  * callback identity stays stable — safe to call per sidebar row.
  */
 export function useForkThread(): (thread: ForkableThread) => Promise<void> {
-  const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const router = useRouter();
   return useCallback(
     (thread: ForkableThread): Promise<void> => {
