@@ -122,6 +122,24 @@ function normalizeGitHubCliError(
     });
   }
 
+  // Classify rate limiting BEFORE auth: a 403 "API rate limit exceeded" from a
+  // perfectly valid token must not be reported as "not authenticated" (which
+  // sends users on a pointless `gh auth login`). This is transient and resolves
+  // on its own once the window resets.
+  if (
+    lower.includes("api rate limit exceeded") ||
+    lower.includes("secondary rate limit") ||
+    lower.includes("rate limit") ||
+    lower.includes("was submitted too quickly")
+  ) {
+    return new GitHubCliError({
+      operation,
+      detail:
+        "GitHub API rate limit reached. Pull request data will refresh automatically once the limit resets.",
+      cause: error,
+    });
+  }
+
   if (
     lower.includes("authentication failed") ||
     lower.includes("not logged in") ||

@@ -118,7 +118,7 @@ export default function PullRequestOverviewPanel({
 }: PullRequestOverviewPanelProps) {
   const {
     data: detail,
-    isPending,
+    isLoading,
     error,
   } = useEnvironmentQuery(
     environmentId !== null && cwd !== null
@@ -134,7 +134,7 @@ export default function PullRequestOverviewPanel({
     return { failing, pending, passing };
   }, [detail]);
 
-  if (isPending) {
+  if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center">
         <Spinner className="size-5 text-muted-foreground" />
@@ -142,7 +142,9 @@ export default function PullRequestOverviewPanel({
     );
   }
 
-  if (error !== null || !detail) {
+  // Keep showing the last good detail if a background refresh failed; only fall
+  // back to the error state when there is nothing cached to display.
+  if (!detail) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
         <AlertCircleIcon className="size-5 text-destructive" />

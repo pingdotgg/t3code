@@ -221,12 +221,12 @@ const FileDiffView = memo(function FileDiffView({
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-2">
-        {fileDiffQuery.isPending ? (
+        {fileDiffQuery.isLoading ? (
           <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
             <Spinner className="mr-2 size-3.5" />
             Loading diff...
           </div>
-        ) : fileDiffQuery.error !== null ? (
+        ) : fileDiffQuery.error !== null && !fileDiffQuery.data ? (
           <div className="flex h-full flex-col items-center justify-center gap-1 px-3 text-center text-xs text-destructive">
             <AlertCircleIcon className="size-4" aria-hidden="true" />
             {fileDiffQuery.error ?? "Failed to load file diff."}
@@ -468,12 +468,12 @@ export function PullRequestFilesPane({
 
         {/* File tree */}
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {diffQuery.isPending ? (
+          {diffQuery.isLoading ? (
             <div className="flex items-center justify-center py-8 text-xs text-muted-foreground">
               <Spinner className="mr-2 size-3.5" />
               Loading files...
             </div>
-          ) : diffQuery.error !== null ? (
+          ) : diffQuery.error !== null && !diffQuery.data ? (
             <div className="flex flex-col items-center gap-1 px-3 py-6 text-center text-xs text-destructive">
               <AlertCircleIcon className="size-4" aria-hidden="true" />
               {diffQuery.error ?? "Failed to load diff."}

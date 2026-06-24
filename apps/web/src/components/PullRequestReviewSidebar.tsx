@@ -177,7 +177,7 @@ export function PullRequestReviewSidebar({
         <h3 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           Merge readiness
         </h3>
-        {detailQuery.isPending ? (
+        {detailQuery.isLoading ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Spinner className="size-3.5" />
             Loading...

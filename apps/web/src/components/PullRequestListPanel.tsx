@@ -219,7 +219,7 @@ export function PullRequestListPanel({
     );
   }
 
-  if (pullRequestsQuery.isPending) {
+  if (pullRequestsQuery.isLoading) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-xs text-muted-foreground">
         <Spinner className="size-4" />
@@ -228,7 +228,10 @@ export function PullRequestListPanel({
     );
   }
 
-  if (pullRequestsQuery.error !== null) {
+  // Only surface an error screen when there is no cached data to fall back on.
+  // A failed background refresh (e.g. a transient rate limit) keeps the last
+  // good data, so we keep showing it rather than blanking the panel.
+  if (!data) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-xs text-destructive">
         <AlertCircleIcon className="size-4" aria-hidden="true" />
@@ -246,11 +249,11 @@ export function PullRequestListPanel({
     );
   }
 
-  if (!data || !data.ghAvailable) {
+  if (!data.ghAvailable) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-xs text-muted-foreground">
         <AlertCircleIcon className="size-4" aria-hidden="true" />
-        <span>{data?.error ?? "GitHub CLI unavailable."}</span>
+        <span>{data.error ?? "GitHub CLI unavailable."}</span>
       </div>
     );
   }
@@ -270,6 +273,14 @@ export function PullRequestListPanel({
           {pullRequestsQuery.isPending ? <Spinner className="size-3" /> : "Refresh"}
         </Button>
       </div>
+      {pullRequestsQuery.error !== null ? (
+        <div className="flex items-center gap-1.5 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
+          <AlertCircleIcon className="size-3 shrink-0" aria-hidden="true" />
+          <span className="truncate">
+            Couldn’t refresh: {pullRequestsQuery.error}. Showing last results.
+          </span>
+        </div>
+      ) : null}
       <div className="flex-1 space-y-4 overflow-y-auto p-3">
         <Section
           label="Review Requested"

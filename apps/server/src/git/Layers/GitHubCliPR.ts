@@ -223,19 +223,11 @@ export function makeGitHubCliPRMethods(execute: Execute) {
     const jsonFields =
       "number,title,url,state,isDraft,updatedAt,headRefName,author,reviews,statusCheckRollup";
 
-    const checkAuth = execute({
-      cwd: input.cwd,
-      args: ["auth", "status"],
-    }).pipe(
-      Effect.map(() => ({ ghAvailable: true as const, error: null as string | null })),
-      Effect.catchTag("GitHubCliError", (error) =>
-        Effect.succeed({
-          ghAvailable: false as const,
-          error: error.detail ?? "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
-        }),
-      ),
-    );
-
+    // No standalone `gh auth status` precheck here: it is an extra GitHub API
+    // call on every poll (adding to rate-limit pressure) and, worse, it turned
+    // *any* failure — including a transient 403 rate limit — into a misleading
+    // "not authenticated" state that blanked the list. We instead derive auth
+    // state from the actual `pr list` calls below.
     const fetchBucket = (args: ReadonlyArray<string>) =>
       execute({ cwd: input.cwd, args }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -252,50 +244,57 @@ export function makeGitHubCliPRMethods(execute: Execute) {
               ),
         ),
         Effect.map((entries) => entries.map(normalizePrListEntry)),
-        Effect.catch(() => Effect.succeed([] as ReadonlyArray<GitHubPullRequestListEntry>)),
       );
 
-    return checkAuth.pipe(
-      Effect.flatMap((auth): Effect.Effect<GitHubPullRequestListResult> => {
-        if (!auth.ghAvailable) {
+    const reviewRequested = fetchBucket([
+      "pr",
+      "list",
+      "--search",
+      "involves:@me -author:@me",
+      "--state",
+      "open",
+      `--json=${jsonFields}`,
+      `--limit=${limit}`,
+    ]);
+    const myPrs = fetchBucket([
+      "pr",
+      "list",
+      "--author",
+      "@me",
+      "--state",
+      "open",
+      `--json=${jsonFields}`,
+      `--limit=${limit}`,
+    ]);
+
+    return Effect.all([reviewRequested, myPrs], { concurrency: 2 }).pipe(
+      Effect.map(
+        ([reviewRequestedEntries, myPrsEntries]) =>
+          ({
+            reviewRequested: reviewRequestedEntries,
+            myPrs: myPrsEntries,
+            ghAvailable: true,
+            error: null,
+          }) satisfies GitHubPullRequestListResult,
+      ),
+      Effect.catchTag("GitHubCliError", (error) => {
+        // A genuine "not authenticated" / "gh not installed" failure is a stable,
+        // actionable state, so report it as unavailable and let the UI prompt the
+        // user to run `gh auth login`. Everything else (rate limits, transient
+        // network/API errors) is propagated as a failure so the client keeps
+        // showing the last good list instead of clearing it.
+        const detail = error.detail.toLowerCase();
+        const isAuthOrMissing =
+          detail.includes("not authenticated") || detail.includes("not available on path");
+        if (isAuthOrMissing) {
           return Effect.succeed({
             reviewRequested: [] as ReadonlyArray<GitHubPullRequestListEntry>,
             myPrs: [] as ReadonlyArray<GitHubPullRequestListEntry>,
             ghAvailable: false,
-            error: auth.error,
-          });
+            error: error.detail,
+          } satisfies GitHubPullRequestListResult);
         }
-        const reviewRequested = fetchBucket([
-          "pr",
-          "list",
-          "--search",
-          "involves:@me -author:@me",
-          "--state",
-          "open",
-          `--json=${jsonFields}`,
-          `--limit=${limit}`,
-        ]);
-        const myPrs = fetchBucket([
-          "pr",
-          "list",
-          "--author",
-          "@me",
-          "--state",
-          "open",
-          `--json=${jsonFields}`,
-          `--limit=${limit}`,
-        ]);
-        return Effect.all([reviewRequested, myPrs], { concurrency: 2 }).pipe(
-          Effect.map(
-            ([reviewRequestedEntries, myPrsEntries]) =>
-              ({
-                reviewRequested: reviewRequestedEntries,
-                myPrs: myPrsEntries,
-                ghAvailable: true,
-                error: null,
-              }) satisfies GitHubPullRequestListResult,
-          ),
-        );
+        return Effect.fail(error);
       }),
     );
   };

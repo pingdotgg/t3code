@@ -236,7 +236,7 @@ export const PullRequestConversationPane = memo(function PullRequestConversation
   );
 
   const isLoading =
-    bodyQuery.isPending || issueCommentsQuery.isPending || reviewCommentsQuery.isPending;
+    bodyQuery.isLoading || issueCommentsQuery.isLoading || reviewCommentsQuery.isLoading;
 
   const activityItems = useMemo<ActivityItem[]>(() => {
     const items: ActivityItem[] = [];
