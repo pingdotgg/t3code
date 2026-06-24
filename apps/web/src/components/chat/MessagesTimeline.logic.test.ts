@@ -879,6 +879,69 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRow?.showAssistantMeta).toBe(false);
     expect(assistantRow?.showAssistantCopyButton).toBe(false);
   });
+
+  it("marks only the unsettled turn work row as in progress", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "old-work-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:08Z",
+          entry: {
+            id: "old-work",
+            createdAt: "2026-01-01T00:00:08Z",
+            turnId: "turn-1" as never,
+            label: "Read files",
+            tone: "tool" as const,
+          },
+        },
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:12Z",
+          message: {
+            id: "user-message" as never,
+            role: "user",
+            text: "Continue",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:12Z",
+            updatedAt: "2026-01-01T00:00:12Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "active-work-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:18Z",
+          entry: {
+            id: "active-work",
+            createdAt: "2026-01-01T00:00:18Z",
+            turnId: "turn-2" as never,
+            label: "Run tests",
+            tone: "tool" as const,
+          },
+        },
+      ],
+      latestTurn: {
+        turnId: "turn-2" as never,
+        state: "running",
+        startedAt: "2026-01-01T00:00:16Z",
+        completedAt: null,
+      },
+      expandedTurnIds: new Set(["turn-1" as never]),
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const workRows = rows.filter((row) => row.kind === "work");
+
+    expect(workRows.map((row) => [row.id, row.turnInProgress])).toEqual([
+      ["old-work-entry", false],
+      ["active-work-entry", true],
+    ]);
+  });
 });
 
 describe("computeStableMessagesTimelineRows", () => {
@@ -985,6 +1048,92 @@ describe("computeStableMessagesTimelineRows", () => {
 
     expect(repeated).toBe(initial);
     expect(repeated.result[0]).toBe(initial.result[0]);
+  });
+
+  it("reuses settled work rows when a different turn stops running", () => {
+    const timelineEntries = [
+      {
+        id: "old-work-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:08Z",
+        entry: {
+          id: "old-work",
+          createdAt: "2026-01-01T00:00:08Z",
+          turnId: "turn-1" as never,
+          label: "Read files",
+          tone: "tool" as const,
+        },
+      },
+      {
+        id: "user-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:12Z",
+        message: {
+          id: "user-message" as never,
+          role: "user" as const,
+          text: "Continue",
+          turnId: null,
+          createdAt: "2026-01-01T00:00:12Z",
+          updatedAt: "2026-01-01T00:00:12Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "active-work-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:18Z",
+        entry: {
+          id: "active-work",
+          createdAt: "2026-01-01T00:00:18Z",
+          turnId: "turn-2" as never,
+          label: "Run tests",
+          tone: "tool" as const,
+        },
+      },
+    ];
+
+    const runningRows = deriveMessagesTimelineRows({
+      timelineEntries,
+      latestTurn: {
+        turnId: "turn-2" as never,
+        state: "running",
+        startedAt: "2026-01-01T00:00:16Z",
+        completedAt: null,
+      },
+      expandedTurnIds: new Set(["turn-1" as never, "turn-2" as never]),
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+    const initial = computeStableMessagesTimelineRows(runningRows, {
+      byId: new Map(),
+      result: [],
+    });
+
+    const settledRows = deriveMessagesTimelineRows({
+      timelineEntries,
+      latestTurn: {
+        turnId: "turn-2" as never,
+        state: "completed",
+        startedAt: "2026-01-01T00:00:16Z",
+        completedAt: "2026-01-01T00:00:30Z",
+      },
+      expandedTurnIds: new Set(["turn-1" as never, "turn-2" as never]),
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const repeated = computeStableMessagesTimelineRows(settledRows, initial);
+
+    expect(repeated.result.find((row) => row.id === "old-work-entry")).toBe(
+      initial.result.find((row) => row.id === "old-work-entry"),
+    );
+    expect(repeated.result.find((row) => row.id === "active-work-entry")).not.toBe(
+      initial.result.find((row) => row.id === "active-work-entry"),
+    );
   });
 
   it("returns a new result when row order changes without content changes", () => {

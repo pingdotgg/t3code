@@ -17,8 +17,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type Dispatch,
   type KeyboardEvent,
   type ReactNode,
+  type SetStateAction,
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
@@ -129,14 +131,12 @@ interface TimelineRowSharedState {
   onToggleTurnFold: (turnId: TurnId) => void;
 }
 
-interface TimelineRowActivityState {
-  isWorking: boolean;
-  isRevertingCheckpoint: boolean;
-  activeTurnInProgress: boolean;
+interface TimelineRevertControlsState {
+  disabled: boolean;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
-const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
+const TimelineRevertControlsCtx = createContext<TimelineRevertControlsState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -147,7 +147,6 @@ const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "d
 
 interface MessagesTimelineProps {
   isWorking: boolean;
-  activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
@@ -174,7 +173,6 @@ interface MessagesTimelineProps {
 
 export const MessagesTimeline = memo(function MessagesTimeline({
   isWorking,
-  activeTurnInProgress,
   activeTurnStartedAt,
   listRef,
   timelineEntries,
@@ -215,52 +213,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       return next;
     });
   }, []);
-  useEffect(() => {
-    if (!foldToggleSettling) {
-      return;
-    }
-    let secondFrameId: number | null = null;
-    const firstFrameId = window.requestAnimationFrame(() => {
-      secondFrameId = window.requestAnimationFrame(() => {
-        setFoldToggleSettling(false);
-      });
-    });
-    return () => {
-      window.cancelAnimationFrame(firstFrameId);
-      if (secondFrameId !== null) {
-        window.cancelAnimationFrame(secondFrameId);
-      }
-    };
-  }, [foldToggleSettling]);
+  useFoldToggleSettlingReset(foldToggleSettling, setFoldToggleSettling);
 
   // An in-session interrupt leaves its turn expanded so the user keeps their
   // place; the next turn (or a reload, since this is local state) folds it.
-  const previousLatestTurnRef = useRef(latestTurn);
-  useEffect(() => {
-    const previous = previousLatestTurnRef.current;
-    previousLatestTurnRef.current = latestTurn;
-    if (!latestTurn || previous?.turnId === undefined) {
-      return;
-    }
-    if (latestTurn.turnId === previous.turnId) {
-      if (previous.state === "running" && latestTurn.state === "interrupted") {
-        setExpandedTurnIds((existing) => {
-          const next = new Set(existing);
-          next.add(latestTurn.turnId);
-          return next;
-        });
-      }
-      return;
-    }
-    setExpandedTurnIds((existing) => {
-      if (!existing.has(previous.turnId)) {
-        return existing;
-      }
-      const next = new Set(existing);
-      next.delete(previous.turnId);
-      return next;
-    });
-  }, [latestTurn]);
+  useLatestTurnFoldState(latestTurn, setExpandedTurnIds);
 
   const rawRows = useMemo(
     () =>
@@ -292,23 +249,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
   }, [listRef, onIsAtEndChange]);
 
-  const previousRowCountRef = useRef(rows.length);
-  useEffect(() => {
-    const previousRowCount = previousRowCountRef.current;
-    previousRowCountRef.current = rows.length;
-
-    if (previousRowCount > 0 || rows.length === 0) {
-      return;
-    }
-
-    onIsAtEndChange(true);
-    const frameId = window.requestAnimationFrame(() => {
-      void listRef.current?.scrollToEnd?.({ animated: false });
-    });
-    return () => {
-      window.cancelAnimationFrame(frameId);
-    };
-  }, [listRef, onIsAtEndChange, rows.length]);
+  useInitialTimelineEndScroll(rows.length, listRef, onIsAtEndChange);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -339,13 +280,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleTurnFold,
     ],
   );
-  const activityState = useMemo<TimelineRowActivityState>(
+  const revertControlsState = useMemo<TimelineRevertControlsState>(
     () => ({
-      isWorking,
-      isRevertingCheckpoint,
-      activeTurnInProgress,
+      disabled: isRevertingCheckpoint || isWorking,
     }),
-    [activeTurnInProgress, isRevertingCheckpoint, isWorking],
+    [isRevertingCheckpoint, isWorking],
   );
 
   // Stable renderItem — no closure deps. Row components read shared state
@@ -371,7 +310,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   return (
     <TimelineRowCtx value={sharedState}>
-      <TimelineRowActivityCtx value={activityState}>
+      <TimelineRevertControlsCtx value={revertControlsState}>
         <LegendList<MessagesTimelineRow>
           ref={listRef}
           data={rows}
@@ -387,10 +326,91 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           ListHeaderComponent={TIMELINE_LIST_HEADER}
           ListFooterComponent={TIMELINE_LIST_FOOTER}
         />
-      </TimelineRowActivityCtx>
+      </TimelineRevertControlsCtx>
     </TimelineRowCtx>
   );
 });
+
+function useFoldToggleSettlingReset(
+  foldToggleSettling: boolean,
+  setFoldToggleSettling: Dispatch<SetStateAction<boolean>>,
+) {
+  useEffect(() => {
+    if (!foldToggleSettling) {
+      return;
+    }
+    let secondFrameId: number | null = null;
+    const firstFrameId = window.requestAnimationFrame(() => {
+      secondFrameId = window.requestAnimationFrame(() => {
+        setFoldToggleSettling(false);
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrameId);
+      if (secondFrameId !== null) {
+        window.cancelAnimationFrame(secondFrameId);
+      }
+    };
+  }, [foldToggleSettling, setFoldToggleSettling]);
+}
+
+function useLatestTurnFoldState(
+  latestTurn: TimelineLatestTurn | null,
+  setExpandedTurnIds: Dispatch<SetStateAction<ReadonlySet<TurnId>>>,
+) {
+  const previousLatestTurnRef = useRef(latestTurn);
+
+  useEffect(() => {
+    const previous = previousLatestTurnRef.current;
+    previousLatestTurnRef.current = latestTurn;
+    if (!latestTurn || previous?.turnId === undefined) {
+      return;
+    }
+    if (latestTurn.turnId === previous.turnId) {
+      if (previous.state === "running" && latestTurn.state === "interrupted") {
+        setExpandedTurnIds((existing) => {
+          const next = new Set(existing);
+          next.add(latestTurn.turnId);
+          return next;
+        });
+      }
+      return;
+    }
+    setExpandedTurnIds((existing) => {
+      if (!existing.has(previous.turnId)) {
+        return existing;
+      }
+      const next = new Set(existing);
+      next.delete(previous.turnId);
+      return next;
+    });
+  }, [latestTurn, setExpandedTurnIds]);
+}
+
+function useInitialTimelineEndScroll(
+  rowCount: number,
+  listRef: React.RefObject<LegendListRef | null>,
+  onIsAtEndChange: (isAtEnd: boolean) => void,
+) {
+  const previousRowCountRef = useRef(rowCount);
+
+  useEffect(() => {
+    const previousRowCount = previousRowCountRef.current;
+    previousRowCountRef.current = rowCount;
+
+    if (previousRowCount > 0 || rowCount === 0) {
+      return;
+    }
+
+    onIsAtEndChange(true);
+    const frameId = window.requestAnimationFrame(() => {
+      void listRef.current?.scrollToEnd?.({ animated: false });
+    });
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [listRef, onIsAtEndChange, rowCount]);
+}
 
 function keyExtractor(item: MessagesTimelineRow) {
   return item.id;
@@ -422,7 +442,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       data-message-id={row.kind === "message" ? row.message.id : undefined}
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
-      {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
+      {row.kind === "work" ? <WorkGroupSection row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
@@ -540,7 +560,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 
 function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
   const ctx = use(TimelineRowCtx);
-  const activity = use(TimelineRowActivityCtx);
+  const controls = use(TimelineRevertControlsCtx);
 
   return (
     <Tooltip>
@@ -550,7 +570,7 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
             type="button"
             size="xs"
             variant="ghost"
-            disabled={activity.isRevertingCheckpoint || activity.isWorking}
+            disabled={controls.disabled}
             onClick={() => ctx.onRevertUserMessage(messageId)}
             aria-label="Revert to this message"
           />
@@ -691,7 +711,16 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
 function WorkingTimer({ createdAt }: { createdAt: string }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const initialText = formatWorkingTimerNow(createdAt);
+  useWorkingTimerText(textRef, createdAt);
 
+  return (
+    <span ref={textRef} className="tabular-nums">
+      {initialText}
+    </span>
+  );
+}
+
+function useWorkingTimerText(textRef: React.RefObject<HTMLSpanElement | null>, createdAt: string) {
   useEffect(() => {
     const updateText = () => {
       if (textRef.current) {
@@ -701,13 +730,7 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
     updateText();
     const id = setInterval(updateText, 1000);
     return () => clearInterval(id);
-  }, [createdAt]);
-
-  return (
-    <span ref={textRef} className="tabular-nums">
-      {initialText}
-    </span>
-  );
+  }, [createdAt, textRef]);
 }
 
 // ---------------------------------------------------------------------------
@@ -717,14 +740,15 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
 
 /** Collapsed state shows the earliest chunk so "Show more" only appends rows downward. */
 const WorkGroupSection = memo(function WorkGroupSection({
-  groupedEntries,
+  row,
 }: {
-  groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
+  row: Extract<MessagesTimelineRow, { kind: "work" }>;
 }) {
   const { workspaceRoot } = use(TimelineRowCtx);
   const [isExpanded, setIsExpanded] = useState(false);
   const sectionRef = useRef<HTMLElement>(null);
   const anchorBottomBeforeToggleRef = useRef<number | null>(null);
+  const { groupedEntries, turnInProgress } = row;
   const nonEmptyEntries = useMemo(
     () => groupedEntries.filter((entry) => !workEntryIndicatesToolNeutralStatus(entry)),
     [groupedEntries],
@@ -742,31 +766,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
       : `${nonEmptyEntries.length} tool calls`
     : "Work Log";
 
-  useLayoutEffect(() => {
-    const anchorBottomBeforeToggle = anchorBottomBeforeToggleRef.current;
-    anchorBottomBeforeToggleRef.current = null;
-
-    if (anchorBottomBeforeToggle === null) {
-      return;
-    }
-
-    const section = sectionRef.current;
-    if (!section) {
-      return;
-    }
-
-    const delta = section.getBoundingClientRect().bottom - anchorBottomBeforeToggle;
-    if (Math.abs(delta) < 0.5) {
-      return;
-    }
-
-    const scroller = findNearestVerticalScroller(section);
-    if (scroller) {
-      scroller.scrollTop += delta;
-    } else {
-      window.scrollBy(0, delta);
-    }
-  }, [isExpanded]);
+  usePreserveWorkGroupAnchorOnExpand(isExpanded, sectionRef, anchorBottomBeforeToggleRef);
 
   const toggleExpanded = () => {
     anchorBottomBeforeToggleRef.current =
@@ -788,6 +788,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
           <SimpleWorkEntryRow
             key={workEntry.id}
             workEntry={workEntry}
+            turnInProgress={turnInProgress}
             workspaceRoot={workspaceRoot}
           />
         ))}
@@ -817,6 +818,38 @@ const WorkGroupSection = memo(function WorkGroupSection({
     </section>
   );
 });
+
+function usePreserveWorkGroupAnchorOnExpand(
+  isExpanded: boolean,
+  sectionRef: React.RefObject<HTMLElement | null>,
+  anchorBottomBeforeToggleRef: React.RefObject<number | null>,
+) {
+  useLayoutEffect(() => {
+    const anchorBottomBeforeToggle = anchorBottomBeforeToggleRef.current;
+    anchorBottomBeforeToggleRef.current = null;
+
+    if (anchorBottomBeforeToggle === null) {
+      return;
+    }
+
+    const section = sectionRef.current;
+    if (!section) {
+      return;
+    }
+
+    const delta = section.getBoundingClientRect().bottom - anchorBottomBeforeToggle;
+    if (Math.abs(delta) < 0.5) {
+      return;
+    }
+
+    const scroller = findNearestVerticalScroller(section);
+    if (scroller) {
+      scroller.scrollTop += delta;
+    } else {
+      window.scrollBy(0, delta);
+    }
+  }, [anchorBottomBeforeToggleRef, isExpanded, sectionRef]);
+}
 
 function findNearestVerticalScroller(element: HTMLElement): HTMLElement | null {
   let parent = element.parentElement;
@@ -1545,10 +1578,10 @@ const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation(
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
+  turnInProgress: boolean;
   workspaceRoot: string | undefined;
 }) {
-  const { workEntry, workspaceRoot } = props;
-  const activity = use(TimelineRowActivityCtx);
+  const { workEntry, turnInProgress, workspaceRoot } = props;
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
@@ -1583,7 +1616,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
       : "font-medium text-foreground/82";
-  const turnSettled = !activity.activeTurnInProgress;
+  const turnSettled = !turnInProgress;
   const showNeutralIndicator = !turnSettled && workEntryIndicatesToolNeutralStatus(workEntry);
   const showSuccessIndicator =
     workEntryIndicatesToolSuccess(workEntry) ||

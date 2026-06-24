@@ -41,6 +41,7 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       groupedEntries: WorkLogEntry[];
+      turnInProgress: boolean;
     }
   | {
       kind: "turn-fold";
@@ -361,6 +362,9 @@ export function deriveMessagesTimelineRows(input: {
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         groupedEntries,
+        turnInProgress:
+          unsettledTurnId !== null &&
+          groupedEntries.some((entry) => entry.turnId === unsettledTurnId),
       });
       index = cursor - 1;
       continue;
@@ -460,7 +464,10 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return a.proposedPlan === (b as typeof a).proposedPlan;
 
     case "work":
-      return Equal.equals(a.groupedEntries, (b as typeof a).groupedEntries);
+      return (
+        a.turnInProgress === (b as typeof a).turnInProgress &&
+        Equal.equals(a.groupedEntries, (b as typeof a).groupedEntries)
+      );
 
     case "message": {
       const bm = b as typeof a;
