@@ -30,7 +30,7 @@ import {
   resolveCodexRateLimitSnapshotUsageLimits,
   resolveCodexRefreshUsageLimits,
 } from "../codexUsageProbe.ts";
-import type { ProviderUsageStateShape } from "../Services/ProviderUsageState.ts";
+import type { ProviderUsageState } from "../Services/ProviderUsageState.ts";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -489,7 +489,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   > = probeCodexAppServerProvider,
   environment?: NodeJS.ProcessEnv,
   instanceId?: ProviderInstanceId,
-  providerUsageState?: ProviderUsageStateShape,
+  providerUsageState?: ProviderUsageState["Service"],
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,

@@ -16,10 +16,7 @@ import { parseClaudeRuntimeUsageLimits } from "../claudeUsageProbe.ts";
 import { parseCodexRuntimeUsageLimits } from "../codexUsageProbe.ts";
 import { mergeProviderUsageLimits } from "../providerUsageLimits.ts";
 import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
-import {
-  ProviderUsageState,
-  type ProviderUsageStateShape,
-} from "../Services/ProviderUsageState.ts";
+import { ProviderUsageState } from "../Services/ProviderUsageState.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
 
 const CLAUDE_DRIVER = ProviderDriverKindSchema.make("claudeAgent");
@@ -102,7 +99,7 @@ export const ProviderUsageStateLive = Layer.effect(
             ),
           );
 
-    const service: ProviderUsageStateShape = {
+    const service: ProviderUsageState["Service"] = {
       get: (provider, providerInstanceId) =>
         Ref.get(stateRef).pipe(
           Effect.map((state) => {

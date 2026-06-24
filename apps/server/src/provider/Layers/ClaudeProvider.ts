@@ -42,7 +42,7 @@ import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { probeClaudeUsageLimits } from "../claudeUsageProbe.ts";
 import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
-import type { ProviderUsageStateShape } from "../Services/ProviderUsageState.ts";
+import type { ProviderUsageState } from "../Services/ProviderUsageState.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -629,7 +629,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   environment?: NodeJS.ProcessEnv,
   ptyAdapter?: PtyAdapter.PtyAdapter["Service"],
   instanceId?: ProviderInstanceId,
-  providerUsageState?: ProviderUsageStateShape,
+  providerUsageState?: ProviderUsageState["Service"],
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
