@@ -6,13 +6,13 @@ packages:
   - scripts
 
 catalog:
-  "@clerk/backend": 3.8.2-snapshot.v20260619001138
-  "@clerk/clerk-js": 6.18.2-snapshot.v20260619001138
-  "@clerk/electron": 0.0.1-snapshot.v20260619001138
-  "@clerk/electron-passkeys": 0.0.1-snapshot.v20260619001138
-  "@clerk/expo": 3.4.8-snapshot.v20260619001138
-  "@clerk/react": 6.10.4-snapshot.v20260619001138
-  "@clerk/shared": 4.19.2-snapshot.v20260619001138
+  "@clerk/backend": 3.8.3-snapshot.v20260622234151
+  "@clerk/clerk-js": 6.21.0-snapshot.v20260622234151
+  "@clerk/electron": 0.0.2-snapshot.v20260622234151
+  "@clerk/electron-passkeys": 0.0.2-snapshot.v20260622234151
+  "@clerk/expo": 3.5.3-snapshot.v20260622234151
+  "@clerk/react": 6.11.0-snapshot.v20260622234151
+  "@clerk/shared": 4.21.0-snapshot.v20260622234151
   "@effect/atom-react": 4.0.0-beta.78
   "@effect/openapi-generator": 4.0.0-beta.78
   "@effect/platform-bun": 4.0.0-beta.78

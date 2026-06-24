@@ -30,7 +30,9 @@ import {
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
 import { buildThreadRoutePath } from "../../lib/routes";
+import { scopedProjectKey } from "../../lib/scopedEntities";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
+import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
 import { useProjects } from "../../state/entities";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useCreateProjectThread } from "./use-project-actions";
@@ -63,6 +65,7 @@ export function NewTaskDraftScreen(props: {
   const controlsBottomPadding = isKeyboardVisible ? 8 : Math.max(insets.bottom, 10);
   const { logicalProjects, selectedProject, setProject } = flow;
   const promptInputRef = useRef<ComposerEditorHandle>(null);
+  const loadedBranchesProjectKeyRef = useRef<string | null>(null);
 
   const borderColor = useThemeColor("--color-border");
   const sheetFadeOpaque = colorScheme === "dark" ? "rgba(14,14,14,0.98)" : "rgba(242,242,247,0.98)";
@@ -78,6 +81,12 @@ export function NewTaskDraftScreen(props: {
         ) ?? null;
 
       if (directProject) {
+        if (
+          selectedProject?.environmentId === directProject.environmentId &&
+          selectedProject.id === directProject.id
+        ) {
+          return;
+        }
         setProject(directProject);
         return;
       }
@@ -105,10 +114,16 @@ export function NewTaskDraftScreen(props: {
 
   useEffect(() => {
     if (!selectedProject) {
+      loadedBranchesProjectKeyRef.current = null;
       return;
     }
+    const projectKey = `${selectedProject.environmentId}:${selectedProject.id}`;
+    if (loadedBranchesProjectKeyRef.current === projectKey) {
+      return;
+    }
+    loadedBranchesProjectKeyRef.current = projectKey;
     void flow.loadBranches();
-  }, [flow, selectedProject]);
+  }, [flow.loadBranches, selectedProject]);
 
   useEffect(() => {
     if (!selectedProject) {
@@ -292,11 +307,7 @@ export function NewTaskDraftScreen(props: {
     if (!event.startsWith("model:")) {
       return;
     }
-    // Defer state update so the native menu dismiss animation completes
-    // before re-rendering the menu actions (prevents submenu jump).
-    setTimeout(() => {
-      flow.setSelectedModelKey(event.slice("model:".length));
-    }, 150);
+    flow.setSelectedModelKey(event.slice("model:".length));
   }
 
   function handleEnvironmentMenuAction(event: string) {
@@ -366,27 +377,42 @@ export function NewTaskDraftScreen(props: {
   );
 
   async function handleStart(): Promise<void> {
+    const selectedProject = flow.selectedProject;
+    if (!selectedProject) {
+      return;
+    }
+    const draft = getComposerDraftSnapshot(
+      `new-task:${scopedProjectKey(selectedProject.environmentId, selectedProject.id)}`,
+    );
+    const modelSelection = draft.modelSelection ?? flow.selectedModel;
+    const workspaceMode = draft.workspaceSelection?.mode ?? flow.workspaceMode;
+    const selectedBranchName = draft.workspaceSelection?.branch ?? flow.selectedBranchName;
+    const selectedWorktreePath =
+      draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath;
+    const runtimeMode = draft.runtimeMode ?? flow.runtimeMode;
+    const interactionMode = draft.interactionMode ?? flow.interactionMode;
+    const initialMessageText = draft.text.trim();
+
     if (
-      !flow.selectedProject ||
-      !flow.selectedModel ||
-      flow.prompt.trim().length === 0 ||
+      !modelSelection ||
+      initialMessageText.length === 0 ||
       flow.submitting ||
-      (flow.workspaceMode === "worktree" && !flow.selectedBranchName)
+      (workspaceMode === "worktree" && !selectedBranchName)
     ) {
       return;
     }
 
     flow.setSubmitting(true);
     const result = await createProjectThread({
-      project: flow.selectedProject,
-      modelSelection: flow.selectedModel,
-      envMode: flow.workspaceMode,
-      branch: flow.selectedBranchName,
-      worktreePath: flow.workspaceMode === "worktree" ? null : flow.selectedWorktreePath,
-      runtimeMode: flow.runtimeMode,
-      interactionMode: flow.interactionMode,
-      initialMessageText: flow.prompt.trim(),
-      initialAttachments: flow.attachments,
+      project: selectedProject,
+      modelSelection,
+      envMode: workspaceMode,
+      branch: selectedBranchName,
+      worktreePath: workspaceMode === "worktree" ? null : selectedWorktreePath,
+      runtimeMode,
+      interactionMode,
+      initialMessageText,
+      initialAttachments: draft.attachments,
     });
     flow.setSubmitting(false);
 

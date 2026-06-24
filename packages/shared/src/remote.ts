@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 const PAIRING_TOKEN_PARAM = "token";
 const HOSTED_PAIRING_HOST_PARAM = "host";
 const HOSTED_PAIRING_LABEL_PARAM = "label";
+const SUPPORTED_REMOTE_BACKEND_PROTOCOLS = new Set(["http:", "https:", "ws:", "wss:"]);
 
 const readHashParams = (url: URL): URLSearchParams =>
   new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
@@ -18,7 +19,10 @@ export class RemoteBackendUrlMissingError extends Schema.TaggedErrorClass<Remote
 
 export class RemotePairingUrlInvalidError extends Schema.TaggedErrorClass<RemotePairingUrlInvalidError>()(
   "RemotePairingUrlInvalidError",
-  { cause: Schema.Defect() },
+  {
+    cause: Schema.optional(Schema.Defect()),
+    protocol: Schema.optional(Schema.String),
+  },
 ) {
   override get message(): string {
     return "Pairing URL is invalid.";
@@ -29,7 +33,8 @@ export class RemoteBackendUrlInvalidError extends Schema.TaggedErrorClass<Remote
   "RemoteBackendUrlInvalidError",
   {
     source: Schema.Literals(["direct-host", "hosted-pairing-host"]),
-    cause: Schema.Defect(),
+    cause: Schema.optional(Schema.Defect()),
+    protocol: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
@@ -64,6 +69,9 @@ export const RemotePairingTargetError = Schema.Union([
 ]);
 export type RemotePairingTargetError = typeof RemotePairingTargetError.Type;
 
+const hasSupportedRemoteBackendProtocol = (url: URL): boolean =>
+  SUPPORTED_REMOTE_BACKEND_PROTOCOLS.has(url.protocol);
+
 const normalizeRemoteBaseUrl = (
   rawValue: string,
   source: RemoteBackendUrlInvalidError["source"],
@@ -82,6 +90,12 @@ const normalizeRemoteBaseUrl = (
     url = new URL(normalizedInput);
   } catch (cause) {
     throw new RemoteBackendUrlInvalidError({ source, cause });
+  }
+  if (!hasSupportedRemoteBackendProtocol(url)) {
+    throw new RemoteBackendUrlInvalidError({
+      source,
+      protocol: url.protocol,
+    });
   }
   url.pathname = "/";
   url.search = "";
@@ -183,6 +197,11 @@ export const resolveRemotePairingTarget = (input: {
       url = new URL(pairingUrl);
     } catch (cause) {
       throw new RemotePairingUrlInvalidError({ cause });
+    }
+    if (!hasSupportedRemoteBackendProtocol(url)) {
+      throw new RemotePairingUrlInvalidError({
+        protocol: url.protocol,
+      });
     }
     const hostedPairingRequest = readHostedPairingRequest(url);
     if (hostedPairingRequest) {
