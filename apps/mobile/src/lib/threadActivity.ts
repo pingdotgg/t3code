@@ -1,6 +1,5 @@
 import { ApprovalRequestId, isToolLifecycleItemType } from "@t3tools/contracts";
 import type {
-  MessageId,
   OrchestrationLatestTurn,
   OrchestrationThread,
   OrchestrationThreadActivity,
@@ -10,7 +9,6 @@ import type {
 } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
-import type { QueuedThreadMessage } from "../state/thread-outbox-model";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
@@ -89,13 +87,6 @@ type RawThreadFeedEntry =
       readonly message: OrchestrationThread["messages"][number];
     }
   | {
-      readonly type: "queued-message";
-      readonly id: string;
-      readonly createdAt: string;
-      readonly queuedMessage: QueuedThreadMessage;
-      readonly sending: boolean;
-    }
-  | {
       readonly type: "activity";
       readonly id: string;
       readonly createdAt: string;
@@ -104,7 +95,7 @@ type RawThreadFeedEntry =
     };
 
 export type ThreadFeedEntry =
-  | Extract<RawThreadFeedEntry, { type: "message" | "queued-message" }>
+  | Extract<RawThreadFeedEntry, { type: "message" }>
   | {
       readonly type: "activity-group";
       readonly id: string;
@@ -1255,8 +1246,6 @@ export function buildPendingUserInputAnswers(
 
 export function buildThreadFeed(
   thread: OrchestrationThread,
-  queuedMessages: ReadonlyArray<QueuedThreadMessage>,
-  dispatchingQueuedMessageId: MessageId | null,
   options?: {
     readonly loadedMessages?: ReadonlyArray<OrchestrationThread["messages"][number]>;
   },
@@ -1272,13 +1261,6 @@ export function buildThreadFeed(
         id: message.id,
         createdAt: message.createdAt,
         message,
-      })),
-      ...queuedMessages.map<RawThreadFeedEntry>((queuedMessage) => ({
-        type: "queued-message",
-        id: queuedMessage.messageId,
-        createdAt: queuedMessage.createdAt,
-        queuedMessage,
-        sending: queuedMessage.messageId === dispatchingQueuedMessageId,
       })),
       ...workLogEntries
         .filter((entry) => {

@@ -86,7 +86,7 @@ describe("buildThreadFeed", () => {
       ],
     });
 
-    const feed = buildThreadFeed(thread, [], null);
+    const feed = buildThreadFeed(thread);
     expect(feed).toMatchObject([
       {
         type: "activity-group",
@@ -144,7 +144,7 @@ describe("buildThreadFeed", () => {
       ],
     });
 
-    const feed = buildThreadFeed(thread, [], null);
+    const feed = buildThreadFeed(thread);
     const group = feed[0];
 
     expect(group).toMatchObject({
@@ -209,7 +209,7 @@ describe("buildThreadFeed", () => {
       ],
     });
 
-    const group = buildThreadFeed(thread, [], null)[0];
+    const group = buildThreadFeed(thread)[0];
     expect(group).toMatchObject({ type: "activity-group" });
     if (!group || group.type !== "activity-group") {
       return;
@@ -271,7 +271,7 @@ describe("buildThreadFeed", () => {
       ],
     });
 
-    const feed = buildThreadFeed(thread, [], null);
+    const feed = buildThreadFeed(thread);
     const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
     expect(collapsed.map((entry) => entry.id)).toEqual(["turn-fold:turn-1", "assistant-final"]);
     expect(collapsed[0]).toMatchObject({
@@ -359,7 +359,7 @@ describe("buildThreadFeed", () => {
       ],
     });
 
-    const feed = buildThreadFeed(thread, [], null);
+    const feed = buildThreadFeed(thread);
     const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
     expect(collapsed.find((entry) => entry.type === "turn-fold")).toMatchObject({
       turnId: firstTurnId,
@@ -399,7 +399,7 @@ describe("buildThreadFeed", () => {
       ],
     });
 
-    const feed = buildThreadFeed(thread, [], null);
+    const feed = buildThreadFeed(thread);
     expect(deriveThreadFeedPresentation(feed, thread.latestTurn, new Set())).toEqual(feed);
     expect(feed[0]).toMatchObject({
       type: "activity-group",

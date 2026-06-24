@@ -40,7 +40,6 @@ import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
-import { dispatchingQueuedMessageIdAtom } from "./use-thread-outbox-drain";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -77,7 +76,6 @@ export function useThreadComposerState() {
   const { selectedThread: selectedThreadShell } = useThreadSelection();
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
-  const dispatchingQueuedMessageId = useAtomValue(dispatchingQueuedMessageIdAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
 
   useEffect(() => {
@@ -91,17 +89,9 @@ export function useThreadComposerState() {
     () => (selectedThreadKey ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []) : []),
     [queuedMessagesByThreadKey, selectedThreadKey],
   );
-
   const selectedThreadFeed = useMemo(
-    () =>
-      selectedThreadDetail
-        ? buildThreadFeed(
-            selectedThreadDetail,
-            selectedThreadQueuedMessages,
-            dispatchingQueuedMessageId,
-          )
-        : [],
-    [dispatchingQueuedMessageId, selectedThreadDetail, selectedThreadQueuedMessages],
+    () => (selectedThreadDetail ? buildThreadFeed(selectedThreadDetail) : []),
+    [selectedThreadDetail],
   );
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
@@ -125,7 +115,6 @@ export function useThreadComposerState() {
     };
   }, [selectedThreadDetail, selectedThreadShell]);
 
-  const queuedSendStartedAt = selectedThreadQueuedMessages[0]?.createdAt ?? null;
   const activeWorkStartedAt = useMemo(() => {
     const selectedThread = selectedThreadDetail ?? selectedThreadShell;
     if (!selectedThread) {
@@ -135,14 +124,9 @@ export function useThreadComposerState() {
     return deriveActiveWorkStartedAt(
       selectedThread.latestTurn,
       selectedThreadSessionActivity,
-      queuedSendStartedAt,
+      null,
     );
-  }, [
-    queuedSendStartedAt,
-    selectedThreadDetail,
-    selectedThreadSessionActivity,
-    selectedThreadShell,
-  ]);
+  }, [selectedThreadDetail, selectedThreadSessionActivity, selectedThreadShell]);
 
   const activeThreadBusy =
     !!selectedThread &&
@@ -150,7 +134,7 @@ export function useThreadComposerState() {
 
   const onSendMessage = useCallback(async () => {
     if (!selectedThreadShell) {
-      return;
+      return null;
     }
 
     const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
@@ -159,15 +143,16 @@ export function useThreadComposerState() {
     const text = draft.text.trim();
     const attachments = draft.attachments;
     if (text.length === 0 && attachments.length === 0) {
-      return;
+      return null;
     }
 
     const metadata = makeQueuedMessageMetadata();
+    const messageId = MessageId.make(metadata.messageId);
     try {
       await enqueueThreadOutboxMessage({
         environmentId: selectedThreadShell.environmentId,
         threadId: selectedThreadShell.id,
-        messageId: MessageId.make(metadata.messageId),
+        messageId,
         commandId: CommandId.make(metadata.commandId),
         text,
         attachments,
@@ -177,10 +162,12 @@ export function useThreadComposerState() {
         createdAt: metadata.createdAt,
       });
       clearComposerDraftContent(threadKey);
+      return messageId;
     } catch (error) {
       setPendingConnectionError(
         error instanceof Error ? error.message : "Failed to save the queued message.",
       );
+      return null;
     }
   }, [selectedThreadDetail, selectedThreadShell]);
 
