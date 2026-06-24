@@ -8,11 +8,12 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useMemo } from "react";
-import { Alert, Linking, Pressable, ScrollView, View } from "react-native";
+import { Alert, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../../lib/useThemeColor";
 
 import { AppText as Text } from "../../../components/AppText";
+import { tryOpenExternalUrl } from "../../../lib/openExternalUrl";
 import { buildThreadReviewRoutePath } from "../../../lib/routes";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
@@ -83,13 +84,8 @@ export function GitOverviewSheet() {
       Alert.alert("No open PR", "This branch does not have an open pull request.");
       return;
     }
-    try {
-      await Linking.openURL(prUrl);
-    } catch (error) {
-      Alert.alert(
-        "Unable to open PR",
-        error instanceof Error ? error.message : "An error occurred.",
-      );
+    if (!(await tryOpenExternalUrl(prUrl, "pull-request"))) {
+      Alert.alert("Unable to open PR", "The pull request could not be opened.");
     }
   }, [gitStatus.data]);
 
@@ -175,13 +171,13 @@ export function GitOverviewSheet() {
           />
         </Pressable>
         <Text
-          className="text-[12px] font-t3-bold uppercase text-foreground-muted"
+          className="text-xs font-t3-bold uppercase text-foreground-muted"
           style={{ letterSpacing: 1 }}
         >
           Branch
         </Text>
-        <Text className="text-[28px] font-t3-bold">{currentBranchLabel}</Text>
-        <Text className="text-foreground-secondary text-[13px] font-medium leading-[19px]">
+        <Text className="text-3xl font-t3-bold">{currentBranchLabel}</Text>
+        <Text className="text-foreground-secondary text-sm font-medium leading-[19px]">
           {statusSummary(gitStatus.data)}
         </Text>
       </View>

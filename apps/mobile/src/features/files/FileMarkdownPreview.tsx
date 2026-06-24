@@ -1,12 +1,14 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import {
   Markdown,
   type CustomRenderers,
   type NodeStyleOverrides,
   type PartialMarkdownTheme,
 } from "react-native-nitro-markdown";
-import { Linking, ScrollView, Text as NativeText, View } from "react-native";
+import { ScrollView, Text as NativeText, View } from "react-native";
 
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useThemeColor } from "../../lib/useThemeColor";
 import {
   hasNativeSelectableMarkdownText,
@@ -37,7 +39,7 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
         <NativeText
           onPress={() => {
             if (href) {
-              void Linking.openURL(href);
+              void tryOpenExternalUrl(href, "markdown-link");
             }
           }}
           style={{
@@ -72,8 +74,7 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
         text: {
           color: body,
           fontFamily: "DMSans_400Regular",
-          fontSize: 15,
-          lineHeight: 22,
+          ...MOBILE_TYPOGRAPHY.body,
         },
         heading: {
           color: strong,
@@ -123,8 +124,7 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
         skillTextColor: codeText,
         quoteMarkerColor: blockquoteBorder,
         dividerColor: horizontalRule,
-        fontSize: 15,
-        lineHeight: 22,
+        ...MOBILE_TYPOGRAPHY.body,
         fontFamily: "DMSans_400Regular",
         headingFontFamily: "DMSans_700Bold",
         boldFontFamily: "DMSans_700Bold",
@@ -144,12 +144,19 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
 
 export function FileMarkdownPreview(props: { readonly markdown: string }) {
   const styles = useMarkdownPreviewStyles();
+  const onLinkPress = useCallback((href: string) => {
+    void tryOpenExternalUrl(href, "markdown-link");
+  }, []);
 
   return (
     <ScrollView className="flex-1 bg-card" contentContainerStyle={{ padding: 18 }}>
       <View className="mx-auto w-full max-w-[760px]">
         {hasNativeSelectableMarkdownText() ? (
-          <SelectableMarkdownText markdown={props.markdown} textStyle={styles.nativeTextStyle} />
+          <SelectableMarkdownText
+            markdown={props.markdown}
+            onLinkPress={onLinkPress}
+            textStyle={styles.nativeTextStyle}
+          />
         ) : (
           <Markdown
             options={{ gfm: true }}

@@ -28,83 +28,71 @@ import {
   type VcsStatusResult,
 } from "@t3tools/contracts";
 
-import { GitManager, type GitRunStackedActionOptions } from "./GitManager.ts";
-import { GitVcsDriver, type GitRemoteStatusOptions } from "../vcs/GitVcsDriver.ts";
-import { VcsDriverRegistry } from "../vcs/VcsDriverRegistry.ts";
-
-export interface GitWorkflowServiceShape {
-  readonly status: (
-    input: VcsStatusInput,
-  ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
-  readonly localStatus: (
-    input: VcsStatusInput,
-  ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
-  readonly remoteStatus: (
-    input: VcsStatusInput,
-    options?: GitRemoteStatusOptions,
-  ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
-  readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
-  readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
-  readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
-  readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
-  readonly runStackedAction: (
-    input: GitRunStackedActionInput,
-    options?: GitRunStackedActionOptions,
-  ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
-  readonly resolvePullRequest: (
-    input: GitPullRequestRefInput,
-  ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
-  readonly preparePullRequestThread: (
-    input: GitPreparePullRequestThreadInput,
-  ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
-  readonly listRefs: (input: VcsListRefsInput) => Effect.Effect<VcsListRefsResult, GitCommandError>;
-  readonly createWorktree: (
-    input: VcsCreateWorktreeInput,
-  ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
-  readonly fetchRemote: (input: {
-    readonly cwd: string;
-    readonly remoteName: string;
-  }) => Effect.Effect<void, GitCommandError>;
-  readonly resolveRemoteTrackingCommit: (input: {
-    readonly cwd: string;
-    readonly refName: string;
-    readonly fallbackRemoteName: string;
-  }) => Effect.Effect<
-    { readonly commitSha: string; readonly remoteRefName: string },
-    GitCommandError
-  >;
-  readonly removeWorktree: (input: VcsRemoveWorktreeInput) => Effect.Effect<void, GitCommandError>;
-  readonly createRef: (
-    input: VcsCreateRefInput,
-  ) => Effect.Effect<VcsCreateRefResult, GitCommandError>;
-  readonly switchRef: (
-    input: VcsSwitchRefInput,
-  ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
-  readonly renameBranch: (input: {
-    readonly cwd: string;
-    readonly oldBranch: string;
-    readonly newBranch: string;
-  }) => Effect.Effect<{ readonly branch: string }, GitManagerServiceError>;
-}
+import * as GitManager from "./GitManager.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
 export class GitWorkflowService extends Context.Service<
   GitWorkflowService,
-  GitWorkflowServiceShape
+  {
+    readonly status: (
+      input: VcsStatusInput,
+    ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
+    readonly localStatus: (
+      input: VcsStatusInput,
+    ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
+    readonly remoteStatus: (
+      input: VcsStatusInput,
+      options?: GitVcsDriver.GitRemoteStatusOptions,
+    ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
+    readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
+    readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
+    readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
+    readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
+    readonly runStackedAction: (
+      input: GitRunStackedActionInput,
+      options?: GitManager.GitRunStackedActionOptions,
+    ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
+    readonly resolvePullRequest: (
+      input: GitPullRequestRefInput,
+    ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
+    readonly preparePullRequestThread: (
+      input: GitPreparePullRequestThreadInput,
+    ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
+    readonly listRefs: (
+      input: VcsListRefsInput,
+    ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
+    readonly createWorktree: (
+      input: VcsCreateWorktreeInput,
+    ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
+    readonly fetchRemote: (input: {
+      readonly cwd: string;
+      readonly remoteName: string;
+    }) => Effect.Effect<void, GitCommandError>;
+    readonly resolveRemoteTrackingCommit: (input: {
+      readonly cwd: string;
+      readonly refName: string;
+      readonly fallbackRemoteName: string;
+    }) => Effect.Effect<
+      { readonly commitSha: string; readonly remoteRefName: string },
+      GitCommandError
+    >;
+    readonly removeWorktree: (
+      input: VcsRemoveWorktreeInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly createRef: (
+      input: VcsCreateRefInput,
+    ) => Effect.Effect<VcsCreateRefResult, GitCommandError>;
+    readonly switchRef: (
+      input: VcsSwitchRefInput,
+    ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
+    readonly renameBranch: (input: {
+      readonly cwd: string;
+      readonly oldBranch: string;
+      readonly newBranch: string;
+    }) => Effect.Effect<{ readonly branch: string }, GitManagerServiceError>;
+  }
 >()("t3/git/GitWorkflowService") {}
-
-const unsupportedGitWorkflow = (operation: string, cwd: string, detail: string) =>
-  new GitManagerError({
-    operation,
-    detail: `${detail} (${cwd})`,
-  });
-
-const unsupportedGitCommand = (operation: string, cwd: string, detail: string) =>
-  new GitCommandError({
-    operation,
-    command: "vcs-route",
-    cwd,
-    detail,
-  });
 
 function nonRepositoryLocalStatus(): VcsStatusLocalResult {
   return {
@@ -142,32 +130,32 @@ function nonRepositoryListRefs(): VcsListRefsResult {
   };
 }
 
-export const make = Effect.fn("makeGitWorkflowService")(function* () {
-  const registry = yield* VcsDriverRegistry;
-  const git = yield* GitVcsDriver;
-  const gitManager = yield* GitManager;
+export const make = Effect.gen(function* () {
+  const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const gitManager = yield* GitManager.GitManager;
 
   const ensureGit = Effect.fn("GitWorkflowService.ensureGit")(function* (
     operation: string,
     cwd: string,
   ) {
-    const handle = yield* registry
-      .resolve({ cwd })
-      .pipe(
-        Effect.mapError((error) =>
-          unsupportedGitWorkflow(
+    const handle = yield* registry.resolve({ cwd }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitManagerError({
             operation,
             cwd,
-            error instanceof Error ? error.message : String(error),
-          ),
-        ),
-      );
+            detail: "Failed to resolve the VCS driver for this Git workflow.",
+            cause,
+          }),
+      ),
+    );
     if (handle.kind !== "git") {
-      return yield* unsupportedGitWorkflow(
+      return yield* new GitManagerError({
         operation,
         cwd,
-        `The ${operation} workflow currently supports Git repositories only; detected ${handle.kind}.`,
-      );
+        detail: `The ${operation} workflow currently supports Git repositories only; detected ${handle.kind}. (${cwd})`,
+      });
     }
   });
 
@@ -175,48 +163,50 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
     operation: string,
     cwd: string,
   ) {
-    const handle = yield* registry
-      .resolve({ cwd })
-      .pipe(
-        Effect.mapError((error) =>
-          unsupportedGitCommand(
+    const handle = yield* registry.resolve({ cwd }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitCommandError({
             operation,
+            command: "vcs-route",
             cwd,
-            error instanceof Error ? error.message : String(error),
-          ),
-        ),
-      );
+            detail: "Failed to resolve the VCS driver for this Git command.",
+            cause,
+          }),
+      ),
+    );
     if (handle.kind !== "git") {
-      return yield* unsupportedGitCommand(
+      return yield* new GitCommandError({
         operation,
+        command: "vcs-route",
         cwd,
-        `The ${operation} command currently supports Git repositories only; detected ${handle.kind}.`,
-      );
+        detail: `The ${operation} command currently supports Git repositories only; detected ${handle.kind}.`,
+      });
     }
   });
 
   const detectGitRepositoryForStatus = Effect.fn("GitWorkflowService.detectGitRepositoryForStatus")(
     function* (operation: string, cwd: string) {
-      const handle = yield* registry
-        .detect({ cwd })
-        .pipe(
-          Effect.mapError((error) =>
-            unsupportedGitWorkflow(
+      const handle = yield* registry.detect({ cwd }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
               operation,
               cwd,
-              error instanceof Error ? error.message : String(error),
-            ),
-          ),
-        );
+              detail: "Failed to detect a VCS repository for this Git workflow.",
+              cause,
+            }),
+        ),
+      );
       if (!handle) {
         return false;
       }
       if (handle.kind !== "git") {
-        return yield* unsupportedGitWorkflow(
+        return yield* new GitManagerError({
           operation,
           cwd,
-          `The ${operation} workflow currently supports Git repositories only; detected ${handle.kind}.`,
-        );
+          detail: `The ${operation} workflow currently supports Git repositories only; detected ${handle.kind}. (${cwd})`,
+        });
       }
       return true;
     },
@@ -225,26 +215,28 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
   const detectGitRepositoryForCommand = Effect.fn(
     "GitWorkflowService.detectGitRepositoryForCommand",
   )(function* (operation: string, cwd: string) {
-    const handle = yield* registry
-      .detect({ cwd })
-      .pipe(
-        Effect.mapError((error) =>
-          unsupportedGitCommand(
+    const handle = yield* registry.detect({ cwd }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitCommandError({
             operation,
+            command: "vcs-route",
             cwd,
-            error instanceof Error ? error.message : String(error),
-          ),
-        ),
-      );
+            detail: "Failed to detect a VCS repository for this Git command.",
+            cause,
+          }),
+      ),
+    );
     if (!handle) {
       return false;
     }
     if (handle.kind !== "git") {
-      return yield* unsupportedGitCommand(
+      return yield* new GitCommandError({
         operation,
+        command: "vcs-route",
         cwd,
-        `The ${operation} command currently supports Git repositories only; detected ${handle.kind}.`,
-      );
+        detail: `The ${operation} command currently supports Git repositories only; detected ${handle.kind}.`,
+      });
     }
     return true;
   });
@@ -334,4 +326,4 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
   });
 });
 
-export const layer = Layer.effect(GitWorkflowService, make());
+export const layer = Layer.effect(GitWorkflowService, make);

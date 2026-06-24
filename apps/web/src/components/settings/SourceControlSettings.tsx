@@ -12,7 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
-import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
+import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
@@ -291,8 +291,10 @@ function DiscoveryItemRow({
 }
 
 function GitFetchIntervalSettings() {
-  const automaticGitFetchInterval = useSettings((settings) => settings.automaticGitFetchInterval);
-  const updateSettings = useUpdateSettings();
+  const automaticGitFetchInterval = usePrimarySettings(
+    (settings) => settings.automaticGitFetchInterval,
+  );
+  const updateSettings = useUpdatePrimarySettings();
   const automaticGitFetchIntervalSeconds = durationToSeconds(automaticGitFetchInterval);
   const defaultAutomaticGitFetchIntervalSeconds = durationToSeconds(
     DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,

@@ -148,7 +148,7 @@ export const T3ChatDriver: ProviderDriver<T3ChatSettings, T3ChatDriverEnv> = {
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build T3 Chat snapshot: ${cause.detail ?? cause.message ?? String(cause)}`,
+              detail: `Failed to build T3 Chat snapshot: ${cause.message ?? String(cause)}`,
               cause,
             }),
         ),

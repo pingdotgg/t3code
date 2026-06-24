@@ -90,15 +90,15 @@ export function GitConfirmSheet() {
 
       <View className="items-center gap-1 px-5 pb-3 pt-4">
         <Text
-          className="text-[12px] font-t3-bold uppercase text-foreground-muted"
+          className="text-xs font-t3-bold uppercase text-foreground-muted"
           style={{ letterSpacing: 1 }}
         >
           Confirm
         </Text>
-        <Text className="text-center text-[28px] font-t3-bold">
+        <Text className="text-center text-3xl font-t3-bold">
           {copy?.title ?? "Run action on default branch?"}
         </Text>
-        <Text className="text-center text-foreground-secondary text-[13px] font-medium leading-[19px]">
+        <Text className="text-center text-foreground-secondary text-sm font-medium leading-[19px]">
           {copy?.description ?? "Choose how to continue."}
         </Text>
       </View>

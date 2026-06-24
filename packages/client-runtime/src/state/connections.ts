@@ -5,10 +5,10 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
-import { EnvironmentRegistry, type EnvironmentRegistryService } from "../connection/registry.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
   createAtomCommandScheduler,
   createRuntimeCommand,
@@ -26,13 +26,13 @@ export const EMPTY_ENVIRONMENT_CATALOG_STATE: EnvironmentCatalogState = Object.f
 });
 
 export function createEnvironmentCatalogAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
 ) {
   const commandScheduler = createAtomCommandScheduler();
   const serial = { mode: "serial" as const, key: () => "environment-catalog" };
   const catalogAtom = runtime.atom(
     Stream.unwrap(
-      EnvironmentRegistry.pipe(
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
         Effect.map((registry) =>
           SubscriptionRef.changes(registry.entries).pipe(
             Stream.map((entries) => ({
@@ -52,7 +52,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
 
   const networkStatusAtom = runtime.atom(
     Stream.unwrap(
-      EnvironmentRegistry.pipe(
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
         Effect.map((registry) => SubscriptionRef.changes(registry.networkStatus)),
       ),
     ),
@@ -68,7 +68,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
       followStreamInEnvironment(
         environmentId,
         Stream.unwrap(
-          EnvironmentSupervisor.pipe(
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
             Effect.map((supervisor) => SubscriptionRef.changes(supervisor.state)),
           ),
         ),
@@ -81,29 +81,39 @@ export function createEnvironmentCatalogAtoms<R, E>(
     label: "environment-catalog:register",
     scheduler: commandScheduler,
     concurrency: serial,
-    execute: (target: Parameters<EnvironmentRegistryService["register"]>[0]) =>
-      EnvironmentRegistry.pipe(Effect.flatMap((registry) => registry.register(target))),
+    execute: (
+      target: Parameters<EnvironmentRegistry.EnvironmentRegistry["Service"]["register"]>[0],
+    ) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.register(target)),
+      ),
   });
   const remove = createRuntimeCommand(runtime, {
     label: "environment-catalog:remove",
     scheduler: commandScheduler,
     concurrency: serial,
     execute: (environmentId: EnvironmentIdType) =>
-      EnvironmentRegistry.pipe(Effect.flatMap((registry) => registry.remove(environmentId))),
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.remove(environmentId)),
+      ),
   });
   const removeRelayEnvironments = createRuntimeCommand(runtime, {
     label: "environment-catalog:remove-relay-environments",
     scheduler: commandScheduler,
     concurrency: serial,
     execute: (_input: void) =>
-      EnvironmentRegistry.pipe(Effect.flatMap((registry) => registry.removeRelayEnvironments())),
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.removeRelayEnvironments()),
+      ),
   });
   const retryNow = createRuntimeCommand(runtime, {
     label: "environment-catalog:retry-now",
     scheduler: commandScheduler,
     concurrency: serial,
     execute: (environmentId: EnvironmentIdType) =>
-      EnvironmentRegistry.pipe(Effect.flatMap((registry) => registry.retryNow(environmentId))),
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.retryNow(environmentId)),
+      ),
   });
 
   return {

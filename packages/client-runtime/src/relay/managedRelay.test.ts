@@ -8,31 +8,24 @@ import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 
-import {
-  MANAGED_RELAY_REQUEST_TIMEOUT_MS,
-  ManagedRelayClient,
-  ManagedRelayDpopSigner,
-  managedRelayClientLayer,
-  type ManagedRelayAccessTokenCacheEntry,
-  type ManagedRelayAccessTokenStore,
-  type ManagedRelayDpopProofInput,
-} from "./managedRelay.ts";
+import * as ManagedRelay from "./managedRelay.ts";
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 
 function managedRelayTestLayer(
   fetchFn: typeof globalThis.fetch,
   relayUrl = "https://relay.example.test",
-  accessTokenStore?: ManagedRelayAccessTokenStore,
+  accessTokenStore?: ManagedRelay.ManagedRelayAccessTokenStore,
 ) {
   const httpClientLayer = remoteHttpClientLayer(fetchFn);
   const signerLayer = Layer.succeed(
-    ManagedRelayDpopSigner,
-    ManagedRelayDpopSigner.of({
+    ManagedRelay.ManagedRelayDpopSigner,
+    ManagedRelay.ManagedRelayDpopSigner.of({
       thumbprint: Effect.succeed("client-thumbprint"),
-      createProof: (input: ManagedRelayDpopProofInput) => Effect.succeed(`proof:${input.url}`),
+      createProof: (input: ManagedRelay.ManagedRelayDpopProofInput) =>
+        Effect.succeed(`proof:${input.url}`),
     }),
   );
-  return managedRelayClientLayer({
+  return ManagedRelay.layer({
     relayUrl,
     clientId: "t3-mobile",
     ...(accessTokenStore ? { accessTokenStore } : {}),
@@ -90,7 +83,7 @@ describe("ManagedRelayClient", () => {
     }) satisfies typeof globalThis.fetch;
 
     return Effect.gen(function* () {
-      const relayClient = yield* ManagedRelayClient;
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
       yield* relayClient.getEnvironmentStatus({
         clerkToken: clerkToken("user-1", "session-1"),
         scopes: [RelayEnvironmentStatusScope],
@@ -124,13 +117,14 @@ describe("ManagedRelayClient", () => {
     }) satisfies typeof globalThis.fetch;
 
     return Effect.gen(function* () {
-      const relayClient = yield* ManagedRelayClient;
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
       const error = yield* relayClient
         .listEnvironments({ clerkToken: "clerk-token" })
         .pipe(Effect.flip);
 
       expect(error).toMatchObject({
-        _tag: "ManagedRelayClientError",
+        _tag: "ManagedRelayUrlInvalidError",
+        relayUrl: "http://relay.example.test",
         message: "Relay URL must be a secure absolute HTTPS origin.",
       });
       expect(requestCount).toBe(0);
@@ -175,7 +169,7 @@ describe("ManagedRelayClient", () => {
     }) satisfies typeof globalThis.fetch;
 
     return Effect.gen(function* () {
-      const relayClient = yield* ManagedRelayClient;
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
       const statusInput = {
         clerkToken: clerkToken("user-1", "session-1"),
         scopes: [RelayEnvironmentStatusScope],
@@ -198,8 +192,8 @@ describe("ManagedRelayClient", () => {
 
   it.effect("reuses a persisted token across runtimes and Clerk session token rotation", () => {
     let tokenExchangeCount = 0;
-    let persistedTokens: ReadonlyArray<ManagedRelayAccessTokenCacheEntry> = [];
-    const accessTokenStore: ManagedRelayAccessTokenStore = {
+    let persistedTokens: ReadonlyArray<ManagedRelay.ManagedRelayAccessTokenCacheEntry> = [];
+    const accessTokenStore: ManagedRelay.ManagedRelayAccessTokenStore = {
       load: Effect.sync(() => persistedTokens),
       save: (entries) =>
         Effect.sync(() => {
@@ -252,7 +246,7 @@ describe("ManagedRelayClient", () => {
 
     return Effect.gen(function* () {
       yield* Effect.gen(function* () {
-        const relayClient = yield* ManagedRelayClient;
+        const relayClient = yield* ManagedRelay.ManagedRelayClient;
         yield* relayClient.getEnvironmentStatus(statusInput(clerkToken("user-1", "session-1")));
       }).pipe(Effect.provide(managedRelayTestLayer(fetchFn, undefined, accessTokenStore)));
 
@@ -260,7 +254,7 @@ describe("ManagedRelayClient", () => {
       expect(persistedTokens).toHaveLength(1);
 
       yield* Effect.gen(function* () {
-        const relayClient = yield* ManagedRelayClient;
+        const relayClient = yield* ManagedRelay.ManagedRelayClient;
         yield* relayClient.getEnvironmentStatus(statusInput(clerkToken("user-1", "session-2")));
       }).pipe(Effect.provide(managedRelayTestLayer(fetchFn, undefined, accessTokenStore)));
 
@@ -271,7 +265,7 @@ describe("ManagedRelayClient", () => {
   it.effect("refreshes a persisted DPoP token once when the relay rejects it", () => {
     let tokenExchangeCount = 0;
     const statusTokens: Array<string | null> = [];
-    let persistedTokens: ReadonlyArray<ManagedRelayAccessTokenCacheEntry> = [
+    let persistedTokens: ReadonlyArray<ManagedRelay.ManagedRelayAccessTokenCacheEntry> = [
       {
         accountId: "user-1",
         clientId: "t3-mobile",
@@ -282,7 +276,7 @@ describe("ManagedRelayClient", () => {
         expiresAtMillis: Number.MAX_SAFE_INTEGER,
       },
     ];
-    const accessTokenStore: ManagedRelayAccessTokenStore = {
+    const accessTokenStore: ManagedRelay.ManagedRelayAccessTokenStore = {
       load: Effect.sync(() => persistedTokens),
       save: (entries) =>
         Effect.sync(() => {
@@ -344,7 +338,7 @@ describe("ManagedRelayClient", () => {
     }) satisfies typeof globalThis.fetch;
 
     return Effect.gen(function* () {
-      const relayClient = yield* ManagedRelayClient;
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
       const result = yield* relayClient.getEnvironmentStatus({
         clerkToken: clerkToken("user-1", "session-1"),
         scopes: [RelayEnvironmentStatusScope],
@@ -363,8 +357,8 @@ describe("ManagedRelayClient", () => {
   });
 
   it.effect("does not persist tokens when the Clerk subject cannot be decoded", () => {
-    let persistedTokens: ReadonlyArray<ManagedRelayAccessTokenCacheEntry> = [];
-    const accessTokenStore: ManagedRelayAccessTokenStore = {
+    let persistedTokens: ReadonlyArray<ManagedRelay.ManagedRelayAccessTokenCacheEntry> = [];
+    const accessTokenStore: ManagedRelay.ManagedRelayAccessTokenStore = {
       load: Effect.succeed([]),
       save: (entries) =>
         Effect.sync(() => {
@@ -407,7 +401,7 @@ describe("ManagedRelayClient", () => {
     }) satisfies typeof globalThis.fetch;
 
     return Effect.gen(function* () {
-      const relayClient = yield* ManagedRelayClient;
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
       yield* relayClient.getEnvironmentStatus({
         clerkToken: "not-a-jwt",
         scopes: [RelayEnvironmentStatusScope],
@@ -423,17 +417,19 @@ describe("ManagedRelayClient", () => {
       new Promise<Response>(() => undefined)) satisfies typeof globalThis.fetch;
 
     return Effect.gen(function* () {
-      const relayClient = yield* ManagedRelayClient;
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
       const errorFiber = yield* relayClient
         .listEnvironments({ clerkToken: "clerk-token" })
         .pipe(Effect.flip, Effect.forkScoped);
 
       yield* Effect.yieldNow;
-      yield* TestClock.adjust(Duration.millis(MANAGED_RELAY_REQUEST_TIMEOUT_MS));
+      yield* TestClock.adjust(Duration.millis(ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS));
       const error = yield* Fiber.join(errorFiber);
 
       expect(error).toMatchObject({
-        _tag: "ManagedRelayClientError",
+        _tag: "ManagedRelayRequestTimeoutError",
+        activity: "Relay environment listing",
+        timeoutMs: ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS,
         message: "Relay environment listing timed out.",
       });
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), managedRelayTestLayer(fetchFn))));
@@ -454,13 +450,13 @@ describe("ManagedRelayClient", () => {
       )) satisfies typeof globalThis.fetch;
 
     return Effect.gen(function* () {
-      const relayClient = yield* ManagedRelayClient;
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
       const error = yield* relayClient
         .listEnvironments({ clerkToken: "clerk-token" })
         .pipe(Effect.flip);
 
       expect(error).toMatchObject({
-        _tag: "ManagedRelayClientError",
+        _tag: "ManagedRelayRequestFailedError",
         traceId: "trace-managed-relay",
       });
     }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
@@ -499,7 +495,7 @@ describe("ManagedRelayClient", () => {
     }) satisfies typeof globalThis.fetch;
 
     return Effect.gen(function* () {
-      const relayClient = yield* ManagedRelayClient;
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
       const devices = yield* relayClient.listDevices({ clerkToken: "clerk-token" });
       expect(devices).toMatchObject([
         {

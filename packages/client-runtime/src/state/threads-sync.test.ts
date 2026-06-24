@@ -24,12 +24,9 @@ import {
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "../connection/model.ts";
-import {
-  EnvironmentSupervisor,
-  type EnvironmentSupervisorService,
-} from "../connection/supervisor.ts";
-import { EnvironmentCacheStore } from "../platform/persistence.ts";
-import type { RpcSession } from "../rpc/session.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as Persistence from "../platform/persistence.ts";
+import * as RpcSession from "../rpc/session.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   makeEnvironmentThreadState,
@@ -69,7 +66,7 @@ const BASE_THREAD: OrchestrationThread = {
 
 type TestThreadInput = OrchestrationThreadStreamItem | Error;
 
-function testSession(client: WsRpcProtocolClient): RpcSession {
+function testSession(client: WsRpcProtocolClient): RpcSession.RpcSession {
   return {
     client,
     initialConfig: Effect.never,
@@ -117,11 +114,11 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
         ),
       ),
   } as unknown as WsRpcProtocolClient;
-  const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession>>(
+  const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
     Option.some(testSession(client)),
   );
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none());
-  const supervisor = EnvironmentSupervisor.of({
+  const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,
     state: supervisorState,
     session: supervisorSession,
@@ -129,8 +126,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     connect: Effect.void,
     disconnect: Effect.void,
     retryNow: Ref.update(retryCount, (count) => count + 1),
-  } satisfies EnvironmentSupervisorService);
-  const cache = EnvironmentCacheStore.of({
+  } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+  const cache = Persistence.EnvironmentCacheStore.of({
     loadShell: () => Effect.succeed(Option.none()),
     saveShell: () => Effect.void,
     loadThread: (_environmentId, threadId) =>
@@ -146,8 +143,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     clear: () => Effect.void,
   });
   const threadState = yield* makeEnvironmentThreadState(THREAD_ID).pipe(
-    Effect.provideService(EnvironmentSupervisor, supervisor),
-    Effect.provideService(EnvironmentCacheStore, cache),
+    Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+    Effect.provideService(Persistence.EnvironmentCacheStore, cache),
   );
   yield* SubscriptionRef.changes(threadState).pipe(
     Stream.runForEach((state) =>

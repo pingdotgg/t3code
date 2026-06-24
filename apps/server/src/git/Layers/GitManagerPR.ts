@@ -8,11 +8,12 @@ import {
 } from "@t3tools/contracts";
 import type { GitHubPullRequestListEntry } from "../Services/GitHubCli.ts";
 import type { GitHubCliShape } from "../Services/GitHubCli.ts";
-import { GitHubCliError } from "../../sourceControl/GitHubCli.ts";
+import type { GitHubCliError } from "../Services/GitHubCli.ts";
 import type { GitManagerShape } from "../GitManager.ts";
 
 /** Map GitHubCliError → GitManagerError so PR methods satisfy GitManagerServiceError. */
 function wrapGhError<A>(
+  cwd: string,
   effect: Effect.Effect<A, GitHubCliError>,
 ): Effect.Effect<A, GitManagerError> {
   return effect.pipe(
@@ -20,6 +21,7 @@ function wrapGhError<A>(
       (error) =>
         new GitManagerError({
           operation: error.operation,
+          cwd,
           detail: error.detail,
           cause: error,
         }),
@@ -122,6 +124,7 @@ export function makeGitManagerPRMethods(gitHubCli: GitHubCliShape): PRMethods {
 
   const listPullRequests: PRMethods["listPullRequests"] = (input) =>
     wrapGhError(
+      input.cwd,
       Effect.gen(function* () {
         const [rawResult, currentUser] = yield* Effect.all(
           [
@@ -155,6 +158,7 @@ export function makeGitManagerPRMethods(gitHubCli: GitHubCliShape): PRMethods {
 
   const getPullRequestDiff: PRMethods["getPullRequestDiff"] = (input) =>
     wrapGhError(
+      input.cwd,
       Effect.gen(function* () {
         const diff = yield* gitHubCli.getPullRequestDiff({
           cwd: input.cwd,
@@ -166,6 +170,7 @@ export function makeGitManagerPRMethods(gitHubCli: GitHubCliShape): PRMethods {
 
   const getPullRequestFileDiff: PRMethods["getPullRequestFileDiff"] = (input) =>
     wrapGhError(
+      input.cwd,
       Effect.gen(function* () {
         const diff = yield* gitHubCli.getPullRequestDiff({
           cwd: input.cwd,
@@ -177,6 +182,7 @@ export function makeGitManagerPRMethods(gitHubCli: GitHubCliShape): PRMethods {
 
   const getPullRequestReviewComments: PRMethods["getPullRequestReviewComments"] = (input) =>
     wrapGhError(
+      input.cwd,
       Effect.gen(function* () {
         const comments = yield* gitHubCli.getPullRequestReviewComments({
           cwd: input.cwd,
@@ -188,6 +194,7 @@ export function makeGitManagerPRMethods(gitHubCli: GitHubCliShape): PRMethods {
 
   const getPullRequestIssueComments: PRMethods["getPullRequestIssueComments"] = (input) =>
     wrapGhError(
+      input.cwd,
       Effect.gen(function* () {
         const comments = yield* gitHubCli.getPullRequestIssueComments({
           cwd: input.cwd,
@@ -199,6 +206,7 @@ export function makeGitManagerPRMethods(gitHubCli: GitHubCliShape): PRMethods {
 
   const getPullRequestBody: PRMethods["getPullRequestBody"] = (input) =>
     wrapGhError(
+      input.cwd,
       Effect.gen(function* () {
         const result = yield* gitHubCli.getPullRequestBodyHtml({
           cwd: input.cwd,
@@ -210,6 +218,7 @@ export function makeGitManagerPRMethods(gitHubCli: GitHubCliShape): PRMethods {
 
   const postPullRequestReviewComment: PRMethods["postPullRequestReviewComment"] = (input) =>
     wrapGhError(
+      input.cwd,
       gitHubCli.postPullRequestReviewComment({
         cwd: input.cwd,
         prNumber: input.prNumber,
@@ -221,6 +230,7 @@ export function makeGitManagerPRMethods(gitHubCli: GitHubCliShape): PRMethods {
 
   const postPullRequestIssueComment: PRMethods["postPullRequestIssueComment"] = (input) =>
     wrapGhError(
+      input.cwd,
       gitHubCli.postPullRequestIssueComment({
         cwd: input.cwd,
         prNumber: input.prNumber,
@@ -230,6 +240,7 @@ export function makeGitManagerPRMethods(gitHubCli: GitHubCliShape): PRMethods {
 
   const getPullRequestViewedFiles: PRMethods["getPullRequestViewedFiles"] = (input) =>
     wrapGhError(
+      input.cwd,
       Effect.gen(function* () {
         const viewedPaths = yield* gitHubCli.getPullRequestViewedFiles({
           cwd: input.cwd,
@@ -241,6 +252,7 @@ export function makeGitManagerPRMethods(gitHubCli: GitHubCliShape): PRMethods {
 
   const setPullRequestFileViewed: PRMethods["setPullRequestFileViewed"] = (input) =>
     wrapGhError(
+      input.cwd,
       gitHubCli.setPullRequestFileViewed({
         cwd: input.cwd,
         prNumber: input.prNumber,
@@ -251,6 +263,7 @@ export function makeGitManagerPRMethods(gitHubCli: GitHubCliShape): PRMethods {
 
   const submitPullRequestReview: PRMethods["submitPullRequestReview"] = (input) =>
     wrapGhError(
+      input.cwd,
       gitHubCli.submitPullRequestReview({
         cwd: input.cwd,
         prNumber: input.prNumber,
@@ -261,6 +274,7 @@ export function makeGitManagerPRMethods(gitHubCli: GitHubCliShape): PRMethods {
 
   const mergePullRequest: PRMethods["mergePullRequest"] = (input) =>
     wrapGhError(
+      input.cwd,
       gitHubCli.mergePullRequest({
         cwd: input.cwd,
         prNumber: input.prNumber,
@@ -272,6 +286,7 @@ export function makeGitManagerPRMethods(gitHubCli: GitHubCliShape): PRMethods {
 
   const getPullRequestDetail: PRMethods["getPullRequestDetail"] = (input) =>
     wrapGhError(
+      input.cwd,
       gitHubCli.getPullRequestDetail({
         cwd: input.cwd,
         prNumber: input.prNumber,
@@ -280,6 +295,7 @@ export function makeGitManagerPRMethods(gitHubCli: GitHubCliShape): PRMethods {
 
   const editPullRequest: PRMethods["editPullRequest"] = (input) =>
     wrapGhError(
+      input.cwd,
       gitHubCli.editPullRequest({
         cwd: input.cwd,
         prNumber: input.prNumber,
@@ -297,6 +313,7 @@ export function makeGitManagerPRMethods(gitHubCli: GitHubCliShape): PRMethods {
 
   const getRepositoryCollaborators: PRMethods["getRepositoryCollaborators"] = (input) =>
     wrapGhError(
+      input.cwd,
       Effect.gen(function* () {
         const collaborators = yield* gitHubCli.getRepositoryCollaborators({
           cwd: input.cwd,

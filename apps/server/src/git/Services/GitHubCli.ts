@@ -5,12 +5,31 @@
  *
  * @module GitHubCli
  */
-import { Context } from "effect";
+import { Context, Schema } from "effect";
 import type { Effect } from "effect";
 
 import type { ProcessRunOutput } from "../../processRunner.ts";
-import type { GitHubCliError } from "../../sourceControl/GitHubCli.ts";
 import type { PullRequestCheck, PullRequestReviewer, PullRequestLabel } from "@t3tools/contracts";
+
+/**
+ * GitHubCliError - error raised by the PR-review GitHub CLI adapter.
+ *
+ * The PR-review feature classifies failures by inspecting `detail` (e.g. to
+ * distinguish a "not authenticated" state that should prompt `gh auth login`
+ * from transient rate-limit/network failures that should keep the last good
+ * data). It is defined here rather than imported from `sourceControl/GitHubCli`
+ * because upstream's `GitHubCliError` is now a union of typed errors; the
+ * adapter in `GitManager` maps those typed errors into this class.
+ */
+export class GitHubCliError extends Schema.TaggedErrorClass<GitHubCliError>()("GitHubCliError", {
+  operation: Schema.String,
+  detail: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {
+  override get message(): string {
+    return `GitHub CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
 
 export interface GitHubPullRequestSummary {
   readonly number: number;

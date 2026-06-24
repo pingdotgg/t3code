@@ -1,23 +1,29 @@
 /**
- * Unified settings hook.
+ * Environment-scoped settings hooks.
  *
  * Abstracts the split between server-authoritative settings (persisted in
  * `settings.json` on the server, fetched via `server.getConfig`) and
  * client-only settings (persisted in localStorage).
  *
- * Consumers use `useSettings(selector)` to read, and `useUpdateSettings()` to
- * write. The hook transparently routes reads/writes to the correct backing
- * store.
+ * Live server settings always require an environment id. Primary-environment
+ * access is intentionally named as such so environment-sensitive consumers
+ * cannot silently read the wrong server's settings.
  */
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type EnvironmentId,
+  ServerSettings,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
 import {
   type ClientSettingsPatch,
   type ClientSettings,
   DEFAULT_CLIENT_SETTINGS,
-  UnifiedSettings,
+  type UnifiedSettings,
 } from "@t3tools/contracts/settings";
+import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { ensureLocalApi } from "~/localApi";
 import * as Struct from "effect/Struct";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
@@ -101,7 +107,10 @@ async function hydrateClientSettings(): Promise<void> {
         replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
       }
     } catch (error) {
-      console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} hydrate failed`, error);
+      console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} hydrate failed`, {
+        operation: "hydrate",
+        ...safeErrorLogAttributes(error),
+      });
     } finally {
       if (hydrationGeneration === clientSettingsHydrationGeneration) {
         setClientSettingsHydrated(true);
@@ -124,7 +133,10 @@ function persistClientSettings(settings: ClientSettings): void {
   void ensureLocalApi()
     .persistence.setClientSettings(settings)
     .catch((error) => {
-      console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, error);
+      console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, {
+        operation: "persist",
+        ...safeErrorLogAttributes(error),
+      });
     });
 }
 
@@ -154,11 +166,6 @@ function splitPatch(patch: Partial<UnifiedSettings>): {
 // ── Hooks ────────────────────────────────────────────────────────────
 
 /**
- * Read merged settings. Selector narrows the subscription so components
- * only re-render when the slice they care about changes.
- */
-
-/**
  * Non-hook accessor for the current merged client settings snapshot.
  * Used by non-React code paths (e.g. runtime services) that need the latest
  * settings without subscribing.
@@ -175,23 +182,56 @@ export function useClientSettingsHydrated(): boolean {
   );
 }
 
-export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings) => T): T {
-  const serverSettings = useAtomValue(primaryServerSettingsAtom);
-  const clientSettings = useSyncExternalStore(
+function useClientSettingsValue(): ClientSettings {
+  return useSyncExternalStore(
     subscribeClientSettings,
     getClientSettingsSnapshot,
     () => DEFAULT_CLIENT_SETTINGS,
   );
+}
+
+export function mergeEnvironmentSettings(
+  serverSettings: ServerSettings,
+  clientSettings: ClientSettings,
+): UnifiedSettings {
+  return { ...serverSettings, ...clientSettings };
+}
+
+function useMergedSettings<T>(
+  serverSettings: ServerSettings,
+  selector: ((settings: UnifiedSettings) => T) | undefined,
+): T {
+  const clientSettings = useClientSettingsValue();
 
   const merged = useMemo<UnifiedSettings>(
-    () => ({
-      ...serverSettings,
-      ...clientSettings,
-    }),
+    () => mergeEnvironmentSettings(serverSettings, clientSettings),
     [clientSettings, serverSettings],
   );
 
   return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
+}
+
+export function useClientSettings<T = ClientSettings>(
+  selector?: (settings: ClientSettings) => T,
+): T {
+  const settings = useClientSettingsValue();
+  return useMemo(() => (selector ? selector(settings) : (settings as T)), [selector, settings]);
+}
+
+/** Read current settings for one environment, merged with client-local preferences. */
+export function useEnvironmentSettings<T = UnifiedSettings>(
+  environmentId: EnvironmentId,
+  selector?: (settings: UnifiedSettings) => T,
+): T {
+  const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
+  return useMergedSettings(serverSettings ?? DEFAULT_SERVER_SETTINGS, selector);
+}
+
+/** Primary-only settings access for the settings UI and other explicitly global surfaces. */
+export function usePrimarySettings<T = UnifiedSettings>(
+  selector?: (settings: UnifiedSettings) => T,
+): T {
+  return useMergedSettings(useAtomValue(primaryServerSettingsAtom), selector);
 }
 
 /**
@@ -200,20 +240,19 @@ export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings)
  * Server keys are optimistically patched in atom-backed server state, then
  * persisted via RPC. Client keys go through client persistence.
  */
-export function useUpdateSettings() {
+function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
   const persistServerSettings = useAtomCommand(
     serverEnvironment.updateSettings,
     "server settings update",
   );
-  const primaryEnvironment = usePrimaryEnvironment();
   const updateSettings = useCallback(
     (patch: Partial<UnifiedSettings>) => {
       const { serverPatch, clientPatch } = splitPatch(patch);
 
       if (Object.keys(serverPatch).length > 0) {
-        if (primaryEnvironment) {
+        if (environmentId) {
           void persistServerSettings({
-            environmentId: primaryEnvironment.environmentId,
+            environmentId,
             input: { patch: serverPatch },
           });
         }
@@ -226,10 +265,27 @@ export function useUpdateSettings() {
         });
       }
     },
-    [persistServerSettings, primaryEnvironment],
+    [environmentId, persistServerSettings],
   );
 
   return updateSettings;
+}
+
+export function useUpdateEnvironmentSettings(environmentId: EnvironmentId) {
+  return useUpdateSettingsTarget(environmentId);
+}
+
+export function useUpdatePrimarySettings() {
+  return useUpdateSettingsTarget(usePrimaryEnvironment()?.environmentId ?? null);
+}
+
+export function useUpdateClientSettings() {
+  return useCallback((patch: ClientSettingsPatch) => {
+    persistClientSettings({
+      ...getClientSettingsSnapshot(),
+      ...patch,
+    });
+  }, []);
 }
 
 export function __resetClientSettingsPersistenceForTests(): void {

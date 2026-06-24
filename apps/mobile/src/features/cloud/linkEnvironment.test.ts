@@ -4,11 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayMobileClientId } from "@t3tools/contracts/relay";
-import {
-  managedRelayClientLayer,
-  ManagedRelayClient,
-  ManagedRelayDpopSigner,
-} from "@t3tools/client-runtime/relay";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import { HttpClient } from "effect/unstable/http";
 
@@ -62,8 +58,8 @@ const createProofMock = vi.fn(
     Effect.succeed(`dpop:${input.method}:${input.url}`),
 );
 const testDpopSignerLayer = Layer.succeed(
-  ManagedRelayDpopSigner,
-  ManagedRelayDpopSigner.of({
+  ManagedRelay.ManagedRelayDpopSigner,
+  ManagedRelay.ManagedRelayDpopSigner.of({
     thumbprint: Effect.succeed("client-proof-key-thumbprint"),
     createProof: (input) => createProofMock(input),
   }),
@@ -73,7 +69,7 @@ function cloudClientLayer() {
   const httpClientLayer = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
   return Layer.mergeAll(
     httpClientLayer,
-    managedRelayClientLayer({
+    ManagedRelay.layer({
       relayUrl: "https://relay.example.test",
       clientId: RelayMobileClientId,
     }).pipe(Layer.provideMerge(testDpopSignerLayer), Layer.provide(httpClientLayer)),
@@ -81,7 +77,11 @@ function cloudClientLayer() {
 }
 
 const withCloudServices = <A, E>(
-  effect: Effect.Effect<A, E, HttpClient.HttpClient | ManagedRelayClient | ManagedRelayDpopSigner>,
+  effect: Effect.Effect<
+    A,
+    E,
+    HttpClient.HttpClient | ManagedRelay.ManagedRelayClient | ManagedRelay.ManagedRelayDpopSigner
+  >,
 ) => effect.pipe(Effect.provide(cloudClientLayer()));
 
 function validLinkProof() {

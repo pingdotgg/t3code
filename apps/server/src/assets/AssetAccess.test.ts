@@ -5,20 +5,21 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { ServerConfig } from "../config.ts";
-import { ProjectFaviconResolverLive } from "../project/Layers/ProjectFaviconResolver.ts";
-import { WorkspacePathsLive } from "../workspace/Layers/WorkspacePaths.ts";
+import * as ServerConfig from "../config.ts";
+import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
 
-const configLayer = ServerConfig.layerTest(process.cwd(), {
+const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-asset-access-test-",
 });
 const testLayer = Layer.mergeAll(
   configLayer,
-  WorkspacePathsLive,
-  ProjectFaviconResolverLive.pipe(Layer.provide(WorkspacePathsLive)),
+  WorkspacePaths.layer,
+  ProjectFaviconResolver.layer.pipe(Layer.provide(WorkspacePaths.layer)),
   ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -85,7 +86,58 @@ describe("AssetAccess", () => {
         },
         workspaceRoot: root,
       }).pipe(Effect.flip);
-      expect(error.message).toContain("relative to the project root");
+      expect(error.message).toBe("Workspace file path must be relative to the project root.");
+      expect(error).toMatchObject({
+        _tag: "AssetWorkspacePathValidationError",
+        resource: {
+          _tag: "workspace-file",
+          threadId: "thread-1",
+          path: htmlPath,
+        },
+      });
+      expect(error.cause).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("preserves non-missing canonical path failures when issuing asset URLs", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-permission-root-",
+      });
+      const htmlPath = path.join(root, "report.html");
+      yield* fileSystem.writeFileString(htmlPath, "<p>report</p>");
+      const cause = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "realPath",
+        pathOrDescriptor: htmlPath,
+      });
+      const failingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        realPath: () => Effect.fail(cause),
+      });
+
+      const error = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: htmlPath,
+        },
+        workspaceRoot: root,
+      }).pipe(Effect.provideService(FileSystem.FileSystem, failingFileSystem), Effect.flip);
+
+      expect(error.message).toBe("Failed to inspect the workspace asset.");
+      expect(error).toMatchObject({
+        _tag: "AssetWorkspaceAssetInspectionError",
+        resource: {
+          _tag: "workspace-file",
+          threadId: "thread-1",
+          path: htmlPath,
+        },
+      });
+      expect(error.cause).toBe(cause);
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -127,7 +179,7 @@ describe("AssetAccess", () => {
 
   it.effect("issues exact attachment capabilities by attachment id", () =>
     Effect.gen(function* () {
-      const config = yield* ServerConfig;
+      const config = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const attachmentId = "thread-1-00000000-0000-4000-8000-000000000001";
@@ -184,6 +236,40 @@ describe("AssetAccess", () => {
           fallbackSuffix.slice(fallbackSeparatorIndex + 1),
         ),
       ).toEqual({ kind: "project-favicon-fallback" });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("preserves structured project favicon resolution causes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-error-",
+      });
+      const platformCause = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "stat",
+      });
+      const resolutionCause = new ProjectFaviconResolver.ProjectFaviconResolutionError({
+        operation: "stat-candidate",
+        workspaceRoot: root,
+        relativePath: "favicon.svg",
+        cause: platformCause,
+      });
+      const resolver = ProjectFaviconResolver.ProjectFaviconResolver.of({
+        resolvePath: () => Effect.fail(resolutionCause),
+      });
+
+      const error = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root },
+      }).pipe(
+        Effect.provideService(ProjectFaviconResolver.ProjectFaviconResolver, resolver),
+        Effect.flip,
+      );
+
+      expect(error.message).toBe("Failed to resolve project favicon.");
+      expect(error._tag).toBe("AssetProjectFaviconResolutionError");
+      expect(error.cause).toBe(resolutionCause);
     }).pipe(Effect.provide(testLayer)),
   );
 });

@@ -7,13 +7,24 @@
 :root {
   --workspace-topbar-height: 52px;
   --workspace-controls-top: 0px;
+  --workspace-controls-left: calc(env(safe-area-inset-left) + 0.75rem);
   --workspace-controls-right: calc(env(safe-area-inset-right) + 0.75rem);
   --workspace-native-controls-inset: 0px;
+  --workspace-titlebar-control-size: 1.75rem;
+  --workspace-titlebar-control-gap: 0.75rem;
+}
+
+[data-slot="sidebar-wrapper"] {
+  --workspace-titlebar-content-left: calc(
+    var(--workspace-controls-left) + var(--workspace-titlebar-control-size) +
+      var(--workspace-titlebar-control-gap)
+  );
 }
 
 .wco {
   --workspace-topbar-height: env(titlebar-area-height, 52px);
   --workspace-controls-top: env(titlebar-area-y, 0px);
+  --workspace-controls-left: calc(env(titlebar-area-x, 0px) + 0.75rem);
   --workspace-controls-right: calc(
     100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem
   );
@@ -90,6 +101,28 @@
 }
 
 @layer components {
+  .sidebar-brand {
+    display: none;
+  }
+
+  .sidebar-brand-stage {
+    display: none;
+  }
+
+  @media (min-width: 48rem) {
+    @container sidebar-header (min-width: 13.5rem) {
+      .sidebar-brand {
+        display: flex;
+      }
+    }
+
+    @container sidebar-header (min-width: 15.75rem) {
+      .sidebar-brand-stage {
+        display: inline-flex;
+      }
+    }
+  }
+
   .workspace-topbar {
     display: flex;
     height: var(--workspace-topbar-height);
@@ -689,7 +722,8 @@ label:has(> select#reasoning-effort) select {
   background: color-mix(in srgb, var(--background) 94%, var(--card));
 }
 
-.diff-render-file {
+.diff-render-file,
+.diff-render-surface > diffs-container {
   border: 1px solid var(--border);
   border-radius: 0.5rem;
   overflow: clip;

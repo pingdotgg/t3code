@@ -3,11 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { observeAutomationOwnerConnectedGeneration } from "./PreviewAutomationOwner";
 
 describe("observeAutomationOwnerConnectedGeneration", () => {
-  it("re-reports ownership only after a later transport generation connects", () => {
+  it("reports ownership when the initial transport generation connects", () => {
     const initial = observeAutomationOwnerConnectedGeneration(null, 1);
     expect(initial).toEqual({
       nextGeneration: 1,
-      shouldReport: false,
+      shouldReport: true,
     });
 
     const disconnected = observeAutomationOwnerConnectedGeneration(initial.nextGeneration, null);

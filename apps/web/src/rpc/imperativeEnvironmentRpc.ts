@@ -17,7 +17,7 @@ import * as Cause from "effect/Cause";
 import { Atom } from "effect/unstable/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
-import { primaryEnvironmentIdAtom } from "../state/environments";
+import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { appAtomRegistry } from "./atomRegistry";
 
 /**

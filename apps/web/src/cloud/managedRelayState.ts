@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   createManagedRelayQueryManager,
-  ManagedRelayClient,
+  ManagedRelay,
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
 } from "@t3tools/client-runtime/relay";
@@ -20,8 +20,10 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 
 const managedRelayAtomRuntime = Atom.runtime(
   Layer.effect(
-    ManagedRelayClient,
-    runtime.contextEffect.pipe(Effect.map((context) => Context.get(context, ManagedRelayClient))),
+    ManagedRelay.ManagedRelayClient,
+    runtime.contextEffect.pipe(
+      Effect.map((context) => Context.get(context, ManagedRelay.ManagedRelayClient)),
+    ),
   ),
 );
 

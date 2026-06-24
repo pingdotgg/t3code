@@ -3,60 +3,73 @@ import { RelayAgentActivityState as RelayAgentActivityStateSchema } from "@t3too
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { cast } from "effect/Function";
+import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { and, desc, eq, isNull } from "drizzle-orm";
 
-import { RelayDb } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { relayAgentActivityRows, relayEnvironmentLinks } from "../persistence/schema.ts";
 
 export class AgentActivityRowUpsertPersistenceError extends Schema.TaggedErrorClass<AgentActivityRowUpsertPersistenceError>()(
   "AgentActivityRowUpsertPersistenceError",
-  { cause: Schema.Defect() },
+  {
+    environmentId: Schema.String,
+    threadId: Schema.String,
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return "Failed to persist agent activity state";
+    return `Failed to persist agent activity state for environment ${this.environmentId}, thread ${this.threadId}.`;
   }
 }
 
 export class AgentActivityRowDeletePersistenceError extends Schema.TaggedErrorClass<AgentActivityRowDeletePersistenceError>()(
   "AgentActivityRowDeletePersistenceError",
-  { cause: Schema.Defect() },
+  {
+    environmentId: Schema.String,
+    threadId: Schema.String,
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return "Failed to delete agent activity state";
+    return `Failed to delete agent activity state for environment ${this.environmentId}, thread ${this.threadId}.`;
   }
 }
 
 export class AgentActivityRowListPersistenceError extends Schema.TaggedErrorClass<AgentActivityRowListPersistenceError>()(
   "AgentActivityRowListPersistenceError",
-  { cause: Schema.Defect() },
+  {
+    userId: Schema.String,
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return "Failed to list agent activity state";
+    return `Failed to list agent activity state for user ${this.userId}.`;
   }
 }
 
-export interface AgentActivityRowsShape {
-  readonly upsert: (input: {
-    readonly environmentPublicKey: string;
-    readonly state: RelayAgentActivityState;
-  }) => Effect.Effect<void, AgentActivityRowUpsertPersistenceError>;
-  readonly remove: (input: {
-    readonly environmentId: string;
-    readonly environmentPublicKey: string;
-    readonly threadId: string;
-  }) => Effect.Effect<void, AgentActivityRowDeletePersistenceError>;
-  readonly listForUser: (input: {
-    readonly userId: string;
-  }) => Effect.Effect<ReadonlyArray<RelayAgentActivityState>, AgentActivityRowListPersistenceError>;
-}
-
-export class AgentActivityRows extends Context.Service<AgentActivityRows, AgentActivityRowsShape>()(
-  "t3code-relay/agentActivity/AgentActivityRows",
-) {}
+export class AgentActivityRows extends Context.Service<
+  AgentActivityRows,
+  {
+    readonly upsert: (input: {
+      readonly environmentPublicKey: string;
+      readonly state: RelayAgentActivityState;
+    }) => Effect.Effect<void, AgentActivityRowUpsertPersistenceError>;
+    readonly remove: (input: {
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+      readonly threadId: string;
+    }) => Effect.Effect<void, AgentActivityRowDeletePersistenceError>;
+    readonly listForUser: (input: {
+      readonly userId: string;
+    }) => Effect.Effect<
+      ReadonlyArray<RelayAgentActivityState>,
+      AgentActivityRowListPersistenceError
+    >;
+  }
+>()("t3code-relay/agentActivity/AgentActivityRows") {}
 
 const decodeJsonString = Schema.decodeEffect(Schema.UnknownFromJsonString);
 const encodeJsonValue = Schema.encodeEffect(Schema.UnknownFromJsonString);
@@ -69,45 +82,60 @@ const decodeRelayAgentActivityStateJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayAgentActivityStateSchema),
 );
 
-const make = Effect.gen(function* () {
-  const db = yield* RelayDb;
+export const make = Effect.gen(function* () {
+  const db = yield* RelayDb.RelayDb;
 
   return AgentActivityRows.of({
-    upsert: Effect.fn("relay.agent_activity_rows.upsert")(
-      function* (input) {
-        yield* Effect.annotateCurrentSpan({
-          "relay.environment_id": input.state.environmentId,
-          "relay.thread_id": input.state.threadId,
-        });
-        const now = yield* DateTime.now;
-        const stateJson = yield* encodeRelayAgentActivityStateJson(input.state).pipe(
-          Effect.flatMap(decodeJsonString),
-          Effect.map(cast<unknown, RelayAgentActivityState>),
-        );
-        yield* db
-          .insert(relayAgentActivityRows)
-          .values({
-            environmentId: input.state.environmentId,
-            environmentPublicKey: input.environmentPublicKey,
-            threadId: input.state.threadId,
+    upsert: Effect.fn("relay.agent_activity_rows.upsert")(function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "relay.environment_id": input.state.environmentId,
+        "relay.thread_id": input.state.threadId,
+      });
+      const now = yield* DateTime.now;
+      const stateJson = yield* encodeRelayAgentActivityStateJson(input.state).pipe(
+        Effect.flatMap(decodeJsonString),
+        Effect.map(Function.cast<unknown, RelayAgentActivityState>),
+        Effect.mapError(
+          (cause) =>
+            new AgentActivityRowUpsertPersistenceError({
+              environmentId: input.state.environmentId,
+              threadId: input.state.threadId,
+              cause,
+            }),
+        ),
+      );
+      yield* db
+        .insert(relayAgentActivityRows)
+        .values({
+          environmentId: input.state.environmentId,
+          environmentPublicKey: input.environmentPublicKey,
+          threadId: input.state.threadId,
+          stateJson,
+          updatedAt: input.state.updatedAt,
+          createdAt: DateTime.formatIso(now),
+        })
+        .onConflictDoUpdate({
+          target: [
+            relayAgentActivityRows.environmentId,
+            relayAgentActivityRows.environmentPublicKey,
+            relayAgentActivityRows.threadId,
+          ],
+          set: {
             stateJson,
             updatedAt: input.state.updatedAt,
-            createdAt: DateTime.formatIso(now),
-          })
-          .onConflictDoUpdate({
-            target: [
-              relayAgentActivityRows.environmentId,
-              relayAgentActivityRows.environmentPublicKey,
-              relayAgentActivityRows.threadId,
-            ],
-            set: {
-              stateJson,
-              updatedAt: input.state.updatedAt,
-            },
-          });
-      },
-      Effect.mapError((cause) => new AgentActivityRowUpsertPersistenceError({ cause })),
-    ),
+          },
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new AgentActivityRowUpsertPersistenceError({
+                environmentId: input.state.environmentId,
+                threadId: input.state.threadId,
+                cause,
+              }),
+          ),
+        );
+    }),
 
     remove: Effect.fn("relay.agent_activity_rows.remove")(function* (input) {
       yield* Effect.annotateCurrentSpan({
@@ -123,7 +151,16 @@ const make = Effect.gen(function* () {
             eq(relayAgentActivityRows.threadId, input.threadId),
           ),
         )
-        .pipe(Effect.mapError((cause) => new AgentActivityRowDeletePersistenceError({ cause })));
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new AgentActivityRowDeletePersistenceError({
+                environmentId: input.environmentId,
+                threadId: input.threadId,
+                cause,
+              }),
+          ),
+        );
     }),
 
     listForUser: Effect.fn("relay.agent_activity_rows.list_for_user")(function* (input) {
@@ -157,7 +194,13 @@ const make = Effect.gen(function* () {
           Effect.map((rows) =>
             rows.flatMap((row) => Option.toArray(decodeRelayAgentActivityStateJson(row))),
           ),
-          Effect.mapError((cause) => new AgentActivityRowListPersistenceError({ cause })),
+          Effect.mapError(
+            (cause) =>
+              new AgentActivityRowListPersistenceError({
+                userId: input.userId,
+                cause,
+              }),
+          ),
         );
     }),
   });

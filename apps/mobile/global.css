@@ -192,11 +192,31 @@
   }
 }
 
-/* ─── Font family ───────────────────────────────────────────────────── */
+/* ─── Typography ────────────────────────────────────────────────────── */
 @theme {
   --font-sans: "DMSans_400Regular";
   --font-medium: "DMSans_500Medium";
   --font-bold: "DMSans_700Bold";
+
+  /* Keep this scale aligned with src/lib/typography.ts for native style props. */
+  --text-3xs: 10px;
+  --text-3xs--line-height: 13px;
+  --text-2xs: 11px;
+  --text-2xs--line-height: 15px;
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 13px;
+  --text-sm--line-height: 18px;
+  --text-base: 15px;
+  --text-base--line-height: 22px;
+  --text-lg: 17px;
+  --text-lg--line-height: 22px;
+  --text-xl: 20px;
+  --text-xl--line-height: 26px;
+  --text-2xl: 24px;
+  --text-2xl--line-height: 30px;
+  --text-3xl: 28px;
+  --text-3xl--line-height: 34px;
 }
 
 /* ─── Custom utilities ──────────────────────────────────────────────── */

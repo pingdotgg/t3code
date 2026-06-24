@@ -1,6 +1,6 @@
 import { Effect, Schema, SchemaIssue } from "effect";
 import { PositiveInt } from "@t3tools/contracts";
-import { GitHubCliError } from "../../sourceControl/GitHubCli.ts";
+import { GitHubCliError } from "../Services/GitHubCli.ts";
 
 import type {
   GitHubCliShape,

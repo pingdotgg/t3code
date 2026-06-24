@@ -32,9 +32,9 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
-import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
+import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import { T3ChatRuntimeLive } from "../t3chatRuntime.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistryHydration.ts";
 import {
   haveProvidersChanged,
@@ -43,12 +43,12 @@ import {
   ProviderRegistryLive,
   selectProvidersByKind,
 } from "./ProviderRegistry.ts";
-import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings.ts";
+import * as ServerConfig from "../../config.ts";
+import * as ServerSettingsModule from "../../serverSettings.ts";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
-import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
+import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
@@ -295,11 +295,11 @@ function makeMutableServerSettingsService(
       get streamChanges() {
         return Stream.fromPubSub(changes);
       },
-    } satisfies ServerSettingsShape;
+    } satisfies ServerSettingsModule.ServerSettingsService["Service"];
   });
 }
 
-it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), TestHttpClientLive))(
+it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), TestHttpClientLive))(
   "ProviderRegistry",
   (it) => {
     describe("checkCodexProviderStatus", () => {
@@ -637,14 +637,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
-          const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry, {
-            getInstance: (instanceId) =>
-              Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
-            listInstances: Effect.succeed([instance]),
-            listUnavailable: Effect.succeed([]),
-            streamChanges: Stream.empty,
-            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
-          });
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (instanceId) =>
+                Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
+              listInstances: Effect.succeed([instance]),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            },
+          );
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const runtimeServices = yield* Layer.build(
@@ -659,7 +662,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             ),
           ).pipe(Scope.provide(scope));
           yield* Effect.gen(function* () {
-            const registry = yield* ProviderRegistry;
+            const registry = yield* ProviderRegistry.ProviderRegistry;
             assert.deepStrictEqual(yield* registry.getProviders, [initialProvider]);
             assert.strictEqual(yield* Ref.get(refreshCalls), 0);
           }).pipe(Effect.provide(runtimeServices));
@@ -787,16 +790,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
-          const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry, {
-            getInstance: (instanceId) =>
-              Effect.succeed(instanceId === cursorInstanceId ? instance : undefined),
-            listInstances: Effect.succeed([instance]),
-            listUnavailable: Effect.succeed([]),
-            streamChanges: Stream.empty,
-            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
-              PubSub.subscribe(pubsub),
-            ),
-          });
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (instanceId) =>
+                Effect.succeed(instanceId === cursorInstanceId ? instance : undefined),
+              listInstances: Effect.succeed([instance]),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
+                PubSub.subscribe(pubsub),
+              ),
+            },
+          );
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const runtimeServices = yield* Layer.build(
@@ -812,8 +818,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           ).pipe(Scope.provide(scope));
 
           yield* Effect.gen(function* () {
-            const registry = yield* ProviderRegistry;
-            const config = yield* ServerConfig;
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const config = yield* ServerConfig.ServerConfig;
             const filePath = yield* resolveProviderStatusCachePath({
               cacheDir: config.providerStatusCacheDir,
               instanceId: cursorInstanceId,
@@ -881,16 +887,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
-          const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry, {
-            getInstance: (instanceId) =>
-              Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
-            listInstances: Effect.succeed([instance]),
-            listUnavailable: Effect.succeed([]),
-            streamChanges: Stream.empty,
-            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
-              PubSub.subscribe(pubsub),
-            ),
-          });
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (instanceId) =>
+                Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
+              listInstances: Effect.succeed([instance]),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
+                PubSub.subscribe(pubsub),
+              ),
+            },
+          );
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const runtimeServices = yield* Layer.build(
@@ -906,7 +915,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           ).pipe(Scope.provide(scope));
 
           yield* Effect.gen(function* () {
-            const registry = yield* ProviderRegistry;
+            const registry = yield* ProviderRegistry.ProviderRegistry;
 
             assert.deepStrictEqual(yield* registry.getProviders, [cachedProvider]);
             assert.deepStrictEqual(yield* registry.refresh(codexDriver), [cachedProvider]);
@@ -976,25 +985,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           const instancesRef = yield* Ref.make<ReadonlyArray<ProviderInstance>>([codexInstance]);
           const failNextList = yield* Ref.make(false);
           const wait = () => Effect.yieldNow;
-          const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry, {
-            getInstance: (instanceId) =>
-              Ref.get(instancesRef).pipe(
-                Effect.map((instances) =>
-                  instances.find((instance) => instance.instanceId === instanceId),
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (instanceId) =>
+                Ref.get(instancesRef).pipe(
+                  Effect.map((instances) =>
+                    instances.find((instance) => instance.instanceId === instanceId),
+                  ),
                 ),
-              ),
-            listInstances: Effect.gen(function* () {
-              const shouldFail = yield* Ref.get(failNextList);
-              if (shouldFail) {
-                yield* Ref.set(failNextList, false);
-                return yield* Effect.die(new Error("simulated registry list failure"));
-              }
-              return yield* Ref.get(instancesRef);
-            }),
-            listUnavailable: Effect.succeed([]),
-            streamChanges: Stream.fromPubSub(changes),
-            subscribeChanges: PubSub.subscribe(changes),
-          });
+              listInstances: Effect.gen(function* () {
+                const shouldFail = yield* Ref.get(failNextList);
+                if (shouldFail) {
+                  yield* Ref.set(failNextList, false);
+                  return yield* Effect.die(new Error("simulated registry list failure"));
+                }
+                return yield* Ref.get(instancesRef);
+              }),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.fromPubSub(changes),
+              subscribeChanges: PubSub.subscribe(changes),
+            },
+          );
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const runtimeServices = yield* Layer.build(
@@ -1010,7 +1022,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           ).pipe(Scope.provide(scope));
 
           yield* Effect.gen(function* () {
-            const registry = yield* ProviderRegistry;
+            const registry = yield* ProviderRegistry.ProviderRegistry;
             assert.deepStrictEqual(yield* registry.getProviders, [codexProvider]);
 
             yield* Ref.set(failNextList, true);
@@ -1093,15 +1105,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-            Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
+            Layer.provideMerge(
+              Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+            ),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
                 prefix: "t3-provider-registry-",
               }),
             ),
             Layer.provideMerge(TestHttpClientLive),
-            Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
-            Layer.provideMerge(OpenCodeRuntimeLive),
+            Layer.provideMerge(
+              Layer.succeed(
+                ProviderEventLoggers.ProviderEventLoggers,
+                ProviderEventLoggers.NoOpProviderEventLoggers,
+              ),
+            ),
+            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.provideMerge(T3ChatRuntimeLive),
             // NO spawner mock — `ChildProcessSpawner` is supplied by the
             // outer `NodeServices.layer` on `it.layer(...)` and will
@@ -1114,7 +1133,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           );
 
           yield* Effect.gen(function* () {
-            const registry = yield* ProviderRegistry;
+            const registry = yield* ProviderRegistry.ProviderRegistry;
             let providers = yield* registry.getProviders;
             for (
               let attempts = 0;
@@ -1179,15 +1198,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-            Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
+            Layer.provideMerge(
+              Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+            ),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
                 prefix: "t3-provider-registry-",
               }),
             ),
             Layer.provideMerge(TestHttpClientLive),
-            Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
-            Layer.provideMerge(OpenCodeRuntimeLive),
+            Layer.provideMerge(
+              Layer.succeed(
+                ProviderEventLoggers.ProviderEventLoggers,
+                ProviderEventLoggers.NoOpProviderEventLoggers,
+              ),
+            ),
+            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.provideMerge(T3ChatRuntimeLive),
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
@@ -1206,7 +1232,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           );
 
           yield* Effect.gen(function* () {
-            const registry = yield* ProviderRegistry;
+            const registry = yield* ProviderRegistry.ProviderRegistry;
             // Boot-time probe: the default codex instance is enabled with
             // `firstMissing`, so the real spawner yields ENOENT and the
             // snapshot should be `status: "error"`.
@@ -1298,15 +1324,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-            Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
+            Layer.provideMerge(
+              Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+            ),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
                 prefix: "t3-provider-registry-",
               }),
             ),
             Layer.provideMerge(TestHttpClientLive),
-            Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
-            Layer.provideMerge(OpenCodeRuntimeLive),
+            Layer.provideMerge(
+              Layer.succeed(
+                ProviderEventLoggers.ProviderEventLoggers,
+                ProviderEventLoggers.NoOpProviderEventLoggers,
+              ),
+            ),
+            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.provideMerge(T3ChatRuntimeLive),
             Layer.provideMerge(NodeServices.layer),
           );
@@ -1315,7 +1348,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           );
 
           yield* Effect.gen(function* () {
-            const registry = yield* ProviderRegistry;
+            const registry = yield* ProviderRegistry.ProviderRegistry;
             const providers = yield* registry.getProviders;
             const ghost = providers.find((provider) => provider.instanceId === "ghost_main");
 
@@ -1353,15 +1386,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
             const providerRegistryLayer = ProviderRegistryLive.pipe(
               Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-              Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
+              Layer.provideMerge(
+                Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+              ),
               Layer.provideMerge(
                 ServerConfig.layerTest(process.cwd(), {
                   prefix: "t3-provider-registry-",
                 }),
               ),
               Layer.provideMerge(TestHttpClientLive),
-              Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
-              Layer.provideMerge(OpenCodeRuntimeLive),
+              Layer.provideMerge(
+                Layer.succeed(
+                  ProviderEventLoggers.ProviderEventLoggers,
+                  ProviderEventLoggers.NoOpProviderEventLoggers,
+                ),
+              ),
+              Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
               Layer.provideMerge(T3ChatRuntimeLive),
               Layer.provideMerge(
                 mockCommandSpawnerLayer((command, args) => {
@@ -1389,13 +1429,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             );
             const runtimeServices = yield* Layer.build(
               Layer.mergeAll(
-                Layer.succeed(ServerSettingsService, serverSettings),
+                Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
                 providerRegistryLayer,
               ),
             ).pipe(Scope.provide(scope));
 
             yield* Effect.gen(function* () {
-              const registry = yield* ProviderRegistry;
+              const registry = yield* ProviderRegistry.ProviderRegistry;
               const providers = yield* registry.getProviders;
               const cursorProvider = providers.find(
                 (provider) => provider.instanceId === ProviderInstanceId.make("cursor"),
@@ -1844,14 +1884,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
         }).pipe(Effect.provide(failingSpawnerLayer("spawn claude ENOENT"))),
       );
 
-      it.effect("returns error when version check fails with non-zero exit code", () =>
-        Effect.gen(function* () {
+      it.effect("returns error when version check fails with non-zero exit code", () => {
+        const secretStderr = "Something went wrong: secret-token-value";
+        return Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
             claudeCapabilities(),
           );
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.installed, true);
+          assert.strictEqual(status.message, "Claude Agent CLI is installed but failed to run.");
+          assert.ok(!(status.message ?? "").includes(secretStderr));
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
@@ -1859,14 +1902,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
               if (joined === "--version")
                 return {
                   stdout: "",
-                  stderr: "Something went wrong",
+                  stderr: secretStderr,
                   code: 1,
                 };
               throw new Error(`Unexpected args: ${joined}`);
             }),
           ),
-        ),
-      );
+        );
+      });
 
       it.effect("returns warning when the Claude initialization result is unavailable", () =>
         Effect.gen(function* () {

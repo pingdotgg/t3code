@@ -78,6 +78,7 @@ import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
+  getComposerPromptInjectionState,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
@@ -105,6 +106,7 @@ import {
 import { proposedPlanTitle } from "../../proposedPlan";
 import { getProviderDisplayName, getProviderInteractionModeToggle } from "../../providerModels";
 import {
+  applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   resolveProviderDriverKindForInstanceSelection,
   sortProviderInstanceEntries,
@@ -662,8 +664,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // configured instance (default built-in + any custom `providerInstances.*`),
   // sorted default-first per driver kind for a stable picker order.
   const providerInstanceEntries = useMemo<ReadonlyArray<ProviderInstanceEntry>>(
-    () => sortProviderInstanceEntries(deriveProviderInstanceEntries(providerStatuses)),
-    [providerStatuses],
+    () =>
+      sortProviderInstanceEntries(
+        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+      ),
+    [providerStatuses, settings],
   );
   const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
   const threadProvider =
@@ -787,18 +792,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [selectedProviderEntry],
   );
 
+  const composerPromptInjectionState = useMemo(
+    () => getComposerPromptInjectionState(prompt),
+    [prompt],
+  );
   const composerProviderState = useMemo(
     () =>
       getComposerProviderState({
         provider: selectedProvider,
         model: selectedModel,
         models: selectedProviderModels,
-        prompt,
+        promptInjectionState: composerPromptInjectionState,
         modelOptions: composerModelOptions?.[selectedInstanceId],
       }),
     [
       composerModelOptions,
-      prompt,
+      composerPromptInjectionState,
       selectedInstanceId,
       selectedModel,
       selectedProvider,

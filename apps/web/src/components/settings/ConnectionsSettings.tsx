@@ -118,6 +118,7 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import {
   linkPrimaryEnvironment as linkPrimaryEnvironmentAtom,
   unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentAtom,
+  updatePrimaryEnvironmentPreferences as updatePrimaryEnvironmentPreferencesAtom,
 } from "~/cloud/linkEnvironmentAtoms";
 import { authEnvironment } from "~/state/auth";
 import { environmentCatalog } from "~/connection/catalog";
@@ -1423,6 +1424,31 @@ function SavedBackendListRow({
           : "bg-muted-foreground/40";
   const statusTooltip = connectionStatusText(environment.connection);
   const errorTraceId = environment.connection.traceId;
+  const { copyToClipboard: copyTraceIdToClipboard } = useCopyToClipboard<{ traceId: string }>({
+    target: "trace ID",
+    onCopy: ({ traceId }) => {
+      toastManager.add({
+        type: "success",
+        title: "Trace ID copied",
+        description: traceId,
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not copy trace ID",
+          description: error.message,
+        }),
+      );
+    },
+  });
+  const copyTraceId = useCallback(
+    (traceId: string) => {
+      copyTraceIdToClipboard(traceId, { traceId });
+    },
+    [copyTraceIdToClipboard],
+  );
   const versionMismatch = resolveServerConfigVersionMismatch(environment.serverConfig);
   const sshTarget =
     environment.entry.target._tag === "SshConnectionTarget" &&
@@ -1432,7 +1458,7 @@ function SavedBackendListRow({
       : null;
   const metadataBits = [
     sshTarget ? `SSH ${formatDesktopSshTarget(sshTarget)}` : null,
-    environment.relayManaged ? "T3 Cloud" : null,
+    environment.relayManaged ? "T3 Connect" : null,
   ].filter((value): value is string => value !== null);
 
   return (
@@ -1468,7 +1494,7 @@ function SavedBackendListRow({
                 <button
                   type="button"
                   className="shrink-0 underline underline-offset-2"
-                  onClick={() => void navigator.clipboard.writeText(errorTraceId)}
+                  onClick={() => copyTraceId(errorTraceId)}
                 >
                   Copy trace ID
                 </button>
@@ -1550,7 +1576,7 @@ function CloudLinkSwitch({
 }) {
   const control = (
     <Switch
-      aria-label="Enable T3 Cloud"
+      aria-label="Enable T3 Connect"
       checked={checked}
       disabled={disabled}
       {...(onCheckedChange ? { onCheckedChange } : {})}
@@ -1577,18 +1603,23 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
   const unlinkPrimaryEnvironment = useAtomCommand(unlinkPrimaryEnvironmentAtom, {
     reportFailure: false,
   });
+  const updatePrimaryEnvironmentPreferences = useAtomCommand(
+    updatePrimaryEnvironmentPreferencesAtom,
+    { reportFailure: false },
+  );
   const primaryCloudLinkState = usePrimaryCloudLinkState();
   const [operationError, setOperationError] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
   const reportUpdateFailure = (cause: unknown) => {
-    const message = cause instanceof Error ? cause.message : "Could not update T3 Cloud access.";
+    const message = cause instanceof Error ? cause.message : "Could not update T3 Connect access.";
     const traceId = findErrorTraceId(cause);
-    console.error("[t3-cloud] Could not update T3 Cloud", { message, traceId, cause });
+    console.error("[t3-connect] Could not update T3 Connect", { message, traceId, cause });
     setOperationError(traceId ? `${message} Trace ID: ${traceId}` : message);
     toastManager.add({
       type: "error",
-      title: "Could not update T3 Cloud",
+      title: "Could not update T3 Connect",
       description: message,
       data: traceId
         ? {
@@ -1618,9 +1649,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       return;
     }
     if (enabled && !tokenResult.value) {
-      reportUpdateFailure(
-        new Error("Sign in from T3 Cloud settings before linking this environment."),
-      );
+      reportUpdateFailure(new Error("Sign in to T3 Connect before linking this environment."));
       setIsUpdating(false);
       return;
     }
@@ -1655,38 +1684,95 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
 
     toastManager.add({
       type: "success",
-      title: enabled ? "T3 Cloud linked" : "T3 Cloud unlinked",
+      title: enabled ? "T3 Connect linked" : "T3 Connect unlinked",
       description: enabled
-        ? "This environment is available through T3 Cloud."
-        : "This environment is no longer available through T3 Cloud.",
+        ? "This environment is available through T3 Connect."
+        : "This environment is no longer available through T3 Connect.",
     });
     setIsUpdating(false);
   };
+
+  const updatePublishAgentActivity = async (enabled: boolean) => {
+    const target = primaryCloudLinkState.target;
+    if (!target) {
+      reportUpdateFailure(new Error("Local environment is not ready yet."));
+      return;
+    }
+
+    setIsUpdatingPreference(true);
+    setOperationError(null);
+    const updateResult = await updatePrimaryEnvironmentPreferences({
+      target,
+      publishAgentActivity: enabled,
+    });
+    if (updateResult._tag === "Failure") {
+      if (!isAtomCommandInterrupted(updateResult)) {
+        reportUpdateFailure(squashAtomCommandFailure(updateResult));
+      }
+      setIsUpdatingPreference(false);
+      return;
+    }
+
+    primaryCloudLinkState.refresh();
+    toastManager.add({
+      type: "success",
+      title: enabled ? "Agent activity enabled" : "Agent activity disabled",
+      description: enabled
+        ? "This environment can publish agent activity to your mobile clients."
+        : "This environment will stop publishing agent activity.",
+    });
+    setIsUpdatingPreference(false);
+  };
   const disabledReason = !isSignedIn
-    ? "Sign in from T3 Cloud settings to manage this environment."
+    ? "Sign in to T3 Connect to manage this environment."
     : !canManageRelay
-      ? "Your session does not have permission to manage T3 Cloud access."
+      ? "Your session does not have permission to manage T3 Connect access."
       : null;
   const linked = primaryCloudLinkState.data?.linked ?? false;
 
   return (
-    <SettingsRow
-      title="T3 Cloud"
-      description={
-        linked
-          ? "This environment is available to your other devices through T3 Cloud."
-          : "Make this environment available to your other devices through T3 Cloud."
-      }
-      status={operationError ?? primaryCloudLinkState.error}
-      control={
-        <CloudLinkSwitch
-          checked={linked}
-          disabled={!canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isUpdating}
-          disabledReason={disabledReason}
-          onCheckedChange={(enabled) => void updateLink(enabled)}
+    <>
+      <SettingsRow
+        title="T3 Connect"
+        description={
+          linked
+            ? "This environment is available to your other devices through T3 Connect."
+            : "Make this environment available to your other devices through T3 Connect."
+        }
+        status={operationError ?? primaryCloudLinkState.error}
+        control={
+          <CloudLinkSwitch
+            checked={linked}
+            disabled={
+              !canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isUpdating
+            }
+            disabledReason={disabledReason}
+            onCheckedChange={(enabled) => void updateLink(enabled)}
+          />
+        }
+      />
+      {linked ? (
+        <SettingsRow
+          title="Publish agent activity"
+          description="Send activity from this environment to your mobile clients for push notifications and Live Activities."
+          className="bg-muted/20 pl-7 sm:pl-8"
+          control={
+            <Switch
+              aria-label="Publish agent activity to mobile clients"
+              checked={primaryCloudLinkState.data?.publishAgentActivity ?? false}
+              disabled={
+                !canManageRelay ||
+                !isSignedIn ||
+                primaryCloudLinkState.isPending ||
+                isUpdating ||
+                isUpdatingPreference
+              }
+              onCheckedChange={(enabled) => void updatePublishAgentActivity(enabled)}
+            />
+          }
         />
-      }
-    />
+      ) : null}
+    </>
   );
 }
 
@@ -1704,7 +1790,7 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
         <EmptyTitle>No saved remote environments</EmptyTitle>
         <EmptyDescription>
           {cloudEnabled
-            ? "Click “Add environment” to pair another environment, or connect one from T3 Cloud."
+            ? "Click “Add environment” to pair another environment, or connect one from T3 Connect."
             : "Click “Add environment” to pair another environment."}
         </EmptyDescription>
       </EmptyHeader>
@@ -1769,7 +1855,7 @@ function ConfiguredCloudRemoteEnvironmentRows({
       toastManager.add({
         type: "success",
         title: "Environment connected",
-        description: `${environment.label} is available through T3 Cloud.`,
+        description: `${environment.label} is available through T3 Connect.`,
       });
       return;
     }
@@ -1778,9 +1864,9 @@ function ConfiguredCloudRemoteEnvironmentRows({
     }
     const cause = squashAtomCommandFailure(result);
     const message =
-      cause instanceof Error ? cause.message : "Could not connect the T3 Cloud environment.";
+      cause instanceof Error ? cause.message : "Could not connect the T3 Connect environment.";
     const traceId = findErrorTraceId(cause);
-    console.error("[t3-cloud] Could not connect environment", { message, traceId, cause });
+    console.error("[t3-connect] Could not connect environment", { message, traceId, cause });
     toastManager.add({
       type: "error",
       title: "Could not connect environment",

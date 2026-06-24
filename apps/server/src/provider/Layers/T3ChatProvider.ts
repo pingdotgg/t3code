@@ -17,7 +17,6 @@ import {
   buildBooleanOptionDescriptor,
   buildSelectOptionDescriptor,
   buildServerProvider,
-  ProviderCommandExecutionError,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 
@@ -133,8 +132,9 @@ function parseBridgeModels(data: unknown): T3ChatModel[] {
   const arr = data as { result?: { data?: { json?: unknown } } } | undefined;
   const benchmarks = arr?.result?.data?.json;
   if (!benchmarks || typeof benchmarks !== "object") {
-    throw new ProviderCommandExecutionError({
-      message: "Bridge returned invalid model payload.",
+    throw new T3ChatBridgeError({
+      operation: "parseBridgeModels",
+      detail: "Bridge returned invalid model payload.",
     });
   }
 
@@ -164,22 +164,25 @@ const fetchModelsFromBridge = Effect.fn("fetchModelsFromBridge")(function* (
   const response = yield* Effect.tryPromise({
     try: () => fetch(`${bridgeURL}/models`),
     catch: () =>
-      new ProviderCommandExecutionError({
-        message: "Failed to fetch T3 Chat models.",
+      new T3ChatBridgeError({
+        operation: "fetchModelsFromBridge",
+        detail: "Failed to fetch T3 Chat models.",
       }),
   });
 
   if (!response.ok) {
-    return yield* new ProviderCommandExecutionError({
-      message: `Bridge /models returned ${response.status}.`,
+    return yield* new T3ChatBridgeError({
+      operation: "fetchModelsFromBridge",
+      detail: `Bridge /models returned ${response.status}.`,
     });
   }
 
   const payload = yield* Effect.tryPromise({
     try: () => response.json() as Promise<unknown>,
     catch: () =>
-      new ProviderCommandExecutionError({
-        message: "Failed to parse bridge model JSON.",
+      new T3ChatBridgeError({
+        operation: "fetchModelsFromBridge",
+        detail: "Failed to parse bridge model JSON.",
       }),
   });
 
@@ -192,16 +195,18 @@ const checkBridgeAuth = Effect.fn("checkBridgeAuth")(function* (
   const response = yield* Effect.tryPromise({
     try: () => fetch(`${bridgeURL}/auth/check`),
     catch: () =>
-      new ProviderCommandExecutionError({
-        message: "Failed to verify T3 Chat bridge auth.",
+      new T3ChatBridgeError({
+        operation: "checkBridgeAuth",
+        detail: "Failed to verify T3 Chat bridge auth.",
       }),
   });
 
   const payload = yield* Effect.tryPromise({
     try: () => response.json() as Promise<{ ok?: boolean; status?: number }>,
     catch: () =>
-      new ProviderCommandExecutionError({
-        message: "Failed to parse bridge auth response.",
+      new T3ChatBridgeError({
+        operation: "checkBridgeAuth",
+        detail: "Failed to parse bridge auth response.",
       }),
   });
 
