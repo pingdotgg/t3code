@@ -95,11 +95,18 @@ export const usePendingUserInputDraftStore = create<PendingUserInputDraftStoreSt
             state.draftsByThreadId[threadId] ?? EMPTY_PENDING_USER_INPUT_THREAD_DRAFT;
           const requestAnswers = threadDraft.answersByRequestId[requestId] ?? {};
           const currentAnswer = requestAnswers[questionId];
+          const prevLabels = currentAnswer?.selectedOptionLabels;
+          const nextLabels = answer.selectedOptionLabels;
+          const labelsEqual =
+            prevLabels === nextLabels ||
+            (prevLabels != null &&
+              nextLabels != null &&
+              prevLabels.length === nextLabels.length &&
+              prevLabels.every((l, i) => l === nextLabels[i]));
           if (
             currentAnswer?.answerSource === answer.answerSource &&
             currentAnswer?.customAnswer === answer.customAnswer &&
-            JSON.stringify(currentAnswer?.selectedOptionLabels) ===
-              JSON.stringify(answer.selectedOptionLabels)
+            labelsEqual
           ) {
             return state;
           }
