@@ -184,4 +184,38 @@ describe("terminal session reducers", () => {
 
     expect(state.buffer).toBe("🙂");
   });
+
+  it("trims a huge output burst without encoding the whole buffer (regression: TextEncoder allocation failure)", () => {
+    // Reproduce the crash deterministically: make TextEncoder.encode fail to
+    // allocate for very large inputs, exactly as it did for a runaway terminal.
+    // The old implementation encoded the entire buffer before trimming, so it
+    // threw here; the fix slices to the retained window before encoding.
+    const originalEncode = TextEncoder.prototype.encode;
+    const ALLOCATION_LIMIT = 4 * 1024 * 1024;
+    TextEncoder.prototype.encode = function (this: TextEncoder, input?: string) {
+      if (typeof input === "string" && input.length > ALLOCATION_LIMIT) {
+        throw new RangeError("Failed to allocate buffer");
+      }
+      return originalEncode.call(this, input);
+    } as typeof TextEncoder.prototype.encode;
+
+    try {
+      const maxBufferBytes = 64;
+      const burst = "x".repeat(8 * 1024 * 1024);
+      const state = applyTerminalAttachStreamEvent(
+        EMPTY_TERMINAL_BUFFER_STATE,
+        {
+          type: "output",
+          threadId: TARGET.threadId,
+          terminalId: TARGET.terminalId,
+          data: burst,
+        },
+        maxBufferBytes,
+      );
+
+      expect(state.buffer).toBe("x".repeat(maxBufferBytes));
+    } finally {
+      TextEncoder.prototype.encode = originalEncode;
+    }
+  });
 });

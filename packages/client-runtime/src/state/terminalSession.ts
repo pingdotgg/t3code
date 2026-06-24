@@ -71,9 +71,16 @@ function trimBufferToBytes(buffer: string, maxBufferBytes: number): string {
     return "";
   }
 
-  const encoded = textEncoder.encode(buffer);
+  // Bound the work before encoding: a single huge output burst can make `buffer`
+  // large enough that `TextEncoder.encode` fails to allocate ("Failed to allocate
+  // buffer"). Every character encodes to >= 1 byte, so the last `maxBufferBytes`
+  // characters always cover at least the last `maxBufferBytes` bytes we keep, so
+  // slicing first is safe and caps the encode at <= 4 * maxBufferBytes bytes.
+  const candidate = buffer.length > maxBufferBytes ? buffer.slice(-maxBufferBytes) : buffer;
+
+  const encoded = textEncoder.encode(candidate);
   if (encoded.byteLength <= maxBufferBytes) {
-    return buffer;
+    return candidate;
   }
 
   let start = encoded.byteLength - maxBufferBytes;
