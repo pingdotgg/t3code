@@ -154,8 +154,15 @@ export default defineConfig(() => {
         // Explicit config so Vite's HMR WebSocket connects reliably
         // inside Electron's BrowserWindow. Vite 8 uses console.debug for
         // connection logs — enable "Verbose" in DevTools to see them.
+        //
+        // The desktop renderer is served from the portless `t3code-dev://app`
+        // custom scheme, so Vite's client can't infer the dev-server port from
+        // the page URL and falls back to `ws://127.0.0.1/` (no port → refused).
+        // Pin host + clientPort explicitly so it dials ws://<host>:<port> directly.
         protocol: "ws",
         host,
+        port,
+        clientPort: port,
       },
     },
     build: {

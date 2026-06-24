@@ -45,12 +45,22 @@ import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./ht
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 
+// Origins the desktop renderer is served from: it loads via the custom
+// `t3code(-dev)://app` scheme (see apps/desktop ElectronProtocol), so its
+// cross-origin API calls to the local backend must be CORS-allowed. Without
+// these, the desktop app's auth bootstrap fetch is blocked and the renderer
+// errors out. (Pre-scheme-rewrite the renderer loaded from the dev http origin,
+// which `devOrigin` already covered.)
+const DESKTOP_APP_ORIGINS = ["t3code://app", "t3code-dev://app"];
+
 export const browserApiCorsLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const devOrigin = config.devUrl?.origin;
+    const allowedOrigins = [...(devOrigin ? [devOrigin] : []), ...DESKTOP_APP_ORIGINS];
     return HttpRouter.cors({
-      ...(devOrigin ? { allowedOrigins: [devOrigin], credentials: true } : {}),
+      allowedOrigins,
+      credentials: true,
       allowedMethods: browserApiCorsAllowedMethods,
       allowedHeaders: browserApiCorsAllowedHeaders,
       maxAge: 600,

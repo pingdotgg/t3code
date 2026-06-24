@@ -2879,10 +2879,16 @@ function SidebarBrand() {
       to="/"
     >
       <T3Wordmark />
-      <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
+      <span
+        className="truncate text-sm font-medium tracking-tight text-muted-foreground"
+        data-slot="sidebar-wordmark-name"
+      >
         Code
       </span>
-      <span className="sidebar-brand-stage shrink-0 items-center whitespace-nowrap rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
+      <span
+        className="sidebar-brand-stage shrink-0 items-center whitespace-nowrap rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60"
+        data-slot="sidebar-wordmark-badge"
+      >
         logflash
       </span>
     </Link>

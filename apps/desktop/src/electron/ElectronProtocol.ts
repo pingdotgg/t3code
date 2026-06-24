@@ -114,9 +114,18 @@ async function proxyRequest(
   }
 
   const targetUrl = new URL(`${requestUrl.pathname}${requestUrl.search}`, targetOrigin);
+  // Forward the renderer's headers, but drop the custom-scheme Origin/Referer:
+  // requests from the `t3code-dev://app` (or prod) scheme carry an
+  // `Origin: t3code-dev://app` header, and forwarding that custom-scheme origin
+  // to the http(s) target makes Electron.net.fetch reject the request with
+  // net::ERR_FAILED, leaving the renderer stuck. Stripping them lets the proxy
+  // fetch succeed (the target sees a normal same-origin request).
+  const forwardedHeaders = new Headers(request.headers);
+  forwardedHeaders.delete("origin");
+  forwardedHeaders.delete("referer");
   const init: RequestInit = {
     method: request.method,
-    headers: request.headers,
+    headers: forwardedHeaders,
   };
   if (request.method !== "GET" && request.method !== "HEAD") {
     init.body = request.body;
