@@ -17,6 +17,7 @@ import { type ComposerImageAttachment, type DraftThreadState } from "../composer
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
+import { waitForAtomValue } from "../state/waitForAtomValue";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
@@ -454,43 +455,11 @@ export async function waitForStartedServerThread(
   timeoutMs = 1_000,
 ): Promise<boolean> {
   const threadAtom = environmentThreadDetails.detailAtom(threadRef);
-  const getThread = () => appAtomRegistry.get(threadAtom);
-  const thread = getThread();
-
-  if (threadHasStarted(thread)) {
-    return true;
-  }
-
-  return await new Promise<boolean>((resolve) => {
-    let settled = false;
-    let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
-    const finish = (result: boolean) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      if (timeoutId !== null) {
-        globalThis.clearTimeout(timeoutId);
-      }
-      unsubscribe();
-      resolve(result);
-    };
-
-    const unsubscribe = appAtomRegistry.subscribe(threadAtom, (thread) => {
-      if (!threadHasStarted(thread)) {
-        return;
-      }
-      finish(true);
-    });
-
-    if (threadHasStarted(getThread())) {
-      finish(true);
-      return;
-    }
-
-    timeoutId = globalThis.setTimeout(() => {
-      finish(false);
-    }, timeoutMs);
+  return waitForAtomValue({
+    registry: appAtomRegistry,
+    atom: threadAtom,
+    predicate: threadHasStarted,
+    timeoutMs,
   });
 }
 

@@ -123,11 +123,7 @@ export function useThreadComposerState() {
       return null;
     }
 
-    return deriveActiveWorkStartedAt(
-      selectedThread.latestRun,
-      selectedThreadSessionActivity,
-      null,
-    );
+    return deriveActiveWorkStartedAt(selectedThread.latestRun, selectedThreadSessionActivity, null);
   }, [selectedThreadDetail, selectedThreadSessionActivity, selectedThreadShell]);
 
   const activeThreadBusy = !!selectedThread && threadRuntimeIsActive(selectedThread.runtime);

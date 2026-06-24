@@ -532,37 +532,16 @@ describe("chat/editor shortcuts", () => {
     );
   });
 
-  it("matches filePicker.toggle shortcut outside terminal focus", () => {
-    assert.strictEqual(
-      resolveShortcutCommand(event({ key: "p", metaKey: true }), DEFAULT_BINDINGS, {
-        platform: "MacIntel",
-        context: { terminalFocus: false },
-      }),
-      "filePicker.toggle",
-    );
-    assert.notStrictEqual(
-      resolveShortcutCommand(event({ key: "p", metaKey: true }), DEFAULT_BINDINGS, {
-        platform: "MacIntel",
-        context: { terminalFocus: true },
-      }),
-      "filePicker.toggle",
-    );
-  });
+  it("resolves a user-configured thread panel shortcut without assigning a default", () => {
+    const bindings = compile([
+      { shortcut: modShortcut("b", { shiftKey: true }), command: "threadPanel.toggle" },
+    ]);
 
-  it("matches projectSearch.toggle shortcut outside terminal focus", () => {
     assert.strictEqual(
-      resolveShortcutCommand(event({ key: "f", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+      resolveShortcutCommand(event({ key: "b", metaKey: true, shiftKey: true }), bindings, {
         platform: "MacIntel",
-        context: { terminalFocus: false },
       }),
-      "projectSearch.toggle",
-    );
-    assert.notStrictEqual(
-      resolveShortcutCommand(event({ key: "f", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
-        platform: "MacIntel",
-        context: { terminalFocus: true },
-      }),
-      "projectSearch.toggle",
+      "threadPanel.toggle",
     );
   });
 

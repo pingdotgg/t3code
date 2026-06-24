@@ -32,6 +32,10 @@ import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
+import {
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_ROW_CLASS,
+} from "./chat/threadDetailsPanelStyles";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import {
@@ -66,6 +70,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface BranchToolbarBranchSelectorProps {
   className?: string;
+  displayMode?: "toolbar" | "panel";
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
@@ -85,6 +90,7 @@ function toBranchActionErrorMessage(error: unknown): string {
 
 export function BranchToolbarBranchSelector({
   className,
+  displayMode = "toolbar",
   environmentId,
   threadId,
   draftId,
@@ -716,7 +722,13 @@ export function BranchToolbarBranchSelector({
       open={isBranchMenuOpen}
       value={resolvedActiveBranch}
     >
-      <div className={cn("flex min-w-0 items-center gap-1", className)}>
+      <div
+        className={cn(
+          "flex min-w-0 items-center gap-1",
+          displayMode === "panel" && "w-full",
+          className,
+        )}
+      >
         {branchPr && branchPrStatus ? (
           <Tooltip>
             <TooltipTrigger
@@ -738,25 +750,36 @@ export function BranchToolbarBranchSelector({
             <TooltipPopup side="top">{branchPrTooltip}</TooltipPopup>
           </Tooltip>
         ) : null}
-        {/* Context menu lives on the wrapper: the disabled Button has
-            pointer-events-none, so the trigger itself never sees right-clicks
-            while refs are loading or a branch action is pending. */}
-        <span
-          className="flex min-w-0"
-          onContextMenu={(event) => handleBranchContextMenu(event, resolvedActiveBranch)}
+        <ComboboxTrigger
+          render={<Button variant="ghost" size={displayMode === "panel" ? "sm" : "xs"} />}
+          className={cn(
+            "min-w-0 text-muted-foreground/70 hover:text-foreground/80",
+            displayMode === "panel" && THREAD_DETAILS_PANEL_ROW_CLASS,
+          )}
+          disabled={isInitialBranchesLoadPending || isBranchActionPending}
         >
-          <ComboboxTrigger
-            render={<Button variant="ghost" size="xs" />}
-            className="min-w-0 max-w-full text-muted-foreground/70 hover:text-foreground/80"
-            disabled={isInitialBranchesLoadPending || isBranchActionPending}
+          <GitBranchIcon
+            className={cn(
+              "size-3 shrink-0 opacity-70",
+              displayMode === "panel" && THREAD_DETAILS_PANEL_ICON_CLASS,
+            )}
+          />
+          <span
+            className={cn(
+              "min-w-0 max-w-[240px] truncate",
+              displayMode === "panel" && "max-w-none flex-1 text-left",
+            )}
           >
-            <GitBranchIcon className="size-3 shrink-0 opacity-70" />
-            <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
-            <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
-          </ComboboxTrigger>
-        </span>
+            {triggerLabel}
+          </span>
+          <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
+        </ComboboxTrigger>
       </div>
-      <ComboboxPopup align="end" side="top" className="flex w-80 flex-col">
+      <ComboboxPopup
+        align={displayMode === "panel" ? "start" : "end"}
+        side={displayMode === "panel" ? "bottom" : "top"}
+        className="flex w-80 flex-col"
+      >
         <div className="shrink-0 px-3 pt-2.5">
           <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
             <SearchIcon

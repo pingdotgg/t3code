@@ -42,6 +42,8 @@ import {
 import { Separator } from "./ui/separator";
 
 interface BranchToolbarProps {
+  layout?: "composer" | "panel";
+  panelSection?: "all" | "workspace" | "branch";
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
@@ -215,6 +217,8 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
 });
 
 export const BranchToolbar = memo(function BranchToolbar({
+  layout = "composer",
+  panelSection = "all",
   environmentId,
   threadId,
   draftId,
@@ -302,6 +306,40 @@ export const BranchToolbar = memo(function BranchToolbar({
   const isMobile = useIsMobile();
 
   if (!hasActiveThread || !activeProject) return null;
+
+  if (layout === "panel") {
+    return (
+      <div className="flex w-full flex-col" data-thread-panel-run-context>
+        {panelSection !== "branch" ? (
+          <BranchToolbarEnvModeSelector
+            displayMode="panel"
+            envLocked={envModeLocked}
+            effectiveEnvMode={effectiveEnvMode}
+            activeWorktreePath={activeWorktreePath}
+            workspaceRoot={activeProject.workspaceRoot}
+            onEnvModeChange={onEnvModeChange}
+          />
+        ) : null}
+        {panelSection !== "workspace" ? (
+          <BranchToolbarBranchSelector
+            displayMode="panel"
+            className="w-full"
+            environmentId={environmentId}
+            threadId={threadId}
+            {...(draftId ? { draftId } : {})}
+            envLocked={envLocked}
+            {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
+            {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
+            {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
+            startFromOrigin={startFromOrigin}
+            onStartFromOriginChange={onStartFromOriginChange}
+            {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
+            {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+          />
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className="chat-composer-context-strip -mt-4 mx-auto flex w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] items-center gap-2 ps-1 pe-2 pt-5 pb-1">

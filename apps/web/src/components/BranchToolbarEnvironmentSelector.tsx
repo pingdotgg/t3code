@@ -3,6 +3,12 @@ import { CloudIcon, MonitorIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import type { EnvironmentOption } from "./BranchToolbar.logic";
+import { cn } from "../lib/utils";
+import {
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
+  THREAD_DETAILS_PANEL_ROW_CLASS,
+} from "./chat/threadDetailsPanelStyles";
 import {
   Select,
   SelectGroup,
@@ -17,9 +23,8 @@ interface BranchToolbarEnvironmentSelectorProps {
   envLocked: boolean;
   environmentId: EnvironmentId;
   availableEnvironments: readonly EnvironmentOption[];
-  // Absent when there is only one environment to show: the indicator still
-  // renders (as a static label) so remote projects are always identifiable.
-  onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  onEnvironmentChange: (environmentId: EnvironmentId) => void;
+  displayMode?: "toolbar" | "panel";
 }
 
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
@@ -27,6 +32,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   environmentId,
   availableEnvironments,
   onEnvironmentChange,
+  displayMode = "toolbar",
 }: BranchToolbarEnvironmentSelectorProps) {
   const activeEnvironment = useMemo(() => {
     return availableEnvironments.find((env) => env.environmentId === environmentId) ?? null;
@@ -43,11 +49,20 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
 
   if (envLocked || onEnvironmentChange === undefined) {
     return (
-      <span className="inline-flex min-w-0 max-w-full items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs",
+          displayMode === "panel" && THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
+        )}
+      >
         {activeEnvironment?.isPrimary ? (
-          <MonitorIcon className="size-3 shrink-0" />
+          <MonitorIcon
+            className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
+          />
         ) : (
-          <CloudIcon className="size-3 shrink-0" />
+          <CloudIcon
+            className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
+          />
         )}
         <span className="truncate">{activeEnvironment?.label ?? "Run on"}</span>
       </span>
@@ -63,14 +78,18 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     >
       <SelectTrigger
         variant="ghost"
-        size="xs"
-        className="min-w-0 max-w-full font-medium"
+        size={displayMode === "panel" ? "default" : "xs"}
+        className={cn("font-medium", displayMode === "panel" && THREAD_DETAILS_PANEL_ROW_CLASS)}
         aria-label="Run on"
       >
         {activeEnvironment?.isPrimary ? (
-          <MonitorIcon className="size-3 shrink-0" />
+          <MonitorIcon
+            className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
+          />
         ) : (
-          <CloudIcon className="size-3 shrink-0" />
+          <CloudIcon
+            className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
+          />
         )}
         <SelectValue />
       </SelectTrigger>
