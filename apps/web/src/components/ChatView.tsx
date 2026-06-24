@@ -78,10 +78,15 @@ import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
   setPendingUserInputCustomAnswer,
+  setPendingUserInputSelectedOption,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
 import { useUiStateStore } from "../uiStateStore";
+import {
+  usePendingUserInputDraftStore,
+  usePendingUserInputThreadDraft,
+} from "../pendingUserInputDraftStore";
 import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
@@ -244,6 +249,9 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+// ponytail: window during which we suppress restoring a just-cleared custom
+// draft back into the composer, so clicking a preset doesn't echo stale text.
+const PENDING_CUSTOM_RESTORE_SUPPRESSION_MS = 500;
 const PreviewPanel = lazy(() =>
   import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
@@ -1079,7 +1087,15 @@ function ChatViewContent(props: ChatViewProps) {
         ? store.getDraftSession(draftId)
         : null,
   );
-  const promptRef = useRef("");
+  const pendingUserInputDraftThread = usePendingUserInputThreadDraft(threadId);
+  const setPendingUserInputDraftQuestionIndex = usePendingUserInputDraftStore(
+    (store) => store.setQuestionIndex,
+  );
+  const setPendingUserInputDraftAnswer = usePendingUserInputDraftStore((store) => store.setAnswer);
+  const clearInactivePendingUserInputDraftRequests = usePendingUserInputDraftStore(
+    (store) => store.clearInactiveRequests,
+  );
+  const promptRef = useRef(prompt);
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
@@ -1105,11 +1121,6 @@ function ChatViewContent(props: ChatViewProps) {
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
   >([]);
-  const [pendingUserInputAnswersByRequestId, setPendingUserInputAnswersByRequestId] = useState<
-    Record<string, Record<string, PendingUserInputDraftAnswer>>
-  >({});
-  const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
-    useState<Record<string, number>>({});
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
@@ -1694,17 +1705,21 @@ function ChatViewContent(props: ChatViewProps) {
     () => derivePendingUserInputs(threadActivities),
     [threadActivities],
   );
+  const activePendingUserInputRequestIds = useMemo(
+    () => pendingUserInputs.map((pendingUserInput) => pendingUserInput.requestId),
+    [pendingUserInputs],
+  );
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingDraftAnswers = useMemo(
     () =>
       activePendingUserInput
-        ? (pendingUserInputAnswersByRequestId[activePendingUserInput.requestId] ??
+        ? (pendingUserInputDraftThread.answersByRequestId[activePendingUserInput.requestId] ??
           EMPTY_PENDING_USER_INPUT_ANSWERS)
         : EMPTY_PENDING_USER_INPUT_ANSWERS,
-    [activePendingUserInput, pendingUserInputAnswersByRequestId],
+    [activePendingUserInput, pendingUserInputDraftThread.answersByRequestId],
   );
   const activePendingQuestionIndex = activePendingUserInput
-    ? (pendingUserInputQuestionIndexByRequestId[activePendingUserInput.requestId] ?? 0)
+    ? (pendingUserInputDraftThread.questionIndexByRequestId[activePendingUserInput.requestId] ?? 0)
     : 0;
   const activePendingProgress = useMemo(
     () =>
@@ -1777,6 +1792,104 @@ function ChatViewContent(props: ChatViewProps) {
     activeThread?.session ?? null,
     localDispatchStartedAt,
   );
+  useEffect(() => {
+    if (!activeThread) {
+      return;
+    }
+    // ponytail: skip pruning until the thread's activities have hydrated, otherwise
+    // a brief empty-activities window on thread switch would delete restored drafts
+    // (activePendingUserInputRequestIds is derived from threadActivities).
+    if (threadActivities === EMPTY_ACTIVITIES && activePendingUserInputRequestIds.length === 0) {
+      return;
+    }
+    clearInactivePendingUserInputDraftRequests(threadId, activePendingUserInputRequestIds);
+  }, [
+    activePendingUserInputRequestIds,
+    activeThread,
+    clearInactivePendingUserInputDraftRequests,
+    threadActivities,
+    threadId,
+  ]);
+  const lastSyncedPendingInputRef = useRef<{
+    requestId: string | null;
+    questionId: string | null;
+  } | null>(null);
+  const pendingAnswerWriteRef = useRef<{
+    requestId: string | null;
+    questionId: string | null;
+    source: "option" | "custom" | null;
+  }>({
+    requestId: null,
+    questionId: null,
+    source: null,
+  });
+  const suppressedPendingCustomRestoreRef = useRef<{
+    requestId: string | null;
+    value: string | null;
+    expiresAtMs: number;
+  }>({
+    requestId: null,
+    value: null,
+    expiresAtMs: 0,
+  });
+  useEffect(() => {
+    const nextCustomAnswer = activePendingProgress?.customAnswer;
+    if (typeof nextCustomAnswer !== "string") {
+      lastSyncedPendingInputRef.current = null;
+      pendingAnswerWriteRef.current = {
+        requestId: null,
+        questionId: null,
+        source: null,
+      };
+      suppressedPendingCustomRestoreRef.current = {
+        requestId: null,
+        value: null,
+        expiresAtMs: 0,
+      };
+      return;
+    }
+    const nextRequestId = activePendingUserInput?.requestId ?? null;
+    const nextQuestionId = activePendingProgress?.activeQuestion?.id ?? null;
+    const questionChanged =
+      lastSyncedPendingInputRef.current?.requestId !== nextRequestId ||
+      lastSyncedPendingInputRef.current?.questionId !== nextQuestionId;
+    const textChangedExternally = promptRef.current !== nextCustomAnswer;
+
+    lastSyncedPendingInputRef.current = {
+      requestId: nextRequestId,
+      questionId: nextQuestionId,
+    };
+    if (
+      pendingAnswerWriteRef.current.requestId !== nextRequestId ||
+      pendingAnswerWriteRef.current.questionId !== nextQuestionId
+    ) {
+      pendingAnswerWriteRef.current = {
+        requestId: nextRequestId,
+        questionId: nextQuestionId,
+        source: activePendingProgress?.activeDraft?.answerSource ?? null,
+      };
+    }
+
+    if (!questionChanged && !textChangedExternally) {
+      return;
+    }
+
+    promptRef.current = nextCustomAnswer;
+    const nextCursor = collapseExpandedComposerCursor(nextCustomAnswer, nextCustomAnswer.length);
+    setComposerCursor(nextCursor);
+    setComposerTrigger(
+      detectComposerTrigger(
+        nextCustomAnswer,
+        expandCollapsedComposerCursor(nextCustomAnswer, nextCursor),
+      ),
+    );
+    setComposerHighlightedItemId(null);
+  }, [
+    activePendingProgress?.activeDraft?.answerSource,
+    activePendingProgress?.customAnswer,
+    activePendingUserInput?.requestId,
+    activePendingProgress?.activeQuestion?.id,
+  ]);
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
@@ -3212,6 +3325,14 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThread?.id, activeThread?.messages, handoffAttachmentPreviews, optimisticUserMessages]);
 
   useEffect(() => {
+    if (activePendingProgress?.activeQuestion) {
+      return;
+    }
+    promptRef.current = prompt;
+    setComposerCursor((existing) => clampCollapsedComposerCursor(prompt, existing));
+  }, [activePendingProgress?.activeQuestion, prompt]);
+
+  useEffect(() => {
     setOptimisticUserMessages((existing) => {
       for (const message of existing) {
         revokeUserMessagePreviewUrls(message);
@@ -3975,45 +4096,101 @@ function ChatViewContent(props: ChatViewProps) {
       if (!activePendingUserInput) {
         return;
       }
-      setPendingUserInputQuestionIndexByRequestId((existing) => ({
-        ...existing,
-        [activePendingUserInput.requestId]: nextQuestionIndex,
-      }));
+      setPendingUserInputDraftQuestionIndex(
+        threadId,
+        activePendingUserInput.requestId,
+        nextQuestionIndex,
+      );
     },
-    [activePendingUserInput],
+    [activePendingUserInput, setPendingUserInputDraftQuestionIndex, threadId],
   );
 
   const onSelectActivePendingUserInputOption = useCallback(
-    (questionId: string, optionLabel: string) => {
+    (
+      questionId: string,
+      optionLabel: string,
+      options?: {
+        advanceToNextQuestion?: boolean;
+        submitIfComplete?: boolean;
+      },
+    ) => {
       if (!activePendingUserInput) {
         return;
       }
-      setPendingUserInputAnswersByRequestId((existing) => {
-        const question =
-          (activePendingProgress?.activeQuestion?.id === questionId
-            ? activePendingProgress.activeQuestion
-            : undefined) ??
-          activePendingUserInput.questions.find((entry) => entry.id === questionId);
-        if (!question) {
-          return existing;
-        }
-
-        return {
-          ...existing,
-          [activePendingUserInput.requestId]: {
-            ...existing[activePendingUserInput.requestId],
-            [questionId]: togglePendingUserInputOptionSelection(
-              question,
-              existing[activePendingUserInput.requestId]?.[questionId],
-              optionLabel,
-            ),
-          },
+      const question =
+        activePendingProgress?.activeQuestion?.id === questionId
+          ? activePendingProgress.activeQuestion
+          : activePendingUserInput.questions.find((entry) => entry.id === questionId);
+      if (!question) {
+        return;
+      }
+      const previousDraft = activePendingDraftAnswers[questionId];
+      const isMultiSelect = question.multiSelect === true;
+      // ponytail: option source is authoritative so a stale custom draft cannot
+      // override a clicked preset at submit (#918/#528 race).
+      const nextDraftAnswer = isMultiSelect
+        ? togglePendingUserInputOptionSelection(question, previousDraft, optionLabel)
+        : setPendingUserInputSelectedOption(previousDraft, optionLabel);
+      pendingAnswerWriteRef.current = {
+        requestId: activePendingUserInput.requestId,
+        questionId,
+        source: "option",
+      };
+      if (!isMultiSelect) {
+        suppressedPendingCustomRestoreRef.current = {
+          requestId: activePendingUserInput.requestId,
+          value:
+            typeof previousDraft?.customAnswer === "string" && previousDraft.customAnswer.length > 0
+              ? previousDraft.customAnswer
+              : null,
+          expiresAtMs: performance.now() + PENDING_CUSTOM_RESTORE_SUPPRESSION_MS,
         };
-      });
+      }
+      setPendingUserInputDraftAnswer(
+        threadId,
+        activePendingUserInput.requestId,
+        questionId,
+        nextDraftAnswer,
+      );
       promptRef.current = "";
-      composerRef.current?.resetCursorState({ cursor: 0 });
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      setComposerHighlightedItemId(null);
+      // Multi-select toggles in place; single-select advances or submits.
+      if (isMultiSelect) {
+        return;
+      }
+      if (options?.submitIfComplete) {
+        const nextResolvedAnswers = buildPendingUserInputAnswers(activePendingUserInput.questions, {
+          ...activePendingDraftAnswers,
+          [questionId]: nextDraftAnswer,
+        });
+        if (nextResolvedAnswers) {
+          void onRespondToUserInput(activePendingUserInput.requestId, nextResolvedAnswers);
+        }
+        return;
+      }
+      if (
+        options?.advanceToNextQuestion &&
+        activePendingProgress &&
+        !activePendingProgress.isLastQuestion
+      ) {
+        setPendingUserInputDraftQuestionIndex(
+          threadId,
+          activePendingUserInput.requestId,
+          activePendingProgress.questionIndex + 1,
+        );
+      }
     },
-    [activePendingProgress?.activeQuestion, activePendingUserInput, composerRef],
+    [
+      activePendingDraftAnswers,
+      activePendingProgress,
+      activePendingUserInput,
+      onRespondToUserInput,
+      setPendingUserInputDraftAnswer,
+      setPendingUserInputDraftQuestionIndex,
+      threadId,
+    ],
   );
 
   const onChangeActivePendingUserInputCustomAnswer = useCallback(
@@ -4027,27 +4204,48 @@ function ChatViewContent(props: ChatViewProps) {
       if (!activePendingUserInput) {
         return;
       }
-      promptRef.current = value;
-      setPendingUserInputAnswersByRequestId((existing) => ({
-        ...existing,
-        [activePendingUserInput.requestId]: {
-          ...existing[activePendingUserInput.requestId],
-          [questionId]: setPendingUserInputCustomAnswer(
-            existing[activePendingUserInput.requestId]?.[questionId],
-            value,
-          ),
-        },
-      }));
-      const snapshot = composerRef.current?.readSnapshot();
       if (
-        snapshot?.value !== value ||
-        snapshot.cursor !== nextCursor ||
-        snapshot.expandedCursor !== expandedCursor
+        suppressedPendingCustomRestoreRef.current.requestId === activePendingUserInput.requestId &&
+        suppressedPendingCustomRestoreRef.current.value !== null &&
+        suppressedPendingCustomRestoreRef.current.value === value &&
+        suppressedPendingCustomRestoreRef.current.expiresAtMs >= performance.now()
       ) {
-        composerRef.current?.focusAt(nextCursor);
+        return;
       }
+      suppressedPendingCustomRestoreRef.current = {
+        requestId: null,
+        value: null,
+        expiresAtMs: 0,
+      };
+      if (
+        pendingAnswerWriteRef.current.requestId === activePendingUserInput.requestId &&
+        pendingAnswerWriteRef.current.questionId === questionId &&
+        pendingAnswerWriteRef.current.source === "option" &&
+        value === activePendingDraftAnswers[questionId]?.customAnswer
+      ) {
+        return;
+      }
+      pendingAnswerWriteRef.current = {
+        requestId: activePendingUserInput.requestId,
+        questionId,
+        source:
+          value.trim().length > 0
+            ? "custom"
+            : (activePendingDraftAnswers[questionId]?.answerSource ?? null),
+      };
+      promptRef.current = value;
+      setPendingUserInputDraftAnswer(
+        threadId,
+        activePendingUserInput.requestId,
+        questionId,
+        setPendingUserInputCustomAnswer(activePendingDraftAnswers[questionId], value),
+      );
+      setComposerCursor(nextCursor);
+      setComposerTrigger(
+        cursorAdjacentToMention ? null : detectComposerTrigger(value, expandedCursor),
+      );
     },
-    [activePendingUserInput, composerRef],
+    [activePendingDraftAnswers, activePendingUserInput, setPendingUserInputDraftAnswer, threadId],
   );
 
   const onAdvanceActivePendingUserInput = useCallback(() => {
@@ -4832,7 +5030,6 @@ function ChatViewContent(props: ChatViewProps) {
                     onImplementPlanInNewThread={onImplementPlanInNewThread}
                     onRespondToApproval={onRespondToApproval}
                     onSelectActivePendingUserInputOption={onSelectActivePendingUserInputOption}
-                    onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
                     onPreviousActivePendingUserInputQuestion={
                       onPreviousActivePendingUserInputQuestion
                     }

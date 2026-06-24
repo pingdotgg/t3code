@@ -1,5 +1,4 @@
-import { type ApprovalRequestId } from "@t3tools/contracts";
-import { memo, useEffect, useEffectEvent, useRef, useState } from "react";
+import { memo, useEffect, useEffectEvent, useState } from "react";
 import { type PendingUserInput } from "../../session-logic";
 import {
   derivePendingUserInputProgress,
@@ -10,20 +9,25 @@ import { cn } from "~/lib/utils";
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
-  respondingRequestIds: ApprovalRequestId[];
+  isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
-  onToggleOption: (questionId: string, optionLabel: string) => void;
-  onAdvance: () => void;
+  onSelectOption: (
+    questionId: string,
+    optionLabel: string,
+    options?: {
+      advanceToNextQuestion?: boolean;
+      submitIfComplete?: boolean;
+    },
+  ) => void;
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
   pendingUserInputs,
-  respondingRequestIds,
+  isResponding,
   answers,
   questionIndex,
-  onToggleOption,
-  onAdvance,
+  onSelectOption,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
   const activePrompt = pendingUserInputs[0];
@@ -33,11 +37,10 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
     <ComposerPendingUserInputCard
       key={activePrompt.requestId}
       prompt={activePrompt}
-      isResponding={respondingRequestIds.includes(activePrompt.requestId)}
+      isResponding={isResponding}
       answers={answers}
       questionIndex={questionIndex}
-      onToggleOption={onToggleOption}
-      onAdvance={onAdvance}
+      onSelectOption={onSelectOption}
     />
   );
 });
@@ -47,28 +50,27 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   isResponding,
   answers,
   questionIndex,
-  onToggleOption,
-  onAdvance,
+  onSelectOption,
 }: {
   prompt: PendingUserInput;
   isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
-  onToggleOption: (questionId: string, optionLabel: string) => void;
-  onAdvance: () => void;
+  onSelectOption: (
+    questionId: string,
+    optionLabel: string,
+    options?: {
+      advanceToNextQuestion?: boolean;
+      submitIfComplete?: boolean;
+    },
+  ) => void;
 }) {
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
-  const autoAdvanceTimerRef = useRef<number | null>(null);
-  const onAdvanceRef = useRef(onAdvance);
   const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
     questionId: string;
     optionLabel: string;
   } | null>(null);
-
-  useEffect(() => {
-    onAdvanceRef.current = onAdvance;
-  }, [onAdvance]);
 
   useEffect(() => {
     if (!activeQuestion || activeQuestion.multiSelect || !optimisticSingleSelect) {
@@ -91,29 +93,20 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     progress.selectedOptionLabels,
   ]);
 
-  // Clear auto-advance timer on unmount
-  useEffect(() => {
-    return () => {
-      if (autoAdvanceTimerRef.current !== null) {
-        window.clearTimeout(autoAdvanceTimerRef.current);
-      }
-    };
-  }, []);
-
+  // ponytail: deterministic auto-advance/submit replaces the prior timeout race.
+  // Selecting a preset immediately advances (or submits on the last question)
+  // instead of waiting on a timer that could fire after stale custom edits.
   const handleOptionSelection = useEffectEvent((questionId: string, optionLabel: string) => {
     if (activeQuestion?.multiSelect) {
-      onToggleOption(questionId, optionLabel);
+      onSelectOption(questionId, optionLabel);
       return;
     }
     setOptimisticSingleSelect({ questionId, optionLabel });
-    onToggleOption(questionId, optionLabel);
-    if (autoAdvanceTimerRef.current !== null) {
-      window.clearTimeout(autoAdvanceTimerRef.current);
-    }
-    autoAdvanceTimerRef.current = window.setTimeout(() => {
-      autoAdvanceTimerRef.current = null;
-      onAdvanceRef.current();
-    }, 200);
+    onSelectOption(
+      questionId,
+      optionLabel,
+      progress.isLastQuestion ? { submitIfComplete: true } : { advanceToNextQuestion: true },
+    );
   });
 
   // Keyboard shortcut: number keys 1-9 select corresponding options when focus is
