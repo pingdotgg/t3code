@@ -34,7 +34,7 @@ export function subagentThreadTitle(input: {
     return `${input.parentTitle} subagent ${input.ordinal}`;
   }
   const clipped = detail.length > 72 ? `${detail.slice(0, 69)}...` : detail;
-  return `Subagent: ${clipped}`;
+  return clipped;
 }
 
 export function makeSubagentChildThread(input: {

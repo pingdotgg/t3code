@@ -10,8 +10,10 @@ import {
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
+  getSidebarForkParentThreadId,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isSidebarSubagentThread,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
@@ -230,6 +232,46 @@ describe("resolveSidebarStageBadgeLabel", () => {
         fallbackStageLabel: "Alpha",
       }),
     ).toBe("Alpha");
+  });
+});
+
+describe("sidebar thread lineage helpers", () => {
+  it("identifies subagent threads so the sidebar can hide them", () => {
+    const parentId = ThreadId.make("thread-parent");
+    const subagent = makeThreadFixture({
+      lineage: {
+        rootThreadId: parentId,
+        parentThreadId: parentId,
+        relationshipToParent: "subagent",
+      },
+    });
+
+    expect(isSidebarSubagentThread(subagent)).toBe(true);
+    expect(isSidebarSubagentThread(makeThreadFixture())).toBe(false);
+  });
+
+  it("resolves the parent thread for fork sidebar affordances", () => {
+    const parentId = ThreadId.make("thread-parent");
+    const fallbackParentId = ThreadId.make("thread-fallback-parent");
+    const runFork = makeThreadFixture({
+      forkedFrom: { type: "run", threadId: parentId, runId: "run-1" as never },
+      lineage: {
+        rootThreadId: parentId,
+        parentThreadId: fallbackParentId,
+        relationshipToParent: "fork",
+      },
+    });
+    const lineageFork = makeThreadFixture({
+      lineage: {
+        rootThreadId: parentId,
+        parentThreadId: fallbackParentId,
+        relationshipToParent: "fork",
+      },
+    });
+
+    expect(getSidebarForkParentThreadId(runFork)).toBe(parentId);
+    expect(getSidebarForkParentThreadId(lineageFork)).toBe(fallbackParentId);
+    expect(getSidebarForkParentThreadId(makeThreadFixture())).toBeNull();
   });
 });
 

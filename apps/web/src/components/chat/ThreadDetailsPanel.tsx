@@ -68,40 +68,6 @@ export interface ThreadDetailsPanelProps {
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
 }
 
-function shortConnectionStatus(connection: EnvironmentConnectionPresentation | null): string {
-  switch (connection?.phase) {
-    case "connected":
-      return "Connected";
-    case "connecting":
-      return "Connecting";
-    case "reconnecting":
-      return "Reconnecting";
-    case "offline":
-      return "Offline";
-    case "error":
-      return "Connection issue";
-    case "available":
-    case undefined:
-      return "Available";
-  }
-}
-
-function connectionDotClass(connection: EnvironmentConnectionPresentation | null): string {
-  switch (connection?.phase) {
-    case "connected":
-      return "bg-success";
-    case "connecting":
-    case "reconnecting":
-      return "bg-warning animate-pulse";
-    case "error":
-    case "offline":
-      return "bg-destructive";
-    case "available":
-    case undefined:
-      return "bg-muted-foreground/50";
-  }
-}
-
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const connectionIssue =
     props.environmentConnection !== null &&
@@ -139,7 +105,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         "floating-glass-surface overflow-x-hidden rounded-[20px] border border-border",
         props.mode === "inline"
           ? "max-h-full overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          : "overflow-y-hidden",
+          : "max-h-[calc(100dvh-6.5rem)] overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
       )}
       data-thread-details-card
     >
@@ -151,28 +117,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           >
             Workspace
           </h3>
-          <div className="flex shrink-0 items-center gap-1">
-            <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <span
-                className={cn(
-                  "size-1.5 rounded-full",
-                  connectionDotClass(props.environmentConnection),
-                )}
-                aria-hidden="true"
-              />
-              {shortConnectionStatus(props.environmentConnection)}
-            </span>
-            {props.mode === "popover" && props.onClose ? (
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                aria-label="Close thread details"
-                onClick={props.onClose}
-              >
-                <XIcon className="size-3.5" />
-              </Button>
-            ) : null}
-          </div>
         </div>
 
         {connectionIssue ? (
@@ -271,7 +215,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               id="thread-details-version-control-heading"
               className="text-[11px] font-medium text-muted-foreground"
             >
-              Version control
+              Version Control
             </h3>
           </div>
           <div className="flex flex-col px-2 pb-2.5">
@@ -298,7 +242,11 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   );
 
   if (props.mode === "popover") {
-    return <div data-thread-details-panel="popover">{card}</div>;
+    return (
+      <div className="max-h-[calc(100dvh-6.5rem)]" data-thread-details-panel="popover">
+        {card}
+      </div>
+    );
   }
 
   return (
