@@ -1,23 +1,21 @@
 import {
   ProviderDriverKind,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   type PlanId,
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import type {
-  ThreadCheckpointSummary,
   ThreadPendingApproval,
   ThreadPendingUserInput,
-  ThreadProposedPlan,
-  ThreadRunSummary,
-  ThreadRuntimeSummary,
-  ThreadTodoPlan,
-  ThreadWorkEntry,
-} from "@t3tools/client-runtime/state/shell";
+} from "@t3tools/client-runtime/state/thread-requests";
+import type { ThreadRunSummary, ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
 
 import type { ChatMessage, ProposedPlan, SessionPhase, TurnDiffSummary } from "./types";
 import * as DateTime from "effect/DateTime";
@@ -47,17 +45,30 @@ export const PROVIDER_OPTIONS: Array<{
   { value: ProviderDriverKind.make("grok"), label: "Grok", available: true },
 ];
 
-export type WorkLogToolLifecycleStatus = ThreadWorkEntry["toolLifecycleStatus"];
+export type WorkLogToolLifecycleStatus =
+  | "inProgress"
+  | "completed"
+  | "failed"
+  | "declined"
+  | "stopped";
 
-export interface WorkLogEntry extends Omit<
-  ThreadWorkEntry,
-  "structuredPayload" | "runId" | "itemType" | "toolLifecycleStatus"
-> {
+export interface WorkLogEntry {
+  readonly id: string;
+  readonly createdAt: string;
   readonly runId?: RunId | null;
-  readonly itemType?: ThreadWorkEntry["itemType"];
-  readonly toolLifecycleStatus?: ThreadWorkEntry["toolLifecycleStatus"];
-  readonly structuredPayload?: ThreadWorkEntry["structuredPayload"];
-  readonly sourceItemType?: ThreadWorkEntry["itemType"];
+  readonly label: string;
+  readonly detail?: string;
+  readonly command?: string;
+  readonly rawCommand?: string;
+  readonly changedFiles?: ReadonlyArray<string>;
+  readonly tone: "thinking" | "tool" | "info" | "error";
+  readonly toolTitle?: string;
+  readonly toolData?: unknown;
+  readonly requestKind?: string;
+  readonly itemType?: OrchestrationV2TurnItem["type"];
+  readonly toolLifecycleStatus?: WorkLogToolLifecycleStatus;
+  readonly structuredPayload?: OrchestrationV2TurnItem;
+  readonly sourceItemType?: OrchestrationV2TurnItem["type"];
   readonly projectedItem?: OrchestrationV2ProjectedTurnItem;
 }
 
@@ -80,9 +91,7 @@ export interface LatestProposedPlanState {
   readonly updatedAt: string;
   readonly runId: RunId | null;
   readonly planMarkdown: string;
-  readonly implementedAt: string | null;
-  readonly implementationThreadId: ThreadId | null;
-  readonly status: ThreadProposedPlan["status"];
+  readonly status: OrchestrationV2PlanArtifact["status"];
 }
 
 export type TimelineAttempt = Pick<
@@ -217,116 +226,95 @@ export function derivePendingUserInputs(
 }
 
 export function deriveActivePlanState(
-  plans: ReadonlyArray<ThreadTodoPlan>,
+  projection: OrchestrationV2ThreadProjection | null,
   latestRunId: RunId | undefined,
 ): ActivePlanState | null {
+  if (projection === null) return null;
+  const plans = projection.plans.filter((plan) => plan.kind === "todo_list");
   const plan =
     [...plans].toReversed().find((candidate) => candidate.runId === latestRunId) ??
     plans.at(-1) ??
     null;
   if (plan === null || plan.steps.length === 0) return null;
   return {
-    createdAt: plan.updatedAt,
+    createdAt: planItemTime(projection, plan.id),
     runId: plan.runId,
-    explanation: plan.explanation,
-    steps: plan.steps.map(({ step, status }) => ({ step, status })),
+    explanation: plan.explanation ?? null,
+    steps: plan.steps.map(({ text, status }) => ({
+      step: text,
+      status: status === "running" ? "inProgress" : status,
+    })),
   };
 }
 
-function toLatestProposedPlanState(plan: ThreadProposedPlan): LatestProposedPlanState {
+function planItemTime(projection: OrchestrationV2ThreadProjection, planId: PlanId): string {
+  const item = projection.turnItems.findLast(
+    (candidate) =>
+      (candidate.type === "proposed_plan" || candidate.type === "todo_list") &&
+      candidate.planId === planId,
+  );
+  return DateTime.formatIso(item?.updatedAt ?? projection.updatedAt);
+}
+
+function toLatestProposedPlanState(
+  projection: OrchestrationV2ThreadProjection,
+  plan: Extract<OrchestrationV2PlanArtifact, { readonly kind: "proposed_plan" }>,
+): LatestProposedPlanState {
+  const updatedAt = planItemTime(projection, plan.id);
   return {
     id: plan.id,
-    createdAt: plan.createdAt,
-    updatedAt: plan.updatedAt,
+    createdAt: updatedAt,
+    updatedAt,
     runId: plan.runId,
-    planMarkdown: plan.planMarkdown,
-    implementedAt: plan.implementedAt,
-    implementationThreadId: plan.implementationThreadId,
+    planMarkdown: plan.markdown,
     status: plan.status,
   };
 }
 
 export function findLatestProposedPlan(
-  plans: ReadonlyArray<ThreadProposedPlan>,
+  projection: OrchestrationV2ThreadProjection | null,
   latestRunId: RunId | string | null | undefined,
 ): LatestProposedPlanState | null {
+  if (projection === null) return null;
+  const plans = projection.plans.filter((plan) => plan.kind === "proposed_plan");
   const candidates = latestRunId ? plans.filter((plan) => plan.runId === latestRunId) : plans;
   const plan = [...(candidates.length > 0 ? candidates : plans)]
     .toSorted(
       (left, right) =>
-        left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
+        planItemTime(projection, left.id).localeCompare(planItemTime(projection, right.id)) ||
+        left.id.localeCompare(right.id),
     )
     .at(-1);
-  return plan === undefined ? null : toLatestProposedPlanState(plan);
+  return plan === undefined ? null : toLatestProposedPlanState(projection, plan);
 }
 
 export function findSidebarProposedPlan(input: {
-  readonly threads: ReadonlyArray<
-    Pick<
-      { readonly id: ThreadId; readonly proposedPlans: ReadonlyArray<ThreadProposedPlan> },
-      "id" | "proposedPlans"
-    >
-  >;
+  readonly threads: ReadonlyArray<{
+    readonly id: ThreadId;
+    readonly projection: OrchestrationV2ThreadProjection;
+  }>;
   readonly latestRun: Pick<ThreadRunSummary, "runId" | "sourcePlanRef"> | null;
   readonly latestRunSettled: boolean;
   readonly threadId: ThreadId | string | null | undefined;
 }): LatestProposedPlanState | null {
   if (!input.latestRunSettled && input.latestRun?.sourcePlanRef !== undefined) {
     const source = input.latestRun.sourcePlanRef;
-    const plan = input.threads
-      .find((thread) => thread.id === source.threadId)
-      ?.proposedPlans.find((candidate) => candidate.id === source.planId);
-    if (plan !== undefined) return toLatestProposedPlanState(plan);
+    const sourceProjection = input.threads.find(
+      (thread) => thread.id === source.threadId,
+    )?.projection;
+    const plan = sourceProjection?.plans.find(
+      (candidate) => candidate.kind === "proposed_plan" && candidate.id === source.planId,
+    );
+    if (sourceProjection !== undefined && plan?.kind === "proposed_plan") {
+      return toLatestProposedPlanState(sourceProjection, plan);
+    }
   }
-  const activePlans =
-    input.threads.find((thread) => thread.id === input.threadId)?.proposedPlans ?? [];
-  return findLatestProposedPlan(activePlans, input.latestRun?.runId);
+  const activeProjection = input.threads.find((thread) => thread.id === input.threadId)?.projection;
+  return findLatestProposedPlan(activeProjection ?? null, input.latestRun?.runId);
 }
 
-export function hasActionableProposedPlan(
-  plan: LatestProposedPlanState | Pick<ThreadProposedPlan, "implementedAt"> | null,
-): boolean {
-  return plan !== null && plan.implementedAt === null;
-}
-
-export function deriveWorkLogEntries(entries: ReadonlyArray<ThreadWorkEntry>): WorkLogEntry[] {
-  return entries.map((entry) => ({ ...entry, sourceItemType: entry.itemType }));
-}
-
-export function deriveTimelineEntries(
-  messages: ReadonlyArray<ChatMessage>,
-  proposedPlans: ReadonlyArray<ThreadProposedPlan>,
-  workEntries: ReadonlyArray<WorkLogEntry>,
-): TimelineEntry[] {
-  return [
-    ...messages.map(
-      (message): TimelineEntry => ({
-        id: message.id,
-        kind: "message",
-        createdAt: message.createdAt,
-        message,
-      }),
-    ),
-    ...proposedPlans.map(
-      (proposedPlan): TimelineEntry => ({
-        id: proposedPlan.id,
-        kind: "proposed-plan",
-        createdAt: proposedPlan.createdAt,
-        proposedPlan,
-      }),
-    ),
-    ...workEntries.map(
-      (entry): TimelineEntry => ({
-        id: entry.id,
-        kind: "work",
-        createdAt: entry.createdAt,
-        entry,
-      }),
-    ),
-  ].toSorted(
-    (left, right) =>
-      left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-  );
+export function hasActionableProposedPlan(plan: LatestProposedPlanState | null): boolean {
+  return plan?.status === "active";
 }
 
 const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"]["type"]>([
@@ -568,8 +556,6 @@ export function deriveTimelineEntriesFromVisibleTurnItems(input: {
         runId: item.runId,
         planMarkdown: item.markdown,
         status: "active" as const,
-        implementedAt: null,
-        implementationThreadId: null,
         createdAt,
         updatedAt: DateTime.formatIso(item.updatedAt),
       };

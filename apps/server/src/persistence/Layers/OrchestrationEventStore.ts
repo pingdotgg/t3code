@@ -1,20 +1,23 @@
 import {
+  ApplicationProjectEvent,
   type ApplicationStoredEvent,
   CommandId,
   EventId,
   IsoDateTime,
   NonNegativeInt,
-  OrchestrationActorKind,
-  OrchestrationAggregateKind,
-  OrchestrationEvent,
-  OrchestrationEventMetadata,
-  OrchestrationEventType,
   OrchestrationV2DomainEventJson,
   OrchestrationV2StoredEvent,
   ProjectId,
   ThreadId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import {
+  OrchestrationActorKind,
+  OrchestrationAggregateKind,
+  OrchestrationEvent,
+  OrchestrationEventMetadata,
+  OrchestrationEventType,
+} from "@t3tools/contracts/legacy-orchestration";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
@@ -34,6 +37,7 @@ import {
 } from "../Services/OrchestrationEventStore.ts";
 
 const decodeEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
+const decodeProjectEvent = Schema.decodeUnknownEffect(ApplicationProjectEvent);
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 const EventMetadataFromJsonString = Schema.fromJsonString(OrchestrationEventMetadata);
 
@@ -137,7 +141,7 @@ const rowToV2StoredEvent = Effect.fn("OrchestrationEventStore.rowToV2StoredEvent
 const rowToProjectEvent = Effect.fn("OrchestrationEventStore.rowToProjectEvent")(function* (
   row: ApplicationEventRow,
 ) {
-  const event = yield* decodeEvent({
+  return yield* decodeProjectEvent({
     sequence: row.sequence,
     eventId: row.event_id,
     type: row.event_type,
@@ -150,14 +154,6 @@ const rowToProjectEvent = Effect.fn("OrchestrationEventStore.rowToProjectEvent")
     payload: yield* decodeJson(row.payload_json),
     metadata: yield* decodeJson(row.metadata_json),
   });
-  switch (event.type) {
-    case "project.created":
-    case "project.meta-updated":
-    case "project.deleted":
-      return event;
-    default:
-      return yield* Effect.die(`Expected a project event, received '${event.type}'.`);
-  }
 });
 
 function rowToApplicationStoredEvent(

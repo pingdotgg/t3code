@@ -1,10 +1,8 @@
-import {
-  ApprovalRequestId,
-  type ChatAttachment,
-  type OrchestrationEvent,
-  type OrchestrationSessionStatus,
-  ThreadId,
-} from "@t3tools/contracts";
+import { ApprovalRequestId, type ChatAttachment, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationEvent,
+  OrchestrationSessionStatus,
+} from "@t3tools/contracts/legacy-orchestration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";

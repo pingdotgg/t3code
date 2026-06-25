@@ -6,8 +6,8 @@
  *
  * @module ProjectionSnapshotQuery
  */
+import type { CheckpointRef, ProjectId, ThreadId } from "@t3tools/contracts";
 import type {
-  CheckpointRef,
   OrchestrationCheckpointSummary,
   OrchestrationProject,
   OrchestrationProjectShell,
@@ -18,9 +18,7 @@ import type {
   OrchestrationThread,
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadShell,
-  ProjectId,
-  ThreadId,
-} from "@t3tools/contracts";
+} from "@t3tools/contracts/legacy-orchestration";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
 import type * as Effect from "effect/Effect";

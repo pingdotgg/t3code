@@ -1280,6 +1280,7 @@ describe("orchestration V2 thread fork", () => {
           projectId,
         });
         const targetThreadId = ThreadId.make("thread-fork-native-fork-local-rollback-target");
+        const targetSecondRunId = ids.derive.run({ threadId: targetThreadId, ordinal: 2 });
         const targetCheckpointScopeId = yield* ids.allocate.checkpointScope({
           threadId: targetThreadId,
           name: "root",
@@ -1392,6 +1393,7 @@ describe("orchestration V2 thread fork", () => {
         return {
           sourceThreadId,
           targetThreadId,
+          targetSecondRunId,
           commands,
         };
       }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
@@ -1412,6 +1414,12 @@ describe("orchestration V2 thread fork", () => {
             { type: "dispatch", command: materialized.commands[4]!, await: true },
             { type: "await_thread_idle", threadId: materialized.targetThreadId },
             { type: "dispatch", command: materialized.commands[5]!, await: true },
+            {
+              type: "await_run_status",
+              threadId: materialized.targetThreadId,
+              runId: materialized.targetSecondRunId,
+              status: "rolled_back",
+            },
             { type: "dispatch", command: materialized.commands[6]!, await: true },
             { type: "await_thread_idle", threadId: materialized.targetThreadId },
           ],

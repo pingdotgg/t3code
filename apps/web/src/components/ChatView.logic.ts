@@ -11,12 +11,12 @@ import {
   type RunId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { presentThread } from "@t3tools/client-runtime/state/shell";
+import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { type ChatMessage, type SessionPhase, type Thread } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { environmentThreadDetails } from "../state/threads";
+import { environmentThreadShells } from "../state/threads";
 import { waitForAtomValue } from "../state/waitForAtomValue";
 import {
   filterTerminalContextsWithText,
@@ -74,44 +74,34 @@ export function buildLocalDraftThread(
   fallbackModelSelection: ModelSelection,
 ): Thread {
   const timestamp = DateTime.makeUnsafe(draftThread.createdAt);
-  return presentThread(draftThread.environmentId, {
-    thread: {
-      id: threadId,
-      projectId: draftThread.projectId,
-      title: "New thread",
-      providerInstanceId: fallbackModelSelection.instanceId,
-      modelSelection: fallbackModelSelection,
-      runtimeMode: draftThread.runtimeMode,
-      interactionMode: draftThread.interactionMode,
-      branch: draftThread.branch,
-      worktreePath: draftThread.worktreePath,
-      activeProviderThreadId: null,
-      lineage: { rootThreadId: threadId, parentThreadId: null, relationshipToParent: null },
-      forkedFrom: null,
-      createdBy: "user",
-      creationSource: "web",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      archivedAt: null,
-      deletedAt: null,
-    },
-    runs: [],
-    attempts: [],
-    nodes: [],
-    subagents: [],
-    providerSessions: [],
-    providerThreads: [],
-    providerTurns: [],
-    runtimeRequests: [],
-    messages: [],
-    plans: [],
-    turnItems: [],
-    checkpointScopes: [],
-    checkpoints: [],
-    contextHandoffs: [],
-    contextTransfers: [],
-    visibleTurnItems: [],
+  return presentThreadShell(draftThread.environmentId, {
+    id: threadId,
+    projectId: draftThread.projectId,
+    title: "New thread",
+    providerInstanceId: fallbackModelSelection.instanceId,
+    modelSelection: fallbackModelSelection,
+    runtimeMode: draftThread.runtimeMode,
+    interactionMode: draftThread.interactionMode,
+    branch: draftThread.branch,
+    worktreePath: draftThread.worktreePath,
+    activeProviderThreadId: null,
+    lineage: { rootThreadId: threadId, parentThreadId: null, relationshipToParent: null },
+    forkedFrom: null,
+    createdBy: "user",
+    creationSource: "web",
+    latestRunId: null,
+    activeRunId: null,
+    status: "idle",
+    pendingRuntimeRequest: null,
+    latestVisibleMessage: null,
+    latestUserMessageAt: null,
+    hasActionableProposedPlan: false,
+    itemCount: 0,
+    visibleItemCount: 0,
+    createdAt: timestamp,
     updatedAt: timestamp,
+    archivedAt: null,
+    deletedAt: null,
   });
 }
 
@@ -372,9 +362,7 @@ export function isBranchMismatchDismissedForSession(key: string | null): boolean
 }
 
 export function threadHasStarted(thread: Thread | null | undefined): boolean {
-  return Boolean(
-    thread && (thread.latestRun !== null || thread.messages.length > 0 || thread.runtime !== null),
-  );
+  return Boolean(thread && (thread.latestRun !== null || thread.itemCount > 0 || thread.runtime));
 }
 
 // `threadProvider` is the open branded driver kind carried by the session.
@@ -454,7 +442,7 @@ export async function waitForStartedServerThread(
   threadRef: ScopedThreadRef,
   timeoutMs = 1_000,
 ): Promise<boolean> {
-  const threadAtom = environmentThreadDetails.detailAtom(threadRef);
+  const threadAtom = environmentThreadShells.threadShellAtom(threadRef);
   return waitForAtomValue({
     registry: appAtomRegistry,
     atom: threadAtom,

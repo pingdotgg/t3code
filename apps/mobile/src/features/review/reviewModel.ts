@@ -1,6 +1,6 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
-import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/shell";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import type { ReviewDiffPreviewSource } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";

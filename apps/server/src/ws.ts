@@ -28,7 +28,6 @@ import {
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
-  ORCHESTRATION_WS_METHODS,
   type OrchestrationProjectShell,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
@@ -363,15 +362,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.subscribeAuthAccess, AuthAccessReadScope],
 ]);
 
-const ServerWsRpcGroup = WsRpcGroup.omit(
-  ORCHESTRATION_WS_METHODS.dispatchCommand,
-  ORCHESTRATION_WS_METHODS.getTurnDiff,
-  ORCHESTRATION_WS_METHODS.getFullThreadDiff,
-  ORCHESTRATION_WS_METHODS.replayEvents,
-  ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
-  ORCHESTRATION_WS_METHODS.subscribeShell,
-  ORCHESTRATION_WS_METHODS.subscribeThread,
-);
+const ServerWsRpcGroup = WsRpcGroup;
 
 function toAuthAccessStreamEvent(
   change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,

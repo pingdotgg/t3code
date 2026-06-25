@@ -17,12 +17,14 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  deriveTimelineEntries,
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveRevertTurnCountByUserMessageId,
   findLatestProposedPlan,
   isLatestRunSettled,
+  type TimelineEntry,
 } from "./session-logic";
+import { makeThreadProjectionFixture } from "./test-fixtures";
+import type { ChatMessage } from "./types";
 
 describe("V2 session presentation", () => {
   it("uses run status as the settlement boundary", () => {
@@ -48,41 +50,51 @@ describe("V2 session presentation", () => {
 
   it("selects the latest proposed plan for a run", () => {
     const runId = RunId.make("run-1");
+    const planId = PlanId.make("plan-1");
+    const nodeId = NodeId.make("node-plan");
+    const now = DateTime.makeUnsafe("2026-06-20T00:00:01.000Z");
+    const baseProjection = makeThreadProjectionFixture();
     const plan = findLatestProposedPlan(
-      [
-        {
-          id: PlanId.make("plan-1"),
-          runId,
-          planMarkdown: "Plan",
-          status: "active",
-          implementedAt: null,
-          implementationThreadId: ThreadId.make("thread-implementation"),
-          createdAt: "2026-06-20T00:00:00.000Z",
-          updatedAt: "2026-06-20T00:00:01.000Z",
-        },
-      ],
+      {
+        ...baseProjection,
+        plans: [
+          {
+            id: planId,
+            threadId: baseProjection.thread.id,
+            nodeId,
+            kind: "proposed_plan" as const,
+            markdown: "Plan",
+            status: "active" as const,
+            runId,
+          },
+        ],
+        turnItems: [
+          {
+            id: TurnItemId.make("item-plan"),
+            threadId: baseProjection.thread.id,
+            nodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 0,
+            status: "completed" as const,
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "proposed_plan" as const,
+            planId,
+            markdown: "Plan",
+            streaming: false,
+            runId,
+          },
+        ],
+        updatedAt: now,
+      },
       runId,
     );
     expect(plan?.planMarkdown).toBe("Plan");
-  });
-
-  it("orders conversation and generic V2 work entries", () => {
-    const entries = deriveTimelineEntries(
-      [
-        {
-          id: "message-1" as never,
-          role: "user",
-          text: "Hello",
-          runId: null,
-          streaming: false,
-          createdAt: "2026-06-20T00:00:00.000Z",
-          updatedAt: "2026-06-20T00:00:00.000Z",
-        },
-      ],
-      [],
-      [],
-    );
-    expect(entries.map((entry) => entry.kind)).toEqual(["message"]);
   });
 
   it("assigns run rollback to the turn-start message instead of a later steer", () => {
@@ -90,40 +102,44 @@ describe("V2 session presentation", () => {
     const turnStartMessageId = MessageId.make("message-turn-start");
     const steerMessageId = MessageId.make("message-steer");
     const assistantMessageId = MessageId.make("message-assistant");
-    const timelineEntries = deriveTimelineEntries(
-      [
-        {
-          id: turnStartMessageId,
-          role: "user",
-          text: "Start",
-          runId,
-          inputIntent: "turn_start",
-          streaming: false,
-          createdAt: "2026-06-20T00:00:00.000Z",
-          updatedAt: "2026-06-20T00:00:00.000Z",
-        },
-        {
-          id: steerMessageId,
-          role: "user",
-          text: "Steer",
-          runId,
-          inputIntent: "steer",
-          streaming: false,
-          createdAt: "2026-06-20T00:00:01.000Z",
-          updatedAt: "2026-06-20T00:00:01.000Z",
-        },
-        {
-          id: assistantMessageId,
-          role: "assistant",
-          text: "Done",
-          runId,
-          streaming: false,
-          createdAt: "2026-06-20T00:00:02.000Z",
-          updatedAt: "2026-06-20T00:00:02.000Z",
-        },
-      ],
-      [],
-      [],
+    const messages: ChatMessage[] = [
+      {
+        id: turnStartMessageId,
+        role: "user",
+        text: "Start",
+        runId,
+        inputIntent: "turn_start",
+        streaming: false,
+        createdAt: "2026-06-20T00:00:00.000Z",
+        updatedAt: "2026-06-20T00:00:00.000Z",
+      },
+      {
+        id: steerMessageId,
+        role: "user",
+        text: "Steer",
+        runId,
+        inputIntent: "steer",
+        streaming: false,
+        createdAt: "2026-06-20T00:00:01.000Z",
+        updatedAt: "2026-06-20T00:00:01.000Z",
+      },
+      {
+        id: assistantMessageId,
+        role: "assistant",
+        text: "Done",
+        runId,
+        streaming: false,
+        createdAt: "2026-06-20T00:00:02.000Z",
+        updatedAt: "2026-06-20T00:00:02.000Z",
+      },
+    ];
+    const timelineEntries: TimelineEntry[] = messages.map(
+      (message): TimelineEntry => ({
+        id: message.id,
+        kind: "message",
+        createdAt: message.createdAt,
+        message,
+      }),
     );
 
     const targets = deriveRevertTurnCountByUserMessageId({

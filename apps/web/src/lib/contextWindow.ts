@@ -1,5 +1,5 @@
-import type { ThreadTokenUsageSnapshot } from "@t3tools/contracts";
-import type { ThreadWorkEntry } from "@t3tools/client-runtime/state/shell";
+import type { OrchestrationV2TurnItem, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 function asFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -41,14 +41,16 @@ export function formatProviderDisplayName(provider: string | null | undefined): 
 }
 
 export function deriveLatestContextWindowSnapshot(
-  entries: ReadonlyArray<ThreadWorkEntry>,
+  entries: ReadonlyArray<{
+    readonly item: OrchestrationV2TurnItem;
+  }>,
 ): ContextWindowSnapshot | null {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
-    if (!entry || entry.structuredPayload.type !== "compaction") {
+    if (!entry || entry.item.type !== "compaction") {
       continue;
     }
-    const payload = entry.structuredPayload;
+    const payload = entry.item;
     const usedTokens = asFiniteNumber(payload.afterTokenCount);
     if (usedTokens === null || usedTokens < 0) {
       continue;
@@ -80,7 +82,7 @@ export function deriveLatestContextWindowSnapshot(
       toolUses: null,
       durationMs: null,
       compactsAutomatically: true,
-      updatedAt: entry.createdAt,
+      updatedAt: DateTime.formatIso(payload.startedAt ?? payload.updatedAt),
     };
   }
 

@@ -26,9 +26,7 @@ import {
 } from "./chatAttachment.ts";
 import {
   OrchestrationGetFullThreadDiffError,
-  OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffError,
-  OrchestrationGetTurnDiffInput,
 } from "./checkpointDiff.ts";
 import {
   GitActionProgressEvent,
@@ -61,15 +59,6 @@ import {
   ReviewDiffPreviewResult,
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
-import {
-  ClientOrchestrationCommand,
-  ORCHESTRATION_WS_METHODS,
-  OrchestrationDispatchCommandError,
-  OrchestrationGetSnapshotError,
-  OrchestrationReplayEventsError,
-  OrchestrationReplayEventsInput,
-  OrchestrationRpcSchemas,
-} from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   ORCHESTRATION_V2_WS_METHODS,
@@ -694,62 +683,6 @@ export const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(
   },
 );
 
-export const WsOrchestrationDispatchCommandRpc = Rpc.make(
-  ORCHESTRATION_WS_METHODS.dispatchCommand,
-  {
-    payload: ClientOrchestrationCommand,
-    success: OrchestrationRpcSchemas.dispatchCommand.output,
-    error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
-  },
-);
-
-export const WsOrchestrationGetTurnDiffRpc = Rpc.make(ORCHESTRATION_WS_METHODS.getTurnDiff, {
-  payload: OrchestrationGetTurnDiffInput,
-  success: OrchestrationRpcSchemas.getTurnDiff.output,
-  error: Schema.Union([OrchestrationGetTurnDiffError, EnvironmentAuthorizationError]),
-});
-
-export const WsOrchestrationGetFullThreadDiffRpc = Rpc.make(
-  ORCHESTRATION_WS_METHODS.getFullThreadDiff,
-  {
-    payload: OrchestrationGetFullThreadDiffInput,
-    success: OrchestrationRpcSchemas.getFullThreadDiff.output,
-    error: Schema.Union([OrchestrationGetFullThreadDiffError, EnvironmentAuthorizationError]),
-  },
-);
-
-export const WsOrchestrationSearchThreadsRpc = Rpc.make(ORCHESTRATION_WS_METHODS.searchThreads, {
-  payload: OrchestrationSearchThreadsInput,
-  success: OrchestrationRpcSchemas.searchThreads.output,
-  error: Schema.Union([OrchestrationSearchThreadsError, EnvironmentAuthorizationError]),
-});
-
-export const WsOrchestrationGetArchivedShellSnapshotRpc = Rpc.make(
-  ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
-  {
-    payload: OrchestrationRpcSchemas.getArchivedShellSnapshot.input,
-    success: OrchestrationRpcSchemas.getArchivedShellSnapshot.output,
-    error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
-  },
-);
-
-export const WsOrchestrationSubscribeShellRpc = Rpc.make(ORCHESTRATION_WS_METHODS.subscribeShell, {
-  payload: OrchestrationRpcSchemas.subscribeShell.input,
-  success: OrchestrationRpcSchemas.subscribeShell.output,
-  error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
-  stream: true,
-});
-
-export const WsOrchestrationSubscribeThreadRpc = Rpc.make(
-  ORCHESTRATION_WS_METHODS.subscribeThread,
-  {
-    payload: OrchestrationRpcSchemas.subscribeThread.input,
-    success: OrchestrationRpcSchemas.subscribeThread.output,
-    error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
-    stream: true,
-  },
-);
-
 export const WsOrchestrationV2DispatchCommandRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   {
@@ -950,15 +883,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
-  WsSubscribeBackgroundPolicyRpc,
-  WsSubscribeResourceTelemetryRpc,
-  WsOrchestrationDispatchCommandRpc,
-  WsOrchestrationGetTurnDiffRpc,
-  WsOrchestrationGetFullThreadDiffRpc,
-  WsOrchestrationSearchThreadsRpc,
-  WsOrchestrationGetArchivedShellSnapshotRpc,
-  WsOrchestrationSubscribeShellRpc,
-  WsOrchestrationSubscribeThreadRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,
