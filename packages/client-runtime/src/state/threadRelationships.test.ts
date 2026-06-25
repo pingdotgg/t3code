@@ -7,7 +7,7 @@ import {
   relatedThreadIds,
   resolveMergeBackTargetThreadId,
   walkThreadRelationships,
-} from "./threadRelationships";
+} from "./threadRelationships.ts";
 
 describe("thread relationships", () => {
   it("keeps missing parents and cycles navigable without recursive traversal", () => {
@@ -46,6 +46,64 @@ describe("thread relationships", () => {
     expect(immediateThreadRelationships(graph, root).map(({ threadId }) => threadId)).toEqual([
       child,
     ]);
+  });
+
+  it("combines subagent and transfer edges with archived shell state", () => {
+    const parent = ThreadId.make("thread-parent");
+    const child = ThreadId.make("thread-child");
+    const transferTarget = ThreadId.make("thread-transfer");
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        {
+          id: parent,
+          title: "Parent",
+          status: "completed",
+          archivedAt: null,
+          forkedFrom: null,
+          lineage: { rootThreadId: parent, parentThreadId: null, relationshipToParent: null },
+        },
+        {
+          id: child,
+          title: "Subagent",
+          status: "completed",
+          archivedAt: "2026-06-24T00:00:00.000Z",
+          forkedFrom: null,
+          lineage: {
+            rootThreadId: parent,
+            parentThreadId: parent,
+            relationshipToParent: "subagent",
+          },
+        },
+      ] as never,
+      projection: {
+        thread: { id: parent },
+        subagents: [{ childThreadId: child, status: "completed" }],
+        contextTransfers: [
+          {
+            sourceThreadId: child,
+            targetThreadId: transferTarget,
+            status: "completed",
+          },
+        ],
+      } as never,
+    });
+
+    expect(graph.nodes.get(child)?.thread?.archivedAt).not.toBeNull();
+    expect(graph.nodes.get(transferTarget)?.missing).toBe(true);
+    expect(graph.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceThreadId: parent,
+          targetThreadId: child,
+          kind: "subagent",
+        }),
+        expect.objectContaining({
+          sourceThreadId: child,
+          targetThreadId: transferTarget,
+          kind: "transfer",
+        }),
+      ]),
+    );
   });
 
   it("resolves merge-back only for forks and prefers the recorded fork source", () => {
