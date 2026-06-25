@@ -418,6 +418,102 @@ export const OrchestrationShellSnapshot = Schema.Struct({
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;
 
+export const OrchestrationListProjectsResult = Schema.Struct({
+  projects: Schema.Array(OrchestrationProjectShell).annotate({
+    description: "Projects visible to the current workspace.",
+  }),
+}).annotate({
+  description: "Result payload for listing all projects.",
+});
+export type OrchestrationListProjectsResult = typeof OrchestrationListProjectsResult.Type;
+
+export const OrchestrationListThreadsInput = Schema.Struct({
+  projectId: ProjectId.annotate({
+    description: "Project to filter threads by.",
+  }),
+}).annotate({
+  description: "Input payload for listing all threads in a project.",
+});
+export type OrchestrationListThreadsInput = typeof OrchestrationListThreadsInput.Type;
+
+export const OrchestrationListThreadsResult = Schema.Struct({
+  threads: Schema.Array(OrchestrationThreadShell).annotate({
+    description: "Threads belonging to the requested project.",
+  }),
+}).annotate({
+  description: "Result payload for listing project threads.",
+});
+export type OrchestrationListThreadsResult = typeof OrchestrationListThreadsResult.Type;
+
+const ThreadCreateTitle = TrimmedNonEmptyString.annotate({
+  description: "Optional human-readable thread title.",
+});
+const ThreadCreateBranch = TrimmedNonEmptyString.annotate({
+  description: "Optional git branch to associate with the thread.",
+});
+const ThreadCreateWorktreePath = TrimmedNonEmptyString.annotate({
+  description: "Optional worktree path for the thread.",
+});
+
+export const OrchestrationCreateThreadInput = Schema.Struct({
+  projectId: ProjectId.annotate({
+    description: "Project to create the thread under.",
+  }),
+  title: Schema.optional(ThreadCreateTitle),
+  modelSelection: Schema.optional(
+    ModelSelection.annotate({
+      description: "Optional model selection for the new thread.",
+    }),
+  ),
+  runtimeMode: Schema.optional(
+    RuntimeMode.annotate({
+      description: "Optional runtime mode for the new thread.",
+    }),
+  ),
+  interactionMode: Schema.optional(
+    ProviderInteractionMode.annotate({
+      description: "Optional interaction mode for the new thread.",
+    }),
+  ),
+  branch: Schema.optional(Schema.NullOr(ThreadCreateBranch)),
+  worktreePath: Schema.optional(Schema.NullOr(ThreadCreateWorktreePath)),
+  createdAt: Schema.optional(
+    IsoDateTime.annotate({
+      description: "Optional creation timestamp in ISO-8601 format.",
+    }),
+  ),
+}).annotate({
+  description: "Input payload for creating a new thread.",
+});
+export type OrchestrationCreateThreadInput = typeof OrchestrationCreateThreadInput.Type;
+
+export const OrchestrationCreateThreadResult = Schema.Struct({
+  thread: OrchestrationThreadShell.annotate({
+    description: "The created thread shell.",
+  }),
+}).annotate({
+  description: "Result payload for creating a thread.",
+});
+export type OrchestrationCreateThreadResult = typeof OrchestrationCreateThreadResult.Type;
+
+export const OrchestrationArchiveThreadInput = Schema.Struct({
+  threadId: ThreadId.annotate({
+    description: "Thread to archive.",
+  }),
+}).annotate({
+  description: "Input payload for archiving a thread.",
+});
+export type OrchestrationArchiveThreadInput = typeof OrchestrationArchiveThreadInput.Type;
+
+export const OrchestrationArchiveThreadResult = Schema.Struct({
+  thread: OrchestrationThreadShell.annotate({
+    description: "The archived thread shell.",
+  }),
+}).annotate({
+  description: "Result payload for archiving a thread.",
+});
+export type OrchestrationArchiveThreadResult = typeof OrchestrationArchiveThreadResult.Type;
+
 export const OrchestrationShellStreamEvent = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("project-upserted"),

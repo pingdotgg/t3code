@@ -1,15 +1,31 @@
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
-import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  EnvironmentId,
+  PreviewTabId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type OrchestrationProjectShell,
+  type OrchestrationThreadShell,
+  type TerminalSessionSnapshot,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -35,6 +51,8 @@ const client = McpSchema.McpServerClient.of({
 const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(PreviewAutomationBroker.layer),
+  Layer.provideMerge(McpHttpServer.OrchestrationToolkitRegistrationLive),
+  Layer.provideMerge(McpHttpServer.TerminalToolkitRegistrationLive),
 );
 
 it("normalizes empty successful notification responses to accepted", () => {
@@ -237,6 +255,23 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(navigateTool?.tool.annotations?.destructiveHint).toBe(false);
       expect(navigateTool?.tool.annotations?.openWorldHint).toBe(true);
 
+      const browserOpenTool = server.tools.find(({ tool }) => tool.name === "browser_open");
+      expect(browserOpenTool?.tool.annotations?.destructiveHint).toBe(true);
+      expect(browserOpenTool?.tool.annotations?.openWorldHint).toBe(true);
+
+      const browserOpen = yield* server
+        .callTool({ name: "browser_open", arguments: { url: "http://example.test/" } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(browserOpen.isError).toBe(false);
+      expect(browserOpen.structuredContent).toMatchObject({
+        available: true,
+        tabId,
+        url: "http://example.test/",
+      });
+
       const status = yield* server
         .callTool({ name: "preview_status", arguments: {} })
         .pipe(
@@ -278,6 +313,217 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(press.isError).toBe(false);
       expect(press.structuredContent).toBeNull();
       expect(press.content).toEqual([{ type: "text", text: "null" }]);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("registers orchestration and terminal tools", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const now = "2026-06-11T00:00:00.000Z";
+      const projectShell: OrchestrationProjectShell = {
+        id: ProjectId.make("project-mcp-test"),
+        title: "MCP Project",
+        workspaceRoot: "/tmp/project",
+        defaultModelSelection: ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(),
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      const baseThreadShell = (
+        overrides: Partial<OrchestrationThreadShell> = {},
+      ): OrchestrationThreadShell => ({
+        id: ThreadId.make("thread-mcp-base"),
+        projectId: projectShell.id,
+        title: "Base thread",
+        modelSelection:
+          projectShell.defaultModelSelection ??
+          ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(),
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        latestTurn: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        session: null,
+        latestUserMessageAt: null,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        hasActionableProposedPlan: false,
+        ...overrides,
+      });
+      let threads: OrchestrationThreadShell[] = [baseThreadShell()];
+      let dispatchSequence = 0;
+      let openedTerminalInput: unknown = null;
+      let terminalWrites: string[] = [];
+      const terminalSnapshot: TerminalSessionSnapshot = {
+        threadId: threadId,
+        terminalId: "term-1",
+        cwd: "/tmp/project",
+        worktreePath: null,
+        status: "running",
+        pid: 12345,
+        history: "",
+        exitCode: null,
+        exitSignal: null,
+        label: "zsh",
+        updatedAt: now,
+        sequence: 1,
+      };
+      const snapshotQuery = ProjectionSnapshotQuery.ProjectionSnapshotQuery.of({
+        getCommandReadModel: () => Effect.die("unused"),
+        getSnapshot: () => Effect.die("unused"),
+        getShellSnapshot: () =>
+          Effect.succeed({
+            snapshotSequence: 1,
+            projects: [projectShell],
+            threads,
+            updatedAt: now,
+          }),
+        getArchivedShellSnapshot: () => Effect.die("unused"),
+        getSnapshotSequence: () => Effect.die("unused"),
+        getCounts: () => Effect.die("unused"),
+        getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
+        getProjectShellById: (projectId) =>
+          Effect.succeed(projectId === projectShell.id ? Option.some(projectShell) : Option.none()),
+        getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+        getThreadCheckpointContext: () => Effect.die("unused"),
+        getFullThreadDiffContext: () => Effect.die("unused"),
+        getThreadShellById: (threadId) => {
+          const thread = threads.find((entry) => entry.id === threadId);
+          return Effect.succeed(thread === undefined ? Option.none() : Option.some(thread));
+        },
+        getThreadDetailById: () => Effect.die("unused"),
+      });
+      const orchestrationEngine = OrchestrationEngine.OrchestrationEngineService.of({
+        readEvents: () => Stream.empty,
+        dispatch: (command) =>
+          Effect.sync(() => {
+            dispatchSequence += 1;
+            if (command.type === "thread.create") {
+              const createdThread = baseThreadShell({
+                id: command.threadId,
+                projectId: command.projectId,
+                title: command.title,
+                modelSelection:
+                  command.modelSelection ??
+                  projectShell.defaultModelSelection ??
+                  ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(),
+                runtimeMode: command.runtimeMode,
+                interactionMode: command.interactionMode,
+                branch: command.branch,
+                worktreePath: command.worktreePath,
+                createdAt: command.createdAt,
+                updatedAt: command.createdAt,
+              });
+              threads = [
+                ...threads.filter((thread) => thread.id !== command.threadId),
+                createdThread,
+              ];
+            }
+            if (command.type === "thread.archive") {
+              threads = threads.map((thread) =>
+                thread.id === command.threadId
+                  ? { ...thread, archivedAt: now, updatedAt: now }
+                  : thread,
+              );
+            }
+            return { sequence: dispatchSequence };
+          }),
+        streamDomainEvents: Stream.empty,
+      });
+      const terminalManager = TerminalManager.TerminalManager.of({
+        open: (input) =>
+          Effect.sync(() => {
+            openedTerminalInput = input;
+            return terminalSnapshot;
+          }),
+        attachStream: () => Effect.die("unused"),
+        write: (input) =>
+          Effect.sync(() => {
+            terminalWrites.push(input.data);
+          }),
+        resize: () => Effect.void,
+        clear: () => Effect.void,
+        restart: () => Effect.die("unused"),
+        close: () => Effect.void,
+        subscribe: () => Effect.succeed(() => undefined),
+        subscribeMetadata: () => Effect.succeed(() => undefined),
+      });
+
+      const callTool = <TArguments extends Record<string, unknown>>(
+        name: string,
+        args: TArguments,
+      ) =>
+        server
+          .callTool({ name, arguments: args })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.provideService(McpSchema.McpServerClient, client),
+            Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, snapshotQuery),
+            Effect.provideService(
+              OrchestrationEngine.OrchestrationEngineService,
+              orchestrationEngine,
+            ),
+            Effect.provideService(TerminalManager.TerminalManager, terminalManager),
+          );
+
+      const projectsList = yield* callTool("projects_list", {});
+      expect(projectsList.isError).toBe(false);
+      expect(projectsList.structuredContent).toMatchObject({ projects: [projectShell] });
+
+      const threadsList = yield* callTool("threads_list", { projectId: projectShell.id });
+      expect(threadsList.isError).toBe(false);
+      expect(threadsList.structuredContent).toMatchObject({ threads });
+
+      const createdThread = yield* callTool("threads_create", {
+        projectId: projectShell.id,
+        title: "Investigate bug",
+      });
+      expect(createdThread.isError).toBe(false);
+      expect(createdThread.structuredContent).toMatchObject({
+        thread: {
+          projectId: projectShell.id,
+          title: "Investigate bug",
+        },
+      });
+
+      const archivedThreadId = threads[0]!.id;
+      const archivedThread = yield* callTool("threads_archive", {
+        threadId: archivedThreadId,
+      });
+      expect(archivedThread.isError).toBe(false);
+      expect(archivedThread.structuredContent).toMatchObject({
+        thread: {
+          id: archivedThreadId,
+          archivedAt: now,
+        },
+      });
+
+      const terminalRun = yield* callTool("terminal_run", {
+        cwd: "/tmp/project",
+        command: "echo hello",
+      });
+      expect(terminalRun.isError).toBe(false);
+      expect(terminalRun.structuredContent).toMatchObject({
+        terminalId: "term-1",
+        cwd: "/tmp/project",
+      });
+      expect(openedTerminalInput).toMatchObject({
+        threadId,
+        terminalId: "term-1",
+        cwd: "/tmp/project",
+      });
+      expect(terminalWrites).toEqual(["echo hello\n"]);
+
+      const orchestrationTool = server.tools.find(({ tool }) => tool.name === "threads_create");
+      expect(orchestrationTool?.tool.annotations?.destructiveHint).toBe(true);
+      const terminalTool = server.tools.find(({ tool }) => tool.name === "terminal_run");
+      expect(terminalTool?.tool.annotations?.destructiveHint).toBe(true);
+      expect(terminalTool?.tool.annotations?.openWorldHint).toBe(true);
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

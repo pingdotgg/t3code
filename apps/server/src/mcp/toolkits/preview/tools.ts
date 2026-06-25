@@ -58,6 +58,19 @@ export const PreviewOpenTool = browserTool(
     .annotate(Tool.Destructive, false),
 );
 
+export const BrowserOpenTool = browserTool(
+  Tool.make("browser_open", {
+    description:
+      "Open the internal browser for the scoped thread and navigate to a webpage, optionally reusing the current tab.",
+    parameters: PreviewAutomationOpenInput,
+    success: PreviewAutomationStatus,
+    failure: PreviewAutomationError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Open webpage in browser")
+    .annotate(Tool.Destructive, false),
+);
+
 export const PreviewNavigateTool = safeBrowserTool(
   Tool.make("preview_navigate", {
     description:
@@ -167,6 +180,7 @@ export const PreviewRecordingStopTool = safeBrowserTool(
 export const PreviewToolkit = Toolkit.make(
   PreviewStatusTool,
   PreviewOpenTool,
+  BrowserOpenTool,
   PreviewNavigateTool,
   PreviewSnapshotTool,
   PreviewClickTool,
@@ -182,6 +196,7 @@ export const PreviewToolkit = Toolkit.make(
 export const PreviewStandardToolkit = Toolkit.make(
   PreviewStatusTool,
   PreviewOpenTool,
+  BrowserOpenTool,
   PreviewNavigateTool,
   PreviewClickTool,
   PreviewTypeTool,

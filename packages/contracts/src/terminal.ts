@@ -90,6 +90,45 @@ export const TerminalCloseInput = Schema.Struct({
 });
 export type TerminalCloseInput = typeof TerminalCloseInput.Type;
 
+export const TerminalRunInput = Schema.Struct({
+  terminalId: Schema.optional(
+    TerminalIdSchema.annotate({
+      description: "Terminal session id to reuse; defaults to term-1.",
+    }),
+  ),
+  cwd: TrimmedNonEmptyStringSchema.annotate({
+    description: "Working directory for the command, for example the project root.",
+  }),
+  worktreePath: Schema.optional(
+    Schema.NullOr(
+      TrimmedNonEmptyStringSchema.annotate({
+        description: "Optional worktree path for the terminal session.",
+      }),
+    ),
+  ),
+  cols: Schema.optional(
+    TerminalColsSchema.annotate({
+      description: "Optional terminal width in columns.",
+    }),
+  ),
+  rows: Schema.optional(
+    TerminalRowsSchema.annotate({
+      description: "Optional terminal height in rows.",
+    }),
+  ),
+  env: Schema.optional(
+    TerminalEnvSchema.annotate({
+      description: "Optional environment variables for the terminal process.",
+    }),
+  ),
+  command: TrimmedNonEmptyStringSchema.annotate({
+    description: "Shell command to execute, without a trailing newline.",
+  }),
+}).annotate({
+  description: "Input payload for opening a terminal and running a command.",
+});
+export type TerminalRunInput = typeof TerminalRunInput.Type;
+
 export const TerminalSessionStatus = Schema.Literals(["starting", "running", "exited", "error"]);
 export type TerminalSessionStatus = typeof TerminalSessionStatus.Type;
 

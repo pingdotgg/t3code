@@ -38,6 +38,12 @@ const handlers = {
       show: input.show ?? true,
       reuseExistingTab: input.reuseExistingTab ?? true,
     }),
+  browser_open: (input) =>
+    invoke<PreviewAutomationStatus>("open", {
+      ...input,
+      show: input.show ?? true,
+      reuseExistingTab: input.reuseExistingTab ?? true,
+    }),
   preview_navigate: (input) => invoke<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
   preview_snapshot: () => invoke<PreviewAutomationSnapshot>("snapshot", {}),
   preview_click: (input) => invoke<void>("click", input, input.timeoutMs).pipe(Effect.as(null)),
