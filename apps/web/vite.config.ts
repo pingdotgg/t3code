@@ -156,6 +156,7 @@ export default defineConfig(() => {
         // connection logs — enable "Verbose" in DevTools to see them.
         protocol: "ws",
         host,
+        clientPort: port,
       },
     },
     build: {
