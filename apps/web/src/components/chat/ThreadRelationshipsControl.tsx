@@ -1,4 +1,11 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  deriveThreadRelationshipGraph,
+  immediateThreadRelationships,
+  resolveMergeBackTargetThreadId,
+  type ThreadRelationshipEdge,
+} from "@t3tools/client-runtime/state/thread-relationships";
+import { canDetachThreadProviderSession } from "@t3tools/client-runtime/state/thread-workflows";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -13,12 +20,6 @@ import {
 import { useState } from "react";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
-import {
-  deriveThreadRelationshipGraph,
-  immediateThreadRelationships,
-  resolveMergeBackTargetThreadId,
-  type ThreadRelationshipEdge,
-} from "../../lib/threadRelationships";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { useThreadProjection, useThreadShells } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
@@ -91,10 +92,7 @@ export function ThreadRelationshipsPanel(props: {
       Number(left.threadId === mergeTargetThreadId),
   );
   const canMerge = mergeTargetThreadId !== null && latestCompletedRun !== null;
-  const canDetach =
-    projection?.providerSessions.some(
-      (session) => session.status !== "stopped" && session.status !== "error",
-    ) ?? false;
+  const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
 
   if (relationshipRows.length === 0) {
     return null;

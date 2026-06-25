@@ -129,6 +129,57 @@ describe("buildThreadFeed", () => {
       "inherited",
       "synthetic",
     ]);
+    expect(activities.at(-1)?.prominent).toBe(true);
+  });
+
+  it("keeps orchestration relationship cards visible when a completed run is folded", () => {
+    const { providerThreadId: _providerThreadId, ...forkBase } = base(
+      "item-fork",
+      "2026-06-20T00:00:02.500Z",
+      2,
+    );
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(command(), 1),
+      projected(
+        {
+          ...forkBase,
+          type: "fork",
+          source: { type: "run", threadId, runId },
+          targetThreadId: sourceThreadId,
+        },
+        2,
+      ),
+      projected(assistantMessage(), 3),
+    ]);
+
+    const collapsed = deriveThreadFeedPresentation(
+      feed,
+      {
+        runId,
+        status: "completed",
+        startedAt: "2026-06-20T00:00:01.000Z",
+        completedAt: "2026-06-20T00:00:03.000Z",
+      },
+      new Set(),
+    );
+
+    expect(
+      collapsed.some(
+        (entry) =>
+          entry.type === "activity-group" &&
+          entry.activities.some((activity) => activity.projectedItem.item.type === "fork"),
+      ),
+    ).toBe(true);
+    expect(
+      collapsed.some(
+        (entry) =>
+          entry.type === "activity-group" &&
+          entry.activities.some(
+            (activity) => activity.projectedItem.item.type === "command_execution",
+          ),
+      ),
+    ).toBe(false);
   });
 
   it("folds settled V2 run work while keeping the terminal assistant message visible", () => {
