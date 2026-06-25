@@ -871,7 +871,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     wc: Electron.WebContents,
     action: string,
-    use: (send: SendCommand) => Effect.Effect<A, PreviewManagerError>,
+    use: (send: SendCommand, sendCleanup: SendCommand) => Effect.Effect<A, PreviewManagerError>,
   ) {
     const sequence = yield* nextCounter(actionSequenceRef);
     const startedAt = yield* currentIso;
@@ -912,7 +912,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           return result;
         },
       );
-      return yield* use(send);
+      // Cleanup commands must still run after human input invalidates the action's
+      // control epoch. Otherwise a partially dispatched input can leave Chromium
+      // with a held key or focus emulation enabled for subsequent actions.
+      const sendCleanup: SendCommand = Effect.fn("PreviewManager.sendCleanupCommand")(
+        function* (method, commandParams) {
+          return yield* attemptPromise(
+            {
+              operation: `${action}.cleanup.${method}`,
+              tabId,
+              webContentsId: wc.id,
+            },
+            () => wc.debugger.sendCommand(method, commandParams),
+          );
+        },
+      );
+      return yield* use(send, sendCleanup);
     });
     const finalize = Effect.fn("PreviewManager.finalizeControlAction")(function* (
       exit: Exit.Exit<A, PreviewManagerError>,
@@ -2169,6 +2184,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     input: PreviewAutomationPressInput,
     send: SendCommand,
+    sendCleanup: SendCommand,
   ) {
     yield* prepareAutomationInput(send, false);
     const modifiers = (input.modifiers ?? []).reduce((value, modifier) => {
@@ -2191,9 +2207,28 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       modifiers,
       ...(text ? { text, unmodifiedText: text } : {}),
     };
-    yield* expectAgentInput(tabId, { kind: "key", key, code: params.code });
-    yield* send("Input.dispatchKeyEvent", { type: "keyDown", ...params });
-    yield* send("Input.dispatchKeyEvent", { type: "keyUp", ...params });
+    let keyReleased = false;
+    const releaseInput = Effect.gen(function* () {
+      if (!keyReleased) {
+        yield* sendCleanup("Input.dispatchKeyEvent", { type: "keyUp", ...params }).pipe(
+          Effect.ignore,
+        );
+      }
+      yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }).pipe(
+        Effect.ignore,
+      );
+    });
+
+    // Hidden/background guest WebContents do not have document focus until a user
+    // clicks them. CDP focus emulation makes native key dispatch deterministic
+    // without bringing another thread's preview to the foreground.
+    yield* Effect.gen(function* () {
+      yield* send("Emulation.setFocusEmulationEnabled", { enabled: true });
+      yield* expectAgentInput(tabId, { kind: "key", key, code: params.code });
+      yield* send("Input.dispatchKeyEvent", { type: "keyDown", ...params });
+      yield* send("Input.dispatchKeyEvent", { type: "keyUp", ...params });
+      keyReleased = true;
+    }).pipe(Effect.ensuring(releaseInput));
   });
 
   const automationPress = Effect.fn("PreviewManager.automationPress")(function* (
@@ -2201,8 +2236,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationPressInput,
   ) {
     const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "press", (send) =>
-      performAutomationPress(tabId, input, send),
+    yield* withControlSession(tabId, wc, "press", (send, sendCleanup) =>
+      performAutomationPress(tabId, input, send, sendCleanup),
     );
   });
 

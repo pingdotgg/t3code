@@ -650,9 +650,17 @@ describe("PreviewManager", () => {
   effectIt.effect("types in background webviews and enables native key input", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        const sendCommand = vi.fn(async (method: string, _params?: Record<string, unknown>) =>
-          method === "Runtime.evaluate" ? { result: { value: { ok: true } } } : undefined,
-        );
+        let failKeyDown = false;
+        const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+          if (
+            failKeyDown &&
+            method === "Input.dispatchKeyEvent" &&
+            params?.["type"] === "keyDown"
+          ) {
+            throw new Error("key dispatch failed");
+          }
+          return method === "Runtime.evaluate" ? { result: { value: { ok: true } } } : undefined;
+        });
         fromId.mockReturnValue({
           id: 42,
           isDestroyed: () => false,
@@ -683,9 +691,24 @@ describe("PreviewManager", () => {
         yield* manager.automationType("tab_input", { text: "hello", clear: true });
         yield* manager.automationPress("tab_input", { key: "x" });
 
-        const methods = sendCommand.mock.calls.map(([method]) => method);
-        const keyDownIndex = methods.indexOf("Input.dispatchKeyEvent");
+        const calls = sendCommand.mock.calls;
+        const methods = calls.map(([method]) => method);
         const enableIndex = methods.indexOf("Input.setIgnoreInputEvents");
+        const focusOnIndex = calls.findIndex(
+          ([method, params]) =>
+            method === "Emulation.setFocusEmulationEnabled" && params?.["enabled"] === true,
+        );
+        const keyDownIndex = calls.findIndex(
+          ([method, params]) =>
+            method === "Input.dispatchKeyEvent" && params?.["type"] === "keyDown",
+        );
+        const keyUpIndex = calls.findIndex(
+          ([method, params]) => method === "Input.dispatchKeyEvent" && params?.["type"] === "keyUp",
+        );
+        const focusOffIndex = calls.findIndex(
+          ([method, params]) =>
+            method === "Emulation.setFocusEmulationEnabled" && params?.["enabled"] === false,
+        );
         const typeEvaluation = sendCommand.mock.calls.find(
           ([method, params]) =>
             method === "Runtime.evaluate" &&
@@ -698,8 +721,28 @@ describe("PreviewManager", () => {
         expect(typeEvaluation).toBeDefined();
         expect(methods).not.toContain("Input.insertText");
         expect(enableIndex).toBeGreaterThanOrEqual(0);
-        expect(enableIndex).toBeLessThan(keyDownIndex);
+        expect(enableIndex).toBeLessThan(focusOnIndex);
+        expect(focusOnIndex).toBeLessThan(keyDownIndex);
+        expect(keyDownIndex).toBeLessThan(keyUpIndex);
+        expect(keyUpIndex).toBeLessThan(focusOffIndex);
         expect(sendCommand).toHaveBeenCalledWith("Input.setIgnoreInputEvents", { ignore: false });
+
+        sendCommand.mockClear();
+        failKeyDown = true;
+        const failedPress = yield* Effect.exit(manager.automationPress("tab_input", { key: "y" }));
+
+        expect(Exit.isFailure(failedPress)).toBe(true);
+        expect(sendCommand).toHaveBeenCalledWith("Input.dispatchKeyEvent", {
+          type: "keyUp",
+          key: "y",
+          code: "KeyY",
+          modifiers: 0,
+          text: "y",
+          unmodifiedText: "y",
+        });
+        expect(sendCommand).toHaveBeenCalledWith("Emulation.setFocusEmulationEnabled", {
+          enabled: false,
+        });
       }),
     ),
   );
