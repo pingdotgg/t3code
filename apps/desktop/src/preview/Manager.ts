@@ -854,6 +854,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     commandParams?: Record<string, unknown>,
   ) => Effect.Effect<unknown, PreviewManagerError>;
 
+  const prepareAutomationInput = Effect.fn("PreviewManager.prepareAutomationInput")(function* (
+    send: SendCommand,
+    enableRuntime: boolean,
+  ) {
+    yield* Effect.all(
+      [
+        ...(enableRuntime ? [send("Runtime.enable")] : []),
+        send("Input.setIgnoreInputEvents", { ignore: false }),
+      ],
+      { concurrency: 2, discard: true },
+    );
+  });
+
   const withControlSession = Effect.fn("PreviewManager.withControlSession")(function* <A>(
     tabId: string,
     wc: Electron.WebContents,
@@ -1093,20 +1106,55 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const scope = yield* Scope.fork(parentScope, "sequential");
     const syncState = Effect.fn("PreviewManager.syncWebContentsState")(function* () {
       if (wc.isDestroyed()) return;
-      yield* update(tabId, {
-        navStatus: computeNavStatus(wc),
-        canGoBack: wc.navigationHistory.canGoBack(),
-        canGoForward: wc.navigationHistory.canGoForward(),
+      const zoomFactor = yield* attempt(
+        { operation: "syncWebContentsState.getZoomFactor", tabId, webContentsId: wc.id },
+        () => wc.getZoomFactor(),
+      );
+      const computedNavStatus = computeNavStatus(wc);
+      const canGoBack = wc.navigationHistory.canGoBack();
+      const canGoForward = wc.navigationHistory.canGoForward();
+      const updatedAt = yield* currentIso;
+      const next = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+        const current = tabs.get(tabId);
+        if (!current) return [Option.none<PreviewTabState>(), tabs] as const;
+        // Electron emits did-stop-loading after did-fail-load. At that point the
+        // failed guest is no longer "loading", but it has not successfully
+        // navigated anywhere. Keep the failure until a new load actually starts.
+        const navStatus =
+          current.navStatus.kind === "LoadFailed" && computedNavStatus.kind === "Success"
+            ? current.navStatus
+            : computedNavStatus;
+        const state: PreviewTabState = {
+          ...current,
+          navStatus,
+          canGoBack,
+          canGoForward,
+          zoomFactor,
+          updatedAt,
+        };
+        return [
+          Option.some(state),
+          replaceMap(tabs, (copy) => {
+            copy.set(tabId, state);
+          }),
+        ] as const;
       });
+      if (Option.isSome(next)) yield* emit(tabId, next.value);
     });
     const sync = () => runFork(syncState());
-    const failed = (_event: Event, code: number, description: string): void => {
-      if (code === -3) return;
+    const failed = (
+      _event: Event,
+      code: number,
+      description: string,
+      validatedUrl: string,
+      isMainFrame: boolean,
+    ): void => {
+      if (code === -3 || !isMainFrame) return;
       runFork(
         update(tabId, {
           navStatus: {
             kind: "LoadFailed",
-            url: wc.getURL(),
+            url: validatedUrl || wc.getURL(),
             title: wc.getTitle(),
             code,
             description,
@@ -1280,6 +1328,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const attached = yield* Ref.get(attachedRef);
     const annotationTheme = yield* Ref.get(annotationThemeRef);
     if (tab.webContentsId === webContentsId && attached.has(webContentsId)) {
+      const zoomFactor = yield* attempt(
+        { operation: "registerWebview.getZoomFactor", tabId, webContentsId },
+        () => wc.getZoomFactor(),
+      );
+      yield* update(tabId, { zoomFactor });
       yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () =>
         wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme),
       );
@@ -1297,6 +1350,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     yield* attachListeners(tabId, wc);
     runFork(ensureControlSession(wc).pipe(Effect.ignore));
+    const zoomFactor = yield* attempt(
+      { operation: "registerWebview.getZoomFactor", tabId, webContentsId },
+      () => wc.getZoomFactor(),
+    );
     const registeredAt = yield* currentIso;
     const registration = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
       const current = tabs.get(tabId);
@@ -1313,6 +1370,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         navStatus: pendingUrl === null ? computeNavStatus(wc) : current.navStatus,
         canGoBack: wc.navigationHistory.canGoBack(),
         canGoForward: wc.navigationHistory.canGoForward(),
+        zoomFactor,
         updatedAt: registeredAt,
       };
       return [
@@ -1330,11 +1388,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     const { state: registered, pendingUrl } = registration.value;
     yield* emit(tabId, registered);
-    if (Math.abs(registered.zoomFactor - DEFAULT_ZOOM_FACTOR) > ZOOM_EPSILON) {
-      yield* attempt({ operation: "registerWebview.restoreZoom", tabId, webContentsId }, () =>
-        wc.setZoomFactor(registered.zoomFactor),
-      ).pipe(Effect.ignore);
-    }
     yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () =>
       wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme),
     );
@@ -1946,10 +1999,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationClickInput,
     send: SendCommand,
   ) {
-    yield* Effect.all(
-      [send("Runtime.enable"), send("Input.setIgnoreInputEvents", { ignore: false })],
-      { concurrency: 2, discard: true },
-    );
+    yield* prepareAutomationInput(send, true);
     const point = yield* resolveClickPoint(tabId, send, input);
     const viewport = yield* evaluateWithDebugger<{ width: number; height: number }>(
       tabId,
@@ -2011,7 +2061,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
-  const focusAutomationTarget = Effect.fn("PreviewManager.focusAutomationTarget")(function* (
+  const typeIntoAutomationTarget = Effect.fn("PreviewManager.typeIntoAutomationTarget")(function* (
     tabId: string,
     send: SendCommand,
     input: PreviewAutomationTypeInput,
@@ -2021,8 +2071,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const locatorJson = locator
       ? yield* encodeJson({ operation: "automationType.encodeLocator", tabId }, locator)
       : null;
+    const textJson = yield* encodeJson(
+      { operation: "automationType.encodeText", tabId },
+      input.text,
+    );
     const result = yield* evaluateWithDebugger<
-      { ok: true } | { invalidSelector: true; message: string } | { notFound: true }
+      | { ok: true }
+      | { invalidSelector: true; message: string }
+      | { notEditable: true }
+      | { notFound: true }
     >(
       tabId,
       send,
@@ -2030,12 +2087,32 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           try {
             const element = ${locatorJson ? `(() => { const injected = globalThis.__t3PlaywrightInjected; return injected.querySelector(injected.parseSelector(${locatorJson}), document, true); })()` : "document.activeElement"};
             if (!element) return { notFound: true };
+            const textControl =
+              element instanceof HTMLTextAreaElement ||
+              (element instanceof HTMLInputElement &&
+                !new Set(["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"]).has(element.type));
+            const editable = textControl || element.isContentEditable;
+            if (!editable || element.disabled || element.readOnly) return { notEditable: true };
             element.focus();
-            if (${input.clear ?? false}) {
-              if ("value" in element) element.value = "";
-              else if (element.isContentEditable) element.textContent = "";
-              element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+            if (document.activeElement !== element) return { notEditable: true };
+            const clear = ${input.clear ?? false};
+            if (clear) {
+              if (textControl) {
+                element.select();
+              } else {
+                const range = document.createRange();
+                range.selectNodeContents(element);
+                const selection = document.getSelection();
+                selection?.removeAllRanges();
+                selection?.addRange(range);
+              }
             }
+            const text = ${textJson};
+            const inserted = text.length > 0
+              ? document.execCommand("insertText", false, text)
+              : !clear || document.execCommand("delete", false);
+            if (!inserted) return { notEditable: true };
+            element.dispatchEvent(new Event("change", { bubbles: true }));
             return { ok: true };
           } catch (error) {
             return { invalidSelector: true, message: String(error) };
@@ -2059,6 +2136,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ...automationSelectorDiagnostics(input),
       });
     }
+    if ("notEditable" in result) {
+      return yield* new PreviewAutomationTargetNotEditableError({
+        tabId,
+        ...automationSelectorDiagnostics(input),
+      });
+    }
   });
 
   const performAutomationType = Effect.fn("PreviewManager.performAutomationType")(function* (
@@ -2066,23 +2149,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationTypeInput,
     send: SendCommand,
   ) {
-    yield* send("Runtime.enable");
-    yield* focusAutomationTarget(tabId, send, input);
-    yield* send("Input.insertText", { text: input.text });
-    const textJson = yield* encodeJson(
-      { operation: "automationType.encodeText", tabId },
-      input.text,
-    );
-    yield* evaluateWithDebugger(
-      tabId,
-      send,
-      `(() => {
-        const element = document.activeElement;
-        element?.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ${textJson} }));
-        element?.dispatchEvent(new Event("change", { bubbles: true }));
-      })()`,
-      false,
-    );
+    // CDP Input.insertText silently drops text until Electron has activated a hidden
+    // guest WebContents with a pointer event. Editing in the page runtime keeps
+    // background automation deterministic without stealing foreground app focus.
+    yield* typeIntoAutomationTarget(tabId, send, input);
   });
 
   const automationType = Effect.fn("PreviewManager.automationType")(function* (
@@ -2100,6 +2170,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationPressInput,
     send: SendCommand,
   ) {
+    yield* prepareAutomationInput(send, false);
     const modifiers = (input.modifiers ?? []).reduce((value, modifier) => {
       switch (modifier) {
         case "Alt":
@@ -2529,6 +2600,20 @@ export class PreviewAutomationTargetNotFoundError extends Schema.TaggedErrorClas
   }
 }
 
+export class PreviewAutomationTargetNotEditableError extends Schema.TaggedErrorClass<PreviewAutomationTargetNotEditableError>()(
+  "PreviewAutomationTargetNotEditableError",
+  {
+    tabId: Schema.String,
+    selectorKind: PreviewAutomationSelectorKind,
+    selectorLength: Schema.optionalKey(Schema.Number),
+  },
+) {
+  override get message(): string {
+    const target = previewAutomationTargetLabel(this.selectorKind, this.selectorLength);
+    return `Preview automation type found ${target}, but it is not editable in tab ${this.tabId}`;
+  }
+}
+
 export class PreviewAutomationCoordinatesOutsideViewportError extends Schema.TaggedErrorClass<PreviewAutomationCoordinatesOutsideViewportError>()(
   "PreviewAutomationCoordinatesOutsideViewportError",
   {
@@ -2631,6 +2716,7 @@ export const PreviewManagerError = Schema.Union([
   PreviewAutomationDebuggerAttachedError,
   PreviewAutomationEvaluationError,
   PreviewAutomationTargetNotFoundError,
+  PreviewAutomationTargetNotEditableError,
   PreviewAutomationCoordinatesOutsideViewportError,
   PreviewAutomationInvalidSelectorError,
   PreviewAutomationResultTooLargeError,

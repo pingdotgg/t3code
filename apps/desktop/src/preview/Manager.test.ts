@@ -250,6 +250,142 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("mirrors Electron's effective zoom across registration and navigation", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let effectiveZoom = 0.9;
+        const listeners = new Map<string, (...args: unknown[]) => void>();
+        const setZoomFactor = vi.fn();
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => effectiveZoom,
+          setZoomFactor,
+          on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+            listeners.set(event, listener);
+          }),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+        const zoomFactors: number[] = [];
+
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            zoomFactors.push(state.zoomFactor);
+          }),
+        );
+        yield* manager.createTab("tab_zoom");
+        yield* manager.registerWebview("tab_zoom", 42);
+
+        expect(zoomFactors.at(-1)).toBe(0.9);
+        expect(setZoomFactor).not.toHaveBeenCalled();
+
+        effectiveZoom = 1.25;
+        listeners.get("did-navigate")?.();
+        yield* Effect.yieldNow;
+
+        expect(zoomFactors.at(-1)).toBe(1.25);
+        expect(setZoomFactor).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps a main-frame load failure visible until a retry starts", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const url = "http://localhost:5733/";
+        let loading = false;
+        const listeners = new Map<string, (...args: unknown[]) => void>();
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => url,
+          getTitle: () => "localhost:5733",
+          isLoading: () => loading,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+            listeners.set(event, listener);
+          }),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+        const statuses: PreviewManager.PreviewNavStatus[] = [];
+
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            statuses.push(state.navStatus);
+          }),
+        );
+        yield* manager.createTab("tab_failed");
+        yield* manager.registerWebview("tab_failed", 42);
+
+        listeners.get("did-fail-load")?.(
+          {},
+          -105,
+          "ERR_NAME_NOT_RESOLVED",
+          "https://missing-frame.example/",
+          false,
+        );
+        yield* Effect.yieldNow;
+        expect(statuses.at(-1)?.kind).toBe("Success");
+
+        loading = true;
+        listeners.get("did-start-loading")?.();
+        yield* Effect.yieldNow;
+        expect(statuses.at(-1)?.kind).toBe("Loading");
+
+        loading = false;
+        listeners.get("did-fail-load")?.({}, -102, "ERR_CONNECTION_REFUSED", url, true);
+        listeners.get("did-stop-loading")?.();
+        listeners.get("page-title-updated")?.();
+        yield* Effect.yieldNow;
+        expect(statuses.at(-1)).toEqual({
+          kind: "LoadFailed",
+          url,
+          title: "localhost:5733",
+          code: -102,
+          description: "ERR_CONNECTION_REFUSED",
+        });
+
+        loading = true;
+        listeners.get("did-start-loading")?.();
+        yield* Effect.yieldNow;
+        expect(statuses.at(-1)?.kind).toBe("Loading");
+
+        loading = false;
+        listeners.get("did-stop-loading")?.();
+        yield* Effect.yieldNow;
+        expect(statuses.at(-1)?.kind).toBe("Success");
+      }),
+    ),
+  );
+
   effectIt.effect("captures a PNG screenshot into browser artifacts", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -507,6 +643,63 @@ describe("PreviewManager", () => {
           button: "left",
           clickCount: 1,
         });
+      }),
+    ),
+  );
+
+  effectIt.effect("types in background webviews and enables native key input", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const sendCommand = vi.fn(async (method: string, _params?: Record<string, unknown>) =>
+          method === "Runtime.evaluate" ? { result: { value: { ok: true } } } : undefined,
+        );
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+        yield* manager.automationType("tab_input", { text: "hello", clear: true });
+        yield* manager.automationPress("tab_input", { key: "x" });
+
+        const methods = sendCommand.mock.calls.map(([method]) => method);
+        const keyDownIndex = methods.indexOf("Input.dispatchKeyEvent");
+        const enableIndex = methods.indexOf("Input.setIgnoreInputEvents");
+        const typeEvaluation = sendCommand.mock.calls.find(
+          ([method, params]) =>
+            method === "Runtime.evaluate" &&
+            typeof params === "object" &&
+            params !== null &&
+            "expression" in params &&
+            typeof params.expression === "string" &&
+            params.expression.includes('document.execCommand("insertText"'),
+        );
+        expect(typeEvaluation).toBeDefined();
+        expect(methods).not.toContain("Input.insertText");
+        expect(enableIndex).toBeGreaterThanOrEqual(0);
+        expect(enableIndex).toBeLessThan(keyDownIndex);
+        expect(sendCommand).toHaveBeenCalledWith("Input.setIgnoreInputEvents", { ignore: false });
       }),
     ),
   );

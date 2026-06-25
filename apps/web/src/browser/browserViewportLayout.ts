@@ -32,6 +32,11 @@ export type BrowserViewportResizeDirection =
   | "west"
   | "northwest";
 
+export const browserViewportSettingKey = (setting: PreviewViewportSetting): string =>
+  setting._tag === "fill"
+    ? "fill"
+    : `${setting._tag}:${setting.width}:${setting.height}:${setting._tag === "preset" ? setting.presetId : ""}`;
+
 const normalizeZoomFactor = (zoomFactor: number): number =>
   Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
 

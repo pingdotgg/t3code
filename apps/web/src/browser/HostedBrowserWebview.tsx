@@ -10,6 +10,7 @@ import { cn } from "~/lib/utils";
 
 import { useActiveBrowserRecordingTabId } from "./browserRecording";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
+import { browserViewportSettingKey } from "./browserViewportLayout";
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
@@ -208,6 +209,7 @@ export function HostedBrowserWebview(props: {
           {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}
           data-preview-tab={tabId}
           data-preview-viewport-mode={effectiveViewport._tag}
+          data-preview-viewport-key={browserViewportSettingKey(effectiveViewport)}
           data-preview-css-width={
             effectiveViewport._tag === "fill"
               ? Math.max(1, Math.round(layout.viewportWidth / normalizedZoomFactor))

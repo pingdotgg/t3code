@@ -55,6 +55,7 @@ import {
   needsPreviewAutomationSessionSync,
   resolvePreviewAutomationTarget,
 } from "./previewAutomationTarget";
+import { isPreviewViewportReady } from "./previewViewportReadiness";
 
 const waitForDesktopOverlay = async (
   threadRef: ScopedThreadRef,
@@ -144,6 +145,16 @@ const readRenderedViewport = async (tabId: string): Promise<PreviewRenderedViewp
   return await readWebviewViewport(webview);
 };
 
+const readDeclaredViewport = (
+  webview: ExecutablePreviewWebview | null,
+): PreviewRenderedViewportSize | null => {
+  const width = Number(webview?.getAttribute("data-preview-css-width"));
+  const height = Number(webview?.getAttribute("data-preview-css-height"));
+  return Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0
+    ? { width, height }
+    : null;
+};
+
 const waitForRenderedViewport = async (
   tabId: string,
   setting: PreviewViewportSetting,
@@ -154,19 +165,19 @@ const waitForRenderedViewport = async (
   while (Date.now() <= deadline) {
     try {
       const webview = findPreviewWebview(tabId);
-      const expectedWidth = Number(webview?.getAttribute("data-preview-css-width"));
-      const expectedHeight = Number(webview?.getAttribute("data-preview-css-height"));
-      const modeApplied = webview?.getAttribute("data-preview-viewport-mode") === setting._tag;
-      const viewport = webview && modeApplied ? await readWebviewViewport(webview) : null;
-      const tolerance = setting._tag === "fill" ? 1 : 0;
+      const appliedSettingKey = webview?.getAttribute("data-preview-viewport-key") ?? null;
+      const declaredViewport = readDeclaredViewport(webview);
+      const renderedViewport = webview ? await readWebviewViewport(webview) : null;
       if (
-        viewport &&
-        Number.isInteger(expectedWidth) &&
-        Number.isInteger(expectedHeight) &&
-        Math.abs(viewport.width - expectedWidth) <= tolerance &&
-        Math.abs(viewport.height - expectedHeight) <= tolerance
+        renderedViewport &&
+        isPreviewViewportReady({
+          setting,
+          appliedSettingKey,
+          declaredViewport,
+          renderedViewport,
+        })
       ) {
-        return viewport;
+        return renderedViewport;
       }
     } catch (error) {
       // Registration and navigation can transiently replace the guest while

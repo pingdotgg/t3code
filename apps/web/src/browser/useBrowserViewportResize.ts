@@ -12,6 +12,7 @@ import {
 
 import { commitBrowserViewportChange } from "./browserViewportActions";
 import {
+  browserViewportSettingKey,
   resizeBrowserViewportFromRail,
   resizeFreeformViewport,
   resolveBrowserDeviceViewportArea,
@@ -27,11 +28,6 @@ interface ViewportDrag extends PreviewViewportSize {
 
 const KEYBOARD_RESIZE_COMMIT_DELAY_MS = 150;
 
-const viewportSettingKey = (viewport: PreviewViewportSetting): string =>
-  viewport._tag === "fill"
-    ? "fill"
-    : `${viewport._tag}:${viewport.width}:${viewport.height}:${viewport._tag === "preset" ? viewport.presetId : ""}`;
-
 export function useBrowserViewportResize(options: {
   readonly tabId: string;
   readonly viewport: PreviewViewportSetting;
@@ -46,7 +42,7 @@ export function useBrowserViewportResize(options: {
   const keyboardCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keyboardViewportRef = useRef<ViewportDrag | null>(null);
   const [dragViewport, setDragViewport] = useState<ViewportDrag | null>(null);
-  const sourceViewportKey = viewportSettingKey(viewport);
+  const sourceViewportKey = browserViewportSettingKey(viewport);
   const sourceViewportKeyRef = useRef(sourceViewportKey);
   sourceViewportKeyRef.current = sourceViewportKey;
   const activeDrag = dragViewport?.sourceKey === sourceViewportKey ? dragViewport : null;
