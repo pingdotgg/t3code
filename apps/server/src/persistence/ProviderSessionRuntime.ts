@@ -9,14 +9,8 @@ import * as Struct from "effect/Struct";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
-import {
-  AgentSessionImportSource,
-  IsoDateTime,
-  ProviderInstanceId,
-  ProviderSessionRuntimeStatus,
-  RuntimeMode,
-  ThreadId,
-} from "@t3tools/contracts";
+import { IsoDateTime, ProviderInstanceId, RuntimeMode, ThreadId } from "@t3tools/contracts";
+import { ProviderSessionRuntimeStatus } from "@t3tools/contracts/legacy-orchestration";
 
 import {
   PersistenceDecodeError,
@@ -59,16 +53,6 @@ export type GetProviderSessionRuntimeInput = typeof GetProviderSessionRuntimeInp
 export const DeleteProviderSessionRuntimeInput = Schema.Struct({ threadId: ThreadId });
 export type DeleteProviderSessionRuntimeInput = typeof DeleteProviderSessionRuntimeInput.Type;
 
-export const RecordImportedTranscriptInput = Schema.Struct({
-  threadId: ThreadId,
-  source: AgentSessionImportSource,
-});
-export type RecordImportedTranscriptInput = typeof RecordImportedTranscriptInput.Type;
-
-export interface ProviderSessionRuntimeUpsertOptions {
-  readonly onConflict?: "update" | "ignore";
-}
-
 /**
  * ProviderSessionRuntimeRepository - Service tag for provider runtime persistence.
  */
@@ -78,17 +62,10 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
     /**
      * Insert or replace a provider runtime row.
      *
-     * Upserts by canonical `threadId`, retaining imported transcript records
-     * from the current database row.
+     * Upserts by canonical `threadId`, including JSON payload/cursor fields.
      */
     readonly upsert: (
       runtime: ProviderSessionRuntime,
-      options?: ProviderSessionRuntimeUpsertOptions,
-    ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
-
-    /** Record one source file without replacing the current session state. */
-    readonly recordImportedTranscript: (
-      input: RecordImportedTranscriptInput,
     ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
 
     /**
@@ -147,10 +124,6 @@ const GetRuntimeRequestSchema = Schema.Struct({
 
 const DeleteRuntimeRequestSchema = GetRuntimeRequestSchema;
 
-const RecordImportedTranscriptRequestSchema = RecordImportedTranscriptInput.mapFields(
-  Struct.assign({ source: Schema.fromJsonString(AgentSessionImportSource) }),
-);
-
 function toPersistenceSqlOrDecodeError(
   sqlOperation: string,
   decodeOperation: string,
@@ -170,8 +143,6 @@ function toPersistenceSqlOrDecodeError(
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // Runtime writes can carry stale payloads. Only recordImportedTranscript may
-  // change source records, so restore that field from the row being updated.
   const upsertRuntimeRow = SqlSchema.void({
     Request: ProviderSessionRuntimeDbRowSchema,
     execute: (runtime) =>
@@ -196,11 +167,7 @@ export const make = Effect.gen(function* () {
           ${runtime.status},
           ${runtime.lastSeenAt},
           ${runtime.resumeCursor},
-          CASE
-            WHEN json_type(${runtime.runtimePayload}) = 'object'
-            THEN json_remove(${runtime.runtimePayload}, '$.importedTranscripts')
-            ELSE ${runtime.runtimePayload}
-          END
+          ${runtime.runtimePayload}
         )
         ON CONFLICT (thread_id)
         DO UPDATE SET
@@ -211,107 +178,7 @@ export const make = Effect.gen(function* () {
           status = excluded.status,
           last_seen_at = excluded.last_seen_at,
           resume_cursor_json = excluded.resume_cursor_json,
-          runtime_payload_json = CASE
-            WHEN json_type(
-              CASE
-                WHEN json_valid(provider_session_runtime.runtime_payload_json)
-                THEN provider_session_runtime.runtime_payload_json
-                ELSE '{}'
-              END,
-              '$.importedTranscripts'
-            ) IS NOT NULL
-            THEN json_set(
-              CASE
-                WHEN json_type(excluded.runtime_payload_json) = 'object'
-                THEN excluded.runtime_payload_json
-                ELSE '{}'
-              END,
-              '$.importedTranscripts',
-              json_extract(provider_session_runtime.runtime_payload_json, '$.importedTranscripts')
-            )
-            ELSE excluded.runtime_payload_json
-          END
-      `,
-  });
-
-  const insertRuntimeRow = SqlSchema.void({
-    Request: ProviderSessionRuntimeDbRowSchema,
-    execute: (runtime) =>
-      sql`
-        INSERT INTO provider_session_runtime (
-          thread_id,
-          provider_name,
-          provider_instance_id,
-          adapter_key,
-          runtime_mode,
-          status,
-          last_seen_at,
-          resume_cursor_json,
-          runtime_payload_json
-        )
-        VALUES (
-          ${runtime.threadId},
-          ${runtime.providerName},
-          ${runtime.providerInstanceId},
-          ${runtime.adapterKey},
-          ${runtime.runtimeMode},
-          ${runtime.status},
-          ${runtime.lastSeenAt},
-          ${runtime.resumeCursor},
-          CASE
-            WHEN json_type(${runtime.runtimePayload}) = 'object'
-            THEN json_remove(${runtime.runtimePayload}, '$.importedTranscripts')
-            ELSE ${runtime.runtimePayload}
-          END
-        )
-        ON CONFLICT (thread_id) DO NOTHING
-      `,
-  });
-
-  const recordImportedTranscriptRow = SqlSchema.void({
-    Request: RecordImportedTranscriptRequestSchema,
-    execute: ({ threadId, source }) =>
-      sql`
-        WITH current_runtime AS (
-          SELECT CASE
-            WHEN json_valid(runtime_payload_json) THEN CASE
-              WHEN json_type(runtime_payload_json) = 'object' THEN runtime_payload_json
-              ELSE '{}'
-            END
-            ELSE '{}'
-          END AS payload
-          FROM provider_session_runtime
-          WHERE thread_id = ${threadId}
-        )
-        UPDATE provider_session_runtime
-        SET runtime_payload_json = (
-          SELECT json_set(
-            payload,
-            '$.importedTranscripts',
-            json((
-              SELECT json_group_array(json(value))
-              FROM (
-                SELECT value
-                FROM json_each(CASE
-                  WHEN json_type(payload, '$.importedTranscripts') = 'array'
-                  THEN json_extract(payload, '$.importedTranscripts')
-                  ELSE '[]'
-                END)
-                WHERE CASE
-                  WHEN type = 'object' THEN
-                    json_extract(value, '$.providerInstanceId')
-                      IS NOT json_extract(${source}, '$.providerInstanceId')
-                    OR json_extract(value, '$.filePath') IS NOT json_extract(${source}, '$.filePath')
-                  ELSE 0
-                END
-                UNION ALL
-                SELECT ${source} AS value
-              )
-            ))
-          )
-          FROM current_runtime
-        )
-        WHERE thread_id = ${threadId}
+          runtime_payload_json = excluded.runtime_payload_json
       `,
   });
 
@@ -364,8 +231,8 @@ export const make = Effect.gen(function* () {
       `,
   });
 
-  const upsert: ProviderSessionRuntimeRepository["Service"]["upsert"] = (runtime, options) =>
-    (options?.onConflict === "ignore" ? insertRuntimeRow(runtime) : upsertRuntimeRow(runtime)).pipe(
+  const upsert: ProviderSessionRuntimeRepository["Service"]["upsert"] = (runtime) =>
+    upsertRuntimeRow(runtime).pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.upsert:query",
@@ -374,18 +241,6 @@ export const make = Effect.gen(function* () {
         ),
       ),
     );
-
-  const recordImportedTranscript: ProviderSessionRuntimeRepository["Service"]["recordImportedTranscript"] =
-    (input) =>
-      recordImportedTranscriptRow(input).pipe(
-        Effect.mapError(
-          toPersistenceSqlOrDecodeError(
-            "ProviderSessionRuntimeRepository.recordImportedTranscript:query",
-            "ProviderSessionRuntimeRepository.recordImportedTranscript:encodeRequest",
-            { threadId: input.threadId },
-          ),
-        ),
-      );
 
   const getByThreadId: ProviderSessionRuntimeRepository["Service"]["getByThreadId"] = (input) =>
     getRuntimeRowByThreadId(input).pipe(
@@ -465,7 +320,6 @@ export const make = Effect.gen(function* () {
 
   return {
     upsert,
-    recordImportedTranscript,
     getByThreadId,
     list,
     deleteByThreadId,

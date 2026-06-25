@@ -7,7 +7,6 @@ import {
   type EnvironmentThreadState,
   createThreadEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/threads";
-import { presentThread, type EnvironmentThread } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -36,7 +35,7 @@ const EMPTY_THREAD_STATE_ATOM = Atom.make(AsyncResult.success(EMPTY_ENVIRONMENT_
 export function useEnvironmentThread(
   environmentId: EnvironmentId | null,
   threadId: ThreadId | null,
-): Omit<EnvironmentThreadState, "data"> & { readonly data: Option.Option<EnvironmentThread> } {
+): EnvironmentThreadState {
   const result = useAtomValue(
     environmentId !== null && threadId !== null
       ? environmentThreads.stateAtom(environmentId, threadId)
@@ -46,11 +45,5 @@ export function useEnvironmentThread(
     AsyncResult.value(result),
     () => EMPTY_ENVIRONMENT_THREAD_STATE,
   ) as EnvironmentThreadState;
-  return {
-    ...state,
-    data:
-      environmentId === null
-        ? Option.none()
-        : Option.map(state.data, (projection) => presentThread(environmentId, projection)),
-  };
+  return state;
 }
