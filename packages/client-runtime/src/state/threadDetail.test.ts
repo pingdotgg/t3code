@@ -40,6 +40,34 @@ describe("createEnvironmentThreadDetailAtoms", () => {
 
     expect(registry.get(details.threadAtom(ref))).toBe(thread);
     expect(registry.get(details.statusAtom(ref))).toBe("synchronizing");
+
+    registry.set(
+      sourceAtom,
+      AsyncResult.success({
+        data: Option.some(v2Projection),
+        status: "live",
+        error: Option.some("Stream interrupted."),
+      }),
+    );
+
+    expect(registry.get(details.threadAtom(ref))).toBe(thread);
+    expect(registry.get(details.visibleTurnItemsAtom(ref))).toBe(v2Projection.visibleTurnItems);
+    expect(registry.get(details.statusAtom(ref))).toBe("live");
+    expect(registry.get(details.errorAtom(ref))).toBe("Stream interrupted.");
+
+    registry.set(
+      sourceAtom,
+      AsyncResult.success({
+        data: Option.none(),
+        status: "deleted",
+        error: Option.none(),
+      }),
+    );
+
+    expect(registry.get(details.threadAtom(ref))).toBeNull();
+    expect(registry.get(details.visibleTurnItemsAtom(ref))).toEqual([]);
+    expect(registry.get(details.statusAtom(ref))).toBe("deleted");
+    expect(registry.get(details.errorAtom(ref))).toBeNull();
     registry.dispose();
   });
 });

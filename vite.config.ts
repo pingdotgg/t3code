@@ -49,6 +49,7 @@ export default defineConfig({
     environment: "node",
     exclude: [
       "**/.repos/**",
+      "**/.t3/**",
       "**/node_modules/**",
       "**/dist/**",
       "**/dist-electron/**",
