@@ -107,6 +107,7 @@ import { resolvePathLinkTarget } from "~/terminal-links";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { readLocalApi } from "~/localApi";
 import {
+  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_ROW_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
@@ -1731,8 +1732,8 @@ export default function GitActionsControl({
     <>
       {!isRepo ? (
         <Button
-          variant="outline"
           size="xs"
+          variant={isPanel ? "ghost" : "outline"}
           className={isPanel ? THREAD_DETAILS_PANEL_ROW_CLASS : undefined}
           disabled={initAction.isPending}
           onClick={() => {
@@ -1776,7 +1777,7 @@ export default function GitActionsControl({
                       isPanel && THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS,
                     )}
                     size="xs"
-                    variant="outline"
+                    variant={isPanel ? "ghost" : "outline"}
                   />
                 }
               >
@@ -1800,7 +1801,7 @@ export default function GitActionsControl({
             </Popover>
           ) : (
             <Button
-              variant="outline"
+              variant={isPanel ? "ghost" : "outline"}
               size="xs"
               className={isPanel ? THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS : undefined}
               disabled={isGitActionRunning || quickAction.disabled}
@@ -1838,13 +1839,16 @@ export default function GitActionsControl({
                 <Button
                   aria-label="Git action options"
                   size={isPanel ? "sm" : "icon-xs"}
-                  variant="outline"
+                  variant={isPanel ? "ghost" : "outline"}
                   className={isPanel ? THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS : undefined}
                 />
               }
               disabled={isGitActionRunning}
             >
-              <ChevronDownIcon aria-hidden="true" className="size-4" />
+              <ChevronDownIcon
+                aria-hidden="true"
+                className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
+              />
             </MenuTrigger>
             <MenuPopup align="end" className="w-full">
               {gitActionMenuItems.map((item) => {
