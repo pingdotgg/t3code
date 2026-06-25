@@ -33,6 +33,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
 import {
+  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_ROW_CLASS,
 } from "./chat/threadDetailsPanelStyles";
@@ -629,12 +630,9 @@ export function BranchToolbarBranchSelector({
     ? `Open ${sourceControlPresentation.terminology.singular} #${branchPr.number} (${branchPr.state})`
     : "";
   const openPrLink = useOpenPrLink(threadRef);
-  const panelPrStateClass =
-    branchPr?.state === "open"
-      ? "bg-emerald-500/10 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300"
-      : branchPr?.state === "merged"
-        ? "bg-violet-500/10 text-violet-700 dark:bg-violet-400/10 dark:text-violet-300"
-        : "bg-muted text-muted-foreground";
+  const panelPrLabel = branchPr
+    ? `#${branchPr.number}${branchPr.title.trim() ? `: ${branchPr.title}` : ""}`
+    : "";
 
   function renderPickerItem(itemValue: string, index: number) {
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
@@ -786,7 +784,12 @@ export function BranchToolbarBranchSelector({
           >
             {triggerLabel}
           </span>
-          <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
+          <ChevronDownIcon
+            className={cn(
+              "size-3 shrink-0 opacity-50",
+              displayMode === "panel" && THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+            )}
+          />
         </ComboboxTrigger>
         {displayMode === "panel" && branchPr && branchPrStatus ? (
           <Tooltip>
@@ -805,18 +808,7 @@ export function BranchToolbarBranchSelector({
               <ChangeRequestStatusIcon
                 className={cn(THREAD_DETAILS_PANEL_ICON_CLASS, branchPrStatus.colorClass)}
               />
-              <span className="min-w-0 flex-1 truncate text-left">
-                View {sourceControlPresentation.terminology.shortLabel} #{branchPr.number}
-              </span>
-              <span
-                className={cn(
-                  "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium capitalize leading-4",
-                  panelPrStateClass,
-                )}
-              >
-                <span className="size-1.5 rounded-full bg-current opacity-75" aria-hidden="true" />
-                {branchPr.state}
-              </span>
+              <span className="min-w-0 flex-1 truncate text-left">{panelPrLabel}</span>
             </TooltipTrigger>
             <TooltipPopup side="top">{branchPrStatus.tooltip}</TooltipPopup>
           </Tooltip>

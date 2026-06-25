@@ -308,7 +308,7 @@ layer("ProviderEventIngestorV2", (it) => {
       const childThread: OrchestrationV2AppThread = {
         ...rootEvent.payload,
         id: childThreadId,
-        title: "Subagent: inspect package",
+        title: "inspect package",
         activeProviderThreadId: null,
         lineage: {
           parentThreadId: rootEvent.threadId,

@@ -1,11 +1,12 @@
 import type { OrchestrationV2TurnItem, ThreadId } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
+  BotIcon,
   ExternalLinkIcon,
   GitForkIcon,
-  HammerIcon,
   MessageSquareIcon,
   MinusIcon,
+  type LucideIcon,
   XIcon,
   ZapIcon,
 } from "lucide-react";
@@ -117,8 +118,8 @@ export function V2LifecycleRow(props: {
     return (
       <RelatedThreadCard
         itemType={item.type}
-        icon={HammerIcon}
-        title={item.title ?? "Subagent"}
+        icon={BotIcon}
+        title={subagentDisplayTitle(item.title ?? "Subagent")}
         detail={item.result ?? item.progress ?? item.prompt}
         badge={item.status}
         threadId={item.childThreadId}
@@ -131,7 +132,7 @@ export function V2LifecycleRow(props: {
 
 function RelatedThreadCard(props: {
   readonly itemType: "subagent" | "thread_created";
-  readonly icon: typeof HammerIcon;
+  readonly icon: LucideIcon;
   readonly title: string;
   readonly detail: string;
   readonly badge: string;
@@ -172,4 +173,8 @@ function RelatedThreadCard(props: {
       {content}
     </button>
   );
+}
+
+function subagentDisplayTitle(title: string): string {
+  return title.replace(/^Subagent:\s*/i, "");
 }

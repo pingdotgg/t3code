@@ -36,6 +36,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "~/lib/utils";
 import {
+  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_ROW_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
@@ -183,7 +184,7 @@ export default function ProjectScriptsControl({
               render={
                 <Button
                   size="xs"
-                  variant="outline"
+                  variant={isPanel ? "ghost" : "outline"}
                   className={isPanel ? THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS : undefined}
                   aria-label={`Run ${primaryScript.name}`}
                   // The tooltip wrapper replaces data-slot="button", so themed
@@ -218,13 +219,15 @@ export default function ProjectScriptsControl({
               render={
                 <Button
                   size={isPanel ? "sm" : "icon-xs"}
-                  variant="outline"
+                  variant={isPanel ? "ghost" : "outline"}
                   className={isPanel ? THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS : undefined}
                   aria-label="Script actions"
                 />
               }
             >
-              <ChevronDownIcon className="size-4" />
+              <ChevronDownIcon
+                className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
+              />
             </MenuTrigger>
             <MenuPopup align="end">
               {scripts.map((script) => {
@@ -284,7 +287,7 @@ export default function ProjectScriptsControl({
             render={
               <Button
                 size="xs"
-                variant="outline"
+                variant={isPanel ? "ghost" : "outline"}
                 className={
                   isPanel
                     ? THREAD_DETAILS_PANEL_ROW_CLASS
