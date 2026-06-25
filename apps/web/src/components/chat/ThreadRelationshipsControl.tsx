@@ -4,7 +4,6 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
   BotIcon,
-  GitBranchIcon,
   GitForkIcon,
   GitMergeIcon,
   LoaderCircleIcon,
@@ -20,7 +19,6 @@ import {
   resolveMergeBackTargetThreadId,
   type ThreadRelationshipEdge,
 } from "../../lib/threadRelationships";
-import { newThreadId } from "../../lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { useThreadProjection, useThreadShells } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
@@ -29,6 +27,15 @@ import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import {
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_ICON_ACTION_CLASS,
+  THREAD_DETAILS_PANEL_LINK_ROW_CLASS,
+  THREAD_DETAILS_PANEL_LINK_SPLIT_GROUP_CLASS,
+  THREAD_DETAILS_PANEL_LINK_SPLIT_PRIMARY_CLASS,
+  THREAD_DETAILS_PANEL_LINK_SPLIT_SECONDARY_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
+} from "./threadDetailsPanelStyles";
 
 function relationshipLabel(edge: ThreadRelationshipEdge, currentThreadId: ThreadId) {
   if (edge.kind === "transfer") return "Context transfer";
@@ -45,7 +52,13 @@ function statusDotClass(status: string | null): string {
   return "bg-muted-foreground/45";
 }
 
-const MAX_VISIBLE_RELATIONSHIPS = 5;
+function relationshipThreadTitle(input: {
+  readonly title: string;
+  readonly isSubagent: boolean;
+}): string {
+  if (!input.isSubagent) return input.title;
+  return input.title.replace(/^Subagent:\s*/i, "");
+}
 
 export function ThreadRelationshipsPanel(props: {
   readonly environmentId: EnvironmentId;
@@ -67,30 +80,10 @@ export function ThreadRelationshipsPanel(props: {
   ];
   const graph = deriveThreadRelationshipGraph({ threads: shells, projection });
   const navigate = useNavigate();
-  const forkFromRun = useAtomCommand(threadEnvironment.forkFromRun);
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
   const stopSession = useAtomCommand(threadEnvironment.stopSession);
-  const [busyAction, setBusyAction] = useState<"fork" | "merge" | "detach" | null>(null);
+  const [busyAction, setBusyAction] = useState<"merge" | "detach" | null>(null);
   const latestCompletedRun = projection?.runs.findLast((run) => run.status === "completed") ?? null;
-  const sourceProviderThread =
-    latestCompletedRun?.providerThreadId == null
-      ? null
-      : (projection?.providerThreads.find(
-          (thread) => thread.id === latestCompletedRun.providerThreadId,
-        ) ?? null);
-  const capabilities =
-    (sourceProviderThread === null
-      ? null
-      : projection?.providerSessions.find(
-          (session) => session.id === sourceProviderThread.providerSessionId,
-        )?.capabilities) ?? null;
-  const canForkNatively =
-    capabilities?.threads.canForkThread === true &&
-    capabilities.threads.canForkFromTurn === true &&
-    capabilities.identity.nativeThreadIds === "strong";
-  const canFork =
-    latestCompletedRun !== null &&
-    (canForkNatively || capabilities?.context.supportsFullThreadHandoff === true);
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
   const relationshipRows = immediateThreadRelationships(graph, props.threadId).toSorted(
     (left, right) =>
@@ -103,7 +96,7 @@ export function ThreadRelationshipsPanel(props: {
       (session) => session.status !== "stopped" && session.status !== "error",
     ) ?? false;
 
-  if (relationshipRows.length === 0 && !canFork && mergeTargetThreadId === null && !canDetach) {
+  if (relationshipRows.length === 0) {
     return null;
   }
 
@@ -112,23 +105,6 @@ export function ThreadRelationshipsPanel(props: {
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(scopeThreadRef(props.environmentId, threadId)),
     });
-  };
-
-  const fork = async () => {
-    if (!latestCompletedRun || busyAction !== null) return;
-    setBusyAction("fork");
-    const targetThreadId = newThreadId();
-    const result = await forkFromRun({
-      environmentId: props.environmentId,
-      input: {
-        sourceThreadId: props.threadId,
-        targetThreadId,
-        runId: latestCompletedRun.id,
-        title: `${projection?.thread.title ?? "Thread"} fork`,
-      },
-    });
-    setBusyAction(null);
-    if (result._tag === "Success") openThread(targetThreadId);
   };
 
   const merge = async () => {
@@ -156,8 +132,6 @@ export function ThreadRelationshipsPanel(props: {
     setBusyAction(null);
   };
 
-  const visibleRows = relationshipRows.slice(0, MAX_VISIBLE_RELATIONSHIPS);
-  const hiddenRelationshipCount = relationshipRows.length - visibleRows.length;
   const parentTitle =
     mergeTargetThreadId === null
       ? null
@@ -177,17 +151,6 @@ export function ThreadRelationshipsPanel(props: {
           Lineage
         </h3>
         <div className="flex shrink-0 items-center gap-1">
-          {canFork ? (
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={busyAction !== null}
-              onClick={() => void fork()}
-            >
-              <GitForkIcon className="size-3" />
-              {busyAction === "fork" ? "Forking..." : "Fork"}
-            </Button>
-          ) : null}
           {canDetach ? (
             <Menu>
               <MenuTrigger
@@ -195,6 +158,7 @@ export function ThreadRelationshipsPanel(props: {
                   <Button
                     size="icon-xs"
                     variant="ghost"
+                    className={THREAD_DETAILS_PANEL_ICON_ACTION_CLASS}
                     aria-label="More thread actions"
                     disabled={busyAction !== null}
                   />
@@ -213,69 +177,73 @@ export function ThreadRelationshipsPanel(props: {
         </div>
       </div>
 
-      {visibleRows.length > 0 ? (
-        <ul>
-          {visibleRows.map(({ threadId, edge }) => {
+      {relationshipRows.length > 0 ? (
+        <ul className="m-0 list-none p-0">
+          {relationshipRows.map(({ threadId, edge }) => {
             const node = graph.nodes.get(threadId);
             const isSubagent = edge.kind === "subagent";
             const isMergeTarget = threadId === mergeTargetThreadId;
-            const RelationshipIcon = isSubagent ? BotIcon : GitBranchIcon;
+            const RelationshipIcon = isSubagent ? BotIcon : GitForkIcon;
             const relationship = relationshipLabel(edge, props.threadId);
-            const threadTitle = node?.thread?.title ?? threadId;
-            return (
-              <li
-                key={threadId}
-                className="group flex min-h-11 items-center rounded-lg transition-colors hover:bg-muted/65"
-              >
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <button
-                        type="button"
-                        disabled={node?.missing === true}
-                        onClick={() => openThread(threadId)}
-                        className="flex min-h-11 min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left disabled:cursor-not-allowed disabled:opacity-55"
-                      >
-                        <span className="relative grid size-7 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
-                          <RelationshipIcon className="size-3.5" />
-                          <span
-                            className={cn(
-                              "absolute -bottom-0.5 -right-0.5 size-2 rounded-full border-2 border-card",
-                              statusDotClass(edge.status),
-                            )}
-                            aria-hidden="true"
-                          />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[13px] font-medium leading-4 text-foreground/85">
-                            {threadTitle}
-                          </span>
-                          <span className="block truncate text-[11px] leading-4 text-muted-foreground">
-                            {node?.missing
-                              ? "Unavailable"
-                              : `${relationship}${edge.status ? ` · ${edge.status.replaceAll("_", " ")}` : ""}`}
-                          </span>
-                        </span>
-                        <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                      </button>
-                    }
+            const threadTitle = relationshipThreadTitle({
+              title: node?.thread?.title ?? threadId,
+              isSubagent,
+            });
+            const relationshipContent = (
+              <>
+                <span className="relative -mx-0.5 grid size-4 shrink-0 place-items-center">
+                  <RelationshipIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+                  <span
+                    className={cn(
+                      "absolute -bottom-1 -right-1 size-2 rounded-full border-2 border-card",
+                      statusDotClass(edge.status),
+                    )}
+                    aria-hidden="true"
                   />
-                  <TooltipPopup side="left">
-                    {node?.missing
-                      ? "This related thread is unavailable"
-                      : `Open ${relationship.toLowerCase()} in this chat`}
-                  </TooltipPopup>
-                </Tooltip>
-
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-medium leading-4 text-foreground/85">
+                    {threadTitle}
+                  </span>
+                </span>
+                <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+              </>
+            );
+            return (
+              <li key={threadId} className="group flex h-9 items-center rounded-lg">
                 {isMergeTarget ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span className="mr-1 inline-flex shrink-0">
+                  <div className={THREAD_DETAILS_PANEL_LINK_SPLIT_GROUP_CLASS}>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
                           <Button
-                            size="xs"
-                            variant="outline"
-                            className="gap-1 px-1.5 text-[11px]"
+                            size="sm"
+                            variant="ghost"
+                            className={THREAD_DETAILS_PANEL_LINK_SPLIT_PRIMARY_CLASS}
+                            disabled={node?.missing === true}
+                            onClick={() => openThread(threadId)}
+                          />
+                        }
+                      >
+                        {relationshipContent}
+                      </TooltipTrigger>
+                      <TooltipPopup side="left">
+                        {node?.missing
+                          ? "This related thread is unavailable"
+                          : `Open ${relationship.toLowerCase()} in this chat`}
+                      </TooltipPopup>
+                    </Tooltip>
+                    <span
+                      aria-hidden="true"
+                      className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS}
+                    />
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className={THREAD_DETAILS_PANEL_LINK_SPLIT_SECONDARY_CLASS}
                             aria-label={
                               parentTitle
                                 ? `Merge back to ${parentTitle}`
@@ -289,31 +257,44 @@ export function ThreadRelationshipsPanel(props: {
                             ) : (
                               <GitMergeIcon className="size-3" />
                             )}
-                            {busyAction === "merge" ? "Merging" : "Merge back"}
                           </Button>
-                        </span>
+                        }
+                      />
+                      <TooltipPopup side="left">
+                        {latestCompletedRun === null
+                          ? "Complete a run in this fork before merging it back"
+                          : parentTitle
+                            ? `Merge this conversation back into ${parentTitle}`
+                            : "Merge this conversation back into its source"}
+                      </TooltipPopup>
+                    </Tooltip>
+                  </div>
+                ) : (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={node?.missing === true}
+                          onClick={() => openThread(threadId)}
+                          className={THREAD_DETAILS_PANEL_LINK_ROW_CLASS}
+                        />
                       }
-                    />
+                    >
+                      {relationshipContent}
+                    </TooltipTrigger>
                     <TooltipPopup side="left">
-                      {latestCompletedRun === null
-                        ? "Complete a run in this fork before merging it back"
-                        : parentTitle
-                          ? `Merge this conversation back into ${parentTitle}`
-                          : "Merge this conversation back into its source"}
+                      {node?.missing
+                        ? "This related thread is unavailable"
+                        : `Open ${relationship.toLowerCase()} in this chat`}
                     </TooltipPopup>
                   </Tooltip>
-                ) : null}
+                )}
               </li>
             );
           })}
         </ul>
-      ) : null}
-
-      {hiddenRelationshipCount > 0 ? (
-        <p className="px-2 pt-1 text-[10px] text-muted-foreground">
-          {hiddenRelationshipCount} more direct relationship
-          {hiddenRelationshipCount === 1 ? "" : "s"}
-        </p>
       ) : null}
     </section>
   );
