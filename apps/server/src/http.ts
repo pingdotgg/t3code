@@ -5,7 +5,6 @@ import {
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
-import { getDesktopOrigin } from "@t3tools/shared/desktopOrigin";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -50,23 +49,14 @@ export const browserApiCorsLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const devOrigin = config.devUrl?.origin;
-    const allowedOrigins = resolveBrowserApiCorsAllowedOrigins(config.mode, devOrigin);
     return HttpRouter.cors({
-      ...(allowedOrigins ? { allowedOrigins, credentials: true } : {}),
+      ...(devOrigin ? { allowedOrigins: [devOrigin], credentials: true } : {}),
       allowedMethods: browserApiCorsAllowedMethods,
       allowedHeaders: browserApiCorsAllowedHeaders,
       maxAge: 600,
     });
   }),
 );
-
-export function resolveBrowserApiCorsAllowedOrigins(
-  mode: ServerConfig.RuntimeMode,
-  devOrigin: string | undefined,
-): readonly string[] | undefined {
-  if (!devOrigin) return undefined;
-  return mode === "desktop" ? [devOrigin, getDesktopOrigin(true)] : [devOrigin];
-}
 
 export function isLoopbackHostname(hostname: string): boolean {
   const normalizedHostname = hostname

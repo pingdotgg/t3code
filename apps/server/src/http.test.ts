@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  isLoopbackHostname,
-  resolveBrowserApiCorsAllowedOrigins,
-  resolveDevRedirectUrl,
-} from "./http.ts";
+import { isLoopbackHostname, resolveDevRedirectUrl } from "./http.ts";
 
 describe("http dev routing", () => {
   it("treats localhost and loopback addresses as local", () => {
@@ -27,16 +23,5 @@ describe("http dev routing", () => {
     expect(resolveDevRedirectUrl(devUrl, requestUrl)).toBe(
       "http://127.0.0.1:5173/pair?token=test-token",
     );
-  });
-
-  it("allows the stable Electron renderer origin in desktop development", () => {
-    expect(resolveBrowserApiCorsAllowedOrigins("desktop", "http://127.0.0.1:5733")).toEqual([
-      "http://127.0.0.1:5733",
-      "t3code-dev://app.t3.codes",
-    ]);
-    expect(resolveBrowserApiCorsAllowedOrigins("web", "http://localhost:5733")).toEqual([
-      "http://localhost:5733",
-    ]);
-    expect(resolveBrowserApiCorsAllowedOrigins("desktop", undefined)).toBeUndefined();
   });
 });

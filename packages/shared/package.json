@@ -174,10 +174,6 @@
     "./hostProcess": {
       "types": "./src/hostProcess.ts",
       "import": "./src/hostProcess.ts"
-    },
-    "./desktopOrigin": {
-      "types": "./src/desktopOrigin.ts",
-      "import": "./src/desktopOrigin.ts"
     }
   },
   "scripts": {

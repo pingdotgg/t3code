@@ -8,15 +8,21 @@ import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
 
-export {
-  DESKTOP_DEVELOPMENT_SCHEME,
-  DESKTOP_HOST,
-  DESKTOP_PRODUCTION_SCHEME,
-  getDesktopOrigin,
-  getDesktopScheme,
-  getDesktopUrl,
-} from "@t3tools/shared/desktopOrigin";
-import { DESKTOP_HOST } from "@t3tools/shared/desktopOrigin";
+export const DESKTOP_HOST = "app";
+export const DESKTOP_PRODUCTION_SCHEME = "t3code";
+export const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
+
+export function getDesktopScheme(isDevelopment: boolean): string {
+  return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
+}
+
+export function getDesktopOrigin(isDevelopment: boolean): string {
+  return `${getDesktopScheme(isDevelopment)}://${DESKTOP_HOST}`;
+}
+
+export function getDesktopUrl(isDevelopment: boolean): string {
+  return `${getDesktopOrigin(isDevelopment)}/`;
+}
 
 export class ElectronProtocolRegistrationError extends Schema.TaggedErrorClass<ElectronProtocolRegistrationError>()(
   "ElectronProtocolRegistrationError",
@@ -88,50 +94,6 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
   ].join("; ");
 }
 
-function setHeader(headers: Record<string, string>, name: string, value: string): void {
-  const existingName = Object.keys(headers).find(
-    (headerName) => headerName.toLowerCase() === name.toLowerCase(),
-  );
-  headers[existingName ?? name] = value;
-}
-
-function setResponseHeader(
-  headers: Record<string, string | string[]>,
-  name: string,
-  value: string,
-): void {
-  const existingName = Object.keys(headers).find(
-    (headerName) => headerName.toLowerCase() === name.toLowerCase(),
-  );
-  headers[existingName ?? name] = [value];
-}
-
-function installClerkOriginBridge(input: DesktopProtocolRegistrationInput): () => void {
-  if (!input.clerkFrontendApiHostname) return () => undefined;
-
-  const rendererOrigin = `${input.scheme}://${DESKTOP_HOST}`;
-  const trustedWebOrigin = `https://${DESKTOP_HOST}`;
-  const filter = { urls: [`https://${input.clerkFrontendApiHostname}/*`] };
-  const webRequest = Electron.session.defaultSession.webRequest;
-
-  webRequest.onBeforeSendHeaders(filter, (details, callback) => {
-    const requestHeaders = { ...details.requestHeaders };
-    setHeader(requestHeaders, "Origin", trustedWebOrigin);
-    setHeader(requestHeaders, "Referer", `${trustedWebOrigin}/`);
-    callback({ requestHeaders });
-  });
-  webRequest.onHeadersReceived(filter, (details, callback) => {
-    const responseHeaders = { ...details.responseHeaders };
-    setResponseHeader(responseHeaders, "Access-Control-Allow-Origin", rendererOrigin);
-    callback({ responseHeaders });
-  });
-
-  return () => {
-    webRequest.onBeforeSendHeaders(null);
-    webRequest.onHeadersReceived(null);
-  };
-}
-
 function withContentSecurityPolicy(response: Response, policy: string): Response {
   const headers = new Headers(response.headers);
   headers.set("Content-Security-Policy", policy);
@@ -153,26 +115,9 @@ async function proxyRequest(
   }
 
   const targetUrl = new URL(`${requestUrl.pathname}${requestUrl.search}`, targetOrigin);
-  const headers = new Headers(request.headers);
-  const headersToRemove: string[] = [];
-  for (const name of headers.keys()) {
-    if (
-      name === "host" ||
-      name === "origin" ||
-      name === "referer" ||
-      name === "connection" ||
-      name === "content-length" ||
-      name === "accept-encoding" ||
-      name === "upgrade-insecure-requests" ||
-      name.startsWith("sec-fetch-")
-    ) {
-      headersToRemove.push(name);
-    }
-  }
-  for (const name of headersToRemove) headers.delete(name);
   const init: RequestInit = {
     method: request.method,
-    headers,
+    headers: request.headers,
   };
   if (request.method !== "GET" && request.method !== "HEAD") {
     init.body = request.body;
@@ -213,11 +158,6 @@ export const make = Effect.gen(function* () {
       if (yield* Ref.get(registered)) return;
 
       const contentSecurityPolicy = makeDesktopContentSecurityPolicy(input);
-
-      yield* Effect.acquireRelease(
-        Effect.sync(() => installClerkOriginBridge(input)),
-        (cleanup) => Effect.sync(cleanup),
-      );
 
       yield* Effect.acquireRelease(
         Effect.try({

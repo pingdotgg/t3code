@@ -239,7 +239,7 @@ describe("web cloud link environment client", () => {
       );
       vi.stubGlobal("fetch", fetchMock);
       vi.stubGlobal("window", {
-        location: { origin: "t3code://app.t3.codes" },
+        location: { origin: "t3code://app" },
         desktopBridge: {
           getLocalEnvironmentBearerToken: vi.fn().mockResolvedValue("desktop-bearer-token"),
         } as unknown as DesktopBridge,

@@ -3,26 +3,15 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { handleMock, netFetchMock, onBeforeSendHeadersMock, onHeadersReceivedMock, unhandleMock } =
-  vi.hoisted(() => ({
-    handleMock: vi.fn(),
-    netFetchMock: vi.fn(),
-    onBeforeSendHeadersMock: vi.fn(),
-    onHeadersReceivedMock: vi.fn(),
-    unhandleMock: vi.fn(),
-  }));
+const { handleMock, netFetchMock, unhandleMock } = vi.hoisted(() => ({
+  handleMock: vi.fn(),
+  netFetchMock: vi.fn(),
+  unhandleMock: vi.fn(),
+}));
 
 vi.mock("electron", () => ({
   net: { fetch: netFetchMock },
   protocol: { handle: handleMock, unhandle: unhandleMock },
-  session: {
-    defaultSession: {
-      webRequest: {
-        onBeforeSendHeaders: onBeforeSendHeadersMock,
-        onHeadersReceived: onHeadersReceivedMock,
-      },
-    },
-  },
 }));
 
 import * as ElectronProtocol from "./ElectronProtocol.ts";
@@ -31,8 +20,6 @@ describe("ElectronProtocol", () => {
   beforeEach(() => {
     handleMock.mockReset();
     netFetchMock.mockReset();
-    onBeforeSendHeadersMock.mockReset();
-    onHeadersReceivedMock.mockReset();
     unhandleMock.mockReset();
   });
 
@@ -56,16 +43,7 @@ describe("ElectronProtocol", () => {
           assert.isDefined(handler);
 
           const response = yield* Effect.promise(() =>
-            handler!(
-              new Request("t3code-dev://app.t3.codes/api/health?verbose=1", {
-                headers: {
-                  accept: "application/json",
-                  origin: "t3code-dev://app.t3.codes",
-                  referer: "t3code-dev://app.t3.codes/",
-                  "sec-fetch-site": "same-origin",
-                },
-              }),
-            ),
+            handler!(new Request("t3code-dev://app/api/health?verbose=1")),
           );
           assert.equal(yield* Effect.promise(() => response.text()), "ok");
           assert.include(
@@ -92,66 +70,7 @@ describe("ElectronProtocol", () => {
         ["t3code-dev"],
       );
       assert.equal(netFetchMock.mock.calls[0]?.[0], "http://127.0.0.1:3773/api/health?verbose=1");
-      const forwardedHeaders = new Headers(netFetchMock.mock.calls[0]?.[1]?.headers);
-      assert.equal(forwardedHeaders.get("accept"), "application/json");
-      assert.isNull(forwardedHeaders.get("origin"));
-      assert.isNull(forwardedHeaders.get("referer"));
-      assert.isNull(forwardedHeaders.get("sec-fetch-site"));
       assert.deepEqual(unhandleMock.mock.calls, [["t3code-dev"]]);
-      assert.deepEqual(onBeforeSendHeadersMock.mock.calls.at(-1), [null]);
-      assert.deepEqual(onHeadersReceivedMock.mock.calls.at(-1), [null]);
-    }).pipe(Effect.provide(ElectronProtocol.layer)),
-  );
-
-  it.effect("bridges the custom renderer origin for Clerk requests", () =>
-    Effect.gen(function* () {
-      let beforeSend:
-        | ((
-            details: { requestHeaders: Record<string, string> },
-            callback: (response: { requestHeaders: Record<string, string> }) => void,
-          ) => void)
-        | undefined;
-      let headersReceived:
-        | ((
-            details: { responseHeaders?: Record<string, string | string[]> },
-            callback: (response: { responseHeaders: Record<string, string | string[]> }) => void,
-          ) => void)
-        | undefined;
-      onBeforeSendHeadersMock.mockImplementation((_filter, listener) => {
-        beforeSend = listener;
-      });
-      onHeadersReceivedMock.mockImplementation((_filter, listener) => {
-        headersReceived = listener;
-      });
-
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const protocol = yield* ElectronProtocol.ElectronProtocol;
-          yield* protocol.registerDesktopProtocol({
-            scheme: "t3code-dev",
-            targetOrigin: new URL("http://127.0.0.1:5733/"),
-            backendOrigin: new URL("http://127.0.0.1:3773/"),
-            clerkFrontendApiHostname: "clerk.t3.codes",
-          });
-
-          assert.isDefined(beforeSend);
-          assert.isDefined(headersReceived);
-          let requestHeaders: Record<string, string> | undefined;
-          beforeSend!({ requestHeaders: { Origin: "t3code-dev://app.t3.codes" } }, (response) => {
-            requestHeaders = response.requestHeaders;
-          });
-          assert.equal(requestHeaders?.Origin, "https://app.t3.codes");
-          assert.equal(requestHeaders?.Referer, "https://app.t3.codes/");
-
-          let responseHeaders: Record<string, string | string[]> | undefined;
-          headersReceived!({ responseHeaders: {} }, (response) => {
-            responseHeaders = response.responseHeaders;
-          });
-          assert.deepEqual(responseHeaders?.["Access-Control-Allow-Origin"], [
-            "t3code-dev://app.t3.codes",
-          ]);
-        }),
-      );
     }).pipe(Effect.provide(ElectronProtocol.layer)),
   );
 
@@ -199,7 +118,7 @@ describe("ElectronProtocol", () => {
             backendOrigin: new URL("http://127.0.0.1:3773/"),
             clerkFrontendApiHostname: undefined,
           });
-          return yield* Effect.promise(() => handler!(new Request("t3code-dev://app.t3.codes/")));
+          return yield* Effect.promise(() => handler!(new Request("t3code-dev://app/")));
         }),
       );
 
