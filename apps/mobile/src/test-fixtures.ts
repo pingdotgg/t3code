@@ -1,7 +1,5 @@
 import {
-  presentThread,
   presentThreadShell,
-  type EnvironmentThread,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import {
@@ -9,7 +7,6 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -70,61 +67,4 @@ export function makeThreadShellFixture(
     worktreePath: overrides.worktreePath,
   });
   return { ...presentThreadShell(environmentId, raw), ...overrides };
-}
-
-export function makeThreadFixture(overrides: Partial<EnvironmentThread> = {}): EnvironmentThread {
-  const shell = makeRawThreadShell({
-    id: overrides.id,
-    projectId: overrides.projectId,
-    title: overrides.title,
-    providerInstanceId: overrides.providerInstanceId,
-    modelSelection: overrides.modelSelection,
-    runtimeMode: overrides.runtimeMode,
-    interactionMode: overrides.interactionMode,
-    branch: overrides.branch,
-    worktreePath: overrides.worktreePath,
-  });
-  const projection: OrchestrationV2ThreadProjection = {
-    thread: {
-      id: shell.id,
-      projectId: shell.projectId,
-      title: shell.title,
-      providerInstanceId: shell.providerInstanceId,
-      modelSelection: shell.modelSelection,
-      runtimeMode: shell.runtimeMode,
-      interactionMode: shell.interactionMode,
-      branch: shell.branch,
-      worktreePath: shell.worktreePath,
-      activeProviderThreadId: shell.activeProviderThreadId,
-      lineage: shell.lineage,
-      forkedFrom: shell.forkedFrom,
-      createdBy: shell.createdBy,
-      creationSource: shell.creationSource,
-      createdAt: shell.createdAt,
-      updatedAt: shell.updatedAt,
-      archivedAt: shell.archivedAt,
-      deletedAt: shell.deletedAt,
-    },
-    runs: [],
-    attempts: [],
-    nodes: [],
-    subagents: [],
-    providerSessions: [],
-    providerThreads: [],
-    providerTurns: [],
-    runtimeRequests: [],
-    messages: [],
-    plans: [],
-    turnItems: [],
-    checkpointScopes: [],
-    checkpoints: [],
-    contextHandoffs: [],
-    contextTransfers: [],
-    visibleTurnItems: [],
-    updatedAt: shell.updatedAt,
-  };
-  return {
-    ...presentThread(overrides.environmentId ?? EnvironmentId.make("environment-test"), projection),
-    ...overrides,
-  };
 }

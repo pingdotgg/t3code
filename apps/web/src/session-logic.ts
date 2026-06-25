@@ -1,23 +1,21 @@
 import {
   ProviderDriverKind,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   type PlanId,
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import type {
-  ThreadCheckpointSummary,
   ThreadPendingApproval,
   ThreadPendingUserInput,
-  ThreadProposedPlan,
-  ThreadRunSummary,
-  ThreadRuntimeSummary,
-  ThreadTodoPlan,
-  ThreadWorkEntry,
-} from "@t3tools/client-runtime/state/shell";
+} from "@t3tools/client-runtime/state/thread-requests";
+import type { ThreadRunSummary, ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
 
 import type { ChatMessage, ProposedPlan, SessionPhase, TurnDiffSummary } from "./types";
 import * as DateTime from "effect/DateTime";
@@ -47,17 +45,30 @@ export const PROVIDER_OPTIONS: Array<{
   { value: ProviderDriverKind.make("grok"), label: "Grok", available: true },
 ];
 
-export type WorkLogToolLifecycleStatus = ThreadWorkEntry["toolLifecycleStatus"];
+export type WorkLogToolLifecycleStatus =
+  | "inProgress"
+  | "completed"
+  | "failed"
+  | "declined"
+  | "stopped";
 
-export interface WorkLogEntry extends Omit<
-  ThreadWorkEntry,
-  "structuredPayload" | "runId" | "itemType" | "toolLifecycleStatus"
-> {
+export interface WorkLogEntry {
+  readonly id: string;
+  readonly createdAt: string;
   readonly runId?: RunId | null;
-  readonly itemType?: ThreadWorkEntry["itemType"];
-  readonly toolLifecycleStatus?: ThreadWorkEntry["toolLifecycleStatus"];
-  readonly structuredPayload?: ThreadWorkEntry["structuredPayload"];
-  readonly sourceItemType?: ThreadWorkEntry["itemType"];
+  readonly label: string;
+  readonly detail?: string;
+  readonly command?: string;
+  readonly rawCommand?: string;
+  readonly changedFiles?: ReadonlyArray<string>;
+  readonly tone: "thinking" | "tool" | "info" | "error";
+  readonly toolTitle?: string;
+  readonly toolData?: unknown;
+  readonly requestKind?: string;
+  readonly itemType?: OrchestrationV2TurnItem["type"];
+  readonly toolLifecycleStatus?: WorkLogToolLifecycleStatus;
+  readonly structuredPayload?: OrchestrationV2TurnItem;
+  readonly sourceItemType?: OrchestrationV2TurnItem["type"];
   readonly projectedItem?: OrchestrationV2ProjectedTurnItem;
 }
 
@@ -80,9 +91,7 @@ export interface LatestProposedPlanState {
   readonly updatedAt: string;
   readonly runId: RunId | null;
   readonly planMarkdown: string;
-  readonly implementedAt: string | null;
-  readonly implementationThreadId: ThreadId | null;
-  readonly status: ThreadProposedPlan["status"];
+  readonly status: OrchestrationV2PlanArtifact["status"];
 }
 
 export type TimelineAttempt = Pick<
@@ -223,31 +232,47 @@ export function derivePendingUserInputs(
 }
 
 export function deriveActivePlanState(
-  plans: ReadonlyArray<ThreadTodoPlan>,
+  projection: OrchestrationV2ThreadProjection | null,
   latestRunId: RunId | undefined,
 ): ActivePlanState | null {
+  if (projection === null) return null;
+  const plans = projection.plans.filter((plan) => plan.kind === "todo_list");
   const plan =
     [...plans].toReversed().find((candidate) => candidate.runId === latestRunId) ??
     plans.at(-1) ??
     null;
   if (plan === null || plan.steps.length === 0) return null;
   return {
-    createdAt: plan.updatedAt,
+    createdAt: planItemTime(projection, plan.id),
     runId: plan.runId,
-    explanation: plan.explanation,
-    steps: plan.steps.map(({ step, status }) => ({ step, status })),
+    explanation: plan.explanation ?? null,
+    steps: plan.steps.map(({ text, status }) => ({
+      step: text,
+      status: status === "running" ? "inProgress" : status,
+    })),
   };
 }
 
-function toLatestProposedPlanState(plan: ThreadProposedPlan): LatestProposedPlanState {
+function planItemTime(projection: OrchestrationV2ThreadProjection, planId: PlanId): string {
+  const item = projection.turnItems.findLast(
+    (candidate) =>
+      (candidate.type === "proposed_plan" || candidate.type === "todo_list") &&
+      candidate.planId === planId,
+  );
+  return DateTime.formatIso(item?.updatedAt ?? projection.updatedAt);
+}
+
+function toLatestProposedPlanState(
+  projection: OrchestrationV2ThreadProjection,
+  plan: Extract<OrchestrationV2PlanArtifact, { readonly kind: "proposed_plan" }>,
+): LatestProposedPlanState {
+  const updatedAt = planItemTime(projection, plan.id);
   return {
     id: plan.id,
-    createdAt: plan.createdAt,
-    updatedAt: plan.updatedAt,
+    createdAt: updatedAt,
+    updatedAt,
     runId: plan.runId,
-    planMarkdown: plan.planMarkdown,
-    implementedAt: plan.implementedAt,
-    implementationThreadId: plan.implementationThreadId,
+    planMarkdown: plan.markdown,
     status: plan.status,
   };
 }
@@ -319,358 +344,49 @@ export function deriveTurnPlans(
 }
 
 export function findLatestProposedPlan(
-  plans: ReadonlyArray<ThreadProposedPlan>,
+  projection: OrchestrationV2ThreadProjection | null,
   latestRunId: RunId | string | null | undefined,
 ): LatestProposedPlanState | null {
+  if (projection === null) return null;
+  const plans = projection.plans.filter((plan) => plan.kind === "proposed_plan");
   const candidates = latestRunId ? plans.filter((plan) => plan.runId === latestRunId) : plans;
   const plan = [...(candidates.length > 0 ? candidates : plans)]
     .toSorted(
       (left, right) =>
-        left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
+        planItemTime(projection, left.id).localeCompare(planItemTime(projection, right.id)) ||
+        left.id.localeCompare(right.id),
     )
     .at(-1);
-  return plan === undefined ? null : toLatestProposedPlanState(plan);
+  return plan === undefined ? null : toLatestProposedPlanState(projection, plan);
 }
 
 export function findSidebarProposedPlan(input: {
-  readonly threads: ReadonlyArray<
-    Pick<
-      { readonly id: ThreadId; readonly proposedPlans: ReadonlyArray<ThreadProposedPlan> },
-      "id" | "proposedPlans"
-    >
-  >;
+  readonly threads: ReadonlyArray<{
+    readonly id: ThreadId;
+    readonly projection: OrchestrationV2ThreadProjection;
+  }>;
   readonly latestRun: Pick<ThreadRunSummary, "runId" | "sourcePlanRef"> | null;
   readonly latestRunSettled: boolean;
   readonly threadId: ThreadId | string | null | undefined;
 }): LatestProposedPlanState | null {
   if (!input.latestRunSettled && input.latestRun?.sourcePlanRef !== undefined) {
     const source = input.latestRun.sourcePlanRef;
-    const plan = input.threads
-      .find((thread) => thread.id === source.threadId)
-      ?.proposedPlans.find((candidate) => candidate.id === source.planId);
-    if (plan !== undefined) return toLatestProposedPlanState(plan);
-  }
-  const activePlans =
-    input.threads.find((thread) => thread.id === input.threadId)?.proposedPlans ?? [];
-  return findLatestProposedPlan(activePlans, input.latestRun?.runId);
-}
-
-export function hasActionableProposedPlan(
-  plan: LatestProposedPlanState | Pick<ThreadProposedPlan, "implementedAt"> | null,
-): boolean {
-  return plan !== null && plan.implementedAt === null;
-}
-
-export function deriveWorkLogEntries(entries: ReadonlyArray<ThreadWorkEntry>): WorkLogEntry[] {
-  return entries.map((entry) => ({ ...entry, sourceItemType: entry.itemType }));
-}
-
-function timelineEntryFromMessage(message: ChatMessage): TimelineEntry {
-  return {
-    id: message.id,
-    kind: "message",
-    createdAt: message.createdAt,
-    message,
-  };
-}
-
-function timelineEntryFromProposedPlan(proposedPlan: ProposedPlan): TimelineEntry {
-  return {
-    id: proposedPlan.id,
-    kind: "proposed-plan",
-    createdAt: proposedPlan.createdAt,
-    proposedPlan,
-  };
-}
-
-function timelineEntryFromWork(workEntry: WorkLogEntry): TimelineEntry {
-  return {
-    id: workEntry.id,
-    kind: "work",
-    createdAt: workEntry.createdAt,
-    entry: workEntry,
-  };
-}
-
-function compareTimelineEntriesByCreatedAt(left: TimelineEntry, right: TimelineEntry): number {
-  return left.createdAt.localeCompare(right.createdAt);
-}
-
-function timelineEntrySourceOrder(entry: TimelineEntry): number {
-  switch (entry.kind) {
-    case "message":
-      return 0;
-    case "proposed-plan":
-      return 1;
-    case "work":
-      return 2;
-  }
-}
-
-function shouldTakePreviousTimelineEntry(previous: TimelineEntry, suffix: TimelineEntry): boolean {
-  const createdAtComparison = compareTimelineEntriesByCreatedAt(previous, suffix);
-  if (createdAtComparison !== 0) return createdAtComparison < 0;
-  // The original full derivation sorts a source-ordered array with a stable
-  // comparator. On a tie, messages precede plans, plans precede work, and an
-  // older item in the same source array precedes a newly appended item.
-  return timelineEntrySourceOrder(previous) <= timelineEntrySourceOrder(suffix);
-}
-
-function hasExactArrayPrefix<T>(previous: ReadonlyArray<T>, next: ReadonlyArray<T>): boolean {
-  if (previous === next) return true;
-  if (next.length < previous.length) return false;
-  for (let index = 0; index < previous.length; index += 1) {
-    if (previous[index] !== next[index]) return false;
-  }
-  return true;
-}
-
-function mergeTimelineEntrySuffix(
-  previous: ReadonlyArray<TimelineEntry>,
-  suffix: ReadonlyArray<TimelineEntry>,
-): TimelineEntry[] {
-  if (suffix.length === 0) return [...previous];
-  const previousLast = previous.at(-1);
-  let suffixIsOrdered = true;
-  for (let index = 1; index < suffix.length; index += 1) {
-    if (compareTimelineEntriesByCreatedAt(suffix[index - 1]!, suffix[index]!) > 0) {
-      suffixIsOrdered = false;
-      break;
-    }
-  }
-  if (
-    suffixIsOrdered &&
-    (previousLast === undefined || shouldTakePreviousTimelineEntry(previousLast, suffix[0]!))
-  ) {
-    return [...previous, ...suffix];
-  }
-
-  const merged: TimelineEntry[] = [];
-  let previousIndex = 0;
-  let suffixIndex = 0;
-  while (previousIndex < previous.length || suffixIndex < suffix.length) {
-    const previousEntry = previous[previousIndex];
-    const suffixEntry = suffix[suffixIndex];
-    if (
-      previousEntry !== undefined &&
-      (suffixEntry === undefined || shouldTakePreviousTimelineEntry(previousEntry, suffixEntry))
-    ) {
-      merged.push(previousEntry);
-      previousIndex += 1;
-    } else if (suffixEntry !== undefined) {
-      merged.push(suffixEntry);
-      suffixIndex += 1;
-    }
-  }
-  return merged;
-}
-
-type AttachmentResource = Extract<AssetResource, { readonly _tag: "attachment" }>;
-const EMPTY_IMAGE_RESOURCES = Object.freeze<ReadonlyArray<AttachmentResource>>([]);
-
-/** A mounted row requests its stored images. Local previews keep their existing URLs. */
-export function selectMessageImageResources(
-  attachments: ChatMessage["attachments"],
-): ReadonlyArray<AttachmentResource> {
-  const attachmentIds = new Set<string>();
-  for (const attachment of attachments ?? []) {
-    if (!isImageAttachment(attachment)) continue;
-    const previewUrl = attachment.previewUrl;
-    if (previewUrl?.startsWith("blob:") || previewUrl?.startsWith("data:")) continue;
-    attachmentIds.add(attachment.id);
-  }
-  return attachmentIds.size === 0
-    ? EMPTY_IMAGE_RESOURCES
-    : Array.from(attachmentIds, (attachmentId) => ({ _tag: "attachment", attachmentId }));
-}
-
-/** Handoffs need server URLs even while their message rows are unmounted. */
-export function selectHandoffImageResources(
-  messages: ReadonlyArray<ChatMessage> | undefined,
-  handoffs: Readonly<Record<string, ReadonlyArray<string>>>,
-): ReadonlyArray<AttachmentResource> {
-  if (Object.keys(handoffs).length === 0) return EMPTY_IMAGE_RESOURCES;
-  const attachmentIds = new Set<string>();
-  for (const message of messages ?? []) {
-    if (message.role !== "user" || !handoffs[message.id]?.length) continue;
-    for (const attachment of message.attachments ?? []) {
-      if (isImageAttachment(attachment)) attachmentIds.add(attachment.id);
-    }
-  }
-  return attachmentIds.size === 0
-    ? EMPTY_IMAGE_RESOURCES
-    : Array.from(attachmentIds, (attachmentId) => ({ _tag: "attachment", attachmentId }));
-}
-
-/** Own one mapper per preview stage. Immutable messages retain unchanged preview objects. */
-export function createMessageAttachmentPreviewProjector() {
-  const attachmentsBySource = new WeakMap<
-    ReadonlyArray<ChatAttachment>,
-    ReadonlyArray<ChatAttachment>
-  >();
-  const messagesBySource = new WeakMap<ChatMessage, ChatMessage>();
-  return (
-    message: ChatMessage,
-    previewUrlFor: (attachment: ChatAttachment) => string | undefined,
-  ): ChatMessage => {
-    const source = message.attachments;
-    if (!source || source.length === 0) return message;
-    const previous = attachmentsBySource.get(source) ?? source;
-    let changed: ChatAttachment[] | undefined;
-    let hasOverrides = false;
-    for (const [index, attachment] of source.entries()) {
-      const previewUrl = previewUrlFor(attachment);
-      const sourceUrl = "previewUrl" in attachment ? attachment.previewUrl : undefined;
-      const previousAttachment = previous[index]!;
-      const previousUrl =
-        "previewUrl" in previousAttachment ? previousAttachment.previewUrl : undefined;
-      const next =
-        !previewUrl || previewUrl === sourceUrl
-          ? attachment
-          : previewUrl === previousUrl
-            ? previousAttachment
-            : { ...attachment, previewUrl };
-      hasOverrides ||= next !== attachment;
-      if (next !== previousAttachment) {
-        changed ??= previous.slice();
-        changed[index] = next;
-      }
-    }
-    const attachments = hasOverrides ? (changed ?? previous) : source;
-    attachmentsBySource.set(source, attachments);
-    if (attachments === source) {
-      messagesBySource.delete(message);
-      return message;
-    }
-    const previousMessage = messagesBySource.get(message);
-    if (previousMessage?.attachments === attachments) return previousMessage;
-    const result = { ...message, attachments };
-    messagesBySource.set(message, result);
-    return result;
-  };
-}
-
-/** Text and update time do not change a streaming assistant message's timeline structure. */
-export function isStreamingMessageTextUpdate(previous: ChatMessage, next: ChatMessage): boolean {
-  if (
-    previous.role !== "assistant" ||
-    next.role !== "assistant" ||
-    !previous.streaming ||
-    !next.streaming
-  ) {
-    return false;
-  }
-  const { text: _previousText, updatedAt: _previousUpdatedAt, ...previousMetadata } = previous;
-  const { text: _nextText, updatedAt: _nextUpdatedAt, ...nextMetadata } = next;
-  return shallow(previousMetadata, nextMetadata);
-}
-
-function replaceStreamingTimelineMessages(
-  messages: ReadonlyArray<ChatMessage>,
-  previous: TimelineEntriesProjection,
-): TimelineEntry[] | null {
-  if (messages.length !== previous.messages.length) return null;
-  const replacements = new Map<ChatMessage, ChatMessage>();
-  for (const [index, message] of messages.entries()) {
-    const previousMessage = previous.messages[index]!;
-    if (message === previousMessage) continue;
-    if (!isStreamingMessageTextUpdate(previousMessage, message)) return null;
-    replacements.set(previousMessage, message);
-  }
-  if (replacements.size === 0) return previous.entries;
-  return previous.entries.map((entry) => {
-    const replacement = entry.kind === "message" ? replacements.get(entry.message) : undefined;
-    return replacement ? timelineEntryFromMessage(replacement) : entry;
-  });
-}
-
-/** Reuse ordered entries across immutable stream updates. Other changes keep the full sort. */
-export function deriveTimelineEntriesWithState(
-  messages: ReadonlyArray<ChatMessage>,
-  proposedPlans: ReadonlyArray<ProposedPlan>,
-  workEntries: ReadonlyArray<WorkLogEntry>,
-  previous: TimelineEntriesProjection | null = null,
-): TimelineEntriesProjection {
-  if (
-    previous !== null &&
-    previous.proposedPlans.length === proposedPlans.length &&
-    previous.workEntries.length === workEntries.length &&
-    hasExactArrayPrefix(previous.proposedPlans, proposedPlans) &&
-    hasExactArrayPrefix(previous.workEntries, workEntries)
-  ) {
-    const entries = replaceStreamingTimelineMessages(messages, previous);
-    if (entries !== null) return { messages, proposedPlans, workEntries, entries };
-  }
-  const canAppend =
-    previous !== null &&
-    hasExactArrayPrefix(previous.messages, messages) &&
-    hasExactArrayPrefix(previous.proposedPlans, proposedPlans) &&
-    hasExactArrayPrefix(previous.workEntries, workEntries);
-
-  if (canAppend) {
-    const messageRows = messages.slice(previous.messages.length).map(timelineEntryFromMessage);
-    const proposedPlanRows = proposedPlans
-      .slice(previous.proposedPlans.length)
-      .map(timelineEntryFromProposedPlan);
-    const workRows = workEntries.slice(previous.workEntries.length).map(timelineEntryFromWork);
-    const suffix = [...messageRows, ...proposedPlanRows, ...workRows].toSorted(
-      compareTimelineEntriesByCreatedAt,
+    const sourceProjection = input.threads.find(
+      (thread) => thread.id === source.threadId,
+    )?.projection;
+    const plan = sourceProjection?.plans.find(
+      (candidate) => candidate.kind === "proposed_plan" && candidate.id === source.planId,
     );
-    return {
-      messages,
-      proposedPlans,
-      workEntries,
-      entries: mergeTimelineEntrySuffix(previous.entries, suffix),
-    };
+    if (sourceProjection !== undefined && plan?.kind === "proposed_plan") {
+      return toLatestProposedPlanState(sourceProjection, plan);
+    }
   }
-
-  const messageRows = messages.map(timelineEntryFromMessage);
-  const proposedPlanRows = proposedPlans.map(timelineEntryFromProposedPlan);
-  const workRows = workEntries.map(timelineEntryFromWork);
-  return {
-    messages,
-    proposedPlans,
-    workEntries,
-    entries: [...messageRows, ...proposedPlanRows, ...workRows].toSorted(
-      compareTimelineEntriesByCreatedAt,
-    ),
-  };
+  const activeProjection = input.threads.find((thread) => thread.id === input.threadId)?.projection;
+  return findLatestProposedPlan(activeProjection ?? null, input.latestRun?.runId);
 }
 
-export function deriveTimelineEntries(
-  messages: ReadonlyArray<ChatMessage>,
-  proposedPlans: ReadonlyArray<ThreadProposedPlan>,
-  workEntries: ReadonlyArray<WorkLogEntry>,
-): TimelineEntry[] {
-  return [
-    ...messages.map(
-      (message): TimelineEntry => ({
-        id: message.id,
-        kind: "message",
-        createdAt: message.createdAt,
-        message,
-      }),
-    ),
-    ...proposedPlans.map(
-      (proposedPlan): TimelineEntry => ({
-        id: proposedPlan.id,
-        kind: "proposed-plan",
-        createdAt: proposedPlan.createdAt,
-        proposedPlan,
-      }),
-    ),
-    ...workEntries.map(
-      (entry): TimelineEntry => ({
-        id: entry.id,
-        kind: "work",
-        createdAt: entry.createdAt,
-        entry,
-      }),
-    ),
-  ].toSorted(
-    (left, right) =>
-      left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-  );
+export function hasActionableProposedPlan(plan: LatestProposedPlanState | null): boolean {
+  return plan?.status === "active";
 }
 
 const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"]["type"]>([
@@ -911,8 +627,6 @@ export function deriveTimelineEntriesFromVisibleTurnItems(input: {
         runId: item.runId,
         planMarkdown: item.markdown,
         status: "active" as const,
-        implementedAt: null,
-        implementationThreadId: null,
         createdAt,
         updatedAt: DateTime.formatIso(item.updatedAt),
       };

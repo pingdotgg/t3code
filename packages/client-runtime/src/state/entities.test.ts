@@ -1,8 +1,17 @@
-import { EnvironmentId, MessageId, RunId, TurnItemId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  NodeId,
+  RunId,
+  RuntimeRequestId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { presentThread, presentThreadShell } from "./models.ts";
+import { presentThreadShell } from "./models.ts";
+import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
+import { derivePendingThreadRequests } from "./threadRequests.ts";
 import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
@@ -16,7 +25,7 @@ describe("V2 client presentation", () => {
     expect(shell.source).toBe(v2ThreadShell);
   });
 
-  it("retains the complete projection while deriving conversation parity", () => {
+  it("derives execution summaries without wrapping or copying the projection", () => {
     const runId = RunId.make("run-1");
     const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
     const projection = {
@@ -59,27 +68,27 @@ describe("V2 client presentation", () => {
       updatedAt: now,
     };
 
-    const thread = presentThread(environmentId, projection);
-    expect(thread.projection).toBe(projection);
-    expect(thread.latestRun?.runId).toBe(runId);
-    expect(thread.runtime?.status).toBe("running");
-    expect(thread.runs).toHaveLength(1);
-    expect(thread.availableActions.canInterrupt).toBe(true);
-    expect(thread.messages[0]).toMatchObject({
-      text: "Hello",
+    expect(deriveLatestThreadRun(projection)).toMatchObject({
       runId,
-      createdBy: "user",
-      creationSource: "web",
+      status: "running",
+      requestedAt: "2026-06-20T01:00:00.000Z",
+      assistantMessageId: null,
+    });
+    expect(deriveThreadRuntime(projection)).toMatchObject({
+      status: "running",
+      activeRunId: runId,
+      providerInstanceId: projection.thread.providerInstanceId,
     });
   });
 
-  it("keeps the complete payload for generic V2 work-item rendering", () => {
+  it("joins pending request entities to their native turn-item display data", () => {
     const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+    const requestId = RuntimeRequestId.make("request-approval");
     const item = {
-      id: TurnItemId.make("item-dynamic"),
+      id: TurnItemId.make("item-approval"),
       threadId: v2Projection.thread.id,
       runId: null,
-      nodeId: null,
+      nodeId: NodeId.make("node-root"),
       providerThreadId: null,
       providerTurnId: null,
       nativeItemRef: null,
@@ -90,31 +99,42 @@ describe("V2 client presentation", () => {
       startedAt: now,
       completedAt: now,
       updatedAt: now,
-      type: "dynamic_tool" as const,
-      toolName: "custom_tool",
-      input: { nested: { value: 1 } },
-      output: { ok: true },
+      type: "approval_request" as const,
+      requestId,
+      requestKind: "command" as const,
+      prompt: "Allow command?",
     };
     const projection = {
       ...v2Projection,
-      turnItems: [item],
-      visibleTurnItems: [
+      runtimeRequests: [
         {
-          position: 0,
-          visibility: "local" as const,
-          sourceThreadId: v2Projection.thread.id,
-          sourceItemId: item.id,
-          item,
+          id: requestId,
+          nodeId: NodeId.make("node-root"),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "command" as const,
+          status: "pending" as const,
+          responseCapability: {
+            type: "not_resumable" as const,
+            reason: "provider disconnected",
+          },
+          createdAt: now,
+          resolvedAt: null,
         },
       ],
+      turnItems: [item],
       updatedAt: now,
     };
 
-    const thread = presentThread(environmentId, projection);
-    expect(thread.workEntries[0]).toMatchObject({
-      itemType: "dynamic_tool",
-      label: "custom_tool",
-      structuredPayload: item,
-    });
+    expect(derivePendingThreadRequests(projection).approvals).toEqual([
+      {
+        requestId,
+        requestKind: "command",
+        createdAt: "2026-06-20T01:00:00.000Z",
+        detail: "Allow command?",
+        responseCapability: "not_resumable",
+      },
+    ]);
+    expect(derivePendingThreadRequests(projection).userInputs).toEqual([]);
   });
 });
