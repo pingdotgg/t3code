@@ -31,7 +31,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ProviderModelPicker } from "../components/chat/ProviderModelPicker";
 import { usePrimarySettings } from "../hooks/useSettings";
-import { resolveMergeBackTargetThreadId } from "../lib/threadRelationships";
+import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { newCommandId, newMessageId, newProjectId, newThreadId } from "../lib/utils";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../modelSelection";
 import { deriveOrchestrationV2DebugProviderSnapshots } from "../orchestrationV2DebugProviders";

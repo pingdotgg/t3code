@@ -135,13 +135,13 @@
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"
     },
-    "./state/thread-settled": {
-      "types": "./src/state/threadSettled.ts",
-      "default": "./src/state/threadSettled.ts"
+    "./state/thread-relationships": {
+      "types": "./src/state/threadRelationships.ts",
+      "default": "./src/state/threadRelationships.ts"
     },
-    "./state/thread-search": {
-      "types": "./src/state/threadSearch.ts",
-      "default": "./src/state/threadSearch.ts"
+    "./state/thread-workflows": {
+      "types": "./src/state/threadWorkflows.ts",
+      "default": "./src/state/threadWorkflows.ts"
     },
     "./state/vcs": {
       "types": "./src/state/vcs.ts",

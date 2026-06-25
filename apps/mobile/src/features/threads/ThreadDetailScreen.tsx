@@ -39,6 +39,8 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
+import { ThreadRelationshipsBanner } from "./ThreadRelationshipsBanner";
+import { ThreadQueueControl } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 
 export interface ThreadDetailScreenProps {
@@ -354,6 +356,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               key={props.selectedThread.id}
               environmentId={props.environmentId}
               threadId={props.selectedThread.id}
+              threadTitle={props.selectedThread.title}
               workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}
               contentPresentation={props.contentPresentation}
@@ -365,6 +368,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               contentInsetEndAdjustment={contentInsetEndAdjustment}
               contentTopInset={headerHeight}
               contentBottomInset={estimatedOverlayHeight}
+              topAccessory={
+                <ThreadRelationshipsBanner
+                  environmentId={props.environmentId}
+                  threadId={props.selectedThread.id}
+                />
+              }
               layoutVariant={layoutVariant}
               skills={selectedProviderSkills}
             />
@@ -384,17 +393,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 <WorkingDurationPill startedAt={props.activeWorkStartedAt} />
               ) : null}
 
-      {/* Floating composer — sticks to keyboard via KeyboardStickyView */}
-      {showContent ? (
-        <KeyboardStickyView
-          style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
-          offset={{ closed: 0, opened: 0 }}
-        >
-          {/* No paddingTop here: the overlay's measured height becomes the
-              list's bottom inset, so any padding above the pill/composer
-              pushes the resting content floor up by the same amount. */}
-          <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
-            <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+              <ThreadQueueControl
+                environmentId={props.environmentId}
+                threadId={props.selectedThread.id}
+              />
+
               {props.activePendingApproval || props.activePendingUserInput ? (
                 <Animated.View
                   className="shrink-0 gap-3 px-4 pb-3"

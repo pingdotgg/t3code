@@ -1,7 +1,15 @@
 import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
-import type { EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  ThreadId,
+  type EnvironmentId,
+  type MessageId,
+  type OrchestrationV2ProjectedTurnItem,
+  type RunId,
+} from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
@@ -78,15 +86,11 @@ import {
 } from "../review/nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "../review/reviewModel";
 import { cn } from "../../lib/cn";
-import { deriveCenteredContentHorizontalPadding, type LayoutVariant } from "../../lib/layout";
-import {
-  resolveMarkdownFontSizes,
-  resolveNativeMarkdownTypography,
-  scaledTypographyLineHeight,
-} from "../../lib/appearancePreferences";
-import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
-import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
+import type { LayoutVariant } from "../../lib/layout";
+import { buildThreadFilesNavigation } from "../../lib/routes";
+import { buildThreadRoutePath } from "../../lib/routes";
+import { uuidv4 } from "../../lib/uuid";
+import { MOBILE_CODE_SURFACE, MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
 import {
@@ -103,6 +107,10 @@ import {
 } from "./thread-work-log";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { environmentThreadShells, threadEnvironment } from "../../state/threads";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { useV2ItemSupport } from "../../state/v2-item-support";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
 
 const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
@@ -147,6 +155,7 @@ function isFreshTimestamp(input: string): boolean {
 export interface ThreadFeedProps {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly threadTitle: string;
   readonly workspaceRoot?: string | null;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly contentPresentation: ThreadContentPresentation;
@@ -158,11 +167,87 @@ export interface ThreadFeedProps {
   readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
-  readonly contentMaxWidth?: number;
+  readonly topAccessory?: ReactNode;
   readonly layoutVariant?: LayoutVariant;
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+}
+
+async function waitForThreadShell(environmentId: EnvironmentId, threadId: ThreadId): Promise<void> {
+  const atom = environmentThreadShells.threadShellAtom(scopeThreadRef(environmentId, threadId));
+  const deadline = Date.now() + 2_000;
+  while (appAtomRegistry.get(atom) === null && Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 40));
+  }
+}
+
+function AssistantForkButton(props: {
+  readonly environmentId: EnvironmentId;
+  readonly iconColor: ColorValue;
+  readonly projectedItem: OrchestrationV2ProjectedTurnItem;
+  readonly sourceTitle: string;
+}) {
+  const support = useV2ItemSupport({
+    environmentId: props.environmentId,
+    sourceThreadId: props.projectedItem.sourceThreadId,
+    sourceItemId: props.projectedItem.sourceItemId,
+  });
+  const forkFromRun = useAtomCommand(threadEnvironment.forkFromRun, "fork from response");
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const canFork = canForkProjectedAssistantItem({
+    projectedItem: props.projectedItem,
+    capabilities: support.providerSession?.capabilities,
+  });
+  const runId = props.projectedItem.item.runId;
+
+  if (!canFork || runId === null) return null;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Fork from this response"
+      disabled={busy}
+      onPress={() => {
+        const targetThreadId = ThreadId.make(uuidv4());
+        setBusy(true);
+        void Haptics.selectionAsync();
+        void forkFromRun({
+          environmentId: props.environmentId,
+          input: {
+            sourceThreadId: props.projectedItem.sourceThreadId,
+            targetThreadId,
+            runId,
+            title: `${props.sourceTitle} fork`,
+          },
+        })
+          .then(async (result) => {
+            if (result._tag !== "Success") return;
+            await waitForThreadShell(props.environmentId, targetThreadId);
+            router.push(
+              buildThreadRoutePath({
+                environmentId: props.environmentId,
+                threadId: targetThreadId,
+              }),
+            );
+          })
+          .finally(() => setBusy(false));
+      }}
+      className="h-7 w-7 items-center justify-center disabled:opacity-40"
+    >
+      {busy ? (
+        <ActivityIndicator size="small" />
+      ) : (
+        <SymbolView
+          name="arrow.triangle.branch"
+          size={13}
+          tintColor={props.iconColor}
+          type="monochrome"
+        />
+      )}
+    </Pressable>
+  );
 }
 
 function MessageAttachmentImage(props: {
@@ -835,6 +920,7 @@ function renderFeedEntry(
     readonly reviewCommentColors: ReviewCommentColors;
     readonly reviewCommentBubbleWidth: number;
     readonly userBubbleMaxWidth: number;
+    readonly threadTitle: string;
   },
 ) {
   const entry = info.item;
@@ -894,10 +980,12 @@ function renderFeedEntry(
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
       return (
-        <Animated.View
-          className="mb-5 items-end"
-          {...(enterAnimated ? { entering: FadeInUp.duration(220) } : {})}
-        >
+        <View className="mb-5 items-end">
+          {message.createdBy === "agent" ? (
+            <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
+              Sent by another agent
+            </Text>
+          ) : null}
           <View
             className="min-w-0 gap-2 rounded-[20px] px-3.5 py-2.5"
             style={{
@@ -989,6 +1077,12 @@ function renderFeedEntry(
         })}
         {showAssistantMeta ? (
           <View className="mt-1 flex-row items-center gap-1">
+            <AssistantForkButton
+              environmentId={props.environmentId}
+              iconColor={iconSubtleColor}
+              projectedItem={message.projectedItem}
+              sourceTitle={props.threadTitle}
+            />
             <CopyTextButton
               accessibilityLabel="Copy message"
               text={message.text}
@@ -1744,6 +1838,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         reviewCommentColors,
         reviewCommentBubbleWidth,
         userBubbleMaxWidth,
+        threadTitle: props.threadTitle,
         skills: props.skills,
         workspaceRoot: props.workspaceRoot,
       }),
@@ -1765,6 +1860,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onToggleWorkGroup,
       onToggleWorkRow,
       props.environmentId,
+      props.threadTitle,
       props.skills,
       props.workspaceRoot,
     ],
@@ -1813,95 +1909,32 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                   // render into — which is why the header blur was missing on threads.
                   scrollIndicatorInsets: { top: 0, left: 0, right: 0, bottom: 0 },
                 }
-              : { scrollIndicatorInsets: { top: topContentInset, bottom: 0 } })}
-            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-            itemLayoutAnimation={feedItemLayoutTransition}
-            // Patched LegendList prop (patches/@legendapp__list@3.2.0.patch):
-            // lets its scroll math clamp programmatic scrolls to -headerInset
-            // instead of 0, so initialScrollAtEnd/maintainScrollAtEnd on short
-            // content rest below the transparent header rather than at frame top.
-            contentInsetStartAdjustment={usesNativeAutomaticInsets ? anchorTopInset : 0}
-            contentInsetEndAdjustment={props.contentInsetEndAdjustment}
-            // UIKit's automatic behavior adds the safe-area bottom on top of the
-            // raw contentInset the keyboard integration writes. The detail screen
-            // under-reports the composer inset by this amount (see
-            // ThreadDetailScreen); this tells LegendList's scroll math about the
-            // extra so programmatic end scrolls land at the true resting offset.
-            contentInsetEndStaticAdjustment={usesNativeAutomaticInsets ? insets.bottom : 0}
-            // The keyboard integration's offset math (end pinning, max scroll)
-            // must add the same UIKit-added extra, or its keyboard-open end
-            // targets land one safe-area short of the true resting offset.
-            adjustedInsetCompensation={usesNativeAutomaticInsets ? insets.bottom : 0}
-            freeze={props.freeze}
-            // Animated: on send, the optimistic message's dataChange fires
-            // maintainScrollAtEnd before any render-cycle suppression could
-            // engage — an instant snap there teleports the feed to the anchor
-            // instead of scrolling to it. Keeping it enabled (animated) during
-            // anchor scrolls also lets it correct a scroll that landed on a
-            // stale end target once the anchor row finishes measuring.
-            maintainScrollAtEnd={
-              disclosureToggleSettling
-                ? false
-                : {
-                    animated: true,
-                    on: {
-                      dataChange: true,
-                      itemLayout: true,
-                      layout: true,
-                    },
-                  }
-            }
-            maintainVisibleContentPosition={maintainVisibleContentPosition}
-            data={presentedFeed}
-            extraData={listAppearanceData}
-            renderItem={renderItem}
-            keyExtractor={(entry) => entry.id}
-            getItemType={(entry) =>
-              entry.type === "message" ? `message:${entry.message.role}` : entry.type
-            }
-            getFixedItemSize={getFixedItemSize}
-            // Measure rows well before they scroll into view so estimate→actual
-            // corrections land offscreen instead of under the user's finger.
-            drawDistance={500}
-            keyboardShouldPersistTaps="always"
-            keyboardDismissMode="none"
-            keyboardLiftBehavior="whenAtEnd"
-            // Seed the list's scroll math with the real viewport before its own
-            // onLayout: the empty→filled remount can then tell at mount that
-            // short content underflows the viewport and skip programmatic
-            // positioning entirely (any offset write during screen attach races
-            // UIKit's adjustedContentInset application and lands high or low).
-            {...(viewportHeight > 0 && viewportWidth > 0
-              ? { estimatedListSize: { height: viewportHeight, width: viewportWidth } }
-              : {})}
-            // RN's native scrollTo command clamps targets to a floor of
-            // -contentInset.top using the RAW inset — under automatic insets the
-            // header inset only exists in adjustedContentInset, so scrolls to
-            // negative offsets (content top below the transparent header) get
-            // clamped to 0. This prop disables that clamp; UIKit still bounces
-            // user overscroll back to the adjusted rest position.
-            scrollToOverflowEnabled
-            estimatedItemSize={180}
-            // Chat-style bottom alignment: when a thread is shorter than the
-            // viewport, pad above the content so messages rest just above the
-            // composer instead of under the header. No effect on threads that
-            // overflow the viewport (the padding clamps to zero).
-            alignItemsAtEnd
-            initialScrollAtEnd
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-            ListHeaderComponent={
-              usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />
-            }
-            contentContainerStyle={{
-              paddingTop: 12,
-              paddingHorizontal: contentHorizontalPadding,
-            }}
-          />
-        </View>
-        {props.feed.length === 0 &&
-        props.activeWorkStartedAt === null &&
-        props.contentPresentation.kind === "ready" ? (
+          }
+          maintainVisibleContentPosition
+          data={presentedFeed}
+          extraData={listAppearanceData}
+          renderItem={renderItem}
+          keyExtractor={(entry) => entry.id}
+          getItemType={(entry) =>
+            entry.type === "message" ? `message:${entry.message.role}` : entry.type
+          }
+          keyboardShouldPersistTaps="always"
+          keyboardDismissMode="none"
+          keyboardLiftBehavior="whenAtEnd"
+          estimatedItemSize={180}
+          initialScrollAtEnd
+          ListHeaderComponent={
+            <>
+              <View style={{ height: topContentInset }} />
+              {props.topAccessory}
+            </>
+          }
+          contentContainerStyle={{
+            paddingTop: 12,
+            paddingHorizontal: horizontalPadding,
+          }}
+        />
+        {props.feed.length === 0 ? (
           <View pointerEvents="none" style={StyleSheet.absoluteFill}>
             <ThreadFeedPlaceholder
               title="No conversation yet"

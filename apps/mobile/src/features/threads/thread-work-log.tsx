@@ -1,12 +1,15 @@
 import * as Haptics from "expo-haptics";
 import { SymbolView, type SFSymbol } from "expo-symbols";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useRouter } from "expo-router";
 import { LayoutAnimation, Pressable, useColorScheme, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { scaledTypographyLineHeight } from "../../lib/appearancePreferences";
 import { cn } from "../../lib/cn";
+import { buildThreadRoutePath } from "../../lib/routes";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
+import { useV2ItemSupport } from "../../state/v2-item-support";
 import { ThreadActivityInspector } from "./ThreadActivityInspector";
 
 const WORK_LOG_LAYOUT_ANIMATION = {
@@ -71,51 +74,56 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): AppSymbolName {
   }
 }
 
-// Entering fades only for rows created moments ago: rows remount whenever the
-// list scrolls them back into view, and old rows must not replay an entrance.
-const FRESH_ROW_WINDOW_MS = 3_000;
-function isFreshRow(createdAt: string): boolean {
-  const timestamp = Date.parse(createdAt);
-  return Number.isFinite(timestamp) && Date.now() - timestamp < FRESH_ROW_WINDOW_MS;
-}
+function ThreadActivityThreadLink(props: {
+  readonly activity: ThreadFeedActivity;
+  readonly environmentId: EnvironmentId;
+  readonly iconColor: import("react-native").ColorValue;
+}) {
+  const row = props.activity.projectedItem;
+  const support = useV2ItemSupport({
+    environmentId: props.environmentId,
+    sourceThreadId: row.sourceThreadId,
+    sourceItemId: row.sourceItemId,
+  });
+  const router = useRouter();
+  const item = row.item;
+  let targetThreadId: ThreadId | null = null;
+  let label = "Open related thread";
 
-// Tool-like activities with a neutral status carry no signal worth a row.
-export function visibleWorkLogActivities(
-  activities: ReadonlyArray<ThreadFeedActivity>,
-): ReadonlyArray<ThreadFeedActivity> {
-  return activities.filter((activity) => !(activity.toolLike && activity.status === "neutral"));
-}
-
-// Pre-measurement heights for the feed's getFixedItemSize. Collapsed work-log
-// rows are single-line (numberOfLines={1}) inside a min-height that stays
-// taller than the text at every supported base font size (text-xs reaches
-// 23px at the 22pt maximum, under the 32px min-h-8), so row height is
-// deterministic. The "work log" label has no such clamp — its height follows
-// the scaled text-2xs line height. Values mirror the classNames below — keep
-// them in sync; a mismatch only costs a one-time correction on measure.
-const WORK_ROW_HEIGHT = 32; // min-h-8
-const WORK_ROW_GAP = 1; // gap-px
-const WORK_LOG_HEADER_PADDING = 2; // pb-0.5 under the "work log" label
-const WORK_LOG_BOTTOM_MARGIN = 4; // mb-1
-
-export const WORK_GROUP_TOGGLE_HEIGHT = 36; // min-h-8 (32) + mb-1 (4)
-
-export function collapsedWorkLogHeight(
-  activities: ReadonlyArray<ThreadFeedActivity>,
-  baseFontSize: number,
-): number {
-  const rows = visibleWorkLogActivities(activities);
-  if (rows.length === 0) {
-    return 0;
+  if (item.type === "thread_created") {
+    targetThreadId = item.targetThreadId;
+    label = "Open created thread";
+  } else if (item.type === "subagent") {
+    targetThreadId = support.subagent?.childThreadId ?? item.childThreadId;
+    label = "Open subagent thread";
+  } else if (item.type === "fork") {
+    targetThreadId =
+      item.targetThreadId === row.sourceThreadId && item.source.type === "run"
+        ? item.source.threadId
+        : item.targetThreadId;
+    label = targetThreadId === item.targetThreadId ? "Open forked thread" : "Open parent thread";
   }
-  const onlyToolRows = rows.every((row) => row.toolLike);
-  const headerHeight =
-    scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.caption, baseFontSize) + WORK_LOG_HEADER_PADDING;
+
+  if (targetThreadId === null) return null;
+
   return (
-    WORK_LOG_BOTTOM_MARGIN +
-    (onlyToolRows ? 0 : headerHeight) +
-    rows.length * WORK_ROW_HEIGHT +
-    (rows.length - 1) * WORK_ROW_GAP
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={label}
+      onPress={() => {
+        void Haptics.selectionAsync();
+        router.push(
+          buildThreadRoutePath({
+            environmentId: props.environmentId,
+            threadId: targetThreadId,
+          }),
+        );
+      }}
+      className="mx-2 mb-2 min-h-9 flex-row items-center justify-center gap-1.5 rounded-lg border border-neutral-300/50 px-2 dark:border-white/[0.08]"
+    >
+      <Text className="font-t3-medium text-2xs text-foreground">{label}</Text>
+      <SymbolView name="arrow.right" size={11} tintColor={props.iconColor} type="monochrome" />
+    </Pressable>
   );
 }
 
@@ -157,9 +165,12 @@ export function ThreadWorkLog(props: {
           const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
 
           return (
-            <Animated.View
+            <View
               key={row.id}
-              {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
+              className={cn(
+                row.prominent &&
+                  "mb-2 overflow-hidden rounded-xl border border-neutral-300/60 bg-card dark:border-white/[0.1]",
+              )}
             >
               <Pressable
                 accessibilityRole={canExpand ? "button" : undefined}
@@ -258,7 +269,14 @@ export function ThreadWorkLog(props: {
                   />
                 </View>
               ) : null}
-            </Animated.View>
+              {row.prominent ? (
+                <ThreadActivityThreadLink
+                  activity={row}
+                  environmentId={props.environmentId}
+                  iconColor={props.iconSubtleColor}
+                />
+              ) : null}
+            </View>
           );
         })}
       </View>
