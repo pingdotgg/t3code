@@ -1945,6 +1945,7 @@ export function ArchivedThreadsPanel() {
           {archivedGroups.map(({ actionThreads, project, threads: projectThreads }) => {
             const projectKey = `${project.environmentId}:${project.id}`;
             const isExpanded = isSearchingArchive || expandedProjectKeys.has(projectKey);
+            const projectActionThreads = isSearchingArchive ? projectThreads : actionThreads;
             return (
               <section
                 key={projectKey}
@@ -1960,7 +1961,7 @@ export function ArchivedThreadsPanel() {
                     event.preventDefault();
                     void (async () => {
                       const result = await settlePromise(() =>
-                        handleArchivedProjectContextMenu(project.name, actionThreads, {
+                        handleArchivedProjectContextMenu(project.name, projectActionThreads, {
                           x: event.clientX,
                           y: event.clientY,
                         }),
