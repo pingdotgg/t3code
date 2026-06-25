@@ -2,7 +2,9 @@ import { useWaitlist } from "@clerk/expo";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useState } from "react";
 
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { CloudWaitlistJoinRejectedError, joinCloudWaitlist } from "./cloudWaitlistJoin";
 
 export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }) {
   const { errors, fetchStatus, waitlist } = useWaitlist();
@@ -20,12 +22,14 @@ export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }
 
     setRequestError(null);
     try {
-      const { error } = await waitlist.join({ emailAddress: normalizedEmailAddress });
-      if (error) {
-        setRequestError("Could not join the waitlist. Check your email address and try again.");
-      }
-    } catch {
-      setRequestError("Could not join the waitlist. Check your connection and try again.");
+      await joinCloudWaitlist(waitlist, normalizedEmailAddress);
+    } catch (error) {
+      console.error(error);
+      setRequestError(
+        error instanceof CloudWaitlistJoinRejectedError
+          ? "Could not join the waitlist. Check your email address and try again."
+          : "Could not join the waitlist. Check your connection and try again.",
+      );
     }
   };
 
@@ -141,12 +145,11 @@ function useCloudWaitlistColors() {
 const styles = StyleSheet.create({
   body: {
     fontFamily: "DMSans_400Regular",
-    fontSize: 15,
-    lineHeight: 21,
+    ...MOBILE_TYPOGRAPHY.body,
   },
   buttonText: {
     fontFamily: "DMSans_700Bold",
-    fontSize: 16,
+    fontSize: MOBILE_TYPOGRAPHY.body.fontSize,
   },
   content: {
     gap: 18,
@@ -156,8 +159,7 @@ const styles = StyleSheet.create({
   },
   error: {
     fontFamily: "DMSans_400Regular",
-    fontSize: 13,
-    lineHeight: 18,
+    ...MOBILE_TYPOGRAPHY.footnote,
   },
   field: {
     gap: 8,
@@ -167,15 +169,14 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     fontFamily: "DMSans_400Regular",
-    fontSize: 17,
+    fontSize: MOBILE_TYPOGRAPHY.headline.fontSize,
     minHeight: 54,
     paddingHorizontal: 16,
     paddingVertical: 14,
   },
   label: {
     fontFamily: "DMSans_700Bold",
-    fontSize: 13,
-    lineHeight: 18,
+    ...MOBILE_TYPOGRAPHY.footnote,
   },
   primaryButton: {
     alignItems: "center",
@@ -196,13 +197,11 @@ const styles = StyleSheet.create({
   },
   signInText: {
     fontFamily: "DMSans_700Bold",
-    fontSize: 15,
-    lineHeight: 21,
+    ...MOBILE_TYPOGRAPHY.body,
   },
   title: {
     fontFamily: "DMSans_700Bold",
-    fontSize: 20,
-    lineHeight: 26,
+    ...MOBILE_TYPOGRAPHY.title,
     textAlign: "center",
   },
 });

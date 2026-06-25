@@ -9,6 +9,11 @@
 import {
   EDITORS,
   ExternalLauncherError,
+  ExternalLauncherBrowserSpawnError,
+  ExternalLauncherCommandNotFoundError,
+  ExternalLauncherEditorSpawnError,
+  ExternalLauncherUnknownEditorError,
+  ExternalLauncherUnsupportedEditorError,
   type EditorId,
   type LaunchEditorInput,
 } from "@t3tools/contracts";
@@ -22,15 +27,26 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 // ==============================
 // Definitions
 // ==============================
 
-export { ExternalLauncherError };
+export {
+  ExternalLauncherError,
+  ExternalLauncherBrowserSpawnError,
+  ExternalLauncherCommandNotFoundError,
+  ExternalLauncherEditorSpawnError,
+  ExternalLauncherUnknownEditorError,
+  ExternalLauncherUnsupportedEditorError,
+  isExternalLauncherError,
+} from "@t3tools/contracts";
 export type { LaunchEditorInput };
 interface EditorLaunch {
+  readonly editor: EditorId;
+  readonly target: string;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
 }
@@ -283,29 +299,22 @@ const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEdit
 });
 
 /**
- * ExternalLauncherShape - Service API for browser and editor launch actions.
- */
-export interface ExternalLauncherShape {
-  readonly resolveAvailableEditors: () => Effect.Effect<ReadonlyArray<EditorId>>;
-  /**
-   * Launch a URL target in the default browser.
-   */
-  readonly launchBrowser: (target: string) => Effect.Effect<void, ExternalLauncherError>;
-
-  /**
-   * Launch a workspace path in a selected editor integration.
-   *
-   * Launches the editor as a detached process so server startup is not blocked.
-   */
-  readonly launchEditor: (input: LaunchEditorInput) => Effect.Effect<void, ExternalLauncherError>;
-}
-
-/**
  * ExternalLauncher - Service tag for browser/editor launch operations.
  */
-export class ExternalLauncher extends Context.Service<ExternalLauncher, ExternalLauncherShape>()(
-  "t3/process/externalLauncher",
-) {}
+export class ExternalLauncher extends Context.Service<
+  ExternalLauncher,
+  {
+    readonly resolveAvailableEditors: () => Effect.Effect<ReadonlyArray<EditorId>>;
+    /** Launch a URL target in the default browser. */
+    readonly launchBrowser: (target: string) => Effect.Effect<void, ExternalLauncherError>;
+    /**
+     * Launch a workspace path in a selected editor integration.
+     *
+     * Launches the editor as a detached process so server startup is not blocked.
+     */
+    readonly launchEditor: (input: LaunchEditorInput) => Effect.Effect<void, ExternalLauncherError>;
+  }
+>()("t3/process/externalLauncher") {}
 
 // ==============================
 // Implementations
@@ -323,7 +332,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   });
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
-    return yield* new ExternalLauncherError({ message: `Unknown editor: ${input.editor}` });
+    return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
   }
 
   if (editorDef.commands) {
@@ -332,21 +341,28 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       () => editorDef.commands[0],
     );
     return {
+      editor: editorDef.id,
+      target: input.cwd,
       command,
       args: resolveEditorArgs(editorDef, input.cwd),
     };
   }
 
   if (editorDef.id !== "file-manager") {
-    return yield* new ExternalLauncherError({ message: `Unsupported editor: ${input.editor}` });
+    return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
 
-  return { command: fileManagerCommandForPlatform(platform), args: [input.cwd] };
+  return {
+    editor: editorDef.id,
+    target: input.cwd,
+    command: fileManagerCommandForPlatform(platform),
+    args: [input.cwd],
+  };
 });
 
 const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
   launch: ProcessLaunch,
-  errorMessage: string,
+  onError: (cause: unknown) => ExternalLauncherError,
 ): Effect.fn.Return<void, ExternalLauncherError, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const command = ChildProcess.make(launch.command, launch.args, launch.options);
@@ -355,7 +371,7 @@ const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
     Effect.flatMap((handle) => handle.unref),
     Effect.asVoid,
     Effect.scoped,
-    Effect.mapError((cause) => new ExternalLauncherError({ message: errorMessage, cause })),
+    Effect.mapError(onError),
   );
 });
 
@@ -363,7 +379,16 @@ const launchBrowser = Effect.fn("externalLauncher.launchBrowser")(function* (
   target: string,
 ): Effect.fn.Return<void, ExternalLauncherError, ChildProcessSpawner.ChildProcessSpawner> {
   const launch = yield* resolveBrowserLaunch(target);
-  return yield* launchAndUnref(launch, "Browser auto-open failed");
+  return yield* launchAndUnref(
+    launch,
+    (cause) =>
+      new ExternalLauncherBrowserSpawnError({
+        target,
+        command: launch.command,
+        args: launch.args,
+        cause,
+      }),
+  );
 });
 
 const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(function* (
@@ -375,8 +400,9 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
 > {
   const env = yield* readCommandLookupEnv;
   if (!(yield* isCommandAvailable(launch.command, { env }))) {
-    return yield* new ExternalLauncherError({
-      message: `Editor command not found: ${launch.command}`,
+    return yield* new ExternalLauncherCommandNotFoundError({
+      editor: launch.editor,
+      command: launch.command,
     });
   }
 
@@ -393,11 +419,18 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
         stderr: "ignore",
       },
     },
-    "failed to spawn detached process",
+    (cause) =>
+      new ExternalLauncherEditorSpawnError({
+        editor: launch.editor,
+        target: launch.target,
+        command: spawnCommand.command,
+        args: spawnCommand.args,
+        cause,
+      }),
   );
 });
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -410,7 +443,7 @@ const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
-  return {
+  return ExternalLauncher.of({
     resolveAvailableEditors: () => provideCommandResolutionServices(resolveAvailableEditors()),
     launchBrowser: (target) =>
       launchBrowser(target).pipe(
@@ -424,7 +457,7 @@ const make = Effect.gen(function* () {
           ),
         ),
       ),
-  } satisfies ExternalLauncherShape;
+  });
 });
 
 export const layer = Layer.effect(ExternalLauncher, make);

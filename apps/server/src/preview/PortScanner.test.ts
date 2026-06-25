@@ -1,25 +1,59 @@
-import * as net from "node:net";
+import * as NodeNet from "node:net";
 
 import { it as effectIt } from "@effect/vitest";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
-import { Effect, Layer } from "effect";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import { expect } from "vite-plus/test";
 
-import { ProcessRunner } from "../processRunner.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
-const TestProcessRunner = Layer.succeed(ProcessRunner, {
-  run: () => Effect.die("ProcessRunner should not be used by Windows TCP probe tests"),
+const TestProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+  run: (input) =>
+    Effect.fail(
+      new ProcessRunner.ProcessSpawnError({
+        command: input.command,
+        argumentCount: input.args.length,
+        cwd: input.cwd,
+        cause: PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          description: "PowerShell is not installed in the test environment",
+        }),
+      }),
+    ),
 });
+
+const makeProbeFailureLayer = (run: ProcessRunner.ProcessRunner["Service"]["run"]) =>
+  PortScanner.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(ProcessRunner.ProcessRunner, { run }),
+        Layer.succeed(Net.NetService, {
+          canListenOnHost: () => Effect.succeed(true),
+          isPortAvailableOnLoopback: () => Effect.succeed(true),
+          reserveLoopbackPort: () => Effect.succeed(40_000),
+          findAvailablePort: (preferred) => Effect.succeed(preferred),
+        }),
+        Layer.succeed(HostProcessPlatform, "linux"),
+      ),
+    ),
+  );
+
 const TestPortDiscoveryLive = PortScanner.layer.pipe(
   Layer.provide(
     Layer.mergeAll(TestProcessRunner, Net.layer, Layer.succeed(HostProcessPlatform, "win32")),
   ),
 );
 
-const openServer = (port: number): Effect.Effect<net.Server | null> =>
+const openServer = (port: number): Effect.Effect<NodeNet.Server | null> =>
   Effect.callback((resume) => {
-    const server = net.createServer();
+    const server = NodeNet.createServer();
     server.once("error", () => {
       resume(Effect.succeed(null));
     });
@@ -31,7 +65,7 @@ const openServer = (port: number): Effect.Effect<net.Server | null> =>
     });
   });
 
-const closeServer = (server: net.Server): Effect.Effect<void> =>
+const closeServer = (server: NodeNet.Server): Effect.Effect<void> =>
   Effect.callback((resume) => {
     server.close(() => resume(Effect.void));
   });
@@ -87,3 +121,37 @@ effectIt.layer(TestPortDiscoveryLive)("PortDiscovery integration (TCP probe fall
     }),
   );
 });
+
+effectIt("does not swallow process probe defects", () =>
+  Effect.gen(function* () {
+    const defect = new Error("unexpected process probe defect");
+    const layer = makeProbeFailureLayer(() => Effect.die(defect));
+
+    const exit = yield* Effect.flatMap(PortScanner.PortDiscovery, (scanner) => scanner.scan()).pipe(
+      Effect.provide(layer),
+      Effect.exit,
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(Cause.hasDies(exit.cause)).toBe(true);
+      expect(Cause.squash(exit.cause)).toBe(defect);
+    }
+  }),
+);
+
+effectIt("does not swallow process probe interruption", () =>
+  Effect.gen(function* () {
+    const layer = makeProbeFailureLayer(() => Effect.interrupt);
+
+    const exit = yield* Effect.flatMap(PortScanner.PortDiscovery, (scanner) => scanner.scan()).pipe(
+      Effect.provide(layer),
+      Effect.exit,
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+    }
+  }),
+);

@@ -13,9 +13,21 @@ vi.mock("@legendapp/list/react", async () => {
     renderItem: (args: { item: { id: string } }) => ReactNode;
     ListHeaderComponent?: ReactNode;
     ListFooterComponent?: ReactNode;
+    anchoredEndSpace?: {
+      anchorIndex: number;
+      anchorMaxSize?: number;
+      anchorOffset?: number;
+    };
+    contentInsetEndAdjustment?: number;
     ref?: Ref<LegendListRef>;
   }) => (
-    <div data-testid={legendListTestId}>
+    <div
+      data-testid={legendListTestId}
+      data-anchor-index={props.anchoredEndSpace?.anchorIndex}
+      data-anchor-max-size={props.anchoredEndSpace?.anchorMaxSize}
+      data-anchor-offset={props.anchoredEndSpace?.anchorOffset}
+      data-content-inset-end={props.contentInsetEndAdjustment}
+    >
       {props.ListHeaderComponent}
       {props.data.map((item) => (
         <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
@@ -109,6 +121,8 @@ function buildProps() {
     resolvedTheme: "light" as const,
     timestampFormat: "locale" as const,
     workspaceRoot: undefined,
+    anchorMessageId: null,
+    contentInsetEndAdjustment: 0,
     onIsAtEndChange: () => {},
   };
 }
@@ -128,13 +142,51 @@ function buildUserTimelineEntry(text: string) {
       id: MessageId.make("message-1"),
       role: "user" as const,
       text,
+      turnId: null,
       createdAt: MESSAGE_CREATED_AT,
+      updatedAt: MESSAGE_CREATED_AT,
       streaming: false,
     },
   };
 }
 
 describe("MessagesTimeline", () => {
+  it("anchors a sent attachment message using its measured height", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const firstEntry = buildUserTimelineEntry("First prompt.");
+    const secondEntry = {
+      ...buildUserTimelineEntry("Newest prompt."),
+      id: "entry-2",
+      message: {
+        ...buildUserTimelineEntry("Newest prompt.").message,
+        id: MessageId.make("message-2"),
+        attachments: [
+          {
+            type: "image" as const,
+            id: "attachment-1",
+            name: "screenshot.png",
+            mimeType: "image/png",
+            sizeBytes: 1,
+            previewUrl: "data:image/png;base64,iVBORw0KGgo=",
+          },
+        ],
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        anchorMessageId={secondEntry.message.id}
+        contentInsetEndAdjustment={144}
+        timelineEntries={[firstEntry, secondEntry]}
+      />,
+    );
+
+    expect(markup).toContain('data-anchor-index="1"');
+    expect(markup).toContain('data-anchor-offset="16"');
+    expect(markup).not.toContain("data-anchor-max-size=");
+    expect(markup).toContain('data-content-inset-end="144"');
+  }, 20_000);
+
   it("renders collapse controls for long user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -191,6 +243,33 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Show full message");
   }, 20_000);
 
+  it("renders chips for standalone element-pick context messages", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "<element_context>",
+              "- <SubmitButton> (Button.tsx:12):",
+              "  url: https://example.com/dashboard",
+              "  selector: button.submit",
+              "  source: /repo/src/Button.tsx:12:5",
+              "  html:",
+              '  <button class="submit">Save</button>',
+              "</element_context>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("SubmitButton");
+    expect(markup).not.toContain("&lt;element_context");
+    expect(markup).not.toContain("<element_context");
+  });
+
   it("keeps the copy button for collapsed long user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -227,7 +306,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Context compacted");
-    expect(markup).toContain("work log");
+    expect(markup).toContain("Work Log");
   });
 
   it("formats changed file paths from the workspace root", async () => {
@@ -280,7 +359,9 @@ describe("MessagesTimeline", () => {
                 "```",
                 "</review_comment>",
               ].join("\n"),
+              turnId: null,
               createdAt: "2026-03-17T19:12:28.000Z",
+              updatedAt: "2026-03-17T19:12:28.000Z",
               streaming: false,
             },
           },
@@ -318,7 +399,9 @@ describe("MessagesTimeline", () => {
                 "```",
                 "</review_comment>",
               ].join("\n"),
+              turnId: null,
               createdAt: "2026-03-17T19:12:28.000Z",
+              updatedAt: "2026-03-17T19:12:28.000Z",
               streaming: false,
             },
           },

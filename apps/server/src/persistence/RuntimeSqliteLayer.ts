@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import type { SqlError } from "effect/unstable/sql/SqlError";
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
@@ -8,7 +9,7 @@ type RuntimeSqliteLayerConfig = {
 };
 
 type Loader = {
-  layer: (config: RuntimeSqliteLayerConfig) => Layer.Layer<SqlClient.SqlClient>;
+  layer: (config: RuntimeSqliteLayerConfig) => Layer.Layer<SqlClient.SqlClient, SqlError>;
 };
 
 const defaultSqliteClientLoaders = {

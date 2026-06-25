@@ -1,30 +1,29 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as SchemaIssue from "effect/SchemaIssue";
 import { RpcClientError } from "effect/unstable/rpc";
 
 import * as AcpSchema from "../_generated/schema.gen.ts";
 import * as AcpError from "../errors.ts";
 const isError = Schema.is(AcpSchema.Error);
-const isAcpRequestError = Schema.is(AcpError.AcpRequestError);
-
-const formatSchemaIssue = SchemaIssue.makeFormatterDefault();
 
 export const callRpc = <A>(
+  method: string,
   effect: Effect.Effect<A, RpcClientError.RpcClientError | AcpSchema.Error>,
 ): Effect.Effect<A, AcpError.AcpError> =>
   effect.pipe(
-    Effect.catchTag("RpcClientError", (error) =>
-      Effect.fail(
-        new AcpError.AcpTransportError({
-          detail: error.message,
-          cause: error,
-        }),
-      ),
-    ),
     Effect.catchIf(isError, (error) =>
-      Effect.fail(AcpError.AcpRequestError.fromProtocolError(error)),
+      Effect.fail(AcpError.AcpRequestError.fromProtocolError(error, { method })),
     ),
+    Effect.catchTags({
+      RpcClientError: (cause) =>
+        Effect.fail(
+          new AcpError.AcpTransportError({
+            operation: "call-rpc",
+            method,
+            cause,
+          }),
+        ),
+    }),
   );
 
 export const runHandler = Effect.fnUntraced(function* <A, B>(
@@ -37,9 +36,7 @@ export const runHandler = Effect.fnUntraced(function* <A, B>(
   }
   return yield* handler(payload).pipe(
     Effect.mapError((error) =>
-      isAcpRequestError(error)
-        ? error.toProtocolError()
-        : AcpError.AcpRequestError.internalError(error.message).toProtocolError(),
+      AcpError.AcpRequestError.fromCoreHandlerError(error, method).toProtocolError(),
     ),
   );
 });
@@ -51,12 +48,7 @@ export function decodeExtRequestRegistration<A, I>(
 ) {
   return (params: unknown): Effect.Effect<unknown, AcpError.AcpError> =>
     Schema.decodeUnknownEffect(payload)(params).pipe(
-      Effect.mapError((error) =>
-        AcpError.AcpRequestError.invalidParams(
-          `Invalid ${method} payload: ${formatSchemaIssue(error.issue)}`,
-          { issue: error.issue },
-        ),
-      ),
+      Effect.mapError((error) => AcpError.AcpRequestError.invalidExtensionPayload(method, error)),
       Effect.flatMap((decoded) => handler(decoded)),
     );
 }
@@ -68,12 +60,12 @@ export function decodeExtNotificationRegistration<A, I>(
 ) {
   return (params: unknown): Effect.Effect<void, AcpError.AcpError> =>
     Schema.decodeUnknownEffect(payload)(params).pipe(
-      Effect.mapError(
-        (error) =>
-          new AcpError.AcpProtocolParseError({
-            detail: `Invalid ${method} notification payload: ${formatSchemaIssue(error.issue)}`,
-            cause: error,
-          }),
+      Effect.mapError((error) =>
+        AcpError.AcpProtocolParseError.fromSchemaError(
+          "decode-notification-payload",
+          method,
+          error,
+        ),
       ),
       Effect.flatMap((decoded) => handler(decoded)),
     );

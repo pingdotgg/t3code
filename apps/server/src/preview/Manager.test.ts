@@ -1,5 +1,6 @@
 import { it } from "@effect/vitest";
 import { type PreviewEvent, ThreadId } from "@t3tools/contracts";
+import { PreviewUrlNormalizationError } from "@t3tools/shared/preview";
 import { Effect, PubSub } from "effect";
 import { expect } from "vite-plus/test";
 
@@ -83,6 +84,31 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
       const manager = yield* PreviewManager.PreviewManager;
       const error = yield* Effect.flip(manager.open({ threadId, url: "   " }));
       expect(error._tag).toBe("PreviewInvalidUrlError");
+      expect(error).toMatchObject({ inputLength: 3, reason: "empty" });
+      expect(error).not.toHaveProperty("rawUrl");
+      expect(error.cause).toBeInstanceOf(PreviewUrlNormalizationError);
+      expect((error.cause as PreviewUrlNormalizationError).reason).toBe("empty");
+    }),
+  );
+
+  it.effect("preserves URL parser failures as the invalid URL cause chain", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const rawUrl = "https://user:password@example.com:bad/path?access_token=secret#fragment";
+      const error = yield* Effect.flip(manager.open({ threadId, url: rawUrl }));
+
+      expect(error).toMatchObject({
+        inputLength: rawUrl.length,
+        reason: "parse",
+        protocol: "https:",
+      });
+      expect(error).not.toHaveProperty("rawUrl");
+      expect(error.cause).toBeInstanceOf(PreviewUrlNormalizationError);
+      const normalizationError = error.cause as PreviewUrlNormalizationError;
+      expect(normalizationError.cause).toBeInstanceOf(Error);
+      expect(error.message).not.toContain((normalizationError.cause as Error).message);
+      expect(error.message).not.toMatch(/user|password|access_token|secret|fragment/);
     }),
   );
 

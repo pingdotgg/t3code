@@ -8,22 +8,32 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 
-export interface DesktopBackendConfigurationShape {
-  readonly resolve: Effect.Effect<
-    DesktopBackendManager.DesktopBackendStartConfig,
-    PlatformError.PlatformError
-  >;
+export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedErrorClass<DesktopBackendObservabilitySettingsReadError>()(
+  "DesktopBackendObservabilitySettingsReadError",
+  {
+    settingsPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to read persisted backend observability settings at ${this.settingsPath}.`;
+  }
 }
 
 export class DesktopBackendConfiguration extends Context.Service<
   DesktopBackendConfiguration,
-  DesktopBackendConfigurationShape
+  {
+    readonly resolve: Effect.Effect<
+      DesktopBackendManager.DesktopBackendStartConfig,
+      PlatformError.PlatformError
+    >;
+  }
 >()("@t3tools/desktop/backend/DesktopBackendConfiguration") {}
 
 interface BackendObservabilitySettings {
@@ -52,29 +62,34 @@ const DESKTOP_BACKEND_ENV_NAMES = [
 const backendChildEnvPatch = (): Record<string, string | undefined> =>
   Object.fromEntries(DESKTOP_BACKEND_ENV_NAMES.map((name) => [name, undefined]));
 
-const { logWarning: logBackendConfigurationWarning } = DesktopObservability.makeComponentLogger(
-  "desktop-backend-configuration",
-);
+const logBackendObservabilitySettingsReadFailure = (
+  settingsPath: string,
+  cause: PlatformError.PlatformError,
+) => {
+  const error = new DesktopBackendObservabilitySettingsReadError({ settingsPath, cause });
+  return Effect.logWarning(error).pipe(
+    Effect.annotateLogs({
+      component: "desktop-backend-configuration",
+      error,
+    }),
+  );
+};
 
-const readPersistedBackendObservabilitySettings: Effect.Effect<
-  BackendObservabilitySettings,
-  never,
-  FileSystem.FileSystem | DesktopEnvironment.DesktopEnvironment
-> = Effect.gen(function* () {
+const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const exists = yield* fileSystem
-    .exists(environment.serverSettingsPath)
-    .pipe(Effect.orElseSucceed(() => false));
-  if (!exists) {
-    return emptyBackendObservabilitySettings;
-  }
-
-  const raw = yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(Effect.option);
+  const raw = yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(
+    Effect.map(Option.some),
+    Effect.catchTags({
+      PlatformError: (cause) =>
+        cause.reason._tag === "NotFound"
+          ? Effect.succeed(Option.none())
+          : logBackendObservabilitySettingsReadFailure(environment.serverSettingsPath, cause).pipe(
+              Effect.as(Option.none()),
+            ),
+    }),
+  );
   if (Option.isNone(raw)) {
-    yield* logBackendConfigurationWarning(
-      "failed to read persisted backend observability settings",
-    );
     return emptyBackendObservabilitySettings;
   }
 
@@ -130,40 +145,39 @@ const resolveBackendStartConfig = Effect.fn("desktop.backendConfiguration.resolv
   },
 );
 
-export const layer = Layer.effect(
-  DesktopBackendConfiguration,
-  Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-    const crypto = yield* Crypto.Crypto;
-    const tokenRef = yield* Ref.make(Option.none<string>());
-    const getOrCreateBootstrapToken = Effect.gen(function* () {
-      const existing = yield* Ref.get(tokenRef);
-      if (Option.isSome(existing)) {
-        return existing.value;
-      }
+export const make = Effect.gen(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+  const crypto = yield* Crypto.Crypto;
+  const tokenRef = yield* Ref.make(Option.none<string>());
+  const getOrCreateBootstrapToken = Effect.gen(function* () {
+    const existing = yield* Ref.get(tokenRef);
+    if (Option.isSome(existing)) {
+      return existing.value;
+    }
 
-      const token = Encoding.encodeHex(yield* crypto.randomBytes(24));
-      yield* Ref.set(tokenRef, Option.some(token));
-      return token;
-    });
+    const token = Encoding.encodeHex(yield* crypto.randomBytes(24));
+    yield* Ref.set(tokenRef, Option.some(token));
+    return token;
+  });
 
-    return DesktopBackendConfiguration.of({
-      resolve: Effect.gen(function* () {
-        const bootstrapToken = yield* getOrCreateBootstrapToken;
-        const observabilitySettings = yield* readPersistedBackendObservabilitySettings.pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
-        );
-        return yield* resolveBackendStartConfig({
-          bootstrapToken,
-          observabilitySettings,
-        }).pipe(
-          Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
-          Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
-        );
-      }).pipe(Effect.withSpan("desktop.backendConfiguration.resolve")),
-    });
-  }),
-);
+  return DesktopBackendConfiguration.of({
+    resolve: Effect.gen(function* () {
+      const bootstrapToken = yield* getOrCreateBootstrapToken;
+      const observabilitySettings = yield* readPersistedBackendObservabilitySettings.pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+      );
+      return yield* resolveBackendStartConfig({
+        bootstrapToken,
+        observabilitySettings,
+      }).pipe(
+        Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+        Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
+      );
+    }).pipe(Effect.withSpan("desktop.backendConfiguration.resolve")),
+  });
+});
+
+export const layer = Layer.effect(DesktopBackendConfiguration, make);

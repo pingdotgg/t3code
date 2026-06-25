@@ -1,16 +1,21 @@
 import {
+  PreviewAutomationClientDisconnectedError,
   PreviewAutomationControlInterruptedError,
   PreviewAutomationExecutionError,
+  PreviewAutomationHostNotConnectedError,
   PreviewAutomationInvalidSelectorError,
+  PreviewAutomationMalformedResponseError,
   PreviewAutomationNoFocusedOwnerError,
+  PreviewAutomationRemoteUnavailableError,
+  PreviewAutomationRequestQueueClosedError,
   PreviewAutomationResultTooLargeError,
   PreviewAutomationTabNotFoundError,
   PreviewAutomationTimeoutError,
-  PreviewAutomationUnavailableError,
   PreviewAutomationUnsupportedClientError,
   type PreviewAutomationError,
   type PreviewAutomationOperation,
   type PreviewAutomationOwner,
+  type PreviewAutomationOwnerIdentity,
   type PreviewAutomationRequest,
   type PreviewAutomationResponse,
   type PreviewTabId,
@@ -34,37 +39,48 @@ export interface PreviewAutomationInvokeInput {
   readonly timeoutMs?: number;
 }
 
-export interface PreviewAutomationBrokerShape {
-  readonly connect: (clientId: string) => Effect.Effect<Stream.Stream<PreviewAutomationRequest>>;
-  readonly reportOwner: (
-    owner: PreviewAutomationOwner,
-  ) => Effect.Effect<void, PreviewAutomationError>;
-  readonly clearOwner: (clientId: string) => Effect.Effect<void>;
-  readonly respond: (
-    response: PreviewAutomationResponse,
-  ) => Effect.Effect<void, PreviewAutomationError>;
-  readonly invoke: <A = unknown>(
-    request: PreviewAutomationInvokeInput,
-  ) => Effect.Effect<A, PreviewAutomationError>;
-}
-
 export class PreviewAutomationBroker extends Context.Service<
   PreviewAutomationBroker,
-  PreviewAutomationBrokerShape
+  {
+    readonly connect: (
+      owner: PreviewAutomationOwner,
+    ) => Effect.Effect<Stream.Stream<PreviewAutomationRequest>>;
+    readonly reportOwner: (
+      owner: PreviewAutomationOwner,
+    ) => Effect.Effect<void, PreviewAutomationError>;
+    readonly clearOwner: (owner: PreviewAutomationOwnerIdentity) => Effect.Effect<void>;
+    readonly respond: (
+      response: PreviewAutomationResponse,
+    ) => Effect.Effect<void, PreviewAutomationError>;
+    readonly invoke: <A = unknown>(
+      request: PreviewAutomationInvokeInput,
+    ) => Effect.Effect<A, PreviewAutomationError>;
+  }
 >()("t3/mcp/PreviewAutomationBroker") {}
 
 interface ClientConnection {
   readonly clientId: string;
-  readonly queue: Queue.Queue<
-    Parameters<PreviewAutomationBrokerShape["respond"]>[0] extends never
-      ? never
-      : import("@t3tools/contracts").PreviewAutomationRequest
-  >;
+  readonly queue: Queue.Queue<PreviewAutomationRequest>;
 }
 
 interface PendingRequest {
-  readonly clientId: string;
+  readonly queue: ClientConnection["queue"];
   readonly deferred: Deferred.Deferred<unknown, PreviewAutomationError>;
+  readonly context: PreviewAutomationRequestErrorContext;
+}
+
+interface PreviewAutomationRequestErrorContext {
+  readonly operation: PreviewAutomationOperation;
+  readonly environmentId: McpInvocationContext.McpInvocationScope["environmentId"];
+  readonly threadId: McpInvocationContext.McpInvocationScope["threadId"];
+  readonly providerSessionId: string;
+  readonly providerInstanceId: McpInvocationContext.McpInvocationScope["providerInstanceId"];
+  readonly clientId: string;
+  readonly requestId: string;
+  readonly tabId?: PreviewTabId;
+  readonly timeoutMs: number;
+  readonly selectorKind?: "locator" | "selector";
+  readonly selectorLength?: number;
 }
 
 interface BrokerState {
@@ -74,53 +90,109 @@ interface BrokerState {
   readonly requestSequence: number;
 }
 
-const makeResponseError = (
+const selectorDiagnosticsFromInput = (
+  input: unknown,
+): Pick<PreviewAutomationRequestErrorContext, "selectorKind" | "selectorLength"> => {
+  if (typeof input !== "object" || input === null) return {};
+  if ("locator" in input && typeof input.locator === "string") {
+    return { selectorKind: "locator", selectorLength: input.locator.length };
+  }
+  if ("selector" in input && typeof input.selector === "string") {
+    return { selectorKind: "selector", selectorLength: input.selector.length };
+  }
+  return {};
+};
+
+type RemoteDetailKind = "null" | "array" | "object" | "string" | "number" | "boolean";
+
+function remoteDetailKind(detail: unknown): RemoteDetailKind {
+  if (detail === null) return "null";
+  if (Array.isArray(detail)) return "array";
+  switch (typeof detail) {
+    case "string":
+      return "string";
+    case "number":
+      return "number";
+    case "boolean":
+      return "boolean";
+    default:
+      return "object";
+  }
+}
+
+const classifyResponseError = (
+  context: PreviewAutomationRequestErrorContext,
   error: NonNullable<PreviewAutomationResponse["error"]>,
 ): PreviewAutomationError => {
+  const remoteDiagnostics = {
+    remoteTag: error._tag,
+    remoteMessageLength: error.message.length,
+    ...(error.detail === undefined ? {} : { remoteDetailKind: remoteDetailKind(error.detail) }),
+    cause: error,
+  };
   switch (error._tag) {
     case "PreviewAutomationNoFocusedOwnerError":
-      return new PreviewAutomationNoFocusedOwnerError({ message: error.message });
+      return new PreviewAutomationNoFocusedOwnerError({
+        ...context,
+        ...remoteDiagnostics,
+      });
     case "PreviewAutomationUnsupportedClientError":
-      return new PreviewAutomationUnsupportedClientError({ message: error.message });
+      return new PreviewAutomationUnsupportedClientError({
+        ...context,
+        ...remoteDiagnostics,
+      });
     case "PreviewAutomationTabNotFoundError":
-      return new PreviewAutomationTabNotFoundError({ message: error.message });
+      return new PreviewAutomationTabNotFoundError({
+        ...context,
+        ...remoteDiagnostics,
+      });
     case "PreviewAutomationTimeoutError":
-      return new PreviewAutomationTimeoutError({ message: error.message });
+      return new PreviewAutomationTimeoutError({
+        ...context,
+        ...remoteDiagnostics,
+      });
     case "PreviewAutomationControlInterruptedError":
-      return new PreviewAutomationControlInterruptedError({ message: error.message });
+      return new PreviewAutomationControlInterruptedError({
+        ...context,
+        ...remoteDiagnostics,
+      });
     case "PreviewAutomationInvalidSelectorError": {
-      const detail =
-        typeof error.detail === "object" && error.detail !== null ? error.detail : undefined;
       return new PreviewAutomationInvalidSelectorError({
-        message: error.message,
-        selector:
-          detail && "selector" in detail && typeof detail.selector === "string"
-            ? detail.selector
-            : "",
+        ...context,
+        ...remoteDiagnostics,
       });
     }
     case "PreviewAutomationResultTooLargeError": {
       const detail =
         typeof error.detail === "object" && error.detail !== null ? error.detail : undefined;
+      const maximumBytes =
+        detail &&
+        "maximumBytes" in detail &&
+        typeof detail.maximumBytes === "number" &&
+        Number.isInteger(detail.maximumBytes) &&
+        detail.maximumBytes > 0
+          ? detail.maximumBytes
+          : undefined;
       return new PreviewAutomationResultTooLargeError({
-        message: error.message,
-        maximumBytes:
-          detail && "maximumBytes" in detail && typeof detail.maximumBytes === "number"
-            ? detail.maximumBytes
-            : 64_000,
+        ...context,
+        ...remoteDiagnostics,
+        ...(maximumBytes === undefined ? {} : { maximumBytes }),
       });
     }
     case "PreviewAutomationUnavailableError":
-      return new PreviewAutomationUnavailableError({ message: error.message });
+      return new PreviewAutomationRemoteUnavailableError({
+        ...context,
+        ...remoteDiagnostics,
+      });
     default:
       return new PreviewAutomationExecutionError({
-        message: error.message,
-        detail: error.detail,
+        ...context,
+        ...remoteDiagnostics,
       });
   }
 };
 
-const make = Effect.gen(function* PreviewAutomationBrokerMake() {
+export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   const state = yield* SynchronizedRef.make<BrokerState>({
     clients: new Map(),
     owners: new Map(),
@@ -133,17 +205,16 @@ const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     queue: ClientConnection["queue"],
   ) {
     const toFail = yield* SynchronizedRef.modify(state, (current) => {
-      if (current.clients.get(clientId)?.queue !== queue) {
-        return [[] as ReadonlyArray<PendingRequest>, current] as const;
-      }
       const clients = new Map(current.clients);
       const owners = new Map(current.owners);
       const pending = new Map(current.pending);
       const disconnected: PendingRequest[] = [];
-      clients.delete(clientId);
-      owners.delete(clientId);
+      if (current.clients.get(clientId)?.queue === queue) {
+        clients.delete(clientId);
+        owners.delete(clientId);
+      }
       for (const [requestId, entry] of pending) {
-        if (entry.clientId === clientId) {
+        if (entry.queue === queue) {
           pending.delete(requestId);
           disconnected.push(entry);
         }
@@ -152,32 +223,37 @@ const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     });
     yield* Effect.forEach(
       toFail,
-      ({ deferred }) =>
-        Deferred.fail(
-          deferred,
-          new PreviewAutomationUnavailableError({
-            message: "The preview automation client disconnected.",
-          }),
-        ),
+      ({ deferred, context }) =>
+        Deferred.fail(deferred, new PreviewAutomationClientDisconnectedError(context)),
       { discard: true },
     );
     yield* Queue.shutdown(queue);
   });
 
-  const connect: PreviewAutomationBrokerShape["connect"] = Effect.fn(
+  const connect: PreviewAutomationBroker["Service"]["connect"] = Effect.fn(
     "PreviewAutomationBroker.connect",
-  )(function* (clientId) {
+  )(function* (owner) {
+    const clientId = owner.clientId;
     const queue = yield* Queue.unbounded<import("@t3tools/contracts").PreviewAutomationRequest>();
     const previous = yield* SynchronizedRef.modify(state, (current) => {
       const clients = new Map(current.clients);
+      const owners = new Map(current.owners);
+      const existingOwner = current.owners.get(clientId);
       clients.set(clientId, { clientId, queue });
-      return [current.clients.get(clientId), { ...current, clients }] as const;
+      owners.set(
+        clientId,
+        existingOwner?.environmentId === owner.environmentId &&
+          existingOwner.threadId === owner.threadId
+          ? { ...existingOwner, supportsAutomation: owner.supportsAutomation }
+          : owner,
+      );
+      return [current.clients.get(clientId), { ...current, clients, owners }] as const;
     });
     if (previous) yield* disconnect(clientId, previous.queue);
     return Stream.fromQueue(queue).pipe(Stream.ensuring(disconnect(clientId, queue)));
   });
 
-  const reportOwner: PreviewAutomationBrokerShape["reportOwner"] = Effect.fn(
+  const reportOwner: PreviewAutomationBroker["Service"]["reportOwner"] = Effect.fn(
     "PreviewAutomationBroker.reportOwner",
   )(function* (owner) {
     yield* SynchronizedRef.update(state, (current) => {
@@ -187,17 +263,25 @@ const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     });
   });
 
-  const clearOwner: PreviewAutomationBrokerShape["clearOwner"] = Effect.fn(
+  const clearOwner: PreviewAutomationBroker["Service"]["clearOwner"] = Effect.fn(
     "PreviewAutomationBroker.clearOwner",
-  )(function* (clientId) {
+  )(function* (owner) {
     yield* SynchronizedRef.update(state, (current) => {
+      const currentOwner = current.owners.get(owner.clientId);
+      if (
+        !currentOwner ||
+        currentOwner.environmentId !== owner.environmentId ||
+        currentOwner.threadId !== owner.threadId
+      ) {
+        return current;
+      }
       const owners = new Map(current.owners);
-      owners.delete(clientId);
+      owners.delete(owner.clientId);
       return { ...current, owners };
     });
   });
 
-  const respond: PreviewAutomationBrokerShape["respond"] = Effect.fn(
+  const respond: PreviewAutomationBroker["Service"]["respond"] = Effect.fn(
     "PreviewAutomationBroker.respond",
   )(function* (response) {
     const pending = yield* SynchronizedRef.modify(state, (current) => {
@@ -214,16 +298,14 @@ const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       yield* Deferred.fail(
         pending.deferred,
         response.error
-          ? makeResponseError(response.error)
-          : new PreviewAutomationExecutionError({
-              message: "Preview automation failed without an error payload.",
-            }),
+          ? classifyResponseError(pending.context, response.error)
+          : new PreviewAutomationMalformedResponseError(pending.context),
       );
     }
   });
 
   const invoke = Effect.fn("PreviewAutomationBroker.invoke")(function* <A = unknown>(
-    input: Parameters<PreviewAutomationBrokerShape["invoke"]>[0],
+    input: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0],
   ): Effect.fn.Return<A, PreviewAutomationError> {
     const current = yield* SynchronizedRef.get(state);
     const candidates = Array.from(current.owners.values())
@@ -234,35 +316,62 @@ const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           owner.supportsAutomation,
       )
       .sort((left, right) => right.focusedAt.localeCompare(left.focusedAt));
-    const owner = candidates[0];
+    const owner = candidates.find((candidate) => current.clients.has(candidate.clientId));
     if (!owner) {
+      const disconnectedOwner = candidates[0];
+      if (disconnectedOwner) {
+        return yield* new PreviewAutomationHostNotConnectedError({
+          operation: input.operation,
+          environmentId: input.scope.environmentId,
+          threadId: input.scope.threadId,
+          providerSessionId: input.scope.providerSessionId,
+          providerInstanceId: input.scope.providerInstanceId,
+          clientId: disconnectedOwner.clientId,
+        });
+      }
       return yield* new PreviewAutomationNoFocusedOwnerError({
-        message: "No desktop browser host is available for this thread.",
+        operation: input.operation,
+        environmentId: input.scope.environmentId,
+        threadId: input.scope.threadId,
+        providerSessionId: input.scope.providerSessionId,
+        providerInstanceId: input.scope.providerInstanceId,
       });
     }
     const connection = current.clients.get(owner.clientId);
     if (!connection) {
-      return yield* new PreviewAutomationUnavailableError({
-        message: "The browser host is not connected.",
-      });
-    }
-    if (
-      input.operation !== "open" &&
-      input.operation !== "status" &&
-      !owner.tabId &&
-      !input.tabId
-    ) {
-      return yield* new PreviewAutomationTabNotFoundError({
-        message: "The browser host does not have an active tab.",
+      return yield* new PreviewAutomationHostNotConnectedError({
+        operation: input.operation,
+        environmentId: input.scope.environmentId,
+        threadId: input.scope.threadId,
+        providerSessionId: input.scope.providerSessionId,
+        providerInstanceId: input.scope.providerInstanceId,
+        clientId: owner.clientId,
       });
     }
     const timeoutMs = input.timeoutMs ?? 15_000;
     const deferred = yield* Deferred.make<unknown, PreviewAutomationError>();
-    const requestId = yield* SynchronizedRef.modify(state, (next) => {
+    const [requestId, requestContext] = yield* SynchronizedRef.modify(state, (next) => {
       const requestId = `preview-${next.requestSequence}`;
+      const tabId = input.tabId ?? owner.tabId ?? undefined;
+      const selectorDiagnostics = selectorDiagnosticsFromInput(input.input);
+      const context: PreviewAutomationRequestErrorContext = {
+        operation: input.operation,
+        environmentId: input.scope.environmentId,
+        threadId: input.scope.threadId,
+        providerSessionId: input.scope.providerSessionId,
+        providerInstanceId: input.scope.providerInstanceId,
+        clientId: owner.clientId,
+        requestId,
+        ...(tabId === undefined ? {} : { tabId }),
+        timeoutMs,
+        ...selectorDiagnostics,
+      };
       const pending = new Map(next.pending);
-      pending.set(requestId, { clientId: owner.clientId, deferred });
-      return [requestId, { ...next, pending, requestSequence: next.requestSequence + 1 }] as const;
+      pending.set(requestId, { queue: connection.queue, deferred, context });
+      return [
+        [requestId, context] as const,
+        { ...next, pending, requestSequence: next.requestSequence + 1 },
+      ] as const;
     });
     const removePending = SynchronizedRef.update(state, (next) => {
       if (!next.pending.has(requestId)) return next;
@@ -274,24 +383,21 @@ const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       const offered = yield* Queue.offer(connection.queue, {
         requestId,
         threadId: input.scope.threadId,
-        tabId: input.tabId ?? owner.tabId ?? undefined,
+        tabId: requestContext.tabId,
         operation: input.operation,
         input: input.input,
         timeoutMs,
       });
       if (!offered) {
-        return yield* new PreviewAutomationUnavailableError({
-          message: "The preview automation client is no longer accepting requests.",
-        });
+        const completion = yield* Deferred.poll(deferred);
+        if (Option.isSome(completion)) {
+          return (yield* completion.value) as A;
+        }
+        return yield* new PreviewAutomationRequestQueueClosedError(requestContext);
       }
       const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(timeoutMs));
       return yield* Option.match(result, {
-        onNone: () =>
-          Effect.fail(
-            new PreviewAutomationTimeoutError({
-              message: `Preview automation timed out after ${timeoutMs}ms.`,
-            }),
-          ),
+        onNone: () => Effect.fail(new PreviewAutomationTimeoutError(requestContext)),
         onSome: (value) => Effect.succeed(value as A),
       });
     });
@@ -302,8 +408,3 @@ const make = Effect.gen(function* PreviewAutomationBrokerMake() {
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
 export const layer = Layer.effect(PreviewAutomationBroker, make);
-
-/** Exposed for tests. */
-export const __testing = {
-  make,
-};

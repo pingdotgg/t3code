@@ -7,8 +7,10 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
+import * as Console from "effect/Console";
+import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -17,23 +19,21 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as Context from "effect/Context";
-import * as Console from "effect/Console";
-import * as DateTime from "effect/DateTime";
 
-import { ServerConfig } from "./config.ts";
-import { Keybindings } from "./keybindings.ts";
+import * as ServerConfig from "./config.ts";
+import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
-import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
-import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor.ts";
-import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
-import { ServerSettingsService } from "./serverSettings.ts";
-import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
-import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
+import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as OrchestrationReactor from "./orchestration/Services/OrchestrationReactor.ts";
+import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
+import * as ServerSettings from "./serverSettings.ts";
+import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
+import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -41,22 +41,29 @@ import {
   issueHeadlessServeAccessInfo,
 } from "./startupAccess.ts";
 
-export class ServerRuntimeStartupError extends Data.TaggedError("ServerRuntimeStartupError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-
-export interface ServerRuntimeStartupShape {
-  readonly awaitCommandReady: Effect.Effect<void, ServerRuntimeStartupError>;
-  readonly markHttpListening: Effect.Effect<void>;
-  readonly enqueueCommand: <A, E>(
-    effect: Effect.Effect<A, E>,
-  ) => Effect.Effect<A, E | ServerRuntimeStartupError>;
+export class ServerRuntimeStartupError extends Schema.TaggedErrorClass<ServerRuntimeStartupError>()(
+  "ServerRuntimeStartupError",
+  {
+    mode: ServerConfig.RuntimeMode,
+    host: Schema.NullOr(Schema.String),
+    port: Schema.Number,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Server runtime startup failed before command readiness.";
+  }
 }
 
 export class ServerRuntimeStartup extends Context.Service<
   ServerRuntimeStartup,
-  ServerRuntimeStartupShape
+  {
+    readonly awaitCommandReady: Effect.Effect<void, ServerRuntimeStartupError>;
+    readonly markHttpListening: Effect.Effect<void>;
+    readonly enqueueCommand: <A, E>(
+      effect: Effect.Effect<A, E>,
+    ) => Effect.Effect<A, E | ServerRuntimeStartupError>;
+  }
 >()("t3/serverRuntimeStartup") {}
 
 interface QueuedCommand {
@@ -124,8 +131,8 @@ export const makeCommandGate = Effect.gen(function* () {
 });
 
 export const recordStartupHeartbeat = Effect.gen(function* () {
-  const analytics = yield* AnalyticsService;
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const analytics = yield* AnalyticsService.AnalyticsService;
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
 
   const { threadCount, projectCount } = yield* projectionSnapshotQuery.getCounts().pipe(
     Effect.catch((cause) =>
@@ -160,7 +167,7 @@ export const getAutoBootstrapDefaultModelSelection = (): ModelSelection => ({
 });
 
 export const resolveWelcomeBase = Effect.gen(function* () {
-  const serverConfig = yield* ServerConfig;
+  const serverConfig = yield* ServerConfig.ServerConfig;
   const segments = serverConfig.cwd.split(/[/\\]/).filter(Boolean);
   const projectName = segments[segments.length - 1] ?? "project";
 
@@ -173,9 +180,9 @@ export const resolveWelcomeBase = Effect.gen(function* () {
 export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const randomUUID = crypto.randomUUIDv4;
-  const serverConfig = yield* ServerConfig;
-  const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
-  const orchestrationEngine = yield* OrchestrationEngineService;
+  const serverConfig = yield* ServerConfig.ServerConfig;
+  const projectionReadModelQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const path = yield* Path.Path;
 
   let bootstrapProjectId: ProjectId | undefined;
@@ -243,7 +250,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
 });
 
 const resolveStartupBrowserTarget = Effect.gen(function* () {
-  const serverConfig = yield* ServerConfig;
+  const serverConfig = yield* ServerConfig.ServerConfig;
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const localUrl = `http://localhost:${serverConfig.port}`;
   const bindUrl =
@@ -260,7 +267,7 @@ const resolveStartupBrowserTarget = Effect.gen(function* () {
 
 const maybeOpenBrowser = (target: string) =>
   Effect.gen(function* () {
-    const serverConfig = yield* ServerConfig;
+    const serverConfig = yield* ServerConfig.ServerConfig;
     if (serverConfig.noBrowser) {
       return;
     }
@@ -281,14 +288,14 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
     Effect.withSpan(`server.startup.${phase}`),
   );
 
-export const makeServerRuntimeStartup = Effect.gen(function* () {
-  const serverConfig = yield* ServerConfig;
-  const keybindings = yield* Keybindings;
-  const orchestrationReactor = yield* OrchestrationReactor;
-  const providerSessionReaper = yield* ProviderSessionReaper;
-  const lifecycleEvents = yield* ServerLifecycleEvents;
-  const serverSettings = yield* ServerSettingsService;
-  const serverEnvironment = yield* ServerEnvironment;
+export const make = Effect.gen(function* () {
+  const serverConfig = yield* ServerConfig.ServerConfig;
+  const keybindings = yield* Keybindings.Keybindings;
+  const orchestrationReactor = yield* OrchestrationReactor.OrchestrationReactor;
+  const providerSessionReaper = yield* ProviderSessionReaper.ProviderSessionReaper;
+  const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const crypto = yield* Crypto.Crypto;
 
   const commandGate = yield* makeCommandGate;
@@ -320,7 +327,9 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
         Effect.catch((error) =>
           Effect.logWarning("failed to start server settings runtime", {
             path: error.settingsPath,
-            detail: error.detail,
+            operation: error.operation,
+            providerInstanceId: error.providerInstanceId,
+            environmentVariable: error.environmentVariable,
             cause: error.cause,
           }),
         ),
@@ -409,7 +418,9 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
       const startupExit = yield* Effect.exit(startup);
       if (Exit.isFailure(startupExit)) {
         const error = new ServerRuntimeStartupError({
-          message: "Server runtime startup failed before command readiness.",
+          mode: serverConfig.mode,
+          host: serverConfig.host ?? null,
+          port: serverConfig.port,
           cause: startupExit.cause,
         });
         yield* Effect.logError("server runtime startup failed", { cause: startupExit.cause });
@@ -461,10 +472,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
     awaitCommandReady: commandGate.awaitCommandReady,
     markHttpListening: Deferred.succeed(httpListening, undefined),
     enqueueCommand: commandGate.enqueueCommand,
-  } satisfies ServerRuntimeStartupShape;
+  } satisfies ServerRuntimeStartup["Service"];
 });
 
-export const ServerRuntimeStartupLive = Layer.effect(
-  ServerRuntimeStartup,
-  makeServerRuntimeStartup,
-);
+export const layer = Layer.effect(ServerRuntimeStartup, make);

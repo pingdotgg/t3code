@@ -1,13 +1,13 @@
-import * as FileSystem from "node:fs/promises";
-import * as Net from "node:net";
-import * as Path from "node:path";
-import * as Timers from "node:timers/promises";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeNet from "node:net";
+import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 
 const defaultTcpHosts = ["127.0.0.1", "localhost", "::1"];
 
 async function fileExists(filePath) {
   try {
-    await FileSystem.access(filePath);
+    await NodeFSP.access(filePath);
     return true;
   } catch {
     return false;
@@ -16,7 +16,7 @@ async function fileExists(filePath) {
 
 function tcpPortIsReady({ host, port, connectTimeoutMs = 500 }) {
   return new Promise((resolveReady) => {
-    const socket = Net.createConnection({ host, port });
+    const socket = NodeNet.createConnection({ host, port });
     let settled = false;
 
     const finish = (ready) => {
@@ -47,7 +47,7 @@ async function resolvePendingResources({ baseDir, files, tcpPort, tcpHosts, conn
   const pendingFiles = [];
 
   for (const relativeFilePath of files) {
-    const ready = await fileExists(Path.resolve(baseDir, relativeFilePath));
+    const ready = await fileExists(NodePath.resolve(baseDir, relativeFilePath));
     if (!ready) {
       pendingFiles.push(relativeFilePath);
     }
@@ -114,6 +114,6 @@ export async function waitForResources({
       );
     }
 
-    await Timers.setTimeout(intervalMs);
+    await NodeTimersPromises.setTimeout(intervalMs);
   }
 }

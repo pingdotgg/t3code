@@ -4,10 +4,7 @@ import * as Layer from "effect/Layer";
 import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 import { TextGenerationError } from "@t3tools/contracts";
 
-import {
-  ProviderInstanceRegistry,
-  type ProviderInstanceRegistryShape,
-} from "../provider/Services/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 
 export type TextGenerationProvider = "codex" | "claudeAgent" | "cursor" | "grok" | "opencode";
@@ -80,44 +77,43 @@ export interface TextGenerationService {
 }
 
 /**
- * TextGenerationShape - Service API for commit/PR text generation.
- */
-export interface TextGenerationShape {
-  /**
-   * Generate a commit message from staged change context.
-   */
-  readonly generateCommitMessage: (
-    input: CommitMessageGenerationInput,
-  ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;
-
-  /**
-   * Generate pull request title/body from branch and diff context.
-   */
-  readonly generatePrContent: (
-    input: PrContentGenerationInput,
-  ) => Effect.Effect<PrContentGenerationResult, TextGenerationError>;
-
-  /**
-   * Generate a concise branch name from a user message.
-   */
-  readonly generateBranchName: (
-    input: BranchNameGenerationInput,
-  ) => Effect.Effect<BranchNameGenerationResult, TextGenerationError>;
-
-  /**
-   * Generate a concise thread title from a user's first message.
-   */
-  readonly generateThreadTitle: (
-    input: ThreadTitleGenerationInput,
-  ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
-}
-
-/**
  * TextGeneration - Service tag for commit and PR text generation.
  */
-export class TextGeneration extends Context.Service<TextGeneration, TextGenerationShape>()(
-  "t3/textGeneration/TextGeneration",
-) {}
+export class TextGeneration extends Context.Service<
+  TextGeneration,
+  {
+    /**
+     * Generate a commit message from staged change context.
+     */
+    readonly generateCommitMessage: (
+      input: CommitMessageGenerationInput,
+    ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;
+
+    /**
+     * Generate pull request title/body from branch and diff context.
+     */
+    readonly generatePrContent: (
+      input: PrContentGenerationInput,
+    ) => Effect.Effect<PrContentGenerationResult, TextGenerationError>;
+
+    /**
+     * Generate a concise branch name from a user message.
+     */
+    readonly generateBranchName: (
+      input: BranchNameGenerationInput,
+    ) => Effect.Effect<BranchNameGenerationResult, TextGenerationError>;
+
+    /**
+     * Generate a concise thread title from a user's first message.
+     */
+    readonly generateThreadTitle: (
+      input: ThreadTitleGenerationInput,
+    ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+  }
+>()("t3/textGeneration/TextGeneration") {}
+
+/** @deprecated Use `TextGeneration["Service"]`. */
+export type TextGenerationShape = TextGeneration["Service"];
 
 type TextGenerationOp =
   | "generateCommitMessage"
@@ -126,7 +122,7 @@ type TextGenerationOp =
   | "generateThreadTitle";
 
 const resolveInstance = (
-  registry: ProviderInstanceRegistryShape,
+  registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
   operation: TextGenerationOp,
   instanceId: ProviderInstanceId,
 ): Effect.Effect<ProviderInstance["textGeneration"], TextGenerationError> =>
@@ -144,30 +140,30 @@ const resolveInstance = (
   );
 
 export const makeTextGenerationFromRegistry = (
-  registry: ProviderInstanceRegistryShape,
-): TextGenerationShape => ({
-  generateCommitMessage: (input) =>
-    resolveInstance(registry, "generateCommitMessage", input.modelSelection.instanceId).pipe(
-      Effect.flatMap((textGeneration) => textGeneration.generateCommitMessage(input)),
-    ),
-  generatePrContent: (input) =>
-    resolveInstance(registry, "generatePrContent", input.modelSelection.instanceId).pipe(
-      Effect.flatMap((textGeneration) => textGeneration.generatePrContent(input)),
-    ),
-  generateBranchName: (input) =>
-    resolveInstance(registry, "generateBranchName", input.modelSelection.instanceId).pipe(
-      Effect.flatMap((textGeneration) => textGeneration.generateBranchName(input)),
-    ),
-  generateThreadTitle: (input) =>
-    resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
-      Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
-    ),
+  registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
+): TextGeneration["Service"] =>
+  TextGeneration.of({
+    generateCommitMessage: (input) =>
+      resolveInstance(registry, "generateCommitMessage", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generateCommitMessage(input)),
+      ),
+    generatePrContent: (input) =>
+      resolveInstance(registry, "generatePrContent", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generatePrContent(input)),
+      ),
+    generateBranchName: (input) =>
+      resolveInstance(registry, "generateBranchName", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generateBranchName(input)),
+      ),
+    generateThreadTitle: (input) =>
+      resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+      ),
+  });
+
+export const make = Effect.gen(function* () {
+  const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+  return makeTextGenerationFromRegistry(registry);
 });
 
-export const layer = Layer.effect(
-  TextGeneration,
-  Effect.gen(function* () {
-    const registry = yield* ProviderInstanceRegistry;
-    return makeTextGenerationFromRegistry(registry);
-  }),
-);
+export const layer = Layer.effect(TextGeneration, make);

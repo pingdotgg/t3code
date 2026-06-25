@@ -1,7 +1,7 @@
 import type { AuthClientPresentationMetadata } from "@t3tools/contracts";
 import { Platform } from "react-native";
 
-export function mobileAuthClientMetadata(): AuthClientPresentationMetadata {
+export function authClientMetadata(): AuthClientPresentationMetadata {
   return {
     label: "T3 Code Mobile",
     deviceType: "mobile",

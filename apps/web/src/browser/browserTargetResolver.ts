@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import { isLoopbackHost, normalizePreviewUrl } from "@t3tools/shared/preview";
 
-import { readEnvironmentConnection } from "~/environments/runtime";
+import { readPreparedConnection } from "~/state/session";
 
 const isPrivateNetworkHost = (host: string): boolean => {
   const normalized = host.toLowerCase().replace(/^\[|\]$/g, "");
@@ -24,6 +24,11 @@ const isPrivateNetworkHost = (host: string): boolean => {
   );
 };
 
+const isLocalLoopbackHost = (host: string): boolean => {
+  const normalized = host.toLowerCase().replace(/^\[|\]$/g, "");
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+};
+
 export function resolveBrowserNavigationTarget(
   environmentId: EnvironmentId,
   target: BrowserNavigationTarget,
@@ -36,9 +41,9 @@ export function resolveBrowserNavigationTarget(
       environmentId,
     };
   }
-  const connection = readEnvironmentConnection(environmentId);
+  const connection = readPreparedConnection(environmentId);
   if (!connection) throw new Error(`Environment ${environmentId} is not connected.`);
-  const environmentUrl = new URL(connection.knownEnvironment.target.httpBaseUrl);
+  const environmentUrl = new URL(connection.httpBaseUrl);
   if (!isPrivateNetworkHost(environmentUrl.hostname)) {
     throw new Error(
       "This environment port needs the planned authenticated preview gateway; its server address is not directly private-network reachable.",
@@ -68,6 +73,12 @@ export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl:
     const normalizedUrl = normalizePreviewUrl(rawUrl);
     const parsed = new URL(normalizedUrl);
     if (!isLoopbackHost(parsed.hostname)) return normalizedUrl;
+    const connection = readPreparedConnection(environmentId);
+    if (!connection) throw new Error(`Environment ${environmentId} is not connected.`);
+    const environmentUrl = new URL(connection.httpBaseUrl);
+    if (parsed.hostname !== "0.0.0.0" && isLocalLoopbackHost(environmentUrl.hostname)) {
+      return normalizedUrl;
+    }
     const port = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
     return resolveBrowserNavigationTarget(environmentId, {
       kind: "environment-port",

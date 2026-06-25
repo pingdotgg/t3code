@@ -9,9 +9,8 @@
 namespace facebook::react {
 
 static constexpr Float ParagraphStyleEncodingOffset = 1000;
-static constexpr auto ChipNativeIdPrefix = "t3-chip-";
-static constexpr auto FileChipNativeIdPrefix = "t3-chip-file:";
-static constexpr auto SkillChipNativeIdPrefix = "t3-chip-skill:";
+static constexpr auto FileAttachmentNativeIdPrefix = "t3-file:";
+static constexpr auto SkillAttachmentNativeIdPrefix = "t3-skill:";
 
 static void applyParagraphStyles(
     NSMutableAttributedString *attributedString,
@@ -58,7 +57,12 @@ static void applyAttachments(
 
     NSTextAttachment *attachment = [[NSTextAttachment alloc] init];
     attachment.image = [[UIImage alloc] init];
-    attachment.bounds = CGRectMake(0, -0.5, 10, 10);
+    const CGFloat attachmentSize = T3MarkdownTextAttachmentSize(attachmentRange);
+    attachment.bounds = CGRectMake(
+        0,
+        T3MarkdownTextAttachmentBaselineOffset(attachmentRange),
+        attachmentSize,
+        attachmentSize);
     const NSRange range = NSMakeRange(
         attachmentRange.location,
         MIN(attachmentRange.length, attributedString.length - attachmentRange.location));
@@ -91,7 +95,6 @@ Size T3MarkdownTextShadowNode::measureContent(
     auto baseAttributedString = AttributedString{};
     auto paragraphStyleRanges = std::vector<T3MarkdownTextParagraphStyleRange>{};
     auto attachmentRanges = std::vector<T3MarkdownTextAttachmentRange>{};
-    auto chipRanges = std::vector<T3MarkdownTextChipRange>{};
     size_t utf16Offset = 0;
     const auto &children = getChildren();
     for (size_t i = 0; i < children.size(); i++) {
@@ -184,25 +187,19 @@ Size T3MarkdownTextShadowNode::measureContent(
               props.shadowRadius - ParagraphStyleEncodingOffset,
           });
         }
-        if (props.nativeId.rfind(ChipNativeIdPrefix, 0) == 0 && fragmentLength > 0) {
-          chipRanges.push_back(T3MarkdownTextChipRange{
-              utf16Offset,
-              fragmentLength,
-              props.nativeId.rfind(SkillChipNativeIdPrefix, 0) == 0,
-          });
-        }
-        if (props.nativeId.rfind(FileChipNativeIdPrefix, 0) == 0 && fragmentLength > 1) {
+        if (props.nativeId.rfind(FileAttachmentNativeIdPrefix, 0) == 0 && fragmentLength > 0) {
           attachmentRanges.push_back(T3MarkdownTextAttachmentRange{
-              utf16Offset + 1,
+              utf16Offset,
               1,
-              props.nativeId.substr(std::char_traits<char>::length(FileChipNativeIdPrefix)),
+              props.nativeId.substr(std::char_traits<char>::length(FileAttachmentNativeIdPrefix)),
           });
         } else if (
-            props.nativeId.rfind(SkillChipNativeIdPrefix, 0) == 0 && fragmentLength > 1) {
+            props.nativeId.rfind(SkillAttachmentNativeIdPrefix, 0) == 0 && fragmentLength > 0) {
           attachmentRanges.push_back(T3MarkdownTextAttachmentRange{
-              utf16Offset + 1,
+              utf16Offset,
               1,
-              props.nativeId.substr(std::char_traits<char>::length(SkillChipNativeIdPrefix)),
+              props.nativeId.substr(
+                  std::char_traits<char>::length(SkillAttachmentNativeIdPrefix)),
           });
         }
         utf16Offset += fragmentLength;
@@ -213,7 +210,6 @@ Size T3MarkdownTextShadowNode::measureContent(
     _attributedString = baseAttributedString;
     _paragraphStyleRanges = paragraphStyleRanges;
     _attachmentRanges = attachmentRanges;
-    _chipRanges = chipRanges;
 
     NSMutableAttributedString *convertedAttributedString =
         [RCTNSAttributedStringFromAttributedString(baseAttributedString) mutableCopy];
@@ -263,7 +259,6 @@ void T3MarkdownTextShadowNode::layout(LayoutContext layoutContext) {
     _attributedString,
     _paragraphStyleRanges,
     _attachmentRanges,
-    _chipRanges,
   });
 }
 }

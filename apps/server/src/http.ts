@@ -25,21 +25,22 @@ import {
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { OtlpTracer } from "effect/unstable/observability";
 
-import { resolveStaticDir, ServerConfig } from "./config.ts";
+import * as ServerConfig from "./config.ts";
 import {
   ASSET_ROUTE_PREFIX,
   FALLBACK_PROJECT_FAVICON_SVG,
   resolveAsset,
 } from "./assets/AssetAccess.ts";
-import { BrowserTraceCollector } from "./observability/Services/BrowserTraceCollector.ts";
+import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
 import {
   annotateEnvironmentRequest,
   failEnvironmentScopeRequired,
   failEnvironmentAuthInvalid,
   failEnvironmentInternal,
 } from "./auth/http.ts";
-import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
+import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
@@ -48,7 +49,7 @@ const INDEX_HTML_FILE_NAME = "index.html";
 
 export const browserApiCorsLayer = Layer.unwrap(
   Effect.gen(function* () {
-    const config = yield* ServerConfig;
+    const config = yield* ServerConfig.ServerConfig;
     const devOrigin = config.devUrl?.origin;
     return HttpRouter.cors({
       ...(devOrigin ? { allowedOrigins: [devOrigin], credentials: true } : {}),
@@ -90,10 +91,12 @@ const authenticateRawRouteWithScope = (
     const request = yield* HttpServerRequest.HttpServerRequest;
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
-      Effect.catchTags({
-        ServerAuthInvalidCredentialError: (error) => failEnvironmentAuthInvalid(error.reason),
-        ServerAuthInternalError: (error) => failEnvironmentInternal("internal_error", error),
-      }),
+      Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+        failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
+      ),
+      Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ),
     );
     if (!session.scopes.includes(scope)) {
       return yield* failEnvironmentScopeRequired(scope);
@@ -104,13 +107,13 @@ export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "metadata",
   Effect.fnUntraced(function* (handlers) {
-    const serverEnvironment = yield* ServerEnvironment;
+    const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
     return handlers.handle(
       "descriptor",
       Effect.fn("environment.metadata.descriptor")(function* (args) {
         yield* annotateEnvironmentRequest(args.endpoint.name);
         return yield* serverEnvironment.getDescriptor;
-      }),
+      }, traceRelayRequest),
     );
   }),
 );
@@ -126,9 +129,9 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
   Effect.gen(function* () {
     yield* authenticateRawRouteWithScope(AuthOrchestrationOperateScope);
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const config = yield* ServerConfig;
+    const config = yield* ServerConfig.ServerConfig;
     const otlpTracesUrl = config.otlpTracesUrl;
-    const browserTraceCollector = yield* BrowserTraceCollector;
+    const browserTraceCollector = yield* BrowserTraceCollector.BrowserTraceCollector;
     const httpClient = yield* HttpClient.HttpClient;
     const bodyJson = cast<unknown, OtlpTracer.TraceData>(yield* request.json);
 
@@ -223,10 +226,11 @@ export const assetRouteLayer = HttpRouter.add(
 
 export const staticAndDevRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
-    const config = yield* ServerConfig;
+    const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const staticDir = config.staticDir ?? (config.devUrl ? yield* resolveStaticDir() : undefined);
+    const staticDir =
+      config.staticDir ?? (config.devUrl ? yield* ServerConfig.resolveStaticDir() : undefined);
     const staticRoot = staticDir ? path.resolve(staticDir) : null;
     const indexHtml =
       staticRoot === null

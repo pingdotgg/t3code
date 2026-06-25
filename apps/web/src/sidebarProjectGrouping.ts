@@ -1,4 +1,4 @@
-import { scopeProjectRef } from "@t3tools/client-runtime";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -104,7 +104,7 @@ export function buildSidebarProjectSnapshots(input: {
               representative,
               members,
             })
-          : representative.name,
+          : representative.title,
       groupedProjectCount: members.length,
       environmentPresence:
         hasLocal && hasRemote ? "mixed" : hasRemote ? "remote-only" : "local-only",

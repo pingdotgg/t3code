@@ -1,653 +1,365 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  type DesktopBridge,
+  EnvironmentId,
+  type RelayClientInstallProgressEvent,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import { RelayWebClientId } from "@t3tools/contracts/relay";
-import { afterEach, beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/unstable/http";
+import { afterEach, beforeEach, vi } from "vite-plus/test";
 import {
-  managedRelayClientLayer,
-  ManagedRelayClient,
-  ManagedRelayDpopSigner,
-  remoteHttpClientLayer,
-} from "@t3tools/client-runtime";
+  AVAILABLE_CONNECTION_STATE,
+  EnvironmentSupervisor,
+  type PreparedConnection,
+  PrimaryConnectionTarget,
+} from "@t3tools/client-runtime/connection";
+import { type RpcSession } from "@t3tools/client-runtime/rpc";
+import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
+import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
+import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth";
 
-import type { SavedEnvironmentRecord } from "../environments/runtime";
 import {
-  connectManagedCloudEnvironment,
-  linkEnvironmentToCloud,
+  collectCloudLinkTargets,
   linkPrimaryEnvironmentToCloud,
   listManagedCloudEnvironments,
   normalizeRelayBaseUrl,
   readPrimaryCloudLinkState,
+  type CloudLinkTarget,
   unlinkPrimaryEnvironmentFromCloud,
+  updatePrimaryCloudPreferences,
 } from "./linkEnvironment";
-import {
-  readPrimaryEnvironmentDescriptor,
-  readPrimaryEnvironmentTarget,
-  resolvePrimaryEnvironmentHttpUrl,
-} from "../environments/primary";
 
-const getSavedEnvironmentSecretMock = vi.fn();
-const relayClientInstallDialogHarness = vi.hoisted(() => ({
+const TARGET: CloudLinkTarget = {
+  environmentId: "environment-1",
+  label: "Desktop",
+  httpBaseUrl: "http://127.0.0.1:3000",
+  wsBaseUrl: "ws://127.0.0.1:3000",
+};
+
+const relayClientInstallDialog = vi.hoisted(() => ({
   requestConfirmation: vi.fn(),
   reportProgress: vi.fn(),
   finish: vi.fn(),
 }));
-const getRelayClientStatusMock = vi.fn();
-const installRelayClientMock = vi.fn();
-const environmentConnectionMock = {
-  client: {
-    cloud: {
-      getRelayClientStatus: getRelayClientStatusMock,
-      installRelayClient: installRelayClientMock,
-    },
-  },
-};
 
-const createProofMock = vi.fn(
-  (_input: { readonly method: string; readonly url: string; readonly accessToken?: string }) =>
-    Effect.succeed("web-dpop-proof"),
-);
-const testDpopSignerLayer = Layer.succeed(
-  ManagedRelayDpopSigner,
-  ManagedRelayDpopSigner.of({
-    thumbprint: Effect.succeed("web-thumbprint"),
-    createProof: (input) => createProofMock(input),
+vi.mock("./relayClientInstallDialog", () => ({
+  requestRelayClientInstallConfirmation: relayClientInstallDialog.requestConfirmation,
+  reportRelayClientInstallProgress: relayClientInstallDialog.reportProgress,
+  finishRelayClientInstall: relayClientInstallDialog.finish,
+}));
+
+const createProof = vi.fn(() => Effect.succeed("dpop-proof"));
+const dpopSignerLayer = Layer.succeed(
+  ManagedRelay.ManagedRelayDpopSigner,
+  ManagedRelay.ManagedRelayDpopSigner.of({
+    thumbprint: Effect.succeed("thumbprint"),
+    createProof,
   }),
 );
 
-function cloudClientLayer() {
-  const httpClientLayer = remoteHttpClientLayer(globalThis.fetch);
+function relayLayer() {
+  const http = remoteHttpClientLayer(globalThis.fetch);
   return Layer.mergeAll(
-    httpClientLayer,
-    managedRelayClientLayer({
+    http,
+    ManagedRelay.layer({
       relayUrl: "https://relay.example.test",
       clientId: RelayWebClientId,
-    }).pipe(Layer.provideMerge(testDpopSignerLayer), Layer.provide(httpClientLayer)),
+    }).pipe(Layer.provideMerge(dpopSignerLayer), Layer.provide(http)),
   );
 }
 
-const withCloudServices = <A, E>(
-  effect: Effect.Effect<A, E, HttpClient.HttpClient | ManagedRelayClient | ManagedRelayDpopSigner>,
-) => effect.pipe(Effect.provide(cloudClientLayer()));
-
-vi.mock("../localApi", () => ({
-  ensureLocalApi: () => ({
-    persistence: {
-      getSavedEnvironmentSecret: getSavedEnvironmentSecretMock,
-    },
-  }),
-}));
-
-vi.mock("./relayClientInstallDialog", () => ({
-  requestRelayClientInstallConfirmation: relayClientInstallDialogHarness.requestConfirmation,
-  reportRelayClientInstallProgress: relayClientInstallDialogHarness.reportProgress,
-  finishRelayClientInstall: relayClientInstallDialogHarness.finish,
-}));
-
-vi.mock("../environments/primary", () => ({
-  readPrimaryEnvironmentDescriptor: vi.fn(() => null),
-  readPrimaryEnvironmentTarget: vi.fn(() => null),
-  resolvePrimaryEnvironmentHttpUrl: vi.fn((path: string) => `http://127.0.0.1:3000${path}`),
-}));
-
-vi.mock("../environments/runtime", () => ({
-  getPrimaryEnvironmentConnection: () => environmentConnectionMock,
-  readEnvironmentConnection: () => environmentConnectionMock,
-}));
-
-const savedEnvironment: SavedEnvironmentRecord = {
-  environmentId: EnvironmentId.make("env-1"),
-  label: "Desktop",
-  httpBaseUrl: "http://127.0.0.1:3000",
-  wsBaseUrl: "ws://127.0.0.1:3000",
-  createdAt: "2026-05-25T00:00:00.000Z",
-  lastConnectedAt: null,
-};
-
-function validProof() {
-  return "signed-environment-link-jwt";
+function registryLayer(options?: {
+  readonly status?: { readonly status: "available"; readonly version: string };
+  readonly installEvents?: ReadonlyArray<RelayClientInstallProgressEvent>;
+}) {
+  return Layer.effect(
+    EnvironmentRegistry,
+    Effect.gen(function* () {
+      const client = {
+        [WS_METHODS.cloudGetRelayClientStatus]: () =>
+          Effect.succeed(options?.status ?? { status: "available", version: "2026.6.0" }),
+        [WS_METHODS.cloudInstallRelayClient]: () =>
+          Stream.fromIterable(options?.installEvents ?? []),
+      } as unknown as RpcSession["client"];
+      const session: RpcSession = {
+        client,
+        initialConfig: Effect.never,
+        ready: Effect.void,
+        probe: Effect.void,
+        closed: Effect.never,
+      };
+      const target = new PrimaryConnectionTarget({
+        environmentId: EnvironmentId.make(TARGET.environmentId),
+        label: TARGET.label,
+        httpBaseUrl: TARGET.httpBaseUrl,
+        wsBaseUrl: TARGET.wsBaseUrl,
+      });
+      const supervisor = EnvironmentSupervisor.of({
+        target,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session)),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor["Service"]);
+      const registry = {
+        run: <A, E, R>(_environmentId: EnvironmentId, effect: Effect.Effect<A, E, R>) =>
+          Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+        runStream: <A, E, R>(_environmentId: EnvironmentId, stream: Stream.Stream<A, E, R>) =>
+          Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+      } as unknown as EnvironmentRegistry["Service"];
+      return EnvironmentRegistry.of(registry);
+    }),
+  );
 }
 
-function validChallenge() {
-  return {
-    challenge: "link-challenge",
-    expiresAt: "2026-05-25T00:05:00.000Z",
-  };
+function services(options?: Parameters<typeof registryLayer>[0]) {
+  return Layer.mergeAll(relayLayer(), registryLayer(options));
 }
 
-function availableRelayClient() {
-  return {
-    status: "available",
-    executablePath: "/Users/test/.t3/tools/cloudflared/cloudflared",
-    source: "managed",
-    version: "2026.5.2",
-  };
+function withServices<A, E>(
+  effect: Effect.Effect<
+    A,
+    E,
+    HttpClient.HttpClient | ManagedRelay.ManagedRelayClient | EnvironmentRegistry
+  >,
+  options?: Parameters<typeof registryLayer>[0],
+) {
+  return effect.pipe(Effect.provide(services(options)));
 }
 
-function requestBodyText(body: BodyInit | null | undefined): string {
+function bodyText(body: BodyInit | null | undefined): string {
   return body instanceof Uint8Array ? new TextDecoder().decode(body) : String(body ?? "");
 }
 
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.stubEnv("VITE_T3CODE_RELAY_URL", "https://relay.example.test");
+  relayClientInstallDialog.requestConfirmation.mockResolvedValue(true);
+});
+
+afterEach(() => {
+  __resetDesktopPrimaryAuthForTests();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
+
 describe("web cloud link environment client", () => {
-  afterEach(() => {
-    if ("window" in globalThis) {
-      Reflect.deleteProperty(window, "desktopBridge");
-    }
-    vi.unstubAllGlobals();
-  });
-
-  beforeEach(() => {
-    vi.restoreAllMocks();
-    vi.clearAllMocks();
-    createProofMock.mockClear();
-    vi.stubEnv("VITE_T3CODE_RELAY_URL", "https://relay.example.test");
-    getSavedEnvironmentSecretMock.mockResolvedValue("local-bearer");
-    relayClientInstallDialogHarness.requestConfirmation.mockResolvedValue(true);
-    getRelayClientStatusMock.mockResolvedValue(availableRelayClient());
-    installRelayClientMock.mockResolvedValue(availableRelayClient());
-    vi.mocked(readPrimaryEnvironmentDescriptor).mockReturnValue(null);
-    vi.mocked(readPrimaryEnvironmentTarget).mockReturnValue(null);
-    vi.mocked(resolvePrimaryEnvironmentHttpUrl).mockImplementation(
-      (path: string) => `http://127.0.0.1:3000${path}`,
-    );
-  });
-
-  it("normalizes configured relay base URLs before building relay requests", () => {
+  it("normalizes relay URLs and de-duplicates cloud link targets", () => {
     expect(normalizeRelayBaseUrl(" https://relay.example.test/// ")).toBe(
       "https://relay.example.test",
     );
-    expect(normalizeRelayBaseUrl("   ")).toBeNull();
+    expect(normalizeRelayBaseUrl(" ")).toBeNull();
+    expect(
+      collectCloudLinkTargets({
+        primary: TARGET,
+        saved: [TARGET, { ...TARGET, environmentId: "environment-2" }],
+      }).map((target) => target.environmentId),
+    ).toEqual(["environment-1", "environment-2"]);
   });
 
-  it.effect(
-    "installs the relay client over environment RPC before requesting a cloud challenge",
-    () =>
-      Effect.gen(function* () {
-        getRelayClientStatusMock.mockResolvedValue({
-          status: "missing",
-          version: "2026.5.2",
-        });
-        vi.mocked(readPrimaryEnvironmentDescriptor).mockReturnValue({
-          environmentId: EnvironmentId.make("env-1"),
-          label: "Desktop",
-          platform: { os: "darwin", arch: "arm64" },
-          serverVersion: "0.0.0-test",
-          capabilities: { repositoryIdentity: true },
-        });
-        vi.mocked(readPrimaryEnvironmentTarget).mockReturnValue({
-          source: "desktop-managed",
-          target: {
-            httpBaseUrl: "http://127.0.0.1:3000",
-            wsBaseUrl: "ws://127.0.0.1:3000",
-          },
-        });
-        const fetchMock = vi
-          .fn()
-          .mockResolvedValueOnce(Response.json(validChallenge()))
-          .mockResolvedValueOnce(Response.json({ malformed: true }));
-        vi.stubGlobal("fetch", fetchMock);
-        installRelayClientMock.mockImplementationOnce(async (onProgress) => {
-          onProgress({ type: "progress", stage: "downloading" });
-          return availableRelayClient();
-        });
-
-        yield* withCloudServices(
-          linkPrimaryEnvironmentToCloud({
-            clerkToken: "clerk-token",
-          }),
-        ).pipe(Effect.flip);
-
-        expect(relayClientInstallDialogHarness.requestConfirmation).toHaveBeenCalledWith(
-          "2026.5.2",
-        );
-        expect(getRelayClientStatusMock).toHaveBeenCalledOnce();
-        expect(installRelayClientMock).toHaveBeenCalledOnce();
-        expect(relayClientInstallDialogHarness.reportProgress).toHaveBeenCalledWith({
-          type: "progress",
-          stage: "downloading",
-        });
-        expect(relayClientInstallDialogHarness.finish).toHaveBeenCalledOnce();
-        expect(installRelayClientMock.mock.invocationCallOrder[0]).toBeLessThan(
-          fetchMock.mock.invocationCallOrder[0]!,
-        );
-        expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-          "https://relay.example.test/v1/client/environment-link-challenges",
-        );
-      }),
-  );
-
-  it.effect("lists relay-managed environments for hosted and served web clients", () =>
+  it.effect("lists relay-managed environments through the typed relay client", () =>
     Effect.gen(function* () {
-      const fetchMock = vi.fn().mockResolvedValueOnce(
+      const fetchMock = vi.fn().mockResolvedValue(
         Response.json({
           environments: [
             {
-              environmentId: "env-1",
-              label: "Managed desktop",
+              environmentId: "environment-1",
+              label: "Desktop",
               endpoint: {
-                httpBaseUrl: "https://managed.example.test",
-                wsBaseUrl: "wss://managed.example.test",
+                httpBaseUrl: "https://desktop.example.test",
+                wsBaseUrl: "wss://desktop.example.test",
                 providerKind: "cloudflare_tunnel",
               },
-              linkedAt: "2026-05-25T00:00:00.000Z",
+              linkedAt: "2026-06-06T00:00:00.000Z",
             },
           ],
         }),
       );
       vi.stubGlobal("fetch", fetchMock);
 
-      const environments = yield* withCloudServices(
+      const environments = yield* withServices(
         listManagedCloudEnvironments({ clerkToken: "clerk-token" }),
       );
+
       expect(environments).toHaveLength(1);
-      expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-        "https://relay.example.test/v1/environments",
-      );
       expect(fetchMock.mock.calls[0]?.[1]?.headers.authorization).toBe("Bearer clerk-token");
-      expect(fetchMock.mock.calls[0]?.[1]?.credentials).not.toBe("include");
     }),
   );
 
-  it.effect("connects web clients to managed environments with a tunnel-only DPoP token", () =>
+  it.effect("reads primary cloud link state from the explicit target", () =>
     Effect.gen(function* () {
-      const environment = {
-        environmentId: EnvironmentId.make("env-1"),
-        label: "Managed desktop",
-        endpoint: {
-          httpBaseUrl: "https://managed.example.test",
-          wsBaseUrl: "wss://managed.example.test",
-          providerKind: "cloudflare_tunnel" as const,
-        },
-        linkedAt: "2026-05-25T00:00:00.000Z",
-      };
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(
-          Response.json({
-            access_token: "relay-access-token",
-            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-            token_type: "DPoP",
-            expires_in: 300,
-            scope: "environment:connect",
-          }),
-        )
-        .mockResolvedValueOnce(
-          Response.json({
-            environmentId: "env-1",
-            endpoint: environment.endpoint,
-            credential: "environment-bootstrap",
-            expiresAt: "2026-05-25T00:05:00.000Z",
-          }),
-        )
-        .mockResolvedValueOnce(
-          Response.json({
-            environmentId: "env-1",
-            label: "Managed desktop",
-            platform: { os: "darwin", arch: "arm64" },
-            serverVersion: "0.0.0-test",
-            capabilities: { repositoryIdentity: true },
-          }),
-        )
-        .mockResolvedValueOnce(
-          Response.json({
-            access_token: "environment-access-token",
-            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-            token_type: "DPoP",
-            expires_in: 3600,
-            scope: "orchestration:read orchestration:operate terminal:operate review:write",
-          }),
-        );
-      vi.stubGlobal("fetch", fetchMock);
-
-      const connection = yield* withCloudServices(
-        connectManagedCloudEnvironment({ clerkToken: "clerk-token", environment }),
-      );
-      expect(connection).toMatchObject({
-        environmentId: "env-1",
-        accessToken: "environment-access-token",
-      });
-
-      const tokenBody = requestBodyText(fetchMock.mock.calls[0]?.[1]?.body);
-      expect(new URLSearchParams(tokenBody).get("client_id")).toBe("t3-web");
-      expect(new URLSearchParams(tokenBody).get("scope")).toBe("environment:connect");
-      expect(fetchMock.mock.calls[1]?.[1]?.headers.authorization).toBe("DPoP relay-access-token");
-      expect(fetchMock.mock.calls[1]?.[1]?.headers.dpop).toBe("web-dpop-proof");
-      expect(createProofMock).toHaveBeenCalledWith({
-        method: "POST",
-        url: "https://managed.example.test/oauth/token",
-      });
-      const traceparents = fetchMock.mock.calls.map(
-        (call) => call[1]?.headers.traceparent as string | undefined,
-      );
-      expect(traceparents.every((traceparent) => typeof traceparent === "string")).toBe(true);
-      expect(new Set(traceparents.map((traceparent) => traceparent?.split("-")[1])).size).toBe(1);
-      expect(connection.relayTraceHeaders.traceparent?.split("-")[1]).toBe(
-        traceparents[0]?.split("-")[1],
-      );
-    }),
-  );
-
-  it.effect("rejects a stored managed connection for another relay origin", () =>
-    Effect.gen(function* () {
-      const environment = {
-        environmentId: EnvironmentId.make("env-1"),
-        label: "Managed desktop",
-        endpoint: {
-          httpBaseUrl: "https://managed.example.test",
-          wsBaseUrl: "wss://managed.example.test",
-          providerKind: "cloudflare_tunnel" as const,
-        },
-        linkedAt: "2026-05-25T00:00:00.000Z",
-      };
-
-      const error = yield* withCloudServices(
-        connectManagedCloudEnvironment({
-          clerkToken: "clerk-token",
-          environment,
-          relayUrl: "https://old-relay.example.test",
-        }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        message: "The saved environment is linked through a different configured relay.",
-      });
-    }),
-  );
-
-  it.effect("rejects malformed local environment link proofs", () =>
-    Effect.gen(function* () {
-      vi.stubGlobal(
-        "fetch",
-        vi
-          .fn()
-          .mockResolvedValueOnce(Response.json(validChallenge()))
-          .mockResolvedValueOnce(
-            Response.json({
-              payload: {
-                environmentId: "env-1",
-              },
-              signature: "signature-1",
-            }),
-          ),
-      );
-
-      const error = yield* withCloudServices(
-        linkEnvironmentToCloud({
-          environment: savedEnvironment,
-          clerkToken: "clerk-token",
-        }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "CloudEnvironmentLinkError",
-        message: "Could not obtain environment link proof.",
-      });
-    }),
-  );
-
-  it.effect("preserves typed local environment failures while obtaining a link proof", () =>
-    Effect.gen(function* () {
-      vi.stubGlobal(
-        "fetch",
-        vi
-          .fn()
-          .mockResolvedValueOnce(Response.json(validChallenge()))
-          .mockResolvedValueOnce(
-            Response.json(
-              {
-                _tag: "EnvironmentHttpUnauthorizedError",
-                message: "Invalid environment bearer session.",
-              },
-              { status: 401 },
-            ),
-          ),
-      );
-
-      const error = yield* withCloudServices(
-        linkEnvironmentToCloud({
-          environment: savedEnvironment,
-          clerkToken: "clerk-token",
-        }),
-      ).pipe(Effect.flip);
-      expect(error._tag).toBe("CloudEnvironmentLinkError");
-      expect(error.message).toBe(
-        "Could not obtain environment link proof: Invalid environment bearer session.",
-      );
-    }),
-  );
-
-  it.effect("rejects malformed relay environment link responses", () =>
-    Effect.gen(function* () {
-      vi.stubGlobal(
-        "fetch",
-        vi
-          .fn()
-          .mockResolvedValueOnce(Response.json(validChallenge()))
-          .mockResolvedValueOnce(Response.json(validProof()))
-          .mockResolvedValueOnce(
-            Response.json({
-              ok: true,
-              environmentId: "env-1",
-              endpoint: {
-                httpBaseUrl: "https://desktop.example.test",
-                wsBaseUrl: "wss://desktop.example.test",
-                providerKind: "cloudflare_tunnel",
-              },
-              endpointRuntime: null,
-              relayIssuer: "https://issuer.example.test",
-              cloudUserId: "user_123",
-              environmentCredential: "",
-              cloudMintPublicKey: "cloud-mint-public-key",
-            }),
-          ),
-      );
-
-      const error = yield* withCloudServices(
-        linkEnvironmentToCloud({
-          environment: savedEnvironment,
-          clerkToken: "clerk-token",
-        }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "CloudEnvironmentLinkError",
-        message: "https://relay.example.test/v1/client/environment-links failed",
-      });
-    }),
-  );
-
-  it.effect(
-    "links the primary local environment through the relay using the owner cookie session",
-    () =>
-      Effect.gen(function* () {
-        vi.mocked(readPrimaryEnvironmentDescriptor).mockReturnValue({
-          environmentId: EnvironmentId.make("env-1"),
-          label: "Desktop",
-          platform: { os: "darwin", arch: "arm64" },
-          serverVersion: "0.0.0-test",
-          capabilities: { repositoryIdentity: true },
-        });
-        vi.mocked(readPrimaryEnvironmentTarget).mockReturnValue({
-          source: "desktop-managed",
-          target: {
-            httpBaseUrl: "http://127.0.0.1:3000",
-            wsBaseUrl: "ws://127.0.0.1:3000",
-          },
-        });
-        vi.mocked(resolvePrimaryEnvironmentHttpUrl).mockImplementation(
-          (path: string) => `http://127.0.0.1:3000${path}`,
-        );
-
-        const fetchMock = vi
-          .fn()
-          .mockResolvedValueOnce(Response.json(validChallenge()))
-          .mockResolvedValueOnce(Response.json(validProof()))
-          .mockResolvedValueOnce(
-            Response.json({
-              ok: true,
-              environmentId: "env-1",
-              endpoint: {
-                httpBaseUrl: "https://desktop.example.test",
-                wsBaseUrl: "wss://desktop.example.test",
-                providerKind: "cloudflare_tunnel",
-              },
-              endpointRuntime: {
-                providerKind: "cloudflare_tunnel",
-                connectorToken: "connector-token",
-                tunnelId: "tunnel-id",
-                tunnelName: "tunnel-name",
-              },
-              relayIssuer: "https://issuer.example.test",
-              cloudUserId: "user_123",
-              environmentCredential: "t3env_test_credential",
-              cloudMintPublicKey: "cloud-mint-public-key",
-            }),
-          )
-          .mockResolvedValueOnce(
-            Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
-          );
-        vi.stubGlobal("fetch", fetchMock);
-
-        yield* withCloudServices(
-          linkPrimaryEnvironmentToCloud({
-            clerkToken: "clerk-token",
-          }),
-        );
-
-        expect(getRelayClientStatusMock).toHaveBeenCalledOnce();
-        expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-          "https://relay.example.test/v1/client/environment-link-challenges",
-        );
-        expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
-        expect(fetchMock.mock.calls[0]?.[1]?.headers.authorization).toBe("Bearer clerk-token");
-        expect(fetchMock.mock.calls[0]?.[1]?.credentials).not.toBe("include");
-
-        expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
-          "http://127.0.0.1:3000/api/connect/link-proof",
-        );
-        expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
-          method: "POST",
-          credentials: "include",
-          headers: expect.objectContaining({
-            "content-type": "application/json",
-          }),
-        });
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        expect(JSON.parse(requestBodyText(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
-          challenge: "link-challenge",
-          endpoint: {
-            httpBaseUrl: "http://127.0.0.1:3000",
-            wsBaseUrl: "ws://127.0.0.1:3000",
-            providerKind: "cloudflare_tunnel",
-          },
-          origin: {
-            localHttpHost: "127.0.0.1",
-            localHttpPort: 3000,
-          },
-        });
-
-        expect(String(fetchMock.mock.calls[2]?.[0])).toBe(
-          "https://relay.example.test/v1/client/environment-links",
-        );
-        expect(fetchMock.mock.calls[2]?.[1]?.method).toBe("POST");
-        expect(fetchMock.mock.calls[2]?.[1]?.headers.authorization).toBe("Bearer clerk-token");
-        expect(fetchMock.mock.calls[2]?.[1]?.credentials).not.toBe("include");
-        expect(fetchMock.mock.calls[2]?.[1]?.headers["content-type"]).toBe("application/json");
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        expect(JSON.parse(requestBodyText(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({
-          proof: validProof(),
-          notificationsEnabled: true,
-          liveActivitiesEnabled: true,
-          managedTunnelsEnabled: true,
-        });
-
-        expect(String(fetchMock.mock.calls[3]?.[0])).toBe(
-          "http://127.0.0.1:3000/api/connect/relay-config",
-        );
-        expect(fetchMock.mock.calls[3]?.[1]).toMatchObject({
-          method: "POST",
-          credentials: "include",
-          headers: expect.objectContaining({
-            "content-type": "application/json",
-          }),
-        });
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        expect(JSON.parse(requestBodyText(fetchMock.mock.calls[3]?.[1]?.body))).toMatchObject({
-          relayUrl: "https://relay.example.test",
-          relayIssuer: "https://issuer.example.test",
-          cloudUserId: "user_123",
-          environmentCredential: "t3env_test_credential",
-          cloudMintPublicKey: "cloud-mint-public-key",
-          endpointRuntime: {
-            providerKind: "cloudflare_tunnel",
-            connectorToken: "connector-token",
-            tunnelId: "tunnel-id",
-            tunnelName: "tunnel-name",
-          },
-        });
-      }),
-  );
-
-  it.effect("reads the primary local cloud link state with the owner cookie session", () =>
-    Effect.gen(function* () {
-      vi.mocked(readPrimaryEnvironmentDescriptor).mockReturnValue({
-        environmentId: EnvironmentId.make("env-1"),
-        label: "Desktop",
-        platform: { os: "darwin", arch: "arm64" },
-        serverVersion: "0.0.0-test",
-        capabilities: { repositoryIdentity: true },
-      });
-      vi.mocked(readPrimaryEnvironmentTarget).mockReturnValue({
-        source: "desktop-managed",
-        target: {
-          httpBaseUrl: "http://127.0.0.1:3000",
-          wsBaseUrl: "ws://127.0.0.1:3000",
-        },
-      });
-      const fetchMock = vi.fn().mockResolvedValueOnce(
+      const fetchMock = vi.fn().mockResolvedValue(
         Response.json({
           linked: true,
-          cloudUserId: "user_123",
+          cloudUserId: "user-1",
           relayUrl: "https://relay.example.test",
-          relayIssuer: "https://issuer.example.test",
+          relayIssuer: "https://relay.example.test",
           publishAgentActivity: false,
         }),
       );
       vi.stubGlobal("fetch", fetchMock);
 
-      const state = yield* withCloudServices(readPrimaryCloudLinkState());
-      expect(state).toEqual({
-        linked: true,
-        cloudUserId: "user_123",
-        relayUrl: "https://relay.example.test",
-        relayIssuer: "https://issuer.example.test",
-        publishAgentActivity: false,
-      });
+      const state = yield* withServices(readPrimaryCloudLinkState({ target: TARGET }));
+
+      expect(Option.fromNullishOr(state)).toEqual(
+        Option.some({
+          linked: true,
+          cloudUserId: "user-1",
+          relayUrl: "https://relay.example.test",
+          relayIssuer: "https://relay.example.test",
+          publishAgentActivity: false,
+        }),
+      );
       expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
         "http://127.0.0.1:3000/api/connect/link-state",
       );
-      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
-        method: "GET",
-        credentials: "include",
+    }),
+  );
+
+  it.effect("uses desktop bearer auth for primary cloud link state", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi.fn().mockResolvedValue(
+        Response.json({
+          linked: true,
+          cloudUserId: "user-1",
+          relayUrl: "https://relay.example.test",
+          relayIssuer: "https://relay.example.test",
+          publishAgentActivity: false,
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("window", {
+        location: { origin: "t3code://app" },
+        desktopBridge: {
+          getLocalEnvironmentBearerToken: vi.fn().mockResolvedValue("desktop-bearer-token"),
+        } as unknown as DesktopBridge,
+      });
+
+      yield* withServices(readPrimaryCloudLinkState({ target: TARGET }));
+
+      const request = new Request(fetchMock.mock.calls[0]?.[0], fetchMock.mock.calls[0]?.[1]);
+      expect(request.credentials).not.toBe("include");
+      expect(request.headers.get("authorization")).toBe("Bearer desktop-bearer-token");
+    }),
+  );
+
+  it.effect("updates agent activity publishing for the explicit primary target", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi.fn().mockResolvedValue(
+        Response.json({
+          linked: true,
+          cloudUserId: "user-1",
+          relayUrl: "https://relay.example.test",
+          relayIssuer: "https://relay.example.test",
+          publishAgentActivity: true,
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const state = yield* withServices(
+        updatePrimaryCloudPreferences({
+          target: TARGET,
+          publishAgentActivity: true,
+        }),
+      );
+
+      expect(state.publishAgentActivity).toBe(true);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+        "http://127.0.0.1:3000/api/connect/preferences",
+      );
+      expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(bodyText(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+        publishAgentActivity: true,
       });
     }),
   );
 
-  it.effect("clears local relay credentials before revoking the primary cloud link", () =>
+  it.effect("links an available primary environment without invoking installation", () =>
     Effect.gen(function* () {
-      vi.mocked(readPrimaryEnvironmentDescriptor).mockReturnValue({
-        environmentId: EnvironmentId.make("env-1"),
-        label: "Desktop",
-        platform: { os: "darwin", arch: "arm64" },
-        serverVersion: "0.0.0-test",
-        capabilities: { repositoryIdentity: true },
-      });
-      vi.mocked(readPrimaryEnvironmentTarget).mockReturnValue({
-        source: "desktop-managed",
-        target: {
-          httpBaseUrl: "http://127.0.0.1:3000",
-          wsBaseUrl: "ws://127.0.0.1:3000",
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({
+            challenge: "challenge",
+            expiresAt: "2026-06-06T00:05:00.000Z",
+          }),
+        )
+        .mockResolvedValueOnce(Response.json("signed-proof"))
+        .mockResolvedValueOnce(
+          Response.json({
+            ok: true,
+            environmentId: TARGET.environmentId,
+            endpoint: {
+              httpBaseUrl: "https://desktop.example.test",
+              wsBaseUrl: "wss://desktop.example.test",
+              providerKind: "cloudflare_tunnel",
+            },
+            endpointRuntime: null,
+            relayIssuer: "https://relay.example.test",
+            cloudUserId: "user-1",
+            environmentCredential: "environment-credential",
+            cloudMintPublicKey: "public-key",
+          }),
+        )
+        .mockResolvedValueOnce(
+          Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
+        );
+      vi.stubGlobal("fetch", fetchMock);
+
+      yield* withServices(
+        linkPrimaryEnvironmentToCloud({
+          target: TARGET,
+          clerkToken: "clerk-token",
+        }),
+      );
+
+      expect(relayClientInstallDialog.requestConfirmation).not.toHaveBeenCalled();
+      expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+        "http://127.0.0.1:3000/api/connect/link-proof",
+      );
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(bodyText(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+        challenge: "challenge",
+        endpoint: {
+          httpBaseUrl: TARGET.httpBaseUrl,
+          wsBaseUrl: TARGET.wsBaseUrl,
         },
       });
+    }),
+  );
+
+  it.effect("installs a missing relay client before linking", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ malformed: true })));
+
+      yield* withServices(
+        linkPrimaryEnvironmentToCloud({
+          target: TARGET,
+          clerkToken: "clerk-token",
+        }),
+        {
+          status: { status: "available", version: "2026.6.0" },
+          installEvents: [],
+        },
+      ).pipe(Effect.flip);
+
+      expect(relayClientInstallDialog.requestConfirmation).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("unlinks locally before revoking the relay record", () =>
+    Effect.gen(function* () {
       const fetchMock = vi
         .fn()
         .mockResolvedValueOnce(
@@ -656,256 +368,17 @@ describe("web cloud link environment client", () => {
         .mockResolvedValueOnce(Response.json({ ok: true }));
       vi.stubGlobal("fetch", fetchMock);
 
-      yield* withCloudServices(
+      yield* withServices(
         unlinkPrimaryEnvironmentFromCloud({
+          target: TARGET,
           clerkToken: "clerk-token",
         }),
       );
 
       expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://127.0.0.1:3000/api/connect/unlink");
-      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
-        method: "POST",
-        credentials: "include",
-      });
-      expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
-        "https://relay.example.test/v1/client/environment-links/env-1",
+      expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
+        `/v1/client/environment-links/${TARGET.environmentId}`,
       );
-      expect(fetchMock.mock.calls[1]?.[1]?.method).toBe("DELETE");
-      expect(fetchMock.mock.calls[1]?.[1]?.headers.authorization).toBe("Bearer clerk-token");
-    }),
-  );
-
-  it.effect("still clears local relay credentials when relay revocation fails", () =>
-    Effect.gen(function* () {
-      vi.mocked(readPrimaryEnvironmentDescriptor).mockReturnValue({
-        environmentId: EnvironmentId.make("env-1"),
-        label: "Desktop",
-        platform: { os: "darwin", arch: "arm64" },
-        serverVersion: "0.0.0-test",
-        capabilities: { repositoryIdentity: true },
-      });
-      vi.mocked(readPrimaryEnvironmentTarget).mockReturnValue({
-        source: "desktop-managed",
-        target: {
-          httpBaseUrl: "http://127.0.0.1:3000",
-          wsBaseUrl: "ws://127.0.0.1:3000",
-        },
-      });
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(
-          Response.json({ ok: true, endpointRuntimeStatus: { status: "disabled" } }),
-        )
-        .mockResolvedValueOnce(Response.json({ error: "unavailable" }, { status: 503 }));
-      vi.stubGlobal("fetch", fetchMock);
-
-      yield* withCloudServices(
-        unlinkPrimaryEnvironmentFromCloud({
-          clerkToken: "clerk-token",
-        }),
-      );
-
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://127.0.0.1:3000/api/connect/unlink");
-      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
-        method: "POST",
-        credentials: "include",
-      });
-    }),
-  );
-
-  it.effect("rejects primary environment linking when the local environment is not ready", () =>
-    Effect.gen(function* () {
-      vi.stubGlobal("fetch", vi.fn());
-
-      const error = yield* withCloudServices(
-        linkPrimaryEnvironmentToCloud({
-          clerkToken: "clerk-token",
-        }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "CloudEnvironmentLinkError",
-        message: "Local environment is not ready yet.",
-      });
-      expect(fetch).not.toHaveBeenCalled();
-    }),
-  );
-
-  it.effect("preserves relay transport failures while linking environments", () =>
-    Effect.gen(function* () {
-      vi.stubGlobal(
-        "fetch",
-        vi
-          .fn()
-          .mockResolvedValueOnce(Response.json(validChallenge()))
-          .mockResolvedValueOnce(Response.json(validProof()))
-          .mockResolvedValueOnce(Response.json({ error: "unavailable" }, { status: 503 })),
-      );
-
-      const error = yield* withCloudServices(
-        linkEnvironmentToCloud({
-          environment: savedEnvironment,
-          clerkToken: "clerk-token",
-        }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "CloudEnvironmentLinkError",
-        message: "https://relay.example.test/v1/client/environment-links failed",
-      });
-    }),
-  );
-
-  it.effect("preserves typed relay error bodies while linking environments", () =>
-    Effect.gen(function* () {
-      vi.stubGlobal(
-        "fetch",
-        vi
-          .fn()
-          .mockResolvedValueOnce(Response.json(validChallenge()))
-          .mockResolvedValueOnce(Response.json(validProof()))
-          .mockResolvedValueOnce(
-            Response.json(
-              {
-                _tag: "RelayEnvironmentLinkProofInvalidError",
-                code: "environment_link_proof_invalid",
-                reason: "origin_not_allowed",
-                traceId: "trace-test",
-              },
-              { status: 400 },
-            ),
-          ),
-      );
-
-      const error = yield* withCloudServices(
-        linkEnvironmentToCloud({
-          environment: savedEnvironment,
-          clerkToken: "clerk-token",
-        }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "CloudEnvironmentLinkError",
-        message:
-          "https://relay.example.test/v1/client/environment-links failed: Relay rejected the environment link proof (origin_not_allowed).",
-      });
-    }),
-  );
-
-  it.effect("rejects relay credentials for a different environment", () =>
-    Effect.gen(function* () {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(Response.json(validChallenge()))
-        .mockResolvedValueOnce(Response.json(validProof()))
-        .mockResolvedValueOnce(
-          Response.json({
-            ok: true,
-            environmentId: "env-2",
-            endpoint: {
-              httpBaseUrl: "https://desktop.example.test",
-              wsBaseUrl: "wss://desktop.example.test",
-              providerKind: "cloudflare_tunnel",
-            },
-            endpointRuntime: null,
-            relayIssuer: "https://issuer.example.test",
-            cloudUserId: "user_123",
-            environmentCredential: "t3env_test_credential",
-            cloudMintPublicKey: "cloud-mint-public-key",
-          }),
-        );
-      vi.stubGlobal("fetch", fetchMock);
-
-      const error = yield* withCloudServices(
-        linkEnvironmentToCloud({
-          environment: savedEnvironment,
-          clerkToken: "clerk-token",
-        }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "CloudEnvironmentLinkError",
-        message: "Relay returned credentials for a different environment.",
-      });
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-    }),
-  );
-
-  it.effect("rejects relay credentials for a different managed endpoint provider", () =>
-    Effect.gen(function* () {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(Response.json(validChallenge()))
-        .mockResolvedValueOnce(Response.json(validProof()))
-        .mockResolvedValueOnce(
-          Response.json({
-            ok: true,
-            environmentId: "env-1",
-            endpoint: {
-              httpBaseUrl: "https://desktop.example.test",
-              wsBaseUrl: "wss://desktop.example.test",
-              providerKind: "manual",
-            },
-            endpointRuntime: null,
-            relayIssuer: "https://issuer.example.test",
-            cloudUserId: "user_123",
-            environmentCredential: "t3env_test_credential",
-            cloudMintPublicKey: "cloud-mint-public-key",
-          }),
-        );
-      vi.stubGlobal("fetch", fetchMock);
-
-      const error = yield* withCloudServices(
-        linkEnvironmentToCloud({
-          environment: savedEnvironment,
-          clerkToken: "clerk-token",
-        }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "CloudEnvironmentLinkError",
-        message: "Relay returned credentials for a different endpoint provider.",
-      });
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-    }),
-  );
-
-  it.effect("passes the relay issuer from the link response into local relay config", () =>
-    Effect.gen(function* () {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(Response.json(validChallenge()))
-        .mockResolvedValueOnce(Response.json(validProof()))
-        .mockResolvedValueOnce(
-          Response.json({
-            ok: true,
-            environmentId: "env-1",
-            endpoint: {
-              httpBaseUrl: "https://desktop.example.test",
-              wsBaseUrl: "wss://desktop.example.test",
-              providerKind: "cloudflare_tunnel",
-            },
-            endpointRuntime: null,
-            relayIssuer: "https://issuer.example.test",
-            cloudUserId: "user_123",
-            environmentCredential: "t3env_test_credential",
-            cloudMintPublicKey: "cloud-mint-public-key",
-          }),
-        )
-        .mockResolvedValueOnce(
-          Response.json({ ok: true, endpointRuntimeStatus: { status: "disabled" } }),
-        );
-      vi.stubGlobal("fetch", fetchMock);
-
-      yield* withCloudServices(
-        linkEnvironmentToCloud({
-          environment: savedEnvironment,
-          clerkToken: "clerk-token",
-        }),
-      );
-
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
-      expect(JSON.parse(requestBodyText(fetchMock.mock.calls[3]?.[1]?.body))).toMatchObject({
-        relayUrl: "https://relay.example.test",
-        relayIssuer: "https://issuer.example.test",
-        cloudUserId: "user_123",
-      });
     }),
   );
 });

@@ -1,8 +1,9 @@
-import assert from "node:assert/strict";
+import * as NodeAssert from "node:assert/strict";
 
+import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { describe, it } from "vite-plus/test";
+import { describe } from "vite-plus/test";
 import { ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
@@ -18,6 +19,23 @@ import {
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
+describe("CodexSessionRuntimeIdentifierGenerationError", () => {
+  it("retains identifier purpose and the random source failure", () => {
+    const cause = new Error("random source unavailable");
+    const error = new CodexErrors.CodexAppServerIdentifierGenerationError({
+      purpose: "provider-event",
+      cause,
+    });
+
+    NodeAssert.equal(error.purpose, "provider-event");
+    NodeAssert.strictEqual(error.cause, cause);
+    NodeAssert.equal(
+      error.message,
+      "Failed to generate Codex App Server identifier for provider-event.",
+    );
+  });
+});
 
 function makeThreadOpenResponse(
   threadId: string,
@@ -43,6 +61,32 @@ function makeThreadOpenResponse(
 }
 
 describe("buildTurnStartParams", () => {
+  it("keeps invalid turn values only in the schema cause", () => {
+    const secret = "codex-turn-input-secret-sentinel";
+    const error = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        attachments: [
+          {
+            type: "image",
+            url: { secret } as unknown as string,
+          },
+        ],
+      }).pipe(Effect.flip),
+    );
+    const { cause, ...directDiagnostics } = error;
+
+    NodeAssert.equal(error.operation, "decode-request-payload");
+    NodeAssert.equal(error.method, "turn/start");
+    NodeAssert.ok((error.issueCount ?? 0) > 0);
+    NodeAssert.ok(error.issueKinds?.includes("Pointer"));
+    NodeAssert.ok((error.maximumPathDepth ?? 0) > 0);
+    NodeAssert.ok(Schema.isSchemaError(cause));
+    NodeAssert.doesNotMatch(error.message, new RegExp(secret));
+    NodeAssert.doesNotMatch(JSON.stringify(directDiagnostics), new RegExp(secret));
+  });
+
   it("includes plan collaboration mode when requested", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
@@ -55,7 +99,7 @@ describe("buildTurnStartParams", () => {
       }),
     );
 
-    assert.deepStrictEqual(params, {
+    NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "never",
       sandboxPolicy: {
@@ -97,7 +141,7 @@ describe("buildTurnStartParams", () => {
       }),
     );
 
-    assert.deepStrictEqual(params, {
+    NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "on-request",
       sandboxPolicy: {
@@ -134,7 +178,7 @@ describe("buildTurnStartParams", () => {
       }),
     );
 
-    assert.deepStrictEqual(params, {
+    NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "untrusted",
       sandboxPolicy: {
@@ -156,19 +200,19 @@ describe("T3 browser developer instructions", () => {
       CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
       CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
     ]) {
-      assert.match(instructions, /t3-code/);
-      assert.match(instructions, /preview_status/);
-      assert.match(instructions, /preview_open/);
-      assert.match(instructions, /Do not switch to global browser skills/);
+      NodeAssert.match(instructions, /t3-code/);
+      NodeAssert.match(instructions, /preview_status/);
+      NodeAssert.match(instructions, /preview_open/);
+      NodeAssert.match(instructions, /Do not switch to global browser skills/);
     }
   });
 });
 
 describe("hasConfiguredMcpServer", () => {
   it("detects inline Codex MCP configuration arguments", () => {
-    assert.equal(hasConfiguredMcpServer(undefined), false);
-    assert.equal(hasConfiguredMcpServer(["--model", "gpt-5.4"]), false);
-    assert.equal(
+    NodeAssert.equal(hasConfiguredMcpServer(undefined), false);
+    NodeAssert.equal(hasConfiguredMcpServer(["--model", "gpt-5.4"]), false);
+    NodeAssert.equal(
       hasConfiguredMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
       true,
     );
@@ -177,7 +221,7 @@ describe("hasConfiguredMcpServer", () => {
 
 describe("isRecoverableThreadResumeError", () => {
   it("matches missing thread errors", () => {
-    assert.equal(
+    NodeAssert.equal(
       isRecoverableThreadResumeError(
         new CodexErrors.CodexAppServerRequestError({
           code: -32603,
@@ -189,7 +233,7 @@ describe("isRecoverableThreadResumeError", () => {
   });
 
   it("ignores non-recoverable resume errors", () => {
-    assert.equal(
+    NodeAssert.equal(
       isRecoverableThreadResumeError(
         new CodexErrors.CodexAppServerRequestError({
           code: -32603,
@@ -201,7 +245,7 @@ describe("isRecoverableThreadResumeError", () => {
   });
 
   it("ignores unrelated missing-resource errors that do not mention threads", () => {
-    assert.equal(
+    NodeAssert.equal(
       isRecoverableThreadResumeError(
         new CodexErrors.CodexAppServerRequestError({
           code: -32603,
@@ -210,7 +254,7 @@ describe("isRecoverableThreadResumeError", () => {
       ),
       false,
     );
-    assert.equal(
+    NodeAssert.equal(
       isRecoverableThreadResumeError(
         new CodexErrors.CodexAppServerRequestError({
           code: -32603,
@@ -223,29 +267,29 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
-  it("falls back to thread/start when resume fails recoverably", async () => {
-    const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
-    const started = makeThreadOpenResponse("fresh-thread");
-    const client = {
-      request: <M extends "thread/start" | "thread/resume">(
-        method: M,
-        payload: CodexRpc.ClientRequestParamsByMethod[M],
-      ) => {
-        calls.push({ method, payload });
-        if (method === "thread/resume") {
-          return Effect.fail(
-            new CodexErrors.CodexAppServerRequestError({
-              code: -32603,
-              errorMessage: "thread not found",
-            }),
-          );
-        }
-        return Effect.succeed(started as CodexRpc.ClientRequestResponsesByMethod[M]);
-      },
-    };
+  it.effect("falls back to thread/start when resume fails recoverably", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
+      const started = makeThreadOpenResponse("fresh-thread");
+      const client = {
+        request: <M extends "thread/start" | "thread/resume">(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push({ method, payload });
+          if (method === "thread/resume") {
+            return Effect.fail(
+              new CodexErrors.CodexAppServerRequestError({
+                code: -32603,
+                errorMessage: "thread not found",
+              }),
+            );
+          }
+          return Effect.succeed(started as CodexRpc.ClientRequestResponsesByMethod[M]);
+        },
+      };
 
-    const opened = await Effect.runPromise(
-      openCodexThread({
+      const opened = yield* openCodexThread({
         client,
         threadId: ThreadId.make("thread-1"),
         runtimeMode: "full-access",
@@ -253,51 +297,49 @@ describe("openCodexThread", () => {
         requestedModel: "gpt-5.3-codex",
         serviceTier: undefined,
         resumeThreadId: "stale-thread",
-      }),
-    );
+      });
 
-    assert.equal(opened.thread.id, "fresh-thread");
-    assert.deepStrictEqual(
-      calls.map((call) => call.method),
-      ["thread/resume", "thread/start"],
-    );
-  });
+      NodeAssert.equal(opened.thread.id, "fresh-thread");
+      NodeAssert.deepStrictEqual(
+        calls.map((call) => call.method),
+        ["thread/resume", "thread/start"],
+      );
+    }),
+  );
 
-  it("propagates non-recoverable resume failures", async () => {
-    const client = {
-      request: <M extends "thread/start" | "thread/resume">(
-        method: M,
-        _payload: CodexRpc.ClientRequestParamsByMethod[M],
-      ) => {
-        if (method === "thread/resume") {
-          return Effect.fail(
-            new CodexErrors.CodexAppServerRequestError({
-              code: -32603,
-              errorMessage: "timed out waiting for server",
-            }),
+  it.effect("propagates non-recoverable resume failures", () =>
+    Effect.gen(function* () {
+      const client = {
+        request: <M extends "thread/start" | "thread/resume">(
+          method: M,
+          _payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          if (method === "thread/resume") {
+            return Effect.fail(
+              new CodexErrors.CodexAppServerRequestError({
+                code: -32603,
+                errorMessage: "timed out waiting for server",
+              }),
+            );
+          }
+          return Effect.succeed(
+            makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
           );
-        }
-        return Effect.succeed(
-          makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
-        );
-      },
-    };
+        },
+      };
 
-    await assert.rejects(
-      Effect.runPromise(
-        openCodexThread({
-          client,
-          threadId: ThreadId.make("thread-1"),
-          runtimeMode: "full-access",
-          cwd: "/tmp/project",
-          requestedModel: "gpt-5.3-codex",
-          serviceTier: undefined,
-          resumeThreadId: "stale-thread",
-        }),
-      ),
-      (error: unknown) =>
-        isCodexAppServerRequestError(error) &&
-        error.errorMessage === "timed out waiting for server",
-    );
-  });
+      const error = yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "stale-thread",
+      }).pipe(Effect.flip);
+
+      NodeAssert.ok(isCodexAppServerRequestError(error));
+      NodeAssert.equal(error.errorMessage, "timed out waiting for server");
+    }),
+  );
 });

@@ -8,16 +8,17 @@ import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { useProjects, useThreadShells } from "../../state/entities";
+import type { WorkspaceState } from "../../state/workspaceModel";
+import { useWorkspaceState } from "../../state/workspace";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
-import { type RemoteCatalogState, useRemoteCatalog } from "../../state/use-remote-catalog";
-import { useRemoteEnvironmentState } from "../../state/use-remote-environment-registry";
 
-function deriveProjectEmptyState(catalogState: RemoteCatalogState): {
+function deriveProjectEmptyState(catalogState: WorkspaceState): {
   readonly title: string;
   readonly detail: string;
   readonly loading: boolean;
 } {
-  if (catalogState.isLoadingSavedConnections) {
+  if (catalogState.isLoadingConnections) {
     return {
       title: "Loading environments",
       detail: "Checking saved environments on this device.",
@@ -25,7 +26,7 @@ function deriveProjectEmptyState(catalogState: RemoteCatalogState): {
     };
   }
 
-  if (!catalogState.hasSavedConnections) {
+  if (!catalogState.hasConnections) {
     return {
       title: "No environments connected",
       detail: "Add an environment before creating a task.",
@@ -33,7 +34,12 @@ function deriveProjectEmptyState(catalogState: RemoteCatalogState): {
     };
   }
 
-  if (catalogState.connectionState === "disconnected" && !catalogState.hasLoadedShellSnapshot) {
+  if (
+    (catalogState.connectionState === "available" ||
+      catalogState.connectionState === "offline" ||
+      catalogState.connectionState === "error") &&
+    !catalogState.hasLoadedShellSnapshot
+  ) {
     return {
       title: "Environment unavailable",
       detail:
@@ -63,8 +69,9 @@ function deriveProjectEmptyState(catalogState: RemoteCatalogState): {
 }
 
 export default function NewTaskRoute() {
-  const { projects, state: catalogState, threads } = useRemoteCatalog();
-  const { savedConnectionsById } = useRemoteEnvironmentState();
+  const projects = useProjects();
+  const threads = useThreadShells();
+  const { state: catalogState } = useWorkspaceState();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const chevronColor = useThemeColor("--color-chevron");
@@ -122,10 +129,10 @@ export default function NewTaskRoute() {
         {items.length === 0 ? (
           <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card px-6 py-8">
             {projectEmptyState.loading ? <ActivityIndicator color={accentColor} /> : null}
-            <Text className="text-center text-[17px] font-t3-bold text-foreground">
+            <Text className="text-center text-lg font-t3-bold text-foreground">
               {projectEmptyState.title}
             </Text>
-            <Text className="text-center text-[14px] leading-[20px] text-foreground-muted">
+            <Text className="text-center text-sm leading-[20px] text-foreground-muted">
               {projectEmptyState.detail}
             </Text>
             {!catalogState.hasReadyEnvironment ? (
@@ -133,7 +140,7 @@ export default function NewTaskRoute() {
                 className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
                 onPress={() => router.push("/connections/new")}
               >
-                <Text className="text-[13px] font-t3-bold text-primary-foreground">
+                <Text className="text-sm font-t3-bold text-primary-foreground">
                   Add environment
                 </Text>
               </Pressable>
@@ -142,7 +149,7 @@ export default function NewTaskRoute() {
                 className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
                 onPress={() => router.push("/new/add-project")}
               >
-                <Text className="text-[13px] font-t3-bold text-primary-foreground">
+                <Text className="text-sm font-t3-bold text-primary-foreground">
                   Add new project
                 </Text>
               </Pressable>
@@ -183,21 +190,14 @@ export default function NewTaskRoute() {
                     <View className="flex-row items-center justify-between gap-3">
                       <View className="h-7 w-7 items-center justify-center">
                         <ProjectFavicon
+                          environmentId={item.environmentId}
                           size={20}
                           projectTitle={item.title}
-                          httpBaseUrl={
-                            savedConnectionsById[item.environmentId]?.httpBaseUrl ?? null
-                          }
                           workspaceRoot={item.workspaceRoot}
-                          bearerToken={
-                            savedConnectionsById[item.environmentId]?.bearerToken ?? null
-                          }
                         />
                       </View>
                       <View className="flex-1">
-                        <Text className="text-[16px] leading-[21px] font-t3-bold">
-                          {item.title}
-                        </Text>
+                        <Text className="text-base leading-[21px] font-t3-bold">{item.title}</Text>
                       </View>
                       <SymbolView
                         name="chevron.right"
