@@ -1,14 +1,22 @@
 import type {
-  EnvironmentThread,
-  ThreadConversationMessage,
   ThreadPendingApproval,
   ThreadPendingUserInput,
-  ThreadRunSummary,
   ThreadUserInputQuestion,
-  ThreadWorkEntry,
 } from "@t3tools/client-runtime/state/shell";
-import type { RunId } from "@t3tools/contracts";
+import type {
+  ChatAttachment,
+  MessageId,
+  OrchestrationV2Actor,
+  OrchestrationV2CreationSource,
+  OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2RunStatus,
+  OrchestrationV2TurnItem,
+  OrchestrationV2UserMessageInputIntent,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import * as DateTime from "effect/DateTime";
 
 export type PendingApproval = ThreadPendingApproval;
 export type PendingUserInput = ThreadPendingUserInput;
@@ -42,6 +50,24 @@ export interface ThreadFeedActivity {
     | "zap";
   readonly toolLike: boolean;
   readonly status: "success" | "failure" | "neutral" | null;
+  readonly projectedItem: OrchestrationV2ProjectedTurnItem;
+}
+
+export interface ThreadFeedMessage {
+  readonly id: MessageId;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly runId: RunId | null;
+  readonly streaming: boolean;
+  readonly inputIntent?: OrchestrationV2UserMessageInputIntent;
+  readonly createdBy?: OrchestrationV2Actor;
+  readonly creationSource?: OrchestrationV2CreationSource;
+  readonly visibility: OrchestrationV2ProjectedTurnItem["visibility"];
+  readonly sourceThreadId: ThreadId;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly projectedItem: OrchestrationV2ProjectedTurnItem;
 }
 
 type RawThreadFeedEntry =
@@ -49,7 +75,7 @@ type RawThreadFeedEntry =
       readonly type: "message";
       readonly id: string;
       readonly createdAt: string;
-      readonly message: ThreadConversationMessage;
+      readonly message: ThreadFeedMessage;
     }
   | {
       readonly type: "activity";
@@ -82,10 +108,12 @@ export type ThreadFeedEntry =
       readonly expanded: boolean;
     };
 
-export type ThreadFeedLatestRun = Pick<
-  ThreadRunSummary,
-  "runId" | "status" | "startedAt" | "completedAt"
->;
+export interface ThreadFeedLatestRun {
+  readonly runId: RunId;
+  readonly status: OrchestrationV2RunStatus;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+}
 
 function normalizeDraftAnswer(value: string | undefined): string | null {
   if (typeof value !== "string") return null;
@@ -106,30 +134,29 @@ function capitalizePhrase(value: string): string {
   return trimmed.length === 0 ? value : `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
 }
 
-function workEntryIsToolLike(entry: ThreadWorkEntry): boolean {
+function itemIsToolLike(item: OrchestrationV2TurnItem): boolean {
   return (
-    entry.tone === "tool" ||
-    entry.tone === "thinking" ||
-    entry.tone === "error" ||
-    entry.command !== undefined ||
-    entry.requestKind !== undefined
+    item.type === "reasoning" ||
+    item.type === "command_execution" ||
+    item.type === "file_change" ||
+    item.type === "file_search" ||
+    item.type === "web_search" ||
+    item.type === "approval_request" ||
+    item.type === "user_input_request" ||
+    item.type === "dynamic_tool" ||
+    item.type === "subagent" ||
+    item.type === "error"
   );
 }
 
-function workEntryStatus(entry: ThreadWorkEntry): ThreadFeedActivity["status"] {
-  if (!workEntryIsToolLike(entry)) return null;
-  if (
-    entry.tone === "error" ||
-    entry.toolLifecycleStatus === "failed" ||
-    entry.toolLifecycleStatus === "declined"
-  ) {
-    return "failure";
-  }
-  return entry.toolLifecycleStatus === "completed" ? "success" : "neutral";
+function itemStatus(item: OrchestrationV2TurnItem): ThreadFeedActivity["status"] {
+  if (!itemIsToolLike(item)) return null;
+  if (item.type === "error" || item.status === "failed") return "failure";
+  return item.status === "completed" ? "success" : "neutral";
 }
 
-function workEntryIcon(entry: ThreadWorkEntry): ThreadFeedActivity["icon"] {
-  switch (entry.itemType) {
+function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
+  switch (item.type) {
     case "reasoning":
       return "agent";
     case "command_execution":
@@ -142,6 +169,8 @@ function workEntryIcon(entry: ThreadWorkEntry): ThreadFeedActivity["icon"] {
       return "globe";
     case "approval_request":
     case "user_input_request":
+    case "user_message":
+    case "assistant_message":
       return "message";
     case "dynamic_tool":
       return "wrench";
@@ -150,71 +179,153 @@ function workEntryIcon(entry: ThreadWorkEntry): ThreadFeedActivity["icon"] {
     case "run_interrupt_request":
     case "run_interrupt_result":
       return "warning";
+    case "error":
+      return "alert";
     case "checkpoint":
+    case "proposed_plan":
+    case "todo_list":
       return "check";
-    default:
-      if (entry.tone === "error") return "alert";
-      if (entry.tone === "thinking") return "agent";
-      if (entry.tone === "info") return "check";
+    case "compaction":
+    case "handoff":
+    case "fork":
+    case "thread_created":
       return "zap";
   }
 }
 
-function workEntryPreview(entry: ThreadWorkEntry): string | null {
-  if (entry.command) return entry.command;
-  if (entry.detail) return entry.detail;
-  const firstPath = entry.changedFiles?.[0];
-  if (!firstPath) return null;
-  return entry.changedFiles?.length === 1
-    ? firstPath
-    : `${firstPath} +${(entry.changedFiles?.length ?? 1) - 1} more`;
+function itemSummary(item: OrchestrationV2TurnItem): string {
+  const title = item.title?.trim();
+  if (title) return capitalizePhrase(title);
+  switch (item.type) {
+    case "reasoning":
+      return "Thinking";
+    case "command_execution":
+      return "Command";
+    case "file_change":
+      return `Changed ${item.fileName}`;
+    case "file_search":
+      return "Searched files";
+    case "web_search":
+      return "Searched the web";
+    case "approval_request":
+      return "Approval requested";
+    case "user_input_request":
+      return "Input requested";
+    case "checkpoint":
+      return "Checkpoint captured";
+    case "run_interrupt_request":
+      return "Interrupt requested";
+    case "run_interrupt_result":
+      return "Run interrupted";
+    case "error":
+      return "Provider error";
+    case "compaction":
+      return "Context compacted";
+    case "handoff":
+      return "Context handed off";
+    case "fork":
+      return "Thread forked";
+    case "thread_created":
+      return "Thread created";
+    case "subagent":
+      return "Subagent";
+    case "dynamic_tool":
+      return item.toolName ?? "Tool call";
+    case "proposed_plan":
+      return "Proposed plan";
+    case "todo_list":
+      return "Plan updated";
+    case "user_message":
+      return "User message";
+    case "assistant_message":
+      return "Assistant message";
+  }
 }
 
-function buildWorkEntryExpandedBody(entry: ThreadWorkEntry): string | null {
-  const blocks: string[] = [];
-  const append = (value: string | null | undefined) => {
-    const trimmed = value?.trim();
-    if (trimmed && !blocks.includes(trimmed)) blocks.push(trimmed);
-  };
-  append(entry.rawCommand ?? entry.command);
-  append(entry.detail);
-  if (entry.changedFiles?.length) append(entry.changedFiles.join("\n"));
-  append(JSON.stringify(entry.structuredPayload, null, 2));
-  return blocks.length === 0 ? null : blocks.join("\n\n");
+function itemPreview(item: OrchestrationV2TurnItem): string | null {
+  switch (item.type) {
+    case "reasoning":
+      return item.text || null;
+    case "command_execution":
+      return item.input || null;
+    case "file_change":
+      return item.fileName;
+    case "file_search":
+      return item.pattern ?? null;
+    case "web_search":
+      return item.patterns?.join(", ") ?? null;
+    case "approval_request":
+      return item.prompt ?? null;
+    case "user_input_request":
+      return item.questions.map((question) => question.question).join(" · ") || null;
+    case "checkpoint":
+      return item.files.length === 1
+        ? (item.files[0]?.path ?? null)
+        : `${item.files.length} changed files`;
+    case "run_interrupt_request":
+    case "run_interrupt_result":
+      return item.message || null;
+    case "error":
+      return item.failure.message;
+    case "compaction":
+    case "handoff":
+      return item.summary ?? null;
+    case "fork":
+    case "thread_created":
+      return item.targetThreadId;
+    case "subagent":
+      return item.result ?? item.progress ?? item.prompt;
+    case "dynamic_tool":
+      return null;
+    case "proposed_plan":
+      return item.markdown || null;
+    case "todo_list":
+      return `${item.steps.filter((step) => step.status === "completed").length}/${item.steps.length} completed`;
+    case "user_message":
+    case "assistant_message":
+      return item.text || null;
+  }
 }
 
-function toFeedActivity(entry: ThreadWorkEntry): ThreadFeedActivity {
-  const summary = capitalizePhrase(entry.toolTitle ?? entry.label);
-  const detail = workEntryPreview(entry);
-  const fullDetail = buildWorkEntryExpandedBody(entry);
+function toFeedActivity(row: OrchestrationV2ProjectedTurnItem): ThreadFeedActivity {
+  const item = row.item;
+  const summary = itemSummary(item);
+  const detail = itemPreview(item);
+  const fullDetail = JSON.stringify(
+    {
+      visibility: row.visibility,
+      sourceThreadId: row.sourceThreadId,
+      sourceItemId: row.sourceItemId,
+      item,
+    },
+    null,
+    2,
+  );
   return {
-    id: entry.id,
-    createdAt: entry.createdAt,
-    runId: entry.runId,
+    id: `${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
+    createdAt: DateTime.formatIso(item.startedAt ?? item.updatedAt),
+    runId: item.runId,
     summary,
     detail,
     fullDetail,
-    icon: workEntryIcon(entry),
+    icon: itemIcon(item),
     copyText: [summary, detail, fullDetail]
       .filter(
         (value, index, values): value is string =>
           Boolean(value) && values.indexOf(value) === index,
       )
       .join("\n"),
-    toolLike: workEntryIsToolLike(entry),
-    status: workEntryStatus(entry),
+    toolLike: itemIsToolLike(item),
+    status: itemStatus(item),
+    projectedItem: row,
   };
-}
-
-function byCreatedAt<A extends { readonly createdAt: string }>(left: A, right: A): number {
-  return left.createdAt.localeCompare(right.createdAt);
 }
 
 function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
   return (
     entry.type === "message" &&
     entry.message.text.trim().length === 0 &&
-    (entry.message.attachments ?? []).length === 0
+    entry.message.attachments.length === 0
   );
 }
 
@@ -424,32 +535,53 @@ export function buildPendingUserInputAnswers(
   return answers;
 }
 
+/**
+ * Projects the server-authored visible sequence into mobile row presentation.
+ * It deliberately preserves the incoming order and never rebuilds chat from
+ * separate message, plan, or work-entry collections.
+ */
 export function buildThreadFeed(
-  thread: EnvironmentThread,
-  options?: { readonly loadedMessages?: ReadonlyArray<ThreadConversationMessage> },
+  visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
 ): ThreadFeedEntry[] {
-  const loadedMessages = options?.loadedMessages ?? thread.messages;
-  const oldestLoadedMessageCreatedAt =
-    options?.loadedMessages === undefined ? null : (loadedMessages[0]?.createdAt ?? null);
-  const entries: RawThreadFeedEntry[] = [
-    ...loadedMessages.map((message) => ({
-      type: "message" as const,
-      id: message.id,
-      createdAt: message.createdAt,
-      message,
-    })),
-    ...thread.workEntries
-      .filter(
-        (entry) =>
-          oldestLoadedMessageCreatedAt === null || entry.createdAt >= oldestLoadedMessageCreatedAt,
-      )
-      .map((entry) => ({
-        type: "activity" as const,
-        id: entry.id,
-        createdAt: entry.createdAt,
-        runId: entry.runId,
-        activity: toFeedActivity(entry),
-      })),
-  ];
-  return groupAdjacentActivities(entries.toSorted(byCreatedAt));
+  const entries = visibleTurnItems.map((row): RawThreadFeedEntry => {
+    const item = row.item;
+    const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
+    if (item.type === "user_message" || item.type === "assistant_message") {
+      const updatedAt = DateTime.formatIso(item.updatedAt);
+      return {
+        type: "message",
+        id: item.messageId,
+        createdAt,
+        message: {
+          id: item.messageId,
+          role: item.type === "user_message" ? "user" : "assistant",
+          text: item.text,
+          attachments: item.type === "user_message" ? item.attachments : [],
+          runId: item.runId,
+          streaming: item.type === "assistant_message" && item.streaming,
+          ...(item.type === "user_message"
+            ? {
+                inputIntent: item.inputIntent,
+                createdBy: item.createdBy,
+                creationSource: item.creationSource,
+              }
+            : {}),
+          visibility: row.visibility,
+          sourceThreadId: row.sourceThreadId,
+          createdAt,
+          updatedAt,
+          projectedItem: row,
+        },
+      };
+    }
+    const activity = toFeedActivity(row);
+    return {
+      type: "activity",
+      id: activity.id,
+      createdAt,
+      runId: item.runId,
+      activity,
+    };
+  });
+  return groupAdjacentActivities(entries);
 }
