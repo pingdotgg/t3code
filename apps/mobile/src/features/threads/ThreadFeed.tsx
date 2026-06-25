@@ -970,7 +970,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
 
 function renderFeedEntry(
   info: { item: ThreadFeedEntry; index: number },
-  props: Pick<ThreadFeedProps, "environmentId" | "onUseArtifactTemplate" | "skills"> & {
+  props: Pick<ThreadFeedProps, "environmentId" | "skills" | "workspaceRoot"> & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
@@ -1204,13 +1204,15 @@ function renderFeedEntry(
       activities={entry.activities}
       anchorKey={entry.id}
       copiedRowId={props.copiedRowId}
+      environmentId={props.environmentId}
+      expanded={props.expandedWorkGroups[entry.id] ?? false}
       expandedRows={props.expandedWorkRows}
       rowSizing={props.workRowSizing}
       scrollPositions={props.workGroupScrollPositions}
       iconSubtleColor={iconSubtleColor}
       onCopyRow={props.onCopyWorkRow}
       onToggleRow={props.onToggleWorkRow}
-      renderImage={props.renderViewedImage}
+      workspaceRoot={props.workspaceRoot}
     />
   );
 }
@@ -2038,6 +2040,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         reviewCommentBubbleWidth,
         userBubbleMaxWidth,
         skills: props.skills,
+        workspaceRoot: props.workspaceRoot,
       }),
     [
       copiedRowId,
@@ -2062,6 +2065,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.environmentId,
       props.onUseArtifactTemplate,
       props.skills,
+      props.workspaceRoot,
     ],
   );
 
