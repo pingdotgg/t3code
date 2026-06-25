@@ -2,7 +2,7 @@ import type {
   ThreadPendingApproval,
   ThreadPendingUserInput,
   ThreadUserInputQuestion,
-} from "@t3tools/client-runtime/state/shell";
+} from "@t3tools/client-runtime/state/thread-requests";
 import type {
   ChatAttachment,
   MessageId,

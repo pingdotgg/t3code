@@ -880,9 +880,9 @@ Add web and mobile integration coverage for:
 
 ## Shape 4.5: V2-Native Frontend Enrichment
 
-Implementation status: in progress. The web-first pass through Sections 1, 2, 4, and 5 is implemented. Mobile remains on the Shape 4.0 presentation path; shared selector extraction and parity-facade removal are intentionally deferred until the mobile port demonstrates what is actually shared.
+Implementation status: complete. Production web and mobile now consume the scoped V2 projection directly, and the temporary Shape 4.0 parity facade, V1 client RPC surface, and V2 debug route have been removed.
 
-Web-first implementation outcome:
+Completion outcome:
 
 - Production web continues to render the server-authoritative `visibleTurnItems` sequence and now joins individual rows to narrowly selected V2 run, attempt, node, provider, request, checkpoint, subagent, handoff, and transfer state.
 - Expandable production inspectors expose command input/output and exit state, file changes and diff navigation, search provenance, dynamic/provider-native structured payloads, checkpoint rollback, subagent/fork navigation, provider identity, attempts, and context handoff state.
@@ -892,7 +892,9 @@ Web-first implementation outcome:
 - While a run is active, an empty composer keeps the Stop action. Entering content replaces it with Send, whose current default is explicit steering; `Mod+Enter` explicitly queues. The default action is isolated behind a small policy seam for a future user setting, without adding an action menu now.
 - Interrupt request/result, compaction, handoff, fork, and subagent lifecycle items use polished production-native dividers or compact rows. Todo updates remain ordinary work-log items because the Tasks right-panel surface owns rich task progress.
 - Shutdown now blocks new mutations, stops the effect worker, closes provider sessions and MCP capabilities, and best-effort reconciles durable state. Startup repeats that repair authoritatively, atomically cancels the complete provider-bound in-flight execution subtree plus its non-replayable effects, allows a waiting run to finish only through its durable replay-safe checkpoint capture, leaves idle provider processes closed, and resumes genuinely queued turns after repair. A development-server restart therefore leaves the interrupted thread terminal and sendable instead of failing projection startup.
-- No mobile binding or shared presentation abstraction was introduced during this pass. The existing projection reducer and command semantics remain the shared substrate.
+- Mobile renders the same server-authoritative `visibleTurnItems` sequence and derives only the runtime, request, and checkpoint summaries required by its concrete surfaces.
+- Shared client-runtime selectors cover only demonstrated cross-platform domain needs. Platform-specific presentation remains local to web and mobile; there is no second complete thread presentation model.
+- Frozen V1 persistence/event-store decoders remain isolated behind the explicit `legacy-orchestration` contract subpath for the later data-migration stage. No production client imports the legacy thread model or calls a V1 endpoint.
 
 ### Goal
 

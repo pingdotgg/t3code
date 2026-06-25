@@ -1,9 +1,9 @@
+import type { ProjectId } from "@t3tools/contracts";
 import type {
   OrchestrationEvent,
   OrchestrationReadModel,
-  ProjectId,
   ProjectOrchestrationCommand,
-} from "@t3tools/contracts";
+} from "@t3tools/contracts/legacy-orchestration";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
