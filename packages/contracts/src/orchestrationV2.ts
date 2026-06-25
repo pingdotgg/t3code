@@ -42,7 +42,7 @@ import {
   RuntimeMode,
 } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
-import { OrchestrationProjectShell } from "./orchestration.ts";
+import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 
 export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);
 export type OrchestrationV2Actor = typeof OrchestrationV2Actor.Type;

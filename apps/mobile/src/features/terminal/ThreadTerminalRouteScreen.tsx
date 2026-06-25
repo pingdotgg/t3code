@@ -50,7 +50,7 @@ import {
   useKnownTerminalSessions,
 } from "../../state/use-terminal-session";
 import { useThreadSelection } from "../../state/use-thread-selection";
-import { useSelectedThreadDetail } from "../../state/use-thread-detail";
+import { useSelectedThreadProjection } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { AndroidWorkspaceSidebarButton } from "../layout/workspace-sidebar-toolbar";
@@ -175,7 +175,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const params = props.route.params;
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
-  const selectedThreadDetail = useSelectedThreadDetail();
+  const selectedThreadDetail = useSelectedThreadProjection();
+  const selectedThreadDetailWorktreePath =
+    selectedThreadDetail?.projection.thread.worktreePath ?? null;
   const routeEnvironmentIdRaw = firstRouteParam(params.environmentId);
   const routeThreadIdRaw = firstRouteParam(params.threadId);
   const routeEnvironmentId = routeEnvironmentIdRaw
@@ -291,13 +293,13 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       activeSessionLocation: activeKnownSession?.state.summary ?? null,
       workspaceRoot: selectedThreadProject.workspaceRoot,
       threadShellWorktreePath: selectedThread.worktreePath ?? null,
-      threadDetailWorktreePath: selectedThreadDetail?.worktreePath ?? null,
+      threadDetailWorktreePath: selectedThreadDetailWorktreePath,
     });
   }, [
     activeKnownSession?.state.summary,
     pendingLaunch,
     selectedThread,
-    selectedThreadDetail?.worktreePath,
+    selectedThreadDetailWorktreePath,
     selectedThreadProject?.workspaceRoot,
   ]);
   const [initialLaunchLocationEntry, setInitialLaunchLocationEntry] = useState(() => ({

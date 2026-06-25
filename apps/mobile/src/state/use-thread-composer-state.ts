@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import {
+  deriveLatestThreadRun,
+  deriveThreadRuntime,
+} from "@t3tools/client-runtime/state/thread-execution";
 import { useCallback, useEffect, useMemo } from "react";
 
 import {
@@ -42,7 +46,7 @@ import {
 } from "./use-composer-drafts";
 import { setPendingConnectionError } from "../state/use-remote-environment-registry";
 import {
-  useSelectedThreadDetail,
+  useSelectedThreadProjection,
   useSelectedThreadVisibleTurnItems,
 } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
@@ -89,7 +93,7 @@ export function useThreadDraftForThread(input: {
 
 export function useThreadComposerState() {
   const { selectedThread: selectedThreadShell } = useThreadSelection();
-  const selectedThreadDetail = useSelectedThreadDetail();
+  const selectedThreadProjection = useSelectedThreadProjection();
   const selectedThreadVisibleTurnItems = useSelectedThreadVisibleTurnItems();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
@@ -114,33 +118,44 @@ export function useThreadComposerState() {
   const draftMessage = selectedDraft?.text ?? "";
   const draftAttachments = selectedDraft?.attachments ?? [];
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
-  const selectedThread = selectedThreadDetail ?? selectedThreadShell;
+  const selectedThread = selectedThreadShell;
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const interactionMode = selectedDraft?.interactionMode ?? selectedThread?.interactionMode ?? null;
+  const selectedThreadRuntime = useMemo(
+    () =>
+      selectedThreadProjection
+        ? deriveThreadRuntime(selectedThreadProjection.projection)
+        : (selectedThreadShell?.runtime ?? null),
+    [selectedThreadProjection, selectedThreadShell?.runtime],
+  );
+  const selectedThreadLatestRun = useMemo(
+    () =>
+      selectedThreadProjection
+        ? deriveLatestThreadRun(selectedThreadProjection.projection)
+        : (selectedThreadShell?.latestRun ?? null),
+    [selectedThreadProjection, selectedThreadShell?.latestRun],
+  );
 
   const selectedThreadSessionActivity = useMemo(() => {
-    const selectedThread = selectedThreadDetail ?? selectedThreadShell;
-    if (!selectedThread?.runtime) {
+    if (!selectedThreadRuntime) {
       return null;
     }
 
     return {
-      orchestrationStatus: selectedThread.runtime.status,
-      activeRunId: selectedThread.runtime.activeRunId ?? undefined,
+      orchestrationStatus: selectedThreadRuntime.status,
+      activeRunId: selectedThreadRuntime.activeRunId ?? undefined,
     };
-  }, [selectedThreadDetail, selectedThreadShell]);
+  }, [selectedThreadRuntime]);
 
   const activeWorkStartedAt = useMemo(() => {
-    const selectedThread = selectedThreadDetail ?? selectedThreadShell;
-    if (!selectedThread) {
+    if (!selectedThreadShell) {
       return null;
     }
+    return deriveActiveWorkStartedAt(selectedThreadLatestRun, selectedThreadSessionActivity, null);
+  }, [selectedThreadLatestRun, selectedThreadSessionActivity, selectedThreadShell]);
 
-    return deriveActiveWorkStartedAt(selectedThread.latestRun, selectedThreadSessionActivity, null);
-  }, [selectedThreadDetail, selectedThreadSessionActivity, selectedThreadShell]);
-
-  const activeThreadBusy = !!selectedThread && threadRuntimeIsActive(selectedThread.runtime);
+  const activeThreadBusy = threadRuntimeIsActive(selectedThreadRuntime);
 
   const onSendMessage = useCallback(async () => {
     if (!selectedThreadShell) {
@@ -149,7 +164,7 @@ export function useThreadComposerState() {
 
     const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
     const draft = getComposerDraftSnapshot(threadKey);
-    const thread = selectedThreadDetail ?? selectedThreadShell;
+    const thread = selectedThreadShell;
     const text = draft.text.trim();
     const attachments = draft.attachments;
     if (
@@ -196,28 +211,20 @@ export function useThreadComposerState() {
       interactionMode: draft.interactionMode ?? thread.interactionMode,
       createdAt: metadata.createdAt,
     });
-    clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
-    enqueuePromise.then(
-      () => {
-        // The queued message owns the files now; the sweep sees that and
-        // spares them. Deferred to here so a failed write cannot roll the
-        // message out of the queue mid-sweep and lose the bytes.
-        scheduleUnusedComposerAttachmentCleanup(attachments);
-      },
-      (error: unknown) => {
-        // Restore text via merge (idempotent) but attachments via the uncapped
-        // append: the merge path slots existing attachments first and truncates
-        // at the send limit, which would silently drop this message's images if
-        // the user attached new ones while the write was in flight.
-        void mergeComposerDraftContent(threadKey, { text, attachments: [] });
-        appendComposerDraftAttachments(threadKey, attachments, { allowOverflow: true });
-        setPendingConnectionError(
-          error instanceof Error ? error.message : "Failed to save the queued message.",
-        );
-      },
-    );
-    return messageId;
-  }, [selectedThreadDetail, selectedThreadShell]);
+    clearComposerDraftContent(threadKey);
+    enqueuePromise.catch((error: unknown) => {
+      // Restore text via merge (idempotent) but attachments via the uncapped
+      // append: the merge path slots existing attachments first and truncates
+      // at the send limit, which would silently drop this message's images if
+      // the user attached new ones while the write was in flight.
+      void mergeComposerDraftContent(threadKey, { text, attachments: [] });
+      appendComposerDraftAttachments(threadKey, attachments);
+      setPendingConnectionError(
+        error instanceof Error ? error.message : "Failed to save the queued message.",
+      );
+      return null;
+    }
+  }, [selectedThreadShell]);
 
   const onChangeDraftMessage = useCallback(
     (value: string) => {

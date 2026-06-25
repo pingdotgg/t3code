@@ -1,13 +1,9 @@
-import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import * as Option from "effect/Option";
-import { Atom } from "effect/unstable/reactivity";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useMemo, useState } from "react";
 
 import { orchestrationEnvironment } from "./orchestration";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
-import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
 import {
   buildCheckpointDiffTargets,
@@ -34,13 +30,6 @@ const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
   labelPrefix: "mobile:thread-search",
 });
 
-export interface ThreadDetailView {
-  readonly data: EnvironmentThread | null;
-  readonly error: string | null;
-  readonly isPending: boolean;
-  readonly isDeleted: boolean;
-}
-
 export interface ComposerPathSearchTarget {
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
@@ -60,44 +49,6 @@ function useDebouncedValue<A>(value: A, delayMs: number): A {
   }, [delayMs, value]);
 
   return debounced;
-}
-
-export function useThreadSearch(
-  environmentIds: ReadonlyArray<EnvironmentId>,
-  query: string,
-): {
-  readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
-  readonly isPending: boolean;
-} {
-  const normalizedQuery = query.trim();
-  const debouncedQuery = useDebouncedValue(normalizedQuery, THREAD_SEARCH_DEBOUNCE_MS);
-  const canSearch = environmentIds.length > 0 && normalizedQuery.length >= 2;
-  const settledQuery = canSearch && normalizedQuery === debouncedQuery ? debouncedQuery : null;
-  const searchKey = useMemo(
-    () => (settledQuery === null ? null : makeThreadSearchKey(environmentIds, settledQuery)),
-    [environmentIds, settledQuery],
-  );
-  const result = useAtomValue(
-    searchKey === null ? EMPTY_THREAD_SEARCH_ATOM : threadSearchResultsAtom(searchKey),
-  );
-  const isDebouncing = canSearch && normalizedQuery !== debouncedQuery;
-  return {
-    matches: isDebouncing ? EMPTY_THREAD_SEARCH_MATCHES : result.matches,
-    isPending: canSearch && (isDebouncing || result.isLoading),
-  };
-}
-
-export function useThreadDetail(
-  environmentId: EnvironmentId | null,
-  threadId: ThreadId | null,
-): ThreadDetailView {
-  const state = useEnvironmentThread(environmentId, threadId);
-  return {
-    data: Option.getOrNull(state.data),
-    error: Option.getOrNull(state.error),
-    isPending: state.status === "synchronizing",
-    isDeleted: state.status === "deleted",
-  };
 }
 
 export function useBranches(input: {
