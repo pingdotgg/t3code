@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   EMPTY_V2_ITEM_SUPPORT,
   resolveV2ItemSupport,
@@ -6,29 +7,22 @@ import {
   type V2ItemSupport,
 } from "@t3tools/client-runtime/state/item-support";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Atom } from "effect/unstable/reactivity";
 
 import { environmentThreadDetails } from "./threads";
 
-function supportKey(input: {
+interface ItemSupportTarget {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly itemId: TurnItemId;
-}): string {
-  return JSON.stringify(input);
 }
 
-function parseSupportKey(key: string): {
-  readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
-  readonly itemId: TurnItemId;
-} {
-  return JSON.parse(key) as {
-    readonly environmentId: EnvironmentId;
-    readonly threadId: ThreadId;
-    readonly itemId: TurnItemId;
-  };
+function supportKey(target: ItemSupportTarget): string {
+  return JSON.stringify(target);
+}
+
+function parseSupportKey(key: string): ItemSupportTarget {
+  return JSON.parse(key) as ItemSupportTarget;
 }
 
 const itemSupportAtomFamily = Atom.family((key: string) => {
@@ -42,10 +36,10 @@ const itemSupportAtomFamily = Atom.family((key: string) => {
     if (v2ItemSupportEqual(previous, next)) return previous;
     previous = next;
     return next;
-  }).pipe(Atom.withLabel(`web-v2-item-support:${key}`));
+  }).pipe(Atom.withLabel(`mobile-v2-item-support:${key}`));
 });
 
-export function useV2ItemSupport(input: {
+export function useV2ItemSupport(target: {
   readonly environmentId: EnvironmentId;
   readonly sourceThreadId: ThreadId;
   readonly sourceItemId: TurnItemId;
@@ -53,9 +47,9 @@ export function useV2ItemSupport(input: {
   return useAtomValue(
     itemSupportAtomFamily(
       supportKey({
-        environmentId: input.environmentId,
-        threadId: input.sourceThreadId,
-        itemId: input.sourceItemId,
+        environmentId: target.environmentId,
+        threadId: target.sourceThreadId,
+        itemId: target.sourceItemId,
       }),
     ),
   );
