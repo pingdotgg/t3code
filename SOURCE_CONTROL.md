@@ -2,6 +2,13 @@
 
 ## Current Status
 
+Branch maintenance snapshot after the latest upstream merge:
+
+- Generated from `upstream/main` `31dfe3596e429725d95d31ecff396caa02a47d12` with branch HEAD `b704651764d98b6c83c70451a0433ceb4fba90ad`.
+- Shared refs at merge time: `origin/main` `fa101adc87689d9755c877bbf4e460ebb06ce036`, local `main` `8454550fad7b40b0571daf41e6462779d1742100`.
+- Branch delta after merge: `31 ahead / 0 behind upstream/main`, `33 ahead / 303 behind origin/main`, `33 ahead / 308 behind local main`; fork diff size is `40 files changed, 11267 insertions(+), 293 deletions(-)` against `upstream/main...HEAD`.
+- Merge note: upstream commit `31dfe3596e429725d95d31ecff396caa02a47d12` brought Electron renderer startup/protocol handling, HTTP dev serving, Vite config, workspace metadata, and lockfile updates. It merged cleanly with no source-control conflicts and did not retire any Version Control panel customization. No new source-control fork customization was introduced by the merge.
+
 T3 Code includes a Git-backed Version Control surface in the right panel. The panel is scoped to the active environment and repository cwd, uses server-owned Git operations, and reuses the existing VCS status, source-control provider, and WebSocket RPC infrastructure rather than shelling out from React.
 
 The panel does not require an existing provider session or started server thread. Draft/new conversations can open Version Control as soon as they have project context and a repository cwd. Thread metadata updates caused by branch switching or detached checkout are routed by `ChatView`: server threads persist through `thread.meta.update`, while draft conversations update local draft thread context. Server-thread metadata failures surface in the chat error banner through source-control-specific per-thread state. Dismissal clears that local metadata error without pretending provider session errors are dismissible, and overlapping metadata updates are sequenced per thread so stale failures cannot overwrite a newer successful checkout.
