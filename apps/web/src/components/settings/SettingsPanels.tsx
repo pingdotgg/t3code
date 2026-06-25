@@ -32,6 +32,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
+import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
@@ -73,6 +74,7 @@ import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
+import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -1470,6 +1472,62 @@ function nextArchivedThreadSortState(
   return { field, direction: current.direction === "desc" ? "asc" : "desc" };
 }
 
+function archivedThreadSearchScore(input: {
+  readonly title: string;
+  readonly normalizedQuery: string;
+  readonly tokens: ReadonlyArray<string>;
+}): number | null {
+  if (input.normalizedQuery.length === 0) {
+    return 0;
+  }
+
+  const title = normalizeSearchQuery(input.title);
+  if (!title) {
+    return null;
+  }
+
+  const phraseScore = scoreQueryMatch({
+    value: title,
+    query: input.normalizedQuery,
+    exactBase: 0,
+    prefixBase: 1,
+    boundaryBase: 2,
+    includesBase: 3,
+  });
+  if (phraseScore !== null) {
+    return phraseScore;
+  }
+
+  let matchedTokenCount = 0;
+  let tokenScore = 0;
+  for (const token of input.tokens) {
+    const score = scoreQueryMatch({
+      value: title,
+      query: token,
+      exactBase: 0,
+      prefixBase: 2,
+      boundaryBase: 4,
+      includesBase: 6,
+      ...(token.length >= 3 ? { fuzzyBase: 100 } : {}),
+    });
+    if (score === null) {
+      continue;
+    }
+    matchedTokenCount += 1;
+    tokenScore += score;
+  }
+
+  if (matchedTokenCount === 0) {
+    return null;
+  }
+
+  if (matchedTokenCount === input.tokens.length) {
+    return 1_000 + tokenScore;
+  }
+
+  return 5_000 + (input.tokens.length - matchedTokenCount) * 1_000 + tokenScore;
+}
+
 function ArchivedSortButton({
   field,
   label,
@@ -1540,6 +1598,7 @@ export function ArchivedThreadsPanel() {
   const [expandedProjectKeys, setExpandedProjectKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const [archiveSearchQuery, setArchiveSearchQuery] = useState("");
   const [sort, setSort] = useState<ArchivedThreadSortState>({
     field: "archivedAt",
     direction: "desc",
@@ -1555,6 +1614,19 @@ export function ArchivedThreadsPanel() {
     isLoading: isLoadingArchive,
     refresh: refreshArchivedThreads,
   } = useArchivedThreadSnapshots(environmentIds);
+  const normalizedArchiveSearchQuery = useMemo(
+    () => normalizeSearchQuery(archiveSearchQuery),
+    [archiveSearchQuery],
+  );
+  const archiveSearchTokens = useMemo(
+    () => normalizedArchiveSearchQuery.split(/\s+/u).filter((token) => token.length > 0),
+    [normalizedArchiveSearchQuery],
+  );
+  const isSearchingArchive = normalizedArchiveSearchQuery.length > 0;
+  const hasArchivedThreads = useMemo(
+    () => archivedSnapshots.some(({ snapshot }) => snapshot.threads.length > 0),
+    [archivedSnapshots],
+  );
 
   const archivedGroups = useMemo(() => {
     const projectsByEnvironmentAndId = new Map(
@@ -1581,28 +1653,62 @@ export function ArchivedThreadsPanel() {
     );
 
     const archivedProjects = Array.from(projectsByEnvironmentAndId.values());
+    type ArchivedThreadWithSearchScore = (typeof threads)[number] & {
+      readonly searchScore: number;
+    };
     const groups: Array<{
       readonly project: (typeof archivedProjects)[number];
-      readonly threads: Array<(typeof threads)[number]>;
+      readonly threads: Array<ArchivedThreadWithSearchScore>;
+      readonly actionThreads: Array<(typeof threads)[number]>;
+      readonly searchScore: number;
     }> = [];
     for (const project of archivedProjects) {
-      const projectThreads: Array<(typeof threads)[number]> = [];
+      const actionThreads: Array<(typeof threads)[number]> = [];
+      const projectThreads: Array<ArchivedThreadWithSearchScore> = [];
       for (const thread of threads) {
         if (thread.projectId === project.id && thread.environmentId === project.environmentId) {
-          projectThreads.push(thread);
+          actionThreads.push(thread);
+          const searchScore = archivedThreadSearchScore({
+            title: thread.title,
+            normalizedQuery: normalizedArchiveSearchQuery,
+            tokens: archiveSearchTokens,
+          });
+          if (searchScore === null) {
+            continue;
+          }
+          projectThreads.push({
+            ...thread,
+            searchScore,
+          });
         }
       }
       if (projectThreads.length > 0) {
         groups.push({
           project,
           threads: projectThreads.toSorted((left, right) =>
-            compareArchivedThreads(left, right, sort),
+            isSearchingArchive
+              ? left.searchScore - right.searchScore || compareArchivedThreads(left, right, sort)
+              : compareArchivedThreads(left, right, sort),
           ),
+          actionThreads,
+          searchScore: Math.min(...projectThreads.map((thread) => thread.searchScore)),
         });
       }
     }
-    return groups;
-  }, [archivedSnapshots, sort]);
+    return isSearchingArchive
+      ? groups.toSorted(
+          (left, right) =>
+            left.searchScore - right.searchScore ||
+            left.project.name.localeCompare(right.project.name),
+        )
+      : groups;
+  }, [
+    archiveSearchTokens,
+    archivedSnapshots,
+    isSearchingArchive,
+    normalizedArchiveSearchQuery,
+    sort,
+  ]);
 
   const toggleProjectExpanded = useCallback((projectKey: string) => {
     setExpandedProjectKeys((current) => {
@@ -1796,6 +1902,14 @@ export function ArchivedThreadsPanel() {
 
   return (
     <SettingsPageContainer>
+      <Input
+        nativeInput
+        type="search"
+        value={archiveSearchQuery}
+        onChange={(event) => setArchiveSearchQuery(event.currentTarget.value)}
+        placeholder="Search archived conversations"
+        aria-label="Search archived conversations"
+      />
       {archivedGroups.length === 0 ? (
         <SettingsSection title="Archived threads">
           <SettingsRow
@@ -1810,21 +1924,27 @@ export function ArchivedThreadsPanel() {
                   ? "Loading archived threads"
                   : archiveError
                     ? "Could not load archived threads"
-                    : "No archived threads"}
+                    : isSearchingArchive && hasArchivedThreads
+                      ? "No matching archived threads"
+                      : "No archived threads"}
               </span>
             }
             description={
               isLoadingArchive
                 ? "Checking connected environments."
-                : (archiveError ?? "Archived threads will appear here.")
+                : archiveError
+                  ? archiveError
+                  : isSearchingArchive && hasArchivedThreads
+                    ? `No archived conversation titles match "${archiveSearchQuery.trim()}".`
+                    : "Archived threads will appear here."
             }
           />
         </SettingsSection>
       ) : (
         <div className="space-y-3">
-          {archivedGroups.map(({ project, threads: projectThreads }) => {
+          {archivedGroups.map(({ actionThreads, project, threads: projectThreads }) => {
             const projectKey = `${project.environmentId}:${project.id}`;
-            const isExpanded = expandedProjectKeys.has(projectKey);
+            const isExpanded = isSearchingArchive || expandedProjectKeys.has(projectKey);
             return (
               <section
                 key={projectKey}
@@ -1840,7 +1960,7 @@ export function ArchivedThreadsPanel() {
                     event.preventDefault();
                     void (async () => {
                       const result = await settlePromise(() =>
-                        handleArchivedProjectContextMenu(project.name, projectThreads, {
+                        handleArchivedProjectContextMenu(project.name, actionThreads, {
                           x: event.clientX,
                           y: event.clientY,
                         }),
