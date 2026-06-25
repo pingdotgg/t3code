@@ -131,7 +131,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
 
   const card = (
     <div
-      className="overflow-hidden rounded-[18px] border border-border/75 bg-card/95 shadow-[0_8px_28px_rgba(0,0,0,0.045)] dark:shadow-[0_12px_30px_rgba(0,0,0,0.18)]"
+      className={cn(
+        "floating-glass-surface overflow-x-hidden rounded-[20px] border border-border/75",
+        props.mode === "inline"
+          ? "max-h-full overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          : "overflow-y-hidden",
+      )}
       data-thread-details-card
     >
       <section aria-labelledby="thread-details-project-heading">
@@ -285,7 +290,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   return (
     <aside
       aria-label="Thread details"
-      className="w-[clamp(18rem,24vw,21rem)] shrink-0 overflow-y-auto bg-background p-3 pl-0"
+      className="absolute inset-y-0 right-[var(--app-scrollbar-width)] z-20 w-[var(--thread-details-panel-width)] p-3"
       data-thread-details-panel="inline"
     >
       {card}

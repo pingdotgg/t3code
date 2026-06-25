@@ -3022,9 +3022,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           ref={composerSurfaceRef}
           data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
           className={cn(
-            "rounded-[20px] transition-[background-color] duration-200",
-            isDragOverComposer ? "bg-accent/45 ring-1 ring-primary/70" : null,
-            projectSelectionRequired ? "opacity-75" : null,
+            "floating-glass-surface rounded-[20px] border transition-colors duration-200 has-focus-visible:border-ring/45",
+            isDragOverComposer ? "border-primary/70 bg-accent/45" : "border-border",
+            environmentUnavailable ? "opacity-75" : null,
             composerProviderState.composerSurfaceClassName,
           )}
           onFocusCapture={(event) => {
