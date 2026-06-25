@@ -1,7 +1,11 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+<<<<<<< HEAD:apps/web/src/components/chat/ChatHeader.test.ts
 import { resolveRenameCommit, shouldShowOpenInPicker } from "./ChatHeader";
+=======
+import { shouldShowOpenInPicker } from "./OpenInPicker.logic";
+>>>>>>> 786f5c5767 (Split open-in editor controls into panel and toolbar variants):apps/web/src/components/chat/OpenInPicker.test.ts
 
 describe("shouldShowOpenInPicker", () => {
   const primaryEnvironmentId = EnvironmentId.make("environment-primary");

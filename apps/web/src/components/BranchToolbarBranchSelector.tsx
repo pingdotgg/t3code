@@ -620,14 +620,8 @@ export function BranchToolbarBranchSelector({
     startFromOrigin,
   });
 
-  // PR pill shown next to the branch selector when the active branch has one.
-  const branchPr = resolveThreadPr({
-    threadBranch: resolveBranchToolbarPrBranch({
-      activeThreadBranch,
-      resolvedActiveBranch,
-    }),
-    gitStatus: branchStatusQuery.data ?? null,
-  });
+  // Change request state is compact in the composer and gets a dedicated row in the panel.
+  const branchPr = resolveThreadPr(resolvedActiveBranch, branchStatusQuery.data ?? null);
   const branchPrStatus = prStatusIndicator(branchPr, branchStatusQuery.data?.sourceControlProvider);
   // Action-oriented tooltip (the pill opens the PR), distinct from the sidebar's
   // state-description tooltip.
@@ -635,6 +629,12 @@ export function BranchToolbarBranchSelector({
     ? `Open ${sourceControlPresentation.terminology.singular} #${branchPr.number} (${branchPr.state})`
     : "";
   const openPrLink = useOpenPrLink(threadRef);
+  const panelPrStateClass =
+    branchPr?.state === "open"
+      ? "bg-emerald-500/10 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300"
+      : branchPr?.state === "merged"
+        ? "bg-violet-500/10 text-violet-700 dark:bg-violet-400/10 dark:text-violet-300"
+        : "bg-muted text-muted-foreground";
 
   function renderPickerItem(itemValue: string, index: number) {
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
@@ -735,12 +735,12 @@ export function BranchToolbarBranchSelector({
     >
       <div
         className={cn(
-          "flex min-w-0 items-center gap-1",
-          displayMode === "panel" && "w-full",
+          "flex min-w-0",
+          displayMode === "panel" ? "w-full flex-col items-stretch" : "items-center gap-1",
           className,
         )}
       >
-        {branchPr && branchPrStatus ? (
+        {displayMode !== "panel" && branchPr && branchPrStatus ? (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -788,6 +788,39 @@ export function BranchToolbarBranchSelector({
           </span>
           <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
         </ComboboxTrigger>
+        {displayMode === "panel" && branchPr && branchPrStatus ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className={THREAD_DETAILS_PANEL_ROW_CLASS}
+                  aria-label={branchPrTooltip}
+                  onClick={(event) => openPrLink(event, branchPrStatus.url)}
+                />
+              }
+            >
+              <ChangeRequestStatusIcon
+                className={cn(THREAD_DETAILS_PANEL_ICON_CLASS, branchPrStatus.colorClass)}
+              />
+              <span className="min-w-0 flex-1 truncate text-left">
+                View {sourceControlPresentation.terminology.shortLabel} #{branchPr.number}
+              </span>
+              <span
+                className={cn(
+                  "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium capitalize leading-4",
+                  panelPrStateClass,
+                )}
+              >
+                <span className="size-1.5 rounded-full bg-current opacity-75" aria-hidden="true" />
+                {branchPr.state}
+              </span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">{branchPrStatus.tooltip}</TooltipPopup>
+          </Tooltip>
+        ) : null}
       </div>
       <ComboboxPopup
         align={displayMode === "panel" ? "start" : "end"}
