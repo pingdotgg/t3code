@@ -1,18 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as DateTime from "effect/DateTime";
 import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./contextWindow";
 
 describe("V2 context window presentation", () => {
   it("uses retained compaction token data when available", () => {
     const snapshot = deriveLatestContextWindowSnapshot([
       {
-        id: "compaction-1",
-        createdAt: "2026-06-20T00:00:00.000Z",
-        runId: null,
-        label: "Context compacted",
-        tone: "info",
-        itemType: "compaction",
-        toolLifecycleStatus: "completed",
-        structuredPayload: {
+        item: {
           id: "compaction-1" as never,
           threadId: "thread-1" as never,
           runId: null,
@@ -26,7 +20,7 @@ describe("V2 context window presentation", () => {
           title: null,
           startedAt: null,
           completedAt: null,
-          updatedAt: {} as never,
+          updatedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
           type: "compaction",
           driver: null,
           beforeTokenCount: 10_000,
