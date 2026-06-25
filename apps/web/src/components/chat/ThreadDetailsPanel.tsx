@@ -1,4 +1,5 @@
 import type {
+  EditorId,
   EnvironmentId,
   ProjectScript,
   ResolvedKeybindingsConfig,
@@ -18,6 +19,7 @@ import ProjectScriptsControl, {
 } from "../ProjectScriptsControl";
 import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
+import { OpenInPicker } from "./OpenInPicker";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 
 interface VersionMismatchIssue {
@@ -37,6 +39,8 @@ export interface ThreadDetailsPanelProps {
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
+  availableEditors: ReadonlyArray<EditorId>;
+  showOpenInPicker: boolean;
   gitCwd: string | null;
   isGitRepo: boolean;
   envLocked: boolean;
@@ -132,20 +136,20 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const card = (
     <div
       className={cn(
-        "floating-glass-surface overflow-x-hidden rounded-[20px] border border-border/75",
+        "floating-glass-surface overflow-x-hidden rounded-[20px] border border-border",
         props.mode === "inline"
           ? "max-h-full overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           : "overflow-y-hidden",
       )}
       data-thread-details-card
     >
-      <section aria-labelledby="thread-details-project-heading">
+      <section aria-labelledby="thread-details-workspace-heading">
         <div className="flex min-h-10 items-center justify-between gap-3 px-3.5 pb-1 pt-3">
           <h3
-            id="thread-details-project-heading"
+            id="thread-details-workspace-heading"
             className="text-[11px] font-medium text-muted-foreground"
           >
-            Project / environment
+            Workspace
           </h3>
           <div className="flex shrink-0 items-center gap-1">
             <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -231,6 +235,16 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           ) : null}
 
           <BranchToolbar layout="panel" panelSection="workspace" {...branchToolbarProps} />
+
+          {props.showOpenInPicker ? (
+            <OpenInPicker
+              environmentId={props.environmentId}
+              keybindings={props.keybindings}
+              availableEditors={props.availableEditors}
+              openInCwd={props.gitCwd}
+              displayMode="panel"
+            />
+          ) : null}
 
           {props.activeProjectScripts ? (
             <ProjectScriptsControl
