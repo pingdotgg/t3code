@@ -1876,6 +1876,57 @@ function getEnvironmentEntries(
   >;
 }
 
+interface ProjectsAcrossEnvironmentsCache {
+  slices: ReadonlyArray<{
+    environmentId: EnvironmentId;
+    projectIds: EnvironmentState["projectIds"];
+    projectById: EnvironmentState["projectById"];
+  }>;
+  result: Project[];
+}
+
+interface SidebarThreadsAcrossEnvironmentsCache {
+  slices: ReadonlyArray<{
+    environmentId: EnvironmentId;
+    threadIds: EnvironmentState["threadIds"];
+    sidebarThreadSummaryById: EnvironmentState["sidebarThreadSummaryById"];
+  }>;
+  result: SidebarThreadSummary[];
+}
+
+let projectsAcrossEnvironmentsCache: ProjectsAcrossEnvironmentsCache | null = null;
+let sidebarThreadsAcrossEnvironmentsCache: SidebarThreadsAcrossEnvironmentsCache | null = null;
+
+function projectSlicesEqual(
+  left: ProjectsAcrossEnvironmentsCache["slices"],
+  right: ProjectsAcrossEnvironmentsCache["slices"],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (slice, index) =>
+        slice.environmentId === right[index]?.environmentId &&
+        slice.projectIds === right[index]?.projectIds &&
+        slice.projectById === right[index]?.projectById,
+    )
+  );
+}
+
+function sidebarThreadSlicesEqual(
+  left: SidebarThreadsAcrossEnvironmentsCache["slices"],
+  right: SidebarThreadsAcrossEnvironmentsCache["slices"],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (slice, index) =>
+        slice.environmentId === right[index]?.environmentId &&
+        slice.threadIds === right[index]?.threadIds &&
+        slice.sidebarThreadSummaryById === right[index]?.sidebarThreadSummaryById,
+    )
+  );
+}
+
 export function selectEnvironmentState(
   state: AppState,
   environmentId: EnvironmentId | null | undefined,
@@ -1898,9 +1949,26 @@ export function selectThreadsForEnvironment(
 }
 
 export function selectProjectsAcrossEnvironments(state: AppState): Project[] {
-  return getEnvironmentEntries(state).flatMap(([, environmentState]) =>
-    getProjects(environmentState),
-  );
+  const entries = getEnvironmentEntries(state);
+  const slices = entries.map(([environmentId, environmentState]) => ({
+    environmentId,
+    projectIds: environmentState.projectIds,
+    projectById: environmentState.projectById,
+  }));
+
+  if (
+    projectsAcrossEnvironmentsCache &&
+    projectSlicesEqual(projectsAcrossEnvironmentsCache.slices, slices)
+  ) {
+    return projectsAcrossEnvironmentsCache.result;
+  }
+
+  const result = entries.flatMap(([, environmentState]) => getProjects(environmentState));
+  projectsAcrossEnvironmentsCache = {
+    slices,
+    result,
+  };
+  return result;
 }
 
 export function selectThreadsAcrossEnvironments(state: AppState): Thread[] {
@@ -1920,12 +1988,31 @@ export function selectThreadShellsAcrossEnvironments(state: AppState): ThreadShe
 }
 
 export function selectSidebarThreadsAcrossEnvironments(state: AppState): SidebarThreadSummary[] {
-  return getEnvironmentEntries(state).flatMap(([environmentId, environmentState]) =>
+  const entries = getEnvironmentEntries(state);
+  const slices = entries.map(([environmentId, environmentState]) => ({
+    environmentId,
+    threadIds: environmentState.threadIds,
+    sidebarThreadSummaryById: environmentState.sidebarThreadSummaryById,
+  }));
+
+  if (
+    sidebarThreadsAcrossEnvironmentsCache &&
+    sidebarThreadSlicesEqual(sidebarThreadsAcrossEnvironmentsCache.slices, slices)
+  ) {
+    return sidebarThreadsAcrossEnvironmentsCache.result;
+  }
+
+  const result = entries.flatMap(([environmentId, environmentState]) =>
     environmentState.threadIds.flatMap((threadId) => {
       const thread = environmentState.sidebarThreadSummaryById[threadId];
       return thread && thread.environmentId === environmentId ? [thread] : [];
     }),
   );
+  sidebarThreadsAcrossEnvironmentsCache = {
+    slices,
+    result,
+  };
+  return result;
 }
 
 export function selectSidebarThreadsForProjectRef(

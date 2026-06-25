@@ -20,6 +20,7 @@ import {
   selectExistingThreadKeys,
   selectEnvironmentState,
   selectProjectsAcrossEnvironments,
+  selectSidebarThreadsAcrossEnvironments,
   selectThreadByRef,
   selectThreadExistsByRef,
   setThreadBranch,
@@ -29,6 +30,7 @@ import {
   type EnvironmentState,
 } from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
+import type { SidebarThreadSummary } from "./types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
@@ -86,6 +88,31 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    ...overrides,
+  };
+}
+
+function makeSidebarThreadSummary(
+  thread: Thread,
+  overrides: Partial<SidebarThreadSummary> = {},
+): SidebarThreadSummary {
+  return {
+    id: thread.id,
+    environmentId: thread.environmentId,
+    projectId: thread.projectId,
+    title: thread.title,
+    interactionMode: thread.interactionMode,
+    session: thread.session,
+    createdAt: thread.createdAt,
+    archivedAt: thread.archivedAt,
+    updatedAt: thread.updatedAt,
+    latestTurn: thread.latestTurn,
+    branch: thread.branch,
+    worktreePath: thread.worktreePath,
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
     ...overrides,
   };
 }
@@ -387,6 +414,68 @@ describe("thread selection memoization", () => {
     expect(selectExistingThreadKeys(state, [missingKey, "malformed", existingKey])).toEqual([
       existingKey,
     ]);
+  });
+
+  it("reuses sidebar selector arrays when unrelated detail slices change", () => {
+    const thread = makeThread();
+    const state = makeState(thread);
+    const environmentState = selectEnvironmentState(state, localEnvironmentId);
+    const stateWithSidebarSummary = withActiveEnvironmentState({
+      ...environmentState,
+      sidebarThreadSummaryById: {
+        ...environmentState.sidebarThreadSummaryById,
+        [thread.id]: makeSidebarThreadSummary(thread),
+      },
+    });
+    const nextEnvironmentState = selectEnvironmentState(
+      stateWithSidebarSummary,
+      localEnvironmentId,
+    );
+    const unrelatedDetailUpdate: AppState = {
+      ...stateWithSidebarSummary,
+      environmentStateById: {
+        ...stateWithSidebarSummary.environmentStateById,
+        [localEnvironmentId]: {
+          ...nextEnvironmentState,
+          messageByThreadId: {
+            ...nextEnvironmentState.messageByThreadId,
+          },
+        },
+      },
+    };
+
+    const projects = selectProjectsAcrossEnvironments(stateWithSidebarSummary);
+    const sidebarThreads = selectSidebarThreadsAcrossEnvironments(stateWithSidebarSummary);
+
+    expect(selectProjectsAcrossEnvironments(unrelatedDetailUpdate)).toBe(projects);
+    expect(selectSidebarThreadsAcrossEnvironments(unrelatedDetailUpdate)).toBe(sidebarThreads);
+  });
+
+  it("invalidates the sidebar thread selector when sidebar summaries change", () => {
+    const thread = makeThread();
+    const state = makeState(thread);
+    const environmentState = selectEnvironmentState(state, localEnvironmentId);
+    const initialState = withActiveEnvironmentState({
+      ...environmentState,
+      sidebarThreadSummaryById: {
+        ...environmentState.sidebarThreadSummaryById,
+        [thread.id]: makeSidebarThreadSummary(thread),
+      },
+    });
+    const nextEnvironmentState = selectEnvironmentState(initialState, localEnvironmentId);
+    const updatedState = withActiveEnvironmentState({
+      ...nextEnvironmentState,
+      sidebarThreadSummaryById: {
+        ...nextEnvironmentState.sidebarThreadSummaryById,
+        [thread.id]: makeSidebarThreadSummary(thread, { title: "Updated" }),
+      },
+    });
+
+    const initialSidebarThreads = selectSidebarThreadsAcrossEnvironments(initialState);
+    const updatedSidebarThreads = selectSidebarThreadsAcrossEnvironments(updatedState);
+
+    expect(updatedSidebarThreads).not.toBe(initialSidebarThreads);
+    expect(updatedSidebarThreads[0]?.title).toBe("Updated");
   });
 });
 
