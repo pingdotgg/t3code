@@ -1,72 +1,142 @@
-import type { ThreadWorkEntry } from "@t3tools/client-runtime/state/shell";
-import { MessageId, RunId } from "@t3tools/contracts";
+import {
+  MessageId,
+  RunId,
+  ThreadId,
+  TurnItemId,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2TurnItem,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { makeThreadFixture } from "../test-fixtures";
 import { buildThreadFeed, deriveThreadFeedPresentation } from "./threadActivity";
 
+const threadId = ThreadId.make("thread-1");
+const sourceThreadId = ThreadId.make("thread-source");
 const runId = RunId.make("run-1");
 
-function message(role: "user" | "assistant", text: string, createdAt: string, id: string) {
+function base(id: string, updatedAt: string, ordinal: number) {
+  const timestamp = DateTime.makeUnsafe(updatedAt);
   return {
-    id: MessageId.make(id),
-    role,
-    text,
-    attachments: [],
-    runId: role === "assistant" ? runId : null,
-    streaming: false,
-    createdAt,
-    updatedAt: createdAt,
-  } as const;
+    id: TurnItemId.make(id),
+    threadId,
+    runId,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal,
+    status: "completed" as const,
+    title: null,
+    startedAt: timestamp,
+    completedAt: timestamp,
+    updatedAt: timestamp,
+  };
 }
 
-function commandEntry(overrides: Partial<ThreadWorkEntry> = {}): ThreadWorkEntry {
-  const structuredPayload = {
-    type: "command_execution",
+function projected(
+  item: OrchestrationV2TurnItem,
+  position: number,
+  visibility: OrchestrationV2ProjectedTurnItem["visibility"] = "local",
+): OrchestrationV2ProjectedTurnItem {
+  return {
+    position,
+    visibility,
+    sourceThreadId: visibility === "local" ? threadId : sourceThreadId,
+    sourceItemId: item.id,
+    item,
+  };
+}
+
+function userMessage(updatedAt = "2026-06-20T00:00:01.000Z") {
+  return {
+    ...base("item-user", updatedAt, 0),
+    type: "user_message" as const,
+    messageId: MessageId.make("message-user"),
+    createdBy: "user" as const,
+    creationSource: "mobile" as const,
+    inputIntent: "turn_start" as const,
+    text: "Run checks",
+    attachments: [],
+  };
+}
+
+function command(updatedAt = "2026-06-20T00:00:02.000Z") {
+  return {
+    ...base("item-command", updatedAt, 1),
+    type: "command_execution" as const,
     input: "vp check",
     output: "ok",
-  } as ThreadWorkEntry["structuredPayload"];
+    exitCode: 0,
+  };
+}
+
+function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
   return {
-    id: "item-1",
-    createdAt: "2026-06-20T00:00:02.000Z",
-    runId,
-    label: "Ran command",
-    command: "vp check",
-    detail: "ok",
-    tone: "tool",
-    itemType: "command_execution",
-    toolLifecycleStatus: "completed",
-    structuredPayload,
-    ...overrides,
+    ...base("item-assistant", updatedAt, 2),
+    type: "assistant_message" as const,
+    messageId: MessageId.make("message-assistant"),
+    text: "Done",
+    streaming: false,
   };
 }
 
 describe("buildThreadFeed", () => {
-  it("orders V2 messages and work entries while retaining structured tool data", () => {
-    const thread = makeThreadFixture({
-      messages: [
-        message("user", "Run checks", "2026-06-20T00:00:01.000Z", "message-user"),
-        message("assistant", "Done", "2026-06-20T00:00:03.000Z", "message-assistant"),
-      ],
-      workEntries: [commandEntry()],
-    });
+  it("preserves authoritative V2 order instead of sorting reconstructed collections", () => {
+    const rows = [
+      projected(userMessage("2026-06-20T00:00:03.000Z"), 0),
+      projected(command("2026-06-20T00:00:01.000Z"), 1),
+      projected(assistantMessage("2026-06-20T00:00:02.000Z"), 2),
+    ];
 
-    const feed = buildThreadFeed(thread);
+    const feed = buildThreadFeed(rows);
     expect(feed.map((entry) => entry.type)).toEqual(["message", "activity-group", "message"]);
+    expect(feed.map((entry) => entry.id)).toEqual([
+      "message-user",
+      "local:thread-1:item-command",
+      "message-assistant",
+    ]);
     const activity = feed.find((entry) => entry.type === "activity-group")?.activities[0];
-    expect(activity?.runId).toBe(runId);
+    expect(activity?.projectedItem).toBe(rows[1]);
     expect(activity?.fullDetail).toContain('"input": "vp check"');
   });
 
+  it("retains inherited and synthetic rows with their original projected identity", () => {
+    const inherited = projected(command(), 0, "inherited");
+    const { providerThreadId: _providerThreadId, ...forkBase } = base(
+      "item-fork",
+      "2026-06-20T00:00:03.000Z",
+      2,
+    );
+    const synthetic = projected(
+      {
+        ...forkBase,
+        type: "fork",
+        source: { type: "run", threadId: sourceThreadId, runId },
+        targetThreadId: threadId,
+      },
+      1,
+      "synthetic",
+    );
+
+    const feed = buildThreadFeed([inherited, synthetic]);
+    const activities = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(activities.map((activity) => activity.projectedItem)).toEqual([inherited, synthetic]);
+    expect(activities.map((activity) => activity.projectedItem.visibility)).toEqual([
+      "inherited",
+      "synthetic",
+    ]);
+  });
+
   it("folds settled V2 run work while keeping the terminal assistant message visible", () => {
-    const thread = makeThreadFixture({
-      messages: [
-        message("user", "Run checks", "2026-06-20T00:00:01.000Z", "message-user"),
-        message("assistant", "Done", "2026-06-20T00:00:03.000Z", "message-assistant"),
-      ],
-      workEntries: [commandEntry()],
-    });
-    const feed = buildThreadFeed(thread);
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(command(), 1),
+      projected(assistantMessage(), 2),
+    ]);
     const latestRun = {
       runId,
       status: "completed" as const,
@@ -87,11 +157,12 @@ describe("buildThreadFeed", () => {
   });
 
   it("keeps an active run expanded and marks failed tools as failures", () => {
-    const thread = makeThreadFixture({
-      messages: [message("user", "Run checks", "2026-06-20T00:00:01.000Z", "message-user")],
-      workEntries: [commandEntry({ tone: "error", toolLifecycleStatus: "failed" })],
-    });
-    const feed = buildThreadFeed(thread);
+    const failedCommand: OrchestrationV2TurnItem = {
+      ...command(),
+      status: "failed",
+      completedAt: DateTime.makeUnsafe("2026-06-20T00:00:02.000Z"),
+    };
+    const feed = buildThreadFeed([projected(userMessage(), 0), projected(failedCommand, 1)]);
     const presented = deriveThreadFeedPresentation(
       feed,
       {
