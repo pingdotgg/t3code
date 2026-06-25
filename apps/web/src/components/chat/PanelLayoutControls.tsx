@@ -100,12 +100,13 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
             <PopoverPopup
               anchor={threadPanelPopoverAnchor}
               align="end"
-              alignOffset={8}
+              alignOffset={0}
+              collisionAvoidance={{ side: "shift", align: "shift", fallbackAxisSide: "none" }}
               side="bottom"
-              sideOffset={8}
-              positionerClassName="w-[min(20rem,calc(var(--anchor-width)-1rem))]"
-              className="w-full border-0 bg-transparent shadow-none before:hidden [--viewport-inline-padding:0]"
-              viewportClassName="p-0"
+              sideOffset={0}
+              positionerClassName="w-[min(21rem,var(--anchor-width))] !transition-none"
+              className="w-full !overflow-visible rounded-none border-0 bg-transparent shadow-none before:hidden [--viewport-inline-padding:0]"
+              viewportClassName="!overflow-visible p-2"
             >
               {threadPanelPopoverContent}
             </PopoverPopup>
