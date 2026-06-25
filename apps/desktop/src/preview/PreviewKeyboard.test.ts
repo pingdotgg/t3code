@@ -64,4 +64,21 @@ describe("preview keyboard packets", () => {
     });
     expect(sequence.signal).toEqual({ kind: "key", key: "!", code: "Digit1" });
   });
+
+  it("keeps shifted key values while suppressing text for modified chords", () => {
+    const sequence = makePreviewAutomationKeySequence({
+      key: "1",
+      modifiers: ["Control", "Shift"],
+    });
+    expect(sequence.keyDown).toEqual({
+      type: "rawKeyDown",
+      key: "!",
+      code: "Digit1",
+      modifiers: 10,
+      windowsVirtualKeyCode: 49,
+      location: 0,
+      isKeypad: false,
+    });
+    expect(sequence.signal).toEqual({ kind: "key", key: "!", code: "Digit1" });
+  });
 });

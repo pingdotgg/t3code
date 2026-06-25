@@ -192,9 +192,9 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   };
 
   useEffect(() => {
-    if (!tabId || !visible) return;
+    if (!tabId) return;
     return subscribeBrowserViewportChange(tabId, handleViewportChange);
-  }, [handleViewportChange, tabId, visible]);
+  }, [handleViewportChange, tabId]);
 
   const handleBack = useCallback(() => {
     if (previewBridge && tabId) void previewBridge.goBack(tabId);

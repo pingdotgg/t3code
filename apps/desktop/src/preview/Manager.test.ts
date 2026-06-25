@@ -329,6 +329,36 @@ describe("PreviewManager", () => {
           title: "Example",
         });
         expect(states.at(-1)?.zoomFactor).toBe(1.25);
+
+        const replacementSetZoomFactor = vi.fn();
+        fromId.mockReturnValue({
+          id: 43,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => url,
+          getTitle: () => "Example",
+          isLoading: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: replacementSetZoomFactor,
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.registerWebview("tab_zoom", 43);
+
+        expect(replacementSetZoomFactor).toHaveBeenCalledWith(1.25);
+        expect(states.at(-1)?.zoomFactor).toBe(1.25);
       }),
     ),
   );
@@ -409,6 +439,14 @@ describe("PreviewManager", () => {
 
         loading = false;
         listeners.get("did-stop-loading")?.();
+        yield* Effect.yieldNow;
+        expect(statuses.at(-1)?.kind).toBe("Success");
+
+        listeners.get("did-fail-load")?.({}, -102, "ERR_CONNECTION_REFUSED", url, true);
+        yield* Effect.yieldNow;
+        expect(statuses.at(-1)?.kind).toBe("LoadFailed");
+
+        listeners.get("did-navigate")?.();
         yield* Effect.yieldNow;
         expect(statuses.at(-1)?.kind).toBe("Success");
       }),
@@ -745,6 +783,7 @@ describe("PreviewManager", () => {
         yield* manager.createTab("tab_input");
         yield* manager.registerWebview("tab_input", 42);
         yield* manager.automationType("tab_input", { text: "hello", clear: true });
+        yield* manager.automationType("tab_input", { text: "", clear: true });
         yield* manager.automationPress("tab_input", { key: "x" });
 
         const calls = sendCommand.mock.calls;
@@ -775,6 +814,17 @@ describe("PreviewManager", () => {
             params.expression.includes('document.execCommand("insertText"'),
         );
         expect(typeEvaluation).toBeDefined();
+        const clearOnlyEvaluation = sendCommand.mock.calls.find(
+          ([method, params]) =>
+            method === "Runtime.evaluate" &&
+            typeof params === "object" &&
+            params !== null &&
+            "expression" in params &&
+            typeof params.expression === "string" &&
+            params.expression.includes('const text = ""') &&
+            params.expression.includes("Object.getOwnPropertyDescriptor"),
+        );
+        expect(clearOnlyEvaluation).toBeDefined();
         expect(methods).not.toContain("Input.insertText");
         expect(enableIndex).toBeGreaterThanOrEqual(0);
         expect(focus).toHaveBeenCalledOnce();

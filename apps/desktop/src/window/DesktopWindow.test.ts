@@ -266,14 +266,17 @@ describe("DesktopWindow", () => {
         assert.equal(fakeWindow.loadURL.mock.calls.length, 1);
 
         yield* TestClock.adjust(100);
-        assert.deepEqual(fakeWindow.loadURL.mock.calls, [["t3code-dev://app/"]]);
-        assert.equal(fakeWindow.reload.mock.calls.length, 1);
+        assert.deepEqual(fakeWindow.loadURL.mock.calls, [
+          ["t3code-dev://app/"],
+          ["t3code-dev://app/"],
+        ]);
+        assert.equal(fakeWindow.reload.mock.calls.length, 0);
 
         didFailLoad({}, -9, "ERR_UNEXPECTED", "t3code-dev://app/", true);
         didFinishLoad();
         yield* TestClock.adjust(250);
-        assert.equal(fakeWindow.loadURL.mock.calls.length, 1);
-        assert.equal(fakeWindow.reload.mock.calls.length, 1);
+        assert.equal(fakeWindow.loadURL.mock.calls.length, 2);
+        assert.equal(fakeWindow.reload.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
   );

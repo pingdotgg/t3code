@@ -287,7 +287,7 @@ type RecordingFrameListener = (frame: DesktopPreviewRecordingFrame) => Effect.Ef
 
 type PreviewInputSignal =
   | { readonly kind: "pointer"; readonly x: number; readonly y: number; readonly button: number }
-  | { readonly kind: "key"; readonly key: string; readonly code?: string };
+  | { readonly kind: "key"; readonly key: string; readonly code: string };
 
 interface ManagedListeners {
   readonly scope: Scope.Closeable;
@@ -353,7 +353,8 @@ const isPreviewInputSignal = (value: unknown): value is PreviewInputSignal => {
     value.kind === "key" &&
     "key" in value &&
     typeof value.key === "string" &&
-    (!("code" in value) || typeof value.code === "string")
+    "code" in value &&
+    typeof value.code === "string"
   );
 };
 
@@ -370,7 +371,7 @@ const inputSignalsMatch = (left: PreviewInputSignal, right: PreviewInputSignal):
     left.kind === "key" &&
     right.kind === "key" &&
     left.key === right.key &&
-    (left.code === undefined || right.code === undefined || left.code === right.code)
+    left.code === right.code
   );
 };
 
@@ -1119,7 +1120,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     wc: Electron.WebContents,
   ) {
     const scope = yield* Scope.fork(parentScope, "sequential");
-    const syncState = Effect.fn("PreviewManager.syncWebContentsState")(function* () {
+    const syncState = Effect.fn("PreviewManager.syncWebContentsState")(function* (
+      preserveLoadFailure: boolean,
+    ) {
       if (wc.isDestroyed()) return;
       const zoomFactor = yield* attempt(
         { operation: "syncWebContentsState.getZoomFactor", tabId, webContentsId: wc.id },
@@ -1136,7 +1139,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         // failed guest is no longer "loading", but it has not successfully
         // navigated anywhere. Keep the failure until a new load actually starts.
         const navStatus =
-          current.navStatus.kind === "LoadFailed" && computedNavStatus.kind === "Success"
+          preserveLoadFailure &&
+          current.navStatus.kind === "LoadFailed" &&
+          computedNavStatus.kind === "Success"
             ? current.navStatus
             : computedNavStatus;
         const state: PreviewTabState = {
@@ -1156,7 +1161,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       });
       if (Option.isSome(next)) yield* emit(tabId, next.value);
     });
-    const sync = () => runFork(syncState());
+    const sync = () => runFork(syncState(true));
+    const syncNavigation = () => runFork(syncState(false));
     const failed = (
       _event: Event,
       code: number,
@@ -1224,8 +1230,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* Scope.addFinalizer(
       scope,
       attempt({ operation: "detachListeners", tabId, webContentsId: wc.id }, () => {
-        wc.off("did-navigate", sync);
-        wc.off("did-navigate-in-page", sync);
+        wc.off("did-navigate", syncNavigation);
+        wc.off("did-navigate-in-page", syncNavigation);
         wc.off("page-title-updated", sync);
         wc.off("did-start-loading", sync);
         wc.off("did-stop-loading", sync);
@@ -1236,8 +1242,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
     const install = Effect.fn("PreviewManager.installWebContentsListeners")(function* () {
       yield* attempt({ operation: "attachListeners", tabId, webContentsId: wc.id }, () => {
-        wc.on("did-navigate", sync);
-        wc.on("did-navigate-in-page", sync);
+        wc.on("did-navigate", syncNavigation);
+        wc.on("did-navigate-in-page", syncNavigation);
         wc.on("page-title-updated", sync);
         wc.on("did-start-loading", sync);
         wc.on("did-stop-loading", sync);
@@ -1353,22 +1359,32 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       return;
     }
-    if (tab.webContentsId != null && tab.webContentsId !== webContentsId) {
+    const replacedWebContentsId =
+      tab.webContentsId != null && tab.webContentsId !== webContentsId ? tab.webContentsId : null;
+    if (replacedWebContentsId !== null) {
       yield* Effect.all(
         [
-          detachControlSession(tab.webContentsId),
-          detachListeners(tab.webContentsId),
+          detachControlSession(replacedWebContentsId),
+          detachListeners(replacedWebContentsId),
           cancelPickElement(tabId),
         ],
         { concurrency: 3, discard: true },
       );
     }
+    const zoomFactor =
+      replacedWebContentsId !== null
+        ? yield* attempt(
+            { operation: "registerWebview.restoreZoomFactor", tabId, webContentsId },
+            () => {
+              wc.setZoomFactor(tab.zoomFactor);
+              return tab.zoomFactor;
+            },
+          )
+        : yield* attempt({ operation: "registerWebview.getZoomFactor", tabId, webContentsId }, () =>
+            wc.getZoomFactor(),
+          );
     yield* attachListeners(tabId, wc);
     runFork(ensureControlSession(wc).pipe(Effect.ignore));
-    const zoomFactor = yield* attempt(
-      { operation: "registerWebview.getZoomFactor", tabId, webContentsId },
-      () => wc.getZoomFactor(),
-    );
     const registeredAt = yield* currentIso;
     const registration = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
       const current = tabs.get(tabId);
@@ -2123,9 +2139,31 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               }
             }
             const text = ${textJson};
-            const inserted = text.length > 0
-              ? document.execCommand("insertText", false, text)
-              : !clear || document.execCommand("delete", false);
+            let inserted = true;
+            if (text.length > 0) {
+              inserted = document.execCommand("insertText", false, text);
+            } else if (clear) {
+              document.execCommand("delete", false);
+              const cleared = textControl
+                ? element.value.length === 0
+                : (element.textContent ?? "").length === 0;
+              if (!cleared) {
+                if (textControl) {
+                  const prototype = element instanceof HTMLTextAreaElement
+                    ? HTMLTextAreaElement.prototype
+                    : HTMLInputElement.prototype;
+                  const valueSetter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+                  if (valueSetter) valueSetter.call(element, "");
+                  else element.value = "";
+                } else {
+                  element.replaceChildren();
+                }
+                element.dispatchEvent(new InputEvent("input", {
+                  bubbles: true,
+                  inputType: "deleteContentBackward",
+                }));
+              }
+            }
             if (!inserted) return { notEditable: true };
             element.dispatchEvent(new Event("change", { bubbles: true }));
             return { ok: true };

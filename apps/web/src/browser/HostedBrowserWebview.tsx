@@ -9,7 +9,7 @@ import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { cn } from "~/lib/utils";
 
 import { useActiveBrowserRecordingTabId } from "./browserRecording";
-import { useBrowserSurfaceStore } from "./browserSurfaceStore";
+import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { browserViewportSettingKey } from "./browserViewportLayout";
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
@@ -50,7 +50,7 @@ export function HostedBrowserWebview(props: {
     useShallow((state) => {
       const current = state.byTabId[tabId];
       return {
-        rect: current?.rect ?? null,
+        rect: resolveBrowserSurfacePanelRect(state.byTabId, tabId),
         visible: current?.visible ?? false,
       };
     }),

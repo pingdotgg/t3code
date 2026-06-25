@@ -104,6 +104,30 @@ interface BrokerState {
   readonly focusSequence: number;
 }
 
+const removeConnectionFromState = (
+  current: BrokerState,
+  clientId: string,
+  queue: ClientConnection["queue"],
+): { readonly state: BrokerState; readonly disconnected: ReadonlyArray<PendingRequest> } => {
+  const clients = new Map(current.clients);
+  const assignments = new Map(current.assignments);
+  const pending = new Map(current.pending);
+  const disconnected: PendingRequest[] = [];
+  if (current.clients.get(clientId)?.queue === queue) clients.delete(clientId);
+  for (const [assignmentKey, assignment] of assignments) {
+    if (assignment.queue === queue) assignments.delete(assignmentKey);
+  }
+  for (const [requestId, entry] of pending) {
+    if (entry.queue !== queue) continue;
+    pending.delete(requestId);
+    disconnected.push(entry);
+  }
+  return {
+    state: { ...current, clients, assignments, pending },
+    disconnected,
+  };
+};
+
 const selectorDiagnosticsFromInput = (
   input: unknown,
 ): Pick<PreviewAutomationRequestErrorContext, "selectorKind" | "selectorLength"> => {
@@ -254,38 +278,28 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     focusSequence: 0,
   });
 
-  const disconnect = Effect.fn("PreviewAutomationBroker.disconnect")(function* (
-    clientId: string,
+  const closeConnection = Effect.fn("PreviewAutomationBroker.closeConnection")(function* (
     queue: ClientConnection["queue"],
+    disconnected: ReadonlyArray<PendingRequest>,
   ) {
-    const toFail = yield* SynchronizedRef.modify(state, (current) => {
-      const clients = new Map(current.clients);
-      const assignments = new Map(current.assignments);
-      const pending = new Map(current.pending);
-      const disconnected: PendingRequest[] = [];
-      if (current.clients.get(clientId)?.queue === queue) {
-        clients.delete(clientId);
-      }
-      for (const [assignmentKey, assignment] of assignments) {
-        if (assignment.queue === queue) {
-          assignments.delete(assignmentKey);
-        }
-      }
-      for (const [requestId, entry] of pending) {
-        if (entry.queue === queue) {
-          pending.delete(requestId);
-          disconnected.push(entry);
-        }
-      }
-      return [disconnected, { ...current, clients, assignments, pending }] as const;
-    });
     yield* Effect.forEach(
-      toFail,
+      disconnected,
       ({ deferred, context }) =>
         Deferred.fail(deferred, new PreviewAutomationClientDisconnectedError(context)),
       { discard: true },
     );
     yield* Queue.shutdown(queue);
+  });
+
+  const disconnect = Effect.fn("PreviewAutomationBroker.disconnect")(function* (
+    clientId: string,
+    queue: ClientConnection["queue"],
+  ) {
+    const disconnected = yield* SynchronizedRef.modify(state, (current) => {
+      const removed = removeConnectionFromState(current, clientId, queue);
+      return [removed.disconnected, removed.state] as const;
+    });
+    yield* closeConnection(queue, disconnected);
   });
 
   const acquireConnection = Effect.fn("PreviewAutomationBroker.acquireConnection")(function* (
@@ -305,17 +319,25 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       queue,
     };
     const registration = yield* SynchronizedRef.modify(state, (current) => {
-      const clients = new Map(current.clients);
-      const focusSequence = current.focusSequence + 1;
+      const previousConnection = current.clients.get(clientId);
+      const removed = previousConnection
+        ? removeConnectionFromState(current, clientId, previousConnection.queue)
+        : { state: current, disconnected: [] };
+      const clients = new Map(removed.state.clients);
+      const focusSequence = removed.state.focusSequence + 1;
       const registeredConnection = { ...connection, focusOrder: focusSequence };
       clients.set(clientId, registeredConnection);
       return [
-        { previousConnection: current.clients.get(clientId), registeredConnection },
-        { ...current, clients, focusSequence },
+        {
+          previousConnection,
+          disconnected: removed.disconnected,
+          registeredConnection,
+        },
+        { ...removed.state, clients, focusSequence },
       ] as const;
     });
     if (registration.previousConnection) {
-      yield* disconnect(clientId, registration.previousConnection.queue);
+      yield* closeConnection(registration.previousConnection.queue, registration.disconnected);
     }
     return registration.registeredConnection;
   });

@@ -31,6 +31,26 @@ interface BrowserSurfaceStoreState {
   readonly hide: (tabId: string) => void;
 }
 
+export function resolveBrowserSurfacePanelRect(
+  byTabId: Readonly<Record<string, BrowserSurfacePresentation>>,
+  tabId: string,
+): BrowserSurfaceRect | null {
+  const current = byTabId[tabId];
+  if (current?.visible && current.rect) return current.rect;
+
+  let latestVisible: BrowserSurfacePresentation | undefined;
+  for (const presentation of Object.values(byTabId)) {
+    if (
+      presentation.visible &&
+      presentation.rect &&
+      (!latestVisible || presentation.updatedAt > latestVisible.updatedAt)
+    ) {
+      latestVisible = presentation;
+    }
+  }
+  return latestVisible?.rect ?? current?.rect ?? null;
+}
+
 const rectEquals = (left: BrowserSurfaceRect | null, right: BrowserSurfaceRect): boolean =>
   left !== null &&
   left.x === right.x &&
