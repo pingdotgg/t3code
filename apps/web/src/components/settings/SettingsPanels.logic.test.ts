@@ -4,11 +4,41 @@ import {
   ProviderInstanceId,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
+import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  archivedThreadSearchScore,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
 } from "./SettingsPanels.logic";
+
+function scoreArchivedTitle(title: string, query: string): number | null {
+  const normalizedQuery = normalizeSearchQuery(query);
+  return archivedThreadSearchScore({
+    normalizedTitle: normalizeSearchQuery(title),
+    normalizedQuery,
+    tokens: normalizedQuery.split(/\s+/u).filter((token) => token.length > 0),
+  });
+}
+
+describe("archivedThreadSearchScore", () => {
+  it("ranks phrase matches ahead of all-token and partial-token matches", () => {
+    const phraseMatch = scoreArchivedTitle("Alpha Beta cleanup", "alpha beta");
+    const allTokenMatch = scoreArchivedTitle("Alpha cleanup Beta", "alpha beta");
+    const partialTokenMatch = scoreArchivedTitle("Alpha cleanup", "alpha beta");
+
+    expect(phraseMatch).not.toBeNull();
+    expect(allTokenMatch).not.toBeNull();
+    expect(partialTokenMatch).not.toBeNull();
+    expect(phraseMatch!).toBeLessThan(allTokenMatch!);
+    expect(allTokenMatch!).toBeLessThan(partialTokenMatch!);
+  });
+
+  it("matches titles case-insensitively and rejects unrelated titles", () => {
+    expect(scoreArchivedTitle("Release Candidate Notes", "candidate")).not.toBeNull();
+    expect(scoreArchivedTitle("Release Candidate Notes", "missing")).toBeNull();
+  });
+});
 
 describe("formatDiagnosticsDescription", () => {
   it("collapses trace and metric URLs that share the same OTEL base path", () => {

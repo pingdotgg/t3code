@@ -32,7 +32,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
-import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
+import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
@@ -90,6 +90,7 @@ import {
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import {
+  archivedThreadSearchScore,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
 } from "./SettingsPanels.logic";
@@ -1436,10 +1437,55 @@ export function ProviderSettingsPanel() {
 
 type ArchivedThreadSortField = "archivedAt" | "createdAt";
 type ArchivedThreadSortDirection = "asc" | "desc";
+type ArchivedProjectBulkScope = "all" | "matching";
 
 interface ArchivedThreadSortState {
   readonly field: ArchivedThreadSortField;
   readonly direction: ArchivedThreadSortDirection;
+}
+
+type ArchivedProjectBulkThread = {
+  readonly id: ScopedThreadRef["threadId"];
+  readonly environmentId: ScopedThreadRef["environmentId"];
+};
+type ArchivedProjectBulkFailure = Extract<
+  AtomCommandResult<unknown, unknown>,
+  { readonly _tag: "Failure" }
+>;
+
+const ARCHIVED_PROJECT_BULK_ACTION_CONCURRENCY = 4;
+
+async function runArchivedProjectThreadActions(
+  threads: ReadonlyArray<ArchivedProjectBulkThread>,
+  action: (thread: ArchivedProjectBulkThread) => Promise<AtomCommandResult<unknown, unknown>>,
+): Promise<ReadonlyArray<ArchivedProjectBulkFailure>> {
+  const failures: Array<ArchivedProjectBulkFailure> = [];
+  let nextThreadIndex = 0;
+  async function worker() {
+    for (;;) {
+      const thread = threads[nextThreadIndex];
+      nextThreadIndex += 1;
+      if (!thread) {
+        return;
+      }
+      const result = await action(thread);
+      if (result._tag === "Failure") {
+        failures.push(result);
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(ARCHIVED_PROJECT_BULK_ACTION_CONCURRENCY, threads.length) },
+      worker,
+    ),
+  );
+  return failures;
+}
+
+function archivedProjectBulkScopeLabel(scope: ArchivedProjectBulkScope): string {
+  return scope === "matching" ? "matching archived conversations" : "all archived conversations";
 }
 
 function archivedThreadSortTimestamp(
@@ -1470,62 +1516,6 @@ function nextArchivedThreadSortState(
     return { field, direction: "desc" };
   }
   return { field, direction: current.direction === "desc" ? "asc" : "desc" };
-}
-
-function archivedThreadSearchScore(input: {
-  readonly title: string;
-  readonly normalizedQuery: string;
-  readonly tokens: ReadonlyArray<string>;
-}): number | null {
-  if (input.normalizedQuery.length === 0) {
-    return 0;
-  }
-
-  const title = normalizeSearchQuery(input.title);
-  if (!title) {
-    return null;
-  }
-
-  const phraseScore = scoreQueryMatch({
-    value: title,
-    query: input.normalizedQuery,
-    exactBase: 0,
-    prefixBase: 1,
-    boundaryBase: 2,
-    includesBase: 3,
-  });
-  if (phraseScore !== null) {
-    return phraseScore;
-  }
-
-  let matchedTokenCount = 0;
-  let tokenScore = 0;
-  for (const token of input.tokens) {
-    const score = scoreQueryMatch({
-      value: title,
-      query: token,
-      exactBase: 0,
-      prefixBase: 2,
-      boundaryBase: 4,
-      includesBase: 6,
-      ...(token.length >= 3 ? { fuzzyBase: 100 } : {}),
-    });
-    if (score === null) {
-      continue;
-    }
-    matchedTokenCount += 1;
-    tokenScore += score;
-  }
-
-  if (matchedTokenCount === 0) {
-    return null;
-  }
-
-  if (matchedTokenCount === input.tokens.length) {
-    return 1_000 + tokenScore;
-  }
-
-  return 5_000 + (input.tokens.length - matchedTokenCount) * 1_000 + tokenScore;
 }
 
 function ArchivedSortButton({
@@ -1649,6 +1639,7 @@ export function ArchivedThreadsPanel() {
       snapshot.threads.map((thread) => ({
         ...thread,
         environmentId,
+        normalizedTitle: normalizeSearchQuery(thread.title),
       })),
     );
 
@@ -1659,17 +1650,14 @@ export function ArchivedThreadsPanel() {
     const groups: Array<{
       readonly project: (typeof archivedProjects)[number];
       readonly threads: Array<ArchivedThreadWithSearchScore>;
-      readonly actionThreads: Array<(typeof threads)[number]>;
       readonly searchScore: number;
     }> = [];
     for (const project of archivedProjects) {
-      const actionThreads: Array<(typeof threads)[number]> = [];
       const projectThreads: Array<ArchivedThreadWithSearchScore> = [];
       for (const thread of threads) {
         if (thread.projectId === project.id && thread.environmentId === project.environmentId) {
-          actionThreads.push(thread);
           const searchScore = archivedThreadSearchScore({
-            title: thread.title,
+            normalizedTitle: thread.normalizedTitle,
             normalizedQuery: normalizedArchiveSearchQuery,
             tokens: archiveSearchTokens,
           });
@@ -1690,7 +1678,6 @@ export function ArchivedThreadsPanel() {
               ? left.searchScore - right.searchScore || compareArchivedThreads(left, right, sort)
               : compareArchivedThreads(left, right, sort),
           ),
-          actionThreads,
           searchScore: Math.min(...projectThreads.map((thread) => thread.searchScore)),
         });
       }
@@ -1760,6 +1747,26 @@ export function ArchivedThreadsPanel() {
     [],
   );
 
+  const showArchivedBulkActionFailure = useCallback(
+    (title: string, failures: ReadonlyArray<ArchivedProjectBulkFailure>, totalCount: number) => {
+      const visibleFailures = failures.filter((failure) => !isAtomCommandInterrupted(failure));
+      if (visibleFailures.length === 0) return;
+      const error = squashAtomCommandFailure(visibleFailures[0]!);
+      const successCount = totalCount - failures.length;
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title,
+          description: [
+            `${successCount} succeeded, ${visibleFailures.length} failed.`,
+            error instanceof Error ? error.message : "An error occurred.",
+          ].join(" "),
+        }),
+      );
+    },
+    [],
+  );
+
   const handleUnarchiveThread = useCallback(
     async (threadRef: ScopedThreadRef) => {
       const result = await unarchiveThread(threadRef);
@@ -1794,55 +1801,59 @@ export function ArchivedThreadsPanel() {
   const handleUnarchiveProjectThreads = useCallback(
     async (
       projectName: string,
-      threads: ReadonlyArray<{
-        readonly id: ScopedThreadRef["threadId"];
-        readonly environmentId: ScopedThreadRef["environmentId"];
-      }>,
+      threads: ReadonlyArray<ArchivedProjectBulkThread>,
+      scope: ArchivedProjectBulkScope,
     ) => {
+      const scopeLabel = archivedProjectBulkScopeLabel(scope);
       const confirmed = await confirmArchivedAction(
         [
-          `Unarchive all archived conversations in "${projectName}"?`,
+          `Unarchive ${scopeLabel} in "${projectName}"?`,
           `This will restore ${threads.length} conversation${threads.length === 1 ? "" : "s"}.`,
         ].join("\n"),
       );
       if (!confirmed) return;
-      for (const thread of threads) {
-        const result = await unarchiveThread(scopeThreadRef(thread.environmentId, thread.id));
-        if (result._tag === "Failure") {
-          showArchivedActionFailure("Failed to unarchive every thread", result);
-          break;
-        }
+      const failures = await runArchivedProjectThreadActions(threads, (thread) =>
+        unarchiveThread(scopeThreadRef(thread.environmentId, thread.id)),
+      );
+      if (failures.length > 0) {
+        showArchivedBulkActionFailure(
+          "Failed to unarchive every archived thread",
+          failures,
+          threads.length,
+        );
       }
       refreshArchivedThreads();
     },
-    [confirmArchivedAction, refreshArchivedThreads, showArchivedActionFailure, unarchiveThread],
+    [confirmArchivedAction, refreshArchivedThreads, showArchivedBulkActionFailure, unarchiveThread],
   );
 
   const handleDeleteProjectThreads = useCallback(
     async (
       projectName: string,
-      threads: ReadonlyArray<{
-        readonly id: ScopedThreadRef["threadId"];
-        readonly environmentId: ScopedThreadRef["environmentId"];
-      }>,
+      threads: ReadonlyArray<ArchivedProjectBulkThread>,
+      scope: ArchivedProjectBulkScope,
     ) => {
+      const scopeLabel = archivedProjectBulkScopeLabel(scope);
       const confirmed = await confirmArchivedAction(
         [
-          `Delete all archived conversations in "${projectName}"?`,
+          `Delete ${scopeLabel} in "${projectName}"?`,
           `This permanently clears conversation history for ${threads.length} conversation${threads.length === 1 ? "" : "s"}.`,
         ].join("\n"),
       );
       if (!confirmed) return;
-      for (const thread of threads) {
-        const result = await deleteThread(scopeThreadRef(thread.environmentId, thread.id));
-        if (result._tag === "Failure") {
-          showArchivedActionFailure("Failed to delete every thread", result);
-          break;
-        }
+      const failures = await runArchivedProjectThreadActions(threads, (thread) =>
+        deleteThread(scopeThreadRef(thread.environmentId, thread.id)),
+      );
+      if (failures.length > 0) {
+        showArchivedBulkActionFailure(
+          "Failed to delete every archived thread",
+          failures,
+          threads.length,
+        );
       }
       refreshArchivedThreads();
     },
-    [confirmArchivedAction, deleteThread, refreshArchivedThreads, showArchivedActionFailure],
+    [confirmArchivedAction, deleteThread, refreshArchivedThreads, showArchivedBulkActionFailure],
   );
 
   const handleArchivedThreadContextMenu = useCallback(
@@ -1872,10 +1883,8 @@ export function ArchivedThreadsPanel() {
   const handleArchivedProjectContextMenu = useCallback(
     async (
       projectName: string,
-      threads: ReadonlyArray<{
-        readonly id: ScopedThreadRef["threadId"];
-        readonly environmentId: ScopedThreadRef["environmentId"];
-      }>,
+      threads: ReadonlyArray<ArchivedProjectBulkThread>,
+      scope: ArchivedProjectBulkScope,
       position: { x: number; y: number },
     ) => {
       const api = readLocalApi();
@@ -1889,12 +1898,12 @@ export function ArchivedThreadsPanel() {
       );
 
       if (clicked === "unarchive-all") {
-        await handleUnarchiveProjectThreads(projectName, threads);
+        await handleUnarchiveProjectThreads(projectName, threads, scope);
         return;
       }
 
       if (clicked === "delete-all") {
-        await handleDeleteProjectThreads(projectName, threads);
+        await handleDeleteProjectThreads(projectName, threads, scope);
       }
     },
     [handleDeleteProjectThreads, handleUnarchiveProjectThreads],
@@ -1942,9 +1951,10 @@ export function ArchivedThreadsPanel() {
         </SettingsSection>
       ) : (
         <div className="space-y-3">
-          {archivedGroups.map(({ actionThreads, project, threads: projectThreads }) => {
+          {archivedGroups.map(({ project, threads: projectThreads }) => {
             const projectKey = `${project.environmentId}:${project.id}`;
             const isExpanded = isSearchingArchive || expandedProjectKeys.has(projectKey);
+            const projectBulkScope = isSearchingArchive ? "matching" : "all";
             return (
               <section
                 key={projectKey}
@@ -1960,10 +1970,15 @@ export function ArchivedThreadsPanel() {
                     event.preventDefault();
                     void (async () => {
                       const result = await settlePromise(() =>
-                        handleArchivedProjectContextMenu(project.name, actionThreads, {
-                          x: event.clientX,
-                          y: event.clientY,
-                        }),
+                        handleArchivedProjectContextMenu(
+                          project.name,
+                          projectThreads,
+                          projectBulkScope,
+                          {
+                            x: event.clientX,
+                            y: event.clientY,
+                          },
+                        ),
                       );
                       if (result._tag === "Failure") {
                         const error = squashAtomCommandFailure(result);
@@ -1981,7 +1996,8 @@ export function ArchivedThreadsPanel() {
                 >
                   <button
                     type="button"
-                    className="group flex min-w-0 items-center gap-2 text-left"
+                    className="group flex min-w-0 items-center gap-2 text-left disabled:cursor-default"
+                    disabled={isSearchingArchive}
                     aria-expanded={isExpanded}
                     onClick={() => toggleProjectExpanded(projectKey)}
                   >

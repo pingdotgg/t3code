@@ -6,6 +6,70 @@ import type {
   UnifiedSettings,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { scoreQueryMatch } from "@t3tools/shared/searchRanking";
+
+const ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET = 1_000;
+const ARCHIVED_THREAD_PARTIAL_TOKENS_SCORE_OFFSET = 5_000;
+
+export function archivedThreadSearchScore(input: {
+  readonly normalizedTitle: string;
+  readonly normalizedQuery: string;
+  readonly tokens: ReadonlyArray<string>;
+}): number | null {
+  if (input.normalizedQuery.length === 0) {
+    return 0;
+  }
+
+  if (!input.normalizedTitle) {
+    return null;
+  }
+
+  const phraseScore = scoreQueryMatch({
+    value: input.normalizedTitle,
+    query: input.normalizedQuery,
+    exactBase: 0,
+    prefixBase: 1,
+    boundaryBase: 2,
+    includesBase: 3,
+  });
+  if (phraseScore !== null) {
+    return phraseScore;
+  }
+
+  let matchedTokenCount = 0;
+  let tokenScore = 0;
+  for (const token of input.tokens) {
+    const score = scoreQueryMatch({
+      value: input.normalizedTitle,
+      query: token,
+      exactBase: 0,
+      prefixBase: 2,
+      boundaryBase: 4,
+      includesBase: 6,
+      ...(token.length >= 3 ? { fuzzyBase: 100 } : {}),
+    });
+    if (score === null) {
+      continue;
+    }
+
+    matchedTokenCount += 1;
+    tokenScore += score;
+  }
+
+  if (matchedTokenCount === 0) {
+    return null;
+  }
+
+  if (matchedTokenCount === input.tokens.length) {
+    return ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET + tokenScore;
+  }
+
+  return (
+    ARCHIVED_THREAD_PARTIAL_TOKENS_SCORE_OFFSET +
+    (input.tokens.length - matchedTokenCount) * 1_000 +
+    tokenScore
+  );
+}
 
 function collapseOtelSignalsUrl(input: {
   readonly tracesUrl: string;
