@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { ScopedThreadProjection } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, OrchestrationV2ThreadProjection, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -10,6 +10,9 @@ import { useThreadSelection } from "./use-thread-selection";
 const EMPTY_THREAD_PROJECTION_ATOM = Atom.make<ScopedThreadProjection | null>(null).pipe(
   Atom.withLabel("mobile-thread-projection:empty"),
 );
+const EMPTY_VISIBLE_TURN_ITEMS_ATOM = Atom.make<
+  OrchestrationV2ThreadProjection["visibleTurnItems"]
+>(Object.freeze([])).pipe(Atom.withLabel("mobile-thread-visible-turn-items:empty"));
 
 export interface ThreadDetailTarget {
   readonly environmentId: EnvironmentId | null;
@@ -46,6 +49,27 @@ export function useThreadProjection(target: ThreadDetailTarget): ScopedThreadPro
 export function useSelectedThreadProjection(): ScopedThreadProjection | null {
   const { selectedThread } = useThreadSelection();
   return useThreadProjection({
+    environmentId: selectedThread?.environmentId ?? null,
+    threadId: selectedThread?.id ?? null,
+  });
+}
+
+export function useThreadVisibleTurnItems(
+  target: ThreadDetailTarget,
+): OrchestrationV2ThreadProjection["visibleTurnItems"] {
+  return useAtomValue(
+    target.environmentId === null || target.threadId === null
+      ? EMPTY_VISIBLE_TURN_ITEMS_ATOM
+      : environmentThreadDetails.visibleTurnItemsAtom({
+          environmentId: target.environmentId,
+          threadId: target.threadId,
+        }),
+  );
+}
+
+export function useSelectedThreadVisibleTurnItems(): OrchestrationV2ThreadProjection["visibleTurnItems"] {
+  const { selectedThread } = useThreadSelection();
+  return useThreadVisibleTurnItems({
     environmentId: selectedThread?.environmentId ?? null,
     threadId: selectedThread?.id ?? null,
   });

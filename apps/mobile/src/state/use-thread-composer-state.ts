@@ -40,7 +40,7 @@ import {
 import { setPendingConnectionError } from "../state/use-remote-environment-registry";
 import {
   useSelectedThreadDetail,
-  useSelectedThreadProjection,
+  useSelectedThreadVisibleTurnItems,
 } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
@@ -80,7 +80,7 @@ export function useThreadDraftForThread(input: {
 export function useThreadComposerState() {
   const { selectedThread: selectedThreadShell } = useThreadSelection();
   const selectedThreadDetail = useSelectedThreadDetail();
-  const selectedThreadProjection = useSelectedThreadProjection();
+  const selectedThreadVisibleTurnItems = useSelectedThreadVisibleTurnItems();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
 
@@ -96,8 +96,8 @@ export function useThreadComposerState() {
     [queuedMessagesByThreadKey, selectedThreadKey],
   );
   const selectedThreadFeed = useMemo(
-    () => buildThreadFeed(selectedThreadProjection?.projection.visibleTurnItems ?? []),
-    [selectedThreadProjection?.projection.visibleTurnItems],
+    () => buildThreadFeed(selectedThreadVisibleTurnItems),
+    [selectedThreadVisibleTurnItems],
   );
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
