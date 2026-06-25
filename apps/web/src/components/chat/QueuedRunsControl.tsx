@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { ArrowDownIcon, ArrowUpIcon, CornerUpRightIcon, ListOrderedIcon } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -18,31 +19,12 @@ export function QueuedRunsControl(props: {
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
-  const queued = useMemo(
-    () =>
-      (projection?.runs ?? [])
-        .filter((run) => run.status === "queued")
-        .toSorted(
-          (left, right) =>
-            (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
-            left.ordinal - right.ordinal,
-        )
-        .map((run) => ({
-          run,
-          text:
-            projection?.messages.find((message) => message.id === run.userMessageId)?.text ??
-            "Queued message",
-        })),
+  const workflow = useMemo(
+    () => (projection ? deriveThreadQueueWorkflowState(projection) : null),
     [projection],
   );
-  const activeRun =
-    projection?.runs.findLast(
-      (run) =>
-        run.status === "preparing" ||
-        run.status === "starting" ||
-        run.status === "running" ||
-        run.status === "waiting",
-    ) ?? null;
+  const queued = workflow?.queuedRuns ?? [];
+  const activeRun = workflow?.activeRun ?? null;
 
   if (queued.length === 0) return null;
 
@@ -83,7 +65,7 @@ export function QueuedRunsControl(props: {
               size="icon-xs"
               variant="ghost"
               aria-label="Move queued message up"
-              disabled={busyRunId !== null || index === 0}
+              disabled={busyRunId !== null || !workflow?.canReorder || index === 0}
               onClick={() => void move(run.id, queued[index - 1]?.run.id ?? null)}
             >
               <ArrowUpIcon className="size-3" />
@@ -92,7 +74,7 @@ export function QueuedRunsControl(props: {
               size="icon-xs"
               variant="ghost"
               aria-label="Move queued message down"
-              disabled={busyRunId !== null || index === queued.length - 1}
+              disabled={busyRunId !== null || !workflow?.canReorder || index === queued.length - 1}
               onClick={() => void move(run.id, queued[index + 2]?.run.id ?? null)}
             >
               <ArrowDownIcon className="size-3" />
@@ -100,7 +82,7 @@ export function QueuedRunsControl(props: {
             <Button
               size="xs"
               variant="outline"
-              disabled={busyRunId !== null || activeRun === null}
+              disabled={busyRunId !== null || !workflow?.canPromoteToSteer}
               title={activeRun === null ? "There is no active run to steer" : "Promote to steer"}
               onClick={() => void steer(run.id)}
             >
