@@ -9,14 +9,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { AgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
-import {
-  emptyAgentPanelModel,
-  formatSubagentTokenCount,
-} from "@t3tools/client-runtime/state/subagentRuntime";
-
-const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
-const NOOP_OPEN_AGENTS = () => {};
+import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
@@ -1269,17 +1262,10 @@ function AssistantForkButton({
     sourceThreadId: projectedItem.sourceThreadId,
     sourceItemId: projectedItem.sourceItemId,
   });
-  const capabilities = support.providerSession?.capabilities;
-  const canForkNatively =
-    capabilities?.threads.canForkThread === true &&
-    capabilities.threads.canForkFromTurn === true &&
-    capabilities.identity.nativeThreadIds === "strong";
-  const canFork =
-    projectedItem.item.runId !== null &&
-    projectedItem.item.status === "completed" &&
-    (capabilities === undefined ||
-      canForkNatively ||
-      capabilities.context.supportsFullThreadHandoff === true);
+  const canFork = canForkProjectedAssistantItem({
+    projectedItem,
+    capabilities: support.providerSession?.capabilities,
+  });
 
   if (!canFork || projectedItem.item.runId === null) return null;
   const runId = projectedItem.item.runId;
