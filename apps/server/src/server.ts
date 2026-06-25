@@ -82,6 +82,7 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import { layer as TaskOrchestratorLive } from "./orchestration/Layers/TaskOrchestrator.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
@@ -356,7 +357,13 @@ export const makeRoutesLayer = Layer.mergeAll(
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),
-  McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
+  McpHttpServer.layer.pipe(
+    Layer.provide(McpSessionRegistry.layer),
+    // TaskOrchestrator backs the `delegate_tasks` MCP tool. Its deps
+    // (engine, projection query, settings, crypto) are satisfied by the
+    // surrounding RuntimeServicesLive / platform layers.
+    Layer.provide(TaskOrchestratorLive),
+  ),
 ).pipe(Layer.provide(browserApiCorsLayer));
 
 export const makeServerLayer = Layer.unwrap(

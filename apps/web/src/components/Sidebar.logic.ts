@@ -442,6 +442,40 @@ export function resolveProjectStatusIndicator(
   return highestPriorityStatus;
 }
 
+/**
+ * Reorder a sorted thread list so each delegated sub-task appears directly
+ * after its lead thread, preserving the existing sort order among lead threads
+ * and among each lead's children. Children whose lead is not in the list keep
+ * their original position (treated as a lead). Delegation is depth-1, so no
+ * recursion is needed.
+ */
+export function nestDelegatedChildren<
+  T extends { readonly id: string; readonly parentThreadId?: string | null | undefined },
+>(threads: readonly T[]): T[] {
+  const presentIds = new Set(threads.map((thread) => thread.id));
+  const childrenByParent = new Map<string, T[]>();
+  const leads: T[] = [];
+  for (const thread of threads) {
+    const parentId = thread.parentThreadId ?? null;
+    if (parentId !== null && parentId !== thread.id && presentIds.has(parentId)) {
+      const siblings = childrenByParent.get(parentId) ?? [];
+      siblings.push(thread);
+      childrenByParent.set(parentId, siblings);
+    } else {
+      leads.push(thread);
+    }
+  }
+  const ordered: T[] = [];
+  for (const lead of leads) {
+    ordered.push(lead);
+    const children = childrenByParent.get(lead.id);
+    if (children !== undefined) {
+      ordered.push(...children);
+    }
+  }
+  return ordered;
+}
+
 export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input: {
   threads: readonly T[];
   activeThreadId: T["id"] | undefined;

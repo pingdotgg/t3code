@@ -352,6 +352,8 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  taskLabel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -398,6 +400,8 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  taskLabel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -503,6 +507,10 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  // Links a delegated sub-task thread to the lead thread that spawned it.
+  parentThreadId: Schema.optional(ThreadId),
+  // Short label describing the sub-task, recorded for audit/UI grouping.
+  taskLabel: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 
@@ -847,6 +855,8 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  parentThreadId: Schema.optional(ThreadId),
+  taskLabel: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

@@ -13,6 +13,8 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { DelegationToolkitHandlersLive } from "./toolkits/delegation/handlers.ts";
+import { DelegationToolkit } from "./toolkits/delegation/tools.ts";
 import {
   PreviewSnapshotToolkitHandlersLive,
   PreviewStandardToolkitHandlersLive,
@@ -208,13 +210,19 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
+// Exposes the `delegate_tasks` tool to every provider session. Requires
+// `TaskOrchestrator`, satisfied by the orchestration runtime (RuntimeServicesLive).
+const DelegationToolkitRegistrationLive = McpServer.toolkit(DelegationToolkit).pipe(
+  Layer.provide(DelegationToolkitHandlersLive),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
   path: "/mcp",
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = PreviewToolkitRegistrationLive.pipe(
-  Layer.provideMerge(McpTransportLive),
-  Layer.provide(PreviewAutomationBroker.layer),
-);
+export const layer = Layer.mergeAll(
+  PreviewToolkitRegistrationLive,
+  DelegationToolkitRegistrationLive,
+).pipe(Layer.provideMerge(McpTransportLive), Layer.provide(PreviewAutomationBroker.layer));

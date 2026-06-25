@@ -184,6 +184,7 @@ import {
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
+  nestDelegatedChildren,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
@@ -379,6 +380,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
+  // Delegated sub-tasks are nested under their lead thread in the list; indent
+  // them and show a corner marker so the grouping reads clearly.
+  const isDelegatedChild = thread.parentThreadId != null;
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const runningTerminalIds = useThreadRunningTerminalIds({
@@ -677,7 +681,20 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         onKeyDown={handleRowKeyDown}
         onContextMenu={handleRowContextMenu}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+        <div
+          className={`flex min-w-0 flex-1 items-center gap-1.5 text-left ${
+            isDelegatedChild ? "pl-3" : ""
+          }`}
+        >
+          {isDelegatedChild && (
+            <span
+              aria-hidden
+              className="text-muted-foreground/70 shrink-0 text-xs leading-none"
+              title={thread.taskLabel ?? "Delegated sub-task"}
+            >
+              ⤷
+            </span>
+          )}
           {prStatus && (
             <Tooltip>
               <TooltipTrigger
@@ -1250,9 +1267,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     };
-    const visibleProjectThreads = sortThreads(
-      projectThreads.filter((thread) => thread.archivedAt === null),
-      threadSortOrder,
+    const visibleProjectThreads = nestDelegatedChildren(
+      sortThreads(
+        projectThreads.filter((thread) => thread.archivedAt === null),
+        threadSortOrder,
+      ),
     );
     const projectStatus = resolveProjectStatusIndicator(
       visibleProjectThreads.map((thread) => resolveProjectThreadStatus(thread)),

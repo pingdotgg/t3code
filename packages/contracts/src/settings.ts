@@ -6,6 +6,30 @@ import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+import { TaskModelHint } from "./taskDelegation.ts";
+
+// ── Task delegation routing ────────────────────────────────────
+
+/**
+ * A single routing rule: when a delegated sub-task matches `when`, route it to
+ * the model in `use`. Rules are evaluated in order; the first match wins.
+ */
+export const TaskRoutingRule = Schema.Struct({
+  when: Schema.Struct({
+    modelHint: Schema.optional(TaskModelHint),
+    /** Case-insensitive substring matched against the sub-task label. */
+    labelMatches: Schema.optional(TrimmedNonEmptyString),
+  }),
+  use: ModelSelection,
+});
+export type TaskRoutingRule = typeof TaskRoutingRule.Type;
+
+export const TaskRoutingSettings = Schema.Struct({
+  rules: Schema.Array(TaskRoutingRule).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Fallback model when no rule matches and the sub-task has no explicit selection. */
+  default: Schema.optional(ModelSelection),
+});
+export type TaskRoutingSettings = typeof TaskRoutingSettings.Type;
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -409,6 +433,10 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // Rules that route delegated sub-tasks to models. Empty by default; a
+  // sub-task with no match and no explicit selection falls back to the lead
+  // thread's model. See TaskModelRouter on the server.
+  taskRouting: TaskRoutingSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 

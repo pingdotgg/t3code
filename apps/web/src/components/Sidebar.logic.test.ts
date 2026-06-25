@@ -6,6 +6,7 @@ import {
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
+  nestDelegatedChildren,
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
@@ -1064,5 +1065,39 @@ describe("sortProjectsForSidebar", () => {
     );
 
     expect(timestamp).toBe(Date.parse("2026-03-09T10:10:00.000Z"));
+  });
+});
+
+describe("nestDelegatedChildren", () => {
+  const t = (id: string, parentThreadId?: string | null) => ({ id, parentThreadId });
+
+  it("places each child directly after its lead, preserving lead order", () => {
+    const ordered = nestDelegatedChildren([
+      t("lead-a"),
+      t("lead-b"),
+      t("child-b1", "lead-b"),
+      t("child-a1", "lead-a"),
+    ]);
+    expect(ordered.map((thread) => thread.id)).toEqual([
+      "lead-a",
+      "child-a1",
+      "lead-b",
+      "child-b1",
+    ]);
+  });
+
+  it("keeps a child's relative order under its lead", () => {
+    const ordered = nestDelegatedChildren([t("lead"), t("child-1", "lead"), t("child-2", "lead")]);
+    expect(ordered.map((thread) => thread.id)).toEqual(["lead", "child-1", "child-2"]);
+  });
+
+  it("treats a child whose lead is absent as a top-level thread", () => {
+    const ordered = nestDelegatedChildren([t("orphan", "missing-lead"), t("lead")]);
+    expect(ordered.map((thread) => thread.id)).toEqual(["orphan", "lead"]);
+  });
+
+  it("leaves plain thread lists untouched", () => {
+    const ordered = nestDelegatedChildren([t("a"), t("b", null), t("c")]);
+    expect(ordered.map((thread) => thread.id)).toEqual(["a", "b", "c"]);
   });
 });
