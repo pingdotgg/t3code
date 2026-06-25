@@ -13,11 +13,11 @@
 import type {
   ApplicationStoredEvent,
   CommandId,
-  OrchestrationEvent,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
   ThreadId,
 } from "@t3tools/contracts";
+import type { OrchestrationEvent } from "@t3tools/contracts/legacy-orchestration";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";

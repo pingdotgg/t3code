@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useMemo, useState } from "react";
 
 import { type ProviderApprovalDecision, type RuntimeRequestId } from "@t3tools/contracts";
+import { derivePendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import { Atom } from "effect/unstable/reactivity";
 
 import { threadEnvironment } from "../state/threads";
@@ -13,7 +14,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../lib/threadActivity";
 import { appAtomRegistry } from "./atom-registry";
-import { useSelectedThreadDetail } from "./use-thread-detail";
+import { useSelectedThreadProjection } from "./use-thread-detail";
 import { useThreadSelection } from "./use-thread-selection";
 import { useAtomCommand } from "./use-atom-command";
 
@@ -62,24 +63,21 @@ export function useSelectedThreadRequests() {
     "thread user input response",
   );
   const { selectedThread: selectedThreadShell } = useThreadSelection();
-  const selectedThread = useSelectedThreadDetail();
+  const selectedThread = useSelectedThreadProjection();
   const userInputDraftsByRequestKey = useAtomValue(userInputDraftsByRequestKeyAtom);
   const [respondingApprovalId, setRespondingApprovalId] = useState<RuntimeRequestId | null>(null);
   const [respondingUserInputId, setRespondingUserInputId] = useState<RuntimeRequestId | null>(null);
 
-  const activePendingApprovals = useMemo(
-    () => selectedThread?.pendingApprovals ?? [],
+  const pendingRequests = useMemo(
+    () =>
+      selectedThread === null
+        ? { approvals: [], userInputs: [] }
+        : derivePendingThreadRequests(selectedThread.projection),
     [selectedThread],
   );
-  const activePendingApprovals = useMemo(
-    () => derivePendingApprovals(sortedActivities),
-    [sortedActivities],
-  );
+  const activePendingApprovals = pendingRequests.approvals;
   const activePendingApproval = activePendingApprovals[0] ?? null;
-  const activePendingUserInputs = useMemo(
-    () => selectedThread?.pendingUserInputs ?? [],
-    [selectedThread],
-  );
+  const activePendingUserInputs = pendingRequests.userInputs;
   const activePendingUserInput = activePendingUserInputs[0] ?? null;
   const activePendingUserInputDrafts =
     activePendingUserInput && selectedThreadShell
