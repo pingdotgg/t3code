@@ -1,26 +1,88 @@
-import { FolderClosedIcon } from "lucide-react";
+import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { FileExplorerIcon, FinderIcon } from "../Icons";
-import { resolveOpenInOptions } from "./OpenInPicker";
+<<<<<<< HEAD:apps/web/src/components/chat/ChatHeader.test.ts
+import { resolveRenameCommit, shouldShowOpenInPicker } from "./ChatHeader";
+=======
+import { shouldShowOpenInPicker } from "./OpenInPicker.logic";
+>>>>>>> 786f5c5767 (Split open-in editor controls into panel and toolbar variants):apps/web/src/components/chat/OpenInPicker.test.ts
 
-describe("resolveOpenInOptions", () => {
-  it.each([
-    ["MacIntel", "Finder", FinderIcon],
-    ["Win32", "File Explorer", FileExplorerIcon],
-    ["Linux x86_64", "Files", FolderClosedIcon],
-  ] as const)("includes the file manager with its icon on %s", (platform, label, Icon) => {
-    expect(resolveOpenInOptions(platform, ["cursor", "vscode", "file-manager"])).toEqual([
-      expect.objectContaining({ value: "cursor", label: "Cursor" }),
-      expect.objectContaining({ value: "vscode", label: "VS Code" }),
-      expect.objectContaining({ value: "file-manager", label, Icon }),
-    ]);
+describe("shouldShowOpenInPicker", () => {
+  const primaryEnvironmentId = EnvironmentId.make("environment-primary");
+
+  it("shows the picker for projects in the primary environment", () => {
+    expect(
+      shouldShowOpenInPicker({
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: primaryEnvironmentId,
+        primaryEnvironmentId,
+        remoteOpenMode: "local-exec",
+      }),
+    ).toBe(true);
   });
 
-  it("omits the file manager when unavailable or using remote editors", () => {
-    expect(resolveOpenInOptions("MacIntel", ["vscode"])).toEqual([
-      expect.objectContaining({ value: "vscode" }),
-    ]);
-    expect(resolveOpenInOptions("MacIntel", [])).toEqual([]);
+  it("shows the picker for remote environments in deep-link mode", () => {
+    expect(
+      shouldShowOpenInPicker({
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
+        primaryEnvironmentId,
+        remoteOpenMode: "remote-links",
+      }),
+    ).toBe(true);
+  });
+
+  it("shows the picker's unavailable state for remote environments without an SSH route", () => {
+    expect(
+      shouldShowOpenInPicker({
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
+        primaryEnvironmentId: null,
+        remoteOpenMode: "remote-unavailable",
+      }),
+    ).toBe(true);
+  });
+
+  it("hides the picker for non-primary local backends", () => {
+    expect(
+      shouldShowOpenInPicker({
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
+        primaryEnvironmentId,
+        remoteOpenMode: "local-exec",
+      }),
+    ).toBe(false);
+  });
+
+  it("hides the picker when there is no active project", () => {
+    expect(
+      shouldShowOpenInPicker({
+        activeProjectName: undefined,
+        activeThreadEnvironmentId: primaryEnvironmentId,
+        primaryEnvironmentId,
+        remoteOpenMode: "remote-links",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("resolveRenameCommit", () => {
+  it("commits a trimmed changed title", () => {
+    expect(resolveRenameCommit({ title: "  New title ", originalTitle: "Old" })).toEqual({
+      action: "commit",
+      title: "New title",
+    });
+  });
+
+  it("rejects empty and whitespace-only titles", () => {
+    expect(resolveRenameCommit({ title: "   ", originalTitle: "Old" })).toEqual({
+      action: "reject-empty",
+    });
+  });
+
+  it("no-ops when the trimmed title is unchanged", () => {
+    expect(resolveRenameCommit({ title: " Old ", originalTitle: "Old" })).toEqual({
+      action: "noop",
+    });
   });
 });
