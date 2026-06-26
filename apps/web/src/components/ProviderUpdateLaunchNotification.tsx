@@ -67,6 +67,7 @@ function updateProviderUpdateToast(input: {
       type: input.view.type,
       title: input.view.title,
       description: input.view.description,
+      actionProps: undefined,
       timeout: 0,
       data: {
         hideCopyButton: true,
