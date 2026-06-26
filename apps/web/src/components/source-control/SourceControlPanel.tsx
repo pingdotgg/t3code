@@ -100,13 +100,18 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   type AttentionKind,
   type BranchSyncState,
+  beginPanelFileDiffLoad,
   branchAttention,
   branchHasUpstream,
   branchSyncCounts,
   branchSyncState,
+  completePanelFileDiffLoad,
+  failPanelFileDiffLoad,
   formatRelativeDate,
   mergeChangeGroups,
   type PanelChangedFile,
+  type PanelFileDiffLoadState,
+  vcsPanelSnapshotFingerprint,
 } from "./SourceControlPanel.logic";
 
 interface SourceControlPanelProps {
@@ -123,10 +128,7 @@ interface SourceControlPanelProps {
 type FileDiffSource = NonNullable<VcsPanelFileDiffInput["source"]>;
 type BranchCommitListKind = NonNullable<VcsPanelBranchCommitsInput["kind"]>;
 
-type FileDiffLoadState =
-  | { readonly status: "loading" }
-  | { readonly status: "loaded"; readonly patch: string }
-  | { readonly status: "error"; readonly message: string };
+type FileDiffLoadState = PanelFileDiffLoadState;
 
 interface WorkingTreeChangeSetView {
   readonly id: string;
@@ -1034,6 +1036,8 @@ export function SourceControlPanel({
     }),
   );
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const snapshotFingerprintRef = useRef<string | null>(null);
+  const snapshotRef = useRef<VcsPanelSnapshotResult | null>(null);
   const expandedTreeRef = useRef<ReadonlySet<string>>(new Set());
   const expandedFileDiffsRef = useRef<ReadonlySet<string>>(new Set());
   const fileDiffRequestIdsRef = useRef(new Map<string, number>());
@@ -1378,14 +1382,22 @@ export function SourceControlPanel({
   );
 
   const loadFileDiff = useCallback(
-    (file: VcsPanelFileChange, source: FileDiffSource, targetCwd = cwd) => {
+    (
+      file: VcsPanelFileChange,
+      source: FileDiffSource,
+      targetCwd = cwd,
+      options: { readonly preserveLoaded?: boolean } = {},
+    ) => {
       if (!api) return;
       const key = fileDiffKey(file, source, targetCwd);
       const nextRequestId = (fileDiffRequestIdsRef.current.get(key) ?? 0) + 1;
       fileDiffRequestIdsRef.current.set(key, nextRequestId);
       setFileDiffsByKey((current) => {
+        const currentState = current.get(key);
+        const nextState = beginPanelFileDiffLoad(currentState, options);
+        if (nextState === currentState) return current;
         const next = new Map(current);
-        next.set(key, { status: "loading" });
+        next.set(key, nextState);
         return next;
       });
       void api.vcs
@@ -1398,16 +1410,22 @@ export function SourceControlPanel({
         .then((result) => {
           if (fileDiffRequestIdsRef.current.get(key) !== nextRequestId) return;
           setFileDiffsByKey((current) => {
+            const currentState = current.get(key);
+            const nextState = completePanelFileDiffLoad(currentState, result.patch);
+            if (nextState === currentState) return current;
             const next = new Map(current);
-            next.set(key, { status: "loaded", patch: result.patch });
+            next.set(key, nextState);
             return next;
           });
         })
         .catch((nextError: unknown) => {
           if (fileDiffRequestIdsRef.current.get(key) !== nextRequestId) return;
           setFileDiffsByKey((current) => {
+            const currentState = current.get(key);
+            const nextState = failPanelFileDiffLoad(currentState, errorMessage(nextError), options);
+            if (nextState === currentState) return current;
             const next = new Map(current);
-            next.set(key, { status: "error", message: errorMessage(nextError) });
+            next.set(key, nextState);
             return next;
           });
         });
@@ -1416,7 +1434,7 @@ export function SourceControlPanel({
   );
 
   const reloadExpandedWorkingTreeDiffs = useCallback(
-    (nextSnapshot: VcsPanelSnapshotResult) => {
+    (nextSnapshot: VcsPanelSnapshotResult, options: { readonly preserveLoaded?: boolean } = {}) => {
       const expandedKeys = expandedFileDiffsRef.current;
       if (expandedKeys.size === 0) return;
 
@@ -1427,7 +1445,7 @@ export function SourceControlPanel({
             staged: !file.hasUnstagedChanges && file.hasStagedChanges,
           } satisfies FileDiffSource;
           if (expandedKeys.has(fileDiffKey(file, source, targetCwd))) {
-            loadFileDiff(file, source, targetCwd);
+            loadFileDiff(file, source, targetCwd, options);
           }
         }
       };
@@ -1451,20 +1469,29 @@ export function SourceControlPanel({
       return;
     }
     refreshInFlightRef.current = true;
-    setLoading(true);
+    if (!snapshotRef.current) {
+      setLoading(true);
+    }
     try {
       do {
         refreshQueuedRef.current = false;
         setError(null);
         const nextSnapshot = await api.vcs.panelSnapshot({ cwd });
+        const nextSnapshotFingerprint = vcsPanelSnapshotFingerprint(cwd, nextSnapshot);
+        if (snapshotFingerprintRef.current === nextSnapshotFingerprint) {
+          reloadExpandedWorkingTreeDiffs(nextSnapshot, { preserveLoaded: true });
+          continue;
+        }
+        snapshotFingerprintRef.current = nextSnapshotFingerprint;
+        snapshotRef.current = nextSnapshot;
         resetWorkingTreeFileEnrichment();
         syncChangedPathSelection(nextSnapshot.changeGroups);
         syncWorktreeChangedPathSelection(nextSnapshot.worktreeChangeSets);
         setSnapshot(nextSnapshot);
-        reloadExpandedWorkingTreeDiffs(nextSnapshot);
+        reloadExpandedWorkingTreeDiffs(nextSnapshot, { preserveLoaded: true });
         const expandedBranches = expandedBranchesForSnapshot(nextSnapshot, expandedTreeRef.current);
         const nextDetails = new Map(mapBranchDetails(nextSnapshot.branchDetails));
-        setLoadingBranchDetails(new Set());
+        setLoadingBranchDetails((current) => (current.size === 0 ? current : new Set()));
         if (expandedBranches.length > 0) {
           setLoadingBranchDetails(new Set(expandedBranches.map((request) => request.detailsKey)));
           const details = await Promise.all(
@@ -1497,7 +1524,7 @@ export function SourceControlPanel({
       setError(errorMessage(nextError));
     } finally {
       refreshInFlightRef.current = false;
-      setLoadingBranchDetails(new Set());
+      setLoadingBranchDetails((current) => (current.size === 0 ? current : new Set()));
       setLoading(false);
     }
   }, [

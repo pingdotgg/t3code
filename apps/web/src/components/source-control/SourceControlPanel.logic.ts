@@ -9,10 +9,44 @@ export type BranchSyncState = "fetch" | "pull" | "push" | "publish" | "diverged"
 
 export type AttentionKind = "conflicts" | "diverged" | "behind" | "unpushed" | "dirty" | "stale";
 
+export type PanelFileDiffLoadState =
+  | { readonly status: "loading" }
+  | { readonly status: "loaded"; readonly patch: string }
+  | { readonly status: "error"; readonly message: string };
+
 export interface PanelChangedFile extends VcsPanelFileChange {
   readonly hasStagedChanges: boolean;
   readonly hasUnstagedChanges: boolean;
   readonly hasConflicts: boolean;
+}
+
+export function vcsPanelSnapshotFingerprint(cwd: string, snapshot: VcsPanelSnapshotResult): string {
+  return `${cwd}\0${JSON.stringify(snapshot)}`;
+}
+
+export function beginPanelFileDiffLoad(
+  current: PanelFileDiffLoadState | undefined,
+  options: { readonly preserveLoaded?: boolean } = {},
+): PanelFileDiffLoadState {
+  if (options.preserveLoaded && current?.status === "loaded") return current;
+  return { status: "loading" };
+}
+
+export function completePanelFileDiffLoad(
+  current: PanelFileDiffLoadState | undefined,
+  patch: string,
+): PanelFileDiffLoadState {
+  if (current?.status === "loaded" && current.patch === patch) return current;
+  return { status: "loaded", patch };
+}
+
+export function failPanelFileDiffLoad(
+  current: PanelFileDiffLoadState | undefined,
+  message: string,
+  options: { readonly preserveLoaded?: boolean } = {},
+): PanelFileDiffLoadState {
+  if (options.preserveLoaded && current?.status === "loaded") return current;
+  return { status: "error", message };
 }
 
 function mergedFileStatus(

@@ -2,11 +2,15 @@ import { describe, expect, it } from "@effect/vitest";
 import type { VcsPanelSnapshotResult, VcsRef } from "@t3tools/contracts";
 
 import {
+  beginPanelFileDiffLoad,
   branchAttention,
   branchHasUpstream,
   branchSyncState,
+  completePanelFileDiffLoad,
+  failPanelFileDiffLoad,
   formatRelativeDate,
   mergeChangeGroups,
+  vcsPanelSnapshotFingerprint,
 } from "./SourceControlPanel.logic";
 
 const baseSnapshot: VcsPanelSnapshotResult = {
@@ -201,5 +205,38 @@ describe("SourceControlPanel working-tree presentation logic", () => {
     const then = new Date(now - 360 * 24 * 60 * 60 * 1000).toISOString();
 
     expect(formatRelativeDate(then, now)).toBe("11 months ago");
+  });
+});
+
+describe("SourceControlPanel refresh stability logic", () => {
+  it("fingerprints snapshots with their cwd so equal snapshots from different repos are distinct", () => {
+    expect(vcsPanelSnapshotFingerprint("/repo/one", baseSnapshot)).toBe(
+      vcsPanelSnapshotFingerprint("/repo/one", { ...baseSnapshot }),
+    );
+    expect(vcsPanelSnapshotFingerprint("/repo/one", baseSnapshot)).not.toBe(
+      vcsPanelSnapshotFingerprint("/repo/two", baseSnapshot),
+    );
+  });
+
+  it("keeps a loaded diff mounted while a refresh revalidates it", () => {
+    const loaded = { status: "loaded", patch: "same patch" } as const;
+
+    expect(beginPanelFileDiffLoad(loaded, { preserveLoaded: true })).toBe(loaded);
+    expect(completePanelFileDiffLoad(loaded, "same patch")).toBe(loaded);
+    expect(failPanelFileDiffLoad(loaded, "failed", { preserveLoaded: true })).toBe(loaded);
+  });
+
+  it("updates preserved loaded diffs only when the refreshed patch changes", () => {
+    const loaded = { status: "loaded", patch: "old patch" } as const;
+
+    expect(completePanelFileDiffLoad(loaded, "new patch")).toEqual({
+      status: "loaded",
+      patch: "new patch",
+    });
+    expect(beginPanelFileDiffLoad(loaded)).toEqual({ status: "loading" });
+    expect(failPanelFileDiffLoad(loaded, "failed")).toEqual({
+      status: "error",
+      message: "failed",
+    });
   });
 });
