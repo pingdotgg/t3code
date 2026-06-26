@@ -2,9 +2,10 @@ import {
   attachEnvironmentDescriptor,
   createKnownEnvironment,
   type KnownEnvironment,
-} from "@t3tools/client-runtime/environment";
-import type { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+} from "@t3tools/client-runtime";
+import type { EnvironmentId, ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { create } from "zustand";
 
 import { PrimaryEnvironmentRequestError, retryTransientBootstrap } from "./auth";
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
@@ -12,7 +13,18 @@ import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
 import { readPrimaryEnvironmentTarget } from "./target";
 
-let primaryEnvironmentDescriptor: ExecutionEnvironmentDescriptor | null = null;
+interface PrimaryEnvironmentBootstrapState {
+  readonly descriptor: ExecutionEnvironmentDescriptor | null;
+  readonly setDescriptor: (descriptor: ExecutionEnvironmentDescriptor | null) => void;
+  readonly reset: () => void;
+}
+
+const usePrimaryEnvironmentBootstrapStore = create<PrimaryEnvironmentBootstrapState>()((set) => ({
+  descriptor: null,
+  setDescriptor: (descriptor) => set({ descriptor }),
+  reset: () => set({ descriptor: null }),
+}));
+
 let primaryEnvironmentDescriptorPromise: Promise<ExecutionEnvironmentDescriptor> | null = null;
 
 function createPrimaryKnownEnvironment(input: {
@@ -55,13 +67,17 @@ async function fetchPrimaryEnvironmentDescriptor(): Promise<ExecutionEnvironment
 }
 
 export function readPrimaryEnvironmentDescriptor(): ExecutionEnvironmentDescriptor | null {
-  return primaryEnvironmentDescriptor;
+  return usePrimaryEnvironmentBootstrapStore.getState().descriptor;
+}
+
+export function usePrimaryEnvironmentId(): EnvironmentId | null {
+  return usePrimaryEnvironmentBootstrapStore((state) => state.descriptor?.environmentId ?? null);
 }
 
 export function writePrimaryEnvironmentDescriptor(
   descriptor: ExecutionEnvironmentDescriptor | null,
 ): void {
-  primaryEnvironmentDescriptor = descriptor;
+  usePrimaryEnvironmentBootstrapStore.getState().setDescriptor(descriptor);
 }
 
 export function getPrimaryKnownEnvironment(): KnownEnvironment | null {
@@ -97,7 +113,7 @@ export function resolveInitialPrimaryEnvironmentDescriptor(): Promise<ExecutionE
 
 export function __resetPrimaryEnvironmentBootstrapForTests(): void {
   primaryEnvironmentDescriptorPromise = null;
-  primaryEnvironmentDescriptor = null;
+  usePrimaryEnvironmentBootstrapStore.getState().reset();
 }
 
 export const resetPrimaryEnvironmentDescriptorForTests = __resetPrimaryEnvironmentBootstrapForTests;
