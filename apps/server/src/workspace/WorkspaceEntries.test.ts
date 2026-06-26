@@ -340,6 +340,28 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("includes directory symlinks when browsing", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const platform = yield* HostProcessPlatform;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-symlink-" });
+        const target = path.join(cwd, "target");
+        const link = path.join(cwd, "linked");
+        yield* writeTextFile(cwd, "target/index.ts", "export {};\n");
+        yield* Effect.promise(() =>
+          fsPromises.symlink(target, link, platform === "win32" ? "junction" : "dir"),
+        );
+
+        const result = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(cwd),
+        });
+
+        expect(result.entries).toContainEqual({ name: "linked", fullPath: link });
+        expect(result.entries).toContainEqual({ name: "target", fullPath: target });
+      }),
+    );
+
     it.effect("supports relative paths when cwd is provided", () =>
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
