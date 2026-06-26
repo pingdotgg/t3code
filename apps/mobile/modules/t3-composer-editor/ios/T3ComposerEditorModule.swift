@@ -5,14 +5,8 @@ public class T3ComposerEditorModule: Module {
     Name("T3ComposerEditor")
 
     View(T3ComposerEditorView.self) {
-      Prop("value") { (view: T3ComposerEditorView, value: String) in
-        view.setValue(value)
-      }
-      Prop("tokensJson") { (view: T3ComposerEditorView, tokensJson: String) in
-        view.setTokensJson(tokensJson)
-      }
-      Prop("selectionJson") { (view: T3ComposerEditorView, selectionJson: String) in
-        view.setSelectionJson(selectionJson)
+      Prop("controlledDocumentJson") { (view: T3ComposerEditorView, documentJson: String) in
+        view.setControlledDocumentJson(documentJson)
       }
       Prop("themeJson") { (view: T3ComposerEditorView, themeJson: String) in
         view.setThemeJson(themeJson)
