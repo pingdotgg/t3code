@@ -790,6 +790,9 @@ export function makeCursorAdapter(
             Stream.mapEffect(acp.getEvents(), (event) =>
               Effect.gen(function* () {
                 switch (event._tag) {
+                  case "EventStreamBarrier":
+                    yield* Deferred.succeed(event.acknowledge, undefined);
+                    return;
                   case "ModeChanged":
                     return;
                   case "AssistantItemStarted":
