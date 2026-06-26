@@ -2,9 +2,10 @@ import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-rou
 import { useHeaderHeight } from "expo-router/build/react-navigation/elements";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
-import { EnvironmentId, type ProjectScript } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Pressable, ScrollView, Text as RNText, View } from "react-native";
+import { Platform, Pressable, ScrollView, Text as RNText, View } from "react-native";
+import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { useWorkspaceState } from "../../state/workspace";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useEnvironmentQuery } from "../../state/query";
@@ -21,6 +22,7 @@ import {
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { connectionTone } from "../connection/connectionTone";
+import { nativeTopScrollEdgeEffect } from "../../lib/native-scroll-edge-effect";
 
 import {
   useRemoteConnections,
@@ -70,6 +72,9 @@ interface ThreadInspectorSelection {
   readonly mode: ThreadInspectorMode;
 }
 
+const USES_NATIVE_GLASS_HEADER = Platform.OS === "ios" && isLiquidGlassAvailable();
+const TOP_SCROLL_EDGE_EFFECT = nativeTopScrollEdgeEffect(Platform.OS, Platform.Version);
+
 function InspectorPaneRoleActivation() {
   useAdaptiveWorkspacePaneRole("inspector");
   return null;
@@ -85,6 +90,82 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
 
 function OpeningThreadLoadingScreen() {
   return <LoadingScreen message="Opening thread…" messagePlacement="above-spinner" />;
+}
+
+interface ThreadRouteScreenProps {
+  readonly onReturnToThread?: () => void;
+  readonly renderInspector?: () => ReactNode;
+}
+
+function ThreadUnavailableScreen() {
+  return (
+    <ScrollView
+      contentInsetAdjustmentBehavior="automatic"
+      contentContainerStyle={{
+        flexGrow: 1,
+        justifyContent: "center",
+        paddingHorizontal: 24,
+        paddingVertical: 32,
+      }}
+      className="bg-screen flex-1"
+    >
+      <EmptyState
+        title="Thread unavailable"
+        detail="This thread is not available in the current mobile snapshot."
+      />
+    </ScrollView>
+  );
+}
+
+export function ThreadRouteScreen(props: ThreadRouteScreenProps = {}) {
+  const { state: workspaceState } = useWorkspaceState();
+  const { connectionState } = useRemoteConnectionStatus();
+  const { selectedThread } = useThreadSelection();
+  const params = useLocalSearchParams<{
+    environmentId?: string | string[];
+    threadId?: string | string[];
+  }>();
+  const environmentIdRaw = firstRouteParam(params.environmentId);
+  const threadIdRaw = firstRouteParam(params.threadId);
+  const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
+  const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
+  const routeConnectionState =
+    routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
+  const routeThreadKey =
+    environmentId !== null && threadIdRaw !== null
+      ? scopedThreadKey(environmentId, ThreadId.make(threadIdRaw))
+      : null;
+  const selectedThreadKey =
+    selectedThread === null
+      ? null
+      : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
+  const selectedThreadDetailState = useSelectedThreadDetailState();
+  const hasThreadDetail = Option.isSome(selectedThreadDetailState.data);
+  const hasTerminalDetailState =
+    selectedThreadDetailState.status === "deleted" ||
+    Option.isSome(selectedThreadDetailState.error);
+
+  if (environmentId === null || threadIdRaw === null) {
+    return <OpeningThreadLoadingScreen />;
+  }
+
+  if (selectedThread !== null && selectedThreadKey === routeThreadKey) {
+    if (!hasThreadDetail && !hasTerminalDetailState) {
+      return <OpeningThreadLoadingScreen />;
+    }
+    return <ThreadRouteContent {...props} selectedThreadDetailState={selectedThreadDetailState} />;
+  }
+
+  const stillHydrating =
+    workspaceState.isLoadingConnections ||
+    routeConnectionState === "connecting" ||
+    routeConnectionState === "reconnecting";
+
+  if (stillHydrating) {
+    return <OpeningThreadLoadingScreen />;
+  }
+
+  return <ThreadUnavailableScreen />;
 }
 
 function ThreadHeaderTitle(props: {
@@ -128,21 +209,19 @@ function ThreadHeaderTitle(props: {
   );
 }
 
-export function ThreadRouteScreen(
-  props: {
-    readonly onReturnToThread?: () => void;
-    readonly renderInspector?: () => ReactNode;
-  } = {},
+function ThreadRouteContent(
+  props: ThreadRouteScreenProps & {
+    readonly selectedThreadDetailState: ReturnType<typeof useSelectedThreadDetailState>;
+  },
 ) {
   const { fileInspector, layout, showAuxiliaryPane, toggleAuxiliaryPane } =
     useAdaptiveWorkspaceLayout();
   const headerHeight = useHeaderHeight();
-  const { state: workspaceState } = useWorkspaceState();
   const { connectionState } = useRemoteConnectionStatus();
   const { onReconnectEnvironment } = useRemoteConnections();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
-  const selectedThreadDetailState = useSelectedThreadDetailState();
+  const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
@@ -208,18 +287,6 @@ export function ThreadRouteScreen(
   ]
     .filter(Boolean)
     .join(" · ");
-  const renderHeaderTitle = useCallback(
-    () => (
-      <ThreadHeaderTitle
-        foregroundColor={foregroundColor}
-        secondaryForegroundColor={secondaryFg}
-        subtitle={headerSubtitle}
-        title={selectedThread?.title ?? ""}
-      />
-    ),
-    [foregroundColor, headerSubtitle, secondaryFg, selectedThread?.title],
-  );
-
   /* ─── Git status for native header trigger ───────────────────────── */
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -484,32 +551,7 @@ export function ThreadRouteScreen(
   }
 
   if (!selectedThread) {
-    const stillHydrating =
-      workspaceState.isLoadingConnections ||
-      routeConnectionState === "connecting" ||
-      routeConnectionState === "reconnecting";
-
-    if (stillHydrating) {
-      return <OpeningThreadLoadingScreen />;
-    }
-
-    return (
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={{
-          flexGrow: 1,
-          justifyContent: "center",
-          paddingHorizontal: 24,
-          paddingVertical: 32,
-        }}
-        className="bg-screen flex-1"
-      >
-        <EmptyState
-          title="Thread unavailable"
-          detail="This thread is not available in the current mobile snapshot."
-        />
-      </ScrollView>
-    );
+    return <OpeningThreadLoadingScreen />;
   }
 
   const selectedThreadKey = scopedThreadKey(selectedThread.environmentId, selectedThread.id);
@@ -527,15 +569,36 @@ export function ThreadRouteScreen(
       <Stack.Screen
         options={{
           headerShown: true,
-          headerTransparent: true,
-          headerStyle: { backgroundColor: "transparent" },
-          headerShadowVisible: false,
+          headerTransparent: USES_NATIVE_GLASS_HEADER,
+          ...(USES_NATIVE_GLASS_HEADER
+            ? {}
+            : {
+                headerStyle: { backgroundColor: "transparent" },
+                headerShadowVisible: false,
+              }),
           headerTintColor: iconColor,
           headerBackVisible: !layout.usesSplitView,
           headerBackTitle: "",
-          headerTitle: renderHeaderTitle,
+          scrollEdgeEffects: {
+            // iOS 27 beta currently renders automatic/soft as transparent.
+            // Keep UIKit's subtler automatic style on iOS 26 and use its
+            // native hard edge treatment on iOS 27+.
+            top: TOP_SCROLL_EDGE_EFFECT,
+            bottom: "hidden",
+            left: "hidden",
+            right: "hidden",
+          },
         }}
       />
+
+      <Stack.Screen.Title asChild>
+        <ThreadHeaderTitle
+          foregroundColor={foregroundColor}
+          secondaryForegroundColor={secondaryFg}
+          subtitle={headerSubtitle}
+          title={selectedThread.title}
+        />
+      </Stack.Screen.Title>
 
       <WorkspaceSidebarToolbar>
         {props.onReturnToThread ? (
@@ -603,6 +666,7 @@ export function ThreadRouteScreen(
             threadCwd={selectedThreadCwd}
             selectedThreadQueueCount={composer.selectedThreadQueueCount}
             layoutVariant={layout.variant}
+            usesAutomaticContentInsets={USES_NATIVE_GLASS_HEADER}
             onOpenDrawer={handleOpenDrawer}
             onOpenConnectionEditor={handleOpenConnectionEditor}
             onChangeDraftMessage={composer.onChangeDraftMessage}

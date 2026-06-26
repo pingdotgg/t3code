@@ -38,7 +38,7 @@ import {
 import { TouchableOpacity } from "react-native-gesture-handler";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { SharedValue } from "react-native-reanimated";
+import { type SharedValue } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import {
@@ -108,6 +108,7 @@ export interface ThreadFeedProps {
   readonly contentBottomInset?: number;
   readonly contentMaxWidth?: number;
   readonly layoutVariant?: LayoutVariant;
+  readonly usesAutomaticContentInsets?: boolean;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
 }
 
@@ -1156,7 +1157,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const insets = useSafeAreaInsets();
   const topContentInset = props.contentTopInset ?? insets.top + 44;
   const bottomContentInset = props.contentBottomInset ?? 18;
-
   const handleViewportLayout = useCallback((event: LayoutChangeEvent) => {
     const nextWidth = Math.round(event.nativeEvent.layout.width);
     setViewportWidth((current) => (Math.abs(current - nextWidth) > 1 ? nextWidth : current));
@@ -1473,8 +1473,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ref={props.listRef}
           key={props.threadId}
           style={{ flex: 1 }}
+          contentInsetAdjustmentBehavior="never"
           automaticallyAdjustsScrollIndicatorInsets={false}
-          scrollIndicatorInsets={{ top: topContentInset, bottom: 0 }}
+          {...(props.usesAutomaticContentInsets
+            ? {
+                contentInset: { top: topContentInset, left: 0, right: 0, bottom: 0 },
+                scrollIndicatorInsets: { top: 0, left: 0, right: 0, bottom: 0 },
+              }
+            : { scrollIndicatorInsets: { top: topContentInset, bottom: 0 } })}
           {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
           contentInsetEndAdjustment={props.contentInsetEndAdjustment}
           freeze={props.freeze}
@@ -1503,7 +1509,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           keyboardLiftBehavior="whenAtEnd"
           estimatedItemSize={180}
           initialScrollAtEnd
-          ListHeaderComponent={<View style={{ height: topContentInset }} />}
+          ListHeaderComponent={
+            props.usesAutomaticContentInsets ? null : <View style={{ height: topContentInset }} />
+          }
           contentContainerStyle={{
             paddingTop: 12,
             paddingHorizontal: contentHorizontalPadding,

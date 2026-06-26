@@ -1,6 +1,11 @@
-import { useLocalSearchParams } from "expo-router";
-import { useMemo } from "react";
-import { EnvironmentId, ThreadId, type ScopedProjectRef } from "@t3tools/contracts";
+import { useGlobalSearchParams } from "expo-router";
+import { createContext, createElement, use, useMemo, useRef, type ReactNode } from "react";
+import {
+  EnvironmentId,
+  ThreadId,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 
 import { useProject, useThreadShell } from "../state/entities";
 import {
@@ -16,12 +21,12 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
   return value ?? null;
 }
 
-export function useThreadSelection() {
-  const params = useLocalSearchParams<{
+function useResolvedThreadSelection() {
+  const params = useGlobalSearchParams<{
     environmentId?: string | string[];
     threadId?: string | string[];
   }>();
-  const selectedThreadRef = useMemo(() => {
+  const routeThreadRef = useMemo<ScopedThreadRef | null>(() => {
     const environmentId = firstRouteParam(params.environmentId);
     const threadId = firstRouteParam(params.threadId);
     if (!environmentId || !threadId) {
@@ -33,6 +38,11 @@ export function useThreadSelection() {
       threadId: ThreadId.make(threadId),
     };
   }, [params.environmentId, params.threadId]);
+  const lastRouteThreadRef = useRef<ScopedThreadRef | null>(null);
+  if (routeThreadRef !== null) {
+    lastRouteThreadRef.current = routeThreadRef;
+  }
+  const selectedThreadRef = routeThreadRef ?? lastRouteThreadRef.current;
   const selectedThread = useThreadShell(selectedThreadRef);
   const selectedProjectRef = useMemo<ScopedProjectRef | null>(
     () =>
@@ -49,11 +59,37 @@ export function useThreadSelection() {
   const selectedEnvironmentConnection = useSavedRemoteConnection(selectedEnvironmentId);
   const selectedEnvironmentRuntime = useRemoteEnvironmentRuntime(selectedEnvironmentId);
 
-  return {
-    selectedThreadRef,
-    selectedThread,
-    selectedThreadProject,
-    selectedEnvironmentConnection,
-    selectedEnvironmentRuntime,
-  };
+  return useMemo(
+    () => ({
+      selectedThreadRef,
+      selectedThread,
+      selectedThreadProject,
+      selectedEnvironmentConnection,
+      selectedEnvironmentRuntime,
+    }),
+    [
+      selectedEnvironmentConnection,
+      selectedEnvironmentRuntime,
+      selectedThread,
+      selectedThreadProject,
+      selectedThreadRef,
+    ],
+  );
+}
+
+type ThreadSelectionState = ReturnType<typeof useResolvedThreadSelection>;
+
+const ThreadSelectionContext = createContext<ThreadSelectionState | null>(null);
+
+export function ThreadSelectionProvider(props: { readonly children: ReactNode }) {
+  const selection = useResolvedThreadSelection();
+  return createElement(ThreadSelectionContext.Provider, { value: selection }, props.children);
+}
+
+export function useThreadSelection(): ThreadSelectionState {
+  const selection = use(ThreadSelectionContext);
+  if (selection === null) {
+    throw new Error("useThreadSelection must be used within ThreadSelectionProvider");
+  }
+  return selection;
 }

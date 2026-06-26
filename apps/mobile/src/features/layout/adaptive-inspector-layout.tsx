@@ -8,7 +8,6 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { useAdaptiveWorkspaceLayout } from "./AdaptiveWorkspaceLayout";
-import { WORKSPACE_PANE_LAYOUT_TRANSITION } from "./workspace-pane-transition";
 
 export function AdaptiveInspectorLayout(props: {
   readonly children: ReactNode;
@@ -41,11 +40,7 @@ export function AdaptiveInspectorLayout(props: {
 
   return (
     <View className="flex-1 flex-row">
-      <Animated.View
-        collapsable={false}
-        className="min-w-0 flex-1"
-        layout={WORKSPACE_PANE_LAYOUT_TRANSITION}
-      >
+      <Animated.View collapsable={false} className="min-w-0 flex-1">
         {props.children}
       </Animated.View>
       {inspectorSupported ? (
@@ -53,7 +48,6 @@ export function AdaptiveInspectorLayout(props: {
           accessibilityElementsHidden={!inspectorVisible}
           collapsable={false}
           importantForAccessibility={inspectorVisible ? "auto" : "no-hide-descendants"}
-          layout={WORKSPACE_PANE_LAYOUT_TRANSITION}
           pointerEvents={inspectorVisible ? "auto" : "none"}
           style={[
             {

@@ -95,7 +95,7 @@ function WorkspaceNavigator() {
   };
   const settingsScreenOptions = layout.usesSplitView
     ? {
-        animation: "fade" as const,
+        animation: "none" as const,
         contentStyle: sheetStyle,
         gestureEnabled: false,
         headerShown: false,

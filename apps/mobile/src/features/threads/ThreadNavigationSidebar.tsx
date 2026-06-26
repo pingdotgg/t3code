@@ -71,16 +71,13 @@ const ThreadNavigationRow = memo(function ThreadNavigationRow(props: {
       primaryAction={primaryAction}
       threadTitle={thread.title}
     >
-      {(close) => (
+      {() => (
         <Pressable
           accessibilityHint="Swipe left for archive and delete actions"
           accessibilityLabel={thread.title}
           accessibilityRole="button"
           accessibilityState={{ selected }}
-          onPress={() => {
-            close();
-            onSelectThread(thread);
-          }}
+          onPress={() => onSelectThread(thread)}
           style={({ pressed }) => [
             styles.threadRow,
             {
@@ -144,6 +141,13 @@ export function ThreadNavigationSidebar(props: {
       openSwipeableRef.current = null;
     }
   }, []);
+  const handleSelectThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      props.onSelectThread(thread);
+      openSwipeableRef.current?.close();
+    },
+    [props.onSelectThread],
+  );
 
   return (
     <View
@@ -219,7 +223,7 @@ export function ThreadNavigationSidebar(props: {
                         fullSwipeWidth={props.width - 20}
                         onArchiveThread={archiveThread}
                         onDeleteThread={confirmDeleteThread}
-                        onSelectThread={props.onSelectThread}
+                        onSelectThread={handleSelectThread}
                         onSwipeableClose={handleSwipeableClose}
                         onSwipeableWillOpen={handleSwipeableWillOpen}
                         pressedBackgroundColor={pressedBackgroundColor}

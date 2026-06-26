@@ -17,6 +17,7 @@ const VARIANT_CONFIG: Record<
     readonly iosIcon: string;
     readonly iosBundleIdentifier: string;
     readonly androidPackage: string;
+    readonly relyingParty?: string;
   }
 > = {
   development: {
@@ -25,6 +26,7 @@ const VARIANT_CONFIG: Record<
     iosIcon: "./assets/icon-composer-dev.icon",
     iosBundleIdentifier: "com.t3tools.t3code.dev",
     androidPackage: "com.t3tools.t3code.dev",
+    relyingParty: "clerk.t3.codes",
   },
   preview: {
     appName: "T3 Code Preview",
@@ -32,6 +34,7 @@ const VARIANT_CONFIG: Record<
     iosIcon: "./assets/icon-composer-prod.icon",
     iosBundleIdentifier: "com.t3tools.t3code.preview",
     androidPackage: "com.t3tools.t3code.preview",
+    relyingParty: "clerk.t3.codes",
   },
   production: {
     appName: "T3 Code",
@@ -39,6 +42,7 @@ const VARIANT_CONFIG: Record<
     iosIcon: "./assets/icon-composer-prod.icon",
     iosBundleIdentifier: "com.t3tools.t3code",
     androidPackage: "com.t3tools.t3code",
+    relyingParty: "clerk.t3.codes",
   },
 };
 
@@ -64,7 +68,7 @@ const config: ExpoConfig = {
   runtimeVersion: {
     policy: process.env.MOBILE_VERSION_POLICY ?? "appVersion",
   },
-  orientation: "default",
+  orientation: "portrait",
   icon: "./assets/icon.png",
   userInterfaceStyle: "automatic",
   updates: {
@@ -77,6 +81,10 @@ const config: ExpoConfig = {
     icon: variant.iosIcon,
     supportsTablet: true,
     bundleIdentifier: variant.iosBundleIdentifier,
+    associatedDomains: [
+      `applinks:${variant.relyingParty}`,
+      `webcredentials:${variant.relyingParty}`,
+    ],
     infoPlist: {
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,

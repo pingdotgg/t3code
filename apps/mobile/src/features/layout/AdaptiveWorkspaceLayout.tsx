@@ -1,18 +1,8 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useFocusEffect, useGlobalSearchParams, usePathname, useRouter } from "expo-router";
-import {
-  createContext,
-  use,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, use, useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { useWindowDimensions, View } from "react-native";
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 
 import {
   deriveFileInspectorPaneLayout,
@@ -27,7 +17,6 @@ import { resolveThreadSelectionNavigationAction } from "../../lib/adaptive-navig
 import { buildThreadRoutePath } from "../../lib/routes";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
-import { WORKSPACE_PANE_LAYOUT_TRANSITION } from "./workspace-pane-transition";
 
 interface AdaptiveWorkspaceContextValue {
   readonly layout: Layout;
@@ -86,7 +75,6 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
   const [fileInspectorPreferredVisible, setFileInspectorPreferredVisible] = useState(true);
   const [focusedAuxiliaryPaneRole, setFocusedAuxiliaryPaneRole] =
     useState<WorkspaceAuxiliaryPaneRole | null>(null);
-  const sidebarProgress = useSharedValue(1);
   const params = useGlobalSearchParams<{
     environmentId?: string | string[];
     threadId?: string | string[];
@@ -181,13 +169,12 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
     ],
   );
 
-  useEffect(() => {
-    sidebarProgress.value = withTiming(panes.primarySidebarVisible ? 1 : 0, { duration: 220 });
-  }, [panes.primarySidebarVisible, sidebarProgress]);
-  const sidebarStyle = useAnimatedStyle(() => ({
-    opacity: sidebarProgress.value,
-    transform: [{ translateX: (sidebarProgress.value - 1) * 24 }],
-  }));
+  const handleOpenSettings = useCallback(() => {
+    router.push("/settings");
+  }, [router]);
+  const handleStartNewTask = useCallback(() => {
+    router.push("/new");
+  }, [router]);
 
   const handleSelectThread = useCallback(
     (thread: EnvironmentThreadShell) => {
@@ -197,8 +184,10 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
         pathname,
       });
       if (navigationAction === "set-params") {
-        // Auxiliary content belongs to the current thread. Close it before
-        // reusing the current native detail screen for a peer thread selection.
+        const nextThreadKey = scopedThreadKey(thread.environmentId, thread.id);
+        if (nextThreadKey === selectedThreadKey) {
+          return;
+        }
         setFileInspectorPreferredVisible(false);
         router.setParams({
           environmentId: String(thread.environmentId),
@@ -213,44 +202,36 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
       }
       router.push(destination);
     },
-    [layout.usesSplitView, pathname, router],
+    [layout.usesSplitView, pathname, router, selectedThreadKey],
   );
 
   return (
     <AdaptiveWorkspaceContext.Provider value={contextValue}>
       <View testID="adaptive-workspace-layout" style={{ flex: 1, flexDirection: "row" }}>
         {layout.usesSplitView && layout.listPaneWidth !== null ? (
-          <Animated.View
+          <View
             accessibilityElementsHidden={!panes.primarySidebarVisible}
             collapsable={false}
             importantForAccessibility={panes.primarySidebarVisible ? "auto" : "no-hide-descendants"}
-            layout={WORKSPACE_PANE_LAYOUT_TRANSITION}
             pointerEvents={panes.primarySidebarVisible ? "auto" : "none"}
-            style={[
-              {
-                alignSelf: "stretch",
-                overflow: "hidden",
-                width: panes.primarySidebarVisible ? layout.listPaneWidth : 0,
-              },
-              sidebarStyle,
-            ]}
+            style={{
+              alignSelf: "stretch",
+              overflow: "hidden",
+              width: panes.primarySidebarVisible ? layout.listPaneWidth : 0,
+            }}
           >
             <ThreadNavigationSidebar
               width={layout.listPaneWidth}
               selectedThreadKey={selectedThreadKey}
-              onOpenSettings={() => router.push("/settings")}
+              onOpenSettings={handleOpenSettings}
               onSelectThread={handleSelectThread}
-              onStartNewTask={() => router.push("/new")}
+              onStartNewTask={handleStartNewTask}
             />
-          </Animated.View>
+          </View>
         ) : null}
-        <Animated.View
-          collapsable={false}
-          layout={WORKSPACE_PANE_LAYOUT_TRANSITION}
-          style={{ flex: 1 }}
-        >
+        <View collapsable={false} style={{ flex: 1 }}>
           {props.children}
-        </Animated.View>
+        </View>
       </View>
     </AdaptiveWorkspaceContext.Provider>
   );
