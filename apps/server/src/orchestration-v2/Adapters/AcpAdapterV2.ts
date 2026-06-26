@@ -11,6 +11,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserInputQuestion,
   type ProviderApprovalDecision,
@@ -53,6 +54,11 @@ import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import { acpSelectionTransition } from "../ProviderSelectionTransition.ts";
+import {
+  makeSubagentChildThread,
+  makeSubagentConversationArtifacts,
+  subagentThreadTitle,
+} from "../SubagentProjection.ts";
 import {
   ProviderAdapterEnsureThreadError,
   ProviderAdapterForkThreadError,
@@ -119,7 +125,20 @@ export interface AcpAdapterV2Flavor {
   readonly registerExtensions?: (
     context: AcpAdapterV2ExtensionContext,
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  readonly extractSubagentUpdate?: (
+    toolCall: AcpToolCallState,
+  ) => AcpAdapterV2SubagentUpdate | undefined;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
+}
+
+export interface AcpAdapterV2SubagentUpdate {
+  readonly nativeTaskId: string;
+  readonly prompt: string;
+  readonly title: string | null;
+  readonly model: string | null;
+  readonly status: "running" | "completed" | "failed";
+  readonly childSessionId: string | null;
+  readonly result: string | null;
 }
 
 export interface AcpAdapterV2Options {
@@ -536,12 +555,26 @@ interface ActiveAcpTurn {
   readonly reasoning: ActiveTextStream;
   readonly tools: Map<string, AcpToolCallState>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
+  readonly subagents: Map<string, ActiveAcpSubagent>;
+  readonly subagentsBySessionId: Map<string, ActiveAcpSubagent>;
+  readonly pendingSubagentNotifications: Map<string, Array<EffectAcpSchema.SessionNotification>>;
   plan: {
     readonly id: OrchestrationV2PlanArtifact["id"];
     readonly startedAt: DateTime.Utc;
   } | null;
   interrupted: boolean;
   finalized: boolean;
+}
+
+interface ActiveAcpSubagent {
+  task: OrchestrationV2Subagent;
+  readonly childThreadId: ThreadId;
+  readonly childRootNodeId: OrchestrationV2ExecutionNode["id"];
+  readonly turnItemId: OrchestrationV2TurnItem["id"];
+  readonly turnItemOrdinal: number;
+  childSessionId: string | null;
+  assistantText: string;
+  nextChildOrdinal: number;
 }
 
 type PendingRuntimeRequest = {
@@ -807,6 +840,297 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           yield* emitTextSegment(context, kind, false);
         });
 
+        const emitSubagentAssistant = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          text: string,
+        ) {
+          if (text.length === 0) return;
+          subagent.assistantText += text;
+          const now = yield* DateTime.now;
+          const nativeItemId = `${subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id}:result`;
+          const artifacts = makeSubagentConversationArtifacts({
+            messageId: idAllocator.derive.messageFromProviderItem({ driver, nativeItemId }),
+            turnItemId: idAllocator.derive.turnItemFromProviderItem({ driver, nativeItemId }),
+            threadId: subagent.childThreadId,
+            rootNodeId: subagent.childRootNodeId,
+            providerThreadId: subagent.task.providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: { driver, nativeId: nativeItemId, strength: "weak" },
+            role: "assistant",
+            text: subagent.assistantText,
+            ordinal: subagent.nextChildOrdinal,
+            now,
+          });
+          yield* emitProviderEvent({ type: "message.updated", driver, message: artifacts.message });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem: artifacts.turnItem,
+          });
+        });
+
+        const projectSubagentNotification = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          notification: EffectAcpSchema.SessionNotification,
+        ) {
+          const update = notification.update;
+          if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") {
+            yield* emitSubagentAssistant(subagent, update.content.text);
+          }
+        });
+
+        const emitSubagent = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          update: AcpAdapterV2SubagentUpdate,
+        ) {
+          const existing = context.subagents.get(update.nativeTaskId);
+          const now = yield* DateTime.now;
+          const nativeItemRef = {
+            driver,
+            nativeId: update.nativeTaskId,
+            strength: "strong" as const,
+          };
+          const nodeId =
+            existing?.task.id ??
+            idAllocator.derive.nodeFromProviderItem({
+              driver,
+              nativeItemId: update.nativeTaskId,
+            });
+          const childThreadId =
+            existing?.childThreadId ??
+            idAllocator.derive.threadFromProviderThread({
+              driver,
+              nativeThreadId: `${nativeThreadId(driver, context.input.providerThread)}:task:${update.nativeTaskId}`,
+            });
+          const childRootNodeId =
+            existing?.childRootNodeId ??
+            idAllocator.derive.nodeFromProviderItem({
+              driver,
+              nativeItemId: `${update.nativeTaskId}:child-root`,
+            });
+          const turnItemId =
+            existing?.turnItemId ??
+            idAllocator.derive.turnItemFromProviderItem({
+              driver,
+              nativeItemId: update.nativeTaskId,
+            });
+          const turnItemOrdinal =
+            existing?.turnItemOrdinal ?? (yield* resolveItemOrdinal(context, update.nativeTaskId));
+          const taskStatus = update.status;
+          const task: OrchestrationV2Subagent = {
+            ...(existing?.task ?? {
+              id: nodeId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              parentNodeId: context.input.rootNodeId,
+              origin: "provider_native" as const,
+              createdBy: "agent" as const,
+              driver,
+              providerInstanceId: context.input.modelSelection.instanceId,
+              providerThreadId: null,
+              childThreadId,
+              nativeTaskRef: nativeItemRef,
+              prompt: update.prompt,
+              title: update.title,
+              model: update.model,
+              result: null,
+              startedAt: now,
+            }),
+            status: taskStatus,
+            result: existing?.assistantText || update.result,
+            completedAt: taskStatus === "running" ? null : now,
+            updatedAt: now,
+          };
+          const subagent: ActiveAcpSubagent = existing ?? {
+            task,
+            childThreadId,
+            childRootNodeId,
+            turnItemId,
+            turnItemOrdinal,
+            childSessionId: null,
+            assistantText: "",
+            nextChildOrdinal: 101,
+          };
+          subagent.task = task;
+          context.subagents.set(update.nativeTaskId, subagent);
+
+          if (existing === undefined) {
+            yield* emitProviderEvent({
+              type: "app_thread.created",
+              driver,
+              appThread: makeSubagentChildThread({
+                parentThread: context.input.appThread,
+                childThreadId,
+                parentNodeId: nodeId,
+                activeProviderThreadId: null,
+                providerInstanceId: context.input.modelSelection.instanceId,
+                modelSelection: {
+                  ...context.input.modelSelection,
+                  model: update.model ?? context.input.modelSelection.model,
+                },
+                title: subagentThreadTitle({
+                  parentTitle: context.input.appThread.title,
+                  title: update.title,
+                  prompt: update.prompt,
+                  ordinal: context.subagents.size,
+                }),
+                now,
+                createdBy: "agent",
+                creationSource: "provider",
+              }),
+            });
+            const promptNativeItemId = `${update.nativeTaskId}:prompt`;
+            const promptArtifacts = makeSubagentConversationArtifacts({
+              messageId: idAllocator.derive.messageFromProviderItem({
+                driver,
+                nativeItemId: promptNativeItemId,
+              }),
+              turnItemId: idAllocator.derive.turnItemFromProviderItem({
+                driver,
+                nativeItemId: promptNativeItemId,
+              }),
+              threadId: childThreadId,
+              rootNodeId: childRootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: { driver, nativeId: promptNativeItemId, strength: "weak" },
+              role: "user",
+              text: update.prompt,
+              ordinal: 100,
+              now,
+            });
+            yield* emitProviderEvent({
+              type: "message.updated",
+              driver,
+              message: promptArtifacts.message,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver,
+              turnItem: promptArtifacts.turnItem,
+            });
+          }
+
+          if (update.childSessionId !== null && subagent.childSessionId === null) {
+            subagent.childSessionId = update.childSessionId;
+            context.subagentsBySessionId.set(update.childSessionId, subagent);
+            const providerThread = makeProviderThread({
+              driver,
+              providerInstanceId: context.input.modelSelection.instanceId,
+              idAllocator,
+              appThreadId: childThreadId,
+              providerSessionId: input.providerSessionId,
+              nativeThreadId: update.childSessionId,
+              forkedFrom: {
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+              },
+              now,
+            });
+            subagent.task = { ...subagent.task, providerThreadId: providerThread.id };
+            yield* emitProviderEvent({
+              type: "provider_thread.updated",
+              driver,
+              providerThread: { ...providerThread, status: "idle" },
+            });
+            const buffered = context.pendingSubagentNotifications.get(update.childSessionId) ?? [];
+            context.pendingSubagentNotifications.delete(update.childSessionId);
+            yield* Effect.forEach(
+              buffered,
+              (notification) => projectSubagentNotification(subagent, notification),
+              { concurrency: 1, discard: true },
+            );
+          }
+
+          if (
+            taskStatus !== "running" &&
+            subagent.assistantText.length === 0 &&
+            update.result !== null
+          ) {
+            yield* emitSubagentAssistant(subagent, update.result);
+          }
+          const result = subagent.assistantText || update.result;
+          subagent.task = {
+            ...subagent.task,
+            status: taskStatus,
+            result,
+            completedAt: taskStatus === "running" ? null : now,
+            updatedAt: now,
+          };
+          const providerThreadId = subagent.task.providerThreadId;
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver,
+            node: {
+              id: nodeId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              parentNodeId: context.input.rootNodeId,
+              rootNodeId: context.input.rootNodeId,
+              kind: "subagent",
+              status: taskStatus,
+              countsForRun: false,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: subagent.task.startedAt,
+              completedAt: subagent.task.completedAt,
+            },
+          });
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver,
+            node: {
+              id: childRootNodeId,
+              threadId: childThreadId,
+              runId: null,
+              parentNodeId: null,
+              rootNodeId: childRootNodeId,
+              kind: "root_turn",
+              status: taskStatus,
+              countsForRun: false,
+              providerThreadId,
+              providerTurnId: null,
+              nativeItemRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: subagent.task.startedAt,
+              completedAt: subagent.task.completedAt,
+            },
+          });
+          yield* emitProviderEvent({ type: "subagent.updated", driver, subagent: subagent.task });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              id: turnItemId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef,
+              parentItemId: null,
+              ordinal: turnItemOrdinal,
+              status: taskStatus,
+              title: subagent.task.title,
+              startedAt: subagent.task.startedAt,
+              completedAt: subagent.task.completedAt,
+              updatedAt: now,
+              type: "subagent",
+              subagentId: subagent.task.id,
+              origin: "provider_native",
+              driver,
+              providerInstanceId: context.input.modelSelection.instanceId,
+              childThreadId,
+              prompt: subagent.task.prompt,
+              result,
+            },
+          });
+        });
+
         const emitTool = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           incoming: AcpToolCallState,
@@ -815,6 +1139,11 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           const previous = context.tools.get(incoming.toolCallId);
           const toolCall = mergeToolCallState(previous, incoming);
           context.tools.set(toolCall.toolCallId, toolCall);
+          const subagentUpdate = flavor.extractSubagentUpdate?.(toolCall);
+          if (subagentUpdate !== undefined) {
+            yield* emitSubagent(context, subagentUpdate);
+            return;
+          }
           const status = toolStatus(toolCall.status);
           const now = yield* DateTime.now;
           const nativeItemId = `${nativeThreadId(driver, context.input.providerThread)}:tool:${toolCall.toolCallId}`;
@@ -1114,7 +1443,21 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             return;
           }
           if (context.finalized) return;
-          if (notification.sessionId !== (yield* Ref.get(activeSessionId))) return;
+          if (notification.sessionId !== (yield* Ref.get(activeSessionId))) {
+            if (flavor.extractSubagentUpdate === undefined) return;
+            if (update.sessionUpdate !== "agent_message_chunk" || update.content.type !== "text") {
+              return;
+            }
+            const subagent = context.subagentsBySessionId.get(notification.sessionId);
+            if (subagent !== undefined) {
+              yield* projectSubagentNotification(subagent, notification);
+              return;
+            }
+            const buffered = context.pendingSubagentNotifications.get(notification.sessionId) ?? [];
+            buffered.push(notification);
+            context.pendingSubagentNotifications.set(notification.sessionId, buffered);
+            return;
+          }
           switch (update.sessionUpdate) {
             case "agent_message_chunk":
               if (update.content.type === "text") {
@@ -1815,6 +2158,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               reasoning: { current: null, nextSegment: 0 },
               tools: new Map(),
               toolStartedAt: new Map(),
+              subagents: new Map(),
+              subagentsBySessionId: new Map(),
+              pendingSubagentNotifications: new Map(),
               plan: null,
               interrupted: false,
               finalized: false,
