@@ -1834,8 +1834,7 @@ export function ArchivedThreadsPanel() {
         </SettingsSection>
       ) : (
         <div className="space-y-3">
-          {archivedGroups.map(({ project, threads: projectThreads }) => {
-            const projectKey = `${project.environmentId}:${project.id}`;
+          {archivedGroups.map(({ key: projectKey, project, threads: projectThreads }) => {
             const isExpanded = archiveSearch.isSearching || expandedProjectKeys.has(projectKey);
             const bulkScope = archiveSearch.isSearching ? "matching" : "all";
             return (

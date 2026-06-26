@@ -51,6 +51,7 @@ export type ArchivedThreadGroupThread = OrchestrationThreadShell & {
 };
 
 export interface ArchivedThreadGroup {
+  readonly key: string;
   readonly project: ArchivedThreadGroupProject;
   readonly threads: ReadonlyArray<ArchivedThreadGroupThread>;
   readonly searchScore: number;
@@ -282,6 +283,7 @@ export function buildArchivedThreadGroups(input: {
         Number.POSITIVE_INFINITY,
       );
       groups.push({
+        key: projectKey,
         project,
         threads: projectThreads.toSorted((left, right) =>
           input.isSearching

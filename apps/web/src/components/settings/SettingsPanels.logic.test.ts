@@ -280,17 +280,20 @@ describe("buildArchivedThreadGroups", () => {
 
     expect(
       result.map((group) => ({
+        key: group.key,
         environmentId: group.project.environmentId,
         projectId: group.project.id,
         threadIds: group.threads.map((thread) => thread.id),
       })),
     ).toEqual([
       {
+        key: '["environment:one","project"]',
         environmentId: "environment:one",
         projectId: "project",
         threadIds: ["thread-first"],
       },
       {
+        key: '["environment","one:project"]',
         environmentId: "environment",
         projectId: "one:project",
         threadIds: ["thread-second"],
