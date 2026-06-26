@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./assets/readme-demo.gif" alt="more Code demo" width="480" />
+<img src="./assets/readme-demo.gif" alt="more Code demo" width="240" style="display: block; margin: 0 auto;" />
 
 </div>
 
