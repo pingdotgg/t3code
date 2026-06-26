@@ -29,7 +29,6 @@ import {
   parseSessionModeState,
   parseSessionUpdateEvent,
   sessionUpdateIsReplay,
-  syntheticLoadSessionResponseFromInitialize,
   waitForSessionLoadReplayIdle,
   type SessionLoadGate,
   type AcpParsedSessionEvent,
@@ -409,7 +408,7 @@ export const make = (
           pendingRef: pendingXAiPromptCompletionsRef,
           completedPromptIdsRef: completedXAiPromptIdsRef,
           notification,
-        }).pipe(Effect.catch(() => Effect.void)),
+        }),
     );
 
     const initializeClientCapabilities = {

@@ -26,7 +26,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import { makeGrokAdapter } from "./GrokAdapter.ts";
+import { grokPromptSettlementBelongsToContext, makeGrokAdapter } from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -81,6 +81,30 @@ const grokAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
 
 const makeTestAdapter = (binaryPath: string, options?: Parameters<typeof makeGrokAdapter>[1]) =>
   makeGrokAdapter(decodeGrokSettings({ binaryPath }), options).pipe(Effect.orDie);
+
+it("classifies settlement from a replaced Grok session as detached", () => {
+  const staleTurnId = TurnId.make("stale-turn");
+  const replacementTurnId = TurnId.make("replacement-turn");
+
+  assert.isFalse(
+    grokPromptSettlementBelongsToContext({
+      liveAcpSessionId: "replacement-session",
+      expectedAcpSessionId: "stale-session",
+      liveActiveTurnId: replacementTurnId,
+      liveSessionActiveTurnId: replacementTurnId,
+      turnId: staleTurnId,
+    }),
+  );
+  assert.isTrue(
+    grokPromptSettlementBelongsToContext({
+      liveAcpSessionId: "replacement-session",
+      expectedAcpSessionId: "stale-session",
+      liveActiveTurnId: staleTurnId,
+      liveSessionActiveTurnId: staleTurnId,
+      turnId: staleTurnId,
+    }),
+  );
+});
 
 it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>

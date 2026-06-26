@@ -215,6 +215,20 @@ function completedStopReasonFromPromptResponse(
   return response.stopReason;
 }
 
+export function grokPromptSettlementBelongsToContext(input: {
+  readonly liveAcpSessionId: string;
+  readonly expectedAcpSessionId: string;
+  readonly liveActiveTurnId: TurnId | undefined;
+  readonly liveSessionActiveTurnId: TurnId | undefined;
+  readonly turnId: TurnId;
+}): boolean {
+  return (
+    input.liveAcpSessionId === input.expectedAcpSessionId ||
+    input.liveActiveTurnId === input.turnId ||
+    input.liveSessionActiveTurnId === input.turnId
+  );
+}
+
 export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapterLiveOptions) {
   return Effect.gen(function* () {
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("grok");
@@ -302,54 +316,44 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         if (!liveCtx) {
           return;
         }
-        if (liveCtx.acpSessionId !== expectedAcpSessionId) {
-          if (liveCtx.activeTurnId !== turnId && liveCtx.session.activeTurnId !== turnId) {
-            const sessionWasActive =
-              liveCtx.session.status === "running" || liveCtx.session.status === "connecting";
-            const shouldEmitFailedTurn = options?.errorMessage !== undefined;
-            const shouldEmitCompletedTurn = options?.completedStopReason !== undefined;
-            if (options?.settleAllPrompts) {
-              liveCtx.promptsInFlight = 0;
-              if (sessionWasActive) {
-                const updatedAt = yield* nowIso;
-                const { activeTurnId: _activeTurnId, ...readySession } = liveCtx.session;
-                liveCtx.activeTurnId = undefined;
-                liveCtx.session = {
-                  ...readySession,
-                  status: "ready",
-                  updatedAt,
-                };
-              }
+        const settlementBelongsToLiveContext = grokPromptSettlementBelongsToContext({
+          liveAcpSessionId: liveCtx.acpSessionId,
+          expectedAcpSessionId,
+          liveActiveTurnId: liveCtx.activeTurnId,
+          liveSessionActiveTurnId: liveCtx.session.activeTurnId,
+          turnId,
+        });
+        if (!settlementBelongsToLiveContext) {
+          if (options?.emitTurnCompletion !== false) {
+            if (options?.errorMessage !== undefined) {
+              yield* offerRuntimeEvent({
+                type: "turn.completed",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId,
+                turnId,
+                payload: {
+                  state: "failed",
+                  errorMessage: options.errorMessage,
+                },
+              });
+            } else if (options?.completedStopReason !== undefined) {
+              yield* offerRuntimeEvent({
+                type: "turn.completed",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId,
+                turnId,
+                payload: {
+                  state: options.completedStopReason === "cancelled" ? "cancelled" : "completed",
+                  stopReason: options.completedStopReason ?? null,
+                },
+              });
             }
-            if (options?.emitTurnCompletion !== false) {
-              if (shouldEmitFailedTurn) {
-                yield* offerRuntimeEvent({
-                  type: "turn.completed",
-                  ...(yield* makeEventStamp()),
-                  provider: PROVIDER,
-                  threadId,
-                  turnId,
-                  payload: {
-                    state: "failed",
-                    errorMessage: options.errorMessage,
-                  },
-                });
-              } else if (shouldEmitCompletedTurn) {
-                yield* offerRuntimeEvent({
-                  type: "turn.completed",
-                  ...(yield* makeEventStamp()),
-                  provider: PROVIDER,
-                  threadId,
-                  turnId,
-                  payload: {
-                    state: options.completedStopReason === "cancelled" ? "cancelled" : "completed",
-                    stopReason: options.completedStopReason ?? null,
-                  },
-                });
-              }
-            }
-            return;
           }
+          return;
+        }
+        if (liveCtx.acpSessionId !== expectedAcpSessionId) {
           liveCtx.promptsInFlight = options?.settleAllPrompts
             ? 0
             : Math.max(0, liveCtx.promptsInFlight - 1);
