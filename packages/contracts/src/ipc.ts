@@ -69,19 +69,20 @@ import type {
   PreviewOpenInput,
   PreviewRefreshInput,
   PreviewReportStatusInput,
+  PreviewResizeInput,
   PreviewSessionSnapshot,
 } from "./preview.ts";
 import {
   PreviewAutomationClickInput,
   PreviewAutomationEvaluateInput,
-  PreviewAutomationOwner,
-  PreviewAutomationOwnerIdentity,
+  PreviewAutomationHost,
+  PreviewAutomationHostFocus,
   PreviewAutomationPressInput,
-  PreviewAutomationRequest,
   PreviewAutomationResponse,
   PreviewAutomationScrollInput,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
+  PreviewAutomationStreamEvent,
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
 } from "./previewAutomation.ts";
@@ -1154,19 +1155,19 @@ export interface EnvironmentApi {
   preview: {
     open: (input: typeof PreviewOpenInput.Encoded) => Promise<PreviewSessionSnapshot>;
     navigate: (input: typeof PreviewNavigateInput.Encoded) => Promise<PreviewSessionSnapshot>;
+    resize: (input: typeof PreviewResizeInput.Encoded) => Promise<PreviewSessionSnapshot>;
     refresh: (input: typeof PreviewRefreshInput.Encoded) => Promise<void>;
     close: (input: typeof PreviewCloseInput.Encoded) => Promise<void>;
     list: (input: typeof PreviewListInput.Encoded) => Promise<PreviewListResult>;
     reportStatus: (input: typeof PreviewReportStatusInput.Encoded) => Promise<void>;
     automation: {
       connect: (
-        input: { clientId: string },
-        callback: (request: PreviewAutomationRequest) => void,
+        input: PreviewAutomationHost,
+        callback: (event: PreviewAutomationStreamEvent) => void,
         options?: { onResubscribe?: () => void },
       ) => () => void;
       respond: (response: PreviewAutomationResponse) => Promise<void>;
-      reportOwner: (owner: PreviewAutomationOwner) => Promise<void>;
-      clearOwner: (input: PreviewAutomationOwnerIdentity) => Promise<void>;
+      focusHost: (input: PreviewAutomationHostFocus) => Promise<void>;
     };
     onEvent: (
       callback: (event: PreviewEvent) => void,

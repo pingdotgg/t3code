@@ -7,6 +7,8 @@ import {
   PreviewAutomationPressInput,
   PreviewAutomationRecordingArtifact,
   PreviewAutomationRecordingStatus,
+  PreviewAutomationResizeInput,
+  PreviewAutomationResizeResult,
   PreviewAutomationScrollInput,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
@@ -35,7 +37,7 @@ const readonlyBrowserTool = <T extends Tool.Any>(tool: T): T =>
 
 export const PreviewStatusTool = Tool.make("preview_status", {
   description:
-    "Report whether the scoped thread has an automation-capable desktop preview, including its active tab, URL, title, visibility, and loading state.",
+    "Report whether the scoped thread has an automation-capable desktop preview, including its active tab, URL, title, visibility, loading state, viewport mode, and measured CSS-pixel size.",
   success: PreviewAutomationStatus,
   failure: PreviewAutomationError,
   dependencies,
@@ -67,6 +69,19 @@ export const PreviewNavigateTool = safeBrowserTool(
     failure: PreviewAutomationError,
     dependencies,
   }).annotate(Tool.Title, "Navigate browser preview"),
+);
+
+export const PreviewResizeTool = safeBrowserTool(
+  Tool.make("preview_resize", {
+    description:
+      "Set the active collaborative browser tab to fill-panel sizing, an independently resizable freeform size, or a Chrome-standard device preset. Use {mode:'fill'}, {mode:'freeform',width:1024,height:768}, or {mode:'preset',preset:'iphone-12-pro',orientation:'portrait'}. This changes CSS layout breakpoints without changing the desktop browser user agent.",
+    parameters: PreviewAutomationResizeInput,
+    success: PreviewAutomationResizeResult,
+    failure: PreviewAutomationError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Resize browser viewport")
+    .annotate(Tool.Idempotent, true),
 );
 
 export const PreviewSnapshotTool = readonlyBrowserTool(
@@ -168,6 +183,7 @@ export const PreviewToolkit = Toolkit.make(
   PreviewStatusTool,
   PreviewOpenTool,
   PreviewNavigateTool,
+  PreviewResizeTool,
   PreviewSnapshotTool,
   PreviewClickTool,
   PreviewTypeTool,
@@ -183,6 +199,7 @@ export const PreviewStandardToolkit = Toolkit.make(
   PreviewStatusTool,
   PreviewOpenTool,
   PreviewNavigateTool,
+  PreviewResizeTool,
   PreviewClickTool,
   PreviewTypeTool,
   PreviewPressTool,

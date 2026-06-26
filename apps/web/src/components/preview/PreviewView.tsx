@@ -1,13 +1,22 @@
 "use client";
 
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { type ScopedThreadRef } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  FILL_PREVIEW_VIEWPORT,
+  type PreviewViewportSetting,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { previewAnnotationScreenshotFile } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
-import { rememberPreviewUrl, useThreadPreviewState } from "~/previewStateStore";
+import {
+  rememberPreviewUrl,
+  updatePreviewServerSnapshot,
+  useThreadPreviewState,
+} from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
@@ -20,10 +29,16 @@ import { PreviewChromeRow } from "./PreviewChromeRow";
 import { formatPreviewUrl } from "./previewUrlPresentation";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu } from "./PreviewMoreMenu";
+import {
+  commitBrowserViewportChange,
+  subscribeBrowserViewportChange,
+} from "~/browser/browserViewportActions";
+import { resolveResponsiveBrowserViewportSize } from "~/browser/browserViewportLayout";
 import { PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
+import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { useLoadingProgress } from "./useLoadingProgress";
 import { usePreviewSession } from "./usePreviewSession";
 import { ZoomIndicator } from "./ZoomIndicator";
@@ -60,6 +75,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const environment = useEnvironment(threadRef.environmentId);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
   const open = useAtomCommand(previewEnvironment.open);
+  const resize = useAtomCommand(previewEnvironment.resize, "preview viewport resize");
 
   usePreviewSession(threadRef);
 
@@ -91,6 +107,10 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
           environmentHttpBaseUrl,
         }) ?? undefined)
       : undefined;
+  const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
+  const panelRect = useBrowserSurfaceStore((state) =>
+    tabId ? (state.byTabId[tabId]?.rect ?? null) : null,
+  );
 
   const handleSubmitUrl = useCallback(
     async (next: string) => {
@@ -130,6 +150,51 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const handleResetZoom = useCallback(() => {
     if (previewBridge && tabId) void previewBridge.resetZoom(tabId);
   }, [tabId]);
+
+  const handleViewportChange = useCallback(
+    async (nextViewport: PreviewViewportSetting) => {
+      if (!tabId) return;
+      const result = await resize({
+        environmentId: threadRef.environmentId,
+        input: {
+          threadId: threadRef.threadId,
+          tabId,
+          viewport: nextViewport,
+        },
+      });
+      if (result._tag === "Failure") {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Unable to resize browser viewport",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+        throw error;
+      }
+      updatePreviewServerSnapshot(threadRef, result.value);
+    },
+    [resize, tabId, threadRef],
+  );
+
+  const handleToggleDeviceToolbar = () => {
+    if (!tabId) return;
+    if (viewport._tag !== "fill") {
+      void commitBrowserViewportChange(tabId, FILL_PREVIEW_VIEWPORT).catch(() => undefined);
+      return;
+    }
+
+    const responsiveSize = panelRect
+      ? resolveResponsiveBrowserViewportSize(panelRect, desktopOverlay?.zoomFactor)
+      : { width: 1024, height: 768 };
+    void commitBrowserViewportChange(tabId, { _tag: "freeform", ...responsiveSize }).catch(
+      () => undefined,
+    );
+  };
+
+  useEffect(() => {
+    if (!tabId) return;
+    return subscribeBrowserViewportChange(tabId, handleViewportChange);
+  }, [handleViewportChange, tabId]);
 
   const handleBack = useCallback(() => {
     if (previewBridge && tabId) void previewBridge.goBack(tabId);
@@ -527,6 +592,8 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
               tabId={tabId}
               hasWebContents={desktopOverlay !== null}
               zoomFactor={desktopOverlay?.zoomFactor ?? 1}
+              deviceToolbarVisible={viewport._tag !== "fill"}
+              onToggleDeviceToolbar={handleToggleDeviceToolbar}
             />
           ) : null
         }

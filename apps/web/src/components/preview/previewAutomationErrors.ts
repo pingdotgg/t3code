@@ -1,6 +1,6 @@
 import {
   EnvironmentId,
-  type PreviewAutomationOwner,
+  type PreviewAutomationHost,
   PreviewAutomationOperation,
   type PreviewAutomationRequest,
   type PreviewAutomationResponse,
@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 export interface PreviewAutomationOperationContext {
   readonly requestId: PreviewAutomationRequest["requestId"];
   readonly operation: PreviewAutomationRequest["operation"];
-  readonly environmentId: PreviewAutomationOwner["environmentId"];
+  readonly environmentId: PreviewAutomationHost["environmentId"];
   readonly threadId: PreviewAutomationRequest["threadId"];
   readonly tabId: Exclude<PreviewAutomationRequest["tabId"], undefined> | null;
 }
@@ -56,21 +56,22 @@ export class PreviewAutomationNavigationTimeoutError extends Schema.TaggedErrorC
   }
 }
 
-export class PreviewAutomationStaleOwnerError extends Schema.TaggedErrorClass<PreviewAutomationStaleOwnerError>()(
-  "PreviewAutomationStaleOwnerError",
+export class PreviewAutomationViewportTimeoutError extends Schema.TaggedErrorClass<PreviewAutomationViewportTimeoutError>()(
+  "PreviewAutomationViewportTimeoutError",
   {
     requestId: TrimmedNonEmptyString,
     environmentId: EnvironmentId,
-    expectedThreadId: ThreadId,
-    requestedThreadId: ThreadId,
+    threadId: ThreadId,
+    tabId: PreviewTabId,
+    timeoutMs: Schema.Int,
   },
 ) {
   get responseTag() {
-    return "PreviewAutomationUnavailableError" as const;
+    return "PreviewAutomationTimeoutError" as const;
   }
 
   override get message(): string {
-    return `Preview automation request ${this.requestId} targeted thread ${this.requestedThreadId}, but the owner for environment ${this.environmentId} is attached to thread ${this.expectedThreadId}.`;
+    return `Preview viewport for request ${this.requestId} on environment ${this.environmentId} thread ${this.threadId} tab ${this.tabId} was not rendered within ${this.timeoutMs}ms.`;
   }
 }
 
@@ -100,7 +101,7 @@ export class PreviewAutomationRecordingNotActiveError extends Schema.TaggedError
     requestId: TrimmedNonEmptyString,
     environmentId: EnvironmentId,
     threadId: ThreadId,
-    tabId: PreviewTabId,
+    tabId: Schema.NullOr(PreviewTabId),
   },
 ) {
   get responseTag() {
@@ -108,9 +109,64 @@ export class PreviewAutomationRecordingNotActiveError extends Schema.TaggedError
   }
 
   override get message(): string {
-    return `Preview automation request ${this.requestId} found no active recording for tab ${this.tabId} on environment ${this.environmentId} thread ${this.threadId}.`;
+    return `Preview automation request ${this.requestId} found no active recording for tab ${this.tabId ?? "unassigned"} on environment ${this.environmentId} thread ${this.threadId}.`;
   }
 }
+
+export class PreviewAutomationTargetNotEditableHostError extends Schema.TaggedErrorClass<PreviewAutomationTargetNotEditableHostError>()(
+  "PreviewAutomationTargetNotEditableHostError",
+  {
+    requestId: TrimmedNonEmptyString,
+    operation: PreviewAutomationOperation,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    tabId: Schema.NullOr(PreviewTabId),
+    selectorKind: Schema.optional(Schema.Literals(["focused-element", "locator", "selector"])),
+    selectorLength: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationTargetNotEditableError" as const;
+  }
+
+  override get message(): string {
+    return `Preview automation ${this.operation} request ${this.requestId} requires an editable target in tab ${this.tabId ?? "unassigned"}.`;
+  }
+}
+
+const targetNotEditableDiagnostics = (
+  cause: unknown,
+): {
+  readonly selectorKind?: "focused-element" | "locator" | "selector";
+  readonly selectorLength?: number;
+} | null => {
+  if (
+    typeof cause !== "object" ||
+    cause === null ||
+    !("_tag" in cause) ||
+    cause._tag !== "PreviewAutomationTargetNotEditableError"
+  ) {
+    return null;
+  }
+  const selectorKind =
+    "selectorKind" in cause &&
+    (cause.selectorKind === "focused-element" ||
+      cause.selectorKind === "locator" ||
+      cause.selectorKind === "selector")
+      ? cause.selectorKind
+      : undefined;
+  const selectorLength =
+    "selectorLength" in cause &&
+    typeof cause.selectorLength === "number" &&
+    Number.isInteger(cause.selectorLength) &&
+    cause.selectorLength >= 0
+      ? cause.selectorLength
+      : undefined;
+  return {
+    ...(selectorKind === undefined ? {} : { selectorKind }),
+    ...(selectorLength === undefined ? {} : { selectorLength }),
+  };
+};
 
 export class PreviewAutomationOperationError extends Schema.TaggedErrorClass<PreviewAutomationOperationError>()(
   "PreviewAutomationOperationError",
@@ -125,9 +181,18 @@ export class PreviewAutomationOperationError extends Schema.TaggedErrorClass<Pre
 ) {
   static fromCause(
     input: PreviewAutomationOperationContext & { readonly cause: unknown },
-  ): PreviewAutomationOwnerError {
-    return isPreviewAutomationOwnerError(input.cause)
-      ? input.cause
+  ): PreviewAutomationHostError {
+    if (isPreviewAutomationHostError(input.cause)) return input.cause;
+    const diagnostics = targetNotEditableDiagnostics(input.cause);
+    return diagnostics
+      ? new PreviewAutomationTargetNotEditableHostError({
+          requestId: input.requestId,
+          operation: input.operation,
+          environmentId: input.environmentId,
+          threadId: input.threadId,
+          tabId: input.tabId,
+          ...diagnostics,
+        })
       : new PreviewAutomationOperationError(input);
   }
 
@@ -140,20 +205,21 @@ export class PreviewAutomationOperationError extends Schema.TaggedErrorClass<Pre
   }
 }
 
-export const PreviewAutomationOwnerError = Schema.Union([
+export const PreviewAutomationHostError = Schema.Union([
   PreviewAutomationOverlayTimeoutError,
   PreviewAutomationNavigationTimeoutError,
-  PreviewAutomationStaleOwnerError,
+  PreviewAutomationViewportTimeoutError,
   PreviewAutomationTargetUnavailableError,
   PreviewAutomationRecordingNotActiveError,
+  PreviewAutomationTargetNotEditableHostError,
   PreviewAutomationOperationError,
 ]);
-export type PreviewAutomationOwnerError = typeof PreviewAutomationOwnerError.Type;
+export type PreviewAutomationHostError = typeof PreviewAutomationHostError.Type;
 
-export const isPreviewAutomationOwnerError = Schema.is(PreviewAutomationOwnerError);
+export const isPreviewAutomationHostError = Schema.is(PreviewAutomationHostError);
 
-export function serializePreviewAutomationOwnerError(
-  error: PreviewAutomationOwnerError,
+export function serializePreviewAutomationHostError(
+  error: PreviewAutomationHostError,
 ): NonNullable<PreviewAutomationResponse["error"]> {
   const detail = Object.fromEntries(
     Object.entries(error).filter(
