@@ -89,7 +89,7 @@ export function ThreadWorkLog(props: {
   const onlyToolRows = rows.every((row) => row.toolLike);
 
   return (
-    <View className="-mx-1 mb-3 px-1 py-0.5">
+    <View className="-mx-1 mb-1 px-1 py-0">
       {!onlyToolRows ? (
         <Text className="px-0.5 pb-0.5 font-t3-medium text-2xs text-foreground-muted opacity-60">
           work log
@@ -125,13 +125,13 @@ export function ThreadWorkLog(props: {
                 style={({ pressed }) => ({
                   backgroundColor: pressed ? pressedBackground : "transparent",
                 })}
-                className="rounded-md px-0.5 py-0.5"
+                className="rounded-md px-0.5 py-0"
               >
-                <View className="min-h-9 flex-row items-center gap-1.5">
-                  <View className="h-5 w-5 shrink-0 items-center justify-center">
+                <View className="min-h-8 flex-row items-center gap-1.5">
+                  <View className="h-[18px] w-5 shrink-0 items-center justify-center">
                     <SymbolView
                       name={workRowSymbolName(row.icon)}
-                      size={14}
+                      size={13}
                       weight="medium"
                       tintColor={iconIsDestructive ? "#e11d48" : props.iconSubtleColor}
                       type="monochrome"
@@ -139,7 +139,7 @@ export function ThreadWorkLog(props: {
                   </View>
 
                   <Text
-                    className="min-w-0 flex-1 text-xs leading-5 text-foreground"
+                    className="min-w-0 flex-1 text-xs leading-4 text-foreground"
                     numberOfLines={1}
                   >
                     <Text
@@ -192,7 +192,7 @@ export function ThreadWorkLog(props: {
               </Pressable>
 
               {expanded && row.fullDetail ? (
-                <View className="ml-7 border-l border-neutral-300/60 pb-1.5 pl-3 pt-0.5 dark:border-white/[0.12]">
+                <View className="ml-7 border-l border-neutral-300/60 pb-1 pl-3 pt-0.5 dark:border-white/[0.12]">
                   <ScrollView
                     nestedScrollEnabled
                     directionalLockEnabled
@@ -240,7 +240,7 @@ export function ThreadWorkGroupToggle(props: {
     : "Show fewer log entries";
 
   return (
-    <View className="-mx-1 mb-3 px-1 py-0.5">
+    <View className="-mx-1 mb-1 px-1 py-0">
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: props.expanded }}
@@ -253,12 +253,12 @@ export function ThreadWorkGroupToggle(props: {
         style={({ pressed }) => ({
           backgroundColor: pressed ? pressedBackground : "transparent",
         })}
-        className="min-h-9 flex-row items-center gap-1.5 rounded-md px-0.5 py-0.5"
+        className="min-h-8 flex-row items-center gap-1.5 rounded-md px-0.5 py-0"
       >
-        <View className="h-5 w-5 items-center justify-center">
+        <View className="h-[18px] w-5 items-center justify-center">
           <SymbolView
             name={props.expanded ? "chevron.up" : "chevron.down"}
-            size={13}
+            size={12}
             tintColor={props.iconSubtleColor}
             type="monochrome"
           />
