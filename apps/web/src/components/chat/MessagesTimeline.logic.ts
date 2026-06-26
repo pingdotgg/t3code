@@ -149,13 +149,20 @@ interface TurnFold {
 }
 
 /**
- * The latest turn counts as unsettled while it is still running (or has not
- * recorded a completion). This is deliberately keyed on the turn's own
- * lifecycle rather than transient working state: right after the user sends
- * a message, the previous turn is still the "active" one until the server
- * creates the new turn, and folding must not flicker through that window.
+ * The session's running turn is authoritative when latestTurn briefly lags or
+ * regresses behind it. Otherwise, the latest turn counts as unsettled while it
+ * is still running (or has not recorded a completion). This is deliberately
+ * keyed on turn lifecycle rather than transient working state: right after the
+ * user sends a message, the previous turn is still the "active" one until the
+ * server creates the new turn, and folding must not flicker through that window.
  */
-function deriveUnsettledTurnId(latestTurn: TimelineLatestTurn | null): TurnId | null {
+function deriveUnsettledTurnId(
+  latestTurn: TimelineLatestTurn | null,
+  runningTurnId: TurnId | null,
+): TurnId | null {
+  if (runningTurnId !== null) {
+    return runningTurnId;
+  }
   if (!latestTurn) {
     return null;
   }
@@ -291,6 +298,7 @@ function deriveTurnFolds(input: {
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestTurn?: TimelineLatestTurn | null;
+  runningTurnId?: TurnId | null;
   expandedTurnIds?: ReadonlySet<TurnId>;
   isWorking: boolean;
   activeTurnStartedAt: string | null;
@@ -302,7 +310,10 @@ export function deriveMessagesTimelineRows(input: {
     input.timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
   );
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(input.timelineEntries);
-  const unsettledTurnId = deriveUnsettledTurnId(input.latestTurn ?? null);
+  const unsettledTurnId = deriveUnsettledTurnId(
+    input.latestTurn ?? null,
+    input.runningTurnId ?? null,
+  );
   const foldsByAnchorEntryId = deriveTurnFolds({
     timelineEntries: input.timelineEntries,
     terminalAssistantMessageIds,

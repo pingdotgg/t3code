@@ -8,6 +8,8 @@ import {
   parsePermissionRequest,
   parseSessionModeState,
   parseSessionUpdateEvent,
+  sessionUpdateIsReplay,
+  syntheticLoadSessionResponseFromInitialize,
 } from "./AcpRuntimeModel.ts";
 
 describe("AcpRuntimeModel", () => {
@@ -57,6 +59,95 @@ describe("AcpRuntimeModel", () => {
     } satisfies EffectAcpSchema.NewSessionResponse);
 
     expect(modelConfigId).toBe("model");
+  });
+
+  it("detects Grok session replay updates from _meta.isReplay", () => {
+    expect(
+      sessionUpdateIsReplay({
+        _meta: { isReplay: true },
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "replayed" },
+        },
+      } satisfies EffectAcpSchema.SessionNotification),
+    ).toBe(true);
+    expect(
+      sessionUpdateIsReplay({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "live" },
+        },
+      } satisfies EffectAcpSchema.SessionNotification),
+    ).toBe(false);
+  });
+
+  it("builds a synthetic load response from initialize model state", () => {
+    const response = syntheticLoadSessionResponseFromInitialize({
+      protocolVersion: 1,
+      _meta: {
+        modelState: {
+          currentModelId: "grok-build",
+          availableModels: [{ modelId: "grok-build", name: "Grok Build" }],
+        },
+      },
+    } satisfies EffectAcpSchema.InitializeResponse);
+
+    expect(response.models?.currentModelId).toBe("grok-build");
+    expect(response._meta).toMatchObject({ t3SessionLoadReady: "replay_idle" });
+  });
+
+  it("accepts initialize model descriptions with null", () => {
+    const response = syntheticLoadSessionResponseFromInitialize({
+      protocolVersion: 1,
+      _meta: {
+        modelState: {
+          currentModelId: "grok-build",
+          availableModels: [{ modelId: "grok-build", name: "Grok Build", description: null }],
+        },
+      },
+    } satisfies EffectAcpSchema.InitializeResponse);
+
+    expect(response.models?.availableModels[0]?.description).toBeNull();
+  });
+
+  it("ignores malformed initialize model state in synthetic load responses", () => {
+    const response = syntheticLoadSessionResponseFromInitialize({
+      protocolVersion: 1,
+      _meta: {
+        modelState: {
+          currentModelId: "grok-build",
+          availableModels: [null],
+        },
+        modeState: {
+          currentModeId: "code",
+          availableModes: [{ id: "code", name: 12 }],
+        },
+      },
+    } as EffectAcpSchema.InitializeResponse);
+
+    expect(response.models).toBeUndefined();
+    expect(response.modes).toBeUndefined();
+    expect(response._meta).toMatchObject({ t3SessionLoadReady: "replay_idle" });
+  });
+
+  it("builds a synthetic load response with initialize mode state", () => {
+    const response = syntheticLoadSessionResponseFromInitialize({
+      protocolVersion: 1,
+      _meta: {
+        modeState: {
+          currentModeId: "code",
+          availableModes: [
+            { id: "ask", name: "Ask" },
+            { id: "code", name: "Code" },
+          ],
+        },
+      },
+    } satisfies EffectAcpSchema.InitializeResponse);
+
+    expect(response.modes?.currentModeId).toBe("code");
+    expect(response.modes?.availableModes).toHaveLength(2);
   });
 
   it("projects typed ACP tool call updates into runtime events", () => {
