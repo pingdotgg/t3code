@@ -48,7 +48,11 @@ exec ${JSON.stringify(mockAgentCommand)} ${JSON.stringify(mockAgentPath)} "$@"
   return wrapperPath;
 }
 
-function waitForFileContent(filePath: string, attempts = 40): Effect.Effect<string> {
+function waitForFileContent(
+  filePath: string,
+  attempts = 40,
+  expectedContent?: string,
+): Effect.Effect<string> {
   const readAttempt = (remainingAttempts: number): Effect.Effect<string> =>
     Effect.gen(function* () {
       if (remainingAttempts <= 0) {
@@ -57,7 +61,10 @@ function waitForFileContent(filePath: string, attempts = 40): Effect.Effect<stri
       const raw = yield* Effect.tryPromise(() => NodeFSP.readFile(filePath, "utf8")).pipe(
         Effect.orElseSucceed(() => ""),
       );
-      if (raw.trim().length > 0) {
+      if (
+        raw.trim().length > 0 &&
+        (expectedContent === undefined || raw.includes(expectedContent))
+      ) {
         return raw;
       }
       yield* Effect.sleep("25 millis");
@@ -82,14 +89,12 @@ const grokAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
 const makeTestAdapter = (binaryPath: string, options?: Parameters<typeof makeGrokAdapter>[1]) =>
   makeGrokAdapter(decodeGrokSettings({ binaryPath }), options).pipe(Effect.orDie);
 
-it("classifies settlement from a replaced Grok session as detached", () => {
+it("requires a settlement to match the live Grok turn", () => {
   const staleTurnId = TurnId.make("stale-turn");
   const replacementTurnId = TurnId.make("replacement-turn");
 
   assert.isFalse(
     grokPromptSettlementBelongsToContext({
-      liveAcpSessionId: "replacement-session",
-      expectedAcpSessionId: "stale-session",
       liveActiveTurnId: replacementTurnId,
       liveSessionActiveTurnId: replacementTurnId,
       turnId: staleTurnId,
@@ -97,8 +102,6 @@ it("classifies settlement from a replaced Grok session as detached", () => {
   );
   assert.isTrue(
     grokPromptSettlementBelongsToContext({
-      liveAcpSessionId: "replacement-session",
-      expectedAcpSessionId: "stale-session",
       liveActiveTurnId: staleTurnId,
       liveSessionActiveTurnId: staleTurnId,
       turnId: staleTurnId,
@@ -539,6 +542,171 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         );
       assert.lengthOf(followUpCompletedEvents, 1);
       assert.equal(followUpCompletedEvents[0]?.payload.state, "completed");
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("does not let a cancelled prompt settlement consume the follow-up prompt slot", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-cancelled-settlement-before-follow-up");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-cancel-race-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const firstTurnStarted = yield* Deferred.make<TurnId>();
+      const twoTurnsCompleted = yield* Deferred.make<void>();
+      const completedCountRef = yield* Ref.make(0);
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          runtimeEvents.push(event);
+          if (String(event.threadId) !== String(threadId)) {
+            return;
+          }
+          if (event.type === "turn.started" && event.turnId !== undefined) {
+            yield* Deferred.succeed(firstTurnStarted, event.turnId).pipe(Effect.ignore);
+            return;
+          }
+          if (event.type !== "turn.completed") {
+            return;
+          }
+          const completedCount = yield* Ref.updateAndGet(completedCountRef, (count) => count + 1);
+          if (completedCount === 2) {
+            yield* Deferred.succeed(twoTurnsCompleted, undefined);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const firstSendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "cancel this prompt", attachments: [] })
+        .pipe(Effect.forkChild);
+      const firstTurnId = yield* Deferred.await(firstTurnStarted).pipe(Effect.timeout("2 seconds"));
+      yield* waitForFileContent(requestLogPath, 80, '"method":"session/prompt"');
+
+      yield* adapter.interruptTurn(threadId, firstTurnId).pipe(Effect.timeout("2 seconds"));
+      const followUp = yield* adapter
+        .sendTurn({ threadId, input: "complete the follow-up", attachments: [] })
+        .pipe(Effect.timeout("2 seconds"));
+      yield* Fiber.join(firstSendTurnFiber).pipe(Effect.timeout("2 seconds"));
+      yield* Deferred.await(twoTurnsCompleted).pipe(Effect.timeout("2 seconds"));
+
+      const turnCompletedEvents = runtimeEvents.filter(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+          event.type === "turn.completed" && String(event.threadId) === String(threadId),
+      );
+      const readySessions = yield* adapter.listSessions();
+      const readySession = readySessions.find((session) => session.threadId === threadId);
+
+      assert.notEqual(String(followUp.turnId), String(firstTurnId));
+      assert.deepEqual(
+        turnCompletedEvents.map((event) => [String(event.turnId), event.payload.state]),
+        [
+          [String(firstTurnId), "cancelled"],
+          [String(followUp.turnId), "completed"],
+        ],
+      );
+      assert.equal(readySession?.status, "ready");
+      assert.isUndefined(readySession?.activeTurnId);
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("drops late ACP notifications after a turn is cancelled", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-drop-late-cancelled-notifications");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_HANG_PROMPT_FOREVER: "1",
+          T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL: "1",
+        }),
+      );
+      const lateNativeUpdate = yield* Deferred.make<void>();
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        nativeEventLogger: {
+          filePath: "memory://grok-cancelled-native-events",
+          write: (record: unknown) =>
+            JSON.stringify(record).includes("late after cancel")
+              ? Deferred.succeed(lateNativeUpdate, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          close: () => Effect.void,
+        },
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnStarted = yield* Deferred.make<TurnId>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "turn.started" &&
+              event.turnId !== undefined &&
+              String(event.threadId) === String(threadId)
+              ? Deferred.succeed(turnStarted, event.turnId).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "cancel before the late update", attachments: [] })
+        .pipe(Effect.forkChild);
+      const turnId = yield* Deferred.await(turnStarted).pipe(Effect.timeout("2 seconds"));
+      yield* adapter.interruptTurn(threadId, turnId).pipe(Effect.timeout("2 seconds"));
+      yield* Fiber.join(sendTurnFiber).pipe(Effect.timeout("2 seconds"));
+      yield* Deferred.await(lateNativeUpdate).pipe(Effect.timeout("2 seconds"));
+      for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
+        yield* Effect.yieldNow;
+      }
+
+      const cancelledIndex = runtimeEvents.findIndex(
+        (event) =>
+          event.type === "turn.completed" &&
+          String(event.threadId) === String(threadId) &&
+          String(event.turnId) === String(turnId) &&
+          event.payload.state === "cancelled",
+      );
+      const turnOutputTypes = new Set([
+        "content.delta",
+        "item.started",
+        "item.updated",
+        "item.completed",
+        "turn.plan.updated",
+      ]);
+      const outputAfterCancellation = runtimeEvents
+        .slice(cancelledIndex + 1)
+        .filter(
+          (event) => String(event.threadId) === String(threadId) && turnOutputTypes.has(event.type),
+        );
+
+      assert.isAtLeast(cancelledIndex, 0);
+      assert.deepEqual(outputAfterCancellation, []);
 
       yield* Fiber.interrupt(runtimeEventsFiber);
       yield* adapter.stopSession(threadId);

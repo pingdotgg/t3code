@@ -216,17 +216,11 @@ function completedStopReasonFromPromptResponse(
 }
 
 export function grokPromptSettlementBelongsToContext(input: {
-  readonly liveAcpSessionId: string;
-  readonly expectedAcpSessionId: string;
   readonly liveActiveTurnId: TurnId | undefined;
   readonly liveSessionActiveTurnId: TurnId | undefined;
   readonly turnId: TurnId;
 }): boolean {
-  return (
-    input.liveAcpSessionId === input.expectedAcpSessionId ||
-    input.liveActiveTurnId === input.turnId ||
-    input.liveSessionActiveTurnId === input.turnId
-  );
+  return input.liveActiveTurnId === input.turnId || input.liveSessionActiveTurnId === input.turnId;
 }
 
 export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapterLiveOptions) {
@@ -317,13 +311,17 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           return;
         }
         const settlementBelongsToLiveContext = grokPromptSettlementBelongsToContext({
-          liveAcpSessionId: liveCtx.acpSessionId,
-          expectedAcpSessionId,
           liveActiveTurnId: liveCtx.activeTurnId,
           liveSessionActiveTurnId: liveCtx.session.activeTurnId,
           turnId,
         });
         if (!settlementBelongsToLiveContext) {
+          // interruptTurn already consumed every prompt slot for this turn. A
+          // late prompt result must neither emit a second terminal event nor
+          // consume a slot belonging to a newer turn on the same ACP session.
+          if (liveCtx.interruptedTurnIds.has(turnId)) {
+            return;
+          }
           if (options?.emitTurnCompletion !== false) {
             if (options?.errorMessage !== undefined) {
               yield* offerRuntimeEvent({
@@ -521,6 +519,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     const emitPlanUpdate = (
       ctx: GrokSessionContext,
+      turnId: TurnId | undefined,
+      stamp: { readonly eventId: EventId; readonly createdAt: string },
       payload: {
         readonly explanation?: string | null;
         readonly plan: ReadonlyArray<{
@@ -532,17 +532,17 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       method: string,
     ) =>
       Effect.gen(function* () {
-        const fingerprint = `${resolveNotificationTurnId(ctx) ?? "no-turn"}:${encodeJsonStringForDiagnostics(payload) ?? "[unserializable payload]"}`;
+        const fingerprint = `${turnId ?? "no-turn"}:${encodeJsonStringForDiagnostics(payload) ?? "[unserializable payload]"}`;
         if (ctx.lastPlanFingerprint === fingerprint) {
           return;
         }
         ctx.lastPlanFingerprint = fingerprint;
         yield* offerRuntimeEvent(
           makeAcpPlanUpdatedEvent({
-            stamp: yield* makeEventStamp(),
+            stamp,
             provider: PROVIDER,
             threadId: ctx.threadId,
-            turnId: resolveNotificationTurnId(ctx),
+            turnId,
             payload,
             source: "acp.jsonrpc",
             method,
@@ -840,14 +840,35 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           const nf = yield* Stream.runDrain(
             Stream.mapEffect(acp.getEvents(), (event) =>
               Effect.gen(function* () {
+                if (
+                  event._tag === "PlanUpdated" ||
+                  event._tag === "ToolCallUpdated" ||
+                  event._tag === "ContentDelta"
+                ) {
+                  yield* logNative(ctx.threadId, "session/update", event.rawPayload);
+                }
+
+                if (event._tag === "ModeChanged") {
+                  return;
+                }
+
+                const stamp = yield* makeEventStamp();
+                const notificationTurnId = resolveNotificationTurnId(ctx);
+                if (
+                  notificationTurnId !== undefined &&
+                  ctx.interruptedTurnIds.has(notificationTurnId)
+                ) {
+                  return;
+                }
+
                 switch (event._tag) {
                   case "AssistantItemStarted":
                     yield* offerRuntimeEvent(
                       makeAcpAssistantItemEvent({
-                        stamp: yield* makeEventStamp(),
+                        stamp,
                         provider: PROVIDER,
                         threadId: ctx.threadId,
-                        turnId: resolveNotificationTurnId(ctx),
+                        turnId: notificationTurnId,
                         itemId: event.itemId,
                         lifecycle: "item.started",
                       }),
@@ -856,40 +877,44 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   case "AssistantItemCompleted":
                     yield* offerRuntimeEvent(
                       makeAcpAssistantItemEvent({
-                        stamp: yield* makeEventStamp(),
+                        stamp,
                         provider: PROVIDER,
                         threadId: ctx.threadId,
-                        turnId: resolveNotificationTurnId(ctx),
+                        turnId: notificationTurnId,
                         itemId: event.itemId,
                         lifecycle: "item.completed",
                       }),
                     );
                     return;
                   case "PlanUpdated":
-                    yield* logNative(ctx.threadId, "session/update", event.rawPayload);
-                    yield* emitPlanUpdate(ctx, event.payload, event.rawPayload, "session/update");
+                    yield* emitPlanUpdate(
+                      ctx,
+                      notificationTurnId,
+                      stamp,
+                      event.payload,
+                      event.rawPayload,
+                      "session/update",
+                    );
                     return;
                   case "ToolCallUpdated":
-                    yield* logNative(ctx.threadId, "session/update", event.rawPayload);
                     yield* offerRuntimeEvent(
                       makeAcpToolCallEvent({
-                        stamp: yield* makeEventStamp(),
+                        stamp,
                         provider: PROVIDER,
                         threadId: ctx.threadId,
-                        turnId: resolveNotificationTurnId(ctx),
+                        turnId: notificationTurnId,
                         toolCall: event.toolCall,
                         rawPayload: event.rawPayload,
                       }),
                     );
                     return;
                   case "ContentDelta":
-                    yield* logNative(ctx.threadId, "session/update", event.rawPayload);
                     yield* offerRuntimeEvent(
                       makeAcpContentDeltaEvent({
-                        stamp: yield* makeEventStamp(),
+                        stamp,
                         provider: PROVIDER,
                         threadId: ctx.threadId,
-                        turnId: resolveNotificationTurnId(ctx),
+                        turnId: notificationTurnId,
                         ...(event.itemId ? { itemId: event.itemId } : {}),
                         text: event.text,
                         rawPayload: event.rawPayload,
@@ -1146,7 +1171,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 });
               }
               if (ctx.interruptedTurnIds.has(prepared.turnId)) {
-                ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
                 yield* Ref.set(promptSettled, true);
                 return {
                   threadId: input.threadId,
@@ -1259,7 +1283,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       return;
                     }
                     if (ctx.interruptedTurnIds.has(prepared.turnId)) {
-                      ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
                       return;
                     }
                     if (
