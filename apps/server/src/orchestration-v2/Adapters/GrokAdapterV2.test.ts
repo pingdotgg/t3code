@@ -45,9 +45,11 @@ describe("GrokAdapterV2 capabilities", () => {
     assert.isFalse(AcpProviderCapabilitiesV2.tools.supportsMcpTools);
   });
 
-  it("leaves non-native features available to orchestrator fallbacks", () => {
+  it("declares Grok Task envelopes as native subagents", () => {
     assert.isFalse(GrokProviderCapabilitiesV2.threads.canForkThread);
-    assert.isFalse(GrokProviderCapabilitiesV2.subagents.supportsSubagents);
+    assert.isTrue(GrokProviderCapabilitiesV2.subagents.supportsSubagents);
+    assert.isTrue(GrokProviderCapabilitiesV2.subagents.exposesSubagentThreadIds);
+    assert.isTrue(GrokProviderCapabilitiesV2.subagents.emitsSubagentLifecycle);
     assert.isFalse(GrokProviderCapabilitiesV2.turns.supportsActiveSteering);
     assert.isTrue(GrokProviderCapabilitiesV2.turns.supportsInterrupt);
     assert.isTrue(GrokProviderCapabilitiesV2.turns.supportsSteeringByInterruptRestart);
