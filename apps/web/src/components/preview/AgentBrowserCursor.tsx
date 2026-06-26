@@ -5,6 +5,7 @@ import { MousePointer2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
+import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 
 import { agentBrowserCursorOpacity, type BrowserController } from "./agentBrowserCursorLogic";
 
@@ -17,6 +18,7 @@ export function AgentBrowserCursor(props: {
 }) {
   const { tabId, zoomFactor, controller } = props;
   const event = useBrowserPointerStore((state) => state.byTabId[tabId] ?? null);
+  const content = useBrowserSurfaceStore((state) => state.byTabId[tabId]?.content ?? null);
 
   if (!event) return null;
 
@@ -24,6 +26,7 @@ export function AgentBrowserCursor(props: {
     <AgentBrowserCursorEvent
       key={event.sequence}
       event={event}
+      content={content}
       zoomFactor={zoomFactor}
       controller={controller}
     />
@@ -32,10 +35,17 @@ export function AgentBrowserCursor(props: {
 
 function AgentBrowserCursorEvent(props: {
   readonly event: DesktopPreviewPointerEvent;
+  readonly content: {
+    readonly x: number;
+    readonly y: number;
+    readonly scale: number;
+    readonly scrollLeft: number;
+    readonly scrollTop: number;
+  } | null;
   readonly zoomFactor: number;
   readonly controller: BrowserController;
 }) {
-  const { event, zoomFactor, controller } = props;
+  const { event, content, zoomFactor, controller } = props;
   const [active, setActive] = useState(true);
 
   useEffect(() => {
@@ -48,7 +58,7 @@ function AgentBrowserCursorEvent(props: {
       className="pointer-events-none absolute left-0 top-0 z-40 transition-[transform,opacity] duration-150 ease-out motion-reduce:transition-none"
       style={{
         opacity: agentBrowserCursorOpacity(active, controller),
-        transform: `translate3d(${event.x * zoomFactor}px, ${event.y * zoomFactor}px, 0)`,
+        transform: `translate3d(${event.x * zoomFactor * (content?.scale ?? 1) + (content?.x ?? 0) - (content?.scrollLeft ?? 0)}px, ${event.y * zoomFactor * (content?.scale ?? 1) + (content?.y ?? 0) - (content?.scrollTop ?? 0)}px, 0)`,
       }}
       aria-hidden="true"
       data-agent-browser-cursor
