@@ -1449,6 +1449,7 @@ export function SourceControlPanel({
         .readFileDiff({
           cwd: targetCwd,
           path: file.path,
+          ...(file.originalPath ? { originalPath: file.originalPath } : {}),
           staged: source.kind === "working-tree" ? source.staged : false,
           source,
         })

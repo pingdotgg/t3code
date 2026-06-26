@@ -530,6 +530,7 @@ const VcsPanelFileDiffSource = Schema.Union([
 export const VcsPanelFileDiffInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   path: TrimmedNonEmptyStringSchema,
+  originalPath: Schema.optional(TrimmedNonEmptyStringSchema),
   staged: Schema.optional(Schema.Boolean),
   source: Schema.optional(VcsPanelFileDiffSource),
 });

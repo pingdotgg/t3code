@@ -918,6 +918,55 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       }),
     );
 
+  const withTemporaryIntentToAddIndex = <A, E>(
+    input: {
+      readonly cwd: string;
+      readonly paths: readonly string[];
+      readonly operations: {
+        readonly gitIndexPath: string;
+        readonly tempIndexReadTree: string;
+        readonly tempIndexIntentToAdd: string;
+      };
+    },
+    body: (env: NodeJS.ProcessEnv) => Effect.Effect<A, E>,
+  ) =>
+    Effect.gen(function* () {
+      const gitIndexPath = (yield* run(input.operations.gitIndexPath, input.cwd, [
+        "rev-parse",
+        "--git-path",
+        "index",
+      ])).trim();
+      const sourceIndexPath = path.isAbsolute(gitIndexPath)
+        ? gitIndexPath
+        : path.resolve(input.cwd, gitIndexPath);
+      const tempDir = yield* fileSystem.makeTempDirectory({ prefix: "t3-vcs-index-" });
+      return yield* Effect.gen(function* () {
+        const tempIndexPath = path.join(tempDir, "index");
+        const env = { ...globalThis.process.env, GIT_INDEX_FILE: tempIndexPath };
+        yield* fileSystem.copyFile(sourceIndexPath, tempIndexPath).pipe(
+          Effect.catch(() =>
+            run(input.operations.tempIndexReadTree, input.cwd, ["read-tree", "HEAD"], {
+              env,
+            }).pipe(
+              Effect.asVoid,
+              Effect.catch(() => Effect.void),
+            ),
+          ),
+        );
+        yield* run(
+          input.operations.tempIndexIntentToAdd,
+          input.cwd,
+          ["add", "-N", "--", ...input.paths],
+          { env },
+        ).pipe(Effect.asVoid);
+        return yield* body(env);
+      }).pipe(
+        Effect.ensuring(
+          fileSystem.remove(tempDir, { recursive: true, force: true }).pipe(Effect.ignore),
+        ),
+      );
+    });
+
   const COMMIT_PAGE_SIZE = 10;
 
   const readWorkingTreeChangeGroups = (
@@ -1593,56 +1642,40 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     Effect.gen(function* () {
       if (untrackedPaths.length === 0) return null;
 
-      const gitIndexPath = (yield* run("vcs.panel.gitIndexPath", cwd, [
-        "rev-parse",
-        "--git-path",
-        "index",
-      ])).trim();
-      if (!gitIndexPath) return null;
-
-      const sourceIndexPath = path.isAbsolute(gitIndexPath)
-        ? gitIndexPath
-        : path.resolve(cwd, gitIndexPath);
-      const tempDir = yield* fileSystem.makeTempDirectory({ prefix: "t3-vcs-index-" });
-      return yield* Effect.gen(function* () {
-        const tempIndexPath = path.join(tempDir, "index");
-        const env = { ...globalThis.process.env, GIT_INDEX_FILE: tempIndexPath };
-        yield* fileSystem.copyFile(sourceIndexPath, tempIndexPath).pipe(
-          Effect.catch(() =>
-            run("vcs.panel.tempIndexReadTree", cwd, ["read-tree", "HEAD"], { env }).pipe(
-              Effect.asVoid,
-              Effect.catch(() => Effect.void),
-            ),
-          ),
-        );
-        yield* run("vcs.panel.tempIndexIntentToAdd", cwd, ["add", "-N", "--", ...untrackedPaths], {
-          env,
-        }).pipe(Effect.asVoid);
-        const [nameStatus, numstat] = yield* Effect.all(
-          [
-            run(
-              "vcs.panel.unstagedNameStatusWithUntracked",
-              cwd,
-              ["diff", "--name-status", "-z", "--find-renames=20%"],
-              { env },
-            ),
-            run(
-              "vcs.panel.unstagedNumstatWithUntracked",
-              cwd,
-              ["diff", "--numstat", "-z", "--find-renames=20%"],
-              { env },
-            ),
-          ],
-          { concurrency: "unbounded" },
-        );
-        return parseFileChangesFromNumstat({
-          numstat,
-          statuses: parseNameStatus(nameStatus),
-        });
-      }).pipe(
-        Effect.ensuring(
-          fileSystem.remove(tempDir, { recursive: true, force: true }).pipe(Effect.ignore),
-        ),
+      return yield* withTemporaryIntentToAddIndex(
+        {
+          cwd,
+          paths: untrackedPaths,
+          operations: {
+            gitIndexPath: "vcs.panel.gitIndexPath",
+            tempIndexReadTree: "vcs.panel.tempIndexReadTree",
+            tempIndexIntentToAdd: "vcs.panel.tempIndexIntentToAdd",
+          },
+        },
+        (env) =>
+          Effect.gen(function* () {
+            const [nameStatus, numstat] = yield* Effect.all(
+              [
+                run(
+                  "vcs.panel.unstagedNameStatusWithUntracked",
+                  cwd,
+                  ["diff", "--name-status", "-z", "--find-renames=20%"],
+                  { env },
+                ),
+                run(
+                  "vcs.panel.unstagedNumstatWithUntracked",
+                  cwd,
+                  ["diff", "--numstat", "-z", "--find-renames=20%"],
+                  { env },
+                ),
+              ],
+              { concurrency: "unbounded" },
+            );
+            return parseFileChangesFromNumstat({
+              numstat,
+              statuses: parseNameStatus(nameStatus),
+            });
+          }),
       );
     }).pipe(Effect.orElseSucceed(() => null));
 
@@ -1953,6 +1986,9 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       kind: "working-tree" as const,
       staged: input.staged ?? false,
     };
+    const diffPaths = uniquePaths(
+      input.originalPath ? [input.originalPath, input.path] : [input.path],
+    );
     if (source.kind === "commit") {
       const patch = yield* run("vcs.panel.readCommitFileDiff", input.cwd, [
         "show",
@@ -1962,7 +1998,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         "--minimal",
         source.sha,
         "--",
-        input.path,
+        ...diffPaths,
       ]);
       return { path: input.path, staged: false, patch };
     }
@@ -1974,7 +2010,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         "--minimal",
         `${source.baseRef}...${source.refName}`,
         "--",
-        input.path,
+        ...diffPaths,
       ]);
       return { path: input.path, staged: false, patch };
     }
@@ -1986,15 +2022,38 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         "--include-untracked",
         source.stashRef,
         "--",
-        input.path,
+        ...diffPaths,
       ]);
       return { path: input.path, staged: false, patch };
     }
 
     const args = source.staged
-      ? ["diff", "--cached", "--", input.path]
-      : ["diff", "--", input.path];
-    let patch = yield* run("vcs.panel.readFileDiff", input.cwd, args);
+      ? [
+          "diff",
+          "--cached",
+          "--no-ext-diff",
+          "--patch",
+          "--minimal",
+          "--find-renames=20%",
+          "--",
+          ...diffPaths,
+        ]
+      : ["diff", "--no-ext-diff", "--patch", "--minimal", "--find-renames=20%", "--", ...diffPaths];
+    let patch =
+      !source.staged && input.originalPath
+        ? yield* withTemporaryIntentToAddIndex(
+            {
+              cwd: input.cwd,
+              paths: [input.path],
+              operations: {
+                gitIndexPath: "vcs.panel.readFileDiff.gitIndexPath",
+                tempIndexReadTree: "vcs.panel.readFileDiff.tempIndexReadTree",
+                tempIndexIntentToAdd: "vcs.panel.readFileDiff.tempIndexIntentToAdd",
+              },
+            },
+            (env) => run("vcs.panel.readFileDiff", input.cwd, args, { env }),
+          ).pipe(Effect.catch(() => run("vcs.panel.readFileDiff", input.cwd, args)))
+        : yield* run("vcs.panel.readFileDiff", input.cwd, args);
     if (!source.staged && patch.trim().length === 0) {
       patch = yield* run(
         "vcs.panel.readUntrackedFileDiff",

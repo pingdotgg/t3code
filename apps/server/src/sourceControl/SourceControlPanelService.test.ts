@@ -680,6 +680,111 @@ describe("SourceControlPanelService", () => {
     ),
   );
 
+  it.effect("reads staged rename diffs against the original path", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const result = yield* service.readFileDiff({
+        cwd: "/repo",
+        path: "src/new.ts",
+        originalPath: "src/old.ts",
+        source: { kind: "working-tree", staged: true },
+      });
+
+      assert.equal(result.patch, "rename patch");
+      assert.deepStrictEqual(
+        calls.map((call) => call.args),
+        [
+          [
+            "diff",
+            "--cached",
+            "--no-ext-diff",
+            "--patch",
+            "--minimal",
+            "--find-renames=20%",
+            "--",
+            "src/old.ts",
+            "src/new.ts",
+          ],
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success("rename patch");
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("reads unstaged rename diffs with a temporary intent-to-add index", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const result = yield* service.readFileDiff({
+        cwd: "/repo",
+        path: "src/new.ts",
+        originalPath: "src/old.ts",
+        source: { kind: "working-tree", staged: false },
+      });
+
+      assert.equal(result.patch, "rename patch");
+      assert.deepStrictEqual(
+        calls.map((call) => ({ operation: call.operation, args: call.args })),
+        [
+          {
+            operation: "vcs.panel.readFileDiff.gitIndexPath",
+            args: ["rev-parse", "--git-path", "index"],
+          },
+          {
+            operation: "vcs.panel.readFileDiff.tempIndexReadTree",
+            args: ["read-tree", "HEAD"],
+          },
+          {
+            operation: "vcs.panel.readFileDiff.tempIndexIntentToAdd",
+            args: ["add", "-N", "--", "src/new.ts"],
+          },
+          {
+            operation: "vcs.panel.readFileDiff",
+            args: [
+              "diff",
+              "--no-ext-diff",
+              "--patch",
+              "--minimal",
+              "--find-renames=20%",
+              "--",
+              "src/old.ts",
+              "src/new.ts",
+            ],
+          },
+        ],
+      );
+      const diffCall = calls.find((call) => call.operation === "vcs.panel.readFileDiff");
+      assert.equal(Boolean(diffCall?.env?.GIT_INDEX_FILE?.length), true);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            switch (input.operation) {
+              case "vcs.panel.readFileDiff.gitIndexPath":
+                return success("/tmp/t3-code-test-missing-index");
+              case "vcs.panel.readFileDiff":
+                return success("rename patch");
+              default:
+                return success("");
+            }
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("decodes quoted porcelain paths and keeps mixed unstaged rows in snapshots", () =>
     Effect.gen(function* () {
       const service = yield* SourceControlPanelService;

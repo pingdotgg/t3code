@@ -7,6 +7,7 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  VcsPanelFileDiffInput,
   VcsPanelDeleteBranchInput,
 } from "./git.ts";
 
@@ -18,6 +19,7 @@ const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedAction
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
 const decodeVcsPanelDeleteBranchInput = Schema.decodeUnknownSync(VcsPanelDeleteBranchInput);
+const decodeVcsPanelFileDiffInput = Schema.decodeUnknownSync(VcsPanelFileDiffInput);
 
 describe("VcsCreateWorktreeInput", () => {
   it("accepts omitted newRefName for existing-refName worktrees", () => {
@@ -85,6 +87,19 @@ describe("VcsPanelDeleteBranchInput", () => {
 
     expect(parsed.branchName).toBe("origin/feature/source-control");
     expect(parsed.force).toBe(true);
+  });
+});
+
+describe("VcsPanelFileDiffInput", () => {
+  it("accepts originalPath for renamed file diffs", () => {
+    const parsed = decodeVcsPanelFileDiffInput({
+      cwd: "/repo",
+      path: "src/new.ts",
+      originalPath: "src/old.ts",
+      source: { kind: "working-tree", staged: false },
+    });
+
+    expect(parsed.originalPath).toBe("src/old.ts");
   });
 });
 
