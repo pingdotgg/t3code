@@ -36,6 +36,7 @@ import {
   createModelSelection,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
+import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
@@ -3147,9 +3148,82 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
-  // Scroll helpers — LegendList handles auto-scroll via maintainScrollAtEnd.
+  // Scrolling is explicit so streamed timeline updates never take control away
+  // from the user after the newly sent row has been positioned once.
   const scrollToEnd = useCallback((animated = false) => {
     void legendListRef.current?.scrollToEnd?.({ animated });
+  }, []);
+  const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
+  const settledTimelineAnchorRef = useRef<MessageId | null>(null);
+  const pendingAnchorScrollRestoreRef = useRef<{
+    readonly messageId: MessageId;
+    readonly offset: number;
+  } | null>(null);
+  const anchorScrollRestoreFrameRef = useRef<number | null>(null);
+  const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
+    if (positionedTimelineAnchorRef.current === messageId) {
+      return;
+    }
+    positionedTimelineAnchorRef.current = messageId;
+    settledTimelineAnchorRef.current = null;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (positionedTimelineAnchorRef.current !== messageId) {
+          return;
+        }
+        const list = legendListRef.current;
+        if (!list) {
+          return;
+        }
+        const scrollNode = list.getScrollableNode();
+        let finished = false;
+        const finishAnimatedPositioning = () => {
+          if (finished) {
+            return;
+          }
+          finished = true;
+          window.clearTimeout(fallbackTimer);
+          scrollNode.removeEventListener("scrollend", finishAnimatedPositioning);
+          if (positionedTimelineAnchorRef.current !== messageId) {
+            return;
+          }
+          const scrollOffset = list.getState().scroll;
+          void list.scrollToOffset({ offset: scrollOffset, animated: false });
+          settledTimelineAnchorRef.current = messageId;
+        };
+        const fallbackTimer = window.setTimeout(finishAnimatedPositioning, 750);
+        scrollNode.addEventListener("scrollend", finishAnimatedPositioning, { once: true });
+        void list.scrollToIndex({
+          index: anchorIndex,
+          animated: true,
+          viewPosition: 0,
+          viewOffset: CHAT_LIST_ANCHOR_OFFSET,
+        });
+      });
+    });
+  }, []);
+  const onTimelineAnchorSizeChanged = useCallback((messageId: MessageId) => {
+    if (settledTimelineAnchorRef.current !== messageId) {
+      return;
+    }
+    const scrollOffset = legendListRef.current?.getState().scroll;
+    if (scrollOffset === undefined) {
+      return;
+    }
+    if (pendingAnchorScrollRestoreRef.current === null) {
+      pendingAnchorScrollRestoreRef.current = { messageId, offset: scrollOffset };
+    }
+    if (anchorScrollRestoreFrameRef.current !== null) {
+      return;
+    }
+    anchorScrollRestoreFrameRef.current = requestAnimationFrame(() => {
+      anchorScrollRestoreFrameRef.current = null;
+      const pending = pendingAnchorScrollRestoreRef.current;
+      pendingAnchorScrollRestoreRef.current = null;
+      if (pending && settledTimelineAnchorRef.current === pending.messageId) {
+        void legendListRef.current?.scrollToOffset({ offset: pending.offset, animated: false });
+      }
+    });
   }, []);
 
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
@@ -3751,8 +3825,6 @@ function ChatViewContent(props: ChatViewProps) {
         streaming: false,
       },
     ]);
-    void legendListRef.current?.scrollToEnd?.({ animated: false });
-
     setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {
       const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -4165,11 +4237,14 @@ function ChatViewContent(props: ChatViewProps) {
       beginLocalDispatch({ preparingWorktree: false });
       setThreadError(threadIdForSend, null);
 
-      // Scroll to the current end *before* adding the optimistic message.
+      // Position this sent row once LegendList has measured the anchored tail.
       isAtEndRef.current = true;
       showScrollDebouncer.current.cancel();
       setShowScrollToBottom(false);
-      await legendListRef.current?.scrollToEnd?.({ animated: false });
+      setTimelineAnchor({
+        threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+        messageId: messageIdForSend,
+      });
 
       setOptimisticUserMessages((existing) => [
         ...existing,
@@ -4789,6 +4864,8 @@ function ChatViewContent(props: ChatViewProps) {
                 workspaceRoot={activeWorkspaceRoot}
                 skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
                 anchorMessageId={timelineAnchorMessageId}
+                onAnchorReady={onTimelineAnchorReady}
+                onAnchorSizeChanged={onTimelineAnchorSizeChanged}
                 contentInsetEndAdjustment={composerOverlayHeight}
                 onIsAtEndChange={onIsAtEndChange}
               />
