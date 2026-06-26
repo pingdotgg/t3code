@@ -42,7 +42,9 @@ describe("preview keyboard packets", () => {
   });
 
   it("suppresses text and uses raw key-down for shortcuts", () => {
-    expect(makePreviewAutomationKeySequence({ key: "a", modifiers: ["Meta"] }).keyDown).toEqual({
+    expect(
+      makePreviewAutomationKeySequence({ key: "a", modifiers: ["Meta"] }, { isMac: true }).keyDown,
+    ).toEqual({
       type: "rawKeyDown",
       key: "a",
       code: "KeyA",
@@ -50,7 +52,18 @@ describe("preview keyboard packets", () => {
       windowsVirtualKeyCode: 65,
       location: 0,
       isKeypad: false,
+      commands: ["selectAll"],
     });
+  });
+
+  it("maps common macOS editing shortcuts without changing other platforms", () => {
+    expect(
+      makePreviewAutomationKeySequence({ key: "z", modifiers: ["Shift", "Meta"] }, { isMac: true })
+        .keyDown.commands,
+    ).toEqual(["redo"]);
+    expect(
+      makePreviewAutomationKeySequence({ key: "a", modifiers: ["Meta"] }).keyDown,
+    ).not.toHaveProperty("commands");
   });
 
   it("resolves shifted printable keys to their browser values", () => {

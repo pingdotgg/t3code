@@ -51,6 +51,7 @@ import {
   PreviewAutomationTargetUnavailableError,
   PreviewAutomationViewportTimeoutError,
 } from "./previewAutomationErrors";
+import { previewAutomationOpenNeedsOverlay } from "./previewAutomationOpenReadiness";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
 import {
@@ -333,6 +334,9 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             const input = request.input as PreviewAutomationOpenInput;
             let activeTabId =
               (input.reuseExistingTab ?? true) ? (state.snapshot?.tabId ?? null) : null;
+            let activeSnapshot = activeTabId
+              ? (state.sessions[activeTabId] ?? state.snapshot ?? undefined)
+              : undefined;
             const reusedExistingTab = activeTabId !== null;
             tabId = activeTabId;
             if (!activeTabId) {
@@ -349,17 +353,20 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               const snapshot = result.value;
               applyPreviewServerSnapshot(threadRef, snapshot);
               activeTabId = snapshot.tabId;
+              activeSnapshot = snapshot;
               tabId = activeTabId;
             }
             if (input.show ?? true) {
               useRightPanelStore.getState().openBrowser(threadRef, activeTabId);
             }
-            await waitForDesktopOverlay(
-              threadRef,
-              request.requestId,
-              activeTabId,
-              request.timeoutMs,
-            );
+            if (activeSnapshot && previewAutomationOpenNeedsOverlay(input, activeSnapshot)) {
+              await waitForDesktopOverlay(
+                threadRef,
+                request.requestId,
+                activeTabId,
+                request.timeoutMs,
+              );
+            }
             if (reusedExistingTab && input.url && previewBridge) {
               const resolution = resolveBrowserNavigationTarget(environmentId, {
                 kind: "url",

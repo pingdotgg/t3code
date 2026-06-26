@@ -1,4 +1,5 @@
 import { it as effectIt } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -91,6 +92,7 @@ const layer = PreviewManager.layer.pipe(
   Layer.provideMerge(environmentLayer),
   Layer.provideMerge(fileSystemLayer),
   Layer.provideMerge(Path.layer),
+  Layer.provideMerge(Layer.succeed(HostProcessPlatform, "linux")),
 );
 const encodePreviewManagerError = Schema.encodeSync(PreviewManager.PreviewManagerError);
 

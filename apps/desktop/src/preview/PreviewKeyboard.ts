@@ -20,6 +20,7 @@ export interface PreviewAutomationKeyEvent {
   readonly isKeypad: boolean;
   readonly text?: string;
   readonly unmodifiedText?: string;
+  readonly commands?: ReadonlyArray<string>;
 }
 
 export interface PreviewAutomationKeySequence {
@@ -79,6 +80,42 @@ const PRINTABLE_KEYS: ReadonlyArray<KeyDefinition> = [
   { code: "Slash", key: "/", shiftedKey: "?", keyCode: 191 },
 ];
 
+/**
+ * Chromium does not infer macOS editing commands from synthetic Meta chords.
+ * Keep the common browser editing/navigation shortcuts explicit so dispatched
+ * key events behave like their physical-key equivalents.
+ */
+const MAC_EDITING_COMMANDS: Readonly<Record<string, string>> = {
+  "Meta+Backspace": "deleteToBeginningOfLine",
+  "Meta+ArrowUp": "moveToBeginningOfDocument",
+  "Meta+ArrowDown": "moveToEndOfDocument",
+  "Meta+ArrowLeft": "moveToLeftEndOfLine",
+  "Meta+ArrowRight": "moveToRightEndOfLine",
+  "Shift+Meta+ArrowUp": "moveToBeginningOfDocumentAndModifySelection",
+  "Shift+Meta+ArrowDown": "moveToEndOfDocumentAndModifySelection",
+  "Shift+Meta+ArrowLeft": "moveToLeftEndOfLineAndModifySelection",
+  "Shift+Meta+ArrowRight": "moveToRightEndOfLineAndModifySelection",
+  "Meta+KeyA": "selectAll",
+  "Meta+KeyC": "copy",
+  "Meta+KeyX": "cut",
+  "Meta+KeyV": "paste",
+  "Meta+KeyZ": "undo",
+  "Shift+Meta+KeyZ": "redo",
+};
+const SHORTCUT_MODIFIER_ORDER = ["Shift", "Control", "Alt", "Meta"] as const;
+
+const macEditingCommands = (
+  code: string,
+  modifiers: PreviewAutomationPressInput["modifiers"],
+): ReadonlyArray<string> => {
+  const shortcut = [
+    ...SHORTCUT_MODIFIER_ORDER.filter((modifier) => modifiers?.includes(modifier)),
+    code,
+  ].join("+");
+  const command = MAC_EDITING_COMMANDS[shortcut];
+  return command ? [command] : [];
+};
+
 const modifierMask = (modifiers: PreviewAutomationPressInput["modifiers"]): number =>
   (modifiers ?? []).reduce((value, modifier) => {
     switch (modifier) {
@@ -136,12 +173,14 @@ function resolveKeyDefinition(input: PreviewAutomationPressInput): KeyDefinition
  */
 export function makePreviewAutomationKeySequence(
   input: PreviewAutomationPressInput,
+  options?: { readonly isMac?: boolean },
 ): PreviewAutomationKeySequence {
   const definition = resolveKeyDefinition(input);
   const modifiers = modifierMask(input.modifiers);
   const suppressText = input.modifiers?.some((modifier) => modifier !== "Shift") ?? false;
   const text = suppressText ? "" : (definition.text ?? "");
   const location = definition.location ?? 0;
+  const commands = options?.isMac ? macEditingCommands(definition.code, input.modifiers) : [];
   const shared = {
     key: definition.key,
     code: definition.code,
@@ -156,6 +195,7 @@ export function makePreviewAutomationKeySequence(
       type: text ? "keyDown" : "rawKeyDown",
       ...shared,
       ...(text ? { text, unmodifiedText: text } : {}),
+      ...(commands.length > 0 ? { commands } : {}),
     },
     keyUp: { type: "keyUp", ...shared },
     signal: { kind: "key", key: definition.key, code: definition.code },

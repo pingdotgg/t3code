@@ -25,6 +25,7 @@ import type {
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import {
   type BrowserWindow,
@@ -379,6 +380,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   artifactDirectory: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
+  const hostPlatform = yield* HostProcessPlatform;
   const path = yield* Path.Path;
   const parentScope = yield* Scope.Scope;
   const context = yield* Effect.context<never>();
@@ -2226,7 +2228,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     sendCleanup: SendCommand,
   ) {
     yield* prepareAutomationInput(send, false);
-    const keySequence = makePreviewAutomationKeySequence(input);
+    const keySequence = makePreviewAutomationKeySequence(input, {
+      isMac: hostPlatform === "darwin",
+    });
     const previouslyFocused = yield* attempt(
       { operation: "automationPress.getFocusedWebContents", tabId, webContentsId: wc.id },
       () => webContents.getFocusedWebContents(),
