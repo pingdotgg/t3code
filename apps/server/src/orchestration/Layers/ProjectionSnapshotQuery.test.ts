@@ -696,6 +696,147 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       }),
   );
 
+  it.effect("normalizes targeted thread detail fields from projection rows", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_turns`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-normalized',
+          'Normalized Project',
+          '/tmp/normalized-project',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-03-03T00:00:00.000Z',
+          '2026-03-03T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-normalized',
+          'project-normalized',
+          '  Normalized Thread  ',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          '  feature/normalized  ',
+          '  /tmp/normalized-worktree  ',
+          NULL,
+          NULL,
+          0,
+          0,
+          0,
+          '2026-03-03T00:00:02.000Z',
+          '2026-03-03T00:00:03.000Z',
+          NULL,
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          created_at
+        )
+        VALUES (
+          'activity-normalized',
+          'thread-normalized',
+          NULL,
+          'info',
+          '  task.progress  ',
+          '  Running checks  ',
+          '{"detail":"still available"}',
+          '2026-03-03T00:00:04.000Z'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_sessions (
+          thread_id,
+          status,
+          provider_name,
+          provider_session_id,
+          provider_thread_id,
+          runtime_mode,
+          active_turn_id,
+          last_error,
+          updated_at
+        )
+        VALUES (
+          'thread-normalized',
+          'error',
+          '  codex  ',
+          'provider-session-normalized',
+          'provider-thread-normalized',
+          'full-access',
+          NULL,
+          '  recoverable issue  ',
+          '2026-03-03T00:00:05.000Z'
+        )
+      `;
+
+      const threadDetail = yield* snapshotQuery.getThreadDetailById(
+        ThreadId.make("thread-normalized"),
+      );
+      assert.equal(threadDetail._tag, "Some");
+      if (threadDetail._tag === "Some") {
+        assert.equal(threadDetail.value.title, "Normalized Thread");
+        assert.equal(threadDetail.value.branch, "feature/normalized");
+        assert.equal(threadDetail.value.worktreePath, "/tmp/normalized-worktree");
+        assert.equal(threadDetail.value.activities[0]?.kind, "task.progress");
+        assert.equal(threadDetail.value.activities[0]?.summary, "Running checks");
+        assert.equal(threadDetail.value.session?.providerName, "codex");
+        assert.equal(threadDetail.value.session?.lastError, "recoverable issue");
+      }
+    }),
+  );
+
   it.effect("reads single-thread checkpoint context without hydrating unrelated threads", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
