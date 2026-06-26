@@ -1,21 +1,17 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Match from "effect/Match";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  VcsOutputDecodeError,
   type VcsError,
   VcsProcessExitError,
-  type VcsProcessExitFailureKind,
-  VcsProcessMissingExitCodeError,
-  VcsProcessOutputLimitError,
-  VcsProcessOutputReadError,
   VcsProcessSpawnError,
-  VcsProcessStdinWriteError,
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
-import * as ProcessRunner from "../processRunner.ts";
+import { ProcessRunner, layer as ProcessRunnerLive } from "../processRunner.ts";
+import * as Match from "effect/Match";
 
 export interface VcsProcessInput {
   readonly operation: string;
@@ -39,62 +35,31 @@ export interface VcsProcessOutput {
   readonly stderrTruncated: boolean;
 }
 
-export class VcsProcess extends Context.Service<
-  VcsProcess,
-  {
-    readonly run: (input: VcsProcessInput) => Effect.Effect<VcsProcessOutput, VcsError>;
-  }
->()("t3/vcs/VcsProcess") {}
+export interface VcsProcessShape {
+  readonly run: (input: VcsProcessInput) => Effect.Effect<VcsProcessOutput, VcsError>;
+}
+
+export class VcsProcess extends Context.Service<VcsProcess, VcsProcessShape>()(
+  "t3/vcs/VcsProcess",
+) {}
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 
-const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
-  const normalized = stderr.toLowerCase();
+function commandLabel(command: string, args: ReadonlyArray<string>): string {
+  return [command, ...args].join(" ");
+}
 
-  if (
-    normalized.includes("authentication failed") ||
-    normalized.includes("not logged in") ||
-    normalized.includes("gh auth login") ||
-    normalized.includes("glab auth login") ||
-    normalized.includes("az devops login") ||
-    normalized.includes("please run az login") ||
-    normalized.includes("no oauth token") ||
-    normalized.includes("unauthorized")
-  ) {
-    return "authentication";
-  }
-
-  if (
-    (command === "gh" &&
-      (normalized.includes("could not resolve to a pullrequest") ||
-        normalized.includes("repository.pullrequest") ||
-        normalized.includes("no pull requests found for branch") ||
-        normalized.includes("pull request not found"))) ||
-    (command === "glab" &&
-      (normalized.includes("merge request not found") ||
-        normalized.includes("not found") ||
-        normalized.includes("404"))) ||
-    (command === "az" &&
-      normalized.includes("pull request") &&
-      (normalized.includes("not found") || normalized.includes("does not exist")))
-  ) {
-    return "not-found";
-  }
-
-  return "command-failed";
-};
-
-export const make = Effect.gen(function* () {
-  const processRunner = yield* ProcessRunner.ProcessRunner;
+export const make = Effect.fn("makeVcsProcess")(function* () {
+  const processRunner = yield* ProcessRunner;
 
   const run = Effect.fn("VcsProcess.run")(function* (input: VcsProcessInput) {
+    const label = commandLabel(input.command, input.args);
     const baseError = {
       operation: input.operation,
-      command: input.command,
+      command: label,
       cwd: input.cwd,
-      argumentCount: input.args.length,
     };
 
     const result = yield* processRunner
@@ -117,44 +82,29 @@ export const make = Effect.gen(function* () {
             ProcessSpawnError: (error) =>
               VcsProcessSpawnError.fromProcessSpawnError(baseError, error),
             ProcessOutputLimitError: (error) =>
-              new VcsProcessOutputLimitError({
-                ...baseError,
-                stream: error.stream,
-                maxBytes: error.maxBytes,
-                observedBytes: error.observedBytes,
-              }),
+              VcsOutputDecodeError.fromProcessOutputLimitError(baseError, error),
             ProcessTimeoutError: (error) =>
               VcsProcessTimeoutError.fromProcessTimeoutError(baseError, error),
             ProcessStdinError: (error) =>
-              new VcsProcessStdinWriteError({
-                ...baseError,
-                stdinBytes: error.stdinBytes,
-                cause: error.cause,
-              }),
+              VcsOutputDecodeError.fromProcessStdinError(baseError, error),
             ProcessReadError: (error) =>
-              new VcsProcessOutputReadError({
-                ...baseError,
-                stream: error.stream,
-                cause: error.cause,
-              }),
+              VcsOutputDecodeError.fromProcessReadError(baseError, error),
           }),
         ),
       );
 
     if (result.code === null) {
-      return yield* new VcsProcessMissingExitCodeError(baseError);
+      return yield* VcsOutputDecodeError.missingExitCode(baseError);
     }
 
     if (!input.allowNonZeroExit && result.code !== 0) {
-      return yield* VcsProcessExitError.fromProcessExit(
-        baseError,
-        {
-          exitCode: result.code,
-          stderr: result.stderr,
-          stderrTruncated: result.stderrTruncated,
-        },
-        classifyNonZeroExit(input.command, result.stderr),
-      );
+      return yield* new VcsProcessExitError({
+        operation: input.operation,
+        command: label,
+        cwd: input.cwd,
+        exitCode: result.code,
+        detail: result.stderr.trim() || `${label} exited with code ${result.code}.`,
+      });
     }
 
     return {
@@ -169,4 +119,4 @@ export const make = Effect.gen(function* () {
   return VcsProcess.of({ run });
 });
 
-export const layer = Layer.effect(VcsProcess, make).pipe(Layer.provide(ProcessRunner.layer));
+export const layer = Layer.effect(VcsProcess, make()).pipe(Layer.provide(ProcessRunnerLive));
