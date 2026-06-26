@@ -25,7 +25,7 @@ export const startCommand = Command.make("start", { ...sharedServerCommandFlags 
 
 export const serveCommand = Command.make("serve", { ...sharedServerCommandFlags }).pipe(
   Command.withDescription(
-    "Run the more Code server without opening a browser and print headless pairing details.",
+    "Run the more Code server in headless mode and print local and LAN pairing URLs.",
   ),
   Command.withHandler((flags) =>
     runServerCommand(flags, {

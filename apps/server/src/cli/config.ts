@@ -48,7 +48,9 @@ export const devUrlFlag = Flag.string("dev-url").pipe(
   Flag.optional,
 );
 export const noBrowserFlag = Flag.boolean("no-browser").pipe(
-  Flag.withDescription("Disable automatic browser opening."),
+  Flag.withDescription(
+    "Disable automatic browser opening (defaults to true; pass --no-browser false to enable).",
+  ),
   Flag.optional,
 );
 export const bootstrapFdFlag = Flag.integer("bootstrap-fd").pipe(
@@ -310,7 +312,7 @@ export const resolveServerConfig = (
         Option.fromUndefinedOr(env.noBrowser),
         Option.fromUndefinedOr(bootstrap?.noBrowser),
       ),
-      () => mode === "desktop",
+      () => true,
     );
     const desktopBootstrapToken = bootstrap?.desktopBootstrapToken;
     const autoBootstrapProjectFromCwd = Option.getOrElse(

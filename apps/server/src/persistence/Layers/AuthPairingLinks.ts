@@ -2,11 +2,13 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
-  toPersistenceDecodeError,
-  toPersistenceSqlError,
+  PersistenceDecodeError,
+  type PersistenceErrorCorrelation,
+  PersistenceSqlError,
   type AuthPairingLinkRepositoryError,
 } from "../Errors.ts";
 import {
@@ -20,11 +22,35 @@ import {
   RevokeAuthPairingLinkInput,
 } from "../Services/AuthPairingLinks.ts";
 
-function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
+const AuthPairingLinkRawDbRow = Schema.Struct({
+  id: Schema.String,
+  credential: Schema.Unknown,
+  method: Schema.Unknown,
+  scopes: Schema.Unknown,
+  subject: Schema.Unknown,
+  label: Schema.Unknown,
+  proofKeyThumbprint: Schema.Unknown,
+  createdAt: Schema.Unknown,
+  expiresAt: Schema.Unknown,
+  consumedAt: Schema.Unknown,
+  revokedAt: Schema.Unknown,
+});
+
+const decodeAuthPairingLinkDbRow = Schema.decodeUnknownEffect(AuthPairingLinkRecord);
+
+function toPersistenceSqlOrDecodeError(
+  sqlOperation: string,
+  decodeOperation: string,
+  correlation?: PersistenceErrorCorrelation,
+) {
   return (cause: unknown): AuthPairingLinkRepositoryError =>
     Schema.isSchemaError(cause)
-      ? toPersistenceDecodeError(decodeOperation)(cause)
-      : toPersistenceSqlError(sqlOperation)(cause);
+      ? PersistenceDecodeError.fromSchemaError(decodeOperation, cause, correlation)
+      : new PersistenceSqlError({
+          operation: sqlOperation,
+          ...(correlation === undefined ? {} : { correlation }),
+          cause,
+        });
 }
 
 const makeAuthPairingLinkRepository = Effect.gen(function* () {
@@ -65,7 +91,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
 
   const consumeAvailablePairingLinkRow = SqlSchema.findOneOption({
     Request: ConsumeAuthPairingLinkInput,
-    Result: AuthPairingLinkRecord,
+    Result: AuthPairingLinkRawDbRow,
     execute: ({ credential, proofKeyThumbprint, consumedAt, now }) =>
       sql`
         UPDATE auth_pairing_links
@@ -95,7 +121,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
 
   const listActivePairingLinkRows = SqlSchema.findAll({
     Request: ListActiveAuthPairingLinksInput,
-    Result: AuthPairingLinkRecord,
+    Result: AuthPairingLinkRawDbRow,
     execute: ({ now }) =>
       sql`
         SELECT
@@ -134,7 +160,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
 
   const getPairingLinkRowByCredential = SqlSchema.findOneOption({
     Request: GetAuthPairingLinkByCredentialInput,
-    Result: AuthPairingLinkRecord,
+    Result: AuthPairingLinkRawDbRow,
     execute: ({ credential }) =>
       sql`
         SELECT
@@ -160,6 +186,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "AuthPairingLinkRepository.create:query",
           "AuthPairingLinkRepository.create:encodeRequest",
+          { pairingLinkId: input.id },
         ),
       ),
     );
@@ -172,6 +199,22 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           "AuthPairingLinkRepository.consumeAvailable:decodeRow",
         ),
       ),
+      Effect.flatMap((rowOption) =>
+        Option.match(rowOption, {
+          onNone: () => Effect.succeed(Option.none()),
+          onSome: (row) =>
+            decodeAuthPairingLinkDbRow(row).pipe(
+              Effect.mapError((cause) =>
+                PersistenceDecodeError.fromSchemaError(
+                  "AuthPairingLinkRepository.consumeAvailable:decodeRow",
+                  cause,
+                  { pairingLinkId: row.id },
+                ),
+              ),
+              Effect.map(Option.some),
+            ),
+        }),
+      ),
     );
 
   const listActive: AuthPairingLinkRepositoryShape["listActive"] = (input) =>
@@ -182,6 +225,19 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           "AuthPairingLinkRepository.listActive:decodeRows",
         ),
       ),
+      Effect.flatMap((rows) =>
+        Effect.forEach(rows, (row) =>
+          decodeAuthPairingLinkDbRow(row).pipe(
+            Effect.mapError((cause) =>
+              PersistenceDecodeError.fromSchemaError(
+                "AuthPairingLinkRepository.listActive:decodeRows",
+                cause,
+                { pairingLinkId: row.id },
+              ),
+            ),
+          ),
+        ),
+      ),
     );
 
   const revoke: AuthPairingLinkRepositoryShape["revoke"] = (input) =>
@@ -190,6 +246,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "AuthPairingLinkRepository.revoke:query",
           "AuthPairingLinkRepository.revoke:decodeRows",
+          { pairingLinkId: input.id },
         ),
       ),
       Effect.map((rows) => rows.length > 0),
@@ -202,6 +259,22 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           "AuthPairingLinkRepository.getByCredential:query",
           "AuthPairingLinkRepository.getByCredential:decodeRow",
         ),
+      ),
+      Effect.flatMap((rowOption) =>
+        Option.match(rowOption, {
+          onNone: () => Effect.succeed(Option.none()),
+          onSome: (row) =>
+            decodeAuthPairingLinkDbRow(row).pipe(
+              Effect.mapError((cause) =>
+                PersistenceDecodeError.fromSchemaError(
+                  "AuthPairingLinkRepository.getByCredential:decodeRow",
+                  cause,
+                  { pairingLinkId: row.id },
+                ),
+              ),
+              Effect.map(Option.some),
+            ),
+        }),
       ),
     );
 

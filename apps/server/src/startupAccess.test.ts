@@ -3,10 +3,14 @@ import { assert, expect, it } from "@effect/vitest";
 import {
   buildPairingUrl,
   formatHeadlessServeOutput,
+  formatStartupAccessOutput,
   renderTerminalQrCode,
   resolveHeadlessConnectionHost,
   resolveHeadlessConnectionString,
+  resolveLanConnectionHost,
+  resolveLanConnectionString,
   resolveListeningPort,
+  resolveLocalConnectionString,
 } from "./startupAccess.ts";
 
 it("prefers localhost when no explicit host is configured", () => {
@@ -65,15 +69,47 @@ it("renders terminal QR codes as a multi-line unicode block grid", () => {
   assert.isTrue(qrCode.split("\n").length > 10);
 });
 
-it("formats headless serve output with the connection string, token, pairing url, and qr code", () => {
+it("resolves a LAN connection string from the first external IPv4 interface", () => {
+  const interfaces = {
+    en0: [
+      {
+        address: "192.168.1.42",
+        netmask: "255.255.255.0",
+        family: "IPv4",
+        mac: "00:00:00:00:00:00",
+        internal: false,
+        cidr: "192.168.1.42/24",
+      },
+    ],
+  };
+
+  expect(resolveLanConnectionHost(interfaces)).toBe("192.168.1.42");
+  expect(resolveLanConnectionString(3773, interfaces)).toBe("http://192.168.1.42:3773");
+  expect(resolveLocalConnectionString(3773)).toBe("http://localhost:3773");
+});
+
+it("formats startup output with local and LAN pairing URLs", () => {
+  const output = formatStartupAccessOutput({
+    token: "PAIRCODE",
+    localPairingUrl: "http://localhost:3773/pair#token=PAIRCODE",
+    lanPairingUrl: "http://192.168.1.42:3773/pair#token=PAIRCODE",
+  });
+
+  expect(output).toContain("Token: PAIRCODE");
+  expect(output).toContain("Local pairing URL: http://localhost:3773/pair#token=PAIRCODE");
+  expect(output).toContain("LAN pairing URL: http://192.168.1.42:3773/pair#token=PAIRCODE");
+  assert.isTrue(output.includes("█") || output.includes("▀") || output.includes("▄"));
+});
+
+it("formats legacy headless serve output through the startup formatter", () => {
   const output = formatHeadlessServeOutput({
     connectionString: "http://192.168.1.42:3773",
     token: "PAIRCODE",
     pairingUrl: "http://192.168.1.42:3773/pair#token=PAIRCODE",
   });
 
-  expect(output).toContain("Connection string: http://192.168.1.42:3773");
   expect(output).toContain("Token: PAIRCODE");
-  expect(output).toContain("Pairing URL: http://192.168.1.42:3773/pair#token=PAIRCODE");
+  expect(output).toContain("Local pairing URL: http://192.168.1.42:3773/pair#token=PAIRCODE");
+  expect(output).not.toContain("LAN pairing URL:");
   assert.isTrue(output.includes("█") || output.includes("▀") || output.includes("▄"));
 });

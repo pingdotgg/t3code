@@ -35,10 +35,10 @@ import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
 import {
-  formatHeadlessServeOutput,
   formatHostForUrl,
+  formatStartupAccessOutput,
   isWildcardHost,
-  issueHeadlessServeAccessInfo,
+  issueStartupAccessInfo,
 } from "./startupAccess.ts";
 
 export class ServerRuntimeStartupError extends Data.TaggedError("ServerRuntimeStartupError")<{
@@ -436,21 +436,16 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
 
       yield* Effect.logDebug("startup phase: recording startup heartbeat");
       yield* launchStartupHeartbeat;
-      if (serverConfig.startupPresentation === "headless") {
-        yield* Effect.logDebug("startup phase: headless access info");
-        const accessInfo = yield* issueHeadlessServeAccessInfo();
+      if (serverConfig.startupPresentation === "headless" || serverConfig.mode === "web") {
+        yield* Effect.logDebug("startup phase: pairing access info");
+        const accessInfo = yield* issueStartupAccessInfo();
         yield* runStartupPhase(
-          "headless.output",
-          Console.log(formatHeadlessServeOutput(accessInfo)),
+          "startup.output",
+          Console.log(formatStartupAccessOutput(accessInfo)),
         );
-      } else {
+      } else if (!serverConfig.noBrowser) {
         yield* Effect.logDebug("startup phase: browser open check");
         const startupBrowserTarget = yield* resolveStartupBrowserTarget;
-        if (serverConfig.mode !== "desktop") {
-          yield* Effect.logInfo(
-            "Authentication required. Open more Code using the pairing URL.",
-          ).pipe(Effect.annotateLogs({ pairingUrl: startupBrowserTarget }));
-        }
         yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));
       }
       yield* Effect.logDebug("startup phase: complete");

@@ -352,8 +352,25 @@ export class GitManagerError extends Schema.TaggedErrorClass<GitManagerError>()(
   }
 }
 
+export class GitPullRequestMaterializationError extends Schema.TaggedErrorClass<GitPullRequestMaterializationError>()(
+  "GitPullRequestMaterializationError",
+  {
+    cwd: TrimmedNonEmptyStringSchema,
+    pullRequestNumber: PositiveInt,
+    headRepository: Schema.NullOr(TrimmedNonEmptyStringSchema),
+    headBranch: TrimmedNonEmptyStringSchema,
+    localBranch: TrimmedNonEmptyStringSchema,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to materialize pull request #${this.pullRequestNumber} branch ${this.headBranch} as ${this.localBranch}.`;
+  }
+}
+
 export const GitManagerServiceError = Schema.Union([
   GitManagerError,
+  GitPullRequestMaterializationError,
   GitCommandError,
   SourceControlProviderError,
   TextGenerationError,

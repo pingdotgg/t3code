@@ -7,6 +7,13 @@ import { HttpServer } from "effect/unstable/http";
 import { ServerConfig } from "./config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 
+export interface StartupAccessInfo {
+  readonly token: string;
+  readonly localPairingUrl: string;
+  readonly lanPairingUrl: string | undefined;
+}
+
+/** @deprecated Use {@link StartupAccessInfo} */
 export interface HeadlessServeAccessInfo {
   readonly connectionString: string;
   readonly token: string;
@@ -77,6 +84,27 @@ export const resolveHeadlessConnectionString = (
   return `http://${formatHostForUrl(connectionHost)}:${port}`;
 };
 
+export const resolveLocalConnectionString = (port: number): string =>
+  `http://localhost:${port}`;
+
+export const resolveLanConnectionHost = (
+  interfaces: NetworkInterfacesMap = NodeOS.networkInterfaces(),
+): string | undefined => {
+  const interfaceEntries = Object.values(interfaces).flatMap((entries) => entries ?? []);
+  const externalIpv4 = interfaceEntries.find(
+    (entry) => !entry.internal && isIpv4Family(entry.family),
+  );
+  return externalIpv4?.address;
+};
+
+export const resolveLanConnectionString = (
+  port: number,
+  interfaces: NetworkInterfacesMap = NodeOS.networkInterfaces(),
+): string | undefined => {
+  const lanHost = resolveLanConnectionHost(interfaces);
+  return lanHost === undefined ? undefined : `http://${formatHostForUrl(lanHost)}:${port}`;
+};
+
 export const resolveListeningPort = (address: unknown, fallbackPort: number): number => {
   if (
     typeof address === "object" &&
@@ -119,30 +147,45 @@ export const renderTerminalQrCode = (value: string, margin = 2): string => {
   return rows.join("\n");
 };
 
-export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): string =>
-  [
+export const formatStartupAccessOutput = (accessInfo: StartupAccessInfo): string => {
+  const lines = [
     "more Code server is ready.",
-    `Connection string: ${accessInfo.connectionString}`,
     `Token: ${accessInfo.token}`,
-    `Pairing URL: ${accessInfo.pairingUrl}`,
-    "",
-    renderTerminalQrCode(accessInfo.pairingUrl),
-    "",
-  ].join("\n");
+    `Local pairing URL: ${accessInfo.localPairingUrl}`,
+  ];
+  if (accessInfo.lanPairingUrl !== undefined) {
+    lines.push(`LAN pairing URL: ${accessInfo.lanPairingUrl}`);
+  }
+  lines.push("", renderTerminalQrCode(accessInfo.localPairingUrl), "");
+  return lines.join("\n");
+};
 
-export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(function* () {
+export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): string =>
+  formatStartupAccessOutput({
+    token: accessInfo.token,
+    localPairingUrl: accessInfo.pairingUrl,
+    lanPairingUrl: undefined,
+  });
+
+export const issueStartupAccessInfo = Effect.fn("issueStartupAccessInfo")(function* () {
   const serverConfig = yield* ServerConfig;
   const httpServer = yield* HttpServer.HttpServer;
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  const connectionString = resolveHeadlessConnectionString(
-    serverConfig.host,
-    resolveListeningPort(httpServer.address, serverConfig.port),
-  );
+  const port = resolveListeningPort(httpServer.address, serverConfig.port);
+  const localConnectionString = resolveLocalConnectionString(port);
+  const lanConnectionString = resolveLanConnectionString(port);
   const issued = yield* serverAuth.issueStartupPairingCredential();
+  const localPairingUrl = buildPairingUrl(localConnectionString, issued.credential);
+  const lanPairingUrl =
+    lanConnectionString === undefined
+      ? undefined
+      : buildPairingUrl(lanConnectionString, issued.credential);
 
   return {
-    connectionString,
     token: issued.credential,
-    pairingUrl: buildPairingUrl(connectionString, issued.credential),
-  } satisfies HeadlessServeAccessInfo;
+    localPairingUrl,
+    lanPairingUrl: lanPairingUrl === localPairingUrl ? undefined : lanPairingUrl,
+  } satisfies StartupAccessInfo;
 });
+
+export const issueHeadlessServeAccessInfo = issueStartupAccessInfo;

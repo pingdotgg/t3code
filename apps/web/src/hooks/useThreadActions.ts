@@ -1,5 +1,6 @@
 import { parseScopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
-import { type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useRef } from "react";
 
@@ -23,6 +24,18 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useSettings } from "./useSettings";
 import { isManagedSectionWorkspace } from "../sectionWorkspacePolicy";
+
+export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArchiveBlockedError>()(
+  "ThreadArchiveBlockedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "Cannot archive a running thread.";
+  }
+}
 
 export function useThreadActions() {
   const sidebarThreadSortOrder = useSettings((settings) => settings.sidebarThreadSortOrder);
@@ -65,7 +78,10 @@ export function useThreadActions() {
       if (!resolved) return;
       const { thread, threadRef } = resolved;
       if (thread.session?.status === "running" && thread.session.activeTurnId != null) {
-        throw new Error("Cannot archive a running thread.");
+        throw new ThreadArchiveBlockedError({
+          environmentId: threadRef.environmentId,
+          threadId: threadRef.threadId,
+        });
       }
 
       const currentRouteThreadRef = getCurrentRouteThreadRef();
