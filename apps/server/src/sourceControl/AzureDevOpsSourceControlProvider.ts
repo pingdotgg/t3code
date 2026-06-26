@@ -9,11 +9,22 @@ import * as SourceControlProviderDiscovery from "./SourceControlProviderDiscover
 function providerError(
   operation: string,
   cause: AzureDevOpsCli.AzureDevOpsCliError,
+  context: {
+    readonly cwd?: string;
+    readonly reference?: string;
+    readonly repository?: string;
+  } = {},
 ): SourceControlProviderError {
   return new SourceControlProviderError({
     provider: "azure-devops",
     operation,
     detail: cause.detail,
+    command: cause.command,
+    cwd: SourceControlProvider.transportSafeSourceControlErrorValue(context.cwd ?? cause.cwd),
+    reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+      context.reference ?? ("reference" in cause ? cause.reference : undefined),
+    ),
+    repository: SourceControlProvider.transportSafeSourceControlErrorValue(context.repository),
     cause,
   });
 }
@@ -97,13 +108,20 @@ export const make = Effect.fn("makeAzureDevOpsSourceControlProvider")(function* 
         })
         .pipe(
           Effect.map((items) => items.map(toChangeRequest)),
-          Effect.mapError((error) => providerError("listChangeRequests", error)),
+          Effect.mapError((error) =>
+            providerError("listChangeRequests", error, {
+              cwd: input.cwd,
+              reference: input.headSelector,
+            }),
+          ),
         );
     },
     getChangeRequest: (input) =>
       azure.getPullRequest(input).pipe(
         Effect.map(toChangeRequest),
-        Effect.mapError((error) => providerError("getChangeRequest", error)),
+        Effect.mapError((error) =>
+          providerError("getChangeRequest", error, { cwd: input.cwd, reference: input.reference }),
+        ),
       ),
     createChangeRequest: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
@@ -117,20 +135,41 @@ export const make = Effect.fn("makeAzureDevOpsSourceControlProvider")(function* 
           title: input.title,
           bodyFile: input.bodyFile,
         })
-        .pipe(Effect.mapError((error) => providerError("createChangeRequest", error)));
+        .pipe(
+          Effect.mapError((error) =>
+            providerError("createChangeRequest", error, {
+              cwd: input.cwd,
+              reference: input.headSelector,
+            }),
+          ),
+        );
     },
     getRepositoryCloneUrls: (input) =>
       azure
         .getRepositoryCloneUrls(input)
-        .pipe(Effect.mapError((error) => providerError("getRepositoryCloneUrls", error))),
+        .pipe(
+          Effect.mapError((error) =>
+            providerError("getRepositoryCloneUrls", error, {
+              cwd: input.cwd,
+              repository: input.repository,
+            }),
+          ),
+        ),
     createRepository: (input) =>
       azure
         .createRepository(input)
-        .pipe(Effect.mapError((error) => providerError("createRepository", error))),
+        .pipe(
+          Effect.mapError((error) =>
+            providerError("createRepository", error, {
+              cwd: input.cwd,
+              repository: input.repository,
+            }),
+          ),
+        ),
     getDefaultBranch: (input) =>
       azure
         .getDefaultBranch({ cwd: input.cwd })
-        .pipe(Effect.mapError((error) => providerError("getDefaultBranch", error))),
+        .pipe(Effect.mapError((error) => providerError("getDefaultBranch", error, input))),
     checkoutChangeRequest: (input) =>
       azure
         .checkoutPullRequest({
@@ -138,7 +177,14 @@ export const make = Effect.fn("makeAzureDevOpsSourceControlProvider")(function* 
           reference: input.reference,
           ...(input.context !== undefined ? { remoteName: input.context.remoteName } : {}),
         })
-        .pipe(Effect.mapError((error) => providerError("checkoutChangeRequest", error))),
+        .pipe(
+          Effect.mapError((error) =>
+            providerError("checkoutChangeRequest", error, {
+              cwd: input.cwd,
+              reference: input.reference,
+            }),
+          ),
+        ),
   });
 });
 

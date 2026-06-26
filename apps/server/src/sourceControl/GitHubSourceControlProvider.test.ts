@@ -25,7 +25,7 @@ const processResult = (
 });
 
 function makeProvider(github: Partial<GitHubCli.GitHubCli["Service"]>) {
-  return GitHubSourceControlProvider.make.pipe(
+  return GitHubSourceControlProvider.make().pipe(
     Effect.provide(Layer.mock(GitHubCli.GitHubCli)(github)),
   );
 }

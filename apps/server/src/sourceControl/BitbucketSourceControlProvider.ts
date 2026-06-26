@@ -11,11 +11,29 @@ import type * as SourceControlProviderDiscovery from "./SourceControlProviderDis
 function providerError(
   operation: string,
   cause: BitbucketApi.BitbucketApiError,
+  context: {
+    readonly cwd?: string;
+    readonly reference?: string;
+    readonly repository?: string;
+  } = {},
 ): SourceControlProviderError {
+  const detail =
+    operation === "getRepositoryCloneUrls"
+      ? "Failed to get repository clone URLs."
+      : "detail" in cause && typeof cause.detail === "string" && cause.detail.length > 0
+      ? cause.detail
+      : cause.message;
   return new SourceControlProviderError({
     provider: "bitbucket",
     operation,
-    detail: cause.detail,
+    detail,
+    cwd: SourceControlProvider.transportSafeSourceControlErrorValue(context.cwd ?? cause.cwd),
+    reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+      context.reference ?? ("reference" in cause ? cause.reference : undefined),
+    ),
+    repository: SourceControlProvider.transportSafeSourceControlErrorValue(
+      context.repository ?? ("repository" in cause ? cause.repository : undefined),
+    ),
     cause,
   });
 }
@@ -62,13 +80,20 @@ export const make = Effect.fn("makeBitbucketSourceControlProvider")(function* ()
         })
         .pipe(
           Effect.map((items) => items.map(toChangeRequest)),
-          Effect.mapError((error) => providerError("listChangeRequests", error)),
+          Effect.mapError((error) =>
+            providerError("listChangeRequests", error, {
+              cwd: input.cwd,
+              reference: input.headSelector,
+            }),
+          ),
         );
     },
     getChangeRequest: (input) =>
       bitbucket.getPullRequest(input).pipe(
         Effect.map(toChangeRequest),
-        Effect.mapError((error) => providerError("getChangeRequest", error)),
+        Effect.mapError((error) =>
+          providerError("getChangeRequest", error, { cwd: input.cwd, reference: input.reference }),
+        ),
       ),
     createChangeRequest: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
@@ -83,23 +108,44 @@ export const make = Effect.fn("makeBitbucketSourceControlProvider")(function* ()
           title: input.title,
           bodyFile: input.bodyFile,
         })
-        .pipe(Effect.mapError((error) => providerError("createChangeRequest", error)));
+        .pipe(
+          Effect.mapError((error) =>
+            providerError("createChangeRequest", error, {
+              cwd: input.cwd,
+              reference: input.headSelector,
+            }),
+          ),
+        );
     },
     getRepositoryCloneUrls: (input) =>
       bitbucket
         .getRepositoryCloneUrls(input)
-        .pipe(Effect.mapError((error) => providerError("getRepositoryCloneUrls", error))),
+        .pipe(
+          Effect.mapError((error) =>
+            providerError("getRepositoryCloneUrls", error, {
+              cwd: input.cwd,
+              repository: input.repository,
+            }),
+          ),
+        ),
     createRepository: (input) =>
       bitbucket
         .createRepository(input)
-        .pipe(Effect.mapError((error) => providerError("createRepository", error))),
+        .pipe(
+          Effect.mapError((error) =>
+            providerError("createRepository", error, {
+              cwd: input.cwd,
+              repository: input.repository,
+            }),
+          ),
+        ),
     getDefaultBranch: (input) =>
       bitbucket
         .getDefaultBranch({
           cwd: input.cwd,
           ...(input.context ? { context: input.context } : {}),
         })
-        .pipe(Effect.mapError((error) => providerError("getDefaultBranch", error))),
+        .pipe(Effect.mapError((error) => providerError("getDefaultBranch", error, input))),
     checkoutChangeRequest: (input) =>
       bitbucket
         .checkoutPullRequest({
@@ -108,7 +154,14 @@ export const make = Effect.fn("makeBitbucketSourceControlProvider")(function* ()
           reference: input.reference,
           ...(input.force !== undefined ? { force: input.force } : {}),
         })
-        .pipe(Effect.mapError((error) => providerError("checkoutChangeRequest", error))),
+        .pipe(
+          Effect.mapError((error) =>
+            providerError("checkoutChangeRequest", error, {
+              cwd: input.cwd,
+              reference: input.reference,
+            }),
+          ),
+        ),
   });
 });
 

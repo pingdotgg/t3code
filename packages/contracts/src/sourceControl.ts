@@ -156,6 +156,10 @@ export class SourceControlProviderError extends Schema.TaggedErrorClass<SourceCo
     provider: SourceControlProviderKind,
     operation: Schema.String,
     detail: Schema.String,
+    command: Schema.optional(TrimmedNonEmptyString),
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    reference: Schema.optional(TrimmedNonEmptyString),
+    repository: Schema.optional(TrimmedNonEmptyString),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

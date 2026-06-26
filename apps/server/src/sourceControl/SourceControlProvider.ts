@@ -49,6 +49,24 @@ export function sourceControlRefFromInput(input: {
   return input.source ?? parseSourceControlOwnerRef(input.headSelector);
 }
 
+export function transportSafeSourceControlErrorValue(
+  value: string | null | undefined,
+): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  try {
+    const url = new URL(trimmed);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    const safeUrl = url.toString();
+    return safeUrl.endsWith("/") && !trimmed.endsWith("/") ? safeUrl.slice(0, -1) : safeUrl;
+  } catch {
+    return trimmed.length > 256 ? `${trimmed.slice(0, 253)}...` : trimmed;
+  }
+}
+
 export interface SourceControlProviderShape {
   readonly kind: SourceControlProviderKind;
   readonly listChangeRequests: (input: {

@@ -65,7 +65,7 @@ function emitChange() {
 }
 
 function hasThemeStorage() {
-  return typeof window !== "undefined" && typeof localStorage !== "undefined";
+  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
 
 function getSystemDark() {
@@ -144,7 +144,13 @@ function getStored(): Theme {
 
 function getStoredPalette(): ThemePalette {
   if (!hasThemeStorage()) return DEFAULT_THEME_SNAPSHOT.palette;
-  const raw = localStorage.getItem(PALETTE_STORAGE_KEY);
+  if (themeStorageReadFailure !== null) return DEFAULT_THEME_SNAPSHOT.palette;
+  let raw: string | null;
+  try {
+    raw = window.localStorage.getItem(PALETTE_STORAGE_KEY);
+  } catch {
+    return DEFAULT_THEME_SNAPSHOT.palette;
+  }
   return isThemePalette(raw) ? raw : DEFAULT_THEME_SNAPSHOT.palette;
 }
 
@@ -347,7 +353,7 @@ export function useTheme() {
   const setPalette = useCallback(
     (next: ThemePalette) => {
       if (!hasThemeStorage()) return;
-      localStorage.setItem(PALETTE_STORAGE_KEY, next);
+      window.localStorage.setItem(PALETTE_STORAGE_KEY, next);
       applyTheme(theme, next, true);
       emitChange();
     },

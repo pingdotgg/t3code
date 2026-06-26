@@ -7,7 +7,7 @@ import * as BitbucketApi from "./BitbucketApi.ts";
 import * as BitbucketSourceControlProvider from "./BitbucketSourceControlProvider.ts";
 
 function makeProvider(bitbucket: Partial<BitbucketApi.BitbucketApi["Service"]>) {
-  return BitbucketSourceControlProvider.make.pipe(
+  return BitbucketSourceControlProvider.make().pipe(
     Effect.provide(Layer.mock(BitbucketApi.BitbucketApi)(bitbucket)),
   );
 }

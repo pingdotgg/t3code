@@ -9,7 +9,7 @@ import { parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 
 function makeProvider(gitlab: Partial<GitLabCli.GitLabCli["Service"]>) {
-  return GitLabSourceControlProvider.make.pipe(
+  return GitLabSourceControlProvider.make().pipe(
     Effect.provide(Layer.mock(GitLabCli.GitLabCli)(gitlab)),
   );
 }

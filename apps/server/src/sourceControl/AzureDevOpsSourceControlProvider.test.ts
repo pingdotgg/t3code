@@ -7,7 +7,7 @@ import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 
 function makeProvider(azure: Partial<AzureDevOpsCli.AzureDevOpsCli["Service"]>) {
-  return AzureDevOpsSourceControlProvider.make.pipe(
+  return AzureDevOpsSourceControlProvider.make().pipe(
     Effect.provide(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)(azure)),
   );
 }
