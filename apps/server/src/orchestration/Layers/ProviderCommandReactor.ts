@@ -881,6 +881,19 @@ const make = Effect.gen(function* () {
 
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
     yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+    if (thread.session) {
+      yield* setThreadSession({
+        threadId: event.payload.threadId,
+        session: {
+          ...thread.session,
+          status: "ready",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: event.payload.createdAt,
+        },
+        createdAt: event.payload.createdAt,
+      });
+    }
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
