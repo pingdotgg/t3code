@@ -27,11 +27,12 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import type * as Scope from "effect/Scope";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -87,7 +88,7 @@ export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
 export interface AcpAdapterV2RuntimeInput {
   readonly cwd: string;
   readonly mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
-  readonly interruptPromptOnCancel: false;
+  readonly interruptPromptOnCancel?: boolean;
   readonly clientCapabilities: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: AcpSessionRuntimeOptions["clientInfo"];
   readonly requestLogger?: NonNullable<AcpSessionRuntimeOptions["requestLogger"]>;
@@ -112,6 +113,43 @@ export interface AcpAdapterV2ExtensionContext {
   ) => Effect.Effect<ProviderUserInputAnswers | null, EffectAcpErrors.AcpError>;
 }
 
+export interface AcpRootTurnIdleSnapshot {
+  readonly finalized: boolean;
+  readonly interrupted: boolean;
+  readonly assistantStreamOpen: boolean;
+  readonly reasoningStreamOpen: boolean;
+  readonly hasRunningTool: boolean;
+  readonly hasPendingRuntimeRequest: boolean;
+  readonly hasToolHistory: boolean;
+  readonly hasRunningSubagent: boolean;
+  readonly hasOutput: boolean;
+}
+
+/** Wait for follow-on tool calls after a brief assistant preamble. */
+export const acpRootTurnSettleDebounceMs = 2_000;
+
+/** Let trailing root session chunks land before terminalizing a settled turn. */
+export const acpRootTurnCompletionDrainMs = 100;
+
+/** True when root-session streaming is quiescent and the turn can settle locally. */
+export function acpRootTurnIsIdle(snapshot: AcpRootTurnIdleSnapshot): boolean {
+  if (snapshot.finalized || snapshot.interrupted) return false;
+  if (snapshot.assistantStreamOpen || snapshot.reasoningStreamOpen) return false;
+  if (snapshot.hasRunningTool || snapshot.hasPendingRuntimeRequest) return false;
+  // Grok tool phases often pause root streaming while work continues. Wait for
+  // the prompt RPC (or root prompt_complete race) instead of idle-canceling.
+  if (snapshot.hasToolHistory || snapshot.hasRunningSubagent) return false;
+  return snapshot.hasOutput;
+}
+
+/** True when idle settle should be (re-)scheduled after pending runtime work clears. */
+export function acpRootTurnShouldRearmRecoveryTimers(context: {
+  readonly finalized: boolean;
+  readonly interrupted: boolean;
+}): boolean {
+  return !context.finalized && !context.interrupted;
+}
+
 export interface AcpAdapterV2Flavor {
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
@@ -130,6 +168,22 @@ export interface AcpAdapterV2Flavor {
     toolCall: AcpToolCallState,
   ) => AcpAdapterV2SubagentUpdate | undefined;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /**
+   * Grok can finish streaming on the root session while `session/prompt` stays
+   * hung. xAI `prompt_complete` is subagent-scoped, so settle the root turn
+   * once root assistant output is idle. Reasoning-only or tool-only phases may
+   * precede further root work and must not terminalize the turn. Settlement is
+   * debounced and rescheduled on each ingested root session update so follow-on
+   * tool calls and assistant replies still attach to the active turn.
+   */
+  readonly settleRootTurnWhenIdle?: boolean;
+  /** Interrupt the local prompt fiber before `session/cancel` (Grok wedged prompts). */
+  readonly interruptPromptOnCancel?: boolean;
+  /**
+   * Kill and respawn the ACP child process before the next `session/prompt` after a
+   * user interrupt. Grok can keep `task_already_running` state until the process exits.
+   */
+  readonly restartRuntimeAfterInterrupt?: boolean;
 }
 
 export interface AcpAdapterV2SubagentUpdate {
@@ -565,6 +619,41 @@ interface ActiveAcpTurn {
   } | null;
   interrupted: boolean;
   finalized: boolean;
+  settleScheduleGeneration: number;
+}
+
+export function acpRootTurnHasIngestedOutput(context: {
+  readonly assistant: ActiveTextStream;
+  readonly reasoning: ActiveTextStream;
+  readonly tools: ReadonlyMap<string, AcpToolCallState>;
+  readonly plan: unknown;
+}): boolean {
+  return (
+    context.assistant.nextSegment > 0 ||
+    context.reasoning.nextSegment > 0 ||
+    context.tools.size > 0 ||
+    context.plan !== null
+  );
+}
+
+/** True when a root session/update carries ingestible turn output, not keepalive noise. */
+export function acpRootSessionUpdateIngestsOutput(
+  notification: EffectAcpSchema.SessionNotification,
+): boolean {
+  const update = notification.update;
+  switch (update.sessionUpdate) {
+    case "agent_message_chunk":
+    case "agent_thought_chunk":
+      return update.content.type === "text" && update.content.text.length > 0;
+    case "tool_call":
+    case "tool_call_update":
+    case "plan":
+      return parseSessionUpdateEvent(notification).events.some(
+        (event) => event._tag === "ToolCallUpdated" || event._tag === "PlanUpdated",
+      );
+    default:
+      return false;
+  }
 }
 
 interface ActiveAcpSubagent {
@@ -576,6 +665,17 @@ interface ActiveAcpSubagent {
   childSessionId: string | null;
   assistantText: string;
   nextChildOrdinal: number;
+}
+
+function acpTurnHasPendingRuntimeRequest(
+  providerTurnId: OrchestrationV2ProviderTurn["id"],
+  pending: ReadonlyMap<string, PendingRuntimeRequest>,
+): boolean {
+  return [...pending.values()].some(
+    (request) =>
+      request.runtimeRequest.providerTurnId === providerTurnId &&
+      request.runtimeRequest.status === "pending",
+  );
 }
 
 type PendingRuntimeRequest = {
@@ -618,6 +718,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         const activeSessionId = yield* Ref.make<string | null>(null);
         const activeSessionSetup = yield* Ref.make<AcpSessionRuntimeStartResult | null>(null);
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
+        const runtimeRestartRequired = yield* Ref.make(false);
         const pendingRuntimeRequests = yield* Ref.make(new Map<string, PendingRuntimeRequest>());
         const nextElicitationOrdinal = yield* Ref.make(0);
         const itemOrdinals = yield* Ref.make(new Map<string, number>());
@@ -632,13 +733,14 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
 
         const emitProviderEvent = (event: ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
+        let scheduleSettleRootTurnWhenIdle = (_context: ActiveAcpTurn) => Effect.void;
+        let rearmRootTurnRecoveryTimers = (_context: ActiveAcpTurn) => Effect.void;
 
         const nativeLogging = options.nativeLogging?.(input.threadId);
-
-        const runtime = yield* flavor.makeRuntime({
+        const runtimeInput: AcpAdapterV2RuntimeInput = {
           cwd: input.runtimePolicy.cwd ?? process.cwd(),
           mcpServers: acpMcpServers(input.threadId),
-          interruptPromptOnCancel: false,
+          interruptPromptOnCancel: flavor.interruptPromptOnCancel ?? false,
           clientCapabilities: {
             fs: { readTextFile: false, writeTextFile: false },
             terminal: false,
@@ -653,7 +755,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             logOutgoing: true,
             logger: () => Effect.void,
           },
-        });
+        };
+        let runtimeScope: Scope.Closeable | undefined;
+        let runtime!: AcpSessionRuntime.AcpSessionRuntime["Service"];
 
         const resolveItemOrdinal = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
@@ -813,6 +917,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           if (stream.current === null) return;
           yield* emitTextSegment(context, kind, true);
           stream.current = null;
+          if (kind === "assistant") {
+            yield* scheduleSettleRootTurnWhenIdle(context);
+          }
         });
 
         const closeTextStreams = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
@@ -1465,12 +1572,12 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               if (update.content.type === "text") {
                 yield* appendText(context, "assistant", update.content.text);
               }
-              return;
+              break;
             case "agent_thought_chunk":
               if (update.content.type === "text") {
                 yield* appendText(context, "reasoning", update.content.text);
               }
-              return;
+              break;
             default: {
               const parsed = parseSessionUpdateEvent(notification);
               for (const event of parsed.events) {
@@ -1482,19 +1589,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               }
             }
           }
+          if (acpRootSessionUpdateIngestsOutput(notification)) {
+            yield* scheduleSettleRootTurnWhenIdle(context);
+          }
         });
-
-        yield* runtime.handleSessionUpdate((notification) =>
-          handleSessionUpdate(notification).pipe(
-            Effect.mapError(
-              (cause) =>
-                new EffectAcpErrors.AcpTransportError({
-                  detail: "Failed to project an ACP session update",
-                  cause,
-                }),
-            ),
-          ),
-        );
 
         const activeContext = Effect.gen(function* () {
           const context = yield* Ref.get(activeTurn);
@@ -1609,50 +1707,18 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           });
           const resolved = yield* Deferred.await(decision).pipe(
             Effect.ensuring(
-              Ref.update(pendingRuntimeRequests, (current) => {
-                const updated = new Map(current);
-                updated.delete(String(requestId));
-                return updated;
+              Effect.gen(function* () {
+                yield* Ref.update(pendingRuntimeRequests, (current) => {
+                  const updated = new Map(current);
+                  updated.delete(String(requestId));
+                  return updated;
+                });
+                yield* rearmRootTurnRecoveryTimers(context);
               }),
             ),
           );
           return resolved;
         });
-
-        yield* runtime.handleRequestPermission((params) =>
-          Effect.gen(function* () {
-            const context = yield* activeContext;
-            const disposition = acpPermissionDisposition(context.input.runtimePolicy, params);
-            if (disposition === "allow") {
-              const optionId = selectAutoApprovedPermissionOption(params);
-              return optionId === undefined
-                ? ({ outcome: { outcome: "cancelled" } } as const)
-                : ({ outcome: { outcome: "selected", optionId } } as const);
-            }
-            if (disposition === "deny") {
-              const optionId = selectPermissionOptionId(params, "decline");
-              return optionId === undefined
-                ? ({ outcome: { outcome: "cancelled" } } as const)
-                : ({ outcome: { outcome: "selected", optionId } } as const);
-            }
-            const decision = yield* emitApprovalRequest(context, params);
-            if (decision === "cancel") {
-              return { outcome: { outcome: "cancelled" } } as const;
-            }
-            const optionId = selectPermissionOptionId(params, decision);
-            return optionId === undefined
-              ? ({ outcome: { outcome: "cancelled" } } as const)
-              : ({ outcome: { outcome: "selected", optionId } } as const);
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new EffectAcpErrors.AcpTransportError({
-                  detail: "Failed to handle an ACP permission request",
-                  cause,
-                }),
-            ),
-          ),
-        );
 
         const requestUserInputInternal = Effect.fnUntraced(function* (
           request: AcpAdapterV2UserInputRequest,
@@ -1764,10 +1830,13 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           });
           return yield* Deferred.await(answers).pipe(
             Effect.ensuring(
-              Ref.update(pendingRuntimeRequests, (current) => {
-                const updated = new Map(current);
-                updated.delete(String(requestId));
-                return updated;
+              Effect.gen(function* () {
+                yield* Ref.update(pendingRuntimeRequests, (current) => {
+                  const updated = new Map(current);
+                  updated.delete(String(requestId));
+                  return updated;
+                });
+                yield* rearmRootTurnRecoveryTimers(context);
               }),
             ),
           );
@@ -1832,61 +1901,125 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           );
         });
 
-        yield* runtime.handleElicitation((params) =>
-          Effect.gen(function* () {
-            if (params.mode === "url") {
-              return { action: { action: "decline" } } as const;
-            }
-            const questions = Object.entries(params.requestedSchema.properties ?? {}).map(
-              ([id, property], index): OrchestrationV2UserInputQuestion => {
-                const record = unknownRecord(property);
-                const enumValues = Array.isArray(record?.enum)
-                  ? record.enum.filter((value): value is string => typeof value === "string")
-                  : [];
-                const options =
-                  enumValues.length > 0
-                    ? enumValues.map((value) => ({ label: value, description: value }))
-                    : record?.type === "boolean"
-                      ? [
-                          { label: "true", description: "Yes" },
-                          { label: "false", description: "No" },
-                        ]
-                      : [];
-                return {
-                  id,
-                  header: nonEmptyText(record?.title, `Question ${index + 1}`),
-                  question: nonEmptyText(record?.description, params.message),
-                  options,
-                };
-              },
-            );
-            const ordinal = yield* Ref.getAndUpdate(
-              nextElicitationOrdinal,
-              (current) => current + 1,
-            );
-            const nativeRequestId = `${params.sessionId}:elicitation:${ordinal}`;
-            const answers = yield* requestUserInput({
-              nativeItemId: nativeRequestId,
-              nativeRequestId,
-              questions,
-            });
-            return answers === null
-              ? ({ action: { action: "cancel" } } as const)
-              : ({
-                  action: {
-                    action: "accept",
-                    content: elicitationContent(
-                      answers,
-                      new Set(Object.keys(params.requestedSchema.properties ?? {})),
-                    ),
-                  },
-                } as const);
-          }),
-        );
+        const wireAcpRuntimeHandlers = Effect.fnUntraced(function* () {
+          yield* runtime.handleSessionUpdate((notification) =>
+            handleSessionUpdate(notification).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new EffectAcpErrors.AcpTransportError({
+                    detail: "Failed to project an ACP session update",
+                    cause,
+                  }),
+              ),
+            ),
+          );
+          yield* runtime.handleRequestPermission((params) =>
+            Effect.gen(function* () {
+              const context = yield* activeContext;
+              const disposition = acpPermissionDisposition(context.input.runtimePolicy, params);
+              if (disposition === "allow") {
+                const optionId = selectAutoApprovedPermissionOption(params);
+                return optionId === undefined
+                  ? ({ outcome: { outcome: "cancelled" } } as const)
+                  : ({ outcome: { outcome: "selected", optionId } } as const);
+              }
+              if (disposition === "deny") {
+                const optionId = selectPermissionOptionId(params, "decline");
+                return optionId === undefined
+                  ? ({ outcome: { outcome: "cancelled" } } as const)
+                  : ({ outcome: { outcome: "selected", optionId } } as const);
+              }
+              const decision = yield* emitApprovalRequest(context, params);
+              if (decision === "cancel") {
+                return { outcome: { outcome: "cancelled" } } as const;
+              }
+              const optionId = selectPermissionOptionId(params, decision);
+              return optionId === undefined
+                ? ({ outcome: { outcome: "cancelled" } } as const)
+                : ({ outcome: { outcome: "selected", optionId } } as const);
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new EffectAcpErrors.AcpTransportError({
+                    detail: "Failed to handle an ACP permission request",
+                    cause,
+                  }),
+              ),
+            ),
+          );
+          yield* runtime.handleElicitation((params) =>
+            Effect.gen(function* () {
+              if (params.mode === "url") {
+                return { action: { action: "decline" } } as const;
+              }
+              const questions = Object.entries(params.requestedSchema.properties ?? {}).map(
+                ([id, property], index): OrchestrationV2UserInputQuestion => {
+                  const record = unknownRecord(property);
+                  const enumValues = Array.isArray(record?.enum)
+                    ? record.enum.filter((value): value is string => typeof value === "string")
+                    : [];
+                  const options =
+                    enumValues.length > 0
+                      ? enumValues.map((value) => ({ label: value, description: value }))
+                      : record?.type === "boolean"
+                        ? [
+                            { label: "true", description: "Yes" },
+                            { label: "false", description: "No" },
+                          ]
+                        : [];
+                  return {
+                    id,
+                    header: nonEmptyText(record?.title, `Question ${index + 1}`),
+                    question: nonEmptyText(record?.description, params.message),
+                    options,
+                  };
+                },
+              );
+              const ordinal = yield* Ref.getAndUpdate(
+                nextElicitationOrdinal,
+                (current) => current + 1,
+              );
+              const nativeRequestId = `${params.sessionId}:elicitation:${ordinal}`;
+              const answers = yield* requestUserInput({
+                nativeItemId: nativeRequestId,
+                nativeRequestId,
+                questions,
+              });
+              return answers === null
+                ? ({ action: { action: "cancel" } } as const)
+                : ({
+                    action: {
+                      action: "accept",
+                      content: elicitationContent(
+                        answers,
+                        new Set(Object.keys(params.requestedSchema.properties ?? {})),
+                      ),
+                    },
+                  } as const);
+            }),
+          );
+          if (flavor.registerExtensions !== undefined) {
+            yield* flavor.registerExtensions({ runtime, requestUserInput });
+          }
+        });
 
-        if (flavor.registerExtensions !== undefined) {
-          yield* flavor.registerExtensions({ runtime, requestUserInput });
-        }
+        const spawnAcpRuntime = Effect.fnUntraced(function* () {
+          if (runtimeScope !== undefined) {
+            yield* Scope.close(runtimeScope, Exit.void);
+          }
+          runtimeScope = yield* Scope.make();
+          runtime = yield* flavor
+            .makeRuntime(runtimeInput)
+            .pipe(Effect.provideService(Scope.Scope, runtimeScope));
+        });
+
+        const restartAcpRuntime = Effect.fnUntraced(function* () {
+          yield* spawnAcpRuntime();
+          yield* wireAcpRuntimeHandlers();
+        });
+
+        yield* spawnAcpRuntime();
+        yield* wireAcpRuntimeHandlers();
 
         const started = yield* runtime.start();
         yield* Ref.set(activeSessionId, started.sessionId);
@@ -1994,13 +2127,25 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           completedAt,
         });
 
+        const drainTrailingRootTurnChunks = Effect.fnUntraced(function* () {
+          if (!flavor.settleRootTurnWhenIdle) return;
+          // Projected via handleSessionUpdate, not getEvents(). Cooperative yield
+          // only — replay uses TestClock; Effect.sleep here would stall settlement.
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+        });
+
         const finalizeTurn = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           status: "completed" | "interrupted" | "failed" | "cancelled",
           failure?: OrchestrationV2ProviderFailure,
+          options?: { readonly drainTrailingChunks?: boolean },
         ) {
           if (context.finalized) return;
           context.finalized = true;
+          if (options?.drainTrailingChunks === true) {
+            yield* drainTrailingRootTurnChunks();
+          }
           yield* closeTextStreams(context);
           const now = yield* DateTime.now;
           const turn = providerTurnPayload(context, status, now);
@@ -2058,6 +2203,61 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           yield* Ref.set(activeTurn, null);
           yield* Deferred.succeed(context.completed, undefined).pipe(Effect.ignore);
         });
+
+        const trySettleRootTurnWhenIdle = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+          const pending = yield* Ref.get(pendingRuntimeRequests);
+          const hasPendingRuntimeRequest = acpTurnHasPendingRuntimeRequest(
+            context.providerTurnId,
+            pending,
+          );
+          const hasRunningTool = [...context.tools.values()].some((tool) => {
+            const status = toolStatus(tool.status);
+            return status === "pending" || status === "running";
+          });
+          // Debounce already proved root-session quiescence; open segment handles
+          // without an explicit close should not block settlement.
+          const hasRunningSubagent = [...context.subagents.values()].some(
+            (subagent) => subagent.task.status === "running",
+          );
+          if (
+            !acpRootTurnIsIdle({
+              finalized: context.finalized,
+              interrupted: context.interrupted,
+              assistantStreamOpen: false,
+              reasoningStreamOpen: false,
+              hasRunningTool,
+              hasPendingRuntimeRequest,
+              hasToolHistory: context.tools.size > 0,
+              hasRunningSubagent,
+              hasOutput: context.assistant.nextSegment > 0,
+            })
+          ) {
+            return;
+          }
+          yield* finalizeTurn(context, "completed", undefined, { drainTrailingChunks: true });
+          yield* runtime.cancel.pipe(Effect.ignore);
+        });
+
+        scheduleSettleRootTurnWhenIdle = (context) =>
+          Effect.gen(function* () {
+            if (!flavor.settleRootTurnWhenIdle) return;
+            context.settleScheduleGeneration += 1;
+            const generation = context.settleScheduleGeneration;
+            yield* Effect.gen(function* () {
+              yield* Effect.sleep(`${acpRootTurnSettleDebounceMs} millis`);
+              if (context.finalized || context.interrupted) return;
+              if (context.settleScheduleGeneration !== generation) return;
+              const active = yield* Ref.get(activeTurn);
+              if (active !== context) return;
+              yield* trySettleRootTurnWhenIdle(context);
+            }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
+          });
+
+        rearmRootTurnRecoveryTimers = (context) =>
+          Effect.gen(function* () {
+            if (!acpRootTurnShouldRearmRecoveryTimers(context)) return;
+            yield* scheduleSettleRootTurnWhenIdle(context);
+          });
 
         const resolvePromptParts = Effect.fnUntraced(function* (
           turnInput: ProviderAdapterV2TurnInput,
@@ -2118,7 +2318,25 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               });
             }
             const requestedSessionId = nativeThreadId(driver, turnInput.providerThread);
-            if ((yield* Ref.get(activeSessionId)) !== requestedSessionId) {
+            const restartAfterInterrupt =
+              flavor.restartRuntimeAfterInterrupt === true &&
+              (yield* Ref.get(runtimeRestartRequired));
+            if (restartAfterInterrupt) {
+              yield* restartAcpRuntime();
+              yield* Ref.set(runtimeRestartRequired, false);
+              yield* Ref.set(activeSessionId, null);
+              yield* Ref.set(activeSessionSetup, null);
+              yield* Ref.set(activeSelection, null);
+              yield* Ref.set(snapshot, {
+                order: [],
+                messages: new Map(),
+                loadingRole: null,
+                loadingIndex: 0,
+              });
+            }
+            const needsSessionActivation =
+              (yield* Ref.get(activeSessionId)) !== requestedSessionId || restartAfterInterrupt;
+            if (needsSessionActivation) {
               const activated = yield* activateSession(requestedSessionId);
               yield* Ref.set(activeSessionId, activated.sessionId);
               yield* Ref.set(activeSessionSetup, activated);
@@ -2166,6 +2384,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               plan: null,
               interrupted: false,
               finalized: false,
+              settleScheduleGeneration: 0,
             };
             yield* Ref.set(activeTurn, context);
             const runningTurn = providerTurnPayload(context, "running", null);
@@ -2206,33 +2425,36 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             });
             yield* runtime.prompt({ prompt }).pipe(
               Effect.flatMap((result) => {
+                if (context.finalized) return Effect.void;
                 const status =
                   result.stopReason === "cancelled"
                     ? context.interrupted
                       ? "interrupted"
                       : "cancelled"
                     : "completed";
-                return finalizeTurn(context, status);
+                return finalizeTurn(context, status, undefined, { drainTrailingChunks: true });
               }),
               Effect.catchCause((cause) =>
-                finalizeTurn(
-                  context,
-                  context.interrupted ? "interrupted" : "failed",
-                  makeProviderFailure({
-                    cause: Cause.squash(cause),
-                    class: "provider_error",
-                  }),
-                ).pipe(
-                  Effect.andThen(
-                    Effect.logWarning("orchestration-v2.acp-prompt-failed", {
-                      driver,
-                      providerSessionId: input.providerSessionId,
-                      providerThreadId: turnInput.providerThread.id,
-                      providerTurnId,
-                      cause,
-                    }),
-                  ),
-                ),
+                context.finalized
+                  ? Effect.void
+                  : finalizeTurn(
+                      context,
+                      context.interrupted ? "interrupted" : "failed",
+                      makeProviderFailure({
+                        cause: Cause.squash(cause),
+                        class: "provider_error",
+                      }),
+                    ).pipe(
+                      Effect.andThen(
+                        Effect.logWarning("orchestration-v2.acp-prompt-failed", {
+                          driver,
+                          providerSessionId: input.providerSessionId,
+                          providerThreadId: turnInput.providerThread.id,
+                          providerTurnId,
+                          cause,
+                        }),
+                      ),
+                    ),
               ),
               Effect.forkIn(sessionScope),
             );
@@ -2270,6 +2492,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             }
             if (flavor.assertComplete !== undefined) {
               yield* flavor.assertComplete.pipe(Effect.orDie);
+            }
+            if (runtimeScope !== undefined) {
+              yield* Scope.close(runtimeScope, Exit.void).pipe(Effect.ignore);
             }
           }),
         );
@@ -2385,6 +2610,12 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                   driver,
                   detail: `ACP provider turn ${turnInput.providerTurnId} did not acknowledge cancellation before the interrupt timeout`,
                 });
+              }
+              if (
+                flavor.restartRuntimeAfterInterrupt === true &&
+                turnInput.requestRuntimeRestart === true
+              ) {
+                yield* Ref.set(runtimeRestartRequired, true);
               }
             },
             (effect, turnInput) =>

@@ -1,10 +1,7 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
-
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import { describe, expect } from "vite-plus/test";
 
@@ -17,24 +14,6 @@ import {
   XAiAskUserQuestionRequest,
 } from "./XAiAcpExtension.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
-
-const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
-
-const makePromptCompletionRuntime = (env: NodeJS.ProcessEnv) =>
-  Effect.gen(function* () {
-    const runtime = yield* AcpSessionRuntime.make({
-      spawn: {
-        command: process.execPath,
-        args: [mockAgentPath],
-        env,
-      },
-      cwd: process.cwd(),
-      clientInfo: { name: "t3-test", version: "0.0.0" },
-      authMethodId: "test",
-    });
-    return yield* makeXAiPromptCompletionRuntime(runtime);
-  });
 
 const decodeXAiAskUserQuestionRequest = Schema.decodeUnknownSync(XAiAskUserQuestionRequest);
 
@@ -335,58 +314,119 @@ describe("XAiAcpExtension", () => {
     });
   });
 
-  it.effect("resolves a hung standard prompt from xAI prompt completion", () =>
+  it.effect("settles a hung prompt from a root-session prompt_complete notification", () =>
     Effect.gen(function* () {
-      const runtime = yield* makePromptCompletionRuntime({
-        T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
-      });
-      yield* runtime.start();
-
-      const promptResult = yield* runtime.prompt({
-        prompt: [{ type: "text", text: "hi" }],
-      });
-      const promptId = promptResult._meta?.promptId;
-
-      expect(typeof promptId).toBe("string");
-      expect(promptResult).toMatchObject({
-        stopReason: "end_turn",
-        _meta: {
-          sessionId: "mock-session-1",
-          promptId,
-          requestId: promptId,
+      let promptCompleteHandler:
+        | ((notification: {
+            readonly sessionId: string;
+            readonly promptId?: string;
+            readonly stopReason?: string;
+          }) => Effect.Effect<void>)
+        | null = null;
+      const hungPrompt = yield* Deferred.make<never>();
+      const baseRuntime = {
+        start: () =>
+          Effect.succeed({
+            sessionId: "root-session",
+            initializeResult: {},
+            sessionSetupResult: {},
+            modelConfigId: undefined,
+          }),
+        prompt: () => Deferred.await(hungPrompt),
+        cancel: Effect.void,
+        handleExtNotification: (
+          _method: string,
+          _schema: unknown,
+          handler: (notification: {
+            readonly sessionId: string;
+            readonly promptId?: string;
+            readonly stopReason?: string;
+          }) => Effect.Effect<void>,
+        ) => {
+          promptCompleteHandler = handler;
+          return Effect.void;
         },
+        handleExtRequest: () => Effect.void,
+      } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+
+      const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
+      const promptFiber = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "hi" }] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      expect(promptCompleteHandler).not.toBeNull();
+      yield* promptCompleteHandler!({
+        sessionId: "root-session",
+        stopReason: "end_turn",
       });
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      const response = yield* Fiber.join(promptFiber);
+      expect(response.stopReason).toBe("end_turn");
+    }),
   );
 
-  it.effect("ignores stale xAI completion from an already settled prompt", () =>
+  it.effect("ignores prompt_complete notifications for foreign session ids", () =>
     Effect.gen(function* () {
-      const runtime = yield* makePromptCompletionRuntime({
-        T3_ACP_EMIT_STALE_XAI_PROMPT_COMPLETE_BEFORE_SECOND_HANG: "1",
-      });
-      yield* runtime.start();
-
-      const firstPromptResult = yield* runtime.prompt({
-        prompt: [{ type: "text", text: "first" }],
-      });
-      expect(firstPromptResult).toMatchObject({
-        stopReason: "end_turn",
-        _meta: { promptId: "mock-stale-xai-prompt-1" },
-      });
-
-      const secondPromptResult = yield* runtime.prompt({
-        prompt: [{ type: "text", text: "second" }],
-      });
-      const secondPromptId = secondPromptResult._meta?.promptId;
-      expect(typeof secondPromptId).toBe("string");
-      expect(secondPromptId).not.toBe("mock-stale-xai-prompt-1");
-      expect(secondPromptResult).toMatchObject({
-        stopReason: "end_turn",
-        _meta: {
-          promptId: secondPromptId,
-          requestId: secondPromptId,
+      let promptCompleteHandler:
+        | ((notification: { readonly sessionId: string }) => Effect.Effect<void>)
+        | null = null;
+      const hungPrompt = yield* Deferred.make<never>();
+      const baseRuntime = {
+        start: () =>
+          Effect.succeed({
+            sessionId: "root-session",
+            initializeResult: {},
+            sessionSetupResult: {},
+            modelConfigId: undefined,
+          }),
+        prompt: () => Deferred.await(hungPrompt),
+        cancel: Effect.void,
+        handleExtNotification: (
+          _method: string,
+          _schema: unknown,
+          handler: (notification: { readonly sessionId: string }) => Effect.Effect<void>,
+        ) => {
+          promptCompleteHandler = handler;
+          return Effect.void;
         },
+        handleExtRequest: () => Effect.void,
+      } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+
+      const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
+      const promptFiber = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "hi" }] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* promptCompleteHandler!({
+        sessionId: "child-session",
       });
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      yield* Effect.yieldNow;
+      expect(promptFiber.pollUnsafe()).toBeUndefined();
+      yield* Fiber.interrupt(promptFiber);
+    }),
+  );
+
+  it.effect("injects promptId and requestId into prompt _meta", () =>
+    Effect.gen(function* () {
+      let capturedMeta: Record<string, unknown> | null | undefined;
+      const baseRuntime = {
+        start: () => Effect.succeed({ sessionId: "session-1" }),
+        prompt: (payload: { readonly _meta?: Record<string, unknown> | null }) => {
+          capturedMeta = payload._meta ?? null;
+          return Effect.succeed({ stopReason: "end_turn" as const });
+        },
+        cancel: Effect.void,
+        handleExtNotification: () => Effect.void,
+        handleExtRequest: () => Effect.void,
+      } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+
+      const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
+      yield* runtime.prompt({ prompt: [{ type: "text", text: "hi" }] });
+
+      expect(typeof capturedMeta?.promptId).toBe("string");
+      expect(capturedMeta).toMatchObject({
+        promptId: capturedMeta?.promptId,
+        requestId: capturedMeta?.promptId,
+      });
+    }),
   );
 });

@@ -1,12 +1,17 @@
 import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import type * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import type { AcpToolCallState } from "./AcpRuntimeModel.ts";
+
+const xAiStopReasonMissingMetaKey = "xAiStopReasonMissing";
+const completedXAiPromptIdLimit = 128;
 
 const XAiPromptCompleteNotification = Schema.Struct({
   sessionId: Schema.String,
@@ -22,9 +27,6 @@ interface PendingXAiPromptCompletion {
   readonly promptId: string;
   readonly deferred: Deferred.Deferred<EffectAcpSchema.PromptResponse>;
 }
-
-const completedXAiPromptIdLimit = 128;
-const xAiStopReasonMissingMetaKey = "xAiStopReasonMissing";
 
 export interface XAiAcpSubagentUpdate {
   readonly nativeTaskId: string;
@@ -283,82 +285,50 @@ export function makeXAiAskUserQuestionCancelledResponse(): XAiAskUserQuestionCan
   return { outcome: "cancelled" };
 }
 
-/**
- * Adds Grok's private prompt-completion fallback around a standards-only ACP runtime.
- * The underlying runtime remains unaware of xAI methods and metadata.
- */
-export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletionRuntime")(
-  function* (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"]) {
-    const activeSessionIdRef = yield* Ref.make<string | undefined>(undefined);
-    const pendingRef = yield* Ref.make<ReadonlyArray<PendingXAiPromptCompletion>>([]);
-    const completedPromptIdsRef = yield* Ref.make<ReadonlyArray<string>>([]);
-    let nextPromptFallbackId = 0;
-    const allocatePromptFallbackId = Effect.sync(() => {
-      nextPromptFallbackId += 1;
-      return `t3-xai-prompt-${nextPromptFallbackId}`;
-    });
+function promptIdFromResponse(response: EffectAcpSchema.PromptResponse): string | undefined {
+  const meta = response._meta;
+  if (meta === null || typeof meta !== "object") {
+    return undefined;
+  }
+  const promptId = meta.promptId ?? meta.requestId;
+  return typeof promptId === "string" && promptId.length > 0 ? promptId : undefined;
+}
 
-    yield* runtime.handleExtNotification(
-      "_x.ai/session/prompt_complete",
-      XAiPromptCompleteNotification,
-      (notification) =>
-        resolveXAiPromptCompletionFallback({
-          pendingRef,
-          completedPromptIdsRef,
-          notification,
-        }),
-    );
+function normalizeXAiStopReason(value: string | undefined): EffectAcpSchema.StopReason {
+  switch (value) {
+    case "cancelled":
+    case "end_turn":
+    case "max_tokens":
+    case "max_turn_requests":
+    case "refusal":
+      return value;
+    default:
+      return "end_turn";
+  }
+}
 
-    return {
-      ...runtime,
-      start: () =>
-        runtime
-          .start()
-          .pipe(Effect.tap((started) => Ref.set(activeSessionIdRef, started.sessionId))),
-      prompt: (payload) =>
-        Effect.gen(function* () {
-          const sessionId = yield* Ref.get(activeSessionIdRef);
-          if (sessionId === undefined) {
-            return yield* runtime.prompt(payload);
-          }
-
-          const promptId = yield* allocatePromptFallbackId;
-          const fallback = yield* registerXAiPromptCompletionFallback(
-            pendingRef,
-            sessionId,
-            promptId,
-          );
-          const requestPayload = {
-            ...payload,
-            _meta: {
-              ...payload._meta,
-              promptId: fallback.promptId,
-              requestId: fallback.promptId,
-            },
-          } satisfies Omit<EffectAcpSchema.PromptRequest, "sessionId">;
-
-          return yield* Effect.raceFirst(
-            runtime.prompt(requestPayload),
-            Deferred.await(fallback.deferred),
-          ).pipe(
-            Effect.tap((response) =>
-              rememberCompletedXAiPromptId(completedPromptIdsRef, response, fallback.promptId),
-            ),
-            Effect.ensuring(unregisterXAiPromptCompletionFallback(pendingRef, fallback.deferred)),
-          );
-        }),
-      cancel: Ref.get(activeSessionIdRef).pipe(
-        Effect.flatMap((sessionId) =>
-          sessionId === undefined
-            ? runtime.cancel
-            : abortPendingPromptCompletions(pendingRef, sessionId).pipe(
-                Effect.andThen(runtime.cancel),
-              ),
-        ),
-      ),
-    } satisfies AcpSessionRuntime.AcpSessionRuntime["Service"];
-  },
-);
+function promptResponseFromXAi(
+  notification: XAiPromptCompleteNotification,
+): EffectAcpSchema.PromptResponse {
+  const stopReason = normalizeXAiStopReason(notification.stopReason);
+  const meta: Record<string, unknown> = {
+    sessionId: notification.sessionId,
+  };
+  if (notification.stopReason === undefined) {
+    meta[xAiStopReasonMissingMetaKey] = true;
+  }
+  if (notification.promptId !== undefined) {
+    meta.promptId = notification.promptId;
+    meta.requestId = notification.promptId;
+  }
+  if (notification.agentResult !== undefined) {
+    meta.agentResult = notification.agentResult;
+  }
+  return {
+    stopReason,
+    _meta: meta,
+  };
+}
 
 const registerXAiPromptCompletionFallback = (
   pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>,
@@ -436,7 +406,15 @@ const resolveXAiPromptCompletionFallback = ({
                   entry.sessionId === notification.sessionId &&
                   entry.promptId === notification.promptId,
               )
-            : pending.findIndex((entry) => entry.sessionId === notification.sessionId);
+            : (() => {
+                const sessionPendingIndexes = pending.flatMap((entry, entryIndex) =>
+                  entry.sessionId === notification.sessionId ? [entryIndex] : [],
+                );
+                if (sessionPendingIndexes.length === 0) {
+                  return -1;
+                }
+                return sessionPendingIndexes[0] ?? -1;
+              })();
         if (index < 0) {
           return [Effect.void, pending] as const;
         }
@@ -458,6 +436,9 @@ const rememberCompletedXAiPromptId = (
   fallbackPromptId: string,
 ) => {
   const promptId = promptIdFromResponse(response) ?? fallbackPromptId;
+  if (promptId.length === 0) {
+    return Effect.void;
+  }
   return Ref.update(completedPromptIdsRef, (completedPromptIds) => {
     if (completedPromptIds.includes(promptId)) {
       return completedPromptIds;
@@ -466,54 +447,97 @@ const rememberCompletedXAiPromptId = (
   });
 };
 
-function promptIdFromResponse(response: EffectAcpSchema.PromptResponse): string | undefined {
-  const meta = response._meta;
-  if (meta === null || typeof meta !== "object") {
-    return undefined;
-  }
-  const promptId = meta.promptId ?? meta.requestId;
-  return typeof promptId === "string" && promptId.length > 0 ? promptId : undefined;
-}
+/**
+ * Grok-specific ACP runtime wrapper. Races `session/prompt` against root-session
+ * `_x.ai/session/prompt_complete` notifications (sessionId-matched). Subagent
+ * completions on foreign session ids are ignored by the pending-entry gate.
+ */
+export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletionRuntime")(
+  function* (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"]) {
+    let nextPromptFallbackId = 0;
+    const allocatePromptFallbackId = Effect.sync(() => {
+      nextPromptFallbackId += 1;
+      return `t3-xai-prompt-${nextPromptFallbackId}`;
+    });
+    const pendingXAiPromptCompletionsRef = yield* Ref.make<
+      ReadonlyArray<PendingXAiPromptCompletion>
+    >([]);
+    const completedXAiPromptIdsRef = yield* Ref.make<ReadonlyArray<string>>([]);
+
+    yield* runtime.handleExtNotification(
+      "_x.ai/session/prompt_complete",
+      XAiPromptCompleteNotification,
+      (notification) =>
+        resolveXAiPromptCompletionFallback({
+          pendingRef: pendingXAiPromptCompletionsRef,
+          completedPromptIdsRef: completedXAiPromptIdsRef,
+          notification,
+        }).pipe(Effect.catch(() => Effect.void)),
+    );
+
+    return {
+      ...runtime,
+      prompt: (payload) =>
+        Effect.gen(function* () {
+          const started = yield* runtime.start();
+          const promptId = yield* allocatePromptFallbackId;
+          const fallback = yield* registerXAiPromptCompletionFallback(
+            pendingXAiPromptCompletionsRef,
+            started.sessionId,
+            promptId,
+          );
+          const cancelledResponse = promptResponseFromXAi({
+            sessionId: started.sessionId,
+            promptId: fallback.promptId,
+            stopReason: "cancelled",
+            agentResult: null,
+          });
+          const promptRpcFiber = yield* runtime
+            .prompt({
+              ...payload,
+              _meta: {
+                ...payload._meta,
+                promptId: fallback.promptId,
+                requestId: fallback.promptId,
+              },
+            })
+            .pipe(Effect.forkChild);
+          return yield* Effect.raceFirst(
+            Fiber.join(promptRpcFiber).pipe(
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause)
+                  ? Effect.succeed(cancelledResponse)
+                  : Effect.failCause(cause),
+              ),
+            ),
+            Deferred.await(fallback.deferred),
+          ).pipe(
+            Effect.tap((response) =>
+              rememberCompletedXAiPromptId(completedXAiPromptIdsRef, response, fallback.promptId),
+            ),
+            Effect.ensuring(
+              Effect.gen(function* () {
+                yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
+                yield* unregisterXAiPromptCompletionFallback(
+                  pendingXAiPromptCompletionsRef,
+                  fallback.deferred,
+                );
+              }),
+            ),
+          );
+        }),
+      cancel: Effect.gen(function* () {
+        const started = yield* runtime.start();
+        yield* abortPendingPromptCompletions(pendingXAiPromptCompletionsRef, started.sessionId);
+        yield* runtime.cancel;
+      }),
+    } satisfies AcpSessionRuntime.AcpSessionRuntime["Service"];
+  },
+);
 
 export function promptResponseHasMissingXAiStopReason(
   response: EffectAcpSchema.PromptResponse,
 ): boolean {
   const meta = response._meta;
   return meta !== null && typeof meta === "object" && meta[xAiStopReasonMissingMetaKey] === true;
-}
-
-function promptResponseFromXAi(
-  notification: XAiPromptCompleteNotification,
-): EffectAcpSchema.PromptResponse {
-  const stopReason = normalizeXAiStopReason(notification.stopReason);
-  const meta: Record<string, unknown> = {
-    sessionId: notification.sessionId,
-  };
-  if (notification.stopReason === undefined) {
-    meta[xAiStopReasonMissingMetaKey] = true;
-  }
-  if (notification.promptId !== undefined) {
-    meta.promptId = notification.promptId;
-    meta.requestId = notification.promptId;
-  }
-  if (notification.agentResult !== undefined) {
-    meta.agentResult = notification.agentResult;
-  }
-  return {
-    stopReason,
-    _meta: meta,
-  };
-}
-
-function normalizeXAiStopReason(value: string | undefined): EffectAcpSchema.StopReason {
-  switch (value) {
-    case "cancelled":
-    case "end_turn":
-    case "max_tokens":
-    case "max_turn_requests":
-    case "refusal":
-      return value;
-    default:
-      return "end_turn";
-  }
 }
