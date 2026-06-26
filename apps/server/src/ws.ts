@@ -391,13 +391,19 @@ function toAuthAccessStreamEvent(
   }
 }
 
-const makeWsRpcLayer = (
-  currentSession: EnvironmentAuth.AuthenticatedSession,
-  listProviderSkills: (
+interface WsRpcLayerOptions {
+  readonly currentSession: EnvironmentAuth.AuthenticatedSession;
+  readonly listProviderSkills: (
     input: ProviderSkillsListInput,
-  ) => Effect.Effect<ServerProviderSkillsListResult, ServerProviderSkillsListError>,
-  previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
-) =>
+  ) => Effect.Effect<ServerProviderSkillsListResult, ServerProviderSkillsListError>;
+  readonly previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"];
+}
+
+const makeWsRpcLayer = ({
+  currentSession,
+  listProviderSkills,
+  previewAutomationBroker,
+}: WsRpcLayerOptions) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
@@ -1826,7 +1832,11 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session, listProviderSkills, previewAutomationBroker).pipe(
+            makeWsRpcLayer({
+              currentSession: session,
+              listProviderSkills,
+              previewAutomationBroker,
+            }).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(
