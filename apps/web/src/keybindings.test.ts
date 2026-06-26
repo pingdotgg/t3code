@@ -709,11 +709,11 @@ describe("terminalNavigationShortcutData", () => {
   it("maps Option+Arrow on macOS to word movement", () => {
     assert.strictEqual(
       terminalNavigationShortcutData(event({ key: "ArrowLeft", altKey: true }), "MacIntel"),
-      "\u001bb",
+      "\u001b[1;5D",
     );
     assert.strictEqual(
       terminalNavigationShortcutData(event({ key: "ArrowRight", altKey: true }), "MacIntel"),
-      "\u001bf",
+      "\u001b[1;5C",
     );
   });
 
@@ -728,14 +728,23 @@ describe("terminalNavigationShortcutData", () => {
     );
   });
 
-  it("maps Ctrl+Arrow on non-macOS to word movement", () => {
-    assert.strictEqual(
+  it("does not intercept Ctrl+Arrow on non-macOS (let xterm handle natively)", () => {
+    assert.isNull(
       terminalNavigationShortcutData(event({ key: "ArrowLeft", ctrlKey: true }), "Win32"),
-      "\u001bb",
+    );
+    assert.isNull(
+      terminalNavigationShortcutData(event({ key: "ArrowRight", ctrlKey: true }), "Linux"),
+    );
+  });
+
+  it("remaps Alt+Arrow on non-macOS to CSI word movement", () => {
+    assert.strictEqual(
+      terminalNavigationShortcutData(event({ key: "ArrowLeft", altKey: true }), "Win32"),
+      "\u001b[1;5D",
     );
     assert.strictEqual(
-      terminalNavigationShortcutData(event({ key: "ArrowRight", ctrlKey: true }), "Linux"),
-      "\u001bf",
+      terminalNavigationShortcutData(event({ key: "ArrowRight", altKey: true }), "Linux"),
+      "\u001b[1;5C",
     );
   });
 

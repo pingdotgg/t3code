@@ -44,8 +44,8 @@ interface ResolvedShortcutLabelOptions extends ShortcutMatchOptions {
   platform?: string;
 }
 
-const TERMINAL_WORD_BACKWARD = "\u001bb";
-const TERMINAL_WORD_FORWARD = "\u001bf";
+const TERMINAL_WORD_BACKWARD = "\u001b[1;5D";
+const TERMINAL_WORD_FORWARD = "\u001b[1;5C";
 const TERMINAL_LINE_START = "\u0001";
 const TERMINAL_LINE_END = "\u0005";
 const TERMINAL_DELETE_TO_LINE_START = "\u0015";
@@ -505,24 +505,14 @@ export function terminalNavigationShortcutData(
   }
 
   const moveWord = key === "arrowleft" ? TERMINAL_WORD_BACKWARD : TERMINAL_WORD_FORWARD;
-  const moveLine = key === "arrowleft" ? TERMINAL_LINE_START : TERMINAL_LINE_END;
-
-  if (isMacPlatform(platform)) {
-    if (event.altKey && !event.metaKey && !event.ctrlKey) {
-      return moveWord;
-    }
-    if (event.metaKey && !event.altKey && !event.ctrlKey) {
-      return moveLine;
-    }
-    return null;
-  }
-
-  if (event.ctrlKey && !event.metaKey && !event.altKey) {
-    return moveWord;
-  }
 
   if (event.altKey && !event.metaKey && !event.ctrlKey) {
     return moveWord;
+  }
+
+  const moveLine = key === "arrowleft" ? TERMINAL_LINE_START : TERMINAL_LINE_END;
+  if (isMacPlatform(platform) && event.metaKey && !event.altKey && !event.ctrlKey) {
+    return moveLine;
   }
 
   return null;
