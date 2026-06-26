@@ -1,4 +1,14 @@
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, RunId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  RunId,
+  TurnItemId,
+  type OrchestrationV2ProjectedTurnItem,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { Thread } from "../types";
@@ -8,6 +18,7 @@ import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
   createLocalDispatchSnapshot,
+  deriveCommittedServerUserMessageIds,
   deriveComposerSendState,
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
@@ -424,5 +435,105 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
+  });
+});
+
+describe("deriveCommittedServerUserMessageIds", () => {
+  it("tracks only committed user turn items, not assistant rows or projection-only messages", () => {
+    const turnStartId = MessageId.make("message-turn-start");
+    const steerId = MessageId.make("message-steer");
+    const assistantId = MessageId.make("message-assistant");
+    const committedAt = DateTime.makeUnsafe("2026-06-26T17:50:15.180Z");
+    const runId = RunId.make("run:thread:thread-1:ordinal:1");
+    const visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = [
+      {
+        position: 0,
+        visibility: "local",
+        sourceThreadId: threadId,
+        sourceItemId: TurnItemId.make("turn-item:message-turn-start"),
+        item: {
+          id: TurnItemId.make("turn-item:message-turn-start"),
+          threadId,
+          runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "completed",
+          title: null,
+          startedAt: committedAt,
+          completedAt: committedAt,
+          updatedAt: committedAt,
+          createdBy: "user",
+          creationSource: "web",
+          type: "user_message",
+          messageId: turnStartId,
+          inputIntent: "turn_start",
+          text: "start",
+          attachments: [],
+        },
+      },
+      {
+        position: 1,
+        visibility: "local",
+        sourceThreadId: threadId,
+        sourceItemId: TurnItemId.make("turn-item:message-assistant"),
+        item: {
+          id: TurnItemId.make("turn-item:message-assistant"),
+          threadId,
+          runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 2,
+          status: "completed",
+          title: null,
+          startedAt: committedAt,
+          completedAt: committedAt,
+          updatedAt: committedAt,
+          type: "assistant_message",
+          messageId: assistantId,
+          text: "working",
+          streaming: false,
+        },
+      },
+      {
+        position: 2,
+        visibility: "local",
+        sourceThreadId: threadId,
+        sourceItemId: TurnItemId.make("turn-item:message-steer"),
+        item: {
+          id: TurnItemId.make("turn-item:message-steer"),
+          threadId,
+          runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 3,
+          status: "completed",
+          title: null,
+          startedAt: committedAt,
+          completedAt: committedAt,
+          updatedAt: committedAt,
+          createdBy: "user",
+          creationSource: "web",
+          type: "user_message",
+          messageId: steerId,
+          inputIntent: "steer",
+          text: "continue",
+          attachments: [],
+        },
+      },
+    ];
+
+    expect(deriveCommittedServerUserMessageIds(visibleTurnItems)).toEqual(
+      new Set([turnStartId, steerId]),
+    );
   });
 });
