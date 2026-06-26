@@ -1,5 +1,7 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 
+import { grokSubagentLineageInput } from "./grok_subagent_lineage/input.ts";
+import { assertGrokSubagentLineageOutput } from "./grok_subagent_lineage/output.ts";
 import { assertClaudeMessageSteeringOutput } from "./message_steering/claude_output.ts";
 import { assertMessageSteeringOutput } from "./message_steering/codex_output.ts";
 import { assertCursorMessageSteeringOutput } from "./message_steering/cursor_output.ts";
@@ -73,6 +75,21 @@ import {
 } from "./shared.ts";
 
 export const ORCHESTRATOR_REPLAY_FIXTURES = [
+  {
+    name: "grok_subagent_lineage",
+    buildInput: grokSubagentLineageInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("grok"),
+        transcriptFile: new URL("./grok_subagent_lineage/grok_transcript.ndjson", import.meta.url),
+        modelSelection: {
+          ...GROK_MODEL_SELECTION,
+          model: "grok-composer-2.5-fast",
+        },
+        assertOutput: assertGrokSubagentLineageOutput,
+      },
+    ],
+  },
   {
     name: "acp_elicitation",
     buildInput: planQuestionsInput,

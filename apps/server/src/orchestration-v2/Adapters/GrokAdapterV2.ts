@@ -23,6 +23,7 @@ import {
 import {
   extractXAiAskUserQuestionIdentity,
   extractXAiAskUserQuestions,
+  extractXAiAcpSubagentUpdate,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   XAiAskUserQuestionRequest,
@@ -64,7 +65,9 @@ export const GrokProviderCapabilitiesV2 = {
   },
   subagents: {
     ...AcpProviderCapabilitiesV2.subagents,
-    supportsSubagents: false,
+    supportsSubagents: true,
+    exposesSubagentThreadIds: true,
+    emitsSubagentLifecycle: true,
   },
   tools: {
     ...AcpProviderCapabilitiesV2.tools,
@@ -140,6 +143,7 @@ export function makeGrokAdapterV2(options: GrokAdapterV2Options) {
           childProcessSpawner: options.childProcessSpawner,
         })),
     registerExtensions: registerGrokAcpExtensions,
+    extractSubagentUpdate: extractXAiAcpSubagentUpdate,
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
   };
   return makeAcpAdapterV2({
