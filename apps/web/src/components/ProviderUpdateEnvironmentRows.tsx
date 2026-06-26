@@ -16,6 +16,7 @@ import {
   firstRejectedProviderUpdateMessage,
   getProviderUpdateProgressToastView,
   getProviderUpdateSidebarPillView,
+  isTerminalProviderUpdatePhase,
   resolveEnvironmentUpdateRowStatus,
   type LocalEnvironmentUpdateGroup,
   type LocalProviderUpdateOutcome,
@@ -264,7 +265,18 @@ export function ProviderUpdateEnvironmentRows({
           providers: collectProviderUpdateOutcomeSnapshots(results),
           providerCount,
         });
-        setResultByEnvironment((previous) => new Map(previous).set(environmentId, view));
+        // Only persist a terminal outcome. A non-terminal ("running"/"initial")
+        // view means this dispatch could not confirm completion — e.g. a snapshot
+        // came back without its targeted instance (collectProviderUpdateOutcome-
+        // Snapshots drops null providers), which happens when the command is
+        // interrupted as a second backend connects and supersedes the in-flight
+        // update. A stored view never re-polls, so persisting it would pin the
+        // row's spinner forever once the pending flag expires. Drop it and let
+        // the live per-environment provider state (pill) plus the pending expiry
+        // drive the row, so it self-heals to whatever the backend actually did.
+        if (isTerminalProviderUpdatePhase(view.phase)) {
+          setResultByEnvironment((previous) => new Map(previous).set(environmentId, view));
+        }
       } catch (error) {
         setErrorByEnvironment((previous) =>
           new Map(previous).set(

@@ -30,6 +30,17 @@ export interface ProviderUpdateToastView {
   readonly dismissAfterVisibleMs?: number;
 }
 
+/**
+ * Terminal update phases — outcomes that are safe to persist as a one-shot row
+ * result. A non-terminal ("initial"/"running") snapshot never re-polls itself,
+ * so storing one pins an update row's spinner indefinitely once its pending flag
+ * expires; such phases must be dropped in favor of the live per-environment
+ * provider state instead of being persisted.
+ */
+export function isTerminalProviderUpdatePhase(phase: ProviderUpdateToastPhase): boolean {
+  return phase === "succeeded" || phase === "failed" || phase === "unchanged";
+}
+
 export type ProviderUpdateSidebarPillTone = "loading" | "warning" | "error" | "success";
 
 export interface ProviderUpdateSidebarPillView {

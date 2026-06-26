@@ -26,6 +26,7 @@ import {
   getSingleProviderUpdateProgressToastView,
   hasOneClickUpdateProviderCandidate,
   isProviderUpdateCandidate,
+  isTerminalProviderUpdatePhase,
   localEnvironmentUpdateNotificationKey,
   parseWslDistroFromInstanceId,
   providerUpdateNotificationKey,
@@ -985,6 +986,25 @@ describe("provider update launch notification logic", () => {
       expect(parseWslDistroFromInstanceId("wsl:")).toBeNull();
       expect(parseWslDistroFromInstanceId("ssh:host")).toBeNull();
       expect(parseWslDistroFromInstanceId(undefined)).toBeNull();
+    });
+  });
+
+  describe("isTerminalProviderUpdatePhase", () => {
+    it("treats succeeded/failed/unchanged as terminal", () => {
+      expect(isTerminalProviderUpdatePhase("succeeded")).toBe(true);
+      expect(isTerminalProviderUpdatePhase("failed")).toBe(true);
+      expect(isTerminalProviderUpdatePhase("unchanged")).toBe(true);
+    });
+
+    it("treats running/initial as non-terminal so they are not persisted", () => {
+      // The per-environment update row uses this to decide what to store. A
+      // "running"/"initial" snapshot never re-polls, so persisting it would pin
+      // the row's spinner forever once pending clears (see the
+      // resolveEnvironmentUpdateRowStatus "keeps a non-terminal result on
+      // loading even after pending clears" case). Dropping these lets the live
+      // per-environment provider state drive the row so it self-heals.
+      expect(isTerminalProviderUpdatePhase("running")).toBe(false);
+      expect(isTerminalProviderUpdatePhase("initial")).toBe(false);
     });
   });
 
