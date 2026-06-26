@@ -26,6 +26,9 @@ export class RepositoryIdentityResolver extends Context.Service<
   RepositoryIdentityResolver,
   {
     readonly resolve: (cwd: string) => Effect.Effect<RepositoryIdentity | null>;
+    readonly resolveMany: (
+      cwds: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyArray<RepositoryIdentity>>;
   }
 >()("t3/project/RepositoryIdentityResolver") {}
 
@@ -166,7 +169,30 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     return yield* Cache.get(repositoryIdentityCache, cacheKey);
   });
 
-  return RepositoryIdentityResolver.of({ resolve });
+  const resolveMany: RepositoryIdentityResolver["Service"]["resolveMany"] = Effect.fn(
+    "RepositoryIdentityResolver.resolveMany",
+  )(function* (cwds) {
+    const seen = new Set<string>();
+    const uniqueCwds = cwds.filter((cwd) => {
+      if (seen.has(cwd)) return false;
+      seen.add(cwd);
+      return true;
+    });
+    const identities = yield* Effect.forEach(uniqueCwds, resolve, {
+      concurrency: 4,
+    });
+    const result: RepositoryIdentity[] = [];
+    const seenKeys = new Set<string>();
+    for (const identity of identities) {
+      if (identity === null) continue;
+      if (seenKeys.has(identity.canonicalKey)) continue;
+      seenKeys.add(identity.canonicalKey);
+      result.push(identity);
+    }
+    return result;
+  });
+
+  return RepositoryIdentityResolver.of({ resolve, resolveMany });
 });
 
 export const layer = Layer.effect(RepositoryIdentityResolver, make()).pipe(

@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-Repo Workspaces — Requirements &amp; Implementation Plan</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1d212b; --ink: #d7dce5;
+    --muted: #8b94a7; --line: #2a2f3a; --accent: #5b9dff; --accent2: #7c5cff;
+    --green: #46c98b; --amber: #e0b341; --red: #e05a6b; --code: #ffd9a0;
+    --maxw: 980px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.62 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px 120px; }
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(160deg, #14171f, #0f1115);
+    padding: 40px 0 28px;
+  }
+  header.hero .wrap { padding-bottom: 0; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 8px; letter-spacing: -0.01em; }
+  h2 {
+    font-size: 21px; margin: 44px 0 12px; padding-top: 10px;
+    border-top: 1px solid var(--line); letter-spacing: -0.01em;
+  }
+  h3 { font-size: 16px; margin: 26px 0 8px; color: #eef1f6; }
+  h4 { font-size: 14px; margin: 18px 0 6px; color: #c4cbd8; text-transform: uppercase; letter-spacing: .04em; }
+  p { margin: 10px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .sub { color: var(--muted); font-size: 14px; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  code { background: #20242e; color: var(--code); padding: 1px 6px; border-radius: 5px; font-size: 12.5px; }
+  pre {
+    background: #11141b; border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px; overflow-x: auto; font-size: 12.5px; line-height: 1.55;
+  }
+  pre code { background: none; color: #c9d3e3; padding: 0; }
+  ul, ol { margin: 8px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  blockquote {
+    margin: 14px 0; padding: 10px 16px; border-left: 3px solid var(--accent2);
+    background: var(--panel); color: #c2c9d6; border-radius: 0 8px 8px 0; font-style: italic;
+  }
+  .meta-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr));
+    gap: 10px; margin-top: 18px;
+  }
+  .meta-grid .cell { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .meta-grid .k { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .meta-grid .v { font-size: 14px; margin-top: 2px; }
+  .badge {
+    display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 9px;
+    border-radius: 999px; vertical-align: middle; letter-spacing: .02em;
+  }
+  .b-done { background: rgba(70,201,139,.16); color: var(--green); border: 1px solid rgba(70,201,139,.35); }
+  .b-todo { background: rgba(224,90,107,.14); color: var(--red); border: 1px solid rgba(224,90,107,.32); }
+  .b-partial { background: rgba(224,179,65,.14); color: var(--amber); border: 1px solid rgba(224,179,65,.32); }
+  .b-design { background: rgba(124,92,255,.16); color: #b3a0ff; border: 1px solid rgba(124,92,255,.35); }
+  .b-resolved { background: rgba(91,157,255,.16); color: var(--accent); border: 1px solid rgba(91,157,255,.35); }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  tr:last-child td { border-bottom: none; }
+  td.mono, th.mono { font-family: ui-monospace, monospace; font-size: 12px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin: 16px 0; }
+  .panel.tight { padding: 12px 16px; }
+  .callout { border-left: 3px solid var(--accent); }
+  .callout.warn { border-left-color: var(--amber); }
+  .callout.crux { border-left-color: var(--accent2); }
+  .phase { border: 1px solid var(--line); border-radius: 10px; margin: 18px 0; overflow: hidden; }
+  .phase > .head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--panel2); border-bottom: 1px solid var(--line); }
+  .phase > .head .n { font-size: 12px; color: var(--muted); font-weight: 700; }
+  .phase > .head .t { font-size: 16px; font-weight: 600; }
+  .phase > .head .pick { margin-left: auto; font-size: 12px; color: var(--accent); font-weight: 600; }
+  .phase > .body { padding: 4px 18px 14px; }
+  .toc { columns: 2; column-gap: 28px; font-size: 13.5px; }
+  .toc a { color: #c2c9d6; }
+  nav.toc-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin: 22px 0; }
+  .kbd { background:#262b36; border:1px solid #39414f; border-bottom-width:2px; border-radius:5px; padding:0 6px; font-size:11.5px; }
+  .legend span { margin-right: 14px; }
+  hr.soft { border: none; border-top: 1px dashed var(--line); margin: 22px 0; }
+  .filelist { font-family: ui-monospace, monospace; font-size: 12px; color: #aeb7c7; }
+  .small { font-size: 12.5px; color: var(--muted); }
+  @media print {
+    :root { --bg:#fff; --panel:#f6f7f9; --panel2:#eef0f4; --ink:#15181e; --muted:#5a6271; --line:#d8dce3; }
+    body { font-size: 11pt; } .toc { columns: 2; } pre, code { color:#333; }
+    h2 { page-break-after: avoid; } .phase { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>Multi-Repo Workspaces</h1>
+    <p class="sub">Requirements &amp; phased implementation plan — letting one T3 Code project / thread span several git repositories, defined by a <span class="mono">.code-workspace</span> file.</p>
+    <div class="meta-grid">
+      <div class="cell"><div class="k">Status</div><div class="v"><span class="badge b-partial">Phase 1a + 1b landed · Phases 2–5 to build</span></div></div>
+      <div class="cell"><div class="k">Revised</div><div class="v">2026-06-17 — all decisions resolved (§5, §12)</div></div>
+      <div class="cell"><div class="k">Primary issue</div><div class="v"><a href="https://github.com/pingdotgg/t3code/issues/1453">#1453</a> — multi-repo projects</div></div>
+      <div class="cell"><div class="k">Prototype branch</div><div class="v mono">multi-repo-root-rebased</div></div>
+      <div class="cell"><div class="k">Origin fork</div><div class="v"><a href="https://github.com/func0der/t3code/tree/feat/multi-repo-root">func0der/feat/multi-repo-root</a></div></div>
+      <div class="cell"><div class="k">Related</div><div class="v">#2441 · #480 · #923 · #1020</div></div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<nav class="toc-wrap">
+  <div class="toc">
+    <a href="#summary">1. Executive summary</a><br>
+    <a href="#problem">2. Problem &amp; use cases</a><br>
+    <a href="#current">3. Current architecture (single-root)</a><br>
+    <a href="#foundation">4. Phase 1 — foundation (landed)</a><br>
+    <a href="#decisions">5. Design decisions (resolved)</a><br>
+    <a href="#model-shift">6. The model shift: <span class="mono">.code-workspace</span></a><br>
+    <a href="#goals">7. Goals &amp; non-goals</a><br>
+    <a href="#plan">8. Phased implementation plan</a><br>
+    <a href="#model">9. Data model &amp; contracts</a><br>
+    <a href="#testing">10. Testing strategy</a><br>
+    <a href="#risks">11. Risks &amp; rollout</a><br>
+    <a href="#questions">12. Remaining questions</a><br>
+    <a href="#appendix">13. Appendix — touchpoint index</a><br>
+  </div>
+</nav>
+
+<p class="legend small">Legend:
+  <span class="badge b-done">done</span>
+  <span class="badge b-partial">partial</span>
+  <span class="badge b-todo">to build</span>
+  <span class="badge b-resolved">decided</span>
+  <span class="badge b-design">open</span>
+</p>
+
+<div class="panel callout crux">
+  <strong>Revision note (v2).</strong> Design decisions D1–D4 are now resolved (§5). The biggest change:
+  <strong>roots come from a <span class="mono">.code-workspace</span> file, not folder discovery</strong> (D4). Repos are
+  arbitrary absolute paths ("cousins") with <em>no guaranteed common parent</em>, which retires the prototype's
+  scan/auto-detect path and reshapes the workspace anchor and agent-cwd model. Details in §6.
+</div>
+
+<!-- ============================================================= -->
+<h2 id="summary">1. Executive summary</h2>
+<p>
+  T3 Code today assumes <strong>one project = one git repository = one working directory</strong> at every
+  layer (orchestration, VCS, checkpointing, file browser, agent cwd). Users who work across several repos at
+  once — a feature spanning a frontend and a backend, a ticket touching multiple microservices — want a
+  <em>single thread</em> whose agent can edit across all of them and whose diff/status view shows changes from
+  each.
+</p>
+<p>
+  A community fork (<span class="mono">func0der/feat/multi-repo-root</span>) built the <strong>data
+  foundation</strong>: a project can record an array of <code>repoRoots</code> plus per-root
+  <code>repositoryIdentities</code>. It is <strong>rebased onto current <span class="mono">main</span>,
+  typechecks clean, and passes the suite</strong>. Its <em>discovery</em> mechanism (scan a parent folder for
+  sibling repos) was a reasonable v1 guess but is <strong>superseded</strong> by the resolved design: the source
+  of truth is now a user-managed <span class="mono">.code-workspace</span> file.
+</p>
+<div class="panel callout">
+  <strong>Where we are:</strong> the data spine (the <code>repoRoots</code> array, migration, identity
+  resolution, contract fields) is correct and kept. Two things change: <strong>(a) how roots are
+  sourced</strong> — parse a <span class="mono">.code-workspace</span> file instead of scanning a parent; and
+  <strong>(b) every behavioral consumer must stop collapsing the array to <code>repoRoots[0]</code></strong> and
+  instead fan out across all roots (VCS, diff, checkpoints, agent context, worktrees). That fan-out is the bulk
+  of the remaining work.
+</div>
+
+<!-- ============================================================= -->
+<h2 id="problem">2. Problem &amp; use cases</h2>
+<p>From <a href="https://github.com/pingdotgg/t3code/issues/1453">#1453</a>, the canonical request:</p>
+<blockquote>
+  "I work on them through a VS Code workspace so the agents can make changes across all repositories…
+  I can add the parent folder containing all projects, but then the git changes are not visible."
+</blockquote>
+<p>
+  Note the user's own framing: <em>a VS Code workspace</em>. That is exactly the <span class="mono">.code-workspace</span>
+  model we are adopting. Representative voices:
+</p>
+<ul>
+  <li><strong>Microservice work</strong> — "tickets spanning multiple micro-services to be feature complete."</li>
+  <li><strong>Frontend + backend in one chat</strong> — "2 different folders / different repos… work in them in the same chat."</li>
+  <li><strong>Cousin layout</strong> (this design's driving case) — repos are <em>not</em> under a shared parent; they sit in
+    different trees and only share a grandparent, so "add the parent folder" cannot express the set. A
+    <span class="mono">.code-workspace</span> file lists them explicitly by absolute (or relative) path.</li>
+</ul>
+<p>Adjacent issues sharing the single-root root cause, partly or wholly resolved:</p>
+<table>
+  <tr><th>Issue</th><th>Title</th><th>Relationship</th></tr>
+  <tr><td class="mono"><a href="https://github.com/pingdotgg/t3code/issues/2441">#2441</a></td><td>Diffs/checkpoints not shown when cwd is a subdirectory of a git repo</td><td>The single-root assumption biting users today; falls out of per-root resolution.</td></tr>
+  <tr><td class="mono"><a href="https://github.com/pingdotgg/t3code/issues/480">#480</a></td><td>Show submodule changes in git diff view</td><td>Submodule flavor of multi-root diff aggregation.</td></tr>
+  <tr><td class="mono"><a href="https://github.com/pingdotgg/t3code/issues/923">#923</a></td><td>@-mention files in other projects</td><td>The agent-input side of cross-repo context.</td></tr>
+  <tr><td class="mono"><a href="https://github.com/pingdotgg/t3code/issues/1020">#1020</a></td><td>Monorepo nested app favicons</td><td>Multi-root identity/metadata resolution.</td></tr>
+</table>
+<div class="panel callout warn">
+  <strong>Explicitly out of scope — not the same feature:</strong>
+  <a href="https://github.com/pingdotgg/t3code/issues/2293">#2293</a> "Spaces" and
+  <a href="https://github.com/pingdotgg/t3code/issues/289">#289</a> "folders of projects" are sidebar
+  <em>grouping</em> features; they do not let one thread span multiple repos. Keep them separate.
+</div>
+
+<!-- ============================================================= -->
+<h2 id="current">3. Current architecture (single-root)</h2>
+<p>Every layer keys off a single directory. The chokepoints to change:</p>
+<table>
+  <tr><th>Concern</th><th>Where</th><th>Today</th></tr>
+  <tr><td>Project model</td><td class="mono">packages/contracts/src/orchestration.ts</td><td><code>OrchestrationProject.workspaceRoot: string</code> — single path.</td></tr>
+  <tr><td>Thread cwd resolution</td><td class="mono">apps/server/src/checkpointing/Utils.ts</td><td><code>resolveThreadWorkspaceCwd()</code> → <code>worktreePath ?? workspaceRoot</code>, one path.</td></tr>
+  <tr><td>Agent session launch</td><td class="mono">orchestration/Layers/ProviderCommandReactor.ts:469,482</td><td><code>effectiveCwd</code> → single <code>cwd</code> passed to <code>startSession()</code>.</td></tr>
+  <tr><td>VCS driver resolution</td><td class="mono">apps/server/src/vcs/VcsDriverRegistry.ts</td><td><code>registry.resolve({ cwd })</code> → one driver per directory.</td></tr>
+  <tr><td>Live git status</td><td class="mono">apps/server/src/vcs/VcsStatusBroadcaster.ts:69-75</td><td><code>getStatus/refreshStatus(cwd)</code> — cached per normalized cwd.</td></tr>
+  <tr><td>Checkpoint capture / diff</td><td class="mono">checkpointing/Layers/CheckpointStore.ts · CheckpointDiffQuery.ts</td><td>All ops take a single <code>cwd</code>; one VCS handle per call.</td></tr>
+  <tr><td>Worktrees</td><td class="mono">vcs/GitVcsDriverCore.ts · persistence ProjectionThreads.ts</td><td>One <code>worktreePath</code> per thread.</td></tr>
+  <tr><td>File browser / search</td><td class="mono">workspace/Services/WorkspaceEntries.ts · WorkspacePaths.ts</td><td>List/search/invalidate keyed by one <code>cwd</code>; paths validated within one root.</td></tr>
+  <tr><td>Asset URLs (file preview)</td><td class="mono">apps/server/src/assets/AssetAccess.ts</td><td><code>workspace-file</code> resolved relative to one <code>workspaceRoot</code>.</td></tr>
+</table>
+
+<!-- ============================================================= -->
+<h2 id="foundation">4. Phase 1 — foundation (landed on prototype branch)</h2>
+<p>
+  Status on <span class="mono">multi-repo-root-rebased</span>:
+  <span class="badge b-done">typecheck ✓</span> <span class="badge b-done">tests ✓</span>.
+  The data spine is correct and kept; the discovery UX is replaced (see §6).
+</p>
+<h4>Kept — the data spine</h4>
+<ul>
+  <li><code>repoRoots: string[]</code> and <code>repositoryIdentities: RepositoryIdentity[]</code> on the project, threaded command → decider → projector → projection → persistence → snapshot query → web store. Singular <code>repositoryIdentity</code> retained as <code>identities[0]</code>.</li>
+  <li>Migration <span class="mono">033_ProjectionProjectsRepoRoots</span> — <code>repo_roots TEXT DEFAULT '[]'</code>, backfilled <code>json_array(workspace_root)</code>; existing projects normalize to single-root.</li>
+  <li><code>RepositoryIdentityResolver.resolveMany()</code> — resolves all roots, dedupes by <code>canonicalKey</code>.</li>
+  <li><code>ProjectMetaUpdateCommand.repoRoots</code> already exists → enables user-managed root editing (D4/D5).</li>
+</ul>
+<h4>Superseded — folder discovery</h4>
+<ul>
+  <li><code>WorkspaceGitScan</code> service + <code>filesystem.scanGitRepos</code> RPC + the "≥2 sibling repos → auto multi-root" toast. Replaced by a <span class="mono">.code-workspace</span> reader (§6, Phase 1b). The scan code may be <strong>dropped or repurposed</strong> as an optional "import these sibling repos into a workspace file" helper — not the primary path.</li>
+</ul>
+<div class="panel callout warn">
+  <strong>The collapse points (still to fix).</strong> Every behavioral read does
+  <code>worktreePath ?? repoRoots[0] ?? workspaceRoot</code>: <code>resolveThreadWorkspaceCwd</code>,
+  <code>CheckpointDiffQuery</code> (90/198), <code>ProviderRuntimeIngestion</code> (capture). These are the seams
+  Phases 2–4 replace with fan-out.
+</div>
+
+<!-- ============================================================= -->
+<h2 id="decisions">5. Design decisions <span class="badge b-resolved">resolved</span></h2>
+<p>Settled with the team. Each drives the phases below.</p>
+
+<div class="phase">
+  <div class="head"><span class="n">D1</span><span class="t">Agent working directory across N roots</span><span class="pick">→ C: per-root context</span></div>
+  <div class="body">
+    <p><strong>Decision: per-root agent context.</strong> Rather than pin a single cwd, T3 hands the provider the
+    full root set via a <strong>generated workspace manifest</strong> (a resolved <span class="mono">.code-workspace</span>)
+    so the agent indexes and edits each repo directly. This is the only option that survives the cousin layout —
+    there is no common parent to launch in.</p>
+    <ul>
+      <li>cwd remains a stable anchor (the <span class="mono">.code-workspace</span> file's directory) for providers that require one, but the <em>authoritative</em> root list is the manifest.</li>
+      <li>In worktree mode (D3) the manifest's folder paths point at the per-root <em>worktrees</em>, not the originals.</li>
+    </ul>
+    <p><strong>Per-provider reality (verified in the protocol schemas):</strong> there is no single clean field
+    both agents accept for "multiple roots." T3 already spawns both provider CLIs as child processes
+    (<code>ChildProcessSpawner</code>), so launch flags are available. Abstract behind a
+    "workspace manifest → provider launch args/RPCs" adapter:</p>
+    <table>
+      <tr><th>Provider</th><th>Session cwd</th><th>Multi-root mechanism</th></tr>
+      <tr><td><strong>Codex</strong> (app-server)</td><td>single <code>cwd</code> per conversation</td><td>Protocol has real multi-root affordances: <code>skills/extraRoots/set { roots: string[] }</code>, <code>fileSearch { roots: string[] }</code>, <code>hooks/list { cwds: string[] }</code>. Register extra roots after session start.</td></tr>
+      <tr><td><strong>Claude</strong> (ACP)</td><td><code>session/new</code> carries one <code>cwd</code> (absolute) + <code>mcpServers</code> — <em>no</em> multi-dir field</td><td>Use the Claude Code CLI <code>--add-dir &lt;root&gt;</code> <em>launch flag</em> (one per extra root) when T3 spawns the agent process. Process-level, not per-session. <code>_meta</code> exists but agents "MUST NOT make assumptions."</td></tr>
+    </table>
+    <p class="small"><strong>Decided (Q6): native.</strong> Codex gets multi-root via RPCs (<code>extraRoots</code>/search <code>roots</code>); Claude gets it via <code>--add-dir</code> launch flags. Both degrade to single-cwd (anchor) if the mechanism is unavailable.</p>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="head"><span class="n">D2</span><span class="t">Per-root checkpoint refs</span><span class="pick">→ normalized child table</span></div>
+  <div class="body">
+    <p><strong>Decision: a child table</strong> (e.g. <span class="mono">projection_checkpoint_refs(checkpoint_id, repo_root, ref)</span>),
+    "unless it becomes too cumbersome." Queryable, indexable, and a clean fan-out per root. A checkpoint is the
+    set of its per-root rows; diff = union of per-root diffs grouped by repo; restore reverts each root's ref.
+    Single-root keeps one row — no special-casing.</p>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="head"><span class="n">D3</span><span class="t">Worktrees × multi-root</span><span class="pick">→ worktree fan-out</span></div>
+  <div class="body">
+    <p><strong>Decision: fan out.</strong> An isolated run creates <strong>one worktree per repoRoot</strong>,
+    grouped under a per-thread directory; the generated manifest (D1) points the agent at those worktrees so
+    diffs/checkpoints operate on the isolated copies. Promotes worktree fan-out from "deferred" to a first-class
+    phase (Phase 4).</p>
+    <ul>
+      <li>Thread state moves from one <code>worktreePath</code> to a per-root map <code>{ repoRoot → worktreePath }</code>.</li>
+      <li>Create/remove fan out and are transactional-ish: partial failure must clean up created worktrees.</li>
+      <li><strong>Placement (decided):</strong> reuse the existing <code>config.worktreesDir</code> = <code>&lt;T3_HOME&gt;/worktrees</code> (already created at startup in <span class="mono">apps/server/src/config.ts:95</span>), grouped per thread + per repo, e.g. <code>&lt;worktreesDir&gt;/&lt;projectId&gt;/&lt;threadId&gt;/&lt;repoName&gt;</code>. Base stays configurable via <code>T3_HOME</code> (aligns with <a href="https://github.com/pingdotgg/t3code/issues/1878">#1878</a>).</li>
+    </ul>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="head"><span class="n">D4</span><span class="t">How roots are defined</span><span class="pick">→ .code-workspace, user-managed</span></div>
+  <div class="body">
+    <p><strong>Decision: no folder discovery.</strong> The set of roots is defined by a VS Code
+    <span class="mono">.code-workspace</span> file, which the user manages. This is the central design change —
+    see §6 for the full model. Rationale: real layouts have repos as <em>cousins</em> (different trees, only a
+    grandparent in common), which a parent-folder scan structurally cannot express; the
+    <span class="mono">.code-workspace</span> file already exists in users' VS Code flow and lists folders
+    explicitly.</p>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="head"><span class="n">D5</span><span class="t">Root management UX</span><span class="pick">→ edit the workspace file</span></div>
+  <div class="body">
+    <p>"Manage" = view the workspace's folders, add/remove a folder, and re-resolve. Since the
+    <span class="mono">.code-workspace</span> is the source of truth, T3's management UI round-trips to that file
+    (and/or re-reads it when it changes on disk). The command plumbing
+    (<code>ProjectMetaUpdateCommand.repoRoots</code>) already exists.</p>
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2 id="model-shift">6. The model shift: <span class="mono">.code-workspace</span> as source of truth</h2>
+<p>
+  A VS Code <span class="mono">.code-workspace</span> file is JSON-with-comments listing folders:
+</p>
+<pre><code>// my-feature.code-workspace
+{
+  "folders": [
+    { "path": "/Users/me/work/backend" },        // absolute
+    { "path": "../frontend", "name": "Web UI" },  // relative to this file
+    { "path": "/Users/me/oss/shared-lib" }        // a cousin, different tree
+  ],
+  "settings": { }
+}</code></pre>
+<h4>What changes conceptually</h4>
+<ul>
+  <li><strong>No common-parent assumption.</strong> Roots are arbitrary absolute paths. <code>workspaceRoot</code>
+    stops meaning "the parent of the repos" and becomes the <strong>anchor = the directory containing the
+    <span class="mono">.code-workspace</span> file</strong> (always exists; keeps the column non-null). A new
+    optional <code>workspaceFile</code> field stores the file path.</li>
+  <li><strong>Roots = resolved folders.</strong> Parse <code>folders[]</code>, resolve each <code>path</code>
+    (relative → against the file's dir; absolute → as-is). Among resolved folders, the <em>git</em> ones become
+    <code>repoRoots</code> for VCS/diff/checkpoint purposes; non-git folders remain browsable and agent-visible
+    but contribute no diff/status.</li>
+  <li><strong>User-managed.</strong> Editing the file (in VS Code or via T3) changes the root set. T3 re-reads on
+    load and on add; the management UI writes back to the file.</li>
+  <li><strong>Add-project flow</strong> gains an "Open <span class="mono">.code-workspace</span>" source (and/or
+    "create a workspace from these folders"), replacing the parent-scan path.</li>
+</ul>
+<div class="panel callout">
+  <strong>Reader requirements:</strong> tolerate comments + trailing commas (JSONC); resolve relative/absolute
+  paths; handle missing/renamed folders gracefully (surface, don't crash); <strong>re-read on load</strong>
+  (Q4 — no live file-watching in v1). The file is the <strong>source of truth</strong> (Q2): a small
+  <code>WorkspaceFile</code> service owns parse <em>and serialize</em> — T3's root-management UI writes back to
+  the file, round-tripping unknown keys like <code>settings</code>.
+</div>
+<div class="panel callout warn">
+  <strong>Prototype impact:</strong> the live add-project flow we verified (folder scan → <code>repo_roots</code>)
+  is <em>superseded</em>. The persisted <code>repo_roots</code> shape is unchanged, so Phases 2–4 are unaffected,
+  but the entry point and the §4 "verified live" demo must be re-done against a <span class="mono">.code-workspace</span> flow.
+</div>
+
+<!-- ============================================================= -->
+<h2 id="goals">7. Goals &amp; non-goals</h2>
+<div class="panel tight">
+  <h4>Goals</h4>
+  <ul>
+    <li>A project is defined by a <span class="mono">.code-workspace</span> file; its thread spans all listed repos (cousins, arbitrary paths).</li>
+    <li>The agent reads/edits across all roots via a generated per-root manifest (D1).</li>
+    <li>Diff &amp; live status show changes from <em>every</em> root, grouped by repo.</li>
+    <li>Checkpoints capture/restore across all roots per turn (D2 child table).</li>
+    <li>Isolated runs fan out worktrees, one per root (D3).</li>
+    <li>File browser, search, and <code>@</code>-mentions span the roots (#923).</li>
+    <li>Fixes <a href="https://github.com/pingdotgg/t3code/issues/2441">#2441</a> via per-root resolution.</li>
+    <li>Existing single-root projects keep working unchanged.</li>
+  </ul>
+</div>
+<div class="panel tight">
+  <h4>Non-goals (v1)</h4>
+  <ul>
+    <li>Cross-repo <em>atomic</em> commit / coordinated PR (commit per repo; see §12 — unanswered).</li>
+    <li>Authoring full VS Code <span class="mono">.code-workspace</span> semantics (only <code>folders[]</code> is consumed; <code>settings</code>/extensions are preserved but ignored).</li>
+    <li>Sidebar grouping / Spaces (<a href="https://github.com/pingdotgg/t3code/issues/2293">#2293</a>).</li>
+    <li>Per-root provider/model configuration.</li>
+  </ul>
+</div>
+
+<!-- ============================================================= -->
+<h2 id="plan">8. Phased implementation plan</h2>
+<p class="small">Target: a fresh design branch off <span class="mono">main</span>, cherry-picking the kept data spine from <span class="mono">multi-repo-root-rebased</span>.</p>
+
+<div class="phase">
+  <div class="head"><span class="n">Phase 1a</span><span class="t">Adopt the data spine</span><span class="badge b-done" style="margin-left:auto">landed</span></div>
+  <div class="body">
+    <p>Keep the fork's model/migration/identity work (§4). Drop or quarantine the folder-scan discovery. Acceptance: typecheck + suite green; single-root behavior identical; <code>repo_roots</code> backfilled.</p>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="head"><span class="n">Phase 1b</span><span class="t">.code-workspace as source of truth</span><span class="badge b-done" style="margin-left:auto">landed</span></div>
+  <div class="body">
+    <p>Replace discovery with a workspace-file model (D4).</p>
+    <ul>
+      <li>New <code>WorkspaceFile</code> service: parse JSONC, resolve <code>folders[]</code> → absolute roots, classify git vs non-git, serialize back (preserve unknown keys).</li>
+      <li>Add <code>workspaceFile?: string</code> to the project; redefine <code>workspaceRoot</code> as the file's dir; derive <code>repoRoots</code> from resolved git folders.</li>
+      <li>Add-project source: "Open <span class="mono">.code-workspace</span>" (file picker) + optional "create workspace from folders."</li>
+      <li>Re-read on load; surface missing/renamed folders.</li>
+    </ul>
+    <p class="small"><strong>Acceptance:</strong> opening a <span class="mono">.code-workspace</span> with cousin repos creates one project whose <code>repoRoots</code> are the resolved git folders; non-git folders listed but not in <code>repoRoots</code>.</p>
+    <div class="panel callout tight">
+      <strong>Landed.</strong> Shipped end-to-end and user-reachable:
+      <ul>
+        <li><code>WorkspaceFile</code> service + reader (<span class="mono">apps/server/src/workspace/{Services,Layers}/WorkspaceFile.ts</span>): JSONC parse, folder resolution (relative/absolute/cousin), git classification, serialize-back preserving unknown keys — 6 unit tests.</li>
+        <li><code>workspaceFile?: string</code> threaded through contracts → decider → projector → projection → persistence; migration <span class="mono">034_ProjectionProjectsWorkspaceFile</span>; surfaced in the web store.</li>
+        <li>RPC <code>filesystem.readWorkspaceFile</code> + <code>WorkspaceFileLive</code> wired into the runtime.</li>
+        <li>Reusable desktop <code>pickFile</code> dialog (extension filters) across the IPC/preload/localApi chain.</li>
+        <li>"Open <span class="mono">.code-workspace</span>" entry point in <span class="mono">CommandPalette.tsx</span> → pick → resolve → <code>project.create</code> with <code>workspaceFile</code> + resolved <code>repoRoots</code>; surfaces missing folders.</li>
+      </ul>
+      <strong>Deferred (by design):</strong> re-read on load and the management/round-trip write UI move to <strong>Phase 5</strong> (D5); the <code>WorkspaceFile.withFolders</code>/<code>write</code> serialize path exists but is not yet wired to a consumer.
+    </div>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="head"><span class="n">Phase 2</span><span class="t">VCS / diff / status aggregation</span><span class="badge b-todo" style="margin-left:auto">to build</span></div>
+  <div class="body">
+    <p>Fan git surfaces out over <code>repoRoots</code> (arbitrary absolute paths). <em>Makes "git changes visible" true.</em> D2.</p>
+    <h4>Server</h4>
+    <ul>
+      <li><code>resolveThreadRepoRoots(thread, project)</code> returns the full list (worktree-aware once Phase 4 lands); replace the <code>[0]</code> collapse in <code>checkpointing/Utils.ts</code>, <code>CheckpointDiffQuery.ts</code>, <code>ProviderRuntimeIngestion.ts</code>.</li>
+      <li><code>projection_checkpoint_refs</code> child table (D2); <code>CheckpointStore</code> + <code>CheckpointReactor</code> capture/diff/restore per root; one aggregated receipt per turn.</li>
+      <li><code>VcsStatusBroadcaster</code>: workspace-level <code>refreshStatus(projectId)</code> mapping over roots; cache key (project, root).</li>
+    </ul>
+    <h4>Contracts / web</h4>
+    <ul>
+      <li>Diff + status payloads gain per-root grouping <code>{ root, displayName, files[] }[]</code>; diff panel renders repo section headers.</li>
+    </ul>
+    <p class="small"><strong>Acceptance:</strong> a turn editing two cousin repos shows both in the diff; checkpoint restore reverts both. Fixes #2441.</p>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="head"><span class="n">Phase 3</span><span class="t">Agent context + file surfaces</span><span class="badge b-todo" style="margin-left:auto">to build</span></div>
+  <div class="body">
+    <p>Per-root agent context (D1) and root-aware file UIs.</p>
+    <ul>
+      <li><strong>Workspace manifest generator</strong>: build a resolved manifest from <code>repoRoots</code> (or worktree paths in Phase 4) feeding a per-provider adapter — <strong>Codex</strong>: <code>skills/extraRoots/set</code> + search <code>roots</code>; <strong>Claude</strong>: <code>--add-dir &lt;root&gt;</code> launch flags (Q6 = native).</li>
+      <li><code>ProviderCommandReactor</code>: launch with the manifest; cwd = anchor (workspace-file dir); degrade to single-cwd where a provider lacks the mechanism.</li>
+      <li><code>WorkspaceEntries</code> / <code>WorkspacePaths</code>: accept multiple roots; list/search union; path validation allows any root.</li>
+      <li><code>AssetAccess</code>: resolve <code>workspace-file</code> against whichever root contains it.</li>
+      <li><code>@</code>-mentions index across roots (#923).</li>
+    </ul>
+    <p class="small"><strong>Acceptance:</strong> agent edits a file in a cousin repo from one thread; <code>@</code>-mention finds files in any root; preview opens cross-root files.</p>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="head"><span class="n">Phase 4</span><span class="t">Worktree fan-out</span><span class="badge b-todo" style="margin-left:auto">to build</span></div>
+  <div class="body">
+    <p>Isolated runs across all roots (D3).</p>
+    <ul>
+      <li>Thread state: <code>worktreePath</code> → <code>{ repoRoot → worktreePath }</code> (persistence + projection).</li>
+      <li><code>vcs.createWorktree</code> / <code>GitVcsDriverCore</code>: fan out create/remove; clean up on partial failure; choose a per-thread grouping dir.</li>
+      <li>Manifest generator (Phase 3) targets the worktree paths when in worktree mode.</li>
+      <li>Diff/checkpoint resolution (Phase 2) prefers the per-root worktree.</li>
+    </ul>
+    <p class="small"><strong>Acceptance:</strong> starting an isolated run creates N worktrees; the agent works in them; merging/cleanup removes all N.</p>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="head"><span class="n">Phase 5</span><span class="t">Root management UX</span><span class="badge b-todo" style="margin-left:auto">to build</span></div>
+  <div class="body">
+    <ul>
+      <li>Project settings: list folders (git/non-git), add/remove, re-resolve — round-tripping to the <span class="mono">.code-workspace</span> (D5).</li>
+      <li>Handle external edits to the file (re-read / reconcile).</li>
+      <li>Submodule support (#480) if it falls out of per-root resolution.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2 id="model">9. Data model &amp; contracts</h2>
+<h4>On the branch (kept)</h4>
+<pre><code>// packages/contracts/src/orchestration.ts
+OrchestrationProject {
+  workspaceRoot: string                        // REDEFINED: anchor = .code-workspace file's dir
+  workspaceFile?: string                       // NEW (Phase 1b): path to the .code-workspace
+  repoRoots?: string[]                         // resolved git folders (absolute, cousins OK)
+  repositoryIdentities?: RepositoryIdentity[]  // one per root, deduped
+  repositoryIdentity?: RepositoryIdentity|null // back-compat = identities[0]
+}
+ProjectCreateCommand / ProjectMetaUpdateCommand { …, repoRoots?: string[] }  // user-managed roots
+// DB: projection_projects.repo_roots TEXT DEFAULT '[]'  (migration 033)</code></pre>
+<h4>Proposed</h4>
+<pre><code>// Phase 1b
+OrchestrationProject.workspaceFile?: string          // + projection column
+
+// Phase 2 (D2) — per-root checkpoint refs as a child table
+projection_checkpoint_refs(checkpoint_id, repo_root, ref)   // 1 row per root
+
+// Phase 4 (D3) — per-root worktrees on the thread
+OrchestrationThread.worktrees?: { repoRoot: string, worktreePath: string }[]
+//   (supersedes the single worktreePath; keep worktreePath as a single-root shim)
+
+// Phase 2/3 — per-root grouped payloads
+WorkspaceDiff   = { roots: { root, displayName, files: DiffFile[] }[] }
+WorkspaceStatus = { roots: { root, displayName, status: VcsStatus }[] }</code></pre>
+
+<!-- ============================================================= -->
+<h2 id="testing">10. Testing strategy</h2>
+<ul>
+  <li><strong>WorkspaceFile parser:</strong> JSONC (comments/trailing commas); relative vs absolute resolution; cousin paths; missing/renamed folder; non-git folder classification; serialize round-trip preserving <code>settings</code>.</li>
+  <li><strong>Unit:</strong> <code>resolveThreadRepoRoots</code> (0/1/N roots, worktree map present); identity dedup.</li>
+  <li><strong>Projection:</strong> multi-root snapshots and meta-update round-trips (<code>ProjectionSnapshotQuery.test</code> already carries the new fields).</li>
+  <li><strong>VCS integration:</strong> two cousin repos in different trees; assert diff + status aggregate both; checkpoint capture/restore reverts both. <span class="small">(CI must allow <code>safe.bareRepository</code> — current local git config fails these tests, unrelated to this work.)</span></li>
+  <li><strong>Worktree fan-out:</strong> create N, assert manifest targets them, remove N, assert cleanup on injected partial failure.</li>
+  <li><strong>E2E:</strong> open a <span class="mono">.code-workspace</span> → project with resolved roots → agent turn edits two repos → diff shows both.</li>
+  <li><strong>Migration:</strong> single-root DB upgrades with <code>repo_roots</code> backfilled; behavior unchanged.</li>
+</ul>
+
+<!-- ============================================================= -->
+<h2 id="risks">11. Risks &amp; rollout</h2>
+<table>
+  <tr><th>Risk</th><th>Mitigation</th></tr>
+  <tr><td>Cross-cutting blast radius (VCS, checkpoint, agent, file browser, worktrees)</td><td>Phase behind the single-root path; <code>repoRoots.length ≤ 1</code> mirrors today exactly.</td></tr>
+  <tr><td>No common parent → relative paths &amp; anchor ambiguity</td><td>Anchor = workspace-file dir; all roots stored absolute; manifest is the authoritative root list.</td></tr>
+  <tr><td>Provider differences for multi-root context (D1=C)</td><td>"manifest → launch args" adapter per provider; degrade to anchor-cwd if a provider can't take multiple folders.</td></tr>
+  <tr><td>Worktree fan-out partial failure / orphaned worktrees</td><td>Transactional create with cleanup on error; reconcile/prune on thread teardown.</td></tr>
+  <tr><td><span class="mono">.code-workspace</span> edited externally / folders move</td><td>Re-read on load; surface missing folders; reconcile rather than crash.</td></tr>
+  <tr><td>Prototype's verified flow superseded</td><td>Re-verify E2E against the <span class="mono">.code-workspace</span> entry point before claiming Phase 1 done.</td></tr>
+</table>
+<h4>Rollout</h4>
+<ul>
+  <li>Single-root projects: no behavior change, no user action.</li>
+  <li>Phases independently shippable; each adds visible capability. Worktree fan-out (Phase 4) can trail diff/agent support.</li>
+</ul>
+
+<!-- ============================================================= -->
+<h2 id="questions">12. Remaining questions</h2>
+<table>
+  <tr><th>#</th><th>Question</th><th>State</th></tr>
+  <tr><td>Q1</td><td>Ownership — team owns/maintains this (touches VCS, checkpoints, agent cwd, file browser).</td><td><span class="badge b-resolved">yes — design now, implement on a separate branch</span></td></tr>
+  <tr><td>Q2</td><td>D4a — is the <span class="mono">.code-workspace</span> the single source of truth, or imported once then T3-managed?</td><td><span class="badge b-resolved">source of truth — T3 reads &amp; writes the file</span></td></tr>
+  <tr><td>Q3</td><td>Worktree fan-out placement.</td><td><span class="badge b-resolved"><code>&lt;T3_HOME&gt;/worktrees/…</code>, base configurable (see D3)</span></td></tr>
+  <tr><td>Q4</td><td>Watch the <span class="mono">.code-workspace</span> for live external edits, or re-read on load only?</td><td><span class="badge b-resolved">re-read on load</span></td></tr>
+  <tr><td>Q5</td><td><strong>Commit/PR UX.</strong> Across N repos there is no single git commit. <em>Per-repo</em> = T3 shows N separate commit/push/PR actions (one per changed repo); matches git, simplest. <em>Coordinated</em> = one "commit all" + one "open PRs"; nicer but adds partial-failure handling and still can't be atomic across repos on GitHub.</td><td><span class="badge b-resolved">per-repo for v1</span></td></tr>
+  <tr><td>Q6</td><td><strong>Provider multi-root depth.</strong> No shared protocol field; per-provider (D1 table). <em>Minimal</em> = cwd = anchor, agent discovers roots from manifest content (soft). <em>Native</em> = Codex <code>extraRoots</code>/search <code>roots</code> + Claude <code>--add-dir</code> launch flags (real filesystem multi-root). Degrade to single-cwd where unsupported.</td><td><span class="badge b-resolved">native (Codex RPCs + Claude --add-dir)</span></td></tr>
+</table>
+<p class="small">All design questions resolved — this plan is ready to break into implementation tickets per phase (§8).</p>
+
+<!-- ============================================================= -->
+<h2 id="appendix">13. Appendix — file touchpoint index</h2>
+<div class="panel tight">
+<p class="small">Where the work concentrates, by phase. Paths relative to repo root.</p>
+<table>
+  <tr><th>Layer</th><th class="mono">File</th><th>Phase</th></tr>
+  <tr><td>Contracts — project</td><td class="mono">packages/contracts/src/orchestration.ts</td><td>1a · 1b · 2 · 4</td></tr>
+  <tr><td>Contracts — diff/status</td><td class="mono">packages/contracts/src/git.ts (or new workspaceDiff)</td><td>2</td></tr>
+  <tr><td>Workspace file (NEW)</td><td class="mono">apps/server/src/workspace/{Services,Layers}/WorkspaceFile.ts</td><td>1b</td></tr>
+  <tr><td>Identity</td><td class="mono">apps/server/src/project/Layers/RepositoryIdentityResolver.ts</td><td>1a</td></tr>
+  <tr><td>Persistence</td><td class="mono">persistence/Migrations/033_…RepoRoots.ts · +workspaceFile · +checkpoint_refs · +thread worktrees</td><td>1a · 1b · 2 · 4</td></tr>
+  <tr><td>Root resolution</td><td class="mono">apps/server/src/checkpointing/Utils.ts</td><td>2 · 4</td></tr>
+  <tr><td>Diff</td><td class="mono">checkpointing/Layers/CheckpointDiffQuery.ts</td><td>2</td></tr>
+  <tr><td>Checkpoint store/reactor</td><td class="mono">checkpointing/…/CheckpointStore.ts · orchestration/Layers/CheckpointReactor.ts</td><td>2</td></tr>
+  <tr><td>Live status</td><td class="mono">apps/server/src/vcs/VcsStatusBroadcaster.ts</td><td>2</td></tr>
+  <tr><td>Capture-on-turn</td><td class="mono">orchestration/Layers/ProviderRuntimeIngestion.ts</td><td>2 · 4</td></tr>
+  <tr><td>Agent launch / manifest</td><td class="mono">orchestration/Layers/ProviderCommandReactor.ts</td><td>3</td></tr>
+  <tr><td>File browser / search</td><td class="mono">workspace/Services/{WorkspaceEntries,WorkspacePaths}.ts</td><td>3</td></tr>
+  <tr><td>Asset URLs</td><td class="mono">apps/server/src/assets/AssetAccess.ts</td><td>3</td></tr>
+  <tr><td>Worktrees</td><td class="mono">vcs/GitVcsDriverCore.ts · persistence ProjectionThreads.ts · ws.ts (vcsCreateWorktree)</td><td>4</td></tr>
+  <tr><td>Add-project / root mgmt UI</td><td class="mono">apps/web/src/components/CommandPalette.tsx · project settings surface</td><td>1b · 5</td></tr>
+  <tr><td>Web read model</td><td class="mono">apps/web/src/store.ts</td><td>1a · 2</td></tr>
+</table>
+</div>
+
+<hr class="soft">
+<p class="small">
+  Prototype: <span class="mono">git switch multi-repo-root-rebased</span> (data spine only — discovery superseded) ·
+  Foundation origin: <a href="https://github.com/func0der/t3code/tree/feat/multi-repo-root">func0der/feat/multi-repo-root</a> ·
+  Tracking: <a href="https://github.com/pingdotgg/t3code/issues/1453">#1453</a>.
+  Reflects the codebase at branch point <span class="mono">d0a7d18c</span> (2026-06-17). Revision v2 — decisions resolved.
+</p>
+
+</div>
+</body>
+</html>

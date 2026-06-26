@@ -992,12 +992,17 @@ describe("CheckpointReactor", () => {
       turnId: asTurnId("turn-after-runtime-failure"),
     });
 
+    // Checkpointing keys off the project's git repo, not the provider's session
+    // cwd, so the non-git session does not disable capture (multi-repo, D2). The
+    // out-of-order turn.completed captures turn 1 with no turn 0 baseline: its
+    // diff summary fails (missing baseline) but is swallowed, so the checkpoint
+    // ref is still recorded and the reactor keeps processing.
     await waitForGitRefExists(
       harness.cwd,
-      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
     );
     expect(
-      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0)),
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1)),
     ).toBe(true);
   });
 

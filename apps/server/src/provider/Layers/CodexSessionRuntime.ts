@@ -101,6 +101,11 @@ export interface CodexSessionRuntimeOptions {
   readonly launchArgs?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly cwd: string;
+  /**
+   * Extra agent-visible roots beyond `cwd` for multi-repo workspaces (D1),
+   * registered after thread open via `skills/extraRoots/set`.
+   */
+  readonly additionalRoots?: ReadonlyArray<string>;
   readonly runtimeMode: RuntimeMode;
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
@@ -1699,6 +1704,24 @@ export const makeCodexSessionRuntime = (
       });
 
       const providerThreadId = opened.thread.id;
+
+      // Multi-repo workspaces (D1): register the cousin repos as extra roots so
+      // Codex indexes and searches across all of them. Best-effort — a Codex
+      // build without the affordance degrades to the anchor cwd alone.
+      const extraRoots = options.additionalRoots ?? [];
+      if (extraRoots.length > 0) {
+        yield* client.request("skills/extraRoots/set", { extraRoots: [...extraRoots] }).pipe(
+          Effect.asVoid,
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to register Codex workspace extra roots.", {
+              threadId: options.threadId,
+              extraRoots,
+              cause,
+            }),
+          ),
+        );
+      }
+
       const session = {
         ...(yield* Ref.get(sessionRef)),
         status: "ready",

@@ -35,6 +35,8 @@ import {
 } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
+import { ProjectionCheckpointRefsRepositoryLive } from "../../persistence/Layers/ProjectionCheckpointRefs.ts";
+import { ProjectionCheckpointRefsRepository } from "../../persistence/Services/ProjectionCheckpointRefs.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
 import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
@@ -479,6 +481,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
     const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
     const projectionTurnRepository = yield* ProjectionTurnRepository;
+    const projectionCheckpointRefsRepository = yield* ProjectionCheckpointRefsRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
 
     const fileSystem = yield* FileSystem.FileSystem;
@@ -494,6 +497,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             projectId: event.payload.projectId,
             title: event.payload.title,
             workspaceRoot: event.payload.workspaceRoot,
+            workspaceFile: event.payload.workspaceFile ?? null,
+            repoRoots:
+              event.payload.repoRoots && event.payload.repoRoots.length > 0
+                ? event.payload.repoRoots
+                : [event.payload.workspaceRoot],
             defaultModelSelection: event.payload.defaultModelSelection,
             defaultThreadEnvMode: null,
             faviconPath: event.payload.faviconPath ?? null,
@@ -516,6 +524,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
             ...(event.payload.workspaceRoot !== undefined
               ? { workspaceRoot: event.payload.workspaceRoot }
+              : {}),
+            ...(event.payload.workspaceFile !== undefined
+              ? { workspaceFile: event.payload.workspaceFile }
+              : {}),
+            ...(event.payload.repoRoots !== undefined
+              ? { repoRoots: event.payload.repoRoots }
               : {}),
             ...(event.payload.defaultModelSelection !== undefined
               ? { defaultModelSelection: event.payload.defaultModelSelection }
@@ -611,6 +625,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            worktrees: event.payload.worktrees,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -798,6 +813,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
+              : {}),
+            ...(event.payload.worktrees !== undefined
+              ? { worktrees: event.payload.worktrees }
               : {}),
             updatedAt: event.payload.updatedAt,
           });
@@ -1414,6 +1432,19 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             checkpointTurnCount: event.payload.checkpointTurnCount,
           });
 
+          // Record the per-root checkpoint refs (multi-repo, D2). Placeholder
+          // checkpoints carry none; a real capture replaces them with the full set.
+          if (event.payload.checkpointRefs && event.payload.checkpointRefs.length > 0) {
+            yield* projectionCheckpointRefsRepository.replaceForCheckpoint({
+              threadId: event.payload.threadId,
+              checkpointTurnCount: event.payload.checkpointTurnCount,
+              refs: event.payload.checkpointRefs.map((entry) => ({
+                repoRoot: entry.repoRoot,
+                checkpointRef: entry.checkpointRef,
+              })),
+            });
+          }
+
           if (Option.isSome(existingTurn)) {
             yield* projectionTurnRepository.upsertByTurnId({
               ...existingTurn.value,
@@ -1746,4 +1777,5 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionTurnRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),
   Layer.provideMerge(ProjectionStateRepositoryLive),
+  Layer.provideMerge(ProjectionCheckpointRefsRepositoryLive),
 );

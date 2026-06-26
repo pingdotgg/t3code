@@ -50,6 +50,9 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  FilesystemScanGitReposError,
+  FilesystemReadWorkspaceFileError,
+  FilesystemWriteWorkspaceFileError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -92,9 +95,12 @@ import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
+import * as WorkspaceFile from "./workspace/WorkspaceFile.ts";
+import * as WorkspaceGitScan from "./workspace/WorkspaceGitScan.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
+import { createThreadWorktrees, type WorktreeFanoutTarget } from "./vcs/WorktreeFanout.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
@@ -377,6 +383,8 @@ const makeWsRpcLayer = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const workspaceGitScan = yield* WorkspaceGitScan.WorkspaceGitScan;
+      const workspaceFile = yield* WorkspaceFile.WorkspaceFile;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -911,44 +919,112 @@ const makeWsRpcLayer = (
             }
 
             if (bootstrap?.prepareWorktree) {
-              let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
+              const prepare = bootstrap.prepareWorktree;
+
+              // Resolve the anchor repo's base ref, honoring `startFromOrigin`:
+              // fetch origin and pin to the resolved remote-tracking commit so
+              // the worktree branches off the latest upstream tip.
+              let anchorBaseRef = prepare.baseBranch;
               // "Start from origin" is a stored default; repos without an
               // origin remote fall back to the local base branch instead of
               // failing the whole bootstrap on `git fetch origin`.
               const startFromOrigin =
-                bootstrap.prepareWorktree.startFromOrigin === true &&
+                prepare.startFromOrigin === true &&
                 (yield* gitWorkflow.remoteExists({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
+                  cwd: prepare.projectCwd,
                   remoteName: "origin",
                 }));
               if (startFromOrigin) {
                 yield* gitWorkflow.fetchRemote({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
+                  cwd: prepare.projectCwd,
                   remoteName: "origin",
                 });
                 const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  refName: bootstrap.prepareWorktree.baseBranch,
+                  cwd: prepare.projectCwd,
+                  refName: prepare.baseBranch,
                   fallbackRemoteName: "origin",
                 });
-                worktreeBaseRef = resolvedRemoteBase.commitSha;
+                anchorBaseRef = resolvedRemoteBase.commitSha;
               }
-              const worktree = yield* gitWorkflow.createWorktree({
-                cwd: bootstrap.prepareWorktree.projectCwd,
-                refName: worktreeBaseRef,
-                newRefName: bootstrap.prepareWorktree.branch,
-                baseRefName: bootstrap.prepareWorktree.baseBranch,
-                path: null,
-              });
-              targetWorktreePath = worktree.worktree.path;
+
+              // Resolve the project so an isolated run fans out across every repo
+              // root (Phase 4 / D3). Multi-repo projects create one worktree per
+              // `repoRoot`; single-root projects fall back to the anchor cwd,
+              // preserving today's single-worktree behavior exactly.
+              const worktreeProjectId =
+                targetProjectId ??
+                (yield* projectionSnapshotQuery.getThreadShellById(command.threadId).pipe(
+                  Effect.map((shell) => (Option.isSome(shell) ? shell.value.projectId : undefined)),
+                  Effect.orElseSucceed(() => undefined),
+                ));
+              const projectShell = worktreeProjectId
+                ? yield* projectionSnapshotQuery.getProjectShellById(worktreeProjectId).pipe(
+                    Effect.map(Option.getOrUndefined),
+                    Effect.orElseSucceed(() => undefined),
+                  )
+                : undefined;
+              const repoRoots =
+                projectShell?.repoRoots && projectShell.repoRoots.length > 0
+                  ? projectShell.repoRoots
+                  : [prepare.projectCwd];
+
+              // Each repo branches from its own base: the anchor repo uses the
+              // resolved base ref (honoring `startFromOrigin`), while cousin
+              // repos branch off their current HEAD (falling back to a detached
+              // HEAD when unresolved).
+              const targets = yield* Effect.forEach(
+                repoRoots,
+                (repoRoot): Effect.Effect<WorktreeFanoutTarget> =>
+                  repoRoot === prepare.projectCwd
+                    ? Effect.succeed({
+                        repoRoot,
+                        baseRef: anchorBaseRef,
+                        newBranch: prepare.branch ?? null,
+                      })
+                    : gitWorkflow.localStatus({ cwd: repoRoot }).pipe(
+                        Effect.map((status) => status.refName ?? "HEAD"),
+                        Effect.orElseSucceed(() => "HEAD"),
+                        Effect.map((baseRef) => ({
+                          repoRoot,
+                          baseRef,
+                          newBranch: prepare.branch ?? null,
+                        })),
+                      ),
+              );
+
+              const created = yield* createThreadWorktrees(
+                {
+                  createWorktree: gitWorkflow.createWorktree,
+                  removeWorktree: gitWorkflow.removeWorktree,
+                },
+                {
+                  worktreesDir: config.worktreesDir,
+                  projectId: worktreeProjectId ?? command.threadId,
+                  threadId: command.threadId,
+                  targets,
+                },
+              );
+
+              const worktrees = created.map((entry) => ({
+                repoRoot: entry.repoRoot,
+                worktreePath: entry.worktreePath,
+              }));
+              const anchorWorktree =
+                created.find((entry) => entry.repoRoot === prepare.projectCwd) ?? created[0];
+              targetWorktreePath = anchorWorktree?.worktreePath ?? null;
+
               yield* orchestrationEngine.dispatch({
                 type: "thread.meta.update",
                 commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
                 threadId: command.threadId,
-                branch: worktree.worktree.refName,
+                branch: anchorWorktree?.refName ?? prepare.branch ?? prepare.baseBranch,
                 worktreePath: targetWorktreePath,
+                worktrees,
               });
-              yield* refreshGitStatus(targetWorktreePath);
+
+              yield* Effect.forEach(created, (entry) => refreshGitStatus(entry.worktreePath), {
+                discard: true,
+              });
             }
 
             yield* runSetupProgram();
@@ -1031,6 +1107,30 @@ const makeWsRpcLayer = (
         vcsStatusBroadcaster
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
+
+      // Multi-repo `.code-workspace` projects diff repos that live outside the
+      // server's configured workspace root, so surface every active project's
+      // repo + workspace roots as allowed diff cwds (mirrors how vcs status and
+      // asset previews already span repoRoots). Both review RPCs must agree on
+      // this set: the preview establishes the cwd a diff is rendered from, and
+      // file-contents expansion is then called back with that same cwd, so a
+      // root allowed by one and rejected by the other renders a diff whose
+      // files cannot be opened. A failed snapshot read falls back to the
+      // configured root only.
+      const resolveAllowedDiffRepoRoots = Effect.fn("ws.resolveAllowedDiffRepoRoots")(function* () {
+        const shell = yield* projectionSnapshotQuery
+          .getShellSnapshot()
+          .pipe(Effect.orElseSucceed(() => null));
+        if (!shell) return [];
+        return [
+          ...new Set(
+            shell.projects.flatMap((project) => [
+              project.workspaceRoot,
+              ...(project.repoRoots ?? []),
+            ]),
+          ),
+        ];
+      });
 
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
@@ -1902,11 +2002,108 @@ const makeWsRpcLayer = (
                   resource: input.resource,
                 });
               }
+              // Multi-repo workspaces (#923): a previewable file may live in any
+              // repo root, so offer every candidate root (worktree, repo roots,
+              // anchor) and let AssetAccess pick whichever contains the file.
+              const workspaceRoots = [
+                ...new Set(
+                  [
+                    thread.value.worktreePath ?? undefined,
+                    ...(project.value.repoRoots ?? []),
+                    project.value.workspaceRoot,
+                  ].filter((root): root is string => typeof root === "string" && root.length > 0),
+                ),
+              ];
               return yield* issueAssetUrl({
                 resource: input.resource,
                 workspaceRoot: thread.value.worktreePath ?? project.value.workspaceRoot,
+                workspaceRoots,
               });
             }),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.filesystemScanGitRepos]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.filesystemScanGitRepos,
+            workspaceGitScan.scan(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new FilesystemScanGitReposError({
+                    message: cause.detail,
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.filesystemReadWorkspaceFile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.filesystemReadWorkspaceFile,
+            workspaceFile.read(input.workspaceFilePath).pipe(
+              Effect.map((resolved) => ({
+                workspaceFilePath: resolved.workspaceFilePath,
+                anchorDir: resolved.anchorDir,
+                folders: resolved.folders.map((folder) => ({
+                  rawPath: folder.rawPath,
+                  name: folder.name,
+                  absolutePath: folder.absolutePath,
+                  exists: folder.exists,
+                  isGit: folder.isGit,
+                })),
+                repoRoots: resolved.repoRoots,
+              })),
+              Effect.mapError(
+                (cause) =>
+                  new FilesystemReadWorkspaceFileError({
+                    message: cause.detail,
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.filesystemWriteWorkspaceFile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.filesystemWriteWorkspaceFile,
+            Effect.gen(function* () {
+              // Read first so we round-trip unknown top-level keys (e.g. `settings`)
+              // rather than clobbering them, then re-read so callers get the freshly
+              // resolved folders/repoRoots after the edit.
+              const current = yield* workspaceFile.read(input.workspaceFilePath);
+              const nextDocument = workspaceFile.withFolders(
+                current.document,
+                input.folders.map((folder) =>
+                  folder.name === undefined
+                    ? { path: folder.path }
+                    : { path: folder.path, name: folder.name },
+                ),
+              );
+              yield* workspaceFile.write({
+                workspaceFilePath: input.workspaceFilePath,
+                document: nextDocument,
+              });
+              const resolved = yield* workspaceFile.read(input.workspaceFilePath);
+              return {
+                workspaceFilePath: resolved.workspaceFilePath,
+                anchorDir: resolved.anchorDir,
+                folders: resolved.folders.map((folder) => ({
+                  rawPath: folder.rawPath,
+                  name: folder.name,
+                  absolutePath: folder.absolutePath,
+                  exists: folder.exists,
+                  isGit: folder.isGit,
+                })),
+                repoRoots: resolved.repoRoots,
+              };
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new FilesystemWriteWorkspaceFileError({
+                    message: cause.detail,
+                    cause,
+                  }),
+              ),
+            ),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
@@ -2015,13 +2212,23 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.reviewGetDiffPreview]: (input) =>
-          observeRpcEffect(WS_METHODS.reviewGetDiffPreview, review.getDiffPreview(input), {
-            "rpc.aggregate": "review",
-          }),
+          observeRpcEffect(
+            WS_METHODS.reviewGetDiffPreview,
+            Effect.gen(function* () {
+              const allowedRepoRoots = yield* resolveAllowedDiffRepoRoots();
+              return yield* review.getDiffPreview(input, allowedRepoRoots);
+            }),
+            {
+              "rpc.aggregate": "review",
+            },
+          ),
         [WS_METHODS.reviewGetDiffFileContents]: (input) =>
           observeRpcEffect(
             WS_METHODS.reviewGetDiffFileContents,
-            review.getDiffFileContents(input),
+            Effect.gen(function* () {
+              const allowedRepoRoots = yield* resolveAllowedDiffRepoRoots();
+              return yield* review.getDiffFileContents(input, allowedRepoRoots);
+            }),
             { "rpc.aggregate": "review" },
           ),
         [WS_METHODS.terminalOpen]: (input) =>

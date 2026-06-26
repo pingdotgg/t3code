@@ -4094,9 +4094,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // the paths ProviderService injects into the turn text, without an
       // approval prompt. It is a leaf directory holding only attachment
       // files; siblings like secrets/ and state.sqlite stay ungranted.
+      //
+      // Multi-repo workspaces (D1): the same `--add-dir` mechanism grants every
+      // workspace root. The cwd is implicitly accessible; the extra roots are
+      // the cousin repos the agent can read and edit.
       const additionalDirectories = [
-        ...(input.cwd ? [input.cwd] : []),
-        serverConfig.attachmentsDir,
+        ...new Set([
+          ...(input.cwd ? [input.cwd] : []),
+          ...(input.additionalRoots ?? []),
+          serverConfig.attachmentsDir,
+        ]),
       ];
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),

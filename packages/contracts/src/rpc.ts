@@ -17,6 +17,15 @@ import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
+  FilesystemScanGitReposInput,
+  FilesystemScanGitReposResult,
+  FilesystemScanGitReposError,
+  FilesystemReadWorkspaceFileInput,
+  FilesystemReadWorkspaceFileResult,
+  FilesystemReadWorkspaceFileError,
+  FilesystemWriteWorkspaceFileInput,
+  FilesystemWriteWorkspaceFileResult,
+  FilesystemWriteWorkspaceFileError,
 } from "./filesystem.ts";
 import { AssetAccessError, AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import {
@@ -206,6 +215,9 @@ export const WS_METHODS = {
 
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
+  filesystemScanGitRepos: "filesystem.scanGitRepos",
+  filesystemReadWorkspaceFile: "filesystem.readWorkspaceFile",
+  filesystemWriteWorkspaceFile: "filesystem.writeWorkspaceFile",
   assetsCreateUrl: "assets.createUrl",
 
   // VCS methods
@@ -655,6 +667,24 @@ export const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
 });
 
+export const WsFilesystemScanGitReposRpc = Rpc.make(WS_METHODS.filesystemScanGitRepos, {
+  payload: FilesystemScanGitReposInput,
+  success: FilesystemScanGitReposResult,
+  error: Schema.Union([FilesystemScanGitReposError, EnvironmentAuthorizationError]),
+});
+
+export const WsFilesystemReadWorkspaceFileRpc = Rpc.make(WS_METHODS.filesystemReadWorkspaceFile, {
+  payload: FilesystemReadWorkspaceFileInput,
+  success: FilesystemReadWorkspaceFileResult,
+  error: Schema.Union([FilesystemReadWorkspaceFileError, EnvironmentAuthorizationError]),
+});
+
+export const WsFilesystemWriteWorkspaceFileRpc = Rpc.make(WS_METHODS.filesystemWriteWorkspaceFile, {
+  payload: FilesystemWriteWorkspaceFileInput,
+  success: FilesystemWriteWorkspaceFileResult,
+  error: Schema.Union([FilesystemWriteWorkspaceFileError, EnvironmentAuthorizationError]),
+});
+
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
   success: VcsStatusStreamEvent,
@@ -1020,6 +1050,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
+  WsFilesystemScanGitReposRpc,
+  WsFilesystemReadWorkspaceFileRpc,
+  WsFilesystemWriteWorkspaceFileRpc,
   WsAssetsCreateUrlRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,

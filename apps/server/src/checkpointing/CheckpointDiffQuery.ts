@@ -30,7 +30,7 @@ import {
   CheckpointWorkspacePathMissingError,
 } from "./Errors.ts";
 import type { CheckpointServiceError } from "./Errors.ts";
-import { checkpointRefForThreadTurn } from "./Utils.ts";
+import { checkpointRefForThreadTurn, resolveThreadRepoRoots } from "./Utils.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 
 /** Service tag for checkpoint diff queries. */
@@ -59,25 +59,78 @@ export class CheckpointDiffQuery extends Context.Service<
 
 const isTurnDiffResult = Schema.is(OrchestrationGetTurnDiffResult);
 
+/** Basename of an absolute repo root, used as the per-repo section label. */
+function repoDisplayName(repoRoot: string): string {
+  const trimmed = repoRoot.replace(/[/\\]+$/, "");
+  const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  const name = separatorIndex >= 0 ? trimmed.slice(separatorIndex + 1) : trimmed;
+  return name.length > 0 ? name : repoRoot;
+}
+
 function buildTurnDiffResult(
   input: {
     readonly threadId: ThreadId;
     readonly fromTurnCount: number;
     readonly toTurnCount: number;
   },
-  diff: string,
+  segments: ReadonlyArray<{ readonly repoRoot: string; readonly diff: string }>,
 ): OrchestrationGetTurnDiffResultType {
+  const groups = segments.map((segment) => ({
+    repoRoot: segment.repoRoot,
+    displayName: repoDisplayName(segment.repoRoot),
+    diff: segment.diff,
+  }));
   return {
     threadId: input.threadId,
     fromTurnCount: input.fromTurnCount,
     toTurnCount: input.toTurnCount,
-    diff,
+    // Back-compat flat patch: concatenation of every root's diff.
+    diff: groups.map((group) => group.diff).join("\n"),
+    ...(groups.length > 0 ? { groups } : {}),
   };
 }
 
 export const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+  // Diff every repo root the thread spans and concatenate the patches
+  // (multi-repo). Checkpoint ref names are uniform across roots, so the same
+  // from/to refs apply to each. A root whose ref is missing (captured later, or
+  // capture failed) is skipped best-effort rather than failing the whole diff.
+  // Per-repo section grouping in the diff payload is a later slice (2c).
+  const diffAcrossRoots = Effect.fn("CheckpointDiffQuery.diffAcrossRoots")(function* (input: {
+    readonly roots: ReadonlyArray<string>;
+    readonly fromCheckpointRef: CheckpointRef;
+    readonly toCheckpointRef: CheckpointRef;
+    readonly ignoreWhitespace: boolean;
+    readonly threadId: ThreadId;
+  }) {
+    const segments = yield* Effect.forEach(
+      input.roots,
+      (root) =>
+        checkpointStore
+          .diffCheckpoints({
+            cwd: root,
+            fromCheckpointRef: input.fromCheckpointRef,
+            toCheckpointRef: input.toCheckpointRef,
+            fallbackFromToHead: false,
+            ignoreWhitespace: input.ignoreWhitespace,
+          })
+          .pipe(
+            Effect.map((diff) => ({ repoRoot: root, diff })),
+            Effect.catch((error) =>
+              Effect.logWarning("turn diff unavailable for root", {
+                threadId: input.threadId,
+                root,
+                detail: error.message,
+              }).pipe(Effect.as({ repoRoot: root, diff: "" })),
+            ),
+          ),
+      { concurrency: 4 },
+    );
+    return segments.filter((segment) => segment.diff.trim().length > 0);
+  });
 
   const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -129,8 +182,13 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const workspaceCwd = threadContext.value.worktreePath ?? threadContext.value.workspaceRoot;
-      if (!workspaceCwd) {
+      const roots = resolveThreadRepoRoots({
+        worktreePath: threadContext.value.worktreePath,
+        worktrees: threadContext.value.worktrees,
+        repoRoots: threadContext.value.repoRoots,
+        workspaceRoot: threadContext.value.workspaceRoot,
+      }).filter((root) => root.length > 0);
+      if (roots.length === 0) {
         return yield* new CheckpointWorkspacePathMissingError({
           operation,
           threadId: input.threadId,
@@ -164,17 +222,15 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const diff = yield* checkpointStore
-        .diffCheckpoints({
-          cwd: workspaceCwd,
-          fromCheckpointRef,
-          toCheckpointRef,
-          fallbackFromToHead: false,
-          ignoreWhitespace,
-        })
-        .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
+      const segments = yield* diffAcrossRoots({
+        roots,
+        fromCheckpointRef,
+        toCheckpointRef,
+        ignoreWhitespace,
+        threadId: input.threadId,
+      }).pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
 
-      const turnDiff = buildTurnDiffResult(input, diff);
+      const turnDiff = buildTurnDiffResult(input, segments);
       if (!isTurnDiffResult(turnDiff)) {
         return yield* new CheckpointDiffResultInvalidError({
           operation,
@@ -206,7 +262,7 @@ export const make = Effect.gen(function* () {
           fromTurnCount: 0,
           toTurnCount: 0,
         },
-        "",
+        [],
       );
       if (!isTurnDiffResult(emptyDiff)) {
         return yield* new CheckpointDiffResultInvalidError({
@@ -237,8 +293,13 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const workspaceCwd = threadContext.value.worktreePath ?? threadContext.value.workspaceRoot;
-    if (!workspaceCwd) {
+    const roots = resolveThreadRepoRoots({
+      worktreePath: threadContext.value.worktreePath,
+      worktrees: threadContext.value.worktrees,
+      repoRoots: threadContext.value.repoRoots,
+      workspaceRoot: threadContext.value.workspaceRoot,
+    }).filter((root) => root.length > 0);
+    if (roots.length === 0) {
       return yield* new CheckpointWorkspacePathMissingError({
         operation,
         threadId: input.threadId,
@@ -254,15 +315,13 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const diff = yield* checkpointStore
-      .diffCheckpoints({
-        cwd: workspaceCwd,
-        fromCheckpointRef: checkpointRefForThreadTurn(input.threadId, 0),
-        toCheckpointRef: threadContext.value.toCheckpointRef as CheckpointRef,
-        fallbackFromToHead: false,
-        ignoreWhitespace,
-      })
-      .pipe(Effect.withSpan("checkpoint.fullThread.diffCheckpoints"));
+    const segments = yield* diffAcrossRoots({
+      roots,
+      fromCheckpointRef: checkpointRefForThreadTurn(input.threadId, 0),
+      toCheckpointRef: threadContext.value.toCheckpointRef as CheckpointRef,
+      ignoreWhitespace,
+      threadId: input.threadId,
+    }).pipe(Effect.withSpan("checkpoint.fullThread.diffCheckpoints"));
 
     const turnDiff = buildTurnDiffResult(
       {
@@ -270,7 +329,7 @@ export const make = Effect.gen(function* () {
         fromTurnCount: 0,
         toTurnCount: input.toTurnCount,
       },
-      diff,
+      segments,
     );
     if (!isTurnDiffResult(turnDiff)) {
       return yield* new CheckpointDiffResultInvalidError({

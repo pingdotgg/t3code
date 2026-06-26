@@ -512,6 +512,73 @@ describe("ProviderCommandReactor", () => {
     };
   }
 
+  effectIt.effect(
+    "launches a multi-repo thread anchored at the workspace root with every repo root",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const now = "2026-01-01T00:00:00.000Z";
+        const multiModelSelection = {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        };
+
+        yield* harness.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-create-multi"),
+          projectId: asProjectId("project-multi"),
+          title: "Multi Repo Project",
+          workspaceRoot: "/tmp/multi-workspace",
+          repoRoots: ["/tmp/multi-workspace/backend", "/tmp/oss/frontend"],
+          defaultModelSelection: multiModelSelection,
+          createdAt: now,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-create-multi"),
+          threadId: ThreadId.make("thread-multi"),
+          projectId: asProjectId("project-multi"),
+          title: "Multi Thread",
+          modelSelection: multiModelSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        });
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-multi"),
+          threadId: ThreadId.make("thread-multi"),
+          message: {
+            messageId: asMessageId("user-message-multi"),
+            role: "user",
+            text: "edit the cousin repo",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        });
+
+        yield* Effect.promise(() =>
+          waitFor(() =>
+            harness.startSession.mock.calls.some(
+              (call) => call[0] === ThreadId.make("thread-multi"),
+            ),
+          ),
+        );
+        const multiCall = harness.startSession.mock.calls.find(
+          (call) => call[0] === ThreadId.make("thread-multi"),
+        );
+        expect(multiCall?.[1]).toMatchObject({
+          cwd: "/tmp/multi-workspace",
+          additionalRoots: ["/tmp/multi-workspace/backend", "/tmp/oss/frontend"],
+        });
+      }),
+  );
+
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

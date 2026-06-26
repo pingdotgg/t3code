@@ -90,6 +90,42 @@ describe("ReviewService", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("allows file contents from a repo root the preview also allows", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-repo-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const detectCalls: Array<{ readonly cwd: string }> = [];
+
+      // A multi-repo project root outside the configured workspace root. The
+      // preview renders from this cwd, so expansion must accept it too --
+      // otherwise the diff shows but none of its files can be opened.
+      const error = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review
+          .getDiffFileContents(
+            {
+              cwd: repoRoot,
+              sourceKind: "working-tree",
+              changeType: "change",
+              baseRef: "HEAD",
+              headRef: null,
+              oldPath: "file.ts",
+              newPath: "file.ts",
+            },
+            [repoRoot],
+          )
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(makeLayer({ workspaceRoot, baseDir, detectCalls })));
+
+      // Past the workspace gate: the mock registry detects nothing, so this
+      // fails on VCS support rather than on the root check.
+      assert.strictEqual(error._tag, "VcsUnsupportedOperationError");
+      assert.deepStrictEqual(detectCalls, [{ cwd: repoRoot }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("allows diff preview cwd inside the configured workspace root", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

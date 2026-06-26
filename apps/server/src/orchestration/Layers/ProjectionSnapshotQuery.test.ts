@@ -270,7 +270,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: asProjectId("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
+          repoRoots: ["/tmp/project-1"],
           repositoryIdentity: null,
+          repositoryIdentities: [],
           defaultModelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
@@ -304,6 +306,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          worktrees: [],
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
@@ -390,7 +393,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: asProjectId("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
+          repoRoots: ["/tmp/project-1"],
           repositoryIdentity: null,
+          repositoryIdentities: [],
           defaultModelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
@@ -423,6 +428,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          worktrees: [],
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
@@ -960,7 +966,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           threadId: ThreadId.make("thread-context"),
           projectId: asProjectId("project-context"),
           workspaceRoot: "/tmp/context-workspace",
+          repoRoots: ["/tmp/context-workspace"],
           worktreePath: "/tmp/context-worktree",
+          worktrees: [],
           checkpoints: [
             {
               turnId: asTurnId("turn-1"),
@@ -1858,6 +1866,35 @@ it.effect(
                 },
                 rootPath: cwd,
               };
+            }),
+          resolveMany: (cwds: ReadonlyArray<string>) =>
+            Effect.sync(() => {
+              const seen = new Set<string>();
+              const result: Array<{
+                readonly canonicalKey: string;
+                readonly locator: {
+                  readonly source: "git-remote";
+                  readonly remoteName: string;
+                  readonly remoteUrl: string;
+                };
+                readonly rootPath: string;
+              }> = [];
+              for (const cwd of cwds) {
+                resolveCalls.push(cwd);
+                const canonicalKey = `github.com/acme${cwd}`;
+                if (seen.has(canonicalKey)) continue;
+                seen.add(canonicalKey);
+                result.push({
+                  canonicalKey,
+                  locator: {
+                    source: "git-remote",
+                    remoteName: "origin",
+                    remoteUrl: `https://github.com/acme${cwd}.git`,
+                  },
+                  rootPath: cwd,
+                });
+              }
+              return result;
             }),
         }),
       ),

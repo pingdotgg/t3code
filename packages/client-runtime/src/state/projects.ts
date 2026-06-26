@@ -121,17 +121,25 @@ export function resolveProjectPathForDispatch(value: string, cwd?: string | null
   );
 }
 
-export function findProjectByPath<T extends { workspaceRoot?: string; cwd?: string }>(
-  projects: ReadonlyArray<T>,
-  candidatePath: string,
-): T | undefined {
+export function findProjectByPath<
+  T extends {
+    workspaceRoot?: string | undefined;
+    cwd?: string | undefined;
+    repoRoots?: ReadonlyArray<string> | undefined;
+  },
+>(projects: ReadonlyArray<T>, candidatePath: string): T | undefined {
   const normalizedCandidate = normalizeProjectPathForComparison(candidatePath);
   if (normalizedCandidate.length === 0) {
     return undefined;
   }
   return projects.find((project) => {
-    const cwd = project.workspaceRoot ?? project.cwd;
-    return cwd ? normalizeProjectPathForComparison(cwd) === normalizedCandidate : false;
+    const candidates: string[] = [];
+    const primary = project.workspaceRoot ?? project.cwd;
+    if (primary) candidates.push(primary);
+    if (project.repoRoots) candidates.push(...project.repoRoots);
+    return candidates.some(
+      (root) => normalizeProjectPathForComparison(root) === normalizedCandidate,
+    );
   });
 }
 

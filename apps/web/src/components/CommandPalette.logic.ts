@@ -348,8 +348,10 @@ export function buildBrowseGroups(input: {
   canBrowseUp: boolean;
   upIcon: ReactNode;
   directoryIcon: ReactNode;
+  workspaceFileIcon: ReactNode;
   browseUp: () => void | Promise<void>;
   browseTo: (name: string) => void | Promise<void>;
+  openWorkspaceFile: (fullPath: string) => void;
 }): CommandPaletteGroup[] {
   const items: CommandPaletteActionItem[] = [];
 
@@ -368,6 +370,22 @@ export function buildBrowseGroups(input: {
   }
 
   for (const entry of input.browseEntries) {
+    if (entry.kind === "workspaceFile") {
+      // Selecting a workspace file resolves its repos and creates the project,
+      // so the palette closes (no keepOpen) rather than navigating into it.
+      items.push({
+        kind: "action",
+        value: `browse:${entry.fullPath}`,
+        searchTerms: [input.browseQuery, entry.fullPath, entry.name],
+        title: entry.name,
+        icon: input.workspaceFileIcon,
+        run: async () => {
+          input.openWorkspaceFile(entry.fullPath);
+        },
+      });
+      continue;
+    }
+
     items.push({
       kind: "action",
       value: `browse:${entry.fullPath}`,

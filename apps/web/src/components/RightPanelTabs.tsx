@@ -27,7 +27,15 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Kbd } from "~/components/ui/kbd";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useTheme } from "~/hooks/useTheme";
@@ -56,7 +64,13 @@ interface RightPanelTabsProps {
   onCloseAllSurfaces: () => void;
   onCopyFilePath: (relativePath: string) => void;
   onAddBrowser: () => void;
-  onAddTerminal: () => void;
+  /** Opens a terminal; pass a repo root to start the shell there (multi-repo). */
+  onAddTerminal: (root?: string) => void;
+  /**
+   * Repo roots to choose between when opening a terminal in a multi-repo
+   * workspace. Undefined/single-entry = open directly with no picker.
+   */
+  terminalRoots?: ReadonlyArray<{ readonly repoRoot: string; readonly displayName: string }>;
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddPullRequest: () => void;
@@ -151,7 +165,8 @@ function SurfaceMenuItem(props: {
  */
 function RightPanelEmptyState(props: {
   onAddBrowser: () => void;
-  onAddTerminal: () => void;
+  onAddTerminal: (root?: string) => void;
+  terminalRoots?: ReadonlyArray<{ readonly repoRoot: string; readonly displayName: string }>;
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddPullRequest: () => void;
@@ -166,7 +181,7 @@ function RightPanelEmptyState(props: {
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
-
+  const multiRepoTerminal = (props.terminalRoots?.length ?? 0) > 1;
   const actions = [
     {
       label: "Browser",
@@ -180,12 +195,14 @@ function RightPanelEmptyState(props: {
     },
     {
       label: "Terminal",
-      description: "Start a shell in this workspace.",
+      description: multiRepoTerminal
+        ? "Start a shell — pick which repo."
+        : "Start a shell in this workspace.",
       icon: TerminalSquare,
       shortcut: "T",
       available: props.terminalAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.terminal,
-      onClick: props.onAddTerminal,
+      onClick: () => props.onAddTerminal(),
       badgeCount: 0,
     },
     {
@@ -682,14 +699,34 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     <Globe2 />
                     Browser
                   </SurfaceMenuItem>
-                  <SurfaceMenuItem
-                    available={props.terminalAvailable}
-                    disabledReason={SURFACE_DISABLED_REASONS.terminal}
-                    onClick={props.onAddTerminal}
-                  >
-                    <TerminalSquare />
-                    Terminal
-                  </SurfaceMenuItem>
+                  {props.terminalRoots && props.terminalRoots.length > 1 ? (
+                    <MenuSub>
+                      <MenuSubTrigger>
+                        <TerminalSquare />
+                        Terminal
+                      </MenuSubTrigger>
+                      <MenuSubPopup className="min-w-44">
+                        {props.terminalRoots.map((root) => (
+                          <MenuItem
+                            key={root.repoRoot}
+                            onClick={() => props.onAddTerminal(root.repoRoot)}
+                          >
+                            <TerminalSquare />
+                            {root.displayName}
+                          </MenuItem>
+                        ))}
+                      </MenuSubPopup>
+                    </MenuSub>
+                  ) : (
+                    <SurfaceMenuItem
+                      available={props.terminalAvailable}
+                      disabledReason={SURFACE_DISABLED_REASONS.terminal}
+                      onClick={() => props.onAddTerminal()}
+                    >
+                      <TerminalSquare />
+                      Terminal
+                    </SurfaceMenuItem>
+                  )}
                   <SurfaceMenuItem
                     available={props.filesAvailable}
                     disabledReason={SURFACE_DISABLED_REASONS.files}
@@ -734,6 +771,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           <RightPanelEmptyState
             onAddBrowser={props.onAddBrowser}
             onAddTerminal={props.onAddTerminal}
+            {...(props.terminalRoots ? { terminalRoots: props.terminalRoots } : {})}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}

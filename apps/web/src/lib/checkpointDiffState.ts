@@ -14,5 +14,6 @@ export function useCheckpointDiff(
     data: state.data,
     error: state.error,
     isPending: state.isPending,
+    refresh: state.refresh,
   };
 }

@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import type {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
+  ProjectEntry,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
   ProjectSearchContentsInput,
@@ -111,6 +112,47 @@ function expandHomePath(input: string, path: Path.Path): string {
     return path.join(NodeOS.homedir(), input.slice(2));
   }
   return input;
+}
+
+function parentPathOf(input: string): string | undefined {
+  const separatorIndex = input.lastIndexOf("/");
+  return separatorIndex === -1 ? undefined : input.slice(0, separatorIndex);
+}
+
+/**
+ * Whether a directory entry name should be hidden from list/search results.
+ * The search index already drops the common ignore set, but bare-repo /
+ * worktree-origin directories whose name merely *ends* in `.git` (e.g.
+ * `.frontend-origin.git`) slip through an exact `.git` match, so we filter
+ * those here (multi-repo workspaces, #923).
+ */
+function isIgnoredDirectoryName(name: string): boolean {
+  return name.endsWith(".git");
+}
+
+/** Whether any segment of a relative posix path is an ignored directory. */
+function isInIgnoredDirectory(relativePath: string): boolean {
+  return relativePath.split("/").some(isIgnoredDirectoryName);
+}
+
+/**
+ * Tag a project entry with the absolute repo root its `path` is relative to
+ * (multi-repo workspaces, #923). The `root` lets callers disambiguate
+ * same-named files across cousin roots and resolve previews against the owning
+ * root. When `root` is undefined (single-root mode) the entry is returned
+ * unchanged so single-root callers keep their existing shape.
+ */
+function withRoot(entry: ProjectEntry, root: string | undefined): ProjectEntry {
+  if (!root) {
+    return entry;
+  }
+  const parentPath = entry.parentPath ?? parentPathOf(entry.path);
+  return {
+    path: entry.path,
+    kind: entry.kind,
+    ...(parentPath ? { parentPath } : {}),
+    root,
+  };
 }
 
 const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(function* (
@@ -216,43 +258,120 @@ export const make = Effect.gen(function* () {
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
-      const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
+      const entries: Array<{
+        readonly name: string;
+        readonly fullPath: string;
+        readonly kind: "directory" | "workspaceFile";
+      }> = [];
       for (const dirent of dirents) {
-        if (
-          dirent.isDirectory() &&
-          dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-          (showHidden || !dirent.name.startsWith("."))
+        if (!dirent.name.toLowerCase().startsWith(lowerPrefix)) {
+          continue;
+        }
+        if (!showHidden && dirent.name.startsWith(".")) {
+          continue;
+        }
+        if (dirent.isDirectory()) {
+          entries.push({
+            name: dirent.name,
+            fullPath: path.join(parentPath, dirent.name),
+            kind: "directory",
+          });
+        } else if (
+          input.includeWorkspaceFiles &&
+          dirent.isFile() &&
+          dirent.name.toLowerCase().endsWith(".code-workspace")
         ) {
           entries.push({
             name: dirent.name,
             fullPath: path.join(parentPath, dirent.name),
+            kind: "workspaceFile",
           });
         }
       }
 
       return {
         parentPath,
-        entries: entries.toSorted((left, right) => left.name.localeCompare(right.name)),
+        // Directories first, then workspace files; alphabetical within each group.
+        entries: entries.toSorted((left, right) => {
+          if (left.kind !== right.kind) {
+            return left.kind === "directory" ? -1 : 1;
+          }
+          return left.name.localeCompare(right.name);
+        }),
       };
+    },
+  );
+
+  /**
+   * Resolve the set of roots a list/search should span (multi-repo, #923).
+   *
+   * When `roots` is provided we union across them and tag each entry with its
+   * owning root so callers can disambiguate same-named files and resolve
+   * previews; a root that fails to normalize (missing/renamed folder) is
+   * skipped rather than crashing the whole query. When `roots` is absent we
+   * preserve single-root behavior exactly: query `cwd` and surface its errors.
+   */
+  const resolveEffectiveRoots = Effect.fn("WorkspaceEntries.resolveEffectiveRoots")(
+    function* (input: {
+      readonly cwd: string;
+      readonly roots?: ReadonlyArray<string> | undefined;
+    }): Effect.fn.Return<
+      ReadonlyArray<{ readonly normalized: string; readonly tag: string | undefined }>,
+      WorkspaceEntriesError
+    > {
+      const multiRoot = (input.roots?.length ?? 0) > 0;
+      const requested = multiRoot ? input.roots! : [input.cwd];
+      const seen = new Set<string>();
+      const resolved: Array<{ normalized: string; tag: string | undefined }> = [];
+      for (const root of requested) {
+        const normalized = multiRoot
+          ? yield* normalizeWorkspaceRoot(root).pipe(Effect.orElseSucceed(() => null))
+          : yield* normalizeWorkspaceRoot(root);
+        if (normalized === null || seen.has(normalized)) {
+          continue;
+        }
+        seen.add(normalized);
+        resolved.push({ normalized, tag: multiRoot ? normalized : undefined });
+      }
+      return resolved;
     },
   );
 
   const search: WorkspaceEntries["Service"]["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
-      const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+      const roots = yield* resolveEffectiveRoots(input);
       const normalizedQuery = normalizeSearchQuery(input.query, {
         trimLeadingPattern: /^[@./]+/,
       });
-      return yield* Effect.gen(function* () {
-        const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-        return yield* searchIndex.search(normalizedQuery, input.limit, input.kind, input.imageOnly);
-      }).pipe(
-        Effect.provide(
-          workspaceSearchIndexes.get(
-            WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths"),
+      const limit = Math.max(0, Math.floor(input.limit));
+      const entries: ProjectEntry[] = [];
+      let truncated = false;
+
+      for (const root of roots) {
+        const result = yield* Effect.gen(function* () {
+          const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
+          return yield* searchIndex.search(normalizedQuery, limit, input.kind, input.imageOnly);
+        }).pipe(
+          Effect.provide(
+            workspaceSearchIndexes.get(
+              WorkspaceSearchIndex.workspaceSearchIndexKey(root.normalized, "paths"),
+            ),
           ),
-        ),
-      );
+        );
+        truncated = truncated || result.truncated;
+        for (const entry of result.entries) {
+          if (isInIgnoredDirectory(entry.path)) {
+            continue;
+          }
+          entries.push(withRoot(entry, root.tag));
+        }
+      }
+
+      // Unioning across roots can exceed the caller's limit; cap and flag it.
+      if (entries.length > limit) {
+        return { entries: entries.slice(0, limit), truncated: true };
+      }
+      return { entries, truncated };
     },
   );
 
@@ -274,17 +393,29 @@ export const make = Effect.gen(function* () {
 
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
     function* (input) {
-      const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
-      return yield* Effect.gen(function* () {
-        const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-        return yield* searchIndex.list();
-      }).pipe(
-        Effect.provide(
-          workspaceSearchIndexes.get(
-            WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths"),
+      const roots = yield* resolveEffectiveRoots(input);
+      const entries: ProjectEntry[] = [];
+      let truncated = false;
+      for (const root of roots) {
+        const result = yield* Effect.gen(function* () {
+          const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
+          return yield* searchIndex.list();
+        }).pipe(
+          Effect.provide(
+            workspaceSearchIndexes.get(
+              WorkspaceSearchIndex.workspaceSearchIndexKey(root.normalized, "paths"),
+            ),
           ),
-        ),
-      );
+        );
+        truncated = truncated || result.truncated;
+        for (const entry of result.entries) {
+          if (isInIgnoredDirectory(entry.path)) {
+            continue;
+          }
+          entries.push(withRoot(entry, root.tag));
+        }
+      }
+      return { entries, truncated };
     },
   );
 

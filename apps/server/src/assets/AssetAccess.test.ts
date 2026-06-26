@@ -72,6 +72,55 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("resolves a workspace file against whichever candidate root contains it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const anchor = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-asset-anchor-" });
+      const cousin = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-asset-cousin-" });
+      const htmlPath = path.join(cousin, "report.html");
+      yield* fileSystem.writeFileString(htmlPath, "<p>cousin</p>");
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: htmlPath,
+        },
+        workspaceRoot: anchor,
+        workspaceRoots: [anchor, cousin],
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+
+      const expectedPath = yield* fileSystem.realPath(htmlPath);
+      expect(yield* resolveAsset(token, "report.html")).toEqual({
+        kind: "file",
+        path: expectedPath,
+      });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects a workspace file that exists in none of the candidate roots", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const anchor = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-asset-anchor-none-" });
+      const cousin = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-asset-cousin-none-" });
+
+      const error = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: path.join(anchor, "missing.html"),
+        },
+        workspaceRoot: anchor,
+        workspaceRoots: [anchor, cousin],
+      }).pipe(Effect.flip);
+      expect(error.message).toContain("Workspace asset was not found.");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("rejects workspace files outside the authorized root", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
