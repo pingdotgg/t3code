@@ -179,6 +179,7 @@ describe("terminalOutputLooksReadyForInput", () => {
     expect(terminalOutputLooksReadyForInput("host% ")).toBe(true);
     expect(terminalOutputLooksReadyForInput("PS C:\\repo> ")).toBe(true);
     expect(terminalOutputLooksReadyForInput("C:\\repo> ")).toBe(true);
+    expect(terminalOutputLooksReadyForInput("C:> ")).toBe(true);
   });
 
   it("ignores terminal title control sequences around prompts", () => {
@@ -190,6 +191,7 @@ describe("terminalOutputLooksReadyForInput", () => {
     expect(terminalOutputLooksReadyForInput("rendered <span>\n")).toBe(false);
     expect(terminalOutputLooksReadyForInput("status: waiting>\n")).toBe(false);
     expect(terminalOutputLooksReadyForInput("progress 100%\n")).toBe(false);
+    expect(terminalOutputLooksReadyForInput("Building 50 %\n")).toBe(false);
   });
 });
 
@@ -441,6 +443,51 @@ describe("openTerminalAndWaitForInputReady", () => {
       terminalId: OPEN_INPUT.terminalId,
       data: "$ ",
     });
+    await ready;
+
+    expect(settled).toBe(true);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back after the timeout when the second attach never emits a prompt", async () => {
+    vi.useFakeTimers();
+    const unsubscribe = vi.fn();
+    let openResolve: () => void = () => {
+      throw new Error("Open promise was not initialized.");
+    };
+    let settled = false;
+    const api: Pick<EnvironmentApi, "terminal"> = {
+      terminal: {
+        attach: vi
+          .fn()
+          .mockImplementationOnce(() => {
+            throw new Error("attach unavailable");
+          })
+          .mockImplementationOnce(() => unsubscribe),
+        open: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              openResolve = resolve;
+            }),
+        ),
+      } as unknown as EnvironmentApi["terminal"],
+    };
+
+    const ready = openTerminalAndWaitForInputReady(api, OPEN_INPUT, 1_000);
+    void ready.then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    expect(api.terminal.open).toHaveBeenCalledTimes(1);
+
+    openResolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(api.terminal.attach).toHaveBeenCalledTimes(2);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1_000);
     await ready;
 
     expect(settled).toBe(true);

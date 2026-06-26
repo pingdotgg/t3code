@@ -31,9 +31,10 @@ const OSC_ESCAPE_PATTERN = new RegExp(
 );
 const BELL_CHARACTER = String.fromCharCode(7);
 const SHELL_LABELS = new Set(["bash", "zsh", "sh", "fish", "csh", "tcsh", "pwsh", "powershell"]);
+const UNIX_PERCENT_PROGRESS_SUFFIX_PATTERN = /\d\s+%\s*$/;
 const UNIX_PROMPT_SUFFIX_PATTERN = /(?:[$#]|(?:^|[^\d])%)\s*$/;
 const POWERSHELL_PROMPT_PATTERN = /^PS\s+\S.*>\s*$/;
-const WINDOWS_PROMPT_PATTERN = /^[A-Za-z]:[\\/][^<>]*>\s*$/;
+const WINDOWS_PROMPT_PATTERN = /^[A-Za-z]:(?:[\\/][^<>]*)?>\s*$/;
 
 export class ProjectActionTerminalReadinessTimeoutError extends Schema.TaggedErrorClass<ProjectActionTerminalReadinessTimeoutError>()(
   "ProjectActionTerminalReadinessTimeoutError",
@@ -151,7 +152,7 @@ export function terminalOutputLooksReadyForInput(value: string): boolean {
     if (line.length > PROMPT_LINE_MAX_LENGTH) {
       return false;
     }
-    if (UNIX_PROMPT_SUFFIX_PATTERN.test(line)) {
+    if (UNIX_PROMPT_SUFFIX_PATTERN.test(line) && !UNIX_PERCENT_PROGRESS_SUFFIX_PATTERN.test(line)) {
       return true;
     }
     return POWERSHELL_PROMPT_PATTERN.test(line) || WINDOWS_PROMPT_PATTERN.test(line);
@@ -248,13 +249,13 @@ export function projectActionTerminalReadinessFailureFromEvent(
 
 function projectActionTerminalAttachErrorFromCause(
   input: TerminalOpenInput,
-  cause: unknown,
+  cause: Cause.Cause<unknown>,
 ): ProjectActionTerminalAttachError {
   return new ProjectActionTerminalAttachError({
     threadId: input.threadId,
     terminalId: input.terminalId,
     cwd: input.cwd,
-    detail: `Terminal attach failed before it was ready for input: ${Cause.pretty(cause as Cause.Cause<unknown>)}`,
+    detail: `Terminal attach failed before it was ready for input: ${Cause.pretty(cause)}`,
   });
 }
 
