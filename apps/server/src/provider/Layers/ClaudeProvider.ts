@@ -550,10 +550,11 @@ const probeClaudeCapabilities = (
   environment?: NodeJS.ProcessEnv,
 ) => {
   const abort = new AbortController();
+  let q: ReturnType<typeof claudeQuery> | undefined;
   return Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
     return yield* Effect.tryPromise(async () => {
-      const q = claudeQuery({
+      q = claudeQuery({
         // Never yield — we only need initialization data, not a conversation.
         // This prevents any prompt from reaching the Anthropic API.
         // oxlint-disable-next-line require-yield
@@ -588,7 +589,12 @@ const probeClaudeCapabilities = (
   }).pipe(
     Effect.ensuring(
       Effect.sync(() => {
-        if (!abort.signal.aborted) abort.abort();
+        try {
+          if (!abort.signal.aborted) abort.abort();
+        } catch {}
+        try {
+          q?.close();
+        } catch {}
       }),
     ),
     Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
