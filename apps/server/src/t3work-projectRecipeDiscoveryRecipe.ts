@@ -8,6 +8,7 @@ import type {
   ProjectRecipeVisibilityResult,
 } from "@t3tools/project-recipes";
 
+import { discoverProjectRecipeModuleAtPath } from "./t3work-projectRecipeDiscoveryModule.ts";
 import {
   decodeRawProjectRecipeManifest,
   normalizeRecipeManifest,
@@ -35,6 +36,20 @@ export const discoverProjectRecipeAtPath = Effect.fn("discoverProjectRecipeAtPat
   }) {
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
+
+    // Prefer a typed `recipe.ts` module when present (Epic 16); the legacy `recipe.json` +
+    // `{{ }}`-expression path below remains for recipes that ship it. The two coexist additively
+    // and a directory with both resolves to the typed module.
+    const modulePath = pathService.join(input.recipePath, "recipe.ts");
+    if (yield* fileSystem.exists(modulePath).pipe(Effect.orElseSucceed(() => false))) {
+      return yield* discoverProjectRecipeModuleAtPath({
+        workspaceRoot: input.workspaceRoot,
+        recipePath: input.recipePath,
+        modulePath,
+        context: input.context,
+      });
+    }
+
     const manifestPath = pathService.join(input.recipePath, "recipe.json");
     if (!(yield* fileSystem.exists(manifestPath).pipe(Effect.orElseSucceed(() => false)))) {
       return Option.none<ProjectRecipeDiscovered>();

@@ -59,9 +59,12 @@ export const discoverProjectRecipes = Effect.fn("discoverProjectRecipes")(functi
     }).pipe(Effect.catch(() => Effect.succeed(Option.none<ProjectRecipeDiscovered>())));
 
     if (
-      yield* fileSystem
+      (yield* fileSystem
         .exists(pathService.join(recipePath, "recipe.json"))
-        .pipe(Effect.orElseSucceed(() => false))
+        .pipe(Effect.orElseSucceed(() => false))) ||
+      (yield* fileSystem
+        .exists(pathService.join(recipePath, "recipe.ts"))
+        .pipe(Effect.orElseSucceed(() => false)))
     ) {
       hasProjectLocalRecipes = true;
     }

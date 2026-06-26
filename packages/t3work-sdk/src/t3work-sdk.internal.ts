@@ -32,6 +32,7 @@ export function getRegistry(): WorkflowSdkRegistry {
     scope[REGISTRY_SYMBOL] = {
       toolGroups: new Map(),
       tools: new Map(),
+      recipes: new Map(),
     };
   }
 

@@ -1,6 +1,22 @@
 import * as Schema from "effect/Schema";
 
 import type { MessageBroker } from "./t3work-sdk.broker.ts";
+import type { AnyRecipeRef } from "./t3work-sdk.recipeTypes.ts";
+
+export type {
+  AnyRecipeRef,
+  RecipeApplicabilitySpec,
+  RecipeBrevity,
+  RecipeDetailDensity,
+  RecipeGuidanceStyle,
+  RecipeRef,
+  RecipeTechnicalDepth,
+} from "./t3work-sdk.recipeTypes.ts";
+export type {
+  PrimitiveCall,
+  PrimitiveKind,
+  WorkflowRuntime,
+} from "./t3work-sdk.runtimeTypes.ts";
 
 export type EngineCapability = "thread" | "child" | "user" | "script" | "ui" | "workflow";
 export type IntegrationMethod = (...args: ReadonlyArray<unknown>) => Promise<unknown>;
@@ -136,71 +152,7 @@ export type AnyScriptRef = ScriptRef<unknown, unknown>;
 export type WorkflowSdkRegistry = {
   readonly toolGroups: Map<string, AnyToolGroupRef>;
   readonly tools: Map<string, AnyToolRef>;
-};
-
-/**
- * Every journaled primitive. tool/script/now/random/uuid + wait/parallel/pipeline/workflow are
- * normal journaled calls; the Thread verbs split into a `sent`/`resolved` pair (Epic 25), and
- * `wait.until` (Epic 27) is their clock-driven sibling, resolved by the scheduler at its deadline.
- */
-export type PrimitiveKind =
-  | "tool"
-  | "script"
-  | "script-never"
-  | "now"
-  | "random"
-  | "uuid"
-  | "wait"
-  | "parallel"
-  | "pipeline"
-  | "workflow"
-  | "thread.create"
-  | "thread.turn"
-  | "thread.message"
-  | "user.input"
-  | "wait.until";
-
-/**
- * A single journaled primitive call. The engine assigns it a `seq`, hashes `args`, and
- * either replays the recorded result (decoding it via {@link decodeRecorded}) or runs
- * {@link exec} live and journals its result.
- */
-export interface PrimitiveCall<R> {
-  readonly kind: PrimitiveKind;
-  /** Stable identity of the called primitive (tool id, script name, or primitive name). */
-  readonly refId: string;
-  /** Canonical-JSON arguments; hashed into the journal for drift detection. */
-  readonly args: unknown;
-  /**
-   * `"never"` → always re-execute and never replay the recorded value. The call still
-   * occupies a `seq` via a typed marker entry so the position stays aligned and a later
-   * removal/reorder surfaces as drift. Defaults to `"default"`.
-   */
-  readonly replay?: "default" | "never";
-  /** Live execution. Its resolved value is journaled and must be canonical-JSON-encodable. */
-  readonly exec: () => Promise<R>;
-  /**
-   * Re-validate a recorded result on replay before handing it back to the body. Should
-   * throw (the engine wraps the failure as `JournalSchemaError`). Omit for primitives whose
-   * recorded shape needs no schema check.
-   */
-  readonly decodeRecorded?: (recorded: unknown) => R | Promise<R>;
-}
-
-/**
- * The journaling dispatcher a workflow body runs against. `callTool`/`callScript` (the
- * `tools.*`/`scripts.*` trees and directly-callable refs) both funnel through
- * {@link callPrimitive}, the single generic seat the 25.3 primitives delegate to.
- */
-export type WorkflowRuntime = {
-  readonly callTool: <I, R>(ref: ToolRef<I, R>, args: I) => Promise<R>;
-  readonly callScript: <I, O>(ref: ScriptRef<I, O>, args: I) => Promise<O>;
-  readonly callPrimitive: <R>(call: PrimitiveCall<R>) => Promise<R>;
-  // Journaled wall-clock / entropy backing the body's `Date.now()` / `Math.random()` /
-  // `crypto.randomUUID()`; a resume replays the recorded value.
-  readonly now: () => number;
-  readonly random: () => number;
-  readonly uuid: () => string;
+  readonly recipes: Map<string, AnyRecipeRef>;
 };
 
 /** Options shared by `startWorkflow` and `resumeWorkflow`. Re-exported from engine. */
