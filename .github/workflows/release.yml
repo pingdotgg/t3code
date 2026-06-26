@@ -38,6 +38,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          filter: blob:none
 
       - id: check
         name: Compare HEAD to last nightly tag
