@@ -17,12 +17,16 @@ vi.mock("@legendapp/list/react", async () => {
       anchorIndex: number;
       anchorMaxSize?: number;
       anchorOffset?: number;
-      onReady?: () => void;
+      onReady?: (info: { anchorIndex: number }) => void;
     };
     contentInsetEndAdjustment?: number;
     maintainScrollAtEnd?: boolean;
+    maintainVisibleContentPosition?: boolean;
     ref?: Ref<LegendListRef>;
   }) => {
+    if (props.anchoredEndSpace) {
+      props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
+    }
     return (
       <div
         data-testid={legendListTestId}
@@ -32,6 +36,7 @@ vi.mock("@legendapp/list/react", async () => {
         data-anchor-on-ready={Boolean(props.anchoredEndSpace?.onReady)}
         data-content-inset-end={props.contentInsetEndAdjustment}
         data-maintain-scroll-at-end={props.maintainScrollAtEnd}
+        data-maintain-visible-content-position={props.maintainVisibleContentPosition}
       >
         {props.ListHeaderComponent}
         {props.data.map((item) => (
@@ -160,6 +165,7 @@ function buildUserTimelineEntry(text: string) {
 describe("MessagesTimeline", () => {
   it("anchors a sent attachment message using its measured height", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
+    const onAnchorReady = vi.fn();
     const firstEntry = buildUserTimelineEntry("First prompt.");
     const secondEntry = {
       ...buildUserTimelineEntry("Newest prompt."),
@@ -183,6 +189,7 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline
         {...buildProps()}
         anchorMessageId={secondEntry.message.id}
+        onAnchorReady={onAnchorReady}
         contentInsetEndAdjustment={144}
         timelineEntries={[firstEntry, secondEntry]}
       />,
@@ -194,6 +201,9 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("data-anchor-max-size=");
     expect(markup).toContain('data-content-inset-end="144"');
     expect(markup).not.toContain("data-maintain-scroll-at-end=");
+    expect(markup).toContain('data-maintain-visible-content-position="false"');
+    expect(onAnchorReady).toHaveBeenCalledOnce();
+    expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
   });
 
   it("renders collapse controls for long user messages", async () => {

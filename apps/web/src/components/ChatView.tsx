@@ -36,6 +36,7 @@ import {
   createModelSelection,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
+import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
@@ -3152,12 +3153,24 @@ function ChatViewContent(props: ChatViewProps) {
     void legendListRef.current?.scrollToEnd?.({ animated });
   }, []);
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
-  const onTimelineAnchorReady = useCallback((messageId: MessageId) => {
+  const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
     if (positionedTimelineAnchorRef.current === messageId) {
       return;
     }
     positionedTimelineAnchorRef.current = messageId;
-    void legendListRef.current?.scrollToEnd?.({ animated: false });
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (positionedTimelineAnchorRef.current !== messageId) {
+          return;
+        }
+        void legendListRef.current?.scrollToIndex?.({
+          index: anchorIndex,
+          animated: true,
+          viewPosition: 0,
+          viewOffset: CHAT_LIST_ANCHOR_OFFSET,
+        });
+      });
+    });
   }, []);
 
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during

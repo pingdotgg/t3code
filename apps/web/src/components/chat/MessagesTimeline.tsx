@@ -167,7 +167,7 @@ interface MessagesTimelineProps {
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   anchorMessageId: MessageId | null;
-  onAnchorReady: (messageId: MessageId) => void;
+  onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   contentInsetEndAdjustment: number;
   onIsAtEndChange: (isAtEnd: boolean) => void;
 }
@@ -266,11 +266,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
-  const handleAnchorReady = useCallback(() => {
-    if (anchorMessageId !== null) {
-      onAnchorReady(anchorMessageId);
-    }
-  }, [anchorMessageId, onAnchorReady]);
+  const handleAnchorReady = useCallback(
+    (info: { anchorIndex: number | undefined }) => {
+      if (anchorMessageId !== null && info.anchorIndex !== undefined) {
+        onAnchorReady(anchorMessageId, info.anchorIndex);
+      }
+    },
+    [anchorMessageId, onAnchorReady],
+  );
   const anchoredEndSpace = useMemo(() => {
     const config = resolveChatListAnchoredEndSpace(rows, anchorMessageId, (row) =>
       row.kind === "message" ? row.message.id : null,
@@ -357,7 +360,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           initialScrollAtEnd
           {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
           contentInsetEndAdjustment={contentInsetEndAdjustment}
-          maintainVisibleContentPosition
+          maintainVisibleContentPosition={false}
           onScroll={handleScroll}
           className="scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
           ListHeaderComponent={TIMELINE_LIST_HEADER}
