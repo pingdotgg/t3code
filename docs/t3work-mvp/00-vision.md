@@ -158,5 +158,3 @@ spec and its tickets) possible at all.
 - Knowledge Workbench (Confluence as first knowledge Source) —
   [Epic 26](./26-knowledge-workbench.md)
 - Durable execution engine — [Epic 25](./25-workflow-engine.md)
-</content>
-</invoke>

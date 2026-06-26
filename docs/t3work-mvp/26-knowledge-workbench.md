@@ -168,4 +168,3 @@ Deferred within this epic:
 - Durable workflows behind maintenance automations — [Epic 25](./25-workflow-engine.md)
 - Surfaces / role profiles that consume knowledge — [Epic 12](./12-profiles-and-skill-packs.md)
 - Vision and the two-axis model — [Epic 00](./00-vision.md)
-</content>
