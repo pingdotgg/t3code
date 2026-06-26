@@ -1,5 +1,11 @@
 import * as Equal from "effect/Equal";
-import { formatDuration, type TimelineEntry, type WorkLogEntry } from "../../session-logic";
+import {
+  formatDuration,
+  workEntryIndicatesToolNeutralStatus,
+  workLogEntryIsToolLike,
+  type TimelineEntry,
+  type WorkLogEntry,
+} from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
 
@@ -41,6 +47,15 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       groupedEntries: WorkLogEntry[];
+    }
+  | {
+      kind: "work-toggle";
+      id: string;
+      createdAt: string;
+      groupId: string;
+      hiddenCount: number;
+      expanded: boolean;
+      onlyToolEntries: boolean;
     }
   | {
       kind: "turn-fold";
@@ -292,6 +307,7 @@ export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestTurn?: TimelineLatestTurn | null;
   expandedTurnIds?: ReadonlySet<TurnId>;
+  expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
@@ -356,12 +372,44 @@ export function deriveMessagesTimelineRows(input: {
         groupedEntries.push(nextEntry.entry);
         cursor += 1;
       }
-      nextRows.push({
-        kind: "work",
-        id: timelineEntry.id,
-        createdAt: timelineEntry.createdAt,
-        groupedEntries,
-      });
+      const visibleGroupedEntries = groupedEntries.filter(
+        (entry) => !workEntryIndicatesToolNeutralStatus(entry),
+      );
+      if (visibleGroupedEntries.length > 0) {
+        if (visibleGroupedEntries.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
+          nextRows.push({
+            kind: "work",
+            id: timelineEntry.id,
+            createdAt: timelineEntry.createdAt,
+            groupedEntries: visibleGroupedEntries,
+          });
+        } else {
+          const groupId = `work-group:${timelineEntry.id}`;
+          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const hiddenEntries = visibleGroupedEntries.slice(0, -MAX_VISIBLE_WORK_LOG_ENTRIES);
+          const visibleEntries = visibleGroupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
+          const renderedEntries = expanded ? [...hiddenEntries, ...visibleEntries] : visibleEntries;
+
+          for (const workEntry of renderedEntries) {
+            nextRows.push({
+              kind: "work",
+              id: workEntry.id,
+              createdAt: workEntry.createdAt,
+              groupedEntries: [workEntry],
+            });
+          }
+
+          nextRows.push({
+            kind: "work-toggle",
+            id: `work-toggle:${timelineEntry.id}`,
+            createdAt: timelineEntry.createdAt,
+            groupId,
+            hiddenCount: hiddenEntries.length,
+            expanded,
+            onlyToolEntries: visibleGroupedEntries.every((entry) => workLogEntryIsToolLike(entry)),
+          });
+        }
+      }
       index = cursor - 1;
       continue;
     }
@@ -461,6 +509,17 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "work":
       return Equal.equals(a.groupedEntries, (b as typeof a).groupedEntries);
+
+    case "work-toggle": {
+      const bw = b as typeof a;
+      return (
+        a.createdAt === bw.createdAt &&
+        a.groupId === bw.groupId &&
+        a.hiddenCount === bw.hiddenCount &&
+        a.expanded === bw.expanded &&
+        a.onlyToolEntries === bw.onlyToolEntries
+      );
+    }
 
     case "message": {
       const bm = b as typeof a;

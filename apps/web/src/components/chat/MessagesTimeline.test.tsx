@@ -23,7 +23,13 @@ vi.mock("@legendapp/list/react", async () => {
     contentInsetEndAdjustment?: number;
     className?: string;
     maintainScrollAtEnd?: boolean;
-    maintainVisibleContentPosition?: boolean;
+    maintainVisibleContentPosition?:
+      | boolean
+      | {
+          data?: boolean;
+          size?: boolean;
+          shouldRestorePosition?: (item: { id: string }) => boolean;
+        };
     ref?: Ref<LegendListRef>;
   }) => {
     if (props.anchoredEndSpace) {
@@ -40,7 +46,21 @@ vi.mock("@legendapp/list/react", async () => {
         data-content-inset-end={props.contentInsetEndAdjustment}
         data-class-name={props.className}
         data-maintain-scroll-at-end={props.maintainScrollAtEnd}
-        data-maintain-visible-content-position={props.maintainVisibleContentPosition}
+        data-maintain-visible-content-position={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? "object"
+            : props.maintainVisibleContentPosition
+        }
+        data-maintain-visible-content-position-data={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? props.maintainVisibleContentPosition.data
+            : undefined
+        }
+        data-maintain-visible-content-position-size={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? props.maintainVisibleContentPosition.size
+            : undefined
+        }
       >
         {props.ListHeaderComponent}
         {props.data.map((item) => (
@@ -209,7 +229,9 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-content-inset-end="144"');
     expect(markup).toContain("[overflow-anchor:none]");
     expect(markup).not.toContain("data-maintain-scroll-at-end=");
-    expect(markup).toContain('data-maintain-visible-content-position="false"');
+    expect(markup).toContain('data-maintain-visible-content-position="object"');
+    expect(markup).toContain('data-maintain-visible-content-position-data="true"');
+    expect(markup).toContain('data-maintain-visible-content-position-size="false"');
     expect(onAnchorReady).toHaveBeenCalledOnce();
     expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
     expect(onAnchorSizeChanged).toHaveBeenCalledWith(secondEntry.message.id, 240);
