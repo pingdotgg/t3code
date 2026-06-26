@@ -42,7 +42,6 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
-import { promptResponseHasMissingXAiStopReason } from "../acp/AcpSessionRuntime.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -64,6 +63,7 @@ import {
   extractXAiAskUserQuestions,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
+  promptResponseHasMissingXAiStopReason,
   XAiAskUserQuestionRequest,
 } from "../acp/XAiAcpExtension.ts";
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
@@ -212,11 +212,16 @@ function completedStopReasonFromPromptResponse(
 }
 
 export function grokPromptSettlementBelongsToContext(input: {
+  readonly liveAcpSessionId: string;
+  readonly expectedAcpSessionId: string;
   readonly liveActiveTurnId: TurnId | undefined;
   readonly liveSessionActiveTurnId: TurnId | undefined;
   readonly turnId: TurnId;
 }): boolean {
-  return input.liveActiveTurnId === input.turnId || input.liveSessionActiveTurnId === input.turnId;
+  return (
+    input.liveAcpSessionId === input.expectedAcpSessionId &&
+    (input.liveActiveTurnId === input.turnId || input.liveSessionActiveTurnId === input.turnId)
+  );
 }
 
 export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapterLiveOptions) {
@@ -307,6 +312,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           return;
         }
         const settlementBelongsToLiveContext = grokPromptSettlementBelongsToContext({
+          liveAcpSessionId: liveCtx.acpSessionId,
+          expectedAcpSessionId,
           liveActiveTurnId: liveCtx.activeTurnId,
           liveSessionActiveTurnId: liveCtx.session.activeTurnId,
           turnId,
@@ -315,7 +322,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           // interruptTurn already consumed every prompt slot for this turn. A
           // late prompt result must neither emit a second terminal event nor
           // consume a slot belonging to a newer turn on the same ACP session.
-          if (liveCtx.interruptedTurnIds.has(turnId)) {
+          if (
+            liveCtx.acpSessionId !== expectedAcpSessionId ||
+            liveCtx.interruptedTurnIds.has(turnId)
+          ) {
             return;
           }
           if (options?.emitTurnCompletion !== false) {
@@ -344,56 +354,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 },
               });
             }
-          }
-          return;
-        }
-        if (liveCtx.acpSessionId !== expectedAcpSessionId) {
-          liveCtx.promptsInFlight = options?.settleAllPrompts
-            ? 0
-            : Math.max(0, liveCtx.promptsInFlight - 1);
-          if (liveCtx.promptsInFlight > 0) {
-            return;
-          }
-          const updatedAt = yield* nowIso;
-          const canEmitTurnCompletion =
-            liveCtx.session.status === "running" || liveCtx.session.status === "connecting";
-          const shouldEmitFailedTurn = options?.errorMessage !== undefined && canEmitTurnCompletion;
-          const shouldEmitCompletedTurn =
-            options?.completedStopReason !== undefined && canEmitTurnCompletion;
-          const { activeTurnId: _activeTurnId, ...readySession } = liveCtx.session;
-          liveCtx.activeTurnId = undefined;
-          liveCtx.session = {
-            ...readySession,
-            status: "ready",
-            updatedAt,
-          };
-          if (options?.emitTurnCompletion === false) {
-            return;
-          }
-          if (shouldEmitFailedTurn) {
-            yield* offerRuntimeEvent({
-              type: "turn.completed",
-              ...(yield* makeEventStamp()),
-              provider: PROVIDER,
-              threadId,
-              turnId,
-              payload: {
-                state: "failed",
-                errorMessage: options.errorMessage,
-              },
-            });
-          } else if (shouldEmitCompletedTurn) {
-            yield* offerRuntimeEvent({
-              type: "turn.completed",
-              ...(yield* makeEventStamp()),
-              provider: PROVIDER,
-              threadId,
-              turnId,
-              payload: {
-                state: options.completedStopReason === "cancelled" ? "cancelled" : "completed",
-                stopReason: options.completedStopReason ?? null,
-              },
-            });
           }
           return;
         }

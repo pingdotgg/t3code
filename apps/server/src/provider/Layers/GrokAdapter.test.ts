@@ -95,13 +95,26 @@ it("requires a settlement to match the live Grok turn", () => {
 
   assert.isFalse(
     grokPromptSettlementBelongsToContext({
+      liveAcpSessionId: "session-1",
+      expectedAcpSessionId: "session-1",
       liveActiveTurnId: replacementTurnId,
       liveSessionActiveTurnId: replacementTurnId,
       turnId: staleTurnId,
     }),
   );
+  assert.isFalse(
+    grokPromptSettlementBelongsToContext({
+      liveAcpSessionId: "replacement-session",
+      expectedAcpSessionId: "stale-session",
+      liveActiveTurnId: staleTurnId,
+      liveSessionActiveTurnId: staleTurnId,
+      turnId: staleTurnId,
+    }),
+  );
   assert.isTrue(
     grokPromptSettlementBelongsToContext({
+      liveAcpSessionId: "session-1",
+      expectedAcpSessionId: "session-1",
       liveActiveTurnId: staleTurnId,
       liveSessionActiveTurnId: staleTurnId,
       turnId: staleTurnId,

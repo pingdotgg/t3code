@@ -160,46 +160,7 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
-  it.effect("resolves a prompt from xAI prompt completion when the prompt RPC hangs", () =>
-    Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
-      yield* runtime.start();
-
-      const promptResult = yield* runtime.prompt({
-        prompt: [{ type: "text", text: "hi" }],
-      });
-
-      const promptId = promptResult._meta?.promptId;
-      expect(typeof promptId).toBe("string");
-      expect(promptResult).toMatchObject({
-        stopReason: "end_turn",
-        _meta: {
-          sessionId: "mock-session-1",
-          promptId,
-          requestId: promptId,
-        },
-      });
-    }).pipe(
-      Effect.provide(
-        AcpSessionRuntime.layer({
-          spawn: {
-            command: mockAgentCommand,
-            args: mockAgentArgs,
-            env: {
-              T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
-            },
-          },
-          cwd: process.cwd(),
-          clientInfo: { name: "t3-test", version: "0.0.0" },
-          authMethodId: "test",
-        }),
-      ),
-      Effect.scoped,
-      Effect.provide(NodeServices.layer),
-    ),
-  );
-
-  it.effect("serializes prompt calls so only one session/prompt is in flight", () =>
+  it.effect("supports successive standard ACP prompts", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       yield* runtime.start();
@@ -211,34 +172,14 @@ describe("AcpSessionRuntime", () => {
         prompt: [{ type: "text", text: "second" }],
       });
 
-      const firstPromptId = firstPromptResult._meta?.promptId;
-      const secondPromptId = secondPromptResult._meta?.promptId;
-      expect(typeof firstPromptId).toBe("string");
-      expect(typeof secondPromptId).toBe("string");
-      expect(firstPromptId).not.toBe(secondPromptId);
-      expect(firstPromptResult).toMatchObject({
-        stopReason: "end_turn",
-        _meta: {
-          promptId: firstPromptId,
-          requestId: firstPromptId,
-        },
-      });
-      expect(secondPromptResult).toMatchObject({
-        stopReason: "end_turn",
-        _meta: {
-          promptId: secondPromptId,
-          requestId: secondPromptId,
-        },
-      });
+      expect(firstPromptResult).toMatchObject({ stopReason: "end_turn" });
+      expect(secondPromptResult).toMatchObject({ stopReason: "end_turn" });
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
           spawn: {
             command: mockAgentCommand,
             args: mockAgentArgs,
-            env: {
-              T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
-            },
           },
           cwd: process.cwd(),
           clientInfo: { name: "t3-test", version: "0.0.0" },
@@ -279,54 +220,6 @@ describe("AcpSessionRuntime", () => {
             args: mockAgentArgs,
             env: {
               T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
-            },
-          },
-          cwd: process.cwd(),
-          clientInfo: { name: "t3-test", version: "0.0.0" },
-          authMethodId: "test",
-        }),
-      ),
-      Effect.scoped,
-      Effect.provide(NodeServices.layer),
-    ),
-  );
-
-  it.effect("ignores stale xAI prompt completion for an already completed prompt", () =>
-    Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
-      yield* runtime.start();
-
-      const firstPromptResult = yield* runtime.prompt({
-        prompt: [{ type: "text", text: "first" }],
-      });
-      expect(firstPromptResult).toMatchObject({
-        stopReason: "end_turn",
-        _meta: {
-          promptId: "mock-stale-xai-prompt-1",
-        },
-      });
-
-      const secondPromptResult = yield* runtime.prompt({
-        prompt: [{ type: "text", text: "second" }],
-      });
-      const secondPromptId = secondPromptResult._meta?.promptId;
-      expect(typeof secondPromptId).toBe("string");
-      expect(secondPromptId).not.toBe("mock-stale-xai-prompt-1");
-      expect(secondPromptResult).toMatchObject({
-        stopReason: "end_turn",
-        _meta: {
-          promptId: secondPromptId,
-          requestId: secondPromptId,
-        },
-      });
-    }).pipe(
-      Effect.provide(
-        AcpSessionRuntime.layer({
-          spawn: {
-            command: mockAgentCommand,
-            args: mockAgentArgs,
-            env: {
-              T3_ACP_EMIT_STALE_XAI_PROMPT_COMPLETE_BEFORE_SECOND_HANG: "1",
             },
           },
           cwd: process.cwd(),
