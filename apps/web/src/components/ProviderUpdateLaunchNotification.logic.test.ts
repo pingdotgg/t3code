@@ -4,6 +4,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
+  buildProviderUpdateToastUpdate,
   canOneClickUpdateProviderCandidate,
   collectProviderUpdateCandidates,
   collectUpdatedProviderSnapshots,
@@ -11,13 +12,16 @@ import {
   getProviderUpdateInitialToastView,
   getProviderUpdateProgressToastView,
   getProviderUpdateRejectedToastView,
+  getProviderUpdateRunningToastView,
   getProviderUpdateSidebarPillView,
   getSingleProviderUpdateProgressToastView,
   hasOneClickUpdateProviderCandidate,
   isProviderUpdateCandidate,
   providerUpdateNotificationKey,
   type ProviderUpdateCandidate,
+  type ProviderUpdateToastView,
 } from "./ProviderUpdateLaunchNotification.logic";
+import { stackedThreadToast } from "./ui/toastHelpers";
 
 const checkedAt = "2026-04-23T10:00:00.000Z";
 const sessionStartedAt = "2026-04-23T09:59:00.000Z";
@@ -69,6 +73,28 @@ function provider(input: {
 
 function updateCandidate(input: Parameters<typeof provider>[0]): ProviderUpdateCandidate {
   return provider(input) as ProviderUpdateCandidate;
+}
+
+function promptToastWithUpdateAction() {
+  return stackedThreadToast({
+    type: "warning",
+    title: "Updates Available: 2 providers",
+    description: "Install the update now or review provider settings.",
+    timeout: 0,
+    actionProps: {
+      children: "Update",
+      onClick: () => undefined,
+    },
+    actionVariant: "default",
+    data: {
+      hideCopyButton: true,
+      secondaryActionProps: {
+        children: "Settings",
+        onClick: () => undefined,
+      },
+      secondaryActionVariant: "outline",
+    },
+  });
 }
 
 describe("provider update launch notification logic", () => {
@@ -269,6 +295,40 @@ describe("provider update launch notification logic", () => {
       title: "Update Available: Codex v1.1.0",
       description: "Install the update now or review provider settings.",
     });
+  });
+
+  it("clears the prompt update action from actionless progress toast views", () => {
+    const successView: ProviderUpdateToastView = {
+      phase: "succeeded",
+      type: "success",
+      title: "Provider updates finished",
+      description: "New sessions will use the updated providers.",
+      dismissAfterVisibleMs: 3_000,
+    };
+
+    for (const view of [getProviderUpdateRunningToastView(2), successView]) {
+      const update = buildProviderUpdateToastUpdate({
+        view,
+        openSettings: () => undefined,
+      });
+      const mergedToast = { ...promptToastWithUpdateAction(), ...update };
+
+      expect(Object.hasOwn(update, "actionProps")).toBe(true);
+      expect(mergedToast.actionProps).toBeUndefined();
+      expect(mergedToast.data?.secondaryActionProps).toBeUndefined();
+      expect(mergedToast.data?.actionLayout).toBeUndefined();
+    }
+  });
+
+  it("keeps failed update toast views actionable from settings", () => {
+    const update = buildProviderUpdateToastUpdate({
+      view: getProviderUpdateRejectedToastView(2, "WebSocket closed"),
+      openSettings: () => undefined,
+    });
+    const mergedToast = { ...promptToastWithUpdateAction(), ...update };
+
+    expect(mergedToast.actionProps?.children).toBe("Settings");
+    expect(mergedToast.data?.actionLayout).toBe("stacked-end");
   });
 
   it("describes settings-only updates without one-click support", () => {

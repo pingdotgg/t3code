@@ -10,6 +10,7 @@ import { useDismissedProviderUpdateNotificationKeys } from "../providerUpdateDis
 import { PROVIDER_ICON_BY_PROVIDER } from "./chat/providerIconUtils";
 import {
   canOneClickUpdateProviderCandidate,
+  buildProviderUpdateToastUpdate,
   collectProviderUpdateCandidates,
   collectUpdatedProviderSnapshots,
   firstFailedProviderUpdateMessage,
@@ -62,37 +63,11 @@ function updateProviderUpdateToast(input: {
   readonly view: ProviderUpdateToastView;
   readonly openSettings: () => void;
 }) {
-  if (input.view.type === "loading" || input.view.type === "success") {
-    toastManager.update(input.toastId, {
-      type: input.view.type,
-      title: input.view.title,
-      description: input.view.description,
-      timeout: 0,
-      data: {
-        hideCopyButton: true,
-        ...(input.view.dismissAfterVisibleMs !== undefined
-          ? { dismissAfterVisibleMs: input.view.dismissAfterVisibleMs }
-          : {}),
-      },
-    });
-    return;
-  }
-
   toastManager.update(
     input.toastId,
-    stackedThreadToast({
-      type: input.view.type,
-      title: input.view.title,
-      description: input.view.description,
-      timeout: 0,
-      actionProps: {
-        children: "Settings",
-        onClick: input.openSettings,
-      },
-      actionVariant: "outline",
-      data: {
-        hideCopyButton: true,
-      },
+    buildProviderUpdateToastUpdate({
+      view: input.view,
+      openSettings: input.openSettings,
     }),
   );
 }

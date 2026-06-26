@@ -1,3 +1,4 @@
+import type { ToastManagerUpdateOptions } from "@base-ui/react/toast";
 import {
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
@@ -9,6 +10,9 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+
+import type { ThreadToastData } from "./ui/toast";
+import { stackedThreadToast } from "./ui/toastHelpers";
 
 export type ProviderUpdateCandidate = ServerProvider & {
   readonly versionAdvisory: NonNullable<ServerProvider["versionAdvisory"]> & {
@@ -236,6 +240,45 @@ export function getProviderUpdateRejectedToastView(
     type: "error",
     title: providerCount === 1 ? "Provider update failed" : "Provider updates failed",
     description: message,
+  };
+}
+
+export function buildProviderUpdateToastUpdate(input: {
+  readonly view: ProviderUpdateToastView;
+  readonly openSettings: () => void;
+}): ToastManagerUpdateOptions<ThreadToastData> {
+  if (input.view.type !== "loading" && input.view.type !== "success") {
+    return stackedThreadToast({
+      type: input.view.type,
+      title: input.view.title,
+      description: input.view.description,
+      timeout: 0,
+      actionProps: {
+        children: "Settings",
+        onClick: input.openSettings,
+      },
+      actionVariant: "outline",
+      data: {
+        hideCopyButton: true,
+      },
+    });
+  }
+
+  const data: ThreadToastData = {
+    hideCopyButton: true,
+  };
+  if (input.view.dismissAfterVisibleMs !== undefined) {
+    data.dismissAfterVisibleMs = input.view.dismissAfterVisibleMs;
+  }
+
+  return {
+    type: input.view.type,
+    title: input.view.title,
+    description: input.view.description,
+    timeout: 0,
+    // Base UI shallow-merges toast updates, so the old prompt CTA must be explicitly cleared.
+    actionProps: undefined,
+    data,
   };
 }
 
