@@ -7,13 +7,11 @@ import {
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
@@ -63,32 +61,44 @@ const settingsChange = (settings: DesktopSettings, changed: boolean): DesktopSet
   changed,
 });
 
-export class DesktopSettingsWriteError extends Data.TaggedError("DesktopSettingsWriteError")<{
-  readonly cause: PlatformError.PlatformError | Schema.SchemaError;
-}> {
-  override get message() {
-    return `Failed to write desktop settings: ${this.cause.message}`;
-  }
-}
+const DesktopSettingsWriteOperation = Schema.Literals([
+  "create-temporary-file-name",
+  "encode-document",
+  "create-directory",
+  "write-temporary-file",
+  "replace-settings-file",
+]);
+type DesktopSettingsWriteOperation = typeof DesktopSettingsWriteOperation.Type;
 
-export interface DesktopAppSettingsShape {
-  readonly load: Effect.Effect<DesktopSettings>;
-  readonly get: Effect.Effect<DesktopSettings>;
-  readonly setServerExposureMode: (
-    mode: DesktopServerExposureMode,
-  ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
-  readonly setTailscaleServe: (input: {
-    readonly enabled: boolean;
-    readonly port: Option.Option<number>;
-  }) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
-  readonly setUpdateChannel: (
-    channel: DesktopUpdateChannel,
-  ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+export class DesktopSettingsWriteError extends Schema.TaggedErrorClass<DesktopSettingsWriteError>()(
+  "DesktopSettingsWriteError",
+  {
+    operation: DesktopSettingsWriteOperation,
+    path: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Desktop settings write failed during ${this.operation} at ${this.path}.`;
+  }
 }
 
 export class DesktopAppSettings extends Context.Service<
   DesktopAppSettings,
-  DesktopAppSettingsShape
+  {
+    readonly load: Effect.Effect<DesktopSettings>;
+    readonly get: Effect.Effect<DesktopSettings>;
+    readonly setServerExposureMode: (
+      mode: DesktopServerExposureMode,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setTailscaleServe: (input: {
+      readonly enabled: boolean;
+      readonly port: Option.Option<number>;
+    }) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setUpdateChannel: (
+      channel: DesktopUpdateChannel,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+  }
 >()("@t3tools/desktop/settings/DesktopAppSettings") {}
 
 export function resolveDefaultDesktopSettings(appVersion: string): DesktopSettings {
@@ -223,77 +233,119 @@ const writeSettings = Effect.fn("desktop.settings.writeSettings")(function* (inp
   readonly settings: DesktopSettings;
   readonly defaultSettings: DesktopSettings;
   readonly suffix: string;
-}): Effect.fn.Return<void, PlatformError.PlatformError | Schema.SchemaError> {
+}): Effect.fn.Return<void, DesktopSettingsWriteError> {
   const directory = input.path.dirname(input.settingsPath);
   const tempPath = `${input.settingsPath}.${process.pid}.${input.suffix}.tmp`;
   const encoded = yield* encodeDesktopSettingsJson(
     toDesktopSettingsDocument(input.settings, input.defaultSettings),
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DesktopSettingsWriteError({
+          operation: "encode-document",
+          path: input.settingsPath,
+          cause,
+        }),
+    ),
   );
-  yield* input.fileSystem.makeDirectory(directory, { recursive: true });
-  yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`);
-  yield* input.fileSystem.rename(tempPath, input.settingsPath);
+  yield* input.fileSystem.makeDirectory(directory, { recursive: true }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DesktopSettingsWriteError({
+          operation: "create-directory",
+          path: directory,
+          cause,
+        }),
+    ),
+  );
+  yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DesktopSettingsWriteError({
+          operation: "write-temporary-file",
+          path: tempPath,
+          cause,
+        }),
+    ),
+  );
+  yield* input.fileSystem.rename(tempPath, input.settingsPath).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DesktopSettingsWriteError({
+          operation: "replace-settings-file",
+          path: input.settingsPath,
+          cause,
+        }),
+    ),
+  );
 });
 
-export const layer = Layer.effect(
-  DesktopAppSettings,
-  Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
-    const settingsRef = yield* SynchronizedRef.make(environment.defaultDesktopSettings);
+export const make = Effect.gen(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
+  const settingsRef = yield* SynchronizedRef.make(environment.defaultDesktopSettings);
 
-    const persist = (
-      update: (settings: DesktopSettings) => DesktopSettings,
-    ): Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError> =>
-      SynchronizedRef.modifyEffect(settingsRef, (settings) => {
-        const nextSettings = update(settings);
-        if (nextSettings === settings) {
-          return Effect.succeed([settingsChange(settings, false), settings] as const);
-        }
+  const persist = (
+    update: (settings: DesktopSettings) => DesktopSettings,
+  ): Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError> =>
+    SynchronizedRef.modifyEffect(settingsRef, (settings) => {
+      const nextSettings = update(settings);
+      if (nextSettings === settings) {
+        return Effect.succeed([settingsChange(settings, false), settings] as const);
+      }
 
-        return crypto.randomUUIDv4.pipe(
-          Effect.map((uuid) => uuid.replace(/-/g, "")),
-          Effect.flatMap((suffix) =>
-            writeSettings({
-              fileSystem,
-              path,
-              settingsPath: environment.desktopSettingsPath,
-              settings: nextSettings,
-              defaultSettings: environment.defaultDesktopSettings,
-              suffix,
+      return crypto.randomUUIDv4.pipe(
+        Effect.map((uuid) => uuid.replace(/-/g, "")),
+        Effect.mapError(
+          (cause) =>
+            new DesktopSettingsWriteError({
+              operation: "create-temporary-file-name",
+              path: environment.desktopSettingsPath,
+              cause,
             }),
-          ),
-          Effect.mapError((cause) => new DesktopSettingsWriteError({ cause })),
-          Effect.as([settingsChange(nextSettings, true), nextSettings] as const),
-        );
-      });
-
-    return DesktopAppSettings.of({
-      get: SynchronizedRef.get(settingsRef),
-      load: Effect.gen(function* () {
-        const settings = yield* readSettings(
-          fileSystem,
-          environment.desktopSettingsPath,
-          environment.appVersion,
-        );
-        return yield* SynchronizedRef.setAndGet(settingsRef, settings);
-      }).pipe(Effect.withSpan("desktop.settings.load")),
-      setServerExposureMode: (mode) =>
-        persist((settings) => setServerExposureMode(settings, mode)).pipe(
-          Effect.withSpan("desktop.settings.setServerExposureMode", { attributes: { mode } }),
         ),
-      setTailscaleServe: (input) =>
-        persist((settings) => setTailscaleServe(settings, input)).pipe(
-          Effect.withSpan("desktop.settings.setTailscaleServe", { attributes: input }),
+        Effect.flatMap((suffix) =>
+          writeSettings({
+            fileSystem,
+            path,
+            settingsPath: environment.desktopSettingsPath,
+            settings: nextSettings,
+            defaultSettings: environment.defaultDesktopSettings,
+            suffix,
+          }),
         ),
-      setUpdateChannel: (channel) =>
-        persist((settings) => setUpdateChannel(settings, channel)).pipe(
-          Effect.withSpan("desktop.settings.setUpdateChannel", { attributes: { channel } }),
-        ),
+        Effect.as([settingsChange(nextSettings, true), nextSettings] as const),
+      );
     });
-  }),
-);
+
+  return DesktopAppSettings.of({
+    get: SynchronizedRef.get(settingsRef),
+    load: Effect.gen(function* () {
+      const settings = yield* readSettings(
+        fileSystem,
+        environment.desktopSettingsPath,
+        environment.appVersion,
+      );
+      return yield* SynchronizedRef.setAndGet(settingsRef, settings);
+    }).pipe(Effect.withSpan("desktop.settings.load")),
+    setServerExposureMode: (mode) =>
+      persist((settings) => setServerExposureMode(settings, mode)).pipe(
+        Effect.withSpan("desktop.settings.setServerExposureMode", { attributes: { mode } }),
+      ),
+    setTailscaleServe: (input) =>
+      persist((settings) => setTailscaleServe(settings, input)).pipe(
+        Effect.withSpan("desktop.settings.setTailscaleServe", { attributes: input }),
+      ),
+    setUpdateChannel: (channel) =>
+      persist((settings) => setUpdateChannel(settings, channel)).pipe(
+        Effect.withSpan("desktop.settings.setUpdateChannel", { attributes: { channel } }),
+      ),
+  });
+});
+
+export const layer = Layer.effect(DesktopAppSettings, make);
 
 export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SETTINGS) =>
   Layer.effect(

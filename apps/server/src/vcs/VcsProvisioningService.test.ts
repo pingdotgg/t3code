@@ -11,7 +11,7 @@ import * as VcsProvisioningService from "./VcsProvisioningService.ts";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
-function makeDriver(calls: string[]): VcsDriver.VcsDriverShape {
+function makeDriver(calls: string[]): VcsDriver.VcsDriver["Service"] {
   return {
     capabilities: {
       kind: "git",

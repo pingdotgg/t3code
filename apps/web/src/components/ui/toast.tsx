@@ -45,6 +45,10 @@ export type ThreadToastData = {
   onClose?: (() => void) | undefined;
   dismissAfterVisibleMs?: number;
   hideCopyButton?: boolean;
+  additionalActions?: ReadonlyArray<{
+    id: string;
+    props: ComponentPropsWithoutRef<"button">;
+  }>;
   secondaryActionProps?: ComponentPropsWithoutRef<"button">;
   secondaryActionVariant?:
     | "default"
@@ -113,7 +117,7 @@ function handleToastDismissClick(
 }
 
 function CopyErrorButton({ text }: { text: string }) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard();
+  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "error-message" });
   const label = isCopied ? "Copied error" : "Copy error";
 
   return (
@@ -292,9 +296,13 @@ function deriveToastBodyDescriptor(toast: {
     toast.type === "error" && typeof toast.description === "string" && !toast.data?.hideCopyButton
       ? toast.description
       : null;
+  const hasAdditionalActions = (toast.data?.additionalActions?.length ?? 0) > 0;
   const hasSecondaryAction = toast.data?.secondaryActionProps !== undefined;
   const hasTrailingControls =
-    copyErrorText !== null || toast.actionProps !== undefined || hasSecondaryAction;
+    copyErrorText !== null ||
+    toast.actionProps !== undefined ||
+    hasAdditionalActions ||
+    hasSecondaryAction;
   const inlineContentEndPad = hasTrailingControls ? "pr-6" : "pr-10";
   return {
     Icon,
@@ -326,6 +334,7 @@ function ToastBodyContent({
   toastDescription,
   toastType,
 }: ToastBodyContentProps) {
+  const additionalActions = toastData?.additionalActions ?? [];
   const secondaryActionProps = toastData?.secondaryActionProps;
   const leadingIcon = toastData?.leadingIcon;
   const { className: secondaryActionClassName, ...secondaryActionRest } =
@@ -371,6 +380,17 @@ function ToastBodyContent({
           )}
         >
           {copyErrorText !== null ? <CopyErrorButton text={copyErrorText} /> : null}
+          {additionalActions.map(({ id, props: { className, ...props } }) => (
+            <button
+              {...props}
+              className={cn(
+                buttonVariants({ size: "xs", variant: secondaryActionVariant }),
+                className,
+              )}
+              key={id}
+              type="button"
+            />
+          ))}
           {secondaryActionProps ? (
             <button
               {...secondaryActionRest}

@@ -1,12 +1,12 @@
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import type * as Electron from "electron";
 
-import * as DesktopObservability from "../app/DesktopObservability.ts";
+import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
@@ -14,13 +14,23 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 
-export interface DesktopApplicationMenuShape {
-  readonly configure: Effect.Effect<void>;
+export class DesktopApplicationMenuActionError extends Schema.TaggedErrorClass<DesktopApplicationMenuActionError>()(
+  "DesktopApplicationMenuActionError",
+  {
+    action: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Desktop menu action "${this.action}" failed.`;
+  }
 }
 
 export class DesktopApplicationMenu extends Context.Service<
   DesktopApplicationMenu,
-  DesktopApplicationMenuShape
+  {
+    readonly configure: Effect.Effect<void>;
+  }
 >()("@t3tools/desktop/window/DesktopApplicationMenu") {}
 
 type DesktopApplicationMenuRuntimeServices =
@@ -28,9 +38,9 @@ type DesktopApplicationMenuRuntimeServices =
   | DesktopWindow.DesktopWindow
   | ElectronDialog.ElectronDialog;
 
-const { logInfo: logUpdaterInfo } = DesktopObservability.makeComponentLogger("desktop-updater");
+const { logInfo: logUpdaterInfo } = makeComponentLogger("desktop-updater");
 
-const { logError: logMenuError } = DesktopObservability.makeComponentLogger("desktop-menu");
+const { logError: logMenuError } = makeComponentLogger("desktop-menu");
 
 const dispatchMenuAction = Effect.fn("desktop.menu.dispatchMenuAction")(function* (
   action: string,
@@ -39,11 +49,7 @@ const dispatchMenuAction = Effect.fn("desktop.menu.dispatchMenuAction")(function
   yield* desktopWindow.dispatchMenuAction(action);
 });
 
-const checkForUpdatesFromMenu: Effect.Effect<
-  void,
-  never,
-  DesktopUpdates.DesktopUpdates | ElectronDialog.ElectronDialog
-> = Effect.gen(function* () {
+const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
   const result = yield* updates.check("menu");
@@ -67,11 +73,7 @@ const checkForUpdatesFromMenu: Effect.Effect<
   }
 }).pipe(Effect.withSpan("desktop.menu.checkForUpdates"));
 
-const handleCheckForUpdatesMenuClick: Effect.Effect<
-  void,
-  DesktopWindow.DesktopWindowError,
-  DesktopUpdates.DesktopUpdates | ElectronDialog.ElectronDialog | DesktopWindow.DesktopWindow
-> = Effect.gen(function* () {
+const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
   const disabledReason = yield* updates.disabledReason;
@@ -94,7 +96,7 @@ const handleCheckForUpdatesMenuClick: Effect.Effect<
   yield* checkForUpdatesFromMenu;
 }).pipe(Effect.withSpan("desktop.menu.handleCheckForUpdatesClick"));
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -110,12 +112,10 @@ const make = Effect.gen(function* () {
       effect.pipe(
         Effect.annotateLogs({ action }),
         Effect.withSpan("desktop.menu.action"),
-        Effect.catchCause((cause) =>
-          logMenuError("desktop menu action failed", {
-            action,
-            cause: Cause.pretty(cause),
-          }),
-        ),
+        Effect.catchCause((cause) => {
+          const error = new DesktopApplicationMenuActionError({ action, cause });
+          return logMenuError(error.message, { error });
+        }),
       ),
     );
   };

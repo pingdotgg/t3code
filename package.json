@@ -41,7 +41,6 @@
     "sync:upstream:main:push": "node scripts/t3work-sync-upstream-fork.mjs sync-main --push-origin",
     "sync:upstream:current": "node scripts/t3work-sync-upstream-fork.mjs rebase-current",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .vite-plus apps/*/.vite-plus packages/*/.vite-plus",
-    "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs",
     "sync:repos": "node scripts/sync-reference-repos.ts"
   },
   "devDependencies": {

@@ -9,12 +9,13 @@ import {
   type GitActionRequestInput,
   requiresDefaultBranchConfirmation,
   resolveQuickAction,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/state/vcs";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import Stack from "expo-router/stack";
 import { useCallback, useMemo } from "react";
-import { Alert, Linking } from "react-native";
-import { buildThreadReviewRoutePath } from "../../lib/routes";
+import { Alert } from "react-native";
+import { buildThreadFilesNavigation, buildThreadReviewRoutePath } from "../../lib/routes";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import {
   basename,
   getTerminalStatusLabel,
@@ -69,6 +70,7 @@ export function ThreadGitControls(props: {
   readonly gitStatus: VcsStatusResult | null;
   readonly gitOperationLabel: string | null;
   readonly canOpenTerminal: boolean;
+  readonly canOpenFiles: boolean;
   readonly projectScripts: ReadonlyArray<ProjectScript>;
   readonly terminalSessions: ReadonlyArray<TerminalMenuSession>;
   readonly onOpenTerminal: (terminalId?: string | null) => void;
@@ -124,13 +126,8 @@ export function ThreadGitControls(props: {
       Alert.alert("No open PR", "This branch does not have an open pull request.");
       return;
     }
-    try {
-      await Linking.openURL(prUrl);
-    } catch (error) {
-      Alert.alert(
-        "Unable to open PR",
-        error instanceof Error ? error.message : "An error occurred.",
-      );
+    if (!(await tryOpenExternalUrl(prUrl, "pull-request"))) {
+      Alert.alert("Unable to open PR", "The pull request could not be opened.");
     }
   }, [gitStatus]);
 
@@ -258,6 +255,14 @@ export function ThreadGitControls(props: {
           subtitle="Turn diffs and worktree changes"
         >
           <Stack.Toolbar.Label>Review changes</Stack.Toolbar.Label>
+        </Stack.Toolbar.MenuAction>
+        <Stack.Toolbar.MenuAction
+          icon="folder"
+          disabled={!props.canOpenFiles}
+          onPress={() => router.push(buildThreadFilesNavigation({ environmentId, threadId }))}
+          subtitle="Browse this workspace"
+        >
+          <Stack.Toolbar.Label>Files</Stack.Toolbar.Label>
         </Stack.Toolbar.MenuAction>
         <Stack.Toolbar.MenuAction
           icon="ellipsis.circle"

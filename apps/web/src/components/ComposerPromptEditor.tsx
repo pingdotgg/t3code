@@ -64,7 +64,7 @@ import {
   type TerminalContextDraft,
 } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
-import { basenameOfPath } from "~/vscode-icons";
+import { basenameOfPath } from "~/pierre-icons";
 import {
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
   COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
@@ -910,6 +910,12 @@ function ComposerCommandKeyPlugin(props: {
       if (!props.onCommandKeyDown || !event) {
         return false;
       }
+
+      if (key === "Enter" && (event.isComposing || event.keyCode === 229)) {
+        event.stopPropagation();
+        return true;
+      }
+
       const handled = props.onCommandKeyDown(key, event);
       if (handled) {
         event.preventDefault();

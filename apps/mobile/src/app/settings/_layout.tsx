@@ -1,16 +1,27 @@
 import Stack from "expo-router/stack";
-import { useColorScheme } from "react-native";
+import { useCallback } from "react";
 import { useResolveClassNames } from "uniwind";
+
+import { useClerkSettingsSheetDetent } from "../../features/cloud/ClerkSettingsSheetDetent";
+import { useThemeColor } from "../../lib/useThemeColor";
 
 export const unstable_settings = {
   anchor: "index",
 };
 
 export default function SettingsLayout() {
+  const { collapse } = useClerkSettingsSheetDetent();
   const contentStyle = useResolveClassNames("bg-sheet");
-  const isDark = useColorScheme() === "dark";
-  const sheetBg = isDark ? "rgba(14, 14, 14, 0.98)" : "rgba(242, 242, 247, 0.98)";
-  const headerTint = isDark ? "#f5f5f5" : "#262626";
+  const sheetBg = useThemeColor("--color-sheet");
+  const headerTint = useThemeColor("--color-foreground");
+  const handleExpandedRouteTransitionEnd = useCallback(
+    (event: { data: { closing: boolean } }) => {
+      if (event.data.closing) {
+        collapse();
+      }
+    },
+    [collapse],
+  );
 
   return (
     <Stack
@@ -35,6 +46,16 @@ export default function SettingsLayout() {
       <Stack.Screen
         name="waitlist"
         options={{ animation: "slide_from_right", title: "Join the waitlist" }}
+      />
+      <Stack.Screen
+        name="archive"
+        listeners={{ transitionEnd: handleExpandedRouteTransitionEnd }}
+        options={{ animation: "slide_from_right", title: "Archived Threads" }}
+      />
+      <Stack.Screen
+        name="auth"
+        listeners={{ transitionEnd: handleExpandedRouteTransitionEnd }}
+        options={{ animation: "slide_from_right", title: "Sign in" }}
       />
     </Stack>
   );

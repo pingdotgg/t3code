@@ -2,30 +2,17 @@ import {
   attachEnvironmentDescriptor,
   createKnownEnvironment,
   type KnownEnvironment,
-} from "@t3tools/client-runtime";
-import type { EnvironmentId, ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+} from "@t3tools/client-runtime/environment";
+import type { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { HttpClientError } from "effect/unstable/http";
-import { create } from "zustand";
 
-import { BootstrapHttpError, retryTransientBootstrap } from "./auth";
+import { PrimaryEnvironmentRequestError, retryTransientBootstrap } from "./auth";
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 
 import { runPrimaryHttp } from "../../lib/runtime";
 import { readPrimaryEnvironmentTarget } from "./target";
 
-interface PrimaryEnvironmentBootstrapState {
-  readonly descriptor: ExecutionEnvironmentDescriptor | null;
-  readonly setDescriptor: (descriptor: ExecutionEnvironmentDescriptor | null) => void;
-  readonly reset: () => void;
-}
-
-const usePrimaryEnvironmentBootstrapStore = create<PrimaryEnvironmentBootstrapState>()((set) => ({
-  descriptor: null,
-  setDescriptor: (descriptor) => set({ descriptor }),
-  reset: () => set({ descriptor: null }),
-}));
-
+let primaryEnvironmentDescriptor: ExecutionEnvironmentDescriptor | null = null;
 let primaryEnvironmentDescriptorPromise: Promise<ExecutionEnvironmentDescriptor> | null = null;
 
 function createPrimaryKnownEnvironment(input: {
@@ -56,13 +43,9 @@ async function fetchPrimaryEnvironmentDescriptor(): Promise<ExecutionEnvironment
         PrimaryEnvironmentHttpClient.pipe(Effect.flatMap((client) => client.metadata.descriptor())),
       );
     } catch (error) {
-      const status =
-        HttpClientError.isHttpClientError(error) && error.response !== undefined
-          ? error.response.status
-          : 500;
-      throw new BootstrapHttpError({
-        message: `Failed to load server environment descriptor (${status}).`,
-        status,
+      throw PrimaryEnvironmentRequestError.fromCause({
+        operation: "fetch-environment-descriptor",
+        cause: error,
       });
     }
 
@@ -72,17 +55,13 @@ async function fetchPrimaryEnvironmentDescriptor(): Promise<ExecutionEnvironment
 }
 
 export function readPrimaryEnvironmentDescriptor(): ExecutionEnvironmentDescriptor | null {
-  return usePrimaryEnvironmentBootstrapStore.getState().descriptor;
-}
-
-export function usePrimaryEnvironmentId(): EnvironmentId | null {
-  return usePrimaryEnvironmentBootstrapStore((state) => state.descriptor?.environmentId ?? null);
+  return primaryEnvironmentDescriptor;
 }
 
 export function writePrimaryEnvironmentDescriptor(
   descriptor: ExecutionEnvironmentDescriptor | null,
 ): void {
-  usePrimaryEnvironmentBootstrapStore.getState().setDescriptor(descriptor);
+  primaryEnvironmentDescriptor = descriptor;
 }
 
 export function getPrimaryKnownEnvironment(): KnownEnvironment | null {
@@ -118,7 +97,7 @@ export function resolveInitialPrimaryEnvironmentDescriptor(): Promise<ExecutionE
 
 export function __resetPrimaryEnvironmentBootstrapForTests(): void {
   primaryEnvironmentDescriptorPromise = null;
-  usePrimaryEnvironmentBootstrapStore.getState().reset();
+  primaryEnvironmentDescriptor = null;
 }
 
 export const resetPrimaryEnvironmentDescriptorForTests = __resetPrimaryEnvironmentBootstrapForTests;

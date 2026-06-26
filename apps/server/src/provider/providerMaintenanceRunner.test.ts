@@ -1,4 +1,4 @@
-import { afterEach, describe, it, assert } from "@effect/vitest";
+import { describe, it, assert } from "@effect/vitest";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -21,8 +21,8 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { ProviderRegistry, type ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import {
-  clearLatestProviderVersionCacheForTests,
   makeProviderMaintenanceCapabilities,
+  ProviderVersionCache,
   type ProviderMaintenanceCapabilities,
 } from "./providerMaintenance.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
@@ -34,10 +34,6 @@ const CODEX_INSTANCE_ID = ProviderInstanceId.make("codex");
 const CURSOR_INSTANCE_ID = ProviderInstanceId.make("cursor");
 const OPENCODE_INSTANCE_ID = ProviderInstanceId.make("opencode");
 const encoder = new TextEncoder();
-
-afterEach(() => {
-  clearLatestProviderVersionCacheForTests();
-});
 
 function lifecycleFor(provider: ProviderDriverKind): ProviderMaintenanceCapabilities {
   if (provider === CURSOR_DRIVER) {
@@ -202,7 +198,12 @@ const makeTestRunner = (registry: ProviderRegistryShape) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
     Effect.provide(
       ProviderMaintenanceRunner.layer.pipe(
-        Layer.provide(Layer.succeed(ProviderRegistry, registry)),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(ProviderRegistry, registry),
+            Layer.succeed(ProviderVersionCache, new Map()),
+          ),
+        ),
       ),
     ),
   );

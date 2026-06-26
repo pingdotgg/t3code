@@ -34,9 +34,9 @@ import {
   collectProcessOutput,
   getLastNonEmptyOutputLine,
   remoteStateKey,
+  resolveSshCommand,
   resolveSshTarget,
   runSshCommand,
-  SSH_COMMAND,
   targetConnectionKey,
 } from "./command.ts";
 import {
@@ -398,7 +398,8 @@ ensure_remote_node_path() {
   prepend_path_if_dir "$FNM_DIR"
   prepend_path_if_dir "$HOME/.fnm"
   if ! command -v node >/dev/null 2>&1 && command -v fnm >/dev/null 2>&1; then
-    eval "$(fnm env --use-on-cd --shell sh)" >/dev/null 2>&1 || eval "$(fnm env --shell sh)" >/dev/null 2>&1 || true
+    eval "$(fnm env --shell bash)" >/dev/null 2>&1 || true
+    fnm use --silent-if-unchanged >/dev/null 2>&1 || fnm use default >/dev/null 2>&1 || true
   fi
 
   prepend_path_if_dir "$HOME/.nodenv/bin"
@@ -1069,7 +1070,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     `${input.localPort}:127.0.0.1:${input.remotePort}`,
     hostSpec,
   ];
-  const tunnelCommand = [SSH_COMMAND, ...args];
+  const sshCommand = yield* resolveSshCommand;
+  const tunnelCommand = [sshCommand, ...args];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scope = yield* Scope.Scope;
   yield* Effect.logDebug("ssh.tunnel.spawn.start", {
@@ -1082,8 +1084,9 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   });
   const child = yield* spawner
     .spawn(
-      ChildProcess.make(SSH_COMMAND, args, {
+      ChildProcess.make(sshCommand, args, {
         env: childEnvironment,
+        extendEnv: true,
         stdin: {
           stream: Stream.empty,
           endOnDone: true,

@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
@@ -14,16 +14,12 @@ import type {
 import {
   ApprovalRequestId,
   ClaudeSettings,
-  MessageId,
-  ProjectId,
   ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
-  DEFAULT_PROVIDER_INTERACTION_MODE,
   type RuntimeMode,
   ThreadId,
   ProviderInstanceId,
-  type OrchestrationThread,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
@@ -31,7 +27,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -39,14 +34,8 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import {
-  T3WORK_MCP_SERVER_NAME,
-  T3workToolBroker,
-  type T3workToolBrokerShape,
-} from "../../t3work-toolBroker.ts";
-import { ProviderAdapterValidationError } from "../Errors.ts";
+import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
@@ -67,7 +56,6 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
   public readonly interruptCalls: Array<void> = [];
   public readonly setModelCalls: Array<string | undefined> = [];
-  public readonly setMcpServersCalls: Array<NonNullable<ClaudeQueryOptions["mcpServers"]>> = [];
   public readonly setPermissionModeCalls: Array<string> = [];
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
   public closeCalls = 0;
@@ -112,12 +100,6 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
   readonly setModel = async (model?: string): Promise<void> => {
     this.setModelCalls.push(model);
-  };
-
-  readonly setMcpServers = async (
-    servers: NonNullable<ClaudeQueryOptions["mcpServers"]>,
-  ): Promise<void> => {
-    this.setMcpServersCalls.push(servers);
   };
 
   readonly setPermissionMode = async (mode: PermissionMode): Promise<void> => {
@@ -174,7 +156,6 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
-  readonly toolBroker?: T3workToolBrokerShape;
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -203,40 +184,22 @@ function makeHarness(config?: {
   };
 
   return {
-    layer: config?.toolBroker
-      ? Layer.effect(
-          ClaudeAdapter,
-          Effect.gen(function* () {
-            const claudeConfig = decodeClaudeSettings(config?.claudeConfig ?? {});
-            return yield* makeClaudeAdapter(claudeConfig, adapterOptions);
-          }),
-        ).pipe(
-          Layer.provideMerge(Layer.succeed(T3workToolBroker, config.toolBroker)),
-          Layer.provideMerge(
-            ServerConfig.layerTest(
-              config?.cwd ?? "/tmp/claude-adapter-test",
-              config?.baseDir ?? "/tmp",
-            ),
-          ),
-          Layer.provideMerge(ServerSettingsService.layerTest()),
-          Layer.provideMerge(NodeServices.layer),
-        )
-      : Layer.effect(
-          ClaudeAdapter,
-          Effect.gen(function* () {
-            const claudeConfig = decodeClaudeSettings(config?.claudeConfig ?? {});
-            return yield* makeClaudeAdapter(claudeConfig, adapterOptions);
-          }),
-        ).pipe(
-          Layer.provideMerge(
-            ServerConfig.layerTest(
-              config?.cwd ?? "/tmp/claude-adapter-test",
-              config?.baseDir ?? "/tmp",
-            ),
-          ),
-          Layer.provideMerge(ServerSettingsService.layerTest()),
-          Layer.provideMerge(NodeServices.layer),
+    layer: Layer.effect(
+      ClaudeAdapter,
+      Effect.gen(function* () {
+        const claudeConfig = decodeClaudeSettings(config?.claudeConfig ?? {});
+        return yield* makeClaudeAdapter(claudeConfig, adapterOptions);
+      }),
+    ).pipe(
+      Layer.provideMerge(
+        ServerConfig.layerTest(
+          config?.cwd ?? "/tmp/claude-adapter-test",
+          config?.baseDir ?? "/tmp",
         ),
+      ),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(NodeServices.layer),
+    ),
     query,
     getLastCreateQueryInput: () => createInput,
   };
@@ -304,46 +267,6 @@ async function readFirstPromptMessage(
 const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
-function makeProjectionSnapshotQueryWithMessages(messages: ReadonlyArray<unknown>) {
-  const threadDetail: OrchestrationThread = {
-    id: THREAD_ID,
-    projectId: ProjectId.make("project-claude"),
-    title: "Claude test thread",
-    modelSelection: createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-opus-4-6"),
-    runtimeMode: "full-access",
-    interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-    branch: null,
-    worktreePath: null,
-    latestTurn: null,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    archivedAt: null,
-    deletedAt: null,
-    messages: messages as never,
-    proposedPlans: [],
-    activities: [],
-    checkpoints: [],
-    session: null,
-  };
-
-  return {
-    getCommandReadModel: () => Effect.die("unused"),
-    getSnapshot: () => Effect.die("unused"),
-    getShellSnapshot: () => Effect.die("unused"),
-    getArchivedShellSnapshot: () => Effect.die("unused"),
-    getSnapshotSequence: () => Effect.die("unused"),
-    getCounts: () => Effect.die("unused"),
-    getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
-    getProjectShellById: () => Effect.die("unused"),
-    getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
-    getThreadCheckpointContext: () => Effect.die("unused"),
-    getFullThreadDiffContext: () => Effect.die("unused"),
-    getThreadShellById: () => Effect.die("unused"),
-    getThreadDetailById: (threadId: ThreadId) =>
-      Effect.succeed(threadId === THREAD_ID ? Option.some(threadDetail) : Option.none()),
-  };
-}
-
 describe("ClaudeAdapterLive", () => {
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
@@ -372,6 +295,44 @@ describe("ClaudeAdapterLive", () => {
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("retains Claude session startup causes without exposing their messages", () => {
+    const cause = new Error("credential material that must remain in the cause chain");
+    const layer = Layer.effect(
+      ClaudeAdapter,
+      Effect.gen(function* () {
+        const claudeConfig = decodeClaudeSettings({});
+        return yield* makeClaudeAdapter(claudeConfig, {
+          createQuery: () => {
+            throw cause;
+          },
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const error = yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(error, ProviderAdapterProcessError);
+      assert.equal(error.detail, "Failed to start Claude runtime session.");
+      assert.strictEqual(error.cause, cause);
+      assert.notMatch(error.message, /credential material/u);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
     );
   });
 
@@ -457,82 +418,6 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect(
-    "injects t3work broker tools into Claude MCP servers and refreshes them on turn start",
-    () => {
-      const toolBroker: T3workToolBrokerShape = {
-        bindReadOnly: () => Effect.void.pipe(Effect.as(undefined)),
-        bindSession: ({ threadId }) =>
-          Effect.succeed({
-            threadId,
-            listServers: () => [
-              {
-                authStatus: "unsupported",
-                name: T3WORK_MCP_SERVER_NAME,
-                resourceTemplates: [],
-                resources: [],
-                tools: {
-                  "t3work.thread.rename": {
-                    name: "t3work.thread.rename",
-                    title: "Rename current thread",
-                    description: "Rename the current thread in t3work.",
-                    inputSchema: {
-                      type: "object",
-                      additionalProperties: false,
-                      properties: {
-                        title: {
-                          type: "string",
-                          description: "New thread title.",
-                          minLength: 1,
-                        },
-                      },
-                      required: ["title"],
-                    },
-                  },
-                },
-              },
-            ],
-            callTool: () =>
-              Effect.succeed({
-                content: [{ type: "text", text: "ok" }],
-                structuredContent: { ok: true },
-              }),
-            readResource: () => Effect.succeed({ contents: [] }),
-          }),
-      };
-      const harness = makeHarness({ toolBroker });
-
-      return Effect.gen(function* () {
-        const adapter = yield* ClaudeAdapter;
-        const session = yield* adapter.startSession({
-          threadId: THREAD_ID,
-          provider: ProviderDriverKind.make("claudeAgent"),
-          runtimeMode: "full-access",
-        });
-
-        const createInput = harness.getLastCreateQueryInput();
-        assert.deepEqual(Object.keys(createInput?.options.mcpServers ?? {}), [
-          T3WORK_MCP_SERVER_NAME,
-        ]);
-        assert.equal(createInput?.options.mcpServers?.[T3WORK_MCP_SERVER_NAME]?.type, "sdk");
-
-        yield* adapter.sendTurn({
-          threadId: session.threadId,
-          input: "hello",
-          attachments: [],
-        });
-
-        assert.deepEqual(
-          harness.query.setMcpServersCalls.map((servers) => Object.keys(servers)),
-          [[T3WORK_MCP_SERVER_NAME]],
-        );
-      }).pipe(
-        Effect.provideService(Random.Random, makeDeterministicRandomService()),
-        Effect.provide(harness.layer),
-      );
-    },
-  );
-
   it.effect("runs Claude SDK sessions with the configured Claude HOME", () => {
     const harness = makeHarness({ claudeConfig: { homePath: "~/.claude-work" } });
     return Effect.gen(function* () {
@@ -548,7 +433,7 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.env?.HOME, path.join(os.homedir(), ".claude-work"));
+      assert.equal(createInput?.options.env?.HOME, NodePath.join(NodeOS.homedir(), ".claude-work"));
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -801,90 +686,8 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("prepends agent-visible system workflow context to Claude prompts", () => {
-    const harness = makeHarness();
-    return Effect.gen(function* () {
-      const adapter = yield* ClaudeAdapter;
-      const session = yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: ProviderDriverKind.make("claudeAgent"),
-        runtimeMode: "full-access",
-      });
-
-      yield* adapter.sendTurn({
-        threadId: session.threadId,
-        input: "Continue the workflow",
-        attachments: [],
-      });
-
-      const createInput = harness.getLastCreateQueryInput();
-      const promptText = yield* Effect.promise(() => readFirstPromptText(createInput));
-      assert.equal(
-        promptText,
-        [
-          "Workflow context:",
-          "- Visible workflow note",
-          "- View attachment: t3work.workflow-card",
-          "",
-          "User request:",
-          "Continue the workflow",
-        ].join("\n"),
-      );
-    }).pipe(
-      Effect.provideService(
-        ProjectionSnapshotQuery,
-        makeProjectionSnapshotQueryWithMessages([
-          {
-            id: MessageId.make("message-system-visible"),
-            role: "system",
-            text: "Visible workflow note",
-            attachments: [],
-            t3workExt: {
-              attachments: [
-                {
-                  kind: "view",
-                  miniappId: "t3work.workflow-card",
-                  props: { status: "waiting" },
-                },
-              ],
-            },
-            turnId: null,
-            streaming: false,
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          },
-          {
-            id: MessageId.make("message-system-hidden"),
-            role: "system",
-            text: "Hidden workflow note",
-            attachments: [],
-            t3workExt: {
-              visibleToAgent: false,
-            },
-            turnId: null,
-            streaming: false,
-            createdAt: "2026-01-01T00:00:01.000Z",
-            updatedAt: "2026-01-01T00:00:01.000Z",
-          },
-          {
-            id: MessageId.make("message-user"),
-            role: "user",
-            text: "User text should not be duplicated",
-            attachments: [],
-            turnId: null,
-            streaming: false,
-            createdAt: "2026-01-01T00:00:02.000Z",
-            updatedAt: "2026-01-01T00:00:02.000Z",
-          },
-        ]),
-      ),
-      Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
-    );
-  });
-
   it.effect("embeds image attachments in Claude user messages", () => {
-    const baseDir = mkdtempSync(path.join(os.tmpdir(), "claude-attachments-"));
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-attachments-"));
     const harness = makeHarness({
       cwd: "/tmp/project-claude-attachments",
       baseDir,
@@ -892,7 +695,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       yield* Effect.addFinalizer(() =>
         Effect.sync(() =>
-          rmSync(baseDir, {
+          NodeFS.rmSync(baseDir, {
             recursive: true,
             force: true,
           }),
@@ -909,9 +712,9 @@ describe("ClaudeAdapterLive", () => {
         mimeType: "image/png",
         sizeBytes: 4,
       };
-      const attachmentPath = path.join(attachmentsDir, attachmentRelativePath(attachment));
-      mkdirSync(path.dirname(attachmentPath), { recursive: true });
-      writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
+      const attachmentPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment));
+      NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
+      NodeFS.writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
@@ -1119,6 +922,73 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(String(turnCompleted.turnId), String(turn.turnId));
         assert.equal(turnCompleted.payload.state, "completed");
       }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "run 5 commands",
+        attachments: [],
+      });
+
+      // Steer: a second sendTurn while the turn is still running continues
+      // the same turn — the message is queued into the live agent loop.
+      const steeredTurn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "actually run 15",
+        attachments: [],
+      });
+      assert.equal(String(steeredTurn.turnId), String(turn.turnId));
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-steer",
+        uuid: "assistant-steer-1",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-message-steer-1",
+          content: [{ type: "text", text: "Adjusting to 15." }],
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-steer",
+        uuid: "result-steer-1",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
+      const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
+
+      // One turn boundary for the whole run: the steer produced no
+      // turn.completed/turn.started pair.
+      assert.equal(turnStartedEvents.length, 1);
+      assert.equal(String(turnStartedEvents[0]?.turnId), String(turn.turnId));
+      assert.equal(turnCompletedEvents.length, 1);
+      assert.equal(String(turnCompletedEvents[0]?.turnId), String(turn.turnId));
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -1533,19 +1403,14 @@ describe("ClaudeAdapterLive", () => {
   it.effect("closes the session when the Claude stream aborts after a turn starts", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
-      const context = yield* Effect.context<never>();
-      const runFork = Effect.runForkWith(context);
-
       const adapter = yield* ClaudeAdapter;
       const runtimeEvents: Array<ProviderRuntimeEvent> = [];
 
-      const runtimeEventsFiber = runFork(
-        Stream.runForEach(adapter.streamEvents, (event) =>
-          Effect.sync(() => {
-            runtimeEvents.push(event);
-          }),
-        ),
-      );
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
 
       yield* adapter.startSession({
         threadId: THREAD_ID,
@@ -1592,6 +1457,57 @@ describe("ClaudeAdapterLive", () => {
       const sessions = yield* adapter.listSessions();
       assert.equal(sessions.length, 0);
       assert.equal(harness.query.closeCalls, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps Claude stream failure events structural", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.fail(new Error("credential material that must stay in the cause chain"));
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      runtimeEventsFiber.interruptUnsafe();
+
+      const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+      assert.equal(runtimeError?.type, "runtime.error");
+      if (runtimeError?.type === "runtime.error") {
+        assert.equal(runtimeError.payload.message, "Claude runtime stream failed.");
+        assert.deepEqual(runtimeError.payload.detail, {
+          failureCount: 1,
+          failureTags: ["ProviderAdapterProcessError"],
+        });
+      }
+
+      const completed = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.payload.state, "failed");
+        assert.equal(completed.payload.errorMessage, "Claude runtime stream failed.");
+      }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -1710,14 +1626,12 @@ describe("ClaudeAdapterLive", () => {
     );
 
     return Effect.gen(function* () {
-      const context = yield* Effect.context<never>();
-      const runFork = Effect.runForkWith(context);
-
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = runFork(
-        Stream.runForEach(adapter.streamEvents, () => Effect.void),
-      );
+      const runtimeEventsFiber = yield* Stream.runForEach(
+        adapter.streamEvents,
+        () => Effect.void,
+      ).pipe(Effect.forkChild);
 
       yield* adapter.startSession({
         threadId: THREAD_ID,

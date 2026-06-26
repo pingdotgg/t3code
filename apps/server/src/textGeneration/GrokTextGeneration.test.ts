@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as path from "node:path";
-import * as os from "node:os";
-import { fileURLToPath } from "node:url";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
+import * as NodeURL from "node:url";
+import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -13,27 +13,27 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 import { GrokSettings, ProviderInstanceId } from "@t3tools/contracts";
 
-import { ServerConfig } from "../config.ts";
-import { type TextGenerationShape } from "./TextGeneration.ts";
+import * as ServerConfig from "../config.ts";
+import * as TextGeneration from "./TextGeneration.ts";
 import { makeGrokTextGeneration } from "./GrokTextGeneration.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const mockAgentPath = path.join(__dirname, "../../scripts/acp-mock-agent.ts");
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const mockAgentPath = NodePath.join(__dirname, "../../scripts/acp-mock-agent.ts");
 
 function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-const GrokTextGenerationTestLayer = ServerConfig.layerTest(process.cwd(), {
+const GrokTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-grok-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
 function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
-  const binDir = path.join(dir, "bin");
-  const grokPath = path.join(binDir, "grok");
-  mkdirSync(binDir, { recursive: true });
-  writeFileSync(
+  const binDir = NodePath.join(dir, "bin");
+  const grokPath = NodePath.join(binDir, "grok");
+  NodeFS.mkdirSync(binDir, { recursive: true });
+  NodeFS.writeFileSync(
     grokPath,
     [
       "#!/bin/sh",
@@ -47,19 +47,19 @@ function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
     ].join("\n"),
     "utf8",
   );
-  chmodSync(grokPath, 0o755);
+  NodeFS.chmodSync(grokPath, 0o755);
   return grokPath;
 }
 
 function withFakeAcpGrok<A, E, R>(
   env: Record<string, string>,
-  effectFn: (textGeneration: TextGenerationShape) => Effect.Effect<A, E, R>,
+  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), "t3code-grok-text-acp-"));
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-acp-"));
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
-        rmSync(tempDir, { recursive: true, force: true });
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }),
     );
     const binaryPath = makeAcpGrokWrapper(tempDir, env);
@@ -72,7 +72,7 @@ function withFakeAcpGrok<A, E, R>(
 function readJsonRpcRequests(
   filePath: string,
 ): ReadonlyArray<{ readonly method?: string; readonly params?: Record<string, unknown> }> {
-  return readFileSync(filePath, "utf8")
+  return NodeFS.readFileSync(filePath, "utf8")
     .trim()
     .split("\n")
     .filter((line) => line.length > 0)
@@ -81,8 +81,10 @@ function readJsonRpcRequests(
 
 it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
   it.effect("uses ACP with disabled tool capabilities and forwards the requested model id", () => {
-    const requestLogDir = mkdtempSync(path.join(os.tmpdir(), "t3code-grok-text-log-"));
-    const requestLogPath = path.join(requestLogDir, "requests.ndjson");
+    const requestLogDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-log-"),
+    );
+    const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
 
     return withFakeAcpGrok(
       {

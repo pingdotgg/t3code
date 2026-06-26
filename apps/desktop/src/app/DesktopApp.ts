@@ -1,8 +1,8 @@
 import * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import * as NetService from "@t3tools/shared/Net";
 import * as Crypto from "effect/Crypto";
@@ -11,12 +11,13 @@ import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
-import * as DesktopCloudAuth from "./DesktopCloudAuth.ts";
+import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
+import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
@@ -32,22 +33,24 @@ const makeDesktopRunId = Crypto.Crypto.pipe(
   Effect.map((value) => value.replaceAll("-", "").slice(0, 12)),
 );
 
-class DesktopBackendPortUnavailableError extends Data.TaggedError(
+export class DesktopBackendPortUnavailableError extends Schema.TaggedErrorClass<DesktopBackendPortUnavailableError>()(
   "DesktopBackendPortUnavailableError",
-)<{
-  readonly startPort: number;
-  readonly maxPort: number;
-  readonly hosts: readonly string[];
-}> {
-  override get message() {
+  {
+    startPort: Schema.Int,
+    maxPort: Schema.Int,
+    hosts: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
     return `No desktop backend port is available on hosts ${this.hosts.join(", ")} between ${this.startPort} and ${this.maxPort}.`;
   }
 }
 
-class DesktopDevelopmentBackendPortRequiredError extends Data.TaggedError(
+export class DesktopDevelopmentBackendPortRequiredError extends Schema.TaggedErrorClass<DesktopDevelopmentBackendPortRequiredError>()(
   "DesktopDevelopmentBackendPortRequiredError",
-)<{}> {
-  override get message() {
+  {},
+) {
+  override get message(): string {
     return "T3CODE_PORT is required in desktop development.";
   }
 }
@@ -100,12 +103,12 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
 ): Effect.fn.Return<
   void,
   never,
-  | DesktopLifecycle.DesktopShutdown
+  | DesktopShutdown.DesktopShutdown
   | DesktopState.DesktopState
   | ElectronApp.ElectronApp
   | ElectronDialog.ElectronDialog
 > {
-  const shutdown = yield* DesktopLifecycle.DesktopShutdown;
+  const shutdown = yield* DesktopShutdown.DesktopShutdown;
   const state = yield* DesktopState.DesktopState;
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -163,6 +166,16 @@ const bootstrap = Effect.gen(function* () {
   }
   const serverExposureState = yield* serverExposure.configureFromSettings({ port: backendPort });
   const backendConfig = yield* serverExposure.backendConfig;
+  const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
+  const rendererTarget = environment.isDevelopment
+    ? Option.getOrThrow(environment.devServerUrl)
+    : backendConfig.httpBaseUrl;
+  yield* electronProtocol.registerDesktopProtocol({
+    scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
+    targetOrigin: rendererTarget,
+    backendOrigin: backendConfig.httpBaseUrl,
+    clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
+  });
   yield* logBootstrapInfo("bootstrap resolved backend endpoint", {
     baseUrl: backendConfig.httpBaseUrl.href,
   });
@@ -176,7 +189,7 @@ const bootstrap = Effect.gen(function* () {
     );
   }
 
-  yield* installDesktopIpcHandlers;
+  yield* installDesktopIpcHandlers();
   yield* logBootstrapInfo("bootstrap ipc handlers registered");
 
   if (!(yield* Ref.get(state.quitting))) {
@@ -189,9 +202,8 @@ const startup = Effect.gen(function* () {
   const appIdentity = yield* DesktopAppIdentity.DesktopAppIdentity;
   const applicationMenu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
   const electronApp = yield* ElectronApp.ElectronApp;
-  const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
   const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
-  const cloudAuth = yield* DesktopCloudAuth.DesktopCloudAuth;
+  const clerk = yield* DesktopClerk.DesktopClerk;
   const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const updates = yield* DesktopUpdates.DesktopUpdates;
@@ -209,7 +221,7 @@ const startup = Effect.gen(function* () {
 
   yield* appIdentity.configure;
   yield* lifecycle.register;
-  yield* cloudAuth.configure;
+  yield* clerk.configure;
 
   yield* electronApp.whenReady.pipe(
     Effect.withSpan("desktop.electron.whenReady"),
@@ -218,7 +230,6 @@ const startup = Effect.gen(function* () {
   yield* logStartupInfo("app ready");
   yield* appIdentity.configure;
   yield* applicationMenu.configure;
-  yield* electronProtocol.registerDesktopFileProtocol;
   yield* updates.configure;
   yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
 }).pipe(Effect.withSpan("desktop.startup"));
@@ -229,7 +240,7 @@ const scopedProgram = Effect.scoped(
     yield* Effect.annotateLogsScoped({ scope: "desktop", runId });
     yield* Effect.annotateCurrentSpan({ scope: "desktop", runId });
 
-    const shutdown = yield* DesktopLifecycle.DesktopShutdown;
+    const shutdown = yield* DesktopShutdown.DesktopShutdown;
     const backendManager = yield* DesktopBackendManager.DesktopBackendManager;
 
     yield* Effect.addFinalizer(() =>

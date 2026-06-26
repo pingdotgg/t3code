@@ -22,15 +22,12 @@ export function BrandMark(props: { readonly compact?: boolean; readonly stageLab
       />
       <View className="gap-1">
         <View className="flex-row items-center gap-2">
-          <Text
-            className="text-[17px] font-t3-bold text-foreground"
-            style={{ letterSpacing: -0.4 }}
-          >
+          <Text className="text-lg font-t3-bold text-foreground" style={{ letterSpacing: -0.4 }}>
             T3 Code
           </Text>
           <View className="rounded-full bg-subtle px-2 py-1">
             <Text
-              className="text-[10px] font-t3-bold uppercase text-foreground-muted"
+              className="text-3xs font-t3-bold uppercase text-foreground-muted"
               style={{ letterSpacing: 1.1 }}
             >
               {stageLabel}
@@ -38,7 +35,7 @@ export function BrandMark(props: { readonly compact?: boolean; readonly stageLab
           </View>
         </View>
         {!compact ? (
-          <Text className="text-[12px] font-medium text-foreground-muted">
+          <Text className="text-xs font-medium text-foreground-muted">
             Mobile control surface for your live coding environments
           </Text>
         ) : null}

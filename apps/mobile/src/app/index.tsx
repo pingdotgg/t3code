@@ -1,110 +1,119 @@
-import { Stack, useRouter } from "expo-router";
-import { useState } from "react";
-import { Text as RNText, View, useColorScheme } from "react-native";
+import type {
+  EnvironmentId,
+  SidebarProjectGroupingMode,
+  SidebarThreadSortOrder,
+} from "@t3tools/contracts";
+import {
+  DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE,
+  DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
+  DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
+} from "@t3tools/contracts";
+import * as Arr from "effect/Array";
+import * as Order from "effect/Order";
+import { useRouter } from "expo-router";
+import { useCallback, useMemo, useState } from "react";
 
+import { useProjects, useThreadShells } from "../state/entities";
+import { useWorkspaceState } from "../state/workspace";
 import { buildThreadRoutePath } from "../lib/routes";
-import { useRemoteCatalog } from "../state/use-remote-catalog";
-import { useRemoteEnvironmentState } from "../state/use-remote-environment-registry";
+import { useSavedRemoteConnections } from "../state/use-remote-environment-registry";
 import { HomeScreen } from "../features/home/HomeScreen";
+import { HomeHeader } from "../features/home/HomeHeader";
+import type { HomeProjectSortOrder } from "../features/home/homeThreadList";
+import { useThreadListActions } from "../features/home/useThreadListActions";
+
+interface HomeListOptions {
+  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly projectSortOrder: HomeProjectSortOrder;
+  readonly threadSortOrder: SidebarThreadSortOrder;
+  readonly projectGroupingMode: SidebarProjectGroupingMode;
+}
 
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
 export default function HomeRouteScreen() {
-  const { projects, state: catalogState, threads } = useRemoteCatalog();
-  const { savedConnectionsById } = useRemoteEnvironmentState();
+  const projects = useProjects();
+  const threads = useThreadShells();
+  const { state: catalogState } = useWorkspaceState();
+  const { savedConnectionsById } = useSavedRemoteConnections();
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
-
-  const isDark = useColorScheme() === "dark";
-  const iconColor = isDark ? "#f5f5f5" : "#262626";
+  const [listOptions, setListOptions] = useState<HomeListOptions>({
+    selectedEnvironmentId: null,
+    projectSortOrder:
+      DEFAULT_SIDEBAR_PROJECT_SORT_ORDER === "manual"
+        ? "updated_at"
+        : DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
+    threadSortOrder: DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
+    projectGroupingMode: DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE,
+  });
+  const { archiveThread, confirmDeleteThread } = useThreadListActions();
+  const environments = useMemo(
+    () =>
+      Arr.sort(
+        Object.values(savedConnectionsById).map((connection) => ({
+          environmentId: connection.environmentId,
+          label: connection.environmentLabel,
+        })),
+        Order.mapInput(
+          Order.String,
+          (environment: { readonly label: string }) => environment.label,
+        ),
+      ),
+    [savedConnectionsById],
+  );
+  const selectedEnvironmentId = environments.some(
+    (environment) => environment.environmentId === listOptions.selectedEnvironmentId,
+  )
+    ? listOptions.selectedEnvironmentId
+    : null;
+  const setSelectedEnvironmentId = useCallback((environmentId: EnvironmentId | null) => {
+    setListOptions((current) => ({ ...current, selectedEnvironmentId: environmentId }));
+  }, []);
+  const setProjectSortOrder = useCallback((projectSortOrder: HomeProjectSortOrder) => {
+    setListOptions((current) => ({ ...current, projectSortOrder }));
+  }, []);
+  const setThreadSortOrder = useCallback((threadSortOrder: SidebarThreadSortOrder) => {
+    setListOptions((current) => ({ ...current, threadSortOrder }));
+  }, []);
+  const setProjectGroupingMode = useCallback((projectGroupingMode: SidebarProjectGroupingMode) => {
+    setListOptions((current) => ({ ...current, projectGroupingMode }));
+  }, []);
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          headerShown: true,
-          headerTransparent: true,
-          headerStyle: { backgroundColor: "transparent" },
-          headerShadowVisible: false,
-          headerTintColor: iconColor,
-          headerTitle: "",
-          headerSearchBarOptions: {
-            placeholder: "Search threads",
-            onChangeText: (event) => {
-              setSearchQuery(event.nativeEvent.text);
-            },
-            allowToolbarIntegration: true,
-          },
-        }}
+      <HomeHeader
+        environments={environments}
+        selectedEnvironmentId={selectedEnvironmentId}
+        projectSortOrder={listOptions.projectSortOrder}
+        threadSortOrder={listOptions.threadSortOrder}
+        projectGroupingMode={listOptions.projectGroupingMode}
+        onEnvironmentChange={setSelectedEnvironmentId}
+        onOpenSettings={() => router.push("/settings")}
+        onProjectGroupingModeChange={setProjectGroupingMode}
+        onProjectSortOrderChange={setProjectSortOrder}
+        onSearchQueryChange={setSearchQuery}
+        onStartNewTask={() => router.push("/new")}
+        onThreadSortOrderChange={setThreadSortOrder}
       />
 
-      {/* Header left: plain text, no Liquid Glass button chrome */}
-      <Stack.Toolbar placement="left">
-        <Stack.Toolbar.View hidesSharedBackground>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <RNText
-              style={{
-                fontFamily: "DMSans_700Bold",
-                fontSize: 17,
-                color: iconColor,
-                letterSpacing: -0.4,
-              }}
-            >
-              T3 Code
-            </RNText>
-            <View
-              style={{
-                backgroundColor: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)",
-                borderRadius: 99,
-                paddingHorizontal: 8,
-                paddingVertical: 3,
-              }}
-            >
-              <RNText
-                style={{
-                  fontFamily: "DMSans_700Bold",
-                  fontSize: 10,
-                  color: "#737373",
-                  letterSpacing: 1.1,
-                  textTransform: "uppercase",
-                }}
-              >
-                Alpha
-              </RNText>
-            </View>
-          </View>
-        </Stack.Toolbar.View>
-      </Stack.Toolbar>
-
-      <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Button
-          icon="gearshape"
-          onPress={() => router.push("/settings")}
-          separateBackground
-        />
-      </Stack.Toolbar>
-
-      {/* Bottom toolbar: search + compose, visually split like iMessage */}
-      <Stack.Toolbar placement="bottom">
-        <Stack.Toolbar.SearchBarSlot />
-        <Stack.Toolbar.Spacer width={8} sharesBackground={false} />
-        <Stack.Toolbar.Button
-          icon="square.and.pencil"
-          onPress={() => router.push("/new")}
-          separateBackground
-        />
-      </Stack.Toolbar>
-
       <HomeScreen
-        projects={projects}
-        threads={threads}
         catalogState={catalogState}
-        savedConnectionsById={savedConnectionsById}
-        searchQuery={searchQuery}
         onAddConnection={() => router.push("/connections/new")}
+        onArchiveThread={archiveThread}
+        onDeleteThread={confirmDeleteThread}
+        onOpenEnvironments={() => router.push("/settings/environments")}
         onSelectThread={(thread) => {
           router.push(buildThreadRoutePath(thread));
         }}
+        projectGroupingMode={listOptions.projectGroupingMode}
+        projects={projects}
+        projectSortOrder={listOptions.projectSortOrder}
+        savedConnectionsById={savedConnectionsById}
+        searchQuery={searchQuery}
+        selectedEnvironmentId={selectedEnvironmentId}
+        threads={threads}
+        threadSortOrder={listOptions.threadSortOrder}
       />
     </>
   );
