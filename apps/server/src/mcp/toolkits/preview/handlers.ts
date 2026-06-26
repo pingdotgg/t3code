@@ -3,6 +3,7 @@ import type {
   PreviewAutomationOperation,
   PreviewAutomationRecordingArtifact,
   PreviewAutomationRecordingStatus,
+  PreviewAutomationResizeResult,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -39,6 +40,8 @@ const handlers = {
       reuseExistingTab: input.reuseExistingTab ?? true,
     }),
   preview_navigate: (input) => invoke<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
+  preview_resize: (input) =>
+    invoke<PreviewAutomationResizeResult>("resize", input, input.timeoutMs),
   preview_snapshot: () => invoke<PreviewAutomationSnapshot>("snapshot", {}),
   preview_click: (input) => invoke<void>("click", input, input.timeoutMs).pipe(Effect.as(null)),
   preview_type: (input) => invoke<void>("type", input, input.timeoutMs).pipe(Effect.as(null)),
