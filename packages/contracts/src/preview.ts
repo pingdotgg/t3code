@@ -17,6 +17,100 @@ const Title = Schema.String.check(Schema.isMaxLength(512));
 export const PreviewTabId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 export type PreviewTabId = typeof PreviewTabId.Type;
 
+export const PREVIEW_VIEWPORT_MIN_DIMENSION = 240;
+export const PREVIEW_VIEWPORT_MAX_DIMENSION = 3840;
+export const PREVIEW_VIEWPORT_MAX_AREA = 3840 * 2160;
+
+const PreviewViewportDimension = Schema.Int.check(
+  Schema.isBetween({
+    minimum: PREVIEW_VIEWPORT_MIN_DIMENSION,
+    maximum: PREVIEW_VIEWPORT_MAX_DIMENSION,
+  }),
+);
+
+const viewportAreaFilter = Schema.makeFilter(
+  ({ width, height }: { readonly width: number; readonly height: number }) =>
+    width * height <= PREVIEW_VIEWPORT_MAX_AREA ||
+    `Viewport area must not exceed ${PREVIEW_VIEWPORT_MAX_AREA} pixels.`,
+);
+
+export const PreviewViewportSize = Schema.Struct({
+  width: PreviewViewportDimension,
+  height: PreviewViewportDimension,
+}).check(viewportAreaFilter);
+export type PreviewViewportSize = typeof PreviewViewportSize.Type;
+
+/**
+ * The page's measured viewport can be smaller than the minimum selectable
+ * fixed size while fill mode follows a narrow panel. Keep measurement
+ * validation separate from the stricter user-selectable size constraints.
+ */
+export const PreviewRenderedViewportSize = Schema.Struct({
+  width: Schema.Int.check(Schema.isGreaterThan(0)),
+  height: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export type PreviewRenderedViewportSize = typeof PreviewRenderedViewportSize.Type;
+
+export const PREVIEW_VIEWPORT_PRESET_IDS = [
+  "iphone-se",
+  "iphone-xr",
+  "iphone-12-pro",
+  "iphone-14-pro-max",
+  "pixel-7",
+  "samsung-galaxy-s8-plus",
+  "samsung-galaxy-s20-ultra",
+  "ipad-mini",
+  "ipad-air",
+  "ipad-pro",
+  "surface-pro-7",
+  "surface-duo",
+  "galaxy-z-fold-5",
+  "asus-zenbook-fold",
+  "samsung-galaxy-a51-71",
+  "nest-hub",
+  "nest-hub-max",
+] as const;
+
+export const PreviewViewportPresetId = Schema.Literals(PREVIEW_VIEWPORT_PRESET_IDS);
+export type PreviewViewportPresetId = typeof PreviewViewportPresetId.Type;
+
+/**
+ * Preset IDs shipped before the Chrome-compatible catalog. Existing sessions
+ * can still reconnect with these values, but new resize requests only expose
+ * PREVIEW_VIEWPORT_PRESET_IDS.
+ */
+const LEGACY_PREVIEW_VIEWPORT_PRESET_IDS = [
+  "desktop-1920x1080",
+  "desktop-1440x900",
+  "laptop-1366x768",
+  "laptop-1280x800",
+  "ipad-pro-11",
+  "iphone-15-pro",
+  "pixel-8",
+  "galaxy-s24",
+] as const;
+
+const StoredPreviewViewportPresetId = Schema.Literals([
+  ...PREVIEW_VIEWPORT_PRESET_IDS,
+  ...LEGACY_PREVIEW_VIEWPORT_PRESET_IDS,
+]);
+
+export const PreviewViewportSetting = Schema.Union([
+  Schema.TaggedStruct("fill", {}),
+  Schema.TaggedStruct("freeform", {
+    ...PreviewViewportSize.fields,
+  }).check(viewportAreaFilter),
+  Schema.TaggedStruct("preset", {
+    ...PreviewViewportSize.fields,
+    presetId: StoredPreviewViewportPresetId,
+  }).check(viewportAreaFilter),
+]);
+export type PreviewViewportSetting = typeof PreviewViewportSetting.Type;
+
+export const FILL_PREVIEW_VIEWPORT = {
+  _tag: "fill",
+} as const satisfies PreviewViewportSetting;
+
 export const PreviewNavStatus = Schema.Union([
   Schema.TaggedStruct("Idle", {}),
   Schema.TaggedStruct("Loading", {
@@ -42,6 +136,8 @@ export const PreviewSessionSnapshot = Schema.Struct({
   navStatus: PreviewNavStatus,
   canGoBack: Schema.Boolean,
   canGoForward: Schema.Boolean,
+  /** Missing snapshots from older servers are treated as fill-panel mode. */
+  viewport: Schema.optional(PreviewViewportSetting),
   updatedAt: Schema.String,
 });
 export type PreviewSessionSnapshot = typeof PreviewSessionSnapshot.Type;
@@ -75,6 +171,13 @@ export const PreviewRefreshInput = Schema.Struct({
   tabId: PreviewTabId,
 });
 export type PreviewRefreshInput = typeof PreviewRefreshInput.Type;
+
+export const PreviewResizeInput = Schema.Struct({
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  viewport: PreviewViewportSetting,
+});
+export type PreviewResizeInput = typeof PreviewResizeInput.Type;
 
 export const PreviewCloseInput = Schema.Struct({
   threadId: ThreadId,
@@ -110,6 +213,12 @@ const PreviewNavigatedEvent = Schema.Struct({
   snapshot: PreviewSessionSnapshot,
 });
 
+const PreviewResizedEvent = Schema.Struct({
+  ...PreviewEventBaseSchema.fields,
+  type: Schema.Literal("resized"),
+  snapshot: PreviewSessionSnapshot,
+});
+
 const PreviewFailedEvent = Schema.Struct({
   ...PreviewEventBaseSchema.fields,
   type: Schema.Literal("failed"),
@@ -127,6 +236,7 @@ const PreviewClosedEvent = Schema.Struct({
 export const PreviewEvent = Schema.Union([
   PreviewOpenedEvent,
   PreviewNavigatedEvent,
+  PreviewResizedEvent,
   PreviewFailedEvent,
   PreviewClosedEvent,
 ]);
@@ -172,14 +282,15 @@ export class PreviewSessionLookupError extends Schema.TaggedErrorClass<PreviewSe
 export class PreviewInvalidUrlError extends Schema.TaggedErrorClass<PreviewInvalidUrlError>()(
   "PreviewInvalidUrlError",
   {
-    rawUrl: Schema.String,
-    detail: Schema.optional(Schema.String),
+    inputLength: Schema.Number,
+    reason: Schema.Literals(["empty", "parse", "unsupported-protocol", "unexpected"]),
+    protocol: Schema.optional(Schema.String),
+    cause: Schema.Defect(),
   },
 ) {
   override get message() {
-    return this.detail
-      ? `Invalid preview URL: ${this.rawUrl} (${this.detail})`
-      : `Invalid preview URL: ${this.rawUrl}`;
+    const protocol = this.protocol === undefined ? "" : `: ${this.protocol}`;
+    return `Invalid preview URL (${this.reason}${protocol}; input length ${this.inputLength}).`;
   }
 }
 

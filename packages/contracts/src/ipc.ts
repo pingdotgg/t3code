@@ -69,18 +69,20 @@ import type {
   PreviewOpenInput,
   PreviewRefreshInput,
   PreviewReportStatusInput,
+  PreviewResizeInput,
   PreviewSessionSnapshot,
 } from "./preview.ts";
 import {
   PreviewAutomationClickInput,
   PreviewAutomationEvaluateInput,
-  PreviewAutomationOwner,
+  PreviewAutomationHost,
+  PreviewAutomationHostFocus,
   PreviewAutomationPressInput,
-  PreviewAutomationRequest,
   PreviewAutomationResponse,
   PreviewAutomationScrollInput,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
+  PreviewAutomationStreamEvent,
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
 } from "./previewAutomation.ts";
@@ -414,23 +416,6 @@ export interface PickFolderOptions {
 export const PickFolderOptionsSchema = Schema.Struct({
   initialPath: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
-
-export const DesktopCloudAuthFetchInputSchema = Schema.Struct({
-  url: Schema.String,
-  method: Schema.optionalKey(Schema.String),
-  headers: Schema.Record(Schema.String, Schema.String),
-  body: Schema.optionalKey(Schema.String),
-});
-export type DesktopCloudAuthFetchInput = typeof DesktopCloudAuthFetchInputSchema.Type;
-
-export const DesktopCloudAuthFetchResultSchema = Schema.Struct({
-  ok: Schema.Boolean,
-  status: Schema.Number,
-  statusText: Schema.String,
-  headers: Schema.Record(Schema.String, Schema.String),
-  body: Schema.String,
-});
-export type DesktopCloudAuthFetchResult = typeof DesktopCloudAuthFetchResultSchema.Type;
 
 /**
  * Renderer-facing snapshot of a desktop preview tab. Mirrors the main-process
@@ -897,15 +882,12 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
+  getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
-  getSavedEnvironmentRegistry: () => Promise<readonly PersistedSavedEnvironmentRecord[]>;
-  setSavedEnvironmentRegistry: (
-    records: readonly PersistedSavedEnvironmentRecord[],
-  ) => Promise<void>;
-  getSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<string | null>;
-  setSavedEnvironmentSecret: (environmentId: EnvironmentId, secret: string) => Promise<boolean>;
-  removeSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<void>;
+  getConnectionCatalog?: () => Promise<string | null>;
+  setConnectionCatalog?: (catalog: string) => Promise<boolean>;
+  clearConnectionCatalog?: () => Promise<void>;
   discoverSshHosts: () => Promise<readonly DesktopDiscoveredSshHost[]>;
   ensureSshEnvironment: (
     target: DesktopSshEnvironmentTarget,
@@ -939,12 +921,6 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
-  createCloudAuthRequest: () => Promise<string>;
-  getCloudAuthToken: () => Promise<string | null>;
-  setCloudAuthToken: (token: string) => Promise<boolean>;
-  clearCloudAuthToken: () => Promise<void>;
-  fetchCloudAuth: (input: DesktopCloudAuthFetchInput) => Promise<DesktopCloudAuthFetchResult>;
-  onCloudAuthCallback: (listener: (rawUrl: string) => void) => () => void;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
@@ -1049,13 +1025,6 @@ export interface LocalApi {
   persistence: {
     getClientSettings: () => Promise<ClientSettings | null>;
     setClientSettings: (settings: ClientSettings) => Promise<void>;
-    getSavedEnvironmentRegistry: () => Promise<readonly PersistedSavedEnvironmentRecord[]>;
-    setSavedEnvironmentRegistry: (
-      records: readonly PersistedSavedEnvironmentRecord[],
-    ) => Promise<void>;
-    getSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<string | null>;
-    setSavedEnvironmentSecret: (environmentId: EnvironmentId, secret: string) => Promise<boolean>;
-    removeSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<void>;
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
@@ -1186,19 +1155,19 @@ export interface EnvironmentApi {
   preview: {
     open: (input: typeof PreviewOpenInput.Encoded) => Promise<PreviewSessionSnapshot>;
     navigate: (input: typeof PreviewNavigateInput.Encoded) => Promise<PreviewSessionSnapshot>;
+    resize: (input: typeof PreviewResizeInput.Encoded) => Promise<PreviewSessionSnapshot>;
     refresh: (input: typeof PreviewRefreshInput.Encoded) => Promise<void>;
     close: (input: typeof PreviewCloseInput.Encoded) => Promise<void>;
     list: (input: typeof PreviewListInput.Encoded) => Promise<PreviewListResult>;
     reportStatus: (input: typeof PreviewReportStatusInput.Encoded) => Promise<void>;
     automation: {
       connect: (
-        input: { clientId: string },
-        callback: (request: PreviewAutomationRequest) => void,
+        input: PreviewAutomationHost,
+        callback: (event: PreviewAutomationStreamEvent) => void,
         options?: { onResubscribe?: () => void },
       ) => () => void;
       respond: (response: PreviewAutomationResponse) => Promise<void>;
-      reportOwner: (owner: PreviewAutomationOwner) => Promise<void>;
-      clearOwner: (input: { clientId: string }) => Promise<void>;
+      focusHost: (input: PreviewAutomationHostFocus) => Promise<void>;
     };
     onEvent: (
       callback: (event: PreviewEvent) => void,

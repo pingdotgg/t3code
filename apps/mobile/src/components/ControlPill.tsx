@@ -48,7 +48,7 @@ export function ControlPill(props: {
         : "bg-subtle",
   );
   const labelClassName = cn(
-    "text-center text-[12px] font-t3-bold",
+    "text-center text-xs font-t3-bold",
     variant === "primary"
       ? props.disabled
         ? "text-foreground-muted"

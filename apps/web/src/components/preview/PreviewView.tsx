@@ -1,16 +1,26 @@
 "use client";
 
-import { scopedThreadKey } from "@t3tools/client-runtime";
-import { type ScopedThreadRef } from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  FILL_PREVIEW_VIEWPORT,
+  type PreviewViewportSetting,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
-import { ensureEnvironmentApi } from "~/environmentApi";
 import { previewAnnotationScreenshotFile } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
-import { selectThreadPreviewState, usePreviewStateStore } from "~/previewStateStore";
+import {
+  rememberPreviewUrl,
+  updatePreviewServerSnapshot,
+  useThreadPreviewState,
+} from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
-import { readEnvironmentConnection } from "~/environments/runtime";
+import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments";
+import { previewEnvironment } from "~/state/preview";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
@@ -19,10 +29,16 @@ import { PreviewChromeRow } from "./PreviewChromeRow";
 import { formatPreviewUrl } from "./previewUrlPresentation";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu } from "./PreviewMoreMenu";
+import {
+  commitBrowserViewportChange,
+  subscribeBrowserViewportChange,
+} from "~/browser/browserViewportActions";
+import { resolveResponsiveBrowserViewportSize } from "~/browser/browserViewportLayout";
 import { PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
+import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { useLoadingProgress } from "./useLoadingProgress";
 import { usePreviewSession } from "./usePreviewSession";
 import { ZoomIndicator } from "./ZoomIndicator";
@@ -30,7 +46,7 @@ import { AgentBrowserCursor } from "./AgentBrowserCursor";
 import {
   startBrowserRecording,
   stopBrowserRecording,
-  useBrowserRecordingStore,
+  useActiveBrowserRecordingTabId,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 
@@ -50,16 +66,16 @@ const localApi = typeof window === "undefined" ? null : ensureLocalApi();
 export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, visible }: Props) {
   const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
   const [pickActive, setPickActive] = useState(false);
-  const activeRecordingTabId = useBrowserRecordingStore((state) => state.activeTabId);
+  const activeRecordingTabId = useActiveBrowserRecordingTabId();
   const pickActiveRef = useRef(false);
   const isMountedRef = useRef(true);
-  const previewState = usePreviewStateStore((state) =>
-    selectThreadPreviewState(state.byThreadKey, threadRef),
-  );
-  const applyServerSnapshot = usePreviewStateStore((state) => state.applyServerSnapshot);
-  const rememberUrl = usePreviewStateStore((state) => state.rememberUrl);
+  const previewState = useThreadPreviewState(threadRef);
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
   const addImage = useComposerDraftStore((store) => store.addImage);
+  const environment = useEnvironment(threadRef.environmentId);
+  const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
+  const open = useAtomCommand(previewEnvironment.open);
+  const resize = useAtomCommand(previewEnvironment.resize, "preview viewport resize");
 
   usePreviewSession(threadRef);
 
@@ -83,40 +99,40 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const showEmptyState = shouldShowPreviewEmptyState(snapshot);
   const controller = desktopOverlay?.controller ?? "none";
   const loadProgress = useLoadingProgress(loading);
-  const environmentConnection = readEnvironmentConnection(threadRef.environmentId);
   const displayUrl =
-    url && environmentConnection
+    url && environment && environmentHttpBaseUrl
       ? (formatPreviewUrl({
           url,
-          environmentLabel: environmentConnection.knownEnvironment.label,
-          environmentHttpBaseUrl: environmentConnection.knownEnvironment.target.httpBaseUrl,
+          environmentLabel: environment.label,
+          environmentHttpBaseUrl,
         }) ?? undefined)
       : undefined;
+  const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
+  const panelRect = useBrowserSurfaceStore((state) =>
+    tabId ? (state.byTabId[tabId]?.rect ?? null) : null,
+  );
 
   const handleSubmitUrl = useCallback(
     async (next: string) => {
-      const api = ensureEnvironmentApi(threadRef.environmentId);
       try {
         const resolvedUrl = resolveDiscoveredServerUrl(threadRef.environmentId, next);
         if (tabId && previewBridge) {
           // Drive the webview imperatively; `usePreviewBridge` mirrors the
           // resolved URL back to the server so other clients stay in sync.
           await previewBridge.navigate(tabId, resolvedUrl);
-          rememberUrl(threadRef, resolvedUrl);
+          rememberPreviewUrl(threadRef, resolvedUrl);
         } else {
           await openPreviewSession({
-            previewApi: api.preview,
+            openPreview: open,
             threadRef,
             url: resolvedUrl,
-            applyServerSnapshot,
-            rememberUrl,
           });
         }
       } catch {
         // Server-side `failed` event renders the unreachable view.
       }
     },
-    [applyServerSnapshot, rememberUrl, tabId, threadRef],
+    [open, tabId, threadRef],
   );
 
   const handleRefresh = useCallback(() => {
@@ -134,6 +150,51 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const handleResetZoom = useCallback(() => {
     if (previewBridge && tabId) void previewBridge.resetZoom(tabId);
   }, [tabId]);
+
+  const handleViewportChange = useCallback(
+    async (nextViewport: PreviewViewportSetting) => {
+      if (!tabId) return;
+      const result = await resize({
+        environmentId: threadRef.environmentId,
+        input: {
+          threadId: threadRef.threadId,
+          tabId,
+          viewport: nextViewport,
+        },
+      });
+      if (result._tag === "Failure") {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Unable to resize browser viewport",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+        throw error;
+      }
+      updatePreviewServerSnapshot(threadRef, result.value);
+    },
+    [resize, tabId, threadRef],
+  );
+
+  const handleToggleDeviceToolbar = () => {
+    if (!tabId) return;
+    if (viewport._tag !== "fill") {
+      void commitBrowserViewportChange(tabId, FILL_PREVIEW_VIEWPORT).catch(() => undefined);
+      return;
+    }
+
+    const responsiveSize = panelRect
+      ? resolveResponsiveBrowserViewportSize(panelRect, desktopOverlay?.zoomFactor)
+      : { width: 1024, height: 768 };
+    void commitBrowserViewportChange(tabId, { _tag: "freeform", ...responsiveSize }).catch(
+      () => undefined,
+    );
+  };
+
+  useEffect(() => {
+    if (!tabId) return;
+    return subscribeBrowserViewportChange(tabId, handleViewportChange);
+  }, [handleViewportChange, tabId]);
 
   const handleBack = useCallback(() => {
     if (previewBridge && tabId) void previewBridge.goBack(tabId);
@@ -531,6 +592,8 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
               tabId={tabId}
               hasWebContents={desktopOverlay !== null}
               zoomFactor={desktopOverlay?.zoomFactor ?? 1}
+              deviceToolbarVisible={viewport._tag !== "fill"}
+              onToggleDeviceToolbar={handleToggleDeviceToolbar}
             />
           ) : null
         }

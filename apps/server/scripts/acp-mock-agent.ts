@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off
-import { appendFileSync } from "node:fs";
+import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
 
@@ -19,6 +19,23 @@ const emitInterleavedAssistantToolCalls =
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
+const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
+const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
+const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
+const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
+const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
+const omitXAiPromptCompleteStopReason =
+  process.env.T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON === "1";
+const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
+const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
+const hangLoadSessionAfterReplay = process.env.T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY === "1";
+const delayLoadSessionAfterReplay = process.env.T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY === "1";
+const loadSessionDelayMs = Number(process.env.T3_ACP_LOAD_SESSION_DELAY_MS ?? "5000");
+const emitStaleXAiPromptCompleteBeforeSecondHang =
+  process.env.T3_ACP_EMIT_STALE_XAI_PROMPT_COMPLETE_BEFORE_SECOND_HANG === "1";
+const emitOverlappingXAiPromptCompleteOutOfOrder =
+  process.env.T3_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
+const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
@@ -36,13 +53,30 @@ let parameterizedModelPicker = false;
 let currentReasoning = "medium";
 let currentContext = "272k";
 let currentFast = false;
+let promptCount = 0;
+let overlappingFirstPromptId: string | undefined;
 const cancelledSessions = new Set<string>();
+
+function promptIdFromRequestMeta(
+  request: Pick<AcpSchema.PromptRequest, "_meta">,
+): string | undefined {
+  const meta = request._meta;
+  if (meta === null || typeof meta !== "object") {
+    return undefined;
+  }
+  const promptId = meta.promptId ?? meta.requestId;
+  return typeof promptId === "string" && promptId.length > 0 ? promptId : undefined;
+}
 
 function logExit(reason: string): void {
   if (!exitLogPath) {
     return;
   }
-  appendFileSync(exitLogPath, `${reason}\n`, "utf8");
+  NodeFS.appendFileSync(exitLogPath, `${reason}\n`, "utf8");
+}
+
+function writeJsonRpcNotification(method: string, params: unknown): void {
+  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
 }
 
 process.once("SIGTERM", () => {
@@ -284,22 +318,66 @@ const program = Effect.gen(function* () {
     }),
   );
 
+  const emitLoadReplayNotifications = (requestedSessionId: string) => {
+    writeJsonRpcNotification("session/update", {
+      _meta: { isReplay: true },
+      sessionId: requestedSessionId,
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "replay-tool-1",
+        title: "Replay tool",
+        kind: "search",
+        status: "completed",
+      },
+    });
+    writeJsonRpcNotification("session/update", {
+      _meta: { isReplay: true },
+      sessionId: requestedSessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "replayed assistant text" },
+      },
+    });
+  };
+
   yield* agent.handleLoadSession((request) =>
-    agent.client
-      .sessionUpdate({
-        sessionId: String(request.sessionId ?? sessionId),
+    Effect.gen(function* () {
+      const requestedSessionId = String(request.sessionId ?? sessionId);
+      if (failLoadSession) {
+        return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
+      }
+      if (hangLoadSessionAfterReplay || delayLoadSessionAfterReplay) {
+        emitLoadReplayNotifications(requestedSessionId);
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: "replay-tail" },
+          },
+        });
+        yield* Effect.sleep(loadSessionDelayMs);
+        return {
+          modes: modeState(),
+          models: modelState(),
+          configOptions: configOptions(),
+        };
+      }
+      if (emitLoadReplay) {
+        emitLoadReplayNotifications(requestedSessionId);
+      }
+      yield* agent.client.sessionUpdate({
+        sessionId: requestedSessionId,
         update: {
           sessionUpdate: "user_message_chunk",
           content: { type: "text", text: "replay" },
         },
-      })
-      .pipe(
-        Effect.as({
-          modes: modeState(),
-          models: modelState(),
-          configOptions: configOptions(),
-        }),
-      ),
+      });
+      return {
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+      };
+    }),
   );
 
   yield* agent.handleSetSessionModel((request) =>
@@ -356,17 +434,150 @@ const program = Effect.gen(function* () {
   );
 
   yield* agent.handleCancel(({ sessionId }) =>
-    Effect.sync(() => {
-      cancelledSessions.add(String(sessionId ?? "mock-session-1"));
+    Effect.gen(function* () {
+      const cancelledSessionId = String(sessionId ?? "mock-session-1");
+      cancelledSessions.add(cancelledSessionId);
+      if (emitLateUpdateAfterCancel) {
+        yield* Effect.sleep("50 millis");
+        yield* Effect.sync(() => {
+          writeJsonRpcNotification("session/update", {
+            sessionId: cancelledSessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "late after cancel" },
+            },
+          });
+        });
+      }
     }),
   );
 
   yield* agent.handlePrompt((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      promptCount += 1;
 
       if (Number.isFinite(promptDelayMs) && promptDelayMs > 0) {
         yield* Effect.sleep(`${promptDelayMs} millis`);
+      }
+
+      if (failPrompt) {
+        return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
+      }
+
+      if (emitStaleXAiPromptCompleteBeforeSecondHang && promptCount === 1) {
+        return {
+          stopReason: "end_turn",
+          _meta: {
+            promptId: "mock-stale-xai-prompt-1",
+            requestId: "mock-stale-xai-prompt-1",
+          },
+        };
+      }
+
+      if (emitStaleXAiPromptCompleteBeforeSecondHang && promptCount === 2) {
+        const currentPromptId = promptIdFromRequestMeta(request) ?? "mock-current-xai-prompt-2";
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: "mock-stale-xai-prompt-1",
+          stopReason: "end_turn",
+          agentResult: null,
+        });
+
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: currentPromptId,
+          stopReason: "end_turn",
+          agentResult: null,
+        });
+
+        return yield* Effect.never;
+      }
+
+      if (emitOverlappingXAiPromptCompleteOutOfOrder && promptCount === 1) {
+        overlappingFirstPromptId = promptIdFromRequestMeta(request);
+        return yield* Effect.never;
+      }
+
+      if (emitOverlappingXAiPromptCompleteOutOfOrder && promptCount === 2) {
+        const secondPromptId = promptIdFromRequestMeta(request);
+        if (overlappingFirstPromptId !== undefined && secondPromptId !== undefined) {
+          writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+            sessionId: requestedSessionId,
+            promptId: secondPromptId,
+            stopReason: "end_turn",
+            agentResult: null,
+          });
+          writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+            sessionId: requestedSessionId,
+            promptId: overlappingFirstPromptId,
+            stopReason: "end_turn",
+            agentResult: null,
+          });
+        }
+        return yield* Effect.never;
+      }
+
+      if (hangPromptForever || (hangFirstPromptForever && promptCount === 1)) {
+        return yield* Effect.never;
+      }
+
+      if (emitXAiPromptCompleteThenHang) {
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "hello from " },
+          },
+        });
+
+        if (emitForeignSessionUpdates) {
+          writeJsonRpcNotification("session/update", {
+            sessionId: "mock-child-session-1",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "child before completion" },
+            },
+          });
+        }
+
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
+          ...(omitXAiPromptCompleteStopReason ? {} : { stopReason: "end_turn" }),
+          agentResult: null,
+        });
+
+        if (emitForeignSessionUpdates) {
+          writeJsonRpcNotification("session/update", {
+            sessionId: "mock-child-session-1",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "child-tool-call-1",
+              title: "Child-only tool",
+              kind: "other",
+              status: "pending",
+              rawInput: {},
+            },
+          });
+          writeJsonRpcNotification("session/update", {
+            sessionId: "mock-child-session-1",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "child after completion" },
+            },
+          });
+        }
+
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "mock" },
+          },
+        });
+
+        return yield* Effect.never;
       }
 
       if (emitInterleavedAssistantToolCalls) {
@@ -599,6 +810,42 @@ const program = Effect.gen(function* () {
         return { stopReason: "end_turn" };
       }
 
+      if (emitForeignSessionUpdates) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "root before child" },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: "mock-child-session-1",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "child content" },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: "mock-child-session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "child-tool-call-1",
+            title: "Child-only tool",
+            kind: "other",
+            status: "pending",
+            rawInput: {},
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: " root after child" },
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
+
       yield* agent.client.sessionUpdate({
         sessionId: requestedSessionId,
         update: {
@@ -693,7 +940,7 @@ const program = Effect.gen(function* () {
               }
               const payload = event.payload;
               return Effect.sync(() => {
-                appendFileSync(
+                NodeFS.appendFileSync(
                   requestLogPath,
                   payload.endsWith("\n") ? payload : `${payload}\n`,
                   "utf8",

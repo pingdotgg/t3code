@@ -16,8 +16,13 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
+import { environmentCatalog } from "../../connection/catalog";
+import { useEnvironmentPresentation } from "../../state/presentation";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
+import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useReviewCacheForThread } from "./reviewState";
 import { resolveNativeReviewDiffView } from "../diffs/nativeReviewDiffSurface";
 import {
@@ -29,6 +34,7 @@ import { useReviewFileVisibility } from "./reviewFileVisibility";
 import { useReviewSections } from "./useReviewSections";
 import { useNativeReviewDiffBridge } from "./useNativeReviewDiffBridge";
 import { useReviewCommentSelectionController } from "./useReviewCommentSelectionController";
+import { resolveReviewAvailability } from "./reviewAvailability";
 
 const IOS_NAV_BAR_HEIGHT = 44;
 const REVIEW_HEADER_SPACING = 0;
@@ -36,10 +42,10 @@ const REVIEW_HEADER_SPACING = 0;
 const ReviewNotice = memo(function ReviewNotice(props: { readonly notice: string }) {
   return (
     <View className="border-b border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/60 dark:bg-amber-950/40">
-      <Text className="text-[12px] font-t3-bold uppercase text-amber-700 dark:text-amber-300">
+      <Text className="text-xs font-t3-bold uppercase text-amber-700 dark:text-amber-300">
         Partial diff
       </Text>
-      <Text className="text-[12px] leading-[18px] text-amber-800 dark:text-amber-200">
+      <Text className="text-xs leading-[18px] text-amber-800 dark:text-amber-200">
         {props.notice}
       </Text>
     </View>
@@ -64,7 +70,7 @@ function ReviewSelectionActionBar(props: {
         tintColor="#ffffff"
         type="monochrome"
       />
-      <Text className="text-[15px] font-t3-bold text-white">{props.title}</Text>
+      <Text className="text-base font-t3-bold text-white">{props.title}</Text>
     </>
   );
 
@@ -114,6 +120,9 @@ export function ReviewSheet() {
     environmentId: EnvironmentId;
     threadId: ThreadId;
   }>();
+  const environment = useEnvironmentPresentation(environmentId);
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
+  const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const { draftMessage } = useThreadDraftForThread({ environmentId, threadId });
   const reviewCache = useReviewCacheForThread({ environmentId, threadId });
   const selectedTheme = colorScheme === "dark" ? "dark" : "light";
@@ -126,7 +135,12 @@ export function ReviewSheet() {
     selectedSection,
     refreshSelectedSection,
     selectSection,
-  } = useReviewSections({ environmentId, threadId, reviewCache });
+  } = useReviewSections({
+    enabled: isEnvironmentReady,
+    environmentId,
+    threadId,
+    reviewCache,
+  });
   const { headerDiffSummary, nativeReviewDiffData, parsedDiff, pendingReviewCommentCount } =
     useReviewDiffData({
       threadKey: reviewCache.threadKey,
@@ -187,6 +201,17 @@ export function ReviewSheet() {
 
   const parsedDiffNotice =
     parsedDiff.kind === "files" || parsedDiff.kind === "raw" ? parsedDiff.notice : null;
+  const hasCachedSelectedDiff = selectedSection?.diff != null;
+  const hasAnyCachedDiff = reviewSections.some((section) => section.diff != null);
+  const { showConnectionNotice, showSectionToolbar } = resolveReviewAvailability({
+    hasEnvironmentPresentation: environment.isReady,
+    isEnvironmentConnected: isEnvironmentReady,
+    hasCachedSelectedDiff,
+    hasAnyCachedDiff,
+  });
+  const handleRetryEnvironment = useCallback(() => {
+    void retryEnvironment(environmentId);
+  }, [environmentId, retryEnvironment]);
 
   const listHeader = useMemo(() => {
     const children: ReactElement[] = [];
@@ -194,8 +219,8 @@ export function ReviewSheet() {
     if (error) {
       children.push(
         <View key="review-error" className="border-b border-border bg-card px-4 py-3">
-          <Text className="text-[13px] font-t3-bold text-foreground">Review unavailable</Text>
-          <Text className="text-[12px] leading-[18px] text-foreground-muted">{error}</Text>
+          <Text className="text-sm font-t3-bold text-foreground">Review unavailable</Text>
+          <Text className="text-xs leading-[18px] text-foreground-muted">{error}</Text>
         </View>,
       );
     }
@@ -227,7 +252,7 @@ export function ReviewSheet() {
                 numberOfLines={1}
                 style={{
                   fontFamily: "DMSans_700Bold",
-                  fontSize: 18,
+                  fontSize: MOBILE_TYPOGRAPHY.headline.fontSize,
                   fontWeight: "900",
                   color: headerForeground,
                   letterSpacing: -0.4,
@@ -249,7 +274,7 @@ export function ReviewSheet() {
                     <NativeText
                       style={{
                         fontFamily: "DMSans_700Bold",
-                        fontSize: 12,
+                        fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
                         fontWeight: "700",
                         color: "#16a34a",
                       }}
@@ -259,7 +284,7 @@ export function ReviewSheet() {
                     <NativeText
                       style={{
                         fontFamily: "DMSans_700Bold",
-                        fontSize: 12,
+                        fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
                         fontWeight: "700",
                         color: "#e11d48",
                       }}
@@ -270,7 +295,7 @@ export function ReviewSheet() {
                       <NativeText
                         style={{
                           fontFamily: "DMSans_700Bold",
-                          fontSize: 12,
+                          fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
                           fontWeight: "700",
                           color: "#b45309",
                         }}
@@ -285,7 +310,7 @@ export function ReviewSheet() {
                       numberOfLines={1}
                       style={{
                         fontFamily: "DMSans_700Bold",
-                        fontSize: 12,
+                        fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
                         fontWeight: "700",
                         color: headerMuted,
                       }}
@@ -296,7 +321,7 @@ export function ReviewSheet() {
                       <NativeText
                         style={{
                           fontFamily: "DMSans_700Bold",
-                          fontSize: 12,
+                          fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
                           fontWeight: "700",
                           color: "#b45309",
                         }}
@@ -312,34 +337,51 @@ export function ReviewSheet() {
         }}
       />
 
-      <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Menu icon="ellipsis.circle" title="Select diff" separateBackground>
-          {reviewSections.map((section) => (
+      {showSectionToolbar ? (
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Menu icon="ellipsis.circle" title="Select diff" separateBackground>
+            {reviewSections.map((section) => (
+              <Stack.Toolbar.MenuAction
+                key={section.id}
+                icon={section.id === selectedSection?.id ? "checkmark" : "circle"}
+                onPress={() => selectSection(section.id)}
+                subtitle={section.subtitle ?? undefined}
+              >
+                <Stack.Toolbar.Label>{section.title}</Stack.Toolbar.Label>
+              </Stack.Toolbar.MenuAction>
+            ))}
             <Stack.Toolbar.MenuAction
-              key={section.id}
-              icon={section.id === selectedSection?.id ? "checkmark" : "circle"}
-              onPress={() => selectSection(section.id)}
-              subtitle={section.subtitle ?? undefined}
+              icon="arrow.clockwise"
+              disabled={
+                loadingGitDiffs ||
+                (selectedSection?.kind === "turn" && loadingTurnIds[selectedSection.id] === true)
+              }
+              onPress={() => void refreshSelectedSection()}
+              subtitle="Reload current diff"
             >
-              <Stack.Toolbar.Label>{section.title}</Stack.Toolbar.Label>
+              <Stack.Toolbar.Label>Refresh</Stack.Toolbar.Label>
             </Stack.Toolbar.MenuAction>
-          ))}
-          <Stack.Toolbar.MenuAction
-            icon="arrow.clockwise"
-            disabled={
-              loadingGitDiffs ||
-              (selectedSection?.kind === "turn" && loadingTurnIds[selectedSection.id] === true)
-            }
-            onPress={() => void refreshSelectedSection()}
-            subtitle="Reload current diff"
-          >
-            <Stack.Toolbar.Label>Refresh</Stack.Toolbar.Label>
-          </Stack.Toolbar.MenuAction>
-        </Stack.Toolbar.Menu>
-      </Stack.Toolbar>
+          </Stack.Toolbar.Menu>
+        </Stack.Toolbar>
+      ) : null}
 
       <View className="flex-1 bg-sheet">
-        {selectedSection && parsedDiff.kind === "files" ? (
+        {showConnectionNotice ? (
+          <View style={{ flex: 1, paddingTop: topContentInset }}>
+            <EnvironmentConnectionNotice
+              environmentLabel={environment.presentation?.entry.target.label ?? "Environment"}
+              connection={
+                environment.presentation?.connection ?? {
+                  phase: "available",
+                  error: null,
+                  traceId: null,
+                }
+              }
+              resourceName="review"
+              onRetry={handleRetryEnvironment}
+            />
+          </View>
+        ) : selectedSection && parsedDiff.kind === "files" ? (
           <View
             className="flex-1"
             style={{
@@ -389,30 +431,30 @@ export function ReviewSheet() {
             {listHeader}
             {!selectedSection ? (
               <View className="border-b border-border bg-card px-4 py-5">
-                <Text className="text-[14px] font-t3-bold text-foreground">No review diffs</Text>
-                <Text className="text-[12px] leading-[18px] text-foreground-muted">
+                <Text className="text-sm font-t3-bold text-foreground">No review diffs</Text>
+                <Text className="text-xs leading-[18px] text-foreground-muted">
                   This thread has no ready turn diffs and the worktree diff is empty.
                 </Text>
               </View>
             ) : selectedSection.isLoading && selectedSection.diff === null ? (
               <View className="items-center gap-3 border-b border-border bg-card px-4 py-6">
                 <ActivityIndicator size="small" />
-                <Text className="text-[12px] text-foreground-muted">Loading diff…</Text>
+                <Text className="text-xs text-foreground-muted">Loading diff…</Text>
               </View>
             ) : parsedDiff.kind === "empty" ? (
               <View className="border-b border-border bg-card px-4 py-5">
-                <Text className="text-[14px] font-t3-bold text-foreground">No changes</Text>
-                <Text className="text-[12px] leading-[18px] text-foreground-muted">
+                <Text className="text-sm font-t3-bold text-foreground">No changes</Text>
+                <Text className="text-xs leading-[18px] text-foreground-muted">
                   {selectedSection.subtitle ?? "This diff is empty."}
                 </Text>
               </View>
             ) : parsedDiff.kind === "raw" ? (
               <View className="gap-3 border-b border-border bg-card px-4 py-4">
-                <Text className="text-[12px] leading-[18px] text-foreground-muted">
+                <Text className="text-xs leading-[18px] text-foreground-muted">
                   {parsedDiff.reason}
                 </Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
-                  <Text selectable className="font-mono text-[12px] leading-[19px] text-foreground">
+                  <Text selectable className="font-mono text-xs leading-[19px] text-foreground">
                     {parsedDiff.text}
                   </Text>
                 </ScrollView>

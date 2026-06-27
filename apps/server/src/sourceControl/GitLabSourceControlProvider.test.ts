@@ -8,8 +8,8 @@ import * as GitLabCli from "./GitLabCli.ts";
 import { parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 
-function makeProvider(gitlab: Partial<GitLabCli.GitLabCliShape>) {
-  return GitLabSourceControlProvider.make().pipe(
+function makeProvider(gitlab: Partial<GitLabCli.GitLabCli["Service"]>) {
+  return GitLabSourceControlProvider.make.pipe(
     Effect.provide(Layer.mock(GitLabCli.GitLabCli)(gitlab)),
   );
 }
@@ -52,9 +52,52 @@ it.effect("maps GitLab MR summaries into provider-neutral change requests", () =
   }),
 );
 
+it.effect("adds repository context while retaining GitLab CLI causes", () =>
+  Effect.gen(function* () {
+    const cause = new GitLabCli.GitLabCliCommandError({
+      operation: "execute",
+      command: "glab",
+      cwd: "/repo",
+      cause: new Error("raw upstream detail that should remain in the cause"),
+    });
+    const provider = yield* makeProvider({
+      createRepository: () => Effect.fail(cause),
+    });
+
+    const error = yield* provider
+      .createRepository({
+        cwd: "/repo",
+        repository: "owner/repo",
+        visibility: "private",
+      })
+      .pipe(Effect.flip);
+
+    assert.deepStrictEqual(
+      {
+        provider: error.provider,
+        operation: error.operation,
+        command: error.command,
+        cwd: error.cwd,
+        repository: error.repository,
+        detail: error.detail,
+      },
+      {
+        provider: "gitlab",
+        operation: "createRepository",
+        command: "glab",
+        cwd: "/repo",
+        repository: "owner/repo",
+        detail: "GitLab CLI command failed.",
+      },
+    );
+    assert.strictEqual(error.cause, cause);
+    assert.equal(error.message.includes("raw upstream detail"), false);
+  }),
+);
+
 it.effect("lists GitLab MRs through provider-neutral input names", () =>
   Effect.gen(function* () {
-    let listInput: Parameters<GitLabCli.GitLabCliShape["listMergeRequests"]>[0] | null = null;
+    let listInput: Parameters<GitLabCli.GitLabCli["Service"]["listMergeRequests"]>[0] | null = null;
     const provider = yield* makeProvider({
       listMergeRequests: (input) => {
         listInput = input;
@@ -80,7 +123,8 @@ it.effect("lists GitLab MRs through provider-neutral input names", () =>
 
 it.effect("creates GitLab MRs through provider-neutral input names", () =>
   Effect.gen(function* () {
-    let createInput: Parameters<GitLabCli.GitLabCliShape["createMergeRequest"]>[0] | null = null;
+    let createInput: Parameters<GitLabCli.GitLabCli["Service"]["createMergeRequest"]>[0] | null =
+      null;
     const provider = yield* makeProvider({
       createMergeRequest: (input) => {
         createInput = input;

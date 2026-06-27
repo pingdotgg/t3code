@@ -103,13 +103,15 @@ import {
   PreviewOpenInput,
   PreviewRefreshInput,
   PreviewReportStatusInput,
+  PreviewResizeInput,
   PreviewSessionSnapshot,
 } from "./preview.ts";
 import {
   PreviewAutomationError,
-  PreviewAutomationOwner,
-  PreviewAutomationRequest,
+  PreviewAutomationHost,
+  PreviewAutomationHostFocus,
   PreviewAutomationResponse,
+  PreviewAutomationStreamEvent,
 } from "./previewAutomation.ts";
 import {
   ServerConfigStreamEvent,
@@ -189,14 +191,14 @@ export const WS_METHODS = {
   // Preview methods
   previewOpen: "preview.open",
   previewNavigate: "preview.navigate",
+  previewResize: "preview.resize",
   previewRefresh: "preview.refresh",
   previewClose: "preview.close",
   previewList: "preview.list",
   previewReportStatus: "preview.reportStatus",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
-  previewAutomationReportOwner: "previewAutomation.reportOwner",
-  previewAutomationClearOwner: "previewAutomation.clearOwner",
+  previewAutomationFocusHost: "previewAutomation.focusHost",
 
   // Server meta
   serverGetConfig: "server.getConfig",
@@ -527,6 +529,12 @@ export const WsPreviewNavigateRpc = Rpc.make(WS_METHODS.previewNavigate, {
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
+export const WsPreviewResizeRpc = Rpc.make(WS_METHODS.previewResize, {
+  payload: PreviewResizeInput,
+  success: PreviewSessionSnapshot,
+  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
+});
+
 export const WsPreviewRefreshRpc = Rpc.make(WS_METHODS.previewRefresh, {
   payload: PreviewRefreshInput,
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
@@ -549,8 +557,8 @@ export const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus,
 });
 
 export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
-  payload: Schema.Struct({ clientId: Schema.String }),
-  success: PreviewAutomationRequest,
+  payload: PreviewAutomationHost,
+  success: PreviewAutomationStreamEvent,
   error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
   stream: true,
 });
@@ -560,14 +568,9 @@ export const WsPreviewAutomationRespondRpc = Rpc.make(WS_METHODS.previewAutomati
   error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
 });
 
-export const WsPreviewAutomationReportOwnerRpc = Rpc.make(WS_METHODS.previewAutomationReportOwner, {
-  payload: PreviewAutomationOwner,
-  error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
-});
-
-export const WsPreviewAutomationClearOwnerRpc = Rpc.make(WS_METHODS.previewAutomationClearOwner, {
-  payload: Schema.Struct({ clientId: Schema.String }),
-  error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
+export const WsPreviewAutomationFocusHostRpc = Rpc.make(WS_METHODS.previewAutomationFocusHost, {
+  payload: PreviewAutomationHostFocus,
+  error: EnvironmentAuthorizationError,
 });
 
 export const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
@@ -727,14 +730,14 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeTerminalMetadataRpc,
   WsPreviewOpenRpc,
   WsPreviewNavigateRpc,
+  WsPreviewResizeRpc,
   WsPreviewRefreshRpc,
   WsPreviewCloseRpc,
   WsPreviewListRpc,
   WsPreviewReportStatusRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
-  WsPreviewAutomationReportOwnerRpc,
-  WsPreviewAutomationClearOwnerRpc,
+  WsPreviewAutomationFocusHostRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsSubscribeServerConfigRpc,

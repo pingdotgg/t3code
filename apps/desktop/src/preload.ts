@@ -4,9 +4,12 @@ import type {
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
 } from "@t3tools/contracts";
+import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
+
+exposeClerkBridge({ passkeys: true });
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
@@ -39,19 +42,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }
     return result as ReturnType<DesktopBridge["getLocalEnvironmentBootstrap"]>;
   },
+  getLocalEnvironmentBearerToken: () =>
+    ipcRenderer.invoke(IpcChannels.GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL),
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
   setClientSettings: (settings) =>
     ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
-  getSavedEnvironmentRegistry: () =>
-    ipcRenderer.invoke(IpcChannels.GET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL),
-  setSavedEnvironmentRegistry: (records) =>
-    ipcRenderer.invoke(IpcChannels.SET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL, records),
-  getSavedEnvironmentSecret: (environmentId) =>
-    ipcRenderer.invoke(IpcChannels.GET_SAVED_ENVIRONMENT_SECRET_CHANNEL, environmentId),
-  setSavedEnvironmentSecret: (environmentId, secret) =>
-    ipcRenderer.invoke(IpcChannels.SET_SAVED_ENVIRONMENT_SECRET_CHANNEL, { environmentId, secret }),
-  removeSavedEnvironmentSecret: (environmentId) =>
-    ipcRenderer.invoke(IpcChannels.REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL, environmentId),
+  getConnectionCatalog: () => ipcRenderer.invoke(IpcChannels.GET_CONNECTION_CATALOG_CHANNEL),
+  setConnectionCatalog: (catalog) =>
+    ipcRenderer.invoke(IpcChannels.SET_CONNECTION_CATALOG_CHANNEL, catalog),
+  clearConnectionCatalog: () => ipcRenderer.invoke(IpcChannels.CLEAR_CONNECTION_CATALOG_CHANNEL),
   discoverSshHosts: () => ipcRenderer.invoke(IpcChannels.DISCOVER_SSH_HOSTS_CHANNEL),
   ensureSshEnvironment: async (target, options) =>
     unwrapEnsureSshEnvironmentResult(
@@ -101,23 +100,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ...(position === undefined ? {} : { position }),
     }),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
-  createCloudAuthRequest: () => ipcRenderer.invoke(IpcChannels.CREATE_CLOUD_AUTH_REQUEST_CHANNEL),
-  getCloudAuthToken: () => ipcRenderer.invoke(IpcChannels.GET_CLOUD_AUTH_TOKEN_CHANNEL),
-  setCloudAuthToken: (token: string) =>
-    ipcRenderer.invoke(IpcChannels.SET_CLOUD_AUTH_TOKEN_CHANNEL, token),
-  clearCloudAuthToken: () => ipcRenderer.invoke(IpcChannels.CLEAR_CLOUD_AUTH_TOKEN_CHANNEL),
-  fetchCloudAuth: (input) => ipcRenderer.invoke(IpcChannels.FETCH_CLOUD_AUTH_CHANNEL, input),
-  onCloudAuthCallback: (listener) => {
-    const wrappedListener = (_event: Electron.IpcRendererEvent, rawUrl: unknown) => {
-      if (typeof rawUrl !== "string") return;
-      listener(rawUrl);
-    };
-
-    ipcRenderer.on(IpcChannels.CLOUD_AUTH_CALLBACK_CHANNEL, wrappedListener);
-    return () => {
-      ipcRenderer.removeListener(IpcChannels.CLOUD_AUTH_CALLBACK_CHANNEL, wrappedListener);
-    };
-  },
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
       if (typeof action !== "string") return;

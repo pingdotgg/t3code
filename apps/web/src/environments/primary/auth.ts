@@ -21,15 +21,100 @@ import {
 
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
-import * as Data from "effect/Data";
-import * as Predicate from "effect/Predicate";
 
-export class BootstrapHttpError extends Data.TaggedError("BootstrapHttpError")<{
-  readonly message: string;
-  readonly status: number;
-}> {}
-const isBootstrapHttpError = (u: unknown): u is BootstrapHttpError =>
-  Predicate.isTagged(u, "BootstrapHttpError");
+const PrimaryEnvironmentRequestOperation = Schema.Literals([
+  "fetch-session-state",
+  "exchange-bootstrap-credential",
+  "fetch-environment-descriptor",
+  "create-pairing-credential",
+  "list-pairing-links",
+  "revoke-pairing-link",
+  "list-client-sessions",
+  "revoke-client-session",
+  "revoke-other-client-sessions",
+]);
+type PrimaryEnvironmentRequestOperation = typeof PrimaryEnvironmentRequestOperation.Type;
+
+export class PrimaryEnvironmentRequestError extends Schema.TaggedErrorClass<PrimaryEnvironmentRequestError>()(
+  "PrimaryEnvironmentRequestError",
+  {
+    operation: PrimaryEnvironmentRequestOperation,
+    status: Schema.Number,
+    pairingLinkId: Schema.optional(Schema.String),
+    sessionId: Schema.optional(Schema.String),
+    cause: Schema.Defect(),
+  },
+) {
+  static fromCause(input: {
+    readonly operation: PrimaryEnvironmentRequestOperation;
+    readonly cause: unknown;
+    readonly pairingLinkId?: string;
+    readonly sessionId?: string;
+  }): PrimaryEnvironmentRequestError {
+    const status = readHttpApiStatus(input.cause) ?? 500;
+    return new PrimaryEnvironmentRequestError({
+      operation: input.operation,
+      status,
+      ...(input.pairingLinkId !== undefined ? { pairingLinkId: input.pairingLinkId } : {}),
+      ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+      cause: input.cause,
+    });
+  }
+
+  override get message(): string {
+    return `Primary environment request failed during ${this.operation} (HTTP ${this.status}).`;
+  }
+}
+
+export const isPrimaryEnvironmentRequestError = Schema.is(PrimaryEnvironmentRequestError);
+
+export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.TaggedErrorClass<PrimaryEnvironmentPairingCredentialRejectedError>()(
+  "PrimaryEnvironmentPairingCredentialRejectedError",
+  {
+    providedLength: Schema.Number,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Invalid pairing token. Check the token and try again.";
+  }
+}
+
+export const isPrimaryEnvironmentPairingCredentialRejectedError = Schema.is(
+  PrimaryEnvironmentPairingCredentialRejectedError,
+);
+
+export class PrimaryEnvironmentAuthSessionTimeoutError extends Schema.TaggedErrorClass<PrimaryEnvironmentAuthSessionTimeoutError>()(
+  "PrimaryEnvironmentAuthSessionTimeoutError",
+  {
+    timeoutMs: Schema.Number,
+    elapsedMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return "Timed out waiting for authenticated session after bootstrap.";
+  }
+}
+
+export const isPrimaryEnvironmentAuthSessionTimeoutError = Schema.is(
+  PrimaryEnvironmentAuthSessionTimeoutError,
+);
+
+export class PrimaryEnvironmentPairingCredentialRequiredError extends Schema.TaggedErrorClass<PrimaryEnvironmentPairingCredentialRequiredError>()(
+  "PrimaryEnvironmentPairingCredentialRequiredError",
+  {
+    providedLength: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return "Enter a pairing token to continue.";
+  }
+}
+
+export const isPrimaryEnvironmentPairingCredentialRequiredError = Schema.is(
+  PrimaryEnvironmentPairingCredentialRequiredError,
+);
+
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
 export interface ServerPairingLinkRecord {
@@ -106,10 +191,9 @@ export async function fetchSessionState(): Promise<AuthSessionState> {
         ),
       );
     } catch (error) {
-      const status = readHttpApiStatus(error);
-      throw new BootstrapHttpError({
-        message: `Failed to load server auth session state (${status ?? "unknown"}).`,
-        status: status ?? 500,
+      throw PrimaryEnvironmentRequestError.fromCause({
+        operation: "fetch-session-state",
+        cause: error,
       });
     }
   });
@@ -138,42 +222,6 @@ function readEnvironmentHttpErrorStatus(error: EnvironmentHttpCommonErrorType): 
   }
 }
 
-function readHttpApiErrorMessage(error: unknown, fallbackMessage: string): string {
-  if (!isEnvironmentHttpCommonError(error)) {
-    return fallbackMessage;
-  }
-  switch (error._tag) {
-    case "EnvironmentAuthInvalidError":
-      return error.reason === "missing_credential"
-        ? "Authentication required."
-        : "Invalid bootstrap credential.";
-    case "EnvironmentRequestInvalidError":
-      return error.reason === "invalid_scope"
-        ? "Requested token scope is invalid."
-        : "Requested scope exceeds the bootstrap credential grant.";
-    case "EnvironmentScopeRequiredError":
-      return `The authenticated token is missing required scope: ${error.requiredScope}.`;
-    case "EnvironmentOperationForbiddenError":
-      return "This operation is not allowed for the current session.";
-    case "EnvironmentInternalError":
-      return fallbackMessage;
-  }
-}
-
-const INVALID_BOOTSTRAP_CREDENTIAL_MESSAGES = new Set([
-  "Invalid bootstrap credential.",
-  "Unknown bootstrap credential.",
-]);
-
-function toFriendlyBootstrapErrorMessage(status: number, message: string): string {
-  const trimmedMessage = message.trim();
-  if (status === 401 && INVALID_BOOTSTRAP_CREDENTIAL_MESSAGES.has(trimmedMessage)) {
-    return "Invalid pairing token. Check the token and try again.";
-  }
-
-  return trimmedMessage;
-}
-
 async function exchangeBootstrapCredential(credential: string): Promise<AuthBrowserSessionResult> {
   return retryTransientBootstrap(async () => {
     try {
@@ -183,11 +231,19 @@ async function exchangeBootstrapCredential(credential: string): Promise<AuthBrow
         ),
       );
     } catch (error) {
-      const status = readHttpApiStatus(error) ?? 500;
-      const message = toFriendlyBootstrapErrorMessage(status, readHttpApiErrorMessage(error, ""));
-      throw new BootstrapHttpError({
-        message: message || `Failed to bootstrap auth session (${status}).`,
-        status,
+      if (
+        isEnvironmentHttpCommonError(error) &&
+        error._tag === "EnvironmentAuthInvalidError" &&
+        error.reason === "invalid_credential"
+      ) {
+        throw new PrimaryEnvironmentPairingCredentialRejectedError({
+          providedLength: credential.length,
+          cause: error,
+        });
+      }
+      throw PrimaryEnvironmentRequestError.fromCause({
+        operation: "exchange-bootstrap-credential",
+        cause: error,
       });
     }
   });
@@ -202,8 +258,12 @@ async function waitForAuthenticatedSessionAfterBootstrap(): Promise<AuthSessionS
       return session;
     }
 
-    if (Date.now() - startedAt >= AUTH_SESSION_ESTABLISH_TIMEOUT_MS) {
-      throw new Error("Timed out waiting for authenticated session after bootstrap.");
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs >= AUTH_SESSION_ESTABLISH_TIMEOUT_MS) {
+      throw new PrimaryEnvironmentAuthSessionTimeoutError({
+        timeoutMs: AUTH_SESSION_ESTABLISH_TIMEOUT_MS,
+        elapsedMs,
+      });
     }
 
     await waitForBootstrapRetry(AUTH_SESSION_ESTABLISH_STEP_MS);
@@ -240,7 +300,7 @@ function waitForBootstrapRetry(delayMs: number): Promise<void> {
 }
 
 function isTransientBootstrapError(error: unknown): boolean {
-  if (isBootstrapHttpError(error)) {
+  if (isPrimaryEnvironmentRequestError(error)) {
     return TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status);
   }
 
@@ -281,7 +341,9 @@ async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
 export async function submitServerAuthCredential(credential: string): Promise<void> {
   const trimmedCredential = credential.trim();
   if (!trimmedCredential) {
-    throw new Error("Enter a pairing token to continue.");
+    throw new PrimaryEnvironmentPairingCredentialRequiredError({
+      providedLength: credential.length,
+    });
   }
 
   resolvedAuthenticatedGateState = null;
@@ -310,13 +372,10 @@ export async function createServerPairingCredential(input?: {
       ),
     );
   } catch (error) {
-    throw new Error(
-      readHttpApiErrorMessage(
-        error,
-        `Failed to create pairing credential (${readHttpApiStatus(error) ?? "unknown"}).`,
-      ),
-      { cause: error },
-    );
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "create-pairing-credential",
+      cause: error,
+    });
   }
 }
 
@@ -353,13 +412,10 @@ export async function listServerPairingLinks(): Promise<ReadonlyArray<ServerPair
       };
     });
   } catch (error) {
-    throw new Error(
-      readHttpApiErrorMessage(
-        error,
-        `Failed to load pairing links (${readHttpApiStatus(error) ?? "unknown"}).`,
-      ),
-      { cause: error },
-    );
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "list-pairing-links",
+      cause: error,
+    });
   }
 }
 
@@ -371,13 +427,11 @@ export async function revokeServerPairingLink(id: string): Promise<void> {
       ),
     );
   } catch (error) {
-    throw new Error(
-      readHttpApiErrorMessage(
-        error,
-        `Failed to revoke pairing link (${readHttpApiStatus(error) ?? "unknown"}).`,
-      ),
-      { cause: error },
-    );
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "revoke-pairing-link",
+      pairingLinkId: id,
+      cause: error,
+    });
   }
 }
 
@@ -406,13 +460,10 @@ export async function listServerClientSessions(): Promise<
       current: clientSession.current,
     }));
   } catch (error) {
-    throw new Error(
-      readHttpApiErrorMessage(
-        error,
-        `Failed to load paired clients (${readHttpApiStatus(error) ?? "unknown"}).`,
-      ),
-      { cause: error },
-    );
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "list-client-sessions",
+      cause: error,
+    });
   }
 }
 
@@ -426,13 +477,11 @@ export async function revokeServerClientSession(sessionId: AuthSessionId): Promi
       ),
     );
   } catch (error) {
-    throw new Error(
-      readHttpApiErrorMessage(
-        error,
-        `Failed to revoke client session (${readHttpApiStatus(error) ?? "unknown"}).`,
-      ),
-      { cause: error },
-    );
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "revoke-client-session",
+      sessionId,
+      cause: error,
+    });
   }
 }
 
@@ -445,13 +494,10 @@ export async function revokeOtherServerClientSessions(): Promise<number> {
     );
     return result.revokedCount;
   } catch (error) {
-    throw new Error(
-      readHttpApiErrorMessage(
-        error,
-        `Failed to revoke other client sessions (${readHttpApiStatus(error) ?? "unknown"}).`,
-      ),
-      { cause: error },
-    );
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "revoke-other-client-sessions",
+      cause: error,
+    });
   }
 }
 

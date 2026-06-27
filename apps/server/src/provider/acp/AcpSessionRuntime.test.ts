@@ -4,16 +4,12 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
-import { handleSessionUpdateForTest } from "./AcpSessionRuntime.ts";
-import type {
-  AcpParsedSessionEvent,
-  AcpSessionModeState,
-  AcpToolCallState,
-} from "./AcpRuntimeModel.ts";
+import { handleSessionUpdateForTest, type AcpSessionRuntimeEvent } from "./AcpSessionRuntime.ts";
+import type { AcpSessionModeState, AcpToolCallState } from "./AcpRuntimeModel.ts";
 
 it.effect("suppresses loaded-session replay updates until the first live prompt", () =>
   Effect.gen(function* () {
-    const queue = yield* Queue.unbounded<AcpParsedSessionEvent>();
+    const queue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>({
       currentModeId: "ask",
       availableModes: [

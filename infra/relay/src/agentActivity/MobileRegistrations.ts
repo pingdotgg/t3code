@@ -15,27 +15,25 @@ export type MobileRegistrationError =
   | Devices.DeviceUnregistrationPersistenceError
   | LiveActivities.LiveActivityRegistrationPersistenceError;
 
-export interface MobileRegistrationsShape {
-  readonly registerDevice: (input: {
-    readonly userId: string;
-    readonly payload: RelayDeviceRegistrationRequest;
-  }) => Effect.Effect<{ readonly ok: true }, MobileRegistrationError>;
-  readonly registerLiveActivity: (input: {
-    readonly userId: string;
-    readonly payload: RelayLiveActivityRegistrationRequest;
-  }) => Effect.Effect<{ readonly ok: true }, MobileRegistrationError>;
-  readonly unregisterDevice: (input: {
-    readonly userId: string;
-    readonly deviceId: string;
-  }) => Effect.Effect<{ readonly ok: true }, MobileRegistrationError>;
-}
-
 export class MobileRegistrations extends Context.Service<
   MobileRegistrations,
-  MobileRegistrationsShape
+  {
+    readonly registerDevice: (input: {
+      readonly userId: string;
+      readonly payload: RelayDeviceRegistrationRequest;
+    }) => Effect.Effect<{ readonly ok: true }, MobileRegistrationError>;
+    readonly registerLiveActivity: (input: {
+      readonly userId: string;
+      readonly payload: RelayLiveActivityRegistrationRequest;
+    }) => Effect.Effect<{ readonly ok: true }, MobileRegistrationError>;
+    readonly unregisterDevice: (input: {
+      readonly userId: string;
+      readonly deviceId: string;
+    }) => Effect.Effect<{ readonly ok: true }, MobileRegistrationError>;
+  }
 >()("t3code-relay/agentActivity/MobileRegistrations") {}
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const devices = yield* Devices.Devices;
   const liveActivities = yield* LiveActivities.LiveActivities;
   const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
@@ -53,8 +51,10 @@ const make = Effect.gen(function* () {
           deviceId: input.payload.deviceId,
         })
         .pipe(
-          Effect.tapError((cause) =>
-            Effect.logWarning("device registration activity replay failed", { cause }),
+          Effect.tapError((error) =>
+            Effect.logWarning("device registration activity replay failed", {
+              errorTag: error._tag,
+            }),
           ),
           Effect.ignore,
         );
@@ -72,8 +72,10 @@ const make = Effect.gen(function* () {
             deviceId: input.payload.deviceId,
           })
           .pipe(
-            Effect.tapError((cause) =>
-              Effect.logWarning("live activity registration replay failed", { cause }),
+            Effect.tapError((error) =>
+              Effect.logWarning("live activity registration replay failed", {
+                errorTag: error._tag,
+              }),
             ),
             Effect.ignore,
           );

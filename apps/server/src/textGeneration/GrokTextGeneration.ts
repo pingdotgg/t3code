@@ -10,7 +10,7 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shar
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 import { TextGenerationError } from "@t3tools/contracts";
-import { type ThreadTitleGenerationResult, type TextGenerationShape } from "./TextGeneration.ts";
+import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -31,30 +31,7 @@ import {
 
 const GROK_TIMEOUT_MS = 180_000;
 
-function mapGrokAcpError(
-  operation:
-    | "generateCommitMessage"
-    | "generatePrContent"
-    | "generateBranchName"
-    | "generateThreadTitle",
-  detail: string,
-  cause: unknown,
-): TextGenerationError {
-  return new TextGenerationError({
-    operation,
-    detail,
-    ...(cause !== undefined ? { cause } : {}),
-  });
-}
-
-function isTextGenerationError(error: unknown): error is TextGenerationError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "_tag" in error &&
-    error._tag === "TextGenerationError"
-  );
-}
+const isTextGenerationError = Schema.is(TextGenerationError);
 
 export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(function* (
   grokSettings: GrokSettings,
@@ -109,11 +86,11 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           currentModelId: currentGrokModelIdFromSessionSetup(started.sessionSetupResult),
           requestedModelId: resolvedModel,
           mapError: (cause) =>
-            mapGrokAcpError(
+            new TextGenerationError({
               operation,
-              "Failed to set Grok ACP base model for text generation.",
+              detail: "Failed to set Grok ACP base model for text generation.",
               cause,
-            ),
+            }),
         });
 
         return yield* runtime.prompt({
@@ -133,7 +110,11 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         Effect.mapError((cause: EffectAcpErrors.AcpError | TextGenerationError) =>
           isTextGenerationError(cause)
             ? cause
-            : mapGrokAcpError(operation, "Grok ACP request failed.", cause),
+            : new TextGenerationError({
+                operation,
+                detail: "Grok ACP request failed.",
+                cause,
+              }),
         ),
       );
 
@@ -150,123 +131,124 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
 
       const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
       return yield* decodeOutput(extractJsonObject(trimmed)).pipe(
-        Effect.catchTag("SchemaError", (cause) =>
-          Effect.fail(
-            new TextGenerationError({
-              operation,
-              detail: "Grok Agent returned invalid structured output.",
-              cause,
-            }),
-          ),
-        ),
+        Effect.catchTags({
+          SchemaError: (cause) =>
+            Effect.fail(
+              new TextGenerationError({
+                operation,
+                detail: "Grok Agent returned invalid structured output.",
+                cause,
+              }),
+            ),
+        }),
       );
     }).pipe(
       Effect.mapError((cause) =>
         isTextGenerationError(cause)
           ? cause
-          : mapGrokAcpError(operation, "Grok ACP text generation failed.", cause),
+          : new TextGenerationError({
+              operation,
+              detail: "Grok ACP text generation failed.",
+              cause,
+            }),
       ),
       Effect.scoped,
     );
 
-  const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = Effect.fn(
-    "GrokTextGeneration.generateCommitMessage",
-  )(function* (input) {
-    const { prompt, outputSchema } = buildCommitMessagePrompt({
-      branch: input.branch,
-      stagedSummary: input.stagedSummary,
-      stagedPatch: input.stagedPatch,
-      includeBranch: input.includeBranch === true,
+  const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
+    Effect.fn("GrokTextGeneration.generateCommitMessage")(function* (input) {
+      const { prompt, outputSchema } = buildCommitMessagePrompt({
+        branch: input.branch,
+        stagedSummary: input.stagedSummary,
+        stagedPatch: input.stagedPatch,
+        includeBranch: input.includeBranch === true,
+      });
+
+      const generated = yield* runGrokJson({
+        operation: "generateCommitMessage",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return {
+        subject: sanitizeCommitSubject(generated.subject),
+        body: generated.body.trim(),
+        ...("branch" in generated && typeof generated.branch === "string"
+          ? { branch: sanitizeFeatureBranchName(generated.branch) }
+          : {}),
+      };
     });
 
-    const generated = yield* runGrokJson({
-      operation: "generateCommitMessage",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: outputSchema,
-      modelSelection: input.modelSelection,
+  const generatePrContent: TextGeneration.TextGeneration["Service"]["generatePrContent"] =
+    Effect.fn("GrokTextGeneration.generatePrContent")(function* (input) {
+      const { prompt, outputSchema } = buildPrContentPrompt({
+        baseBranch: input.baseBranch,
+        headBranch: input.headBranch,
+        commitSummary: input.commitSummary,
+        diffSummary: input.diffSummary,
+        diffPatch: input.diffPatch,
+      });
+
+      const generated = yield* runGrokJson({
+        operation: "generatePrContent",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return {
+        title: sanitizePrTitle(generated.title),
+        body: generated.body.trim(),
+      };
     });
 
-    return {
-      subject: sanitizeCommitSubject(generated.subject),
-      body: generated.body.trim(),
-      ...("branch" in generated && typeof generated.branch === "string"
-        ? { branch: sanitizeFeatureBranchName(generated.branch) }
-        : {}),
-    };
-  });
+  const generateBranchName: TextGeneration.TextGeneration["Service"]["generateBranchName"] =
+    Effect.fn("GrokTextGeneration.generateBranchName")(function* (input) {
+      const { prompt, outputSchema } = buildBranchNamePrompt({
+        message: input.message,
+        attachments: input.attachments,
+      });
 
-  const generatePrContent: TextGenerationShape["generatePrContent"] = Effect.fn(
-    "GrokTextGeneration.generatePrContent",
-  )(function* (input) {
-    const { prompt, outputSchema } = buildPrContentPrompt({
-      baseBranch: input.baseBranch,
-      headBranch: input.headBranch,
-      commitSummary: input.commitSummary,
-      diffSummary: input.diffSummary,
-      diffPatch: input.diffPatch,
+      const generated = yield* runGrokJson({
+        operation: "generateBranchName",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return {
+        branch: sanitizeBranchFragment(generated.branch),
+      };
     });
 
-    const generated = yield* runGrokJson({
-      operation: "generatePrContent",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: outputSchema,
-      modelSelection: input.modelSelection,
+  const generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"] =
+    Effect.fn("GrokTextGeneration.generateThreadTitle")(function* (input) {
+      const { prompt, outputSchema } = buildThreadTitlePrompt({
+        message: input.message,
+        attachments: input.attachments,
+      });
+
+      const generated = yield* runGrokJson({
+        operation: "generateThreadTitle",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return {
+        title: sanitizeThreadTitle(generated.title),
+      } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
-
-    return {
-      title: sanitizePrTitle(generated.title),
-      body: generated.body.trim(),
-    };
-  });
-
-  const generateBranchName: TextGenerationShape["generateBranchName"] = Effect.fn(
-    "GrokTextGeneration.generateBranchName",
-  )(function* (input) {
-    const { prompt, outputSchema } = buildBranchNamePrompt({
-      message: input.message,
-      attachments: input.attachments,
-    });
-
-    const generated = yield* runGrokJson({
-      operation: "generateBranchName",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: outputSchema,
-      modelSelection: input.modelSelection,
-    });
-
-    return {
-      branch: sanitizeBranchFragment(generated.branch),
-    };
-  });
-
-  const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = Effect.fn(
-    "GrokTextGeneration.generateThreadTitle",
-  )(function* (input) {
-    const { prompt, outputSchema } = buildThreadTitlePrompt({
-      message: input.message,
-      attachments: input.attachments,
-    });
-
-    const generated = yield* runGrokJson({
-      operation: "generateThreadTitle",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: outputSchema,
-      modelSelection: input.modelSelection,
-    });
-
-    return {
-      title: sanitizeThreadTitle(generated.title),
-    } satisfies ThreadTitleGenerationResult;
-  });
 
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
-  } satisfies TextGenerationShape;
+  } satisfies TextGeneration.TextGeneration["Service"];
 });

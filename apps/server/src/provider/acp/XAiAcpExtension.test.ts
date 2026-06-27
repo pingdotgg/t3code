@@ -1,12 +1,39 @@
-import { describe, expect, it } from "vite-plus/test";
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { describe, expect } from "vite-plus/test";
 
 import {
   extractXAiAskUserQuestions,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
+  makeXAiPromptCompletionRuntime,
   XAiAskUserQuestionRequest,
 } from "./XAiAcpExtension.ts";
+import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
+
+const makePromptCompletionRuntime = (env: NodeJS.ProcessEnv) =>
+  Effect.gen(function* () {
+    const runtime = yield* AcpSessionRuntime.make({
+      spawn: {
+        command: process.execPath,
+        args: [mockAgentPath],
+        env,
+      },
+      cwd: process.cwd(),
+      clientInfo: { name: "t3-test", version: "0.0.0" },
+      authMethodId: "test",
+    });
+    return yield* makeXAiPromptCompletionRuntime(runtime);
+  });
 
 const decodeXAiAskUserQuestionRequest = Schema.decodeUnknownSync(XAiAskUserQuestionRequest);
 
@@ -247,4 +274,59 @@ describe("XAiAcpExtension", () => {
       },
     });
   });
+
+  it.effect("resolves a hung standard prompt from xAI prompt completion", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makePromptCompletionRuntime({
+        T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
+      });
+      yield* runtime.start();
+
+      const promptResult = yield* runtime.prompt({
+        prompt: [{ type: "text", text: "hi" }],
+      });
+      const promptId = promptResult._meta?.promptId;
+
+      expect(typeof promptId).toBe("string");
+      expect(promptResult).toMatchObject({
+        stopReason: "end_turn",
+        _meta: {
+          sessionId: "mock-session-1",
+          promptId,
+          requestId: promptId,
+        },
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("ignores stale xAI completion from an already settled prompt", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makePromptCompletionRuntime({
+        T3_ACP_EMIT_STALE_XAI_PROMPT_COMPLETE_BEFORE_SECOND_HANG: "1",
+      });
+      yield* runtime.start();
+
+      const firstPromptResult = yield* runtime.prompt({
+        prompt: [{ type: "text", text: "first" }],
+      });
+      expect(firstPromptResult).toMatchObject({
+        stopReason: "end_turn",
+        _meta: { promptId: "mock-stale-xai-prompt-1" },
+      });
+
+      const secondPromptResult = yield* runtime.prompt({
+        prompt: [{ type: "text", text: "second" }],
+      });
+      const secondPromptId = secondPromptResult._meta?.promptId;
+      expect(typeof secondPromptId).toBe("string");
+      expect(secondPromptId).not.toBe("mock-stale-xai-prompt-1");
+      expect(secondPromptResult).toMatchObject({
+        stopReason: "end_turn",
+        _meta: {
+          promptId: secondPromptId,
+          requestId: secondPromptId,
+        },
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });

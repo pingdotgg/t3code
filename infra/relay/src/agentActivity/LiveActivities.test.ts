@@ -8,7 +8,7 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { RelayDb, type RelayDatabase } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { relayLiveActivities } from "../persistence/schema.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 
@@ -88,7 +88,7 @@ describe("LiveActivities", () => {
             },
           };
         },
-      } as unknown as RelayDatabase;
+      } as unknown as RelayDb.RelayDb["Service"];
 
       return Effect.gen(function* () {
         const liveActivities = yield* LiveActivities.LiveActivities;
@@ -138,7 +138,9 @@ describe("LiveActivities", () => {
           }),
         );
       }).pipe(
-        Effect.provide(LiveActivities.layer.pipe(Layer.provide(Layer.succeed(RelayDb, fakeDb)))),
+        Effect.provide(
+          LiveActivities.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
+        ),
       );
     },
   );
@@ -164,7 +166,7 @@ describe("LiveActivities", () => {
           },
         };
       },
-    } as unknown as RelayDatabase;
+    } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {
       const liveActivities = yield* LiveActivities.LiveActivities;
@@ -190,7 +192,97 @@ describe("LiveActivities", () => {
         }),
       );
     }).pipe(
-      Effect.provide(LiveActivities.layer.pipe(Layer.provide(Layer.succeed(RelayDb, fakeDb)))),
+      Effect.provide(
+        LiveActivities.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
+      ),
+    );
+  });
+
+  it.effect("preserves correlation context and causes for persistence failures", () => {
+    const cause = new Error("database unavailable");
+    const registration: RelayLiveActivityRegistrationRequest = {
+      deviceId: "device-1" as RelayLiveActivityRegistrationRequest["deviceId"],
+      activityPushToken:
+        "activity-push-token" as RelayLiveActivityRegistrationRequest["activityPushToken"],
+    };
+    const fakeDb = {
+      update: () => ({
+        set: () => ({ where: () => Effect.fail(cause) }),
+      }),
+      insert: () => ({
+        values: () => ({ onConflictDoUpdate: () => Effect.fail(cause) }),
+      }),
+      select: () => ({
+        from: () => ({
+          leftJoin: () => ({ where: () => Effect.fail(cause) }),
+        }),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const liveActivities = yield* LiveActivities.LiveActivities;
+      const registrationError = yield* Effect.flip(
+        liveActivities.register({ userId: "user-1", registration }),
+      );
+      const targetListError = yield* Effect.flip(liveActivities.listTargets({ userId: "user-1" }));
+      const deliveryErrors = yield* Effect.all(
+        [
+          liveActivities.markDelivery({
+            userId: "user-1",
+            deviceId: "device-1",
+            kind: "live_activity_update",
+            aggregate: null,
+            deliveredAt: "2026-05-25T00:00:10.000Z",
+          }),
+          liveActivities.markStartQueued({
+            userId: "user-1",
+            deviceId: "device-1",
+            queuedAt: "2026-05-25T00:00:10.000Z",
+          }),
+          liveActivities.clearStartQueued({ userId: "user-1", deviceId: "device-1" }),
+          liveActivities.invalidateDeliveryToken({
+            userId: "user-1",
+            deviceId: "device-1",
+            kind: "push_notification",
+            invalidatedAt: "2026-05-25T00:00:10.000Z",
+          }),
+        ].map(Effect.flip),
+        { concurrency: 1 },
+      );
+
+      expect(registrationError).toMatchObject({
+        userId: "user-1",
+        deviceId: "device-1",
+        cause,
+        message:
+          "Failed to persist Live Activity registration for user user-1 and device device-1.",
+      });
+      expect(targetListError).toMatchObject({
+        userId: "user-1",
+        cause,
+        message: "Failed to list Live Activity delivery targets for user user-1.",
+      });
+
+      const expectedDeliveryContext = [
+        ["mark-delivery", "live_activity_update"],
+        ["mark-start-queued", null],
+        ["clear-start-queued", null],
+        ["invalidate-delivery-token", "push_notification"],
+      ] as const;
+      for (const [index, [operation, kind]] of expectedDeliveryContext.entries()) {
+        expect(deliveryErrors[index]).toMatchObject({
+          operation,
+          userId: "user-1",
+          deviceId: "device-1",
+          kind,
+          cause,
+          message: `Failed to persist Live Activity state during ${operation} for user user-1 and device device-1.`,
+        });
+      }
+    }).pipe(
+      Effect.provide(
+        LiveActivities.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
+      ),
     );
   });
 });

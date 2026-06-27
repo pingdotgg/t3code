@@ -4,12 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayMobileClientId } from "@t3tools/contracts/relay";
-import {
-  managedRelayClientLayer,
-  ManagedRelayClient,
-  ManagedRelayDpopSigner,
-  remoteHttpClientLayer,
-} from "@t3tools/client-runtime";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
+import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import { HttpClient } from "effect/unstable/http";
 
 import {
@@ -55,13 +51,15 @@ const savedConnection = {
   bearerToken: "local-bearer",
 };
 
+const stableClerkToken = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ1c2VyXzEyMyJ9.test";
+
 const createProofMock = vi.fn(
   (input: { readonly method: string; readonly url: string; readonly accessToken?: string }) =>
     Effect.succeed(`dpop:${input.method}:${input.url}`),
 );
 const testDpopSignerLayer = Layer.succeed(
-  ManagedRelayDpopSigner,
-  ManagedRelayDpopSigner.of({
+  ManagedRelay.ManagedRelayDpopSigner,
+  ManagedRelay.ManagedRelayDpopSigner.of({
     thumbprint: Effect.succeed("client-proof-key-thumbprint"),
     createProof: (input) => createProofMock(input),
   }),
@@ -71,7 +69,7 @@ function cloudClientLayer() {
   const httpClientLayer = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
   return Layer.mergeAll(
     httpClientLayer,
-    managedRelayClientLayer({
+    ManagedRelay.layer({
       relayUrl: "https://relay.example.test",
       clientId: RelayMobileClientId,
     }).pipe(Layer.provideMerge(testDpopSignerLayer), Layer.provide(httpClientLayer)),
@@ -79,7 +77,11 @@ function cloudClientLayer() {
 }
 
 const withCloudServices = <A, E>(
-  effect: Effect.Effect<A, E, HttpClient.HttpClient | ManagedRelayClient | ManagedRelayDpopSigner>,
+  effect: Effect.Effect<
+    A,
+    E,
+    HttpClient.HttpClient | ManagedRelay.ManagedRelayClient | ManagedRelay.ManagedRelayDpopSigner
+  >,
 ) => effect.pipe(Effect.provide(cloudClientLayer()));
 
 function validLinkProof() {
@@ -352,7 +354,7 @@ describe("mobile cloud link environment client", () => {
       });
       vi.stubGlobal("fetch", fetchMock);
 
-      yield* withCloudServices(listCloudEnvironmentsWithStatus({ clerkToken: "clerk-token" }));
+      yield* withCloudServices(listCloudEnvironmentsWithStatus({ clerkToken: stableClerkToken }));
 
       expect(
         fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/client/dpop-token")),
@@ -425,9 +427,11 @@ describe("mobile cloud link environment client", () => {
 
       yield* withCloudServices(
         Effect.gen(function* () {
-          const records = yield* listCloudEnvironmentsWithStatus({ clerkToken: "clerk-token" });
+          const records = yield* listCloudEnvironmentsWithStatus({
+            clerkToken: stableClerkToken,
+          });
           yield* connectCloudEnvironment({
-            clerkToken: "clerk-token",
+            clerkToken: stableClerkToken,
             environment: records[0]!.environment,
           });
         }),
@@ -658,6 +662,7 @@ describe("mobile cloud link environment client", () => {
         _tag: "CloudEnvironmentLinkError",
         message:
           "https://relay.example.test/v1/client/environment-links failed: Relay rejected the environment link proof (origin_not_allowed).",
+        traceId: "trace-test",
       });
       expect(fetchMock).toHaveBeenCalledTimes(3);
     }),
@@ -1003,6 +1008,7 @@ describe("mobile cloud link environment client", () => {
         _tag: "CloudEnvironmentLinkError",
         message:
           "https://relay.example.test/v1/environments/env-1/connect failed: Relay rejected the DPoP proof.",
+        traceId: "trace-connect",
       });
     }),
   );

@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const VcsDriverKind = Schema.Literals(["git", "jj", "unknown"]);
 export type VcsDriverKind = typeof VcsDriverKind.Type;
@@ -62,28 +62,28 @@ export interface VcsProcessErrorContext {
   readonly operation: string;
   readonly command: string;
   readonly cwd: string;
+  readonly argumentCount?: number;
 }
 
 export interface VcsProcessSpawnFailure {
   readonly cause: unknown;
 }
 
-export interface VcsProcessStdinFailure {
-  readonly cause: unknown;
-}
-
-export interface VcsProcessReadFailure {
-  readonly stream: "stdout" | "stderr" | "exitCode";
-  readonly cause: unknown;
-}
-
-export interface VcsProcessOutputLimitFailure {
-  readonly stream: "stdout" | "stderr";
-  readonly maxBytes: number;
-}
-
 export interface VcsProcessTimeoutFailure {
   readonly timeoutMs: number;
+}
+
+export const VcsProcessExitFailureKind = Schema.Literals([
+  "authentication",
+  "not-found",
+  "command-failed",
+]);
+export type VcsProcessExitFailureKind = typeof VcsProcessExitFailureKind.Type;
+
+export interface VcsProcessExitFailure {
+  readonly exitCode: number;
+  readonly stderr: string;
+  readonly stderrTruncated: boolean;
 }
 
 export class VcsProcessSpawnError extends Schema.TaggedErrorClass<VcsProcessSpawnError>()(
@@ -92,6 +92,7 @@ export class VcsProcessSpawnError extends Schema.TaggedErrorClass<VcsProcessSpaw
     operation: Schema.String,
     command: Schema.String,
     cwd: Schema.String,
+    argumentCount: Schema.optional(NonNegativeInt),
     cause: Schema.Defect(),
   },
 ) {
@@ -113,12 +114,42 @@ export class VcsProcessExitError extends Schema.TaggedErrorClass<VcsProcessExitE
     operation: Schema.String,
     command: Schema.String,
     cwd: Schema.String,
+    argumentCount: Schema.optional(NonNegativeInt),
     exitCode: Schema.Number,
     detail: Schema.String,
+    failureKind: Schema.optional(VcsProcessExitFailureKind),
+    stderrLength: Schema.optional(NonNegativeInt),
+    stderrTruncated: Schema.optional(Schema.Boolean),
   },
 ) {
   override get message(): string {
     return `VCS process failed in ${this.operation}: ${this.command} (${this.cwd}) exited with ${this.exitCode} - ${this.detail}`;
+  }
+
+  static fromProcessExit(
+    context: VcsProcessErrorContext,
+    error: VcsProcessExitFailure,
+    failureKind: VcsProcessExitFailureKind,
+  ) {
+    const detail =
+      failureKind === "authentication"
+        ? "Authentication failed."
+        : failureKind === "not-found"
+          ? context.command === "glab"
+            ? "Merge request not found."
+            : context.command === "gh" || context.command === "az"
+              ? "Pull request not found."
+              : "VCS resource not found."
+          : "Process exited with a non-zero status.";
+
+    return new VcsProcessExitError({
+      ...context,
+      exitCode: error.exitCode,
+      detail,
+      failureKind,
+      stderrLength: error.stderr.length,
+      stderrTruncated: error.stderrTruncated,
+    });
   }
 }
 
@@ -128,6 +159,7 @@ export class VcsProcessTimeoutError extends Schema.TaggedErrorClass<VcsProcessTi
     operation: Schema.String,
     command: Schema.String,
     cwd: Schema.String,
+    argumentCount: Schema.optional(NonNegativeInt),
     timeoutMs: Schema.Number,
   },
 ) {
@@ -143,56 +175,69 @@ export class VcsProcessTimeoutError extends Schema.TaggedErrorClass<VcsProcessTi
   }
 }
 
-export class VcsOutputDecodeError extends Schema.TaggedErrorClass<VcsOutputDecodeError>()(
-  "VcsOutputDecodeError",
+const VcsProcessBoundaryErrorFields = {
+  operation: Schema.String,
+  command: Schema.String,
+  cwd: Schema.String,
+  argumentCount: Schema.optional(NonNegativeInt),
+};
+
+export class VcsProcessStdinWriteError extends Schema.TaggedErrorClass<VcsProcessStdinWriteError>()(
+  "VcsProcessStdinWriteError",
   {
-    operation: Schema.String,
-    command: Schema.String,
-    cwd: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
+    ...VcsProcessBoundaryErrorFields,
+    stdinBytes: NonNegativeInt,
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `VCS output decode failed in ${this.operation}: ${this.command} (${this.cwd}) - ${this.detail}`;
-  }
-
-  static fromProcessStdinError(context: VcsProcessErrorContext, error: VcsProcessStdinFailure) {
-    return new VcsOutputDecodeError({
-      ...context,
-      detail: "failed to write process stdin",
-      cause: error.cause,
-    });
-  }
-
-  static fromProcessReadError(context: VcsProcessErrorContext, error: VcsProcessReadFailure) {
-    return new VcsOutputDecodeError({
-      ...context,
-      detail:
-        error.stream === "exitCode"
-          ? "failed to read process exit code"
-          : `failed to read process ${error.stream}`,
-      cause: error.cause,
-    });
-  }
-
-  static fromProcessOutputLimitError(
-    context: VcsProcessErrorContext,
-    error: VcsProcessOutputLimitFailure,
-  ) {
-    return new VcsOutputDecodeError({
-      ...context,
-      detail: `process ${error.stream} exceeded ${error.maxBytes} bytes`,
-    });
-  }
-
-  static missingExitCode(context: VcsProcessErrorContext) {
-    return new VcsOutputDecodeError({
-      ...context,
-      detail: "process completed without an exit code",
-    });
+    return `VCS process failed to write ${this.stdinBytes} bytes to stdin in ${this.operation}: ${this.command} (${this.cwd})`;
   }
 }
+
+export class VcsProcessOutputReadError extends Schema.TaggedErrorClass<VcsProcessOutputReadError>()(
+  "VcsProcessOutputReadError",
+  {
+    ...VcsProcessBoundaryErrorFields,
+    stream: Schema.Literals(["stdout", "stderr", "exitCode"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `VCS process failed to read ${this.stream} in ${this.operation}: ${this.command} (${this.cwd})`;
+  }
+}
+
+export class VcsProcessOutputLimitError extends Schema.TaggedErrorClass<VcsProcessOutputLimitError>()(
+  "VcsProcessOutputLimitError",
+  {
+    ...VcsProcessBoundaryErrorFields,
+    stream: Schema.Literals(["stdout", "stderr"]),
+    maxBytes: NonNegativeInt,
+    observedBytes: NonNegativeInt,
+  },
+) {
+  override get message(): string {
+    return `VCS process ${this.stream} produced ${this.observedBytes} bytes in ${this.operation}: ${this.command} (${this.cwd}), exceeding the ${this.maxBytes} byte limit`;
+  }
+}
+
+export class VcsProcessMissingExitCodeError extends Schema.TaggedErrorClass<VcsProcessMissingExitCodeError>()(
+  "VcsProcessMissingExitCodeError",
+  VcsProcessBoundaryErrorFields,
+) {
+  override get message(): string {
+    return `VCS process completed without an exit code in ${this.operation}: ${this.command} (${this.cwd})`;
+  }
+}
+
+export const VcsOutputDecodeError = Schema.Union([
+  VcsProcessStdinWriteError,
+  VcsProcessOutputReadError,
+  VcsProcessOutputLimitError,
+  VcsProcessMissingExitCodeError,
+]);
+export type VcsOutputDecodeError = typeof VcsOutputDecodeError.Type;
 
 export class VcsRepositoryDetectionError extends Schema.TaggedErrorClass<VcsRepositoryDetectionError>()(
   "VcsRepositoryDetectionError",
@@ -225,7 +270,10 @@ export const VcsError = Schema.Union([
   VcsProcessSpawnError,
   VcsProcessExitError,
   VcsProcessTimeoutError,
-  VcsOutputDecodeError,
+  VcsProcessStdinWriteError,
+  VcsProcessOutputReadError,
+  VcsProcessOutputLimitError,
+  VcsProcessMissingExitCodeError,
   VcsRepositoryDetectionError,
   VcsUnsupportedOperationError,
 ]);

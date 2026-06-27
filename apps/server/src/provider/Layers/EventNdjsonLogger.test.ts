@@ -1,13 +1,17 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { ThreadId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Logger from "effect/Logger";
+import * as Schema from "effect/Schema";
 
 import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+
+const encodeUnknownJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
 
 function parseLogLine(line: string) {
   const match = /^\[([^\]]+)\] ([A-Z]+): (.+)$/.exec(line);
@@ -29,10 +33,42 @@ function parseLogLine(line: string) {
 }
 
 describe("EventNdjsonLogger", () => {
+  it.effect("logs bounded diagnostics when an event cannot be serialized", () => {
+    const messages: Array<unknown> = [];
+    const logCapture = Logger.make<unknown, void>(({ message }) => {
+      if (Array.isArray(message)) {
+        messages.push(...message);
+      } else {
+        messages.push(message);
+      }
+    });
+    const secret = "secret-circular-event-value";
+
+    return Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "provider-native.ndjson");
+      const circular: Record<string, unknown> = { secret };
+      circular.self = circular;
+
+      try {
+        const logger = yield* makeEventNdjsonLogger(basePath, { stream: "native" });
+        assert.exists(logger);
+        if (!logger) return;
+        yield* logger.write(circular, ThreadId.make("thread-1"));
+
+        const serialized = encodeUnknownJson(messages);
+        assert.notInclude(serialized, secret);
+        assert.include(serialized, '"errorTag":"SchemaError"');
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }).pipe(Effect.provide(Logger.layer([logCapture], { mergeWithExisting: false })));
+  });
+
   it.effect("writes effect-style lines to thread-scoped files", () =>
     Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-log-"));
-      const basePath = path.join(tempDir, "provider-native.ndjson");
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "provider-native.ndjson");
 
       try {
         const logger = yield* makeEventNdjsonLogger(basePath, { stream: "native" });
@@ -51,13 +87,13 @@ describe("EventNdjsonLogger", () => {
         );
         yield* logger.close();
 
-        const threadOnePath = path.join(tempDir, "thread-1.log");
-        const threadTwoPath = path.join(tempDir, "thread-2.log");
-        assert.equal(fs.existsSync(threadOnePath), true);
-        assert.equal(fs.existsSync(threadTwoPath), true);
+        const threadOnePath = NodePath.join(tempDir, "thread-1.log");
+        const threadTwoPath = NodePath.join(tempDir, "thread-2.log");
+        assert.equal(NodeFS.existsSync(threadOnePath), true);
+        assert.equal(NodeFS.existsSync(threadTwoPath), true);
 
-        const first = parseLogLine(fs.readFileSync(threadOnePath, "utf8").trim());
-        const second = parseLogLine(fs.readFileSync(threadTwoPath, "utf8").trim());
+        const first = parseLogLine(NodeFS.readFileSync(threadOnePath, "utf8").trim());
+        const second = parseLogLine(NodeFS.readFileSync(threadTwoPath, "utf8").trim());
 
         assert.equal(Number.isNaN(Date.parse(first.observedAt)), false);
         assert.equal(first.stream, "NTIVE");
@@ -70,7 +106,7 @@ describe("EventNdjsonLogger", () => {
           '{"type":"turn.completed","threadId":"provider-thread-2","id":"evt-2"}',
         );
       } finally {
-        fs.rmSync(tempDir, { recursive: true, force: true });
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }
     }),
   );
@@ -79,8 +115,8 @@ describe("EventNdjsonLogger", () => {
     "falls back to a global segment when orchestration thread id is missing or invalid",
     () =>
       Effect.gen(function* () {
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-log-"));
-        const basePath = path.join(tempDir, "provider-canonical.ndjson");
+        const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+        const basePath = NodePath.join(tempDir, "provider-canonical.ndjson");
 
         try {
           const logger = yield* makeEventNdjsonLogger(basePath, { stream: "orchestration" });
@@ -93,10 +129,9 @@ describe("EventNdjsonLogger", () => {
           yield* logger.write({ id: "evt-invalid-thread" }, "!!!" as unknown as ThreadId);
           yield* logger.close();
 
-          const globalPath = path.join(tempDir, "_global.log");
-          assert.equal(fs.existsSync(globalPath), true);
-          const lines = fs
-            .readFileSync(globalPath, "utf8")
+          const globalPath = NodePath.join(tempDir, "_global.log");
+          assert.equal(NodeFS.existsSync(globalPath), true);
+          const lines = NodeFS.readFileSync(globalPath, "utf8")
             .trim()
             .split("\n")
             .map((line) => parseLogLine(line));
@@ -108,15 +143,15 @@ describe("EventNdjsonLogger", () => {
           assert.equal(lines[1]?.stream, "CANON");
           assert.equal(lines[1]?.payload, '{"id":"evt-invalid-thread"}');
         } finally {
-          fs.rmSync(tempDir, { recursive: true, force: true });
+          NodeFS.rmSync(tempDir, { recursive: true, force: true });
         }
       }),
   );
 
   it.effect("serializes concurrent first writes for the same segment", () =>
     Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-log-"));
-      const basePath = path.join(tempDir, "provider-canonical.ndjson");
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "provider-canonical.ndjson");
 
       try {
         const logger = yield* makeEventNdjsonLogger(basePath, {
@@ -137,10 +172,9 @@ describe("EventNdjsonLogger", () => {
         );
         yield* logger.close();
 
-        const globalPath = path.join(tempDir, "_global.log");
-        assert.equal(fs.existsSync(globalPath), true);
-        const lines = fs
-          .readFileSync(globalPath, "utf8")
+        const globalPath = NodePath.join(tempDir, "_global.log");
+        assert.equal(NodeFS.existsSync(globalPath), true);
+        const lines = NodeFS.readFileSync(globalPath, "utf8")
           .trim()
           .split("\n")
           .map((line) => parseLogLine(line));
@@ -151,15 +185,15 @@ describe("EventNdjsonLogger", () => {
           '{"id":"evt-concurrent-2"}',
         ]);
       } finally {
-        fs.rmSync(tempDir, { recursive: true, force: true });
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }
     }),
   );
 
   it.effect("rotates per-thread files when max size is exceeded", () =>
     Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-log-"));
-      const basePath = path.join(tempDir, "provider-native.ndjson");
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "provider-native.ndjson");
 
       try {
         const logger = yield* makeEventNdjsonLogger(basePath, {
@@ -185,8 +219,7 @@ describe("EventNdjsonLogger", () => {
         yield* logger.close();
 
         const fileStem = "thread-rotate.log";
-        const matchingFiles = fs
-          .readdirSync(tempDir)
+        const matchingFiles = NodeFS.readdirSync(tempDir)
           .filter((entry) => entry === fileStem || entry.startsWith(`${fileStem}.`))
           .toSorted();
 
@@ -203,7 +236,7 @@ describe("EventNdjsonLogger", () => {
           false,
         );
       } finally {
-        fs.rmSync(tempDir, { recursive: true, force: true });
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }
     }),
   );

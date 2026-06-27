@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
+import {
+  extractPairingUrlFromQrPayload,
+  PairingQrPayloadEmptyError,
+  parsePairingUrl,
+} from "./pairing";
 
 describe("extractPairingUrlFromQrPayload", () => {
   it("trims raw pairing urls from qr payloads", () => {
@@ -18,7 +22,8 @@ describe("extractPairingUrlFromQrPayload", () => {
   });
 
   it("rejects empty qr payloads", () => {
-    expect(() => extractPairingUrlFromQrPayload("   ")).toThrow(
+    expect(() => extractPairingUrlFromQrPayload("   ")).toThrowError(PairingQrPayloadEmptyError);
+    expect(() => extractPairingUrlFromQrPayload("   ")).toThrowError(
       "Scanned QR code did not contain a pairing URL.",
     );
   });

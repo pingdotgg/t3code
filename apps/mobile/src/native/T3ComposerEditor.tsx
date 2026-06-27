@@ -2,6 +2,7 @@ import { TextInputWrapper } from "expo-paste-input";
 import { useImperativeHandle, useRef } from "react";
 import { TextInput, type TextInput as RNTextInput } from "react-native";
 
+import { MOBILE_TYPOGRAPHY } from "../lib/typography";
 import { useThemeColor } from "../lib/useThemeColor";
 import { useNativePaste } from "../lib/useNativePaste";
 import type { ComposerEditorProps } from "./T3ComposerEditor.types";
@@ -47,8 +48,7 @@ export function ComposerEditor({
             minHeight: 0,
             color: foregroundColor,
             fontFamily: "DMSans_400Regular",
-            fontSize: 15,
-            lineHeight: 22,
+            ...MOBILE_TYPOGRAPHY.composer,
             paddingVertical: contentInsetVertical,
           },
           textStyle,

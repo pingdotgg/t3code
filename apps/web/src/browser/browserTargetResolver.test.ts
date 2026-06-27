@@ -1,17 +1,15 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const readEnvironmentConnection = vi.fn();
+const readPreparedConnection = vi.fn();
 
-vi.mock("~/environments/runtime", () => ({ readEnvironmentConnection }));
+vi.mock("~/state/session", () => ({ readPreparedConnection }));
 
 describe("browser target resolver", () => {
-  beforeEach(() => readEnvironmentConnection.mockReset());
+  beforeEach(() => readPreparedConnection.mockReset());
 
   it("maps environment ports onto a private network host", async () => {
-    readEnvironmentConnection.mockReturnValue({
-      knownEnvironment: { target: { httpBaseUrl: "http://192.168.1.25:3773" } },
-    });
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.1.25:3773" });
     const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
     expect(
       resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
@@ -28,9 +26,7 @@ describe("browser target resolver", () => {
   });
 
   it("refuses public relay hosts until the authenticated gateway exists", async () => {
-    readEnvironmentConnection.mockReturnValue({
-      knownEnvironment: { target: { httpBaseUrl: "https://relay.example.com" } },
-    });
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://relay.example.com" });
     const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
     expect(() =>
       resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
@@ -41,9 +37,7 @@ describe("browser target resolver", () => {
   });
 
   it("normalizes schemeless localhost server-picker values", async () => {
-    readEnvironmentConnection.mockReturnValue({
-      knownEnvironment: { target: { httpBaseUrl: "http://localhost:3773" } },
-    });
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://localhost:3773" });
     const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
     expect(resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:5173")).toBe(
       "http://localhost:5173/",
@@ -51,6 +45,14 @@ describe("browser target resolver", () => {
     expect(
       resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "0.0.0.0:3000/app"),
     ).toBe("http://localhost:3000/app");
+  });
+
+  it("preserves localhost server-picker values when the prepared base is 127.0.0.1", async () => {
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://127.0.0.1:3773" });
+    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
+    expect(
+      resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:5173/app?x=1#top"),
+    ).toBe("http://localhost:5173/app?x=1#top");
   });
 
   it("normalizes public URLs without treating them as environment ports", async () => {
@@ -61,9 +63,7 @@ describe("browser target resolver", () => {
   });
 
   it("supports private IPv6 environment hosts", async () => {
-    readEnvironmentConnection.mockReturnValue({
-      knownEnvironment: { target: { httpBaseUrl: "http://[::1]:3773" } },
-    });
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://[::1]:3773" });
     const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
     expect(
       resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {

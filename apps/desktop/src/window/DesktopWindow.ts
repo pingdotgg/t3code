@@ -1,6 +1,6 @@
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -9,20 +9,30 @@ import type * as Electron from "electron";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import * as DesktopObservability from "../app/DesktopObservability.ts";
+import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
-import * as PreviewManager from "../preview/Manager.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
+import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import * as IpcChannels from "../ipc/channels.ts";
-import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
+import { MENU_ACTION_CHANNEL } from "../ipc/channels.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
 const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
+const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
+const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([
+  -2, // ERR_FAILED
+  -7, // ERR_TIMED_OUT
+  -9, // ERR_UNEXPECTED (custom protocol handler rejected)
+  -102, // ERR_CONNECTION_REFUSED
+  -105, // ERR_NAME_NOT_RESOLVED
+  -106, // ERR_INTERNET_DISCONNECTED
+  -118, // ERR_CONNECTION_TIMED_OUT
+]);
 
 type WindowTitleBarOptions = Pick<
   Electron.BrowserWindowConstructorOptions,
@@ -32,7 +42,6 @@ type WindowTitleBarOptions = Pick<
 type DesktopWindowRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
   | DesktopAssets.DesktopAssets
-  | DesktopServerExposure.DesktopServerExposure
   | DesktopState.DesktopState
   | ElectronMenu.ElectronMenu
   | ElectronShell.ElectronShell
@@ -40,45 +49,26 @@ type DesktopWindowRuntimeServices =
   | ElectronWindow.ElectronWindow
   | PreviewManager.PreviewManager;
 
-export class DesktopWindowDevServerUrlMissingError extends Data.TaggedError(
-  "DesktopWindowDevServerUrlMissingError",
-)<{}> {
-  override get message() {
-    return "VITE_DEV_SERVER_URL is required in desktop development.";
-  }
-}
-
 export type DesktopWindowError =
-  | DesktopWindowDevServerUrlMissingError
   | ElectronWindow.ElectronWindowCreateError
   | PreviewManager.PreviewManagerError;
 
-export interface DesktopWindowShape {
-  readonly createMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
-  readonly ensureMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
-  readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
-  readonly activate: Effect.Effect<void, DesktopWindowError>;
-  readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
-  readonly handleBackendReady: Effect.Effect<void, DesktopWindowError>;
-  readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
-  readonly syncAppearance: Effect.Effect<void>;
-}
-
-export class DesktopWindow extends Context.Service<DesktopWindow, DesktopWindowShape>()(
-  "@t3tools/desktop/window/DesktopWindow",
-) {}
+export class DesktopWindow extends Context.Service<
+  DesktopWindow,
+  {
+    readonly createMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
+    readonly ensureMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
+    readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
+    readonly activate: Effect.Effect<void, DesktopWindowError>;
+    readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
+    readonly handleBackendReady: Effect.Effect<void, DesktopWindowError>;
+    readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
+    readonly syncAppearance: Effect.Effect<void>;
+  }
+>()("@t3tools/desktop/window/DesktopWindow") {}
 
 const { logInfo: logWindowInfo, logWarning: logWindowWarning } =
-  DesktopObservability.makeComponentLogger("desktop-window");
-
-function resolveDesktopDevServerUrl(
-  environment: DesktopEnvironment.DesktopEnvironmentShape,
-): Effect.Effect<string, DesktopWindowDevServerUrlMissingError> {
-  return Option.match(environment.devServerUrl, {
-    onNone: () => Effect.fail(new DesktopWindowDevServerUrlMissingError()),
-    onSome: (url) => Effect.succeed(url.href),
-  });
-}
+  makeComponentLogger("desktop-window");
 
 function getIconOption(
   iconPaths: DesktopAssets.DesktopIconPaths,
@@ -105,6 +95,22 @@ export function isSameOriginRendererNavigation(input: {
   } catch {
     return false;
   }
+}
+
+export function isRetryableDevelopmentRendererLoadFailure(input: {
+  readonly applicationUrl: string;
+  readonly errorCode: number;
+  readonly isMainFrame: boolean;
+  readonly validatedUrl: string;
+}): boolean {
+  return (
+    input.isMainFrame &&
+    DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES.has(input.errorCode) &&
+    isSameOriginRendererNavigation({
+      applicationUrl: input.applicationUrl,
+      navigationUrl: input.validatedUrl,
+    })
+  );
 }
 
 function getWindowTitleBarOptions(
@@ -163,7 +169,7 @@ function bindFirstRevealTrigger(
   }
 }
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const assets = yield* DesktopAssets.DesktopAssets;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
@@ -171,18 +177,17 @@ const make = Effect.gen(function* () {
   const electronTheme = yield* ElectronTheme.ElectronTheme;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const previewManager = yield* PreviewManager.PreviewManager;
-  const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
   const state = yield* DesktopState.DesktopState;
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
+  const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
 
-  const createWindow = Effect.fn("desktop.window.createWindow")(function* (
-    backendHttpUrl: URL,
-  ): Effect.fn.Return<Electron.BrowserWindow, DesktopWindowError> {
+  const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
+    Electron.BrowserWindow,
+    DesktopWindowError
+  > {
     yield* previewManager.getBrowserSession();
-    const applicationUrl = environment.isDevelopment
-      ? yield* resolveDesktopDevServerUrl(environment)
-      : backendHttpUrl.href;
+    const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
@@ -300,7 +305,61 @@ const make = Effect.gen(function* () {
       event.preventDefault();
       window.setTitle(environment.displayName);
     });
+
+    let developmentLoadRetryIndex = 0;
+    let developmentLoadRetryFiber: Fiber.Fiber<void, never> | undefined;
+    const clearDevelopmentLoadRetry = () => {
+      if (developmentLoadRetryFiber === undefined) {
+        return;
+      }
+      const retryFiber = developmentLoadRetryFiber;
+      developmentLoadRetryFiber = undefined;
+      runFork(Fiber.interrupt(retryFiber));
+    };
+    const loadApplication = () => {
+      if (window.isDestroyed()) {
+        return;
+      }
+      void window.loadURL(applicationUrl).catch(() => undefined);
+    };
+    const scheduleDevelopmentLoadRetry = () => {
+      if (developmentLoadRetryFiber !== undefined || window.isDestroyed()) {
+        return undefined;
+      }
+
+      const retryIndex = Math.min(
+        developmentLoadRetryIndex,
+        DEVELOPMENT_LOAD_RETRY_DELAYS_MS.length - 1,
+      );
+      const retryInMs = DEVELOPMENT_LOAD_RETRY_DELAYS_MS[retryIndex] ?? 2_000;
+      developmentLoadRetryIndex += 1;
+      developmentLoadRetryFiber = runFork(
+        Effect.sleep(retryInMs).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              developmentLoadRetryFiber = undefined;
+              if (!window.isDestroyed()) {
+                loadApplication();
+              }
+            }),
+          ),
+        ),
+      );
+      return retryInMs;
+    };
+
     window.webContents.on("did-finish-load", () => {
+      if (
+        environment.isDevelopment &&
+        !isSameOriginRendererNavigation({
+          applicationUrl,
+          navigationUrl: window.webContents.getURL(),
+        })
+      ) {
+        return;
+      }
+      clearDevelopmentLoadRetry();
+      developmentLoadRetryIndex = 0;
       window.setTitle(environment.displayName);
     });
     window.webContents.on(
@@ -309,11 +368,22 @@ const make = Effect.gen(function* () {
         if (!isMainFrame) {
           return;
         }
+        const retryInMs =
+          environment.isDevelopment &&
+          isRetryableDevelopmentRendererLoadFailure({
+            applicationUrl,
+            errorCode,
+            isMainFrame,
+            validatedUrl: validatedURL,
+          })
+            ? scheduleDevelopmentLoadRetry()
+            : undefined;
         void runPromise(
           logWindowWarning("main window failed to load", {
             errorCode,
             errorDescription,
             url: validatedURL,
+            ...(retryInMs === undefined ? {} : { retryInMs }),
           }),
         );
       },
@@ -335,14 +405,13 @@ const make = Effect.gen(function* () {
       void runPromise(electronWindow.reveal(window));
     });
 
+    loadApplication();
     if (environment.isDevelopment) {
-      void window.loadURL(applicationUrl);
       window.webContents.openDevTools({ mode: "detach" });
-    } else {
-      void window.loadURL(applicationUrl);
     }
 
     window.on("closed", () => {
+      clearDevelopmentLoadRetry();
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 
@@ -350,8 +419,7 @@ const make = Effect.gen(function* () {
   });
 
   const createMain = Effect.gen(function* () {
-    const backendConfig = yield* serverExposure.backendConfig;
-    const window = yield* createWindow(backendConfig.httpBaseUrl);
+    const window = yield* createWindow();
     yield* electronWindow.setMain(window);
     yield* logWindowInfo("main window created");
     return window;
@@ -404,7 +472,7 @@ const make = Effect.gen(function* () {
 
       const send = () => {
         if (targetWindow.isDestroyed()) return;
-        targetWindow.webContents.send(IpcChannels.MENU_ACTION_CHANNEL, action);
+        targetWindow.webContents.send(MENU_ACTION_CHANNEL, action);
         void runPromise(electronWindow.reveal(targetWindow));
       };
 

@@ -18,7 +18,7 @@ import {
   formatPairingCredentialList,
   formatSessionList,
 } from "../cliAuthFormat.ts";
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import {
   authLocationFlags,
   type CliAuthLocationFlags,
@@ -28,7 +28,7 @@ import {
 
 const runWithEnvironmentAuth = <A, E>(
   flags: CliAuthLocationFlags,
-  run: (environmentAuth: EnvironmentAuth.EnvironmentAuthShape) => Effect.Effect<A, E>,
+  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
   options?: {
     readonly quietLogs?: boolean;
   },
@@ -43,7 +43,7 @@ const runWithEnvironmentAuth = <A, E>(
     }).pipe(
       Effect.provide(
         Layer.mergeAll(EnvironmentAuth.runtimeLayer).pipe(
-          Layer.provide(Layer.succeed(ServerConfig, config)),
+          Layer.provide(ServerConfig.layer(config)),
           Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
         ),
       ),
