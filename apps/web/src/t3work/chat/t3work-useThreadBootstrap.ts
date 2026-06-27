@@ -37,7 +37,7 @@ type ThreadBootstrapInput = {
   kickoffWorkflow: T3workKickoffWorkflow | undefined;
   initialToolContext: T3workTurnToolContext | undefined;
   onInitialUserMessageSent: (() => void) | undefined;
-  serverThread: unknown | undefined;
+  serverThread: unknown | null | undefined;
 };
 
 export type ThreadBootstrapStatus = "idle" | "running" | "failed";
@@ -97,7 +97,7 @@ export function useThreadBootstrap({
     const bootstrapPlan = planThreadBootstrap({
       currentState: dispatchStateRef.current,
       threadId,
-      hasServerThread: serverThread !== undefined,
+      hasServerThread: serverThread != null,
       hasInitialUserMessage: Boolean(initialUserMessage),
       hasProjectWorkspaceRoot: Boolean(projectWorkspaceRoot),
       projectExists,
@@ -111,13 +111,13 @@ export function useThreadBootstrap({
       projectExists,
       action: bootstrapPlan.action,
       shouldEnsureProject: bootstrapPlan.shouldEnsureProject,
-      hasServerThread: serverThread !== undefined,
+      hasServerThread: serverThread != null,
       hasInitialUserMessage: Boolean(initialUserMessage),
       serverThread,
       dispatchState: bootstrapPlan.state,
     });
 
-    if (serverThread !== undefined) {
+    if (serverThread != null) {
       updateBootstrapStatus("idle");
     } else if (
       bootstrapPlan.action === "none" &&
