@@ -147,6 +147,7 @@ const config: ExpoConfig = {
         },
       },
     ],
+    "./plugins/withIosCocoaPodsUuidCache.cjs",
     [
       "expo-widgets",
       {
