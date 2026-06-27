@@ -113,6 +113,13 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as Data from "effect/Data";
+import { WorkflowRunRepositoryLive } from "./persistence/Layers/WorkflowRuns.ts";
+import { WorkflowJournalStoreLive } from "./persistence/Layers/SqliteJournalStore.ts";
+import * as VcsProcess from "./vcs/VcsProcess.ts";
+import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import { T3workWorkflowEngineRegistryLive } from "./t3work-workflowEngineRegistry.ts";
+import { T3workWorkflowScheduler } from "./t3work-workflowScheduler.ts";
+import { T3workThreadToolContextStoreLive } from "./t3work-threadToolContextStore.ts";
 
 const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
@@ -384,6 +391,28 @@ const buildAppUnderTest = (options?: {
       ...options?.config,
     };
     const layerConfig = ServerConfig.layer(config);
+    const t3workRouterSupportLayer = Layer.mergeAll(
+      SqlitePersistenceMemory,
+      T3workWorkflowEngineRegistryLive,
+      T3workThreadToolContextStoreLive,
+      WorkflowRunRepositoryLive.pipe(Layer.provide(SqlitePersistenceMemory)),
+      WorkflowJournalStoreLive.pipe(Layer.provide(SqlitePersistenceMemory)),
+      Layer.mock(VcsProcess.VcsProcess)({
+        run: () =>
+          Effect.succeed({
+            exitCode: ChildProcessSpawner.ExitCode(0),
+            stdout: "",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          }),
+      }),
+      Layer.mock(T3workWorkflowScheduler)({
+        rearm: () => Promise.resolve(),
+        stop: () => {},
+      }),
+      PreviewAutomationBroker.layer,
+    );
     const defaultVcsDriver: VcsDriver.VcsDriver["Service"] = {
       capabilities: {
         kind: "git",
@@ -801,6 +830,7 @@ const buildAppUnderTest = (options?: {
       Layer.provideMerge(makeAuthTestLayer()),
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provide(workspaceAndProjectServicesLayer),
+      Layer.provideMerge(t3workRouterSupportLayer),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(layerConfig),
     );

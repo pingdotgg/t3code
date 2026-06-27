@@ -27,6 +27,7 @@ squashfs-root/
 .vercel
 .gstack/
 apps/server/.t3work/
+apps/server/__fixtures__/t3work-timer-e2e-*/
 worktrees/
 dist-electron/
 .electron-runtime/
