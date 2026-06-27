@@ -1,7 +1,7 @@
 import Stack from "expo-router/stack";
 import { SymbolView } from "expo-symbols";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -462,7 +462,8 @@ function FilesToolbarBottomFade() {
 export function ThreadFilesTreeScreen() {
   useAdaptiveWorkspacePaneRole("inspector");
   const router = useRouter();
-  const { fileInspector, layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
+  const { fileInspector, layout, panes, showAuxiliaryPane, togglePrimarySidebar } =
+    useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
   const colorScheme = useColorScheme();
   const highlightTheme = colorScheme === "dark" ? "dark" : "light";
@@ -535,6 +536,11 @@ export function ThreadFilesTreeScreen() {
     () => <FilesHeaderTitle projectName={projectName} />,
     [projectName],
   );
+  useEffect(() => {
+    if (fileInspector.supported) {
+      showAuxiliaryPane("inspector");
+    }
+  }, [fileInspector.supported, showAuxiliaryPane]);
 
   if (selectedThread === null || environmentId === null || threadId === null) {
     if (fileInspector.supported) {

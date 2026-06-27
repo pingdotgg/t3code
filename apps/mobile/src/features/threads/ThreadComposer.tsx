@@ -26,6 +26,7 @@ import {
 } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 
 import { AppText as Text } from "../../components/AppText";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
@@ -450,15 +451,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
 
   const handleSend = useCallback(async () => {
-    const threadId = props.selectedThread.id;
-    if (inFlightThreadIdsRef.current.has(threadId)) return;
-    inFlightThreadIdsRef.current.add(threadId);
+    const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+    if (inFlightThreadIdsRef.current.has(threadKey)) return;
+    inFlightThreadIdsRef.current.add(threadKey);
     try {
       await onSendMessage();
     } finally {
-      inFlightThreadIdsRef.current.delete(threadId);
+      inFlightThreadIdsRef.current.delete(threadKey);
     }
-  }, [onSendMessage, props.selectedThread.id]);
+  }, [onSendMessage, props.environmentId, props.selectedThread.id]);
   const handleCommandSelect = useCallback(
     (item: ComposerCommandItem) => {
       if (!composerTrigger) return;

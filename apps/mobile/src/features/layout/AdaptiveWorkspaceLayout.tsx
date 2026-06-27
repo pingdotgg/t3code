@@ -208,9 +208,13 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
     if (!layout.usesSplitView || !fileInspector.supported || activeThread === null) {
       return false;
     }
+    showAuxiliaryPane("inspector");
+    if (/\/files(?:\/|$)/.test(pathname)) {
+      return true;
+    }
     router.replace(buildThreadFilesNavigation(activeThread));
     return true;
-  }, [fileInspector.supported, layout.usesSplitView, pathname, router]);
+  }, [fileInspector.supported, layout.usesSplitView, pathname, router, showAuxiliaryPane]);
   useHardwareKeyboardCommand("files", handleOpenFilesCommand);
   const toggleAuxiliaryPane = useCallback(() => {
     if (auxiliaryPaneRole === "inspector") {

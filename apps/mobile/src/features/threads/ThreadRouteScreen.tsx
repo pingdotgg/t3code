@@ -1,5 +1,4 @@
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { useHeaderHeight } from "expo-router/build/react-navigation/elements";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
@@ -223,7 +222,6 @@ function ThreadRouteContent(
 ) {
   const { fileInspector, layout, showAuxiliaryPane, toggleAuxiliaryPane } =
     useAdaptiveWorkspaceLayout();
-  const headerHeight = useHeaderHeight();
   const { connectionState } = useRemoteConnectionStatus();
   const { onReconnectEnvironment } = useRemoteConnections();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
@@ -251,12 +249,18 @@ function ThreadRouteContent(
   const [inspectorSelection, setInspectorSelection] = useState<ThreadInspectorSelection | null>(
     () => (props.renderInspector ? { routeThreadIdentity, mode: "route" } : null),
   );
-  const inspectorMode =
-    inspectorSelection?.routeThreadIdentity === routeThreadIdentity
-      ? inspectorSelection.mode
-      : fileInspector.supported && selectedThreadCwd !== null
-        ? "files"
-        : null;
+  const inspectorMode = (() => {
+    if (inspectorSelection?.routeThreadIdentity === routeThreadIdentity) {
+      if (inspectorSelection.mode === "files" && selectedThreadCwd === null) {
+        return null;
+      }
+      return inspectorSelection.mode;
+    }
+    if (fileInspector.supported && selectedThreadCwd !== null) {
+      return "files";
+    }
+    return null;
+  })();
 
   useEffect(() => {
     setInspectorSelection((current) => {
@@ -430,8 +434,8 @@ function ThreadRouteContent(
     [fileInspector.supported, router, selectedThread],
   );
   const GitInspector = useCallback(
-    () => <GitOverviewSheet headerInset={headerHeight} presentation="inspector" />,
-    [headerHeight],
+    () => <GitOverviewSheet headerInset={0} presentation="inspector" />,
+    [],
   );
   const FilesInspector = useCallback(
     () =>
@@ -439,19 +443,13 @@ function ThreadRouteContent(
         <ThreadFileNavigatorPane
           cwd={selectedThreadCwd}
           environmentId={selectedThread.environmentId}
-          headerInset={headerHeight}
+          headerInset={0}
           projectName={selectedThreadProject?.title ?? "Files"}
           selectedPath={null}
           onSelectFile={handleSelectInspectorFile}
         />
       ) : null,
-    [
-      handleSelectInspectorFile,
-      headerHeight,
-      selectedThread,
-      selectedThreadCwd,
-      selectedThreadProject?.title,
-    ],
+    [handleSelectInspectorFile, selectedThread, selectedThreadCwd, selectedThreadProject?.title],
   );
   const renderInspectorStack = useCallback(
     () =>
@@ -460,10 +458,10 @@ function ThreadRouteContent(
           Files={FilesInspector}
           Git={GitInspector}
           mode={inspectorMode}
-          Route={props.renderInspector ? () => props.renderInspector?.(headerHeight) : undefined}
+          Route={props.renderInspector ? () => props.renderInspector?.(0) : undefined}
         />
       ),
-    [FilesInspector, GitInspector, headerHeight, inspectorMode, props.renderInspector],
+    [FilesInspector, GitInspector, inspectorMode, props.renderInspector],
   );
   const activeInspectorRenderer = inspectorMode === null ? undefined : renderInspectorStack;
 
