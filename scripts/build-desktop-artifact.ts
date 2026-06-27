@@ -1358,9 +1358,15 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: [target],
       icon: "icon.ico",
     };
-    if (signed) {
+    const azureTrustedSigningConfigured = [
+      process.env.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME,
+      process.env.AZURE_TRUSTED_SIGNING_ENDPOINT,
+      process.env.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME,
+      process.env.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME,
+    ].every((value) => value !== undefined && value.trim().length > 0);
+    if (signed && azureTrustedSigningConfigured) {
       winConfig.azureSignOptions = yield* AzureTrustedSigningOptionsConfig;
-    } else {
+    } else if (!signed) {
       winConfig.signAndEditExecutable = false;
     }
     buildConfig.win = winConfig;

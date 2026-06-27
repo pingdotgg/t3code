@@ -12,6 +12,8 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 - Fork stable release versions are committed through release PRs before release artifacts are built and tagged.
 - macOS release signing is separate from Apple notarization.
 - Self-signed macOS signing certificates are trusted during release builds.
+- macOS passkey entitlements are only enabled when Apple notarization/profile configuration is present.
+- Windows releases can sign with the static certificate when Azure Trusted Signing is not configured.
 
 ### Desktop Updater Channels
 

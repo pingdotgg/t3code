@@ -470,7 +470,7 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
           MACOS_PROVISIONING_PROFILE: ${{ secrets.MACOS_PROVISIONING_PROFILE }}
-          T3CODE_CLERK_PASSKEY_RP_DOMAINS: ${{ vars.CLERK_PASSKEY_RP_DOMAINS }}
+          CLERK_PASSKEY_RP_DOMAINS: ${{ vars.CLERK_PASSKEY_RP_DOMAINS }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -513,10 +513,11 @@ jobs:
                 security cms -D -i "$profile_path" >/dev/null
                 export T3CODE_APPLE_TEAM_ID="$APPLE_TEAM_ID"
                 export T3CODE_MACOS_PROVISIONING_PROFILE="$profile_path"
+                export T3CODE_CLERK_PASSKEY_RP_DOMAINS="$CLERK_PASSKEY_RP_DOMAINS"
 
                 echo "macOS notarization enabled."
               else
-                unset APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER
+                unset APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER T3CODE_CLERK_PASSKEY_RP_DOMAINS
                 echo "macOS notarization disabled (missing one or more Apple notarization secrets)."
               fi
               echo "macOS signing enabled."
@@ -535,8 +536,11 @@ jobs:
               "$AZURE_TRUSTED_SIGNING_PUBLISHER_NAME"; then
               echo "Windows signing enabled (Azure Trusted Signing)."
               args+=(--signed)
+            elif has_all "$CSC_LINK" "$CSC_KEY_PASSWORD"; then
+              echo "Windows signing enabled (certificate)."
+              args+=(--signed)
             else
-              echo "Windows signing disabled (missing one or more Azure Trusted Signing secrets)."
+              echo "Windows signing disabled (missing certificate or Azure Trusted Signing secrets)."
             fi
           else
             echo "Signing disabled for ${{ matrix.platform }}."
