@@ -1,4 +1,4 @@
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
@@ -18,6 +18,7 @@ describe("terminalUiStateStore actions", () => {
     useTerminalUiStateStore.persist.clearStorage();
     useTerminalUiStateStore.setState({
       terminalUiStateByThreadKey: {},
+      suppressedTerminalIdsByThreadKey: {},
     });
   });
 
@@ -259,6 +260,29 @@ describe("terminalUiStateStore actions", () => {
       { id: "group-term-a", terminalIds: ["term-a"] },
       { id: "group-term-b", terminalIds: ["term-b"] },
     ]);
+  });
+
+  it("does not import a closed panel terminal from stale metadata", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.newTerminal(THREAD_REF, "term-2");
+    store.closeTerminal(THREAD_REF, "term-1");
+
+    store.reconcileTerminalIds(THREAD_REF, ["term-1", "term-2"]);
+
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).terminalIds,
+    ).toEqual(["term-2"]);
+
+    store.newTerminal(THREAD_REF, "term-1");
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).terminalIds,
+    ).toEqual(["term-2", "term-1"]);
   });
 
   it("is a no-op when clearing terminal UI state for a thread with no state", () => {

@@ -125,7 +125,8 @@ describe("DesktopObservability", () => {
       }).pipe(Effect.provide(environmentLayer));
 
       yield* Effect.gen(function* () {
-        const outputLog = yield* DesktopObservability.DesktopBackendOutputLog;
+        const factory = yield* DesktopObservability.DesktopBackendOutputLogFactory;
+        const outputLog = yield* factory.forInstance("primary");
         yield* outputLog.writeSessionBoundary({
           phase: "START",
           details: "pid=123 port=3773 cwd=/repo",
@@ -145,6 +146,7 @@ describe("DesktopObservability", () => {
       assert.equal(boundary.level, "INFO");
       assert.equal(boundary.annotations.component, "desktop-backend-child");
       assert.equal(boundary.annotations.runId, "test-run");
+      assert.equal(boundary.annotations.instanceId, "primary");
       assert.equal(boundary.annotations.phase, "START");
       assert.equal(boundary.annotations.details, "pid=123 port=3773 cwd=/repo");
 
@@ -152,6 +154,7 @@ describe("DesktopObservability", () => {
       assert.equal(output.level, "INFO");
       assert.equal(output.annotations.component, "desktop-backend-child");
       assert.equal(output.annotations.runId, "test-run");
+      assert.equal(output.annotations.instanceId, "primary");
       assert.equal(output.annotations.stream, "stdout");
       assert.equal(output.annotations.text, "hello server\n");
     }).pipe(

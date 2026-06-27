@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpServer } from "effect/unstable/http";
 
-import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
 
@@ -60,11 +60,22 @@ const bytesToHex = (bytes: Uint8Array): string =>
 
 const tokenFromBytes = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64url");
 
+const getHttpMcpEndpointHost = (hostname: string): string => {
+  const normalized = hostname.toLowerCase();
+  const endpointHostname =
+    normalized === "0.0.0.0" || normalized === "::" || normalized === "[::]"
+      ? "127.0.0.1"
+      : hostname;
+  return endpointHostname.includes(":") && !endpointHostname.startsWith("[")
+    ? `[${endpointHostname}]`
+    : endpointHostname;
+};
+
 const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   options: McpSessionRegistryOptions = {},
 ) {
   const crypto = yield* Crypto.Crypto;
-  const environment = yield* ServerEnvironment;
+  const environment = yield* ServerEnvironment.ServerEnvironment;
   const environmentId = yield* environment.getEnvironmentId;
   const httpServer = yield* HttpServer.HttpServer;
   const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
@@ -73,7 +84,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const maximumLifetimeMs = options.maximumLifetimeMs ?? DEFAULT_MAXIMUM_LIFETIME_MS;
   const endpoint =
     httpServer.address._tag === "TcpAddress"
-      ? `http://127.0.0.1:${httpServer.address.port}/mcp`
+      ? `http://${getHttpMcpEndpointHost(httpServer.address.hostname)}:${httpServer.address.port}/mcp`
       : "http://127.0.0.1/mcp";
 
   const hashToken = (token: string) =>
@@ -180,11 +191,7 @@ const make = Effect.acquireRelease(
     }),
 );
 
-export const layer: Layer.Layer<
-  McpSessionRegistry,
-  never,
-  Crypto.Crypto | ServerEnvironment | HttpServer.HttpServer
-> = Layer.effect(McpSessionRegistry, make);
+export const layer = Layer.effect(McpSessionRegistry, make);
 
 export const issueActiveMcpCredential = (
   request: McpCredentialRequest,

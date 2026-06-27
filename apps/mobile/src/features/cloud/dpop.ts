@@ -70,7 +70,7 @@ function toExpoDigestAlgorithm(
   }
 }
 
-export const mobileCryptoLayer = Layer.succeed(
+export const cryptoLayer = Layer.succeed(
   Crypto.Crypto,
   Crypto.make({
     randomBytes: ExpoCrypto.getRandomBytes,

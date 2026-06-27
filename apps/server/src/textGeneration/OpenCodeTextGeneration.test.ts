@@ -1,4 +1,4 @@
-import { OpenCodeSettings, ProviderInstanceId } from "@t3tools/contracts";
+import { OpenCodeSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
@@ -9,14 +9,10 @@ import * as TestClock from "effect/testing/TestClock";
 import * as NetService from "@t3tools/shared/Net";
 import { beforeEach, expect } from "vite-plus/test";
 
-import { ServerConfig } from "../config.ts";
-import {
-  OpenCodeRuntime,
-  OpenCodeRuntimeError,
-  type OpenCodeRuntimeShape,
-} from "../provider/opencodeRuntime.ts";
-import { type TextGenerationShape } from "./TextGeneration.ts";
-import { makeOpenCodeTextGeneration } from "./OpenCodeTextGeneration.ts";
+import * as ServerConfig from "../config.ts";
+import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
+import * as OpenCodeTextGeneration from "./OpenCodeTextGeneration.ts";
+import * as TextGeneration from "./TextGeneration.ts";
 
 const runtimeMock = {
   state: {
@@ -24,8 +20,11 @@ const runtimeMock = {
     promptUrls: [] as string[],
     authHeaders: [] as Array<string | null>,
     closeCalls: [] as string[],
+    sessionCreateError: undefined as unknown,
+    sessionResult: undefined as { data?: { id: string } } | undefined,
+    promptRequestError: undefined as unknown,
     promptResult: undefined as
-      | { data?: { info?: { error?: unknown }; parts?: Array<{ type: string; text?: string }> } }
+      | { data?: { info?: { error?: unknown }; parts?: Array<unknown> } }
       | undefined,
   },
   reset() {
@@ -33,11 +32,14 @@ const runtimeMock = {
     this.state.promptUrls.length = 0;
     this.state.authHeaders.length = 0;
     this.state.closeCalls.length = 0;
+    this.state.sessionCreateError = undefined;
+    this.state.sessionResult = undefined;
+    this.state.promptRequestError = undefined;
     this.state.promptResult = undefined;
   },
 };
 
-const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
+const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
   startOpenCodeServerProcess: ({ binaryPath }) =>
     Effect.gen(function* () {
       const index = runtimeMock.state.startCalls.length + 1;
@@ -65,12 +67,20 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
   createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
     ({
       session: {
-        create: async () => ({ data: { id: `${baseUrl}/session` } }),
+        create: async () => {
+          if (runtimeMock.state.sessionCreateError !== undefined) {
+            throw runtimeMock.state.sessionCreateError;
+          }
+          return runtimeMock.state.sessionResult ?? { data: { id: `${baseUrl}/session` } };
+        },
         prompt: async () => {
           runtimeMock.state.promptUrls.push(baseUrl);
           runtimeMock.state.authHeaders.push(
             serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
           );
+          if (runtimeMock.state.promptRequestError !== undefined) {
+            throw runtimeMock.state.promptRequestError;
+          }
           return (
             runtimeMock.state.promptResult ?? {
               data: {
@@ -88,10 +98,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           );
         },
       },
-    }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+    }) as unknown as ReturnType<OpenCodeRuntime.OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
     Effect.fail(
-      new OpenCodeRuntimeError({
+      new OpenCodeRuntime.OpenCodeRuntimeError({
         operation: "loadOpenCodeInventory",
         detail: "OpenCodeRuntimeTestDouble.loadOpenCodeInventory not used in this test",
         cause: null,
@@ -103,15 +113,22 @@ const DEFAULT_TEST_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("opencode"),
   model: "openai/gpt-5",
 };
+const DEFAULT_COMMIT_MESSAGE_INPUT = {
+  cwd: process.cwd(),
+  branch: "feature/opencode-reuse",
+  stagedSummary: "M README.md",
+  stagedPatch: "diff --git a/README.md b/README.md",
+  modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+};
 
 const OPENCODE_TEXT_GENERATION_IDLE_TTL_MS = 30_000;
 
 const OpenCodeTextGenerationTestLayer = Layer.succeed(
-  OpenCodeRuntime,
+  OpenCodeRuntime.OpenCodeRuntime,
   OpenCodeRuntimeTestDouble,
 ).pipe(
   Layer.provideMerge(
-    ServerConfig.layerTest(process.cwd(), {
+    ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "t3code-opencode-text-generation-test-",
     }),
   ),
@@ -120,11 +137,11 @@ const OpenCodeTextGenerationTestLayer = Layer.succeed(
 );
 
 const OpenCodeTextGenerationExistingServerTestLayer = Layer.succeed(
-  OpenCodeRuntime,
+  OpenCodeRuntime.OpenCodeRuntime,
   OpenCodeRuntimeTestDouble,
 ).pipe(
   Layer.provideMerge(
-    ServerConfig.layerTest(process.cwd(), {
+    ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "t3code-opencode-text-generation-existing-server-test-",
     }),
   ),
@@ -143,10 +160,10 @@ const EXISTING_SERVER_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
 
 function withOpenCodeTextGeneration<A, E, R>(
   settings: OpenCodeSettings,
-  effectFn: (textGeneration: TextGenerationShape) => Effect.Effect<A, E, R>,
+  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
-    const textGeneration = yield* makeOpenCodeTextGeneration(settings);
+    const textGeneration = yield* OpenCodeTextGeneration.makeOpenCodeTextGeneration(settings);
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
@@ -225,22 +242,99 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
     ).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("returns a typed empty-output error when OpenCode returns no text parts", () =>
+  it.effect("preserves the SDK cause when session creation fails", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
-        runtimeMock.state.promptResult = { data: {} };
+        const sdkCause = new Error("session endpoint unavailable");
+        runtimeMock.state.sessionCreateError = sdkCause;
 
         const error = yield* textGeneration
-          .generateCommitMessage({
-            cwd: process.cwd(),
-            branch: "feature/opencode-reuse",
-            stagedSummary: "M README.md",
-            stagedPatch: "diff --git a/README.md b/README.md",
-            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-          })
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(TextGenerationError);
+        expect(error.message).toContain("OpenCode session.create request failed.");
+        expect(error.cause).toMatchObject({
+          _tag: "OpenCodeTextGenerationSessionRequestError",
+          operation: "generateCommitMessage",
+          cwd: process.cwd(),
+          cause: sdkCause,
+        });
+        expect((error.cause as { cause: unknown }).cause).toBe(sdkCause);
+      }),
+    ),
+  );
+
+  it.effect("reports a missing session payload without manufacturing a cause", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.sessionResult = {};
+
+        const error = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain("OpenCode session.create returned no session payload.");
+        expect(error.cause).toMatchObject({
+          _tag: "OpenCodeTextGenerationSessionPayloadError",
+          operation: "generateCommitMessage",
+          cwd: process.cwd(),
+        });
+        expect(error.cause).not.toHaveProperty("cause");
+      }),
+    ),
+  );
+
+  it.effect("preserves the SDK cause and request context when prompting fails", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        const sdkCause = new Error("prompt endpoint unavailable");
+        runtimeMock.state.promptRequestError = sdkCause;
+
+        const error = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain("OpenCode session.prompt request failed.");
+        expect(error.cause).toMatchObject({
+          _tag: "OpenCodeTextGenerationPromptRequestError",
+          operation: "generateCommitMessage",
+          cwd: process.cwd(),
+          sessionId: "http://127.0.0.1:4301/session",
+          providerId: "openai",
+          modelId: "gpt-5",
+          cause: sdkCause,
+        });
+        expect((error.cause as { cause: unknown }).cause).toBe(sdkCause);
+      }),
+    ),
+  );
+
+  it.effect("returns a typed empty-output error for malformed and blank response parts", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [null, { type: "tool" }, { type: "text", text: "   " }],
+          },
+        };
+
+        const error = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
           .pipe(Effect.flip);
 
         expect(error.message).toContain("OpenCode returned empty output.");
+        expect(error.cause).toMatchObject({
+          _tag: "OpenCodeTextGenerationEmptyOutputError",
+          operation: "generateCommitMessage",
+          cwd: process.cwd(),
+          sessionId: "http://127.0.0.1:4301/session",
+          providerId: "openai",
+          modelId: "gpt-5",
+          responsePartCount: 3,
+          textPartCount: 1,
+        });
+        expect(error.cause).not.toHaveProperty("cause");
       }),
     ),
   );
@@ -293,16 +387,21 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
         };
 
         const error = yield* textGeneration
-          .generateCommitMessage({
-            cwd: process.cwd(),
-            branch: "feature/opencode-reuse",
-            stagedSummary: "M README.md",
-            stagedPatch: "diff --git a/README.md b/README.md",
-            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-          })
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
           .pipe(Effect.flip);
 
         expect(error.message).toContain("Model did not produce structured output");
+        expect(error.cause).toMatchObject({
+          _tag: "OpenCodeTextGenerationPromptResponseError",
+          operation: "generateCommitMessage",
+          cwd: process.cwd(),
+          sessionId: "http://127.0.0.1:4301/session",
+          providerId: "openai",
+          modelId: "gpt-5",
+          providerErrorName: "StructuredOutputError",
+          providerMessage: "Model did not produce structured output",
+        });
+        expect(error.cause).not.toHaveProperty("cause");
       }),
     ),
   );

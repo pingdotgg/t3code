@@ -11,11 +11,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
-import {
-  ExternalLauncher,
-  layer as ExternalLauncherLive,
-  resolveMacApplicationDirectories,
-} from "./externalLauncher.ts";
+import * as ExternalLauncher from "./externalLauncher.ts";
+import { resolveMacApplicationDirectories } from "./externalLauncher.ts";
 
 function makeMockDetachedHandle(onUnref: () => void = () => undefined) {
   return ChildProcessSpawner.makeHandle({
@@ -66,7 +63,7 @@ const testLayer = (input: {
   );
 
   return Layer.mergeAll(
-    ExternalLauncherLive.pipe(Layer.provide(Layer.merge(NodeServices.layer, spawnerLayer))),
+    ExternalLauncher.layer.pipe(Layer.provide(Layer.merge(NodeServices.layer, spawnerLayer))),
     Layer.succeed(HostProcessPlatform, input.platform),
     Layer.succeed(
       SpawnExecutableResolution,
@@ -80,7 +77,7 @@ it.effect("launches the default browser through the platform command", () => {
   let spawned: ChildProcess.StandardCommand | undefined;
   let didUnref = false;
   return Effect.gen(function* () {
-    const launcher = yield* ExternalLauncher;
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
 
     yield* launcher.launchBrowser("https://example.com/some path");
 
@@ -113,7 +110,7 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
 
     let spawned: ChildProcess.StandardCommand | undefined;
     yield* Effect.gen(function* () {
-      const launcher = yield* ExternalLauncher;
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
       yield* launcher.launchEditor({
         editor: "vscode",
         cwd: "C:\\workspace with spaces\\src\\index.ts:12:4",
@@ -151,7 +148,7 @@ it.effect("discovers editors through the service API", () =>
     yield* fileSystem.writeFileString(path.join(binDir, "explorer.CMD"), "@echo off\r\n");
 
     const editors = yield* Effect.gen(function* () {
-      const launcher = yield* ExternalLauncher;
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
       return yield* launcher.resolveAvailableEditors();
     }).pipe(
       Effect.provide(
@@ -206,10 +203,12 @@ it.effect("discovers and launches editors from the user Applications directory o
 
 it.effect("rejects unknown editors through the service API", () =>
   Effect.gen(function* () {
-    const launcher = yield* ExternalLauncher;
-    const result = yield* launcher
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+    const error = yield* launcher
       .launchEditor({ editor: "missing-editor" as never, cwd: "/tmp/workspace" })
-      .pipe(Effect.result);
-    assert.equal(result._tag, "Failure");
+      .pipe(Effect.flip);
+    assert.instanceOf(error, ExternalLauncher.ExternalLauncherUnknownEditorError);
+    assert.equal(error.editor, "missing-editor");
+    assert.equal(error.message, "Unknown editor: missing-editor");
   }).pipe(Effect.provide(testLayer({ platform: "linux", env: { PATH: "" } }))),
 );

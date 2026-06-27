@@ -23,10 +23,11 @@ export class WorkspaceSearchIndexCreateFailed extends Schema.TaggedErrorClass<Wo
   {
     cwd: Schema.String,
     reason: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to create the workspace search index for '${this.cwd}': ${this.reason}`;
+    return `Failed to create the workspace search index for '${this.cwd}'.`;
   }
 }
 
@@ -46,11 +47,14 @@ export class WorkspaceSearchIndexSearchFailed extends Schema.TaggedErrorClass<Wo
   "WorkspaceSearchIndexSearchFailed",
   {
     cwd: Schema.String,
+    queryLength: Schema.Number,
+    pageSize: Schema.Number,
     reason: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Workspace search failed for '${this.cwd}': ${this.reason}`;
+    return `Workspace search failed for '${this.cwd}'.`;
   }
 }
 
@@ -59,10 +63,23 @@ export class WorkspaceSearchIndexRefreshFailed extends Schema.TaggedErrorClass<W
   {
     cwd: Schema.String,
     reason: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to refresh the workspace search index for '${this.cwd}': ${this.reason}`;
+    return `Failed to refresh the workspace search index for '${this.cwd}'.`;
+  }
+}
+
+export class WorkspaceSearchIndexDestroyFailed extends Schema.TaggedErrorClass<WorkspaceSearchIndexDestroyFailed>()(
+  "WorkspaceSearchIndexDestroyFailed",
+  {
+    cwd: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to destroy the workspace search index for '${this.cwd}'.`;
   }
 }
 
@@ -153,23 +170,35 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
 }
 
 const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (cwd: string) {
-  const result = FileFinder.create({
-    basePath: cwd,
-    disableMmapCache: true,
-    disableContentIndexing: true,
-    aiMode: false,
-    enableFsRootScanning: true,
-    enableHomeDirScanning: true,
+  const result = yield* Effect.try({
+    try: () =>
+      FileFinder.create({
+        basePath: cwd,
+        disableMmapCache: true,
+        disableContentIndexing: true,
+        aiMode: false,
+        enableFsRootScanning: true,
+        enableHomeDirScanning: true,
+      }),
+    catch: (cause) =>
+      new WorkspaceSearchIndexCreateFailed({
+        cwd,
+        reason: "FileFinder.create threw unexpectedly.",
+        cause,
+      }),
   });
   if (result.ok) return result.value;
-  return yield* new WorkspaceSearchIndexCreateFailed({ cwd, reason: result.error });
+  return yield* new WorkspaceSearchIndexCreateFailed({
+    cwd,
+    reason: result.error,
+  });
 });
 
-const waitForScan = Effect.fn("WorkspaceSearchIndex.waitForScan")(function* (
-  cwd: string,
-  finder: FileFinder,
-) {
-  yield* Effect.sync(() => finder.isScanning()).pipe(
+const waitForScan = <E>(cwd: string, finder: FileFinder, onFailure: (cause: unknown) => E) =>
+  Effect.try({
+    try: () => finder.isScanning(),
+    catch: onFailure,
+  }).pipe(
     Effect.repeat({
       while: (scanning) => scanning,
       schedule: Schedule.spaced(WORKSPACE_INDEX_SCAN_POLL_INTERVAL),
@@ -179,67 +208,119 @@ const waitForScan = Effect.fn("WorkspaceSearchIndex.waitForScan")(function* (
       orElse: () =>
         new WorkspaceSearchIndexScanTimedOut({ cwd, timeout: WORKSPACE_INDEX_SCAN_TIMEOUT }),
     }),
+    Effect.withSpan("WorkspaceSearchIndex.waitForScan"),
   );
+
+export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (cwd: string) {
+  const finder = yield* Effect.acquireRelease(createFinder(cwd), (finder) =>
+    Effect.try({
+      try: () => finder.destroy(),
+      catch: (cause) => new WorkspaceSearchIndexDestroyFailed({ cwd, cause }),
+    }).pipe(Effect.orDie),
+  );
+  yield* waitForScan(
+    cwd,
+    finder,
+    (cause) =>
+      new WorkspaceSearchIndexCreateFailed({
+        cwd,
+        reason: "FileFinder.isScanning threw while creating the index.",
+        cause,
+      }),
+  );
+
+  const runMixedSearch = Effect.fn("WorkspaceSearchIndex.runMixedSearch")(function* (
+    query: string,
+    pageSize: number,
+  ) {
+    const result = yield* Effect.try({
+      try: () => finder.mixedSearch(query, { pageSize }),
+      catch: (cause) =>
+        new WorkspaceSearchIndexSearchFailed({
+          cwd,
+          queryLength: query.length,
+          pageSize,
+          reason: "FileFinder.mixedSearch threw unexpectedly.",
+          cause,
+        }),
+    });
+    if (!result.ok) {
+      return yield* new WorkspaceSearchIndexSearchFailed({
+        cwd,
+        queryLength: query.length,
+        pageSize,
+        reason: result.error,
+      });
+    }
+    return result.value;
+  });
+
+  const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
+    "WorkspaceSearchIndex.refresh",
+  )(function* () {
+    const result = yield* Effect.try({
+      try: () => finder.scanFiles(),
+      catch: (cause) =>
+        new WorkspaceSearchIndexRefreshFailed({
+          cwd,
+          reason: "FileFinder.scanFiles threw unexpectedly.",
+          cause,
+        }),
+    });
+    if (!result.ok) {
+      return yield* new WorkspaceSearchIndexRefreshFailed({
+        cwd,
+        reason: result.error,
+      });
+    }
+    yield* waitForScan(
+      cwd,
+      finder,
+      (cause) =>
+        new WorkspaceSearchIndexRefreshFailed({
+          cwd,
+          reason: "FileFinder.isScanning threw while refreshing the index.",
+          cause,
+        }),
+    );
+  });
+
+  const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
+    function* () {
+      const result = yield* runMixedSearch("", WORKSPACE_INDEX_PAGE_SIZE);
+      const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
+      const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
+        left.path.localeCompare(right.path),
+      );
+      const entries = sortedEntries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
+      return {
+        entries,
+        truncated: mapped.truncated || entries.length < sortedEntries.length,
+      };
+    },
+  );
+
+  const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
+    "WorkspaceSearchIndex.search",
+  )(function* (query, limit) {
+    const result = yield* runMixedSearch(query, Math.max(1, limit + 1));
+    return mapMixedSearchResult(result, limit);
+  });
+
+  return WorkspaceSearchIndex.of({ list, refresh, search });
 });
 
-const makeWorkspaceSearchIndex = (cwd: string) =>
-  Effect.acquireRelease(createFinder(cwd), (finder) => Effect.sync(() => finder.destroy())).pipe(
-    Effect.tap((finder) => waitForScan(cwd, finder)),
-    Effect.map((finder) => {
-      const runMixedSearch = Effect.fn("WorkspaceSearchIndex.runMixedSearch")(function* (
-        query: string,
-        pageSize: number,
-      ) {
-        const result = yield* Effect.sync(() => finder.mixedSearch(query, { pageSize }));
-        if (!result.ok) {
-          return yield* new WorkspaceSearchIndexSearchFailed({ cwd, reason: result.error });
-        }
-        return result.value;
-      });
-
-      const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
-        "WorkspaceSearchIndex.refresh",
-      )(function* () {
-        const result = yield* Effect.sync(() => finder.scanFiles());
-        if (!result.ok) {
-          return yield* new WorkspaceSearchIndexRefreshFailed({ cwd, reason: result.error });
-        }
-        yield* waitForScan(cwd, finder);
-      });
-
-      const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
-        function* () {
-          const result = yield* runMixedSearch("", WORKSPACE_INDEX_PAGE_SIZE);
-          const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
-          const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
-            left.path.localeCompare(right.path),
-          );
-          const entries = sortedEntries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
-          return {
-            entries,
-            truncated: mapped.truncated || entries.length < sortedEntries.length,
-          };
-        },
-      );
-
-      const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
-        "WorkspaceSearchIndex.search",
-      )(function* (query, limit) {
-        const result = yield* runMixedSearch(query, Math.max(1, limit + 1));
-        return mapMixedSearchResult(result, limit);
-      });
-
-      return WorkspaceSearchIndex.of({ list, refresh, search });
-    }),
-  );
-
-const workspaceSearchIndexLayer = (cwd: string) =>
-  Layer.effect(WorkspaceSearchIndex, makeWorkspaceSearchIndex(cwd));
+/**
+ * A layer factory is required because every index is scoped to a concrete
+ * workspace root. WorkspaceSearchIndexMap owns memoization and idle cleanup;
+ * using a default cwd here would mix resources from different workspaces.
+ */
+export const layer = (cwd: string) => Layer.effect(WorkspaceSearchIndex, make(cwd));
 
 export class WorkspaceSearchIndexMap extends LayerMap.Service<WorkspaceSearchIndexMap>()(
   "t3/workspace/WorkspaceSearchIndexMap",
   {
-    lookup: workspaceSearchIndexLayer,
+    lookup: layer,
     idleTimeToLive: WORKSPACE_INDEX_IDLE_TTL,
   },
 ) {}

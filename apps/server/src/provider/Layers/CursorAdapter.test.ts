@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as path from "node:path";
-import * as os from "node:os";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -36,8 +36,8 @@ class CursorAdapter extends Context.Service<CursorAdapter, CursorAdapterShape>()
   "t3/provider/Layers/CursorAdapter.test/CursorAdapter",
 ) {}
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const mockAgentPath = path.join(__dirname, "../../../scripts/acp-mock-agent.ts");
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 const mockAgentCommand = "node";
 const mockAgentArgs = [mockAgentPath] as const;
 
@@ -45,8 +45,8 @@ async function makeMockAgentWrapper(
   extraEnv?: Record<string, string>,
   options?: { initialDelaySeconds?: number },
 ) {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "cursor-acp-mock-"));
-  const wrapperPath = path.join(dir, "fake-agent.sh");
+  const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-mock-"));
+  const wrapperPath = NodePath.join(dir, "fake-agent.sh");
   const envExports = Object.entries(extraEnv ?? {})
     .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
     .join("\n");
@@ -55,8 +55,8 @@ ${envExports}
 ${options?.initialDelaySeconds ? `sleep ${JSON.stringify(String(options.initialDelaySeconds))}` : ""}
 exec ${JSON.stringify(mockAgentCommand)} ${mockAgentArgs.map((arg) => JSON.stringify(arg)).join(" ")} "$@"
 `;
-  await writeFile(wrapperPath, script, "utf8");
-  await chmod(wrapperPath, 0o755);
+  await NodeFSP.writeFile(wrapperPath, script, "utf8");
+  await NodeFSP.chmod(wrapperPath, 0o755);
   return wrapperPath;
 }
 
@@ -65,8 +65,8 @@ async function makeProbeWrapper(
   argvLogPath: string,
   extraEnv?: Record<string, string>,
 ) {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "cursor-acp-probe-"));
-  const wrapperPath = path.join(dir, "fake-agent.sh");
+  const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-probe-"));
+  const wrapperPath = NodePath.join(dir, "fake-agent.sh");
   const envExports = Object.entries(extraEnv ?? {})
     .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
     .join("\n");
@@ -77,13 +77,13 @@ export T3_ACP_REQUEST_LOG_PATH=${JSON.stringify(requestLogPath)}
 ${envExports}
 exec ${JSON.stringify(mockAgentCommand)} ${mockAgentArgs.map((arg) => JSON.stringify(arg)).join(" ")} "$@"
 `;
-  await writeFile(wrapperPath, script, "utf8");
-  await chmod(wrapperPath, 0o755);
+  await NodeFSP.writeFile(wrapperPath, script, "utf8");
+  await NodeFSP.chmod(wrapperPath, 0o755);
   return wrapperPath;
 }
 
 async function readArgvLog(filePath: string) {
-  const raw = await readFile(filePath, "utf8");
+  const raw = await NodeFSP.readFile(filePath, "utf8");
   return raw
     .split("\n")
     .map((line) => line.trim())
@@ -92,7 +92,7 @@ async function readArgvLog(filePath: string) {
 }
 
 async function readJsonLines(filePath: string) {
-  const raw = await readFile(filePath, "utf8");
+  const raw = await NodeFSP.readFile(filePath, "utf8");
   return raw
     .split("\n")
     .map((line) => line.trim())
@@ -103,7 +103,7 @@ async function readJsonLines(filePath: string) {
 async function waitForFileContent(filePath: string, attempts = 40) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      const raw = await readFile(filePath, "utf8");
+      const raw = await NodeFSP.readFile(filePath, "utf8");
       if (raw.trim().length > 0) {
         return raw;
       }
@@ -111,6 +111,23 @@ async function waitForFileContent(filePath: string, attempts = 40) {
     await Effect.runPromise(Effect.yieldNow);
   }
   throw new Error(`Timed out waiting for file content at ${filePath}`);
+}
+
+function waitForJsonLogMatch(
+  filePath: string,
+  predicate: (entry: Record<string, unknown>) => boolean,
+  attempts = 40,
+) {
+  return Effect.gen(function* () {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const requests = yield* Effect.promise(() => readJsonLines(filePath));
+      if (requests.some(predicate)) {
+        return requests;
+      }
+      yield* Effect.yieldNow;
+    }
+    return yield* Effect.promise(() => readJsonLines(filePath));
+  });
 }
 
 // Tests mutate `ServerSettingsService` mid-flight (e.g. setting
@@ -315,9 +332,9 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const settings = yield* ServerSettingsService;
       const threadId = ThreadId.make("cursor-stop-session-close");
       const tempDir = yield* Effect.promise(() =>
-        mkdtemp(path.join(os.tmpdir(), "cursor-adapter-exit-log-")),
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-adapter-exit-log-")),
       );
-      const exitLogPath = path.join(tempDir, "exit.log");
+      const exitLogPath = NodePath.join(tempDir, "exit.log");
 
       const wrapperPath = yield* Effect.promise(() =>
         makeMockAgentWrapper({
@@ -349,9 +366,9 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         const settings = yield* ServerSettingsService;
         const threadId = ThreadId.make("cursor-concurrent-start-session");
         const tempDir = yield* Effect.promise(() =>
-          mkdtemp(path.join(os.tmpdir(), "cursor-adapter-concurrent-exit-log-")),
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-adapter-concurrent-exit-log-")),
         );
-        const exitLogPath = path.join(tempDir, "exit.log");
+        const exitLogPath = NodePath.join(tempDir, "exit.log");
 
         const wrapperPath = yield* Effect.promise(() =>
           makeMockAgentWrapper(
@@ -414,10 +431,12 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const adapter = yield* CursorAdapter;
       const serverSettings = yield* ServerSettingsService;
       const threadId = ThreadId.make("cursor-plan-mode-probe");
-      const tempDir = yield* Effect.promise(() => mkdtemp(path.join(os.tmpdir(), "cursor-acp-")));
-      const requestLogPath = path.join(tempDir, "requests.ndjson");
-      const argvLogPath = path.join(tempDir, "argv.txt");
-      yield* Effect.promise(() => writeFile(requestLogPath, "", "utf8"));
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
       const wrapperPath = yield* Effect.promise(() =>
         makeProbeWrapper(requestLogPath, argvLogPath),
       );
@@ -470,10 +489,12 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         const adapter = yield* CursorAdapter;
         const serverSettings = yield* ServerSettingsService;
         const threadId = ThreadId.make("cursor-initial-config-probe");
-        const tempDir = yield* Effect.promise(() => mkdtemp(path.join(os.tmpdir(), "cursor-acp-")));
-        const requestLogPath = path.join(tempDir, "requests.ndjson");
-        const argvLogPath = path.join(tempDir, "argv.txt");
-        yield* Effect.promise(() => writeFile(requestLogPath, "", "utf8"));
+        const tempDir = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+        );
+        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+        const argvLogPath = NodePath.join(tempDir, "argv.txt");
+        yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
         const wrapperPath = yield* Effect.promise(() =>
           makeProbeWrapper(requestLogPath, argvLogPath),
         );
@@ -713,10 +734,12 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         const runtimeEvents: Array<ProviderRuntimeEvent> = [];
         const settledEventTypes = new Set<string>();
         const settledEventsReady = yield* Deferred.make<void>();
-        const tempDir = yield* Effect.promise(() => mkdtemp(path.join(os.tmpdir(), "cursor-acp-")));
-        const requestLogPath = path.join(tempDir, "requests.ndjson");
-        const argvLogPath = path.join(tempDir, "argv.txt");
-        yield* Effect.promise(() => writeFile(requestLogPath, "", "utf8"));
+        const tempDir = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+        );
+        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+        const argvLogPath = NodePath.join(tempDir, "argv.txt");
+        yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
         const wrapperPath = yield* Effect.promise(() =>
           makeProbeWrapper(requestLogPath, argvLogPath, { T3_ACP_EMIT_TOOL_CALLS: "1" }),
         );
@@ -931,10 +954,12 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const adapter = yield* CursorAdapter;
       const serverSettings = yield* ServerSettingsService;
       const threadId = ThreadId.make("cursor-cancel-probe");
-      const tempDir = yield* Effect.promise(() => mkdtemp(path.join(os.tmpdir(), "cursor-acp-")));
-      const requestLogPath = path.join(tempDir, "requests.ndjson");
-      const argvLogPath = path.join(tempDir, "argv.txt");
-      yield* Effect.promise(() => writeFile(requestLogPath, "", "utf8"));
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
       const wrapperPath = yield* Effect.promise(() =>
         makeProbeWrapper(requestLogPath, argvLogPath, { T3_ACP_EMIT_TOOL_CALLS: "1" }),
       );
@@ -996,21 +1021,19 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         assert.equal(turnCompleted.payload.stopReason, "cancelled");
       }
 
-      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const isCancelledApprovalResponse = (entry: Record<string, unknown>) =>
+        !("method" in entry) &&
+        typeof entry.result === "object" &&
+        entry.result !== null &&
+        "outcome" in entry.result &&
+        typeof entry.result.outcome === "object" &&
+        entry.result.outcome !== null &&
+        "outcome" in entry.result.outcome &&
+        entry.result.outcome.outcome === "cancelled";
+      yield* waitForJsonLogMatch(requestLogPath, (entry) => entry.method === "session/cancel");
+      const requests = yield* waitForJsonLogMatch(requestLogPath, isCancelledApprovalResponse);
       assert.isTrue(requests.some((entry) => entry.method === "session/cancel"));
-      assert.isTrue(
-        requests.some(
-          (entry) =>
-            !("method" in entry) &&
-            typeof entry.result === "object" &&
-            entry.result !== null &&
-            "outcome" in entry.result &&
-            typeof entry.result.outcome === "object" &&
-            entry.result.outcome !== null &&
-            "outcome" in entry.result.outcome &&
-            entry.result.outcome.outcome === "cancelled",
-        ),
-      );
+      assert.isTrue(requests.some(isCancelledApprovalResponse));
 
       yield* adapter.stopSession(threadId);
     }),
@@ -1192,10 +1215,12 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const adapter = yield* CursorAdapter;
       const serverSettings = yield* ServerSettingsService;
       const threadId = ThreadId.make("cursor-model-switch");
-      const tempDir = yield* Effect.promise(() => mkdtemp(path.join(os.tmpdir(), "cursor-acp-")));
-      const requestLogPath = path.join(tempDir, "requests.ndjson");
-      const argvLogPath = path.join(tempDir, "argv.txt");
-      yield* Effect.promise(() => writeFile(requestLogPath, "", "utf8"));
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
       const wrapperPath = yield* Effect.promise(() =>
         makeProbeWrapper(requestLogPath, argvLogPath),
       );
@@ -1255,10 +1280,12 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const adapter = yield* CursorAdapter;
       const serverSettings = yield* ServerSettingsService;
       const threadId = ThreadId.make("cursor-fast-mode-reset");
-      const tempDir = yield* Effect.promise(() => mkdtemp(path.join(os.tmpdir(), "cursor-acp-")));
-      const requestLogPath = path.join(tempDir, "requests.ndjson");
-      const argvLogPath = path.join(tempDir, "argv.txt");
-      yield* Effect.promise(() => writeFile(requestLogPath, "", "utf8"));
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
       const wrapperPath = yield* Effect.promise(() =>
         makeProbeWrapper(requestLogPath, argvLogPath),
       );
@@ -1339,10 +1366,12 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         const adapter = yield* CursorAdapter;
         const serverSettings = yield* ServerSettingsService;
         const threadId = ThreadId.make("cursor-fast-mode-custom-instance");
-        const tempDir = yield* Effect.promise(() => mkdtemp(path.join(os.tmpdir(), "cursor-acp-")));
-        const requestLogPath = path.join(tempDir, "requests.ndjson");
-        const argvLogPath = path.join(tempDir, "argv.txt");
-        yield* Effect.promise(() => writeFile(requestLogPath, "", "utf8"));
+        const tempDir = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+        );
+        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+        const argvLogPath = NodePath.join(tempDir, "argv.txt");
+        yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
         const wrapperPath = yield* Effect.promise(() =>
           makeProbeWrapper(requestLogPath, argvLogPath),
         );

@@ -69,7 +69,12 @@ describe("apnsDeliveryJobs", () => {
     });
 
     expect(result).toMatchObject({
-      _tag: "ApnsDeliveryJobInvalid",
+      _tag: "ApnsDeliveryJobSignatureInvalid",
+      jobId: "job-1",
+      kind: "live_activity_end",
+      userId: "user-1",
+      deviceId: "device-1",
+      message: "Invalid signature for APNs delivery job job-1.",
     });
   });
 
@@ -93,8 +98,12 @@ describe("apnsDeliveryJobs", () => {
     });
 
     expect(result).toMatchObject({
-      _tag: "ApnsDeliveryJobInvalid",
-      message: "Live Activity start/update jobs require an aggregate.",
+      _tag: "ApnsDeliveryJobLiveActivityAggregateMissing",
+      jobId: "job-start-invalid",
+      kind: "live_activity_start",
+      userId: "user-1",
+      deviceId: "device-1",
+      message: "APNs live activity start job job-start-invalid requires an aggregate.",
     });
   });
 
@@ -119,8 +128,11 @@ describe("apnsDeliveryJobs", () => {
     });
 
     expect(result).toMatchObject({
-      _tag: "ApnsDeliveryJobInvalid",
-      message: "Push notification jobs must not carry aggregate state.",
+      _tag: "ApnsDeliveryJobPushNotificationAggregateUnexpected",
+      jobId: "job-push-invalid",
+      userId: "user-1",
+      deviceId: "device-1",
+      message: "APNs push notification job job-push-invalid must not carry aggregate state.",
     });
   });
 
@@ -194,8 +206,13 @@ describe("apnsDeliveryJobs", () => {
         nowMs: 0,
       }),
     ).toMatchObject({
-      _tag: "ApnsDeliveryJobInvalid",
-      message: "Invalid APNs delivery job creation time.",
+      _tag: "ApnsDeliveryJobCreatedAtInvalid",
+      jobId: "job-window",
+      kind: "live_activity_end",
+      userId: "user-1",
+      deviceId: "device-1",
+      createdAt: "not-a-date",
+      message: "APNs delivery job job-window has invalid creation time not-a-date.",
     });
     expect(
       verifySignedApnsDeliveryJob({
@@ -204,8 +221,15 @@ describe("apnsDeliveryJobs", () => {
         nowMs: 0,
       }),
     ).toMatchObject({
-      _tag: "ApnsDeliveryJobInvalid",
-      message: "Invalid APNs delivery job time window.",
+      _tag: "ApnsDeliveryJobTimeWindowInvalid",
+      jobId: "job-window",
+      kind: "live_activity_end",
+      userId: "user-1",
+      deviceId: "device-1",
+      createdAt: "2026-05-25T00:00:00.000Z",
+      expiresAt: "2026-05-24T23:59:59.000Z",
+      message:
+        "APNs delivery job job-window has invalid time window 2026-05-25T00:00:00.000Z to 2026-05-24T23:59:59.000Z.",
     });
     expect(
       verifySignedApnsDeliveryJob({
@@ -214,8 +238,15 @@ describe("apnsDeliveryJobs", () => {
         nowMs: 0,
       }),
     ).toMatchObject({
-      _tag: "ApnsDeliveryJobInvalid",
-      message: "APNs delivery job time window is too long.",
+      _tag: "ApnsDeliveryJobTimeWindowTooLong",
+      jobId: "job-window",
+      kind: "live_activity_end",
+      userId: "user-1",
+      deviceId: "device-1",
+      createdAt: "2026-05-25T00:00:00.000Z",
+      expiresAt: "2026-05-25T00:10:01.000Z",
+      message:
+        "APNs delivery job job-window time window 2026-05-25T00:00:00.000Z to 2026-05-25T00:10:01.000Z is too long.",
     });
   });
 });

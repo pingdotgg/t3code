@@ -1,6 +1,13 @@
 import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import {
+  type ColorValue,
+  Modal,
+  Pressable,
+  ScrollView,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -15,21 +22,19 @@ import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
 import { StatusPill } from "../../components/StatusPill";
+import { useProjects, useThreadShells } from "../../state/entities";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
 import { threadStatusTone } from "./threadPresentation";
-import {
-  EnvironmentScopedProjectShell,
-  EnvironmentScopedThreadShell,
-} from "@t3tools/client-runtime";
+import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 const threadActivityOrder = Order.mapInput(
   Order.Struct({
     activityAt: Order.flip(Order.Number),
     title: Order.String,
   }),
-  (thread: EnvironmentScopedThreadShell) => ({
+  (thread: EnvironmentThreadShell) => ({
     activityAt: new Date(thread.updatedAt ?? thread.createdAt).getTime(),
     title: thread.title,
   }),
@@ -37,11 +42,9 @@ const threadActivityOrder = Order.mapInput(
 
 export function ThreadNavigationDrawer(props: {
   readonly visible: boolean;
-  readonly projects: ReadonlyArray<EnvironmentScopedProjectShell>;
-  readonly threads: ReadonlyArray<EnvironmentScopedThreadShell>;
   readonly selectedThreadKey: string | null;
   readonly onClose: () => void;
-  readonly onSelectThread: (thread: EnvironmentScopedThreadShell) => void;
+  readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onStartNewTask: () => void;
 }) {
   const insets = useSafeAreaInsets();
@@ -56,26 +59,6 @@ export function ThreadNavigationDrawer(props: {
   const drawerShadow = useThemeColor("--color-drawer-shadow");
   const primaryForeground = useThemeColor("--color-primary-foreground");
   const borderSubtleColor = useThemeColor("--color-border-subtle");
-
-  const repositoryGroups = useMemo(
-    () => groupProjectsByRepository({ projects: props.projects, threads: props.threads }),
-    [props.projects, props.threads],
-  );
-  const groupedThreads = useMemo(
-    () =>
-      repositoryGroups.map((group) => {
-        const threads: EnvironmentScopedThreadShell[] = [];
-        for (const projectGroup of group.projects) {
-          threads.push(...projectGroup.threads);
-        }
-        return {
-          key: group.key,
-          title: group.projects[0]?.project.title ?? group.title,
-          threads: Arr.sort(threads, threadActivityOrder),
-        };
-      }),
-    [repositoryGroups],
-  );
 
   useEffect(() => {
     if (props.visible) {
@@ -169,7 +152,7 @@ export function ThreadNavigationDrawer(props: {
             ]}
           >
             <View className="flex-row items-center justify-between px-4 pb-5">
-              <Text className="text-[26px] font-t3-bold">Threads</Text>
+              <Text className="text-2xl font-t3-bold">Threads</Text>
               <Pressable
                 onPress={() => {
                   props.onClose();
@@ -186,76 +169,114 @@ export function ThreadNavigationDrawer(props: {
               </Pressable>
             </View>
 
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentInset={{ bottom: Math.max(insets.bottom, 18) + 12 }}
-              contentContainerStyle={{
-                gap: 20,
-                paddingHorizontal: 14,
-              }}
-            >
-              {groupedThreads.map((group) => (
-                <View key={group.key} className="gap-3">
-                  <Text
-                    className="px-1 text-[15px] font-t3-bold text-foreground-muted"
-                    style={{ letterSpacing: -0.2 }}
-                  >
-                    {group.title}
-                  </Text>
-
-                  <View className="overflow-hidden rounded-[22px] bg-card">
-                    {group.threads.length === 0 ? (
-                      <View className="px-4 py-4">
-                        <Text className="text-[14px] font-medium text-foreground-tertiary">
-                          No threads yet
-                        </Text>
-                      </View>
-                    ) : (
-                      group.threads.map((thread, index) => {
-                        const threadKey = scopedThreadKey(thread.environmentId, thread.id);
-                        const selected = props.selectedThreadKey === threadKey;
-
-                        return (
-                          <Pressable
-                            key={threadKey}
-                            onPress={() => {
-                              props.onSelectThread(thread);
-                              props.onClose();
-                            }}
-                            style={{
-                              paddingHorizontal: 16,
-                              paddingVertical: 15,
-                              borderTopWidth: index === 0 ? 0 : 1,
-                              borderTopColor: borderSubtleColor,
-                              backgroundColor: selected ? undefined : "transparent",
-                            }}
-                            className={selected ? "bg-subtle" : undefined}
-                          >
-                            <View className="flex-row items-start justify-between gap-3">
-                              <View className="flex-1 gap-1">
-                                <Text className="text-[16px] font-t3-bold" numberOfLines={1}>
-                                  {thread.title}
-                                </Text>
-                                <Text
-                                  className="text-[13px] font-medium text-foreground-muted"
-                                  numberOfLines={1}
-                                >
-                                  {relativeTime(thread.updatedAt ?? thread.createdAt)}
-                                </Text>
-                              </View>
-                              <StatusPill {...threadStatusTone(thread)} />
-                            </View>
-                          </Pressable>
-                        );
-                      })
-                    )}
-                  </View>
-                </View>
-              ))}
-            </ScrollView>
+            <ThreadNavigationDrawerContent
+              bottomInset={Math.max(insets.bottom, 18)}
+              borderSubtleColor={borderSubtleColor}
+              selectedThreadKey={props.selectedThreadKey}
+              onClose={props.onClose}
+              onSelectThread={props.onSelectThread}
+            />
           </Animated.View>
         </GestureDetector>
       </View>
     </Modal>
+  );
+}
+
+function ThreadNavigationDrawerContent(props: {
+  readonly bottomInset: number;
+  readonly borderSubtleColor: ColorValue;
+  readonly selectedThreadKey: string | null;
+  readonly onClose: () => void;
+  readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
+}) {
+  const projects = useProjects();
+  const threads = useThreadShells();
+  const repositoryGroups = useMemo(
+    () => groupProjectsByRepository({ projects, threads }),
+    [projects, threads],
+  );
+  const groupedThreads = useMemo(
+    () =>
+      repositoryGroups.map((group) => {
+        const threads: EnvironmentThreadShell[] = [];
+        for (const projectGroup of group.projects) {
+          threads.push(...projectGroup.threads);
+        }
+        return {
+          key: group.key,
+          title: group.projects[0]?.project.title ?? group.title,
+          threads: Arr.sort(threads, threadActivityOrder),
+        };
+      }),
+    [repositoryGroups],
+  );
+
+  return (
+    <ScrollView
+      showsVerticalScrollIndicator={false}
+      contentInset={{ bottom: props.bottomInset + 12 }}
+      contentContainerStyle={{
+        gap: 20,
+        paddingHorizontal: 14,
+      }}
+    >
+      {groupedThreads.map((group) => (
+        <View key={group.key} className="gap-3">
+          <Text
+            className="px-1 text-base font-t3-bold text-foreground-muted"
+            style={{ letterSpacing: -0.2 }}
+          >
+            {group.title}
+          </Text>
+
+          <View className="overflow-hidden rounded-[22px] bg-card">
+            {group.threads.length === 0 ? (
+              <View className="px-4 py-4">
+                <Text className="text-sm font-medium text-foreground-tertiary">No threads yet</Text>
+              </View>
+            ) : (
+              group.threads.map((thread, index) => {
+                const threadKey = scopedThreadKey(thread.environmentId, thread.id);
+                const selected = props.selectedThreadKey === threadKey;
+
+                return (
+                  <Pressable
+                    key={threadKey}
+                    onPress={() => {
+                      props.onSelectThread(thread);
+                      props.onClose();
+                    }}
+                    style={{
+                      paddingHorizontal: 16,
+                      paddingVertical: 15,
+                      borderTopWidth: index === 0 ? 0 : 1,
+                      borderTopColor: props.borderSubtleColor,
+                      backgroundColor: selected ? undefined : "transparent",
+                    }}
+                    className={selected ? "bg-subtle" : undefined}
+                  >
+                    <View className="flex-row items-start justify-between gap-3">
+                      <View className="flex-1 gap-1">
+                        <Text className="text-base font-t3-bold" numberOfLines={1}>
+                          {thread.title}
+                        </Text>
+                        <Text
+                          className="text-sm font-medium text-foreground-muted"
+                          numberOfLines={1}
+                        >
+                          {relativeTime(thread.updatedAt ?? thread.createdAt)}
+                        </Text>
+                      </View>
+                      <StatusPill {...threadStatusTone(thread)} />
+                    </View>
+                  </Pressable>
+                );
+              })
+            )}
+          </View>
+        </View>
+      ))}
+    </ScrollView>
   );
 }

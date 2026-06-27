@@ -2,6 +2,8 @@ import type { ComponentType } from "react";
 import type { NativeSyntheticEvent, ViewProps } from "react-native";
 import { requireNativeView } from "expo";
 
+import { NativeViewResolutionError } from "../../native/nativeViewResolutionError";
+
 const NATIVE_REVIEW_DIFF_MODULE_NAME = "T3ReviewDiffSurface";
 
 interface ExpoGlobalWithViewConfig {
@@ -110,6 +112,7 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   readonly styleJson?: string;
   readonly rowHeight: number;
   readonly contentWidth: number;
+  readonly initialRowIndex?: number;
   readonly onDebug?: (event: NativeSyntheticEvent<Record<string, unknown>>) => void;
   readonly onToggleFile?: (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => void;
   readonly onToggleViewedFile?: (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => void;
@@ -127,6 +130,7 @@ export interface NativeReviewDiffViewProps extends ViewProps {
 }
 
 let cachedNativeReviewDiffView: ComponentType<NativeReviewDiffViewProps> | undefined;
+let nativeReviewDiffViewResolutionFailed = false;
 
 function getExpoViewConfig(moduleName: string) {
   return (globalThis as typeof globalThis & ExpoGlobalWithViewConfig).expo?.getViewConfig?.(
@@ -139,6 +143,10 @@ export function resolveNativeReviewDiffView(): ComponentType<NativeReviewDiffVie
     return cachedNativeReviewDiffView;
   }
 
+  if (nativeReviewDiffViewResolutionFailed) {
+    return null;
+  }
+
   if (getExpoViewConfig(NATIVE_REVIEW_DIFF_MODULE_NAME) == null) {
     return null;
   }
@@ -147,7 +155,14 @@ export function resolveNativeReviewDiffView(): ComponentType<NativeReviewDiffVie
     cachedNativeReviewDiffView = requireNativeView<NativeReviewDiffViewProps>(
       NATIVE_REVIEW_DIFF_MODULE_NAME,
     );
-  } catch {
+  } catch (cause) {
+    nativeReviewDiffViewResolutionFailed = true;
+    console.error(
+      new NativeViewResolutionError({
+        nativeModuleName: NATIVE_REVIEW_DIFF_MODULE_NAME,
+        cause,
+      }),
+    );
     return null;
   }
 
