@@ -1339,6 +1339,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     threadLastVisitedAts,
     visibleProjectThreads,
   ]);
+  const remoteProjectEnvironmentLabel =
+    project.environmentPresence === "remote-only"
+      ? project.remoteEnvironmentLabels.join(", ") || "Remote"
+      : null;
 
   const handleProjectButtonClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -2233,6 +2237,26 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             <span className="truncate text-xs font-medium text-foreground/90">
               {project.displayName}
             </span>
+            {remoteProjectEnvironmentLabel ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      aria-label={`Remote project: ${remoteProjectEnvironmentLabel}`}
+                      className="inline-flex h-5 min-w-0 shrink items-center gap-1 rounded-md text-muted-foreground/60"
+                    />
+                  }
+                >
+                  <span className="max-w-[7rem] truncate text-[10px] leading-none max-sm:max-w-[5.5rem]">
+                    {remoteProjectEnvironmentLabel}
+                  </span>
+                  <CloudIcon className="size-3 shrink-0" />
+                </TooltipTrigger>
+                <TooltipPopup side="top">
+                  Remote environment: {remoteProjectEnvironmentLabel}
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
             {project.groupedProjectCount > 1 ? (
               <span className="shrink-0 text-[10px] text-muted-foreground/60">
                 {project.groupedProjectCount} projects
@@ -2240,30 +2264,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             ) : null}
           </span>
         </SidebarMenuButton>
-        {/* Environment badge – visible by default, crossfades with the
-            "new thread" button on hover using the same pointer-events +
-            opacity pattern as the thread row archive/timestamp swap. */}
-        {project.environmentPresence === "remote-only" && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <span
-                  aria-label={
-                    project.environmentPresence === "remote-only"
-                      ? "Remote project"
-                      : "Available in multiple environments"
-                  }
-                  className="pointer-events-none absolute top-1 right-1.5 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/60 transition-opacity duration-150 max-sm:right-7 group-hover/project-header:opacity-0 group-focus-within/project-header:opacity-0 max-sm:group-hover/project-header:opacity-100 max-sm:group-focus-within/project-header:opacity-100"
-                />
-              }
-            >
-              <CloudIcon className="size-3" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              Remote environment: {project.remoteEnvironmentLabels.join(", ")}
-            </TooltipPopup>
-          </Tooltip>
-        )}
         <Tooltip>
           <TooltipTrigger
             render={
