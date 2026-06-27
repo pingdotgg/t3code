@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -180,6 +180,8 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
 export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
   const keyboardInputRef = useRef<TextInput>(null);
+  const keyboardTextValueRef = useRef("");
+  const [keyboardInputValue, setKeyboardInputValue] = useState("");
   const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
   const theme = props.theme ?? getPierreTerminalTheme(appearanceScheme);
   const { onInput, onResize } = props;
@@ -222,11 +224,25 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
   }, [NativeTerminalSurfaceView, props.keyboardFocusRequest]);
 
   const handleKeyboardInput = useCallback(
-    (data: string) => {
-      if (data.length > 0) {
-        onInput(data);
-        keyboardInputRef.current?.clear();
+    (nextText: string) => {
+      if (nextText.length === 0) {
+        keyboardTextValueRef.current = "";
+        setKeyboardInputValue("");
+        return;
       }
+
+      const previousText = keyboardTextValueRef.current;
+      const input =
+        previousText.length > 0 && nextText.startsWith(previousText)
+          ? nextText.slice(previousText.length)
+          : nextText;
+
+      keyboardTextValueRef.current = nextText;
+      if (input.length > 0) {
+        onInput(input);
+      }
+      setKeyboardInputValue("");
+      keyboardInputRef.current?.clear();
     },
     [onInput],
   );
@@ -256,6 +272,7 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
           editable={props.isRunning}
           keyboardType="ascii-capable"
           style={{ bottom: 0, height: 1, left: 0, opacity: 0.01, position: "absolute", width: 1 }}
+          value={keyboardInputValue}
           onChangeText={handleKeyboardInput}
           onKeyPress={(event) => {
             if (event.nativeEvent.key === "Backspace") {

@@ -13,6 +13,10 @@ import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vc
 import { vcsEnvironment } from "../../state/vcs";
 
 import { EmptyState } from "../../components/EmptyState";
+import {
+  AndroidScreenHeader,
+  type AndroidHeaderAction,
+} from "../../components/AndroidScreenHeader";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import {
   buildThreadFilesNavigation,
@@ -339,11 +343,28 @@ function ThreadRouteContent(
   }, [layout.usesSplitView]);
 
   const handleOpenGitInspector = useCallback(() => {
+    if (!fileInspector.supported) {
+      if (selectedThread === null) {
+        return;
+      }
+      router.push({
+        pathname: "/threads/[environmentId]/[threadId]/git",
+        params: {
+          environmentId: selectedThread.environmentId,
+          threadId: selectedThread.id,
+        },
+      });
+      return;
+    }
     setInspectorSelection({ routeThreadIdentity, mode: "git" });
     showAuxiliaryPane("inspector");
-  }, [routeThreadIdentity, showAuxiliaryPane]);
+  }, [fileInspector.supported, routeThreadIdentity, router, selectedThread, showAuxiliaryPane]);
   const handleOpenFilesInspector = useCallback(() => {
-    if (!fileInspector.supported || selectedThread === null || selectedThreadCwd === null) {
+    if (selectedThread === null || selectedThreadCwd === null) {
+      return;
+    }
+    if (!fileInspector.supported) {
+      router.push(buildThreadFilesNavigation(selectedThread));
       return;
     }
     setInspectorSelection({
@@ -355,6 +376,7 @@ function ThreadRouteContent(
     fileInspector.supported,
     props.renderInspector,
     routeThreadIdentity,
+    router,
     selectedThread,
     selectedThreadCwd,
     showAuxiliaryPane,
@@ -562,13 +584,61 @@ function ThreadRouteContent(
     connectionState: routeConnectionState,
   });
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
+  const androidHeaderActions = useMemo<ReadonlyArray<AndroidHeaderAction>>(() => {
+    if (Platform.OS !== "android") return [];
+
+    const actions: AndroidHeaderAction[] = [];
+    if (props.onReturnToThread) {
+      actions.push({
+        accessibilityLabel: "Return to chat",
+        icon: "chevron.left",
+        onPress: props.onReturnToThread,
+      });
+    }
+    if (selectedThreadCwd !== null) {
+      actions.push({
+        accessibilityLabel: "Open files",
+        icon: "folder",
+        onPress: handleOpenFilesInspector,
+      });
+    }
+    if (selectedThreadProject?.workspaceRoot) {
+      actions.push({
+        accessibilityLabel: "Open terminal",
+        icon: "terminal",
+        onPress: () => handleOpenTerminal(null),
+      });
+    }
+    actions.push({
+      accessibilityLabel: "Open git controls",
+      icon: "point.topleft.down.curvedto.point.bottomright.up",
+      onPress: handleOpenGitInspector,
+    });
+    if (fileInspector.supported && selectedThreadCwd !== null) {
+      actions.push({
+        accessibilityLabel: "Toggle inspector",
+        icon: "sidebar.right",
+        onPress: handleToggleInspector,
+      });
+    }
+    return actions;
+  }, [
+    fileInspector.supported,
+    handleOpenFilesInspector,
+    handleOpenTerminal,
+    handleOpenGitInspector,
+    handleToggleInspector,
+    props.onReturnToThread,
+    selectedThreadCwd,
+    selectedThreadProject?.workspaceRoot,
+  ]);
 
   return (
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
       <Stack.Screen
         options={{
-          headerShown: true,
+          headerShown: Platform.OS !== "android",
           headerTransparent: USES_NATIVE_GLASS_HEADER,
           headerBlurEffect: USES_NATIVE_GLASS_HEADER ? "systemThinMaterial" : undefined,
           headerShadowVisible: false,
@@ -593,53 +663,64 @@ function ThreadRouteContent(
         }}
       />
 
-      <Stack.Screen.Title asChild>
-        <ThreadHeaderTitle
-          foregroundColor={foregroundColor}
-          secondaryForegroundColor={secondaryFg}
-          subtitle={headerSubtitle}
+      {Platform.OS === "android" ? (
+        <AndroidScreenHeader
           title={selectedThread.title}
+          subtitle={headerSubtitle}
+          onBack={layout.usesSplitView ? undefined : () => router.back()}
+          actions={androidHeaderActions}
         />
-      </Stack.Screen.Title>
+      ) : (
+        <>
+          <Stack.Screen.Title asChild>
+            <ThreadHeaderTitle
+              foregroundColor={foregroundColor}
+              secondaryForegroundColor={secondaryFg}
+              subtitle={headerSubtitle}
+              title={selectedThread.title}
+            />
+          </Stack.Screen.Title>
 
-      <WorkspaceSidebarToolbar>
-        {props.onReturnToThread ? (
-          <Stack.Toolbar.Button
-            accessibilityLabel="Return to chat"
-            icon="chevron.left"
-            onPress={props.onReturnToThread}
+          <WorkspaceSidebarToolbar>
+            {props.onReturnToThread ? (
+              <Stack.Toolbar.Button
+                accessibilityLabel="Return to chat"
+                icon="chevron.left"
+                onPress={props.onReturnToThread}
+              />
+            ) : null}
+          </WorkspaceSidebarToolbar>
+
+          <ThreadGitControls
+            auxiliaryPaneControl={
+              fileInspector.supported && selectedThreadCwd !== null
+                ? {
+                    accessibilityLabel: "Toggle inspector",
+                    onPress: handleToggleInspector,
+                  }
+                : undefined
+            }
+            onOpenFilesInspector={
+              fileInspector.supported && selectedThreadCwd !== null
+                ? handleOpenFilesInspector
+                : undefined
+            }
+            onOpenGitInspector={fileInspector.supported ? handleOpenGitInspector : undefined}
+            currentBranch={selectedThread.branch}
+            gitStatus={gitStatus.data}
+            gitOperationLabel={gitState.gitOperationLabel}
+            canOpenTerminal={Boolean(selectedThreadProject?.workspaceRoot)}
+            canOpenFiles={Boolean(selectedThreadProject?.workspaceRoot)}
+            projectScripts={selectedThreadProject?.scripts ?? []}
+            terminalSessions={terminalMenuSessions}
+            onOpenTerminal={handleOpenTerminal}
+            onOpenNewTerminal={handleOpenNewTerminal}
+            onRunProjectScript={handleRunProjectScript}
+            onPull={gitActions.onPullSelectedThreadBranch}
+            onRunAction={gitActions.onRunSelectedThreadGitAction}
           />
-        ) : null}
-      </WorkspaceSidebarToolbar>
-
-      <ThreadGitControls
-        auxiliaryPaneControl={
-          fileInspector.supported && selectedThreadCwd !== null
-            ? {
-                accessibilityLabel: "Toggle inspector",
-                onPress: handleToggleInspector,
-              }
-            : undefined
-        }
-        onOpenFilesInspector={
-          fileInspector.supported && selectedThreadCwd !== null
-            ? handleOpenFilesInspector
-            : undefined
-        }
-        onOpenGitInspector={fileInspector.supported ? handleOpenGitInspector : undefined}
-        currentBranch={selectedThread.branch}
-        gitStatus={gitStatus.data}
-        gitOperationLabel={gitState.gitOperationLabel}
-        canOpenTerminal={Boolean(selectedThreadProject?.workspaceRoot)}
-        canOpenFiles={Boolean(selectedThreadProject?.workspaceRoot)}
-        projectScripts={selectedThreadProject?.scripts ?? []}
-        terminalSessions={terminalMenuSessions}
-        onOpenTerminal={handleOpenTerminal}
-        onOpenNewTerminal={handleOpenNewTerminal}
-        onRunProjectScript={handleRunProjectScript}
-        onPull={gitActions.onPullSelectedThreadBranch}
-        onRunAction={gitActions.onRunSelectedThreadGitAction}
-      />
+        </>
+      )}
 
       <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
 
@@ -676,6 +757,7 @@ function ThreadRouteContent(
             onNativePasteImages={composer.onNativePasteImages}
             onRemoveDraftImage={composer.onRemoveDraftImage}
             serverConfig={serverConfig}
+            contentTopInset={Platform.OS === "android" ? 0 : undefined}
             onStopThread={handleStopThread}
             onSendMessage={composer.onSendMessage}
             onReconnectEnvironment={handleReconnectEnvironment}

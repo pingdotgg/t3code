@@ -9,6 +9,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   Switch,
@@ -19,6 +20,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import {
   type RelayEnvironmentView,
   useConnectionController,
@@ -59,16 +61,31 @@ export default function SettingsEnvironmentsRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       <Stack.Screen
         options={{
+          headerShown: Platform.OS !== "android",
           title: "Environments",
         }}
       />
-      <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Button
-          icon="plus"
-          onPress={() => router.push("/settings/environment-new")}
-          separateBackground
+      {Platform.OS === "android" ? (
+        <AndroidScreenHeader
+          title="Environments"
+          onBack={() => router.back()}
+          actions={[
+            {
+              accessibilityLabel: "Add environment",
+              icon: "plus",
+              onPress: () => router.push("/settings/environment-new"),
+            },
+          ]}
         />
-      </Stack.Toolbar>
+      ) : (
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Button
+            icon="plus"
+            onPress={() => router.push("/settings/environment-new")}
+            separateBackground
+          />
+        </Stack.Toolbar>
+      )}
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}

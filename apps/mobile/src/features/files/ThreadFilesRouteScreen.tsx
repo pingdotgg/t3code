@@ -5,6 +5,7 @@ import { useHeaderHeight } from "expo-router/build/react-navigation/elements";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   Text as RNText,
@@ -19,7 +20,8 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 
-import { AppText as Text } from "../../components/AppText";
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { CopyTextButton } from "../../components/CopyTextButton";
 import { EmptyState } from "../../components/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
@@ -467,7 +469,9 @@ export function ThreadFilesTreeScreen() {
   const { fileInspector, layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
   const colorScheme = useColorScheme();
+  const isAndroid = Platform.OS === "android";
   const highlightTheme = colorScheme === "dark" ? "dark" : "light";
+  const iconColor = String(useThemeColor("--color-icon-muted"));
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace();
   const entriesQuery = useEnvironmentQuery(
     environmentId !== null && cwd !== null && !fileInspector.supported
@@ -560,7 +564,7 @@ export function ThreadFilesTreeScreen() {
       <Stack.Screen
         options={{
           title: "Files",
-          headerShown: true,
+          headerShown: !isAndroid,
           headerTransparent: true,
           headerStyle: { backgroundColor: "transparent" },
           headerShadowVisible: false,
@@ -579,28 +583,61 @@ export function ThreadFilesTreeScreen() {
           },
         }}
       />
-      <Stack.Toolbar placement="right">
-        {layout.usesSplitView ? (
-          <Stack.Toolbar.Button
-            accessibilityLabel={
-              panes.primarySidebarVisible ? "Maximize files" : "Show thread sidebar"
-            }
-            icon={
-              panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left"
-            }
-            onPress={togglePrimarySidebar}
-            separateBackground
+      {isAndroid ? (
+        <>
+          <AndroidScreenHeader
+            title="Files"
+            subtitle={projectName}
+            onBack={handleReturnToThread}
+            actions={[
+              {
+                accessibilityLabel: "Refresh files",
+                icon: "arrow.clockwise",
+                onPress: entriesQuery.refresh,
+              },
+            ]}
           />
-        ) : null}
-        <Stack.Toolbar.Button
-          accessibilityLabel="Refresh files"
-          icon="arrow.clockwise"
-          onPress={entriesQuery.refresh}
-        />
-      </Stack.Toolbar>
-      <Stack.Toolbar placement="bottom">
-        <Stack.Toolbar.SearchBarSlot />
-      </Stack.Toolbar>
+          <View className="flex-row items-center gap-2 border-b border-border px-3 py-2">
+            <SymbolView name="magnifyingglass" size={17} tintColor={iconColor} type="monochrome" />
+            <TextInput
+              accessibilityLabel="Search files"
+              autoCapitalize="none"
+              autoCorrect={false}
+              className="min-h-10 flex-1 rounded-xl py-2 text-sm"
+              placeholder="Search files"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+          </View>
+        </>
+      ) : (
+        <>
+          <Stack.Toolbar placement="right">
+            {layout.usesSplitView ? (
+              <Stack.Toolbar.Button
+                accessibilityLabel={
+                  panes.primarySidebarVisible ? "Maximize files" : "Show thread sidebar"
+                }
+                icon={
+                  panes.primarySidebarVisible
+                    ? "arrow.up.left.and.arrow.down.right"
+                    : "sidebar.left"
+                }
+                onPress={togglePrimarySidebar}
+                separateBackground
+              />
+            ) : null}
+            <Stack.Toolbar.Button
+              accessibilityLabel="Refresh files"
+              icon="arrow.clockwise"
+              onPress={entriesQuery.refresh}
+            />
+          </Stack.Toolbar>
+          <Stack.Toolbar placement="bottom">
+            <Stack.Toolbar.SearchBarSlot />
+          </Stack.Toolbar>
+        </>
+      )}
       <FileTreeBrowser
         entries={entriesData?.entries ?? []}
         error={entriesQuery.error}

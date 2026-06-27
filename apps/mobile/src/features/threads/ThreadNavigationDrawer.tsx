@@ -1,4 +1,3 @@
-import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   type ColorValue,
@@ -19,6 +18,7 @@ import Animated, {
 import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/AppSymbol";
 import { StatusPill } from "../../components/StatusPill";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { scopedThreadKey } from "../../lib/scopedEntities";
@@ -131,14 +131,13 @@ export function ThreadNavigationDrawer(props: {
                 bottom: 0,
                 width: drawerWidth,
                 backgroundColor: drawerBg,
-                paddingTop: insets.top + 10,
-                paddingBottom: Math.max(insets.bottom, 18),
+                paddingTop: insets.top,
                 boxShadow: `20px 0 36px ${String(drawerShadow)}`,
               },
               drawerStyle,
             ]}
           >
-            <View className="flex-row items-center justify-between px-4 pb-5">
+            <View className="min-h-14 flex-row items-center justify-between px-4 py-2">
               <Text className="text-2xl font-t3-bold">Threads</Text>
               <Pressable
                 onPress={() => {

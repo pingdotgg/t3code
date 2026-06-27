@@ -7,10 +7,19 @@ import type {
   SidebarProjectGroupingMode,
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
-import { SymbolView } from "expo-symbols";
+import * as Haptics from "expo-haptics";
 import { useCallback, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
-import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  ScrollView,
+  useWindowDimensions,
+  View,
+} from "react-native";
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from "react-native-gesture-handler/ReanimatedSwipeable";
 import Animated, {
   Easing,
   LinearTransition,
@@ -22,6 +31,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/AppSymbol";
 import { EmptyState } from "../../components/EmptyState";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import type { WorkspaceState } from "../../state/workspaceModel";
@@ -29,7 +39,11 @@ import type { SavedRemoteConnection } from "../../lib/connection";
 import { relativeTime } from "../../lib/time";
 import { threadStatusTone } from "../threads/threadPresentation";
 import { buildHomeThreadGroups, type HomeProjectSortOrder } from "./homeThreadList";
-import { ThreadSwipeable } from "./thread-swipe-actions";
+import {
+  THREAD_SWIPE_ACTIONS_WIDTH,
+  THREAD_SWIPE_SPRING,
+  ThreadSwipeActions,
+} from "./thread-swipe-actions";
 import { WorkspaceConnectionStatus } from "./WorkspaceConnectionStatus";
 import { shouldShowWorkspaceConnectionStatus } from "./workspace-connection-status";
 
@@ -214,10 +228,13 @@ function ThreadRow(props: {
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   readonly isLast: boolean;
 }) {
+  const swipeableRef = useRef<SwipeableMethods | null>(null);
+  const fullSwipeArmedRef = useRef(false);
   const { width: windowWidth } = useWindowDimensions();
   const separatorColor = useThemeColor("--color-separator");
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
   const cardColor = useThemeColor("--color-card");
+  const fullSwipeThreshold = Math.max(THREAD_SWIPE_ACTIONS_WIDTH + 44, (windowWidth - 32) * 0.58);
   const { bg, fg } = statusColors(props.thread);
   const tone = threadStatusTone(props.thread);
   const timestamp = relativeTime(
@@ -227,107 +244,150 @@ function ThreadRow(props: {
   const subtitleParts = [props.environmentLabel, branch].filter((part): part is string =>
     Boolean(part),
   );
+  const handleFullSwipeArmedChange = useCallback((armed: boolean) => {
+    if (armed && !fullSwipeArmedRef.current && process.env.EXPO_OS === "ios") {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+    fullSwipeArmedRef.current = armed;
+  }, []);
 
   return (
-    <ThreadSwipeable
-      backgroundColor={cardColor}
-      fullSwipeWidth={windowWidth - 32}
-      onDelete={props.onDelete}
-      onSwipeableClose={props.onSwipeableClose}
-      onSwipeableWillOpen={props.onSwipeableWillOpen}
-      primaryAction={{
-        accessibilityLabel: `Archive ${props.thread.title}`,
-        icon: "archivebox",
-        label: "Archive",
-        onPress: props.onArchive,
+    <ReanimatedSwipeable
+      ref={swipeableRef}
+      animationOptions={THREAD_SWIPE_SPRING}
+      childrenContainerStyle={{ backgroundColor: cardColor }}
+      containerStyle={{ backgroundColor: cardColor }}
+      dragOffsetFromRightEdge={8}
+      enableTrackpadTwoFingerGesture
+      friction={1}
+      onSwipeableClose={() => {
+        fullSwipeArmedRef.current = false;
+        if (swipeableRef.current) {
+          props.onSwipeableClose(swipeableRef.current);
+        }
       }}
-      threadTitle={props.thread.title}
-    >
-      {(close) => (
-        <Pressable
-          accessibilityHint="Swipe left for archive and delete actions"
-          accessibilityLabel={props.thread.title}
-          accessibilityRole="button"
-          className="bg-card"
-          onPress={() => {
-            close();
-            props.onPress();
+      onSwipeableOpenStartDrag={() => {
+        if (swipeableRef.current) {
+          props.onSwipeableWillOpen(swipeableRef.current);
+        }
+      }}
+      onSwipeableWillOpen={() => {
+        const methods = swipeableRef.current;
+        if (!methods) {
+          return;
+        }
+
+        props.onSwipeableWillOpen(methods);
+        if (fullSwipeArmedRef.current) {
+          fullSwipeArmedRef.current = false;
+          methods.close();
+          props.onDelete();
+        }
+      }}
+      overshootFriction={1}
+      overshootRight
+      renderRightActions={(_progress, translation, methods) => (
+        <ThreadSwipeActions
+          backgroundColor={cardColor}
+          fullSwipeThreshold={fullSwipeThreshold}
+          onDelete={props.onDelete}
+          onFullSwipeArmedChange={handleFullSwipeArmedChange}
+          primaryAction={{
+            accessibilityLabel: `Archive ${props.thread.title}`,
+            icon: "archivebox",
+            label: "Archive",
+            onPress: props.onArchive,
           }}
-          style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+          swipeableMethods={methods}
+          threadTitle={props.thread.title}
+          translation={translation}
+        />
+      )}
+      rightThreshold={THREAD_SWIPE_ACTIONS_WIDTH * 0.42}
+    >
+      <Pressable
+        accessibilityHint="Swipe left for archive and delete actions"
+        accessibilityLabel={props.thread.title}
+        accessibilityRole="button"
+        className="bg-card"
+        onPress={() => {
+          swipeableRef.current?.close();
+          props.onPress();
+        }}
+        style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            paddingLeft: 16,
+            paddingRight: 16,
+            paddingVertical: 10,
+            gap: 12,
+            borderBottomWidth: props.isLast ? 0 : 1,
+            borderBottomColor: separatorColor,
+          }}
         >
           <View
             style={{
-              flexDirection: "row",
-              paddingLeft: 16,
-              paddingRight: 16,
-              paddingVertical: 10,
-              gap: 12,
-              borderBottomWidth: props.isLast ? 0 : 1,
-              borderBottomColor: separatorColor,
+              width: 30,
+              height: 30,
+              borderRadius: 9,
+              backgroundColor: bg,
+              alignItems: "center",
+              justifyContent: "center",
+              marginTop: 2,
             }}
           >
-            <View
-              style={{
-                width: 30,
-                height: 30,
-                borderRadius: 9,
-                backgroundColor: bg,
-                alignItems: "center",
-                justifyContent: "center",
-                marginTop: 2,
-              }}
-            >
-              <SymbolView name="arrow.triangle.branch" size={13} tintColor={fg} type="monochrome" />
-            </View>
-
-            <View style={{ flex: 1, gap: 3 }}>
-              <View className="flex-row items-center justify-between gap-2">
-                <Text
-                  className="flex-1 text-base font-t3-bold leading-[20px] text-foreground"
-                  numberOfLines={1}
-                >
-                  {props.thread.title}
-                </Text>
-                <View className="flex-row items-center gap-2">
-                  <View
-                    className={tone.pillClassName}
-                    style={{ borderRadius: 99, paddingHorizontal: 6, paddingVertical: 2 }}
-                  >
-                    <Text className={`text-3xs font-t3-bold ${tone.textClassName}`}>
-                      {tone.label}
-                    </Text>
-                  </View>
-                  <Text
-                    className="text-xs text-foreground-tertiary"
-                    style={{ fontVariant: ["tabular-nums"] }}
-                  >
-                    {timestamp}
-                  </Text>
-                </View>
-              </View>
-
-              {subtitleParts.length > 0 ? (
-                <View className="flex-row items-center gap-1.5" style={{ marginTop: 1 }}>
-                  <SymbolView
-                    name="arrow.triangle.branch"
-                    size={10}
-                    tintColor={iconSubtleColor}
-                    type="monochrome"
-                  />
-                  <Text
-                    className="text-2xs text-foreground-tertiary"
-                    numberOfLines={1}
-                    style={{ fontFamily: "monospace" }}
-                  >
-                    {subtitleParts.join(" · ")}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
+            <SymbolView name="arrow.triangle.branch" size={13} tintColor={fg} type="monochrome" />
           </View>
-        </Pressable>
-      )}
-    </ThreadSwipeable>
+
+          <View style={{ flex: 1, gap: 3 }}>
+            <View className="flex-row items-center justify-between gap-2">
+              <Text
+                className="flex-1 text-base font-t3-bold leading-[20px] text-foreground"
+                numberOfLines={1}
+              >
+                {props.thread.title}
+              </Text>
+              <View className="flex-row items-center gap-2">
+                <View
+                  className={tone.pillClassName}
+                  style={{ borderRadius: 99, paddingHorizontal: 6, paddingVertical: 2 }}
+                >
+                  <Text className={`text-3xs font-t3-bold ${tone.textClassName}`}>
+                    {tone.label}
+                  </Text>
+                </View>
+                <Text
+                  className="text-xs text-foreground-tertiary"
+                  style={{ fontVariant: ["tabular-nums"] }}
+                >
+                  {timestamp}
+                </Text>
+              </View>
+            </View>
+
+            {subtitleParts.length > 0 ? (
+              <View className="flex-row items-center gap-1.5" style={{ marginTop: 1 }}>
+                <SymbolView
+                  name="arrow.triangle.branch"
+                  size={10}
+                  tintColor={iconSubtleColor}
+                  type="monochrome"
+                />
+                <Text
+                  className="text-2xs text-foreground-tertiary"
+                  numberOfLines={1}
+                  style={{ fontFamily: "monospace" }}
+                >
+                  {subtitleParts.join(" · ")}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      </Pressable>
+    </ReanimatedSwipeable>
   );
 }
 
@@ -401,16 +461,19 @@ export function HomeScreen(props: HomeScreenProps) {
   return (
     <View className="flex-1 bg-screen">
       <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
+        contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
         showsVerticalScrollIndicator={false}
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
         onScrollBeginDrag={() => openSwipeableRef.current?.close()}
         className="flex-1"
         contentContainerStyle={{
+          alignSelf: "center",
+          width: "100%",
+          maxWidth: 720,
           paddingHorizontal: 16,
-          paddingTop: 8,
-          paddingBottom: 24,
+          paddingTop: Platform.OS === "android" ? 16 : 8,
+          paddingBottom: Math.max(insets.bottom, 24),
           gap: 20,
         }}
       >

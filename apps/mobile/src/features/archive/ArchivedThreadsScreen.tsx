@@ -10,6 +10,7 @@ import { SymbolView } from "expo-symbols";
 import { useCallback, useRef } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -61,6 +62,10 @@ function ArchivedThreadsHeader(props: {
   readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
 }) {
   const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
+  const searchBackgroundColor = useThemeColor("--color-input");
+  const searchIconColor = useThemeColor("--color-icon");
+  const searchPlaceholderColor = useThemeColor("--color-placeholder");
+  const searchTextColor = useThemeColor("--color-foreground");
 
   return (
     <>
@@ -73,6 +78,14 @@ function ArchivedThreadsHeader(props: {
             obscureBackground: false,
             placeholder: "Search archived threads",
             placement: "stacked",
+            ...(Platform.OS === "android"
+              ? {
+                  barTintColor: searchBackgroundColor,
+                  headerIconColor: searchIconColor,
+                  hintTextColor: searchPlaceholderColor,
+                  textColor: searchTextColor,
+                }
+              : {}),
             onChangeText: (event) => {
               props.onSearchQueryChange(event.nativeEvent.text);
             },

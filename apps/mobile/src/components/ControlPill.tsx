@@ -1,10 +1,10 @@
 import { MenuView } from "@react-native-menu/menu";
 import type { ComponentProps, ReactNode } from "react";
 import { Pressable, useColorScheme, View } from "react-native";
-import { SymbolView } from "expo-symbols";
 import { useThemeColor } from "../lib/useThemeColor";
 
 import { cn } from "../lib/cn";
+import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
 
 export function ControlPill(props: {

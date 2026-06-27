@@ -2,10 +2,11 @@ import { Stack, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
-import { ScrollView, View } from "react-native";
+import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -33,16 +34,31 @@ export default function ConnectionsRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       <Stack.Screen
         options={{
+          headerShown: Platform.OS !== "android",
           title: "Environments",
         }}
       />
-      <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Button
-          icon="plus"
-          onPress={() => router.push("/connections/new")}
-          separateBackground
+      {Platform.OS === "android" ? (
+        <AndroidScreenHeader
+          title="Environments"
+          onBack={() => router.back()}
+          actions={[
+            {
+              accessibilityLabel: "Add environment",
+              icon: "plus",
+              onPress: () => router.push("/connections/new"),
+            },
+          ]}
         />
-      </Stack.Toolbar>
+      ) : (
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Button
+            icon="plus"
+            onPress={() => router.push("/connections/new")}
+            separateBackground
+          />
+        </Stack.Toolbar>
+      )}
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}

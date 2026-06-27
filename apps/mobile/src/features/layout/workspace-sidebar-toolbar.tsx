@@ -1,12 +1,13 @@
 import { Stack } from "expo-router";
 import type { ReactNode } from "react";
+import { Platform } from "react-native";
 
 import { useAdaptiveWorkspaceLayout } from "./AdaptiveWorkspaceLayout";
 
 export function WorkspaceSidebarToolbar(props: { readonly children?: ReactNode } = {}) {
   const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
 
-  if (!layout.usesSplitView) {
+  if (Platform.OS === "android" || !layout.usesSplitView) {
     return null;
   }
 

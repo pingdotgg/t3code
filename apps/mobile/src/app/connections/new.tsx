@@ -2,10 +2,11 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, ScrollView, View } from "react-native";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { ErrorBanner } from "../../components/ErrorBanner";
 import { dismissRoute } from "../../lib/routes";
@@ -126,22 +127,43 @@ export default function ConnectionsNewRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       <Stack.Screen
         options={{
+          headerShown: Platform.OS !== "android",
           title: showScanner ? "Scan QR Code" : "Add Environment",
         }}
       />
-      <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Button
-          icon={showScanner ? "xmark" : "qrcode.viewfinder"}
-          onPress={() => {
-            if (showScanner) {
-              closeScanner();
-            } else {
-              void openScanner();
-            }
-          }}
-          separateBackground
+      {Platform.OS === "android" ? (
+        <AndroidScreenHeader
+          title={showScanner ? "Scan QR Code" : "Add Environment"}
+          onBack={() => router.back()}
+          actions={[
+            {
+              accessibilityLabel: showScanner ? "Close scanner" : "Scan QR code",
+              icon: showScanner ? "xmark" : "camera",
+              onPress: () => {
+                if (showScanner) {
+                  closeScanner();
+                } else {
+                  void openScanner();
+                }
+              },
+            },
+          ]}
         />
-      </Stack.Toolbar>
+      ) : (
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Button
+            icon={showScanner ? "xmark" : "qrcode.viewfinder"}
+            onPress={() => {
+              if (showScanner) {
+                closeScanner();
+              } else {
+                void openScanner();
+              }
+            }}
+            separateBackground
+          />
+        </Stack.Toolbar>
+      )}
 
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"

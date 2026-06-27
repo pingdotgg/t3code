@@ -2,10 +2,11 @@ import { Link, Stack, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useMemo } from "react";
-import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useProjects, useThreadShells } from "../../state/entities";
@@ -110,22 +111,36 @@ export default function NewTaskRoute() {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <Stack.Screen options={{ title: "Choose project" }} />
-      <Stack.Toolbar placement="right">
-        {layout.usesSplitView ? (
+      <Stack.Screen options={{ headerShown: Platform.OS !== "android", title: "Choose project" }} />
+      {Platform.OS === "android" ? (
+        <AndroidScreenHeader
+          title="Choose project"
+          onBack={layout.usesSplitView ? () => router.back() : undefined}
+          actions={[
+            {
+              accessibilityLabel: "Add project",
+              icon: "plus",
+              onPress: () => router.push("/new/add-project"),
+            },
+          ]}
+        />
+      ) : (
+        <Stack.Toolbar placement="right">
+          {layout.usesSplitView ? (
+            <Stack.Toolbar.Button
+              accessibilityLabel="Close new task"
+              icon="xmark"
+              onPress={() => router.back()}
+              separateBackground
+            />
+          ) : null}
           <Stack.Toolbar.Button
-            accessibilityLabel="Close new task"
-            icon="xmark"
-            onPress={() => router.back()}
+            icon="plus"
+            onPress={() => router.push("/new/add-project")}
             separateBackground
           />
-        ) : null}
-        <Stack.Toolbar.Button
-          icon="plus"
-          onPress={() => router.push("/new/add-project")}
-          separateBackground
-        />
-      </Stack.Toolbar>
+        </Stack.Toolbar>
+      )}
 
       <ScrollView
         showsVerticalScrollIndicator={false}

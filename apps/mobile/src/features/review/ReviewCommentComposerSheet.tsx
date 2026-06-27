@@ -1,14 +1,21 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { SymbolView } from "expo-symbols";
 import { TextInputWrapper } from "expo-paste-input";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, View, useColorScheme, useWindowDimensions } from "react-native";
-import { KeyboardAvoidingView } from "react-native-keyboard-controller";
+import {
+  Platform,
+  Pressable,
+  ScrollView,
+  View,
+  useColorScheme,
+  useWindowDimensions,
+} from "react-native";
+import { KeyboardAvoidingView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ImageViewing from "react-native-image-viewing";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { SymbolView } from "../../components/AppSymbol";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { ControlPill } from "../../components/ControlPill";
 import { cn } from "../../lib/cn";
@@ -41,6 +48,7 @@ import {
 const REVIEW_COMMENT_PREVIEW_MAX_LINES = 5;
 
 export function ReviewCommentComposerSheet() {
+  const isAndroid = Platform.OS === "android";
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -140,6 +148,21 @@ export function ReviewCommentComposerSheet() {
     }
   }
 
+  const handleSubmit = useCallback(() => {
+    if (!target || !environmentId || !threadId || commentText.trim().length === 0) {
+      return;
+    }
+
+    appendReviewCommentToDraft({
+      environmentId,
+      threadId,
+      text: formatReviewCommentContext(target, commentText),
+      attachments,
+    });
+    setAttachments([]);
+    dismissComposer();
+  }, [attachments, commentText, dismissComposer, environmentId, target, threadId]);
+
   return (
     <View style={{ flex: 1 }}>
       <KeyboardAvoidingView automaticOffset behavior="padding" style={{ flex: 1 }}>
@@ -147,8 +170,8 @@ export function ReviewCommentComposerSheet() {
           style={{
             flex: 1,
             paddingHorizontal: 20,
-            paddingTop: 8,
-            paddingBottom: target ? 0 : Math.max(insets.bottom, 18),
+            paddingTop: isAndroid ? insets.top + 8 : 8,
+            paddingBottom: target ? (isAndroid ? 72 : 0) : Math.max(insets.bottom, 18),
           }}
         >
           <View className="flex-row items-center justify-between py-2">
@@ -274,7 +297,7 @@ export function ReviewCommentComposerSheet() {
             </View>
           )}
         </View>
-        {target ? (
+        {!isAndroid && target ? (
           <View className="flex-row items-center gap-3 bg-sheet px-5 py-2">
             <ControlPill
               accessibilityLabel="Add image"
@@ -288,24 +311,37 @@ export function ReviewCommentComposerSheet() {
               label="Comment"
               variant="primary"
               disabled={!canSubmit}
-              onPress={() => {
-                if (!target || !environmentId || !threadId || commentText.trim().length === 0) {
-                  return;
-                }
-
-                appendReviewCommentToDraft({
-                  environmentId,
-                  threadId,
-                  text: formatReviewCommentContext(target, commentText),
-                  attachments,
-                });
-                setAttachments([]);
-                dismissComposer();
-              }}
+              onPress={handleSubmit}
             />
           </View>
         ) : null}
       </KeyboardAvoidingView>
+      {isAndroid && target ? (
+        <KeyboardStickyView
+          offset={{ closed: 0, opened: 0 }}
+          style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
+        >
+          <View
+            className="flex-row items-center gap-3 border-t border-border bg-sheet px-5 pt-2"
+            style={{ paddingBottom: Math.max(insets.bottom, 10) }}
+          >
+            <ControlPill
+              accessibilityLabel="Add image"
+              icon="plus"
+              onPress={() => void handlePickImages()}
+            />
+            <View className="flex-1" />
+            <ControlPill
+              accessibilityLabel="Comment"
+              icon="arrow.up"
+              label="Comment"
+              variant="primary"
+              disabled={!canSubmit}
+              onPress={handleSubmit}
+            />
+          </View>
+        </KeyboardStickyView>
+      ) : null}
       <ImageViewing
         images={previewImageUri ? [{ uri: previewImageUri }] : []}
         imageIndex={0}

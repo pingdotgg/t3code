@@ -1,19 +1,21 @@
 import Stack from "expo-router/stack";
-import { StyleSheet } from "react-native";
+import { Platform, StyleSheet } from "react-native";
 import { useResolveClassNames } from "uniwind";
 import { useAdaptiveWorkspaceLayout } from "../../../../features/layout/AdaptiveWorkspaceLayout";
+import { useThemeColor } from "../../../../lib/useThemeColor";
 import { ThreadSelectionProvider } from "../../../../state/use-thread-selection";
 
 export default function ThreadLayout() {
   const { fileInspector } = useAdaptiveWorkspaceLayout();
   const sheetStyle = StyleSheet.flatten(useResolveClassNames("bg-sheet"));
+  const headerTintColor = useThemeColor("--color-foreground");
   const headerBg = {
     backgroundColor: (sheetStyle as { backgroundColor?: string })?.backgroundColor,
   };
 
   return (
     <ThreadSelectionProvider>
-      <Stack screenOptions={{ headerShown: false }}>
+      <Stack screenOptions={{ headerShown: false, headerTintColor }}>
         <Stack.Screen
           name="index"
           options={{
@@ -92,9 +94,9 @@ export default function ThreadLayout() {
             contentStyle: sheetStyle,
             gestureEnabled: true,
             headerShown: false,
-            presentation: "formSheet" as const,
-            sheetAllowedDetents: [0.72, 0.92],
-            sheetGrabberVisible: true,
+            presentation: Platform.OS === "android" ? "fullScreenModal" : "formSheet",
+            sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.72, 0.92],
+            sheetGrabberVisible: Platform.OS !== "android",
           }}
         />
         <Stack.Screen

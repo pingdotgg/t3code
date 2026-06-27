@@ -1,8 +1,8 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useLocalSearchParams } from "expo-router";
+import type { MenuAction } from "@react-native-menu/menu";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useHeaderHeight } from "expo-router/build/react-navigation/elements";
 import Stack from "expo-router/stack";
-import { SymbolView } from "expo-symbols";
 import {
   memo,
   type Ref,
@@ -28,6 +28,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/AppSymbol";
+import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -58,6 +61,7 @@ import { useReviewCommentSelectionController } from "./useReviewCommentSelection
 import { resolveReviewAvailability } from "./reviewAvailability";
 import { resolveSelectedReviewFileId } from "./reviewPaneSelection";
 import { buildReviewSectionMenu } from "./review-section-menu";
+import type { ReviewSectionItem } from "./reviewModel";
 
 const REVIEW_HEADER_SPACING = 0;
 
@@ -382,6 +386,8 @@ function ReviewHeaderTitle(props: {
 }
 
 export function ReviewSheet() {
+  const router = useRouter();
+  const isAndroid = process.env.EXPO_OS === "android";
   useAdaptiveWorkspacePaneRole("inspector");
   const { layout, panes, showAuxiliaryPane, toggleAuxiliaryPane, togglePrimarySidebar } =
     useAdaptiveWorkspaceLayout();
@@ -401,7 +407,7 @@ export function ReviewSheet() {
   const { draftMessage } = useThreadDraftForThread({ environmentId, threadId });
   const reviewCache = useReviewCacheForThread({ environmentId, threadId });
   const selectedTheme = colorScheme === "dark" ? "dark" : "light";
-  const topContentInset = headerHeight;
+  const topContentInset = isAndroid ? 0 : headerHeight;
 
   useEffect(() => {
     showAuxiliaryPane("inspector");
@@ -531,9 +537,63 @@ export function ReviewSheet() {
     hasCachedSelectedDiff,
     hasAnyCachedDiff,
   });
+  const androidSectionMenuActions = useMemo<MenuAction[]>(() => {
+    const sectionAction = (section: ReviewSectionItem | null, title: string): MenuAction => ({
+      id: section ? `section:${section.id}` : `unavailable:${title}`,
+      title: section?.id === selectedSection?.id ? `${title} (selected)` : title,
+      attributes: section ? undefined : { disabled: true },
+    });
+    const actions: MenuAction[] = [
+      sectionAction(sectionMenu.workingTree, "Working tree"),
+      sectionAction(sectionMenu.branchChanges, "Branch changes"),
+      sectionAction(sectionMenu.latestTurn, "Latest turn"),
+    ];
+
+    if (sectionMenu.turns.length > 0) {
+      actions.push({
+        id: "turns",
+        title: "Turn",
+        subactions: sectionMenu.turns.map((section) => ({
+          id: `section:${section.id}`,
+          title: section.id === selectedSection?.id ? `${section.title} (selected)` : section.title,
+          subtitle: section.subtitle ?? undefined,
+        })),
+      });
+    }
+
+    actions.push({
+      id: "refresh",
+      title: "Refresh current diff",
+      attributes: {
+        disabled:
+          !selectedSection ||
+          loadingGitDiffs ||
+          (selectedSection.kind === "turn" && loadingTurnIds[selectedSection.id] === true),
+      },
+    });
+    return actions;
+  }, [loadingGitDiffs, loadingTurnIds, sectionMenu, selectedSection]);
+  const handleAndroidSectionMenuAction = useCallback(
+    (event: { nativeEvent: { event: string } }) => {
+      const id = event.nativeEvent.event;
+      if (id === "refresh") {
+        void refreshSelectedSection();
+      } else if (id.startsWith("section:")) {
+        selectSection(id.slice("section:".length));
+      }
+    },
+    [refreshSelectedSection, selectSection],
+  );
   const handleRetryEnvironment = useCallback(() => {
     void retryEnvironment(environmentId);
   }, [environmentId, retryEnvironment]);
+  const androidHeaderSubtitle = [
+    selectedSection?.title,
+    headerDiffSummary.additions,
+    headerDiffSummary.deletions,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(" · ");
 
   const listHeader = useMemo(() => {
     const children: ReactElement[] = [];
@@ -581,18 +641,44 @@ export function ReviewSheet() {
   return (
     <>
       <Stack.Screen
-        options={{
-          headerTransparent: true,
-          headerShadowVisible: false,
-          headerTintColor: headerIcon,
-          headerStyle: {
-            backgroundColor: "transparent",
-          },
-          headerTitle: renderHeaderTitle,
-        }}
+        options={
+          isAndroid
+            ? { headerShown: false }
+            : {
+                headerTransparent: true,
+                headerShadowVisible: false,
+                headerTintColor: headerIcon,
+                headerStyle: {
+                  backgroundColor: "transparent",
+                },
+                headerTitle: renderHeaderTitle,
+              }
+        }
       />
 
-      {layout.usesSplitView || showSectionToolbar || panes.supportsAuxiliaryPane ? (
+      {isAndroid ? (
+        <AndroidScreenHeader
+          title="Review changes"
+          subtitle={androidHeaderSubtitle || "Select a diff"}
+          onBack={() => router.back()}
+          trailing={
+            showSectionToolbar ? (
+              <ControlPillMenu
+                actions={androidSectionMenuActions}
+                isAnchoredToRight
+                onPressAction={handleAndroidSectionMenuAction}
+              >
+                <AndroidHeaderIconButton
+                  accessibilityLabel="Select review diff"
+                  icon="ellipsis.circle"
+                />
+              </ControlPillMenu>
+            ) : null
+          }
+        />
+      ) : null}
+
+      {!isAndroid && (layout.usesSplitView || showSectionToolbar || panes.supportsAuxiliaryPane) ? (
         <Stack.Toolbar placement="right">
           {layout.usesSplitView ? (
             <Stack.Toolbar.Button

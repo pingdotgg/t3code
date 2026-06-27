@@ -5,6 +5,7 @@ import {
   DMSans_700Bold,
   useFonts,
 } from "@expo-google-fonts/dm-sans";
+import { RegistryContext } from "@effect/atom-react";
 import { usePathname } from "expo-router";
 import Stack from "expo-router/stack";
 import { useCallback } from "react";
@@ -18,7 +19,6 @@ import { LoadingScreen } from "../components/LoadingScreen";
 
 import { useWorkspaceState } from "../state/workspace";
 import { useThreadOutboxDrain } from "../state/use-thread-outbox-drain";
-import { RegistryContext } from "@effect/atom-react";
 import { appAtomRegistry } from "../state/atom-registry";
 import { CloudAuthProvider } from "../features/cloud/CloudAuthProvider";
 import {

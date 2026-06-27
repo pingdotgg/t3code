@@ -5,7 +5,7 @@ import { SymbolView } from "expo-symbols";
 import * as Effect from "effect/Effect";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ComponentProps, ReactNode } from "react";
-import { Alert, Linking, Pressable, ScrollView, Switch, View } from "react-native";
+import { Alert, Linking, Platform, Pressable, ScrollView, Switch, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -42,7 +42,7 @@ export default function SettingsRouteScreen() {
   return (
     <>
       <WorkspaceSidebarToolbar />
-      {layout.usesSplitView ? (
+      {Platform.OS !== "android" && layout.usesSplitView ? (
         <Stack.Toolbar placement="right">
           <Stack.Toolbar.Button
             accessibilityLabel="Close settings"

@@ -1,6 +1,7 @@
 import Stack from "expo-router/stack";
 import { StyleSheet } from "react-native";
 import { useResolveClassNames } from "uniwind";
+import { useThemeColor } from "../../../../../lib/useThemeColor";
 
 export const unstable_settings = {
   anchor: "index",
@@ -8,6 +9,7 @@ export const unstable_settings = {
 
 export default function GitSheetLayout() {
   const sheetStyle = StyleSheet.flatten(useResolveClassNames("bg-sheet"));
+  const headerTintColor = useThemeColor("--color-foreground");
   const headerBg = {
     backgroundColor: (sheetStyle as { backgroundColor?: string })?.backgroundColor,
   };
@@ -17,6 +19,7 @@ export default function GitSheetLayout() {
       screenOptions={{
         contentStyle: sheetStyle,
         headerShown: false,
+        headerTintColor,
       }}
     >
       <Stack.Screen name="index" options={{ animation: "none" }} />
