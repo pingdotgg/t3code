@@ -5,6 +5,7 @@ import {
   ArrowUpIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  EllipsisIcon,
   LoaderIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -179,8 +180,13 @@ export function ArchivedThreadsPanel() {
 
   const confirmArchivedAction = useCallback(async (message: string) => {
     const localApi = readLocalApi();
-    if (!localApi) return true;
-    const confirmationResult = await settlePromise(() => localApi.dialogs.confirm(message));
+    const confirmationResult = await settlePromise(() =>
+      localApi
+        ? localApi.dialogs.confirm(message)
+        : typeof window !== "undefined"
+          ? Promise.resolve(window.confirm(message))
+          : Promise.resolve(false),
+    );
     if (confirmationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(confirmationResult);
       toastManager.add(
@@ -228,6 +234,21 @@ export function ArchivedThreadsPanel() {
             }.`,
             error instanceof Error ? error.message : "An error occurred.",
           ].join(" "),
+        }),
+      );
+    },
+    [],
+  );
+
+  const showArchivedProjectMenuFailure = useCallback(
+    (result: AtomCommandResult<unknown, unknown>) => {
+      if (result._tag === "Success") return;
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Archived project action failed",
+          description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
     },
@@ -392,6 +413,25 @@ export function ArchivedThreadsPanel() {
     [handleDeleteProjectThreads, handleUnarchiveProjectThreads],
   );
 
+  const handleArchivedProjectMenuButton = useCallback(
+    async (
+      projectName: string,
+      threads: ReadonlyArray<ArchivedProjectBulkThread>,
+      scope: ArchivedProjectBulkScope,
+      trigger: HTMLElement,
+    ) => {
+      const rect = trigger.getBoundingClientRect();
+      const result = await settlePromise(() =>
+        handleArchivedProjectContextMenu(projectName, threads, scope, {
+          x: rect.right,
+          y: rect.bottom,
+        }),
+      );
+      showArchivedProjectMenuFailure(result);
+    },
+    [handleArchivedProjectContextMenu, showArchivedProjectMenuFailure],
+  );
+
   return (
     <SettingsPageContainer>
       <Input
@@ -445,8 +485,8 @@ export function ArchivedThreadsPanel() {
                 <div
                   className={
                     isExpanded
-                      ? "grid grid-cols-[minmax(0,1fr)_4.75rem_4.75rem] items-center gap-2 px-1"
-                      : "grid grid-cols-[minmax(0,1fr)] items-center gap-2 px-1"
+                      ? "grid grid-cols-[minmax(0,1fr)_4.75rem_4.75rem_1.75rem] items-center gap-2 px-1"
+                      : "grid grid-cols-[minmax(0,1fr)_1.75rem] items-center gap-2 px-1"
                   }
                   onContextMenu={(event) => {
                     event.preventDefault();
@@ -457,17 +497,7 @@ export function ArchivedThreadsPanel() {
                           y: event.clientY,
                         }),
                       );
-                      if (result._tag === "Failure") {
-                        const error = squashAtomCommandFailure(result);
-                        toastManager.add(
-                          stackedThreadToast({
-                            type: "error",
-                            title: "Archived project action failed",
-                            description:
-                              error instanceof Error ? error.message : "An error occurred.",
-                          }),
-                        );
-                      }
+                      showArchivedProjectMenuFailure(result);
                     })();
                   }}
                 >
@@ -507,6 +537,31 @@ export function ArchivedThreadsPanel() {
                       />
                     </>
                   ) : null}
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={`Project actions for ${project.name}`}
+                          className="size-6 rounded-md justify-self-end"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleArchivedProjectMenuButton(
+                              project.name,
+                              projectThreads,
+                              bulkScope,
+                              event.currentTarget,
+                            );
+                          }}
+                        >
+                          <EllipsisIcon className="size-3.5" />
+                        </Button>
+                      }
+                    />
+                    <TooltipPopup side="top">Project actions</TooltipPopup>
+                  </Tooltip>
                 </div>
                 {isExpanded ? (
                   <div className="mt-1 space-y-0.5">
