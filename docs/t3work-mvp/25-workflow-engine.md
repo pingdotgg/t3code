@@ -228,16 +228,16 @@ there is **no** separate `agent.task` (deleted — "structured compute, no chat"
 
 | Global                   | Returns                       | Notes                                                                                                                                                                                                             |
 | ------------------------ | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `thread`                 | `Thread \| undefined`         | The chat the user launched from; `undefined` when headless (cron/automation). See [§The thread model](#the-thread-model).                                                                                          |
-| `spawnThread(opts?)`     | `Thread`                      | Create a new isolated thread; returns a `Thread` bound to it.                                                                                                                                                      |
-| `agent(prompt, opts?)`   | `Promise<string \| T>`        | One-shot shortcut for `spawnThread(opts).askAgent(prompt, opts)`. With `schema: Schema<T>`, returns a validated `T`; the thread is not retained.                                                                   |
+| `thread`                 | `Thread \| undefined`         | The chat the user launched from; `undefined` when headless (cron/automation). See [§The thread model](#the-thread-model).                                                                                         |
+| `spawnThread(opts?)`     | `Thread`                      | Create a new isolated thread; returns a `Thread` bound to it.                                                                                                                                                     |
+| `agent(prompt, opts?)`   | `Promise<string \| T>`        | One-shot shortcut for `spawnThread(opts).askAgent(prompt, opts)`. With `schema: Schema<T>`, returns a validated `T`; the thread is not retained.                                                                  |
 | `parallel(thunks)`       | `Promise<R[]>`                | Concurrent fanout with a barrier. Failing thunks resolve to `null`.                                                                                                                                               |
 | `pipeline(items, …stgs)` | `Promise<R[]>`                | Per-item pipelined fanout — no barrier between stages.                                                                                                                                                            |
 | `workflow(ref, args?)`   | `Promise<O>`                  | Run another workflow inline as a sub-step. `ref` must be a typed `WorkflowRef` (no string form — declare refs via `defineWorkflow`). One level of nesting; cycles refused.                                        |
 | `phase(title)`           | `void`                        | Start a progress group. `title` is typed as the union of `meta.phases[].title` literals when `meta.phases` is declared `as const` (recommended). Calling with a title outside that union is a compile-time error. |
 | `log(message)`           | `void`                        | Emit a narrator line above the progress tree.                                                                                                                                                                     |
 | `args`                   | `unknown`                     | The workflow's input; validated against `meta.inputs` before the body runs.                                                                                                                                       |
-| `budget`                 | `{ total, spent, remaining }` | Token accumulator. Thread-turn token rollup is deferred (§Out of scope), so `spent()` currently reads 0.                                                                                                           |
+| `budget`                 | `{ total, spent, remaining }` | Token accumulator. Thread-turn token rollup is deferred (§Out of scope), so `spent()` currently reads 0.                                                                                                          |
 
 > **Black-box journaling boundary (Stage-1).** `parallel`, `pipeline`, and `workflow`
 > are each journaled as **one** entry; primitive calls made inside their thunks/stages/
@@ -274,7 +274,7 @@ The globals bound into the body:
 | Global               | Returns               | Purpose                                                                                                |
 | -------------------- | --------------------- | ------------------------------------------------------------------------------------------------------ |
 | `thread`             | `Thread \| undefined` | The thread the workflow runs in (the launching chat); `undefined` if headless.                         |
-| `spawnThread(opts?)` | `Thread`              | A new isolated thread (`{ name?, model? }`).                                                            |
+| `spawnThread(opts?)` | `Thread`              | A new isolated thread (`{ name?, model? }`).                                                           |
 | `agent(prompt, o?)`  | `Promise<R>`          | Shortcut for `spawnThread(o).askAgent(prompt, o)` — returns the result for one-shots; thread not kept. |
 
 The surface is a **2×2** of recipient (Agent / User) × mode (ask = drive + await a reply /
@@ -369,7 +369,6 @@ new thread's stable id.
 The engine fires through an injected `MessageBroker` (the host delivery seam) and journals the
 reply; real turn execution and view rendering (Epic 19) live in the host, not the engine.
 
-
 ## The determinism contract — replay safety
 
 > **This is the most important section of this doc.** The engine replays the workflow
@@ -394,7 +393,7 @@ journaled), `result` is a value/void envelope that is absent for `script-never` 
    append a journal entry, return it.
 5. **Mismatched:** throw `ReplayDriftError` citing `seq` plus the expected-vs-observed
    `(kind, refId)` (call-identity drift) or `argsHash` prefixes (argument drift). A `seq`
-   at or below the recorded frontier with no entry (a *gap*) is also drift.
+   at or below the recorded frontier with no entry (a _gap_) is also drift.
 
 A `replay: "never"` script always re-executes, but it still writes a typed
 `script-never` **marker** (no `result`) so it occupies its `seq`. Removing or reordering a
@@ -410,7 +409,7 @@ sequence-counter idiom is what Temporal/Restate use.) The type tag is the drift 
 **adding, removing, or reordering primitive calls is a workflow-version-incompatible
 change**, because every call after the edit shifts to a `seq` whose recorded `(kind, refId)`
 no longer matches — surfacing as a loud `ReplayDriftError` rather than a silent wrong
-replay. The one residual blind spot is reordering two calls that share the *same*
+replay. The one residual blind spot is reordering two calls that share the _same_
 `(kind, refId)`: the type tag can't tell them apart, so only a differing `argsHash` would
 catch it. Authors get correctness by keeping the call sequence stable across versions.
 
@@ -456,14 +455,14 @@ determinism for everything downstream of it.
 
 ### What the engine catches automatically
 
-| Detected                                                                                         | When                      | Effect                                       |
-| ------------------------------------------------------------------------------------------------ | ------------------------- | -------------------------------------------- |
+| Detected                                                                                         | When                      | Effect                                                                   |
+| ------------------------------------------------------------------------------------------------ | ------------------------- | ------------------------------------------------------------------------ |
 | Non-type runtime imports                                                                         | Lint                      | Flagged; the loader blanks the import (value is `undefined` in the body) |
-| Module-level mutable state                                                                       | Lint                      | Flagged by the linter                        |
-| `meta` referencing non-extractable values                                                        | Workflow load time        | Workflow refuses to load                     |
-| Mismatched `argsHash` on replay (including a journaled `Date`/`Math.random`/`uuid` call)         | Replay execution          | `ReplayDriftError` at the diverging site     |
-| Primitive call after `cancellation` aborted                                                      | Runtime                   | `CancelledError`                             |
-| Capability mismatch (call site references a tool whose `group` ref isn't in `meta.capabilities`) | Runtime, at the call site | `PermissionDeniedError` thrown and journaled |
+| Module-level mutable state                                                                       | Lint                      | Flagged by the linter                                                    |
+| `meta` referencing non-extractable values                                                        | Workflow load time        | Workflow refuses to load                                                 |
+| Mismatched `argsHash` on replay (including a journaled `Date`/`Math.random`/`uuid` call)         | Replay execution          | `ReplayDriftError` at the diverging site                                 |
+| Primitive call after `cancellation` aborted                                                      | Runtime                   | `CancelledError`                                                         |
+| Capability mismatch (call site references a tool whose `group` ref isn't in `meta.capabilities`) | Runtime, at the call site | `PermissionDeniedError` thrown and journaled                             |
 
 ### What the engine cannot catch
 
@@ -946,15 +945,15 @@ inbound message; the workflow does the suspension.
 
 The step-union runtime has been **deleted** — the durable engine is the only workflow runtime.
 
-| Phase | Scope                                                                                                                                                                                                                                   | Status  |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| 25.1  | `.workflow.ts` file loader + `meta` static extractor + `defineWorkflow` / `defineTool` / `defineToolGroup` / `defineScript` SDK + ambient `tools.*` / `scripts.*` trees + ambient types                                                 | Implemented |
-| 25.2  | Durable-execution engine: journal, replay, `argsHash`, `ReplayDriftError`                                                                                                                                                               | Implemented |
-| 25.3  | Composition primitives: `parallel`, `pipeline`, `phase`, `log`, `args`, `budget`, `workflow`; plus the journaled-value primitives `random`, `now`, `uuid`, `wait`, and the `script` / `tool` invocation primitives                       | Implemented |
-| 25.4  | Handle pattern: the `sent`/`resolved` journal split, deterministic `correlationId`, durable suspension (`SuspendedResult`), and the `MessageBroker` host seam                                                                            | Implemented |
+| Phase | Scope                                                                                                                                                                                                                                                                                                                                                    | Status      |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| 25.1  | `.workflow.ts` file loader + `meta` static extractor + `defineWorkflow` / `defineTool` / `defineToolGroup` / `defineScript` SDK + ambient `tools.*` / `scripts.*` trees + ambient types                                                                                                                                                                  | Implemented |
+| 25.2  | Durable-execution engine: journal, replay, `argsHash`, `ReplayDriftError`                                                                                                                                                                                                                                                                                | Implemented |
+| 25.3  | Composition primitives: `parallel`, `pipeline`, `phase`, `log`, `args`, `budget`, `workflow`; plus the journaled-value primitives `random`, `now`, `uuid`, `wait`, and the `script` / `tool` invocation primitives                                                                                                                                       | Implemented |
+| 25.4  | Handle pattern: the `sent`/`resolved` journal split, deterministic `correlationId`, durable suspension (`SuspendedResult`), and the `MessageBroker` host seam                                                                                                                                                                                            | Implemented |
 | 25.x  | **Thread model + host wiring + legacy deletion:** `thread`/`spawnThread`/`agent` + the `Thread` verbs over the Handle pattern; the orchestration-backed broker, the launch path (`startWorkflow`), and the resume reactor (turn-done / user-reply → `appendResolvedEntry` + `resumeWorkflow`); the step-union runtime, its routes, and its tests removed | Implemented |
-| 25.x  | **DB-backed durability:** the `JournalStore` seam (default `FsJournalStore`), the server's SQLite store (`workflow_journal`) + `WorkflowRunRepository` (`workflow_runs`), launch/broker write-through, and boot rehydration of suspended runs (§Open question 2). The in-memory registry is now a hot index over a durable DB source of truth | Implemented |
-| 25.5  | Determinism enforcement: lint rules flagging nondeterminism patterns, capability gating at load time                                                                                                                                    | Planned |
+| 25.x  | **DB-backed durability:** the `JournalStore` seam (default `FsJournalStore`), the server's SQLite store (`workflow_journal`) + `WorkflowRunRepository` (`workflow_runs`), launch/broker write-through, and boot rehydration of suspended runs (§Open question 2). The in-memory registry is now a hot index over a durable DB source of truth            | Implemented |
+| 25.5  | Determinism enforcement: lint rules flagging nondeterminism patterns, capability gating at load time                                                                                                                                                                                                                                                     | Planned     |
 
 Every recipe is authored against the engine (`recipe.ts` + `*.workflow.ts`); there is no
 longer a `recipe.json` / step-union path.
@@ -985,6 +984,7 @@ longer a `recipe.json` / step-union path.
    layers, then `registry.registerRun` + restore the pending ask. The reactor then resolves it
    identically whether the ask was set this uptime or a prior one. Journal compaction/retention
    for completed runs, and multi-instance locking, remain future work (single-instance assumed).
+
 3. **Per-call model selection for cost discipline.** When `meta.model` declares a default and
    a single `agent` / `askAgent` call wants a cheaper model, the per-call `model:` override
    should be a strict subset of the workflow's declared capability for that provider. Surface

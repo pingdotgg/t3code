@@ -78,7 +78,7 @@ effectiveCapacity(person, window) =
 
 1. **Base schedule** — Tempo `user-schedule` per day (`requiredSeconds`; part-time +
    holiday schemes resolved), minus **unavailability plans**: non-issue Tempo plans
-   plus plans on issues *outside the planned project* (verified live: off-project
+   plus plans on issues _outside the planned project_ (verified live: off-project
    time is modeled as plans on internal issues like INT-2 "Nicht für Sprint/Projekt
    verfügbar"). Plans on the planned project's own issues are sprint work and never
    subtract. Issue→project resolution goes through the Atlassian client, memoized.

@@ -5,8 +5,8 @@ provider." It complements, but does not replace, the automated proof:
 
 - `apps/server/src/t3work-workflowEngineReactor.integration.test.ts` drives the **real**
   production reactor (`T3workWorkflowEngineReactorLive`) through the **real** OrchestrationEngine
-  + projection pipeline, with a *stub* provider that emits real-shaped domain events. It proves
-  the suspend→resume loop end to end with nobody manually resolving.
+  - projection pipeline, with a _stub_ provider that emits real-shaped domain events. It proves
+    the suspend→resume loop end to end with nobody manually resolving.
 - This checklist proves the one thing a stub provider cannot: that a **real configured provider**
   emits the turn lifecycle in the shapes the reactor expects, and that the loop runs against it.
 
@@ -70,16 +70,16 @@ Record the `runId` returned (also the `run_id` in `workflow_runs`).
 - [ ] **UI/stream:** a new isolated thread is created and an agent turn begins streaming into it.
       (The launching thread itself shows no agent turn yet — `agent()` runs in a spawned thread.)
 - [ ] **DB:** a `workflow_runs` row exists for the `runId`:
-      ```sql
-      SELECT run_id, status, pending_thread_id, pending_kind, pending_correlation_id
-      FROM workflow_runs WHERE run_id = '<runId>';
-      ```
+      `sql
+SELECT run_id, status, pending_thread_id, pending_kind, pending_correlation_id
+FROM workflow_runs WHERE run_id = '<runId>';
+`
       Expect `status = 'suspended'`, `pending_kind = 'thread.turn'`, and `pending_thread_id`
       equal to the **spawned** thread's id (it looks like `<runId>:1`, **not** the launch thread).
 - [ ] **DB:** `workflow_journal` has the fired verbs:
-      ```sql
-      SELECT seq, phase, kind FROM workflow_journal WHERE run_id = '<runId>' ORDER BY seq;
-      ```
+      `sql
+SELECT seq, phase, kind FROM workflow_journal WHERE run_id = '<runId>' ORDER BY seq;
+`
       Expect `sent` entries for `thread.create` and `thread.turn`, with **no** `resolved` entry yet.
 - [ ] **Logs:** the orchestration engine dispatched `thread.create` then `thread.turn.start` for
       the spawned thread; the provider command reactor started a real provider turn.
@@ -90,9 +90,9 @@ Record the `runId` returned (also the `run_id` in `workflow_runs`).
 - [ ] **Logs:** **no** warning from `t3work workflow-engine reactor failed to process event`.
       (Any such warning is a real bug — capture the cause.)
 - [ ] **DB:** the run flipped its pending ask to the user escalation:
-      ```sql
-      SELECT status, pending_thread_id, pending_kind FROM workflow_runs WHERE run_id = '<runId>';
-      ```
+      `sql
+SELECT status, pending_thread_id, pending_kind FROM workflow_runs WHERE run_id = '<runId>';
+`
       Expect `status = 'suspended'`, `pending_kind = 'user.input'`, and `pending_thread_id` equal
       to the **launching** thread's id.
 - [ ] **DB:** `workflow_journal` now has a `resolved` entry for the agent turn's correlation, and a
@@ -110,9 +110,9 @@ Record the `runId` returned (also the `run_id` in `workflow_runs`).
       user typing the JSON both work because the SDK coerces a JSON string reply).
 - [ ] **Logs:** no reactor warning; the run resumed and settled.
 - [ ] **DB:** the run completed:
-      ```sql
-      SELECT status, pending_thread_id, pending_correlation_id FROM workflow_runs WHERE run_id = '<runId>';
-      ```
+      `sql
+SELECT status, pending_thread_id, pending_correlation_id FROM workflow_runs WHERE run_id = '<runId>';
+`
       Expect `status = 'completed'`, and the pending columns cleared (`NULL`).
 - [ ] **DB:** `workflow_journal` has a second `resolved` entry (for the `user.input` correlation).
 - [ ] **Result:** the validated output is `{ summary: <the agent's summary>, merged: <bool> }`.
@@ -133,13 +133,13 @@ intervention** beyond launching and replying — specifically: the agent-turn re
 user-input resolution were both driven by the production reactor off real domain events, and the
 escalation carried the **real** (non-empty) assistant summary.
 
-| Check | Result | Notes |
-| --- | --- | --- |
-| Provider / build | | provider kind + commit |
-| Step 1 — suspend on agent turn | | |
-| Step 2 — reactor resumes, advances to askUser, summary non-empty | | |
-| Step 3 — user reply resumes, run completes with validated result | | |
-| Step 4 — restart durability (optional) | | |
+| Check                                                            | Result | Notes                  |
+| ---------------------------------------------------------------- | ------ | ---------------------- |
+| Provider / build                                                 |        | provider kind + commit |
+| Step 1 — suspend on agent turn                                   |        |                        |
+| Step 2 — reactor resumes, advances to askUser, summary non-empty |        |                        |
+| Step 3 — user reply resumes, run completes with validated result |        |                        |
+| Step 4 — restart durability (optional)                           |        |                        |
 
 > Out of scope for this gate (Phase A): UI rendering polish (Phase C) and thread-deletion cascade
 > (Phase B). If the escalation/agent-turn UI looks rough, **note it here, do not fix it in this phase.**

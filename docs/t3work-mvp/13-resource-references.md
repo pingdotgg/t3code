@@ -216,9 +216,9 @@ opaque text — it is normalized into a typed relation that resolves across conn
 
 ```ts
 type ResourceRelation = {
-  from: ResourceRef;        // e.g. the Jira issue
-  to: ResourceRef;          // e.g. @confluence:ENG/runbook-release
-  kind: string;             // "links" | "mentions" | "remote-link" | "child-of" | ...
+  from: ResourceRef; // e.g. the Jira issue
+  to: ResourceRef; // e.g. @confluence:ENG/runbook-release
+  kind: string; // "links" | "mentions" | "remote-link" | "child-of" | ...
   source: "body" | "remote-link" | "smart-link" | "field";
 };
 ```

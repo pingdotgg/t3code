@@ -6,7 +6,7 @@ Documentation and knowledge work are unaddressed today. `t3work` has structured-
 support (Jira) but nothing for the wiki/documentation half of how teams actually work —
 Confluence, in Atlassian terms — where requirements, runbooks, decisions, and specs live.
 
-The **Knowledge Workbench** is a provider-agnostic *documents* surface, a sibling to the
+The **Knowledge Workbench** is a provider-agnostic _documents_ surface, a sibling to the
 Backlog and My Work surfaces. **Confluence is its first Source.** It is the knowledge-side
 counterpart to the issue-side Backlog browser.
 
@@ -55,7 +55,7 @@ For a Confluence page (and any future documents Source):
 - rendered page content (read-only) with source link
 - metadata: space, author, last updated, labels
 - **linked resources** — tickets, PRs, and other pages this page references, and items
-  that reference *it* (powered by the cross-provider graph, below)
+  that reference _it_ (powered by the cross-provider graph, below)
 - context-relevant recipes (ask, summarize, draft, check)
 - cached/generated artifacts
 - reviewable mutation drafts (for authoring/maintenance actions)

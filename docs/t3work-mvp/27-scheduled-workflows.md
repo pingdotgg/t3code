@@ -8,7 +8,7 @@ can sleep until a specific date/time, which makes two things possible — a one-
 ("open this back up Monday morning") and a **routine** (a loop that does work, waits,
 does it again).
 
-A routine is just a workflow that loops on a timer. The thread it runs in *is* its
+A routine is just a workflow that loops on a timer. The thread it runs in _is_ its
 visualization — it mostly sleeps, wakes on its timer, posts what it did, sleeps again.
 There is no "automations panel": a routine is a thread that lives in the sidebar, dormant
 until its next wake.
@@ -25,7 +25,7 @@ only wake path is the **event reactor** — a run suspended on `askUser` / `askA
 when a matching orchestration domain event lands (a user reply, a completed turn). That
 covers human-in-the-loop, not time.
 
-`wait(durationMs)` (Epic 25 §Other primitives) journals a deadline, but nothing *causes*
+`wait(durationMs)` (Epic 25 §Other primitives) journals a deadline, but nothing _causes_
 the resume at that deadline — it relies on the run still being in-process. There is no
 component whose job is "wake parked run X when the wall clock reaches T." That component —
 a **scheduler** — is the missing piece, and it's what turns a parked run into a timer.
@@ -44,7 +44,7 @@ import { Schema } from "effect";
 import { jiraRead, jiraWrite } from "@t3work/sdk/groups";
 import { nextWeekday } from "@t3work/sdk/time";
 
-export const Inputs = Schema.Struct({});            // no launch args — it just runs
+export const Inputs = Schema.Struct({}); // no launch args — it just runs
 
 export const meta = {
   name: "weekly-triage",
@@ -66,7 +66,9 @@ while (true) {
 
   phase("Triage");
   // A search tool returns a `ResourcePage`; its `items` are already `ExternalResourceRef`s.
-  const bugs = await tools.jira.searchIssues({ jql: "type = Bug AND status = New AND created >= -7d" });
+  const bugs = await tools.jira.searchIssues({
+    jql: "type = Bug AND status = New AND created >= -7d",
+  });
   if (bugs.items.length === 0) continue;
 
   // Isolate this week's reasoning in its own child thread; the routine thread stays a clean log.
@@ -99,10 +101,14 @@ while (true) {
   if (flagged.length > 0) {
     const decision = await thread.askUser(
       "These bugs need your call — assign them to the platform team, or hold for review?",
-      { attachments: flagged, schema: Schema.Struct({ action: Schema.Literals(["assign-platform", "hold"]) }) },
+      {
+        attachments: flagged,
+        schema: Schema.Struct({ action: Schema.Literals(["assign-platform", "hold"]) }),
+      },
     );
     if (decision.action === "assign-platform") {
-      for (const b of flagged) await tools.jira.assignIssue({ id: b.id, assignee: "platform-team" });
+      for (const b of flagged)
+        await tools.jira.assignIssue({ id: b.id, assignee: "platform-team" });
     }
   }
 }
@@ -112,13 +118,13 @@ A one-off timer is the same `waitUntil`, without the loop:
 
 ```ts
 const DAY = 24 * 60 * 60 * 1000;
-await waitUntil(now() + 3 * DAY);     // `now()` is the journaled clock → deterministic
+await waitUntil(now() + 3 * DAY); // `now()` is the journaled clock → deterministic
 await thread.notifyUser("Reminder: the BUG-241 fix is still awaiting review.");
 ```
 
-*(Tool names — `tools.jira.searchIssues`, `tools.jira.assignIssue` — follow the
+_(Tool names — `tools.jira.searchIssues`, `tools.jira.assignIssue` — follow the
 `tools.<group>.<name>` convention from Epic 25; the exact catalog is in
-[Epic 21](./21-context-tool-catalog.md).)*
+[Epic 21](./21-context-tool-catalog.md).)_
 
 What's **injected** vs **imported** in that file (Epic 25 §Globals):
 
@@ -127,14 +133,14 @@ What's **injected** vs **imported** in that file (Epic 25 §Globals):
   thread — for a routine, the thread you watch it in; `undefined` only for a truly headless
   run with no chat surface). `askAgent` / `askUser` / `notifyUser` / `notifyAgent` are
   methods on a thread (`thread.*`, or the handle from `spawnThread()`). `askAgent(prompt,
-  opts)` / `askUser(question, opts)` take `{ schema?, model?, attachments? }` —
+opts)` / `askUser(question, opts)` take `{ schema?, model?, attachments? }` —
   `attachments` is how context is passed: typed references (`ExternalResourceRef`s for
   issues / PRs / pages — exactly what the search/read tools return — plus file/url kinds),
   which the context layer resolves to live snapshots, **never inlined into the prompt**.
   `notifyUser(text, { attachments? })` is fire-and-forget — it can carry attachments so the
   user clicks straight through to a bug/PR, it just doesn't await a response. `askUser`
   is the same but awaits a typed answer (`schema` → choice affordances, `attachments` →
-  resource cards). The ask-vs-notify split is *awaits-a-response or not*; both render
+  resource cards). The ask-vs-notify split is _awaits-a-response or not_; both render
   richly. A string of ids is never the answer.
 - **Imported — allowlisted pure modules only:** `Schema` from `effect`, capability groups
   from `@t3work/sdk/groups`, and the time helpers from `@t3work/sdk/time`.
@@ -149,7 +155,7 @@ Three properties fall out, and all three are the author's choice, not the engine
   inside the loop. Want them to share one running context? Don't. The default is "share."
 
 "Skip missed fires" vs. "catch up" is likewise just author logic: compute the next
-*future* time to skip, or don't to catch up. The engine has no catch-up policy because
+_future_ time to skip, or don't to catch up. The engine has no catch-up policy because
 the body already expresses it.
 
 ### `waitUntil(when)`
@@ -158,8 +164,8 @@ A body primitive, sibling to `wait(durationMs)`. Suspends the run until a wall-c
 instant, then resumes from the journal.
 
 ```ts
-await waitUntil(deadline);          // absolute instant (epoch millis or ISO)
-await waitUntil(now() + 3 * DAY);   // relative to the journaled clock
+await waitUntil(deadline); // absolute instant (epoch millis or ISO)
+await waitUntil(now() + 3 * DAY); // relative to the journaled clock
 ```
 
 Like `wait`, the resolved instant is **journaled** on first execution, so replay is
@@ -182,8 +188,8 @@ authors don't hand-roll them:
 ```ts
 import { nextWeekday, nextCron } from "@t3work/sdk/time";
 
-nextWeekday(now(), { weekday: "monday", at: "09:00", tz: "Europe/Zurich" });  // → epoch millis
-nextCron(now(), "0 9 * * 1", { tz: "Europe/Zurich" });                        // cron, via cron-parser
+nextWeekday(now(), { weekday: "monday", at: "09:00", tz: "Europe/Zurich" }); // → epoch millis
+nextCron(now(), "0 9 * * 1", { tz: "Europe/Zurich" }); // cron, via cron-parser
 ```
 
 The one replay-safety rule, and the reason every helper takes `now()` as its first
@@ -212,7 +218,7 @@ runs on domain events, the scheduler wakes them on the wall clock.
 3. **Re-arm on boot.** In `serverRuntimeStartup`, alongside Epic 25's workflow-run
    rehydration, the scheduler queries all runs with a future (or past-due) `wake_at` and
    re-arms them. This is the durability guarantee: a timer set before a restart still
-   fires after it. A deadline that *passed* during downtime fires immediately on boot.
+   fires after it. A deadline that _passed_ during downtime fires immediately on boot.
 
 The scheduler is the only clock authority. Workflow bodies never read the wall clock to
 decide timing (they read the journaled `now()`); the scheduler reads the real clock and
@@ -257,7 +263,7 @@ next-wake time, distinct from active and input-waiting threads.
 - **Run now** — resume the parked run before its `wake_at`.
 - **Pause / resume** — pause clears the scheduler's arming for that run (it stays parked,
   not woken); resume re-arms it for its `wake_at` (or the next computed one).
-- **Edit cadence** — via composer, *if* the routine reads its schedule from mutable config
+- **Edit cadence** — via composer, _if_ the routine reads its schedule from mutable config
   (see above). A routine that hardcodes its cadence isn't editable without changing the
   workflow.
 - **Delete** — follows the thread-deletion cascade: deleting the thread deletes the run +
@@ -285,7 +291,7 @@ that has fired weekly for a year, that's a large journal to replay on each wake.
 This is acceptable for now (unbounded threads are explicitly fine), and it's the standard
 durable-execution problem with a standard answer: **continue-as-new / checkpointing** —
 periodically collapse completed iterations so replay starts from a checkpoint, not the
-top. Deferred. It does *not* change the author model (the loop stays a loop); it's an
+top. Deferred. It does _not_ change the author model (the loop stays a loop); it's an
 engine optimization that bounds replay cost when it eventually matters. Flagged here so
 the journal/replay layer isn't designed in a way that precludes it.
 
@@ -293,13 +299,13 @@ the journal/replay layer isn't designed in a way that precludes it.
 
 Builds on the shipped Epic 25 engine + durability.
 
-| Phase | Scope                                                                                          | Status  |
-| ----- | ---------------------------------------------------------------------------------------------- | ------- |
-| 27.1  | `waitUntil(when)` primitive — journaled deadline, records `wake_at` on the run                 | Planned |
-| 27.2  | Scheduler service — arm soonest `wake_at`, fire → resume, re-arm on boot (the core new piece)  | Planned |
-| 27.3  | `sleeping` status + `wake_at` column + dormant-thread UX (state pill, run history, run-now)    | Planned |
-| 27.4  | Lifecycle (pause/resume/run-now) + `"schedule"` capability + frequency floor                   | Planned |
-| 27.5  | Continue-as-new / journal checkpointing — only when long-lived routines make replay cost real  | Deferred |
+| Phase | Scope                                                                                         | Status   |
+| ----- | --------------------------------------------------------------------------------------------- | -------- |
+| 27.1  | `waitUntil(when)` primitive — journaled deadline, records `wake_at` on the run                | Planned  |
+| 27.2  | Scheduler service — arm soonest `wake_at`, fire → resume, re-arm on boot (the core new piece) | Planned  |
+| 27.3  | `sleeping` status + `wake_at` column + dormant-thread UX (state pill, run history, run-now)   | Planned  |
+| 27.4  | Lifecycle (pause/resume/run-now) + `"schedule"` capability + frequency floor                  | Planned  |
+| 27.5  | Continue-as-new / journal checkpointing — only when long-lived routines make replay cost real | Deferred |
 
 27.2 is the load-bearing build — once the scheduler can durably wake a parked run on the
 clock, the one-off timer and the routine loop are both just `waitUntil`.

@@ -28,6 +28,7 @@ the same nodes; zoom depth is semantic; overlap is impossible by construction.
 ## 2. Scope
 
 In scope (v1):
+
 - New `viewMode: "planning-space"` in the backlog dashboard, behind a feature flag initially.
 - Read path: epics, stories, subtasks, sprint membership, assignee, estimates
   (hours on subtasks; board estimation field on stories, read-only aggregate display),
@@ -51,6 +52,7 @@ backlog thematically and reuses its entire data spine (board/sprint/saved-filter
 selection, cache + freshness, write-through endpoints). Decision confirmed.
 
 Entry points:
+
 1. **Quick view toggle** — a two-state segmented control (table icon ⇄ planning-space
    cube icon) placed directly left of the existing ellipsis options button in the
    backlog header (`ProjectBacklogOverviewFilters`), same `size-8` bordered-button
@@ -74,9 +76,9 @@ Entry points:
 - All camera motion is target + lerp (k ≈ 0.1 per frame).
 - **Zoom speed is perceptually constant**: `Δz = deltaY · k · (F + Z_story − cam.z)`.
 - **Zoom is cursor-anchored**: the world point under the pointer stays fixed —
-  recompute `cam.xy` from the anchor after each `Δz`, against the camera *target*.
+  recompute `cam.xy` from the anchor after each `Δz`, against the camera _target_.
 - **Layout must be zoom-independent** (hard rule). The earlier zoom-coupled "spread"
-  (spacing growing with depth) made node targets move *while* zooming; combined with
+  (spacing growing with depth) made node targets move _while_ zooming; combined with
   cursor anchoring and snap, the view careened uncontrollably at high zoom (v7 bug).
   Replaced by true-size masonry packing (§3.4): positions are static per
   grouping mode, so cursor-anchored zoom is exact and stable.
@@ -89,15 +91,15 @@ Entry points:
 
 Gauge labels: **All · Epics · Stories · Cards · Tasks · Full.**
 
-| # | Gauge label | Trigger | Summary |
-|---|------------|---------|---------|
-| − | All | dedicated mode | **epic overview**: epics ONLY (no children) as a dense tile grid, fully readable |
-| 0 | Epics | s < 0.3 | epic star systems + stories as planning-state dots |
-| 1 | (transition) | 0.3–0.62 | key + Σ-hours chips |
-| 2 | Stories | 0.62–0.92 | titled frames + subtask dot rows |
-| 3 | Cards | 0.92–1.3 | frames open: **grid of all subtask cards** (hours · title · owner) |
-| 4 | Tasks | 1.3–1.8 | subtask cards grow: 2-line titles, hour steppers active |
-| 5 | Full | ≥ 1.8 | one story frame as a fully interactive document (§3.5) |
+| #   | Gauge label  | Trigger        | Summary                                                                          |
+| --- | ------------ | -------------- | -------------------------------------------------------------------------------- |
+| −   | All          | dedicated mode | **epic overview**: epics ONLY (no children) as a dense tile grid, fully readable |
+| 0   | Epics        | s < 0.3        | epic star systems + stories as planning-state dots                               |
+| 1   | (transition) | 0.3–0.62       | key + Σ-hours chips                                                              |
+| 2   | Stories      | 0.62–0.92      | titled frames + subtask dot rows                                                 |
+| 3   | Cards        | 0.92–1.3       | frames open: **grid of all subtask cards** (hours · title · owner)               |
+| 4   | Tasks        | 1.3–1.8        | subtask cards grow: 2-line titles, hour steppers active                          |
+| 5   | Full         | ≥ 1.8          | one story frame as a fully interactive document (§3.5)                           |
 
 - **All is not a far camera position — it is an epic overview projection.** Children
   (stories/subtasks) are hidden entirely; epics re-target into a dense viewport-
@@ -174,7 +176,7 @@ Mechanics: breadcrumb (parent epic · sprint · key) at top; header row is the d
 handle; the body is native scroll/selection/editing territory — pointer capture and
 camera input must never steal events from form controls; the side panel is
 suppressed at this band; breadcrumb and related-chip camera targets are evaluated at
-the *destination* zoom. All edits are optimistic write-through with rollback, same
+the _destination_ zoom. All edits are optimistic write-through with rollback, same
 as everywhere else.
 
 ### 3.6 Estimate model (verified live)
@@ -214,7 +216,7 @@ OR any of its subtasks belongs to the owner.)
 
 **Spotlight propagation (hard rule)**: muting applies to the whole scene graph, not
 just story frames. An epic node (and its All-grid tile) takes the muted opacity when
-*none* of its stories match the active filter; every edge inherits
+_none_ of its stories match the active filter; every edge inherits
 `min(opacity(endpointA), opacity(endpointB))`. A spotlight where unrelated epics and
 connection lines stay at full strength reads as broken (v8 gap).
 
@@ -231,19 +233,22 @@ other sections reference it.
 Group anchors split into two semantic families (revised during live testing —
 the earlier uniform click-equals-spotlight rule made epics feel inert):
 
-**Epic anchors** (epic node, All-grid epic tile) are *places you enter*:
+**Epic anchors** (epic node, All-grid epic tile) are _places you enter_:
+
 - **Click = fly into the cluster**: camera frames the epic's stories + subtasks
   at the Stories band. From the All overview this exits the overlay.
 - **Spotlighting an epic** stays available via the filter bar's epic chips and
   the context menu — shared filter state as before.
 
-**Owner anchors** (dock, in-space owner header) are *filters you toggle*:
+**Owner anchors** (dock, in-space owner header) are _filters you toggle_:
+
 - **Click = spotlight toggle** (camera never moves): dims everything outside the
   member's work to ~14% with full propagation (§5); one shared state with the
   filter bar; click again / Esc clears.
 - **Double-click = frame the member** (switches to by-owner mode if needed).
 
 Shared by both families:
+
 - **Right-click = context menu**: Open details (group panel, §7) · Add to chat ·
   Open in Jira.
 - **Drag source**: owner anchors drag onto items to assign (§6.2). Items
@@ -254,6 +259,7 @@ Shared by both families:
 
 One primitive for stories and subtasks alike; all paths converge on the same write,
 flight animation, capacity-arc tween and toast:
+
 - **Owner affordance** (avatar/dot) on ANY representation of the item — frame
   header, subtask card, planet row, panel row — click → **assign mode**: the rail
   expands and lifts, the affordance highlights, the hint names the target; resolve
@@ -262,9 +268,9 @@ flight animation, capacity-arc tween and toast:
 - **Drag item → owner anchor**, or **drag person (dock/header) → item** (story frame
   or individual subtask card). In by-owner mode, dropping a frame near a cluster
   resolves to that cluster's owner.
-- Domain rule, applied on **every** path equally: assigning a backlog *story* during
+- Domain rule, applied on **every** path equally: assigning a backlog _story_ during
   planning also commits it to the selected sprint (toast mentions both effects);
-  *subtask* assignment never changes sprint membership; unassign = the Unassigned
+  _subtask_ assignment never changes sprint membership; unassign = the Unassigned
   anchor.
 
 ### 6.3 Estimates and sprint membership
@@ -286,7 +292,7 @@ flight animation, capacity-arc tween and toast:
   flipped-open card = subtask detail). The side panel is a per-item singleton that
   re-binds — never stacks.
 - **Navigation jumps** (related chips, parent breadcrumb, panel navigate links,
-  group framing): camera flight with the target computed at the *destination* zoom,
+  group framing): camera flight with the target computed at the _destination_ zoom,
   setting the snap target; an open panel follows to the destination item.
 
 ### 6.5 Create, remove, undo
@@ -323,6 +329,7 @@ the member, drop = assign.
 
 One panel family — per-item singleton, leader line to the item, camera never moves,
 suppressed at band 5 (the planet is the editor; entering band 5 closes panels):
+
 - **Story panel** (bands 0–4): header (key, epic, state) · editable title · effort
   (read-only Σ, §6.3) · owner affordance (→ assign mode, §6.2) · sprint toggle ·
   navigate (parent epic, related, reveal-in-space; §6.4) · description (ADF) ·
@@ -357,28 +364,28 @@ zoom exactness (anchor drift < 1px over a full zoom sweep), fit-all bounds.
 
 ### 10.1 Jira (via existing Atlassian client)
 
-| Datum | Source | Status |
-|-------|--------|--------|
-| Epic → story → subtask hierarchy | `parent` + classic Epic Link (`customfield_10014`) — handle both; match subtasks by `issuetype.subtask === true`, never by name (type is named "Task" here) | ✅ verified |
-| Subtask estimate | `timetracking.originalEstimateSeconds` | ✅ verified |
-| Story aggregate | `aggregatetimeoriginalestimate` (on `ProjectTicket`) | ✅ verified |
-| Story points (reference only) | board estimation field via existing `estimateMode` discovery | ✅ exists |
-| Per-person load | Σ subtask `originalEstimateSeconds` per assignee in sprint (+ story's own estimate when no subtasks) | ✅ computed live |
-| Sprints incl. future | agile API (next sprint "PW Sprint 8.1" verified — planning targets the future sprint via picker) | ✅ verified |
-| Related stories | `issuelinks` (mostly point outside the loaded set → fetch on demand) | ✅ verified |
-| Rank | LexoRank (`customfield_10019`) | ✅ verified |
-| Descriptions | ADF documents | ✅ verified |
+| Datum                            | Source                                                                                                                                                      | Status           |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| Epic → story → subtask hierarchy | `parent` + classic Epic Link (`customfield_10014`) — handle both; match subtasks by `issuetype.subtask === true`, never by name (type is named "Task" here) | ✅ verified      |
+| Subtask estimate                 | `timetracking.originalEstimateSeconds`                                                                                                                      | ✅ verified      |
+| Story aggregate                  | `aggregatetimeoriginalestimate` (on `ProjectTicket`)                                                                                                        | ✅ verified      |
+| Story points (reference only)    | board estimation field via existing `estimateMode` discovery                                                                                                | ✅ exists        |
+| Per-person load                  | Σ subtask `originalEstimateSeconds` per assignee in sprint (+ story's own estimate when no subtasks)                                                        | ✅ computed live |
+| Sprints incl. future             | agile API (next sprint "PW Sprint 8.1" verified — planning targets the future sprint via picker)                                                            | ✅ verified      |
+| Related stories                  | `issuelinks` (mostly point outside the loaded set → fetch on demand)                                                                                        | ✅ verified      |
+| Rank                             | LexoRank (`customfield_10019`)                                                                                                                              | ✅ verified      |
+| Descriptions                     | ADF documents                                                                                                                                               | ✅ verified      |
 
 ### 10.2 Tempo (capacity + availability) — verified with live token
 
 Tempo REST v4 (`https://api.tempo.io/4/…`, Bearer token / OAuth):
 
-| Endpoint | Verified | Use |
-|----------|----------|-----|
-| `GET /4/user-schedule/{accountId}?from&to` | ✅ 200, incl. other users | per-day `requiredSeconds` per person — workload scheme, part-time and holidays already resolved (verified: 7.2h/day vs 5.6h/day for different members) |
-| `GET /4/teams` + `/4/teams/{id}/members` | ✅ 200 ("IES NG Nexplore", 42 members, commitmentPercent, roles) | rail membership + ordering |
-| `GET /4/plans?from&to` | ✅ 200 (44 plans) | pre-planned allocations to subtract from availability |
-| `/4/workload-schemes`, `/4/holiday-schemes` | 403 with member token | not needed — user-schedule is the resolved product |
+| Endpoint                                    | Verified                                                         | Use                                                                                                                                                    |
+| ------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /4/user-schedule/{accountId}?from&to`  | ✅ 200, incl. other users                                        | per-day `requiredSeconds` per person — workload scheme, part-time and holidays already resolved (verified: 7.2h/day vs 5.6h/day for different members) |
+| `GET /4/teams` + `/4/teams/{id}/members`    | ✅ 200 ("IES NG Nexplore", 42 members, commitmentPercent, roles) | rail membership + ordering                                                                                                                             |
+| `GET /4/plans?from&to`                      | ✅ 200 (44 plans)                                                | pre-planned allocations to subtract from availability                                                                                                  |
+| `/4/workload-schemes`, `/4/holiday-schemes` | 403 with member token                                            | not needed — user-schedule is the resolved product                                                                                                     |
 
 **Capacity formula (v1):**
 `capacity(person, sprint) = Σ requiredSeconds(user-schedule, sprint dates) − Σ plannedSeconds(plans overlapping sprint, non-issue items)`.

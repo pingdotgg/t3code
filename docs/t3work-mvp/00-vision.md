@@ -7,7 +7,7 @@ in — Jira today; Confluence, Linear, GitHub, and your own tools tomorrow — i
 AI-accelerated work surfaces. It extends along two axes: **Sources** (connect any back-end
 as a first-class data provider — the platform handles auth, caching, sync, normalization,
 and reviewable mutations for you) and **Surfaces** (compose role-specific pages, panels,
-and recipes for how *you* work — QA, product, support, delivery). Atlassian/Jira and the
+and recipes for how _you_ work — QA, product, support, delivery). Atlassian/Jira and the
 QA profile are simply the first Source and the first Surface; everything else rides the
 same in-app, agent-authorable plugin model.
 
@@ -47,7 +47,7 @@ owns the hard, repetitive parts so a connector author does not have to:
 
 A connector author implements only the back-end-specific part: how to list, read, search,
 and mutate that system, and how to normalize its data. One connector can span a **product
-family** — the Atlassian connector exposes both Jira issues *and* Confluence pages under a
+family** — the Atlassian connector exposes both Jira issues _and_ Confluence pages under a
 single connection.
 
 Connectors are authored the same way recipes are: as typed TypeScript plugin modules, and
@@ -59,7 +59,7 @@ the North Star is that any user can add a Source the same way.
 
 A **Surface** is how you work a Source: the pages, panels, recipes, and automations a
 particular role sees. A requirements engineer, a product manager, a QA tester, and a
-release coordinator should each be able to shape `t3work` around how *they* work.
+release coordinator should each be able to shape `t3work` around how _they_ work.
 
 The machinery for this already exists across the spec — this axis names it:
 
@@ -100,17 +100,17 @@ the same act** — write a small typed module against shared primitives, review 
 
 ## What the Platform Owns vs. What You Author
 
-| The platform owns (plumbing)                          | You author (intent)                          |
-| ----------------------------------------------------- | -------------------------------------------- |
-| Auth, account/site discovery                          | Which Sources to connect                     |
-| Caching, queryable store, sync, freshness             | How a connector reads/searches/mutates       |
-| Normalization into shared snapshots                   | How a back-end's data maps to snapshots      |
-| Reviewable mutation flow (prepare → commit)           | Which Surfaces/pages a role sees             |
-| Cross-provider resource graph                         | Which recipes and automations exist          |
-| Durable workflow execution, permission UI             | What "good output" looks like for your work  |
+| The platform owns (plumbing)                | You author (intent)                         |
+| ------------------------------------------- | ------------------------------------------- |
+| Auth, account/site discovery                | Which Sources to connect                    |
+| Caching, queryable store, sync, freshness   | How a connector reads/searches/mutates      |
+| Normalization into shared snapshots         | How a back-end's data maps to snapshots     |
+| Reviewable mutation flow (prepare → commit) | Which Surfaces/pages a role sees            |
+| Cross-provider resource graph               | Which recipes and automations exist         |
+| Durable workflow execution, permission UI   | What "good output" looks like for your work |
 
 The dividing line is deliberate: the boring, security-sensitive, easy-to-get-wrong parts
-are the platform's job; the parts that encode *your* work are yours to author.
+are the platform's job; the parts that encode _your_ work are yours to author.
 
 ## The Cross-Provider Resource Graph
 
