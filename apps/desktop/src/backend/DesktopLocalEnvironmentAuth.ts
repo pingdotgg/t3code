@@ -1,4 +1,5 @@
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
+import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,7 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
-import * as DesktopBackendManager from "./DesktopBackendManager.ts";
+import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 
 export class DesktopLocalEnvironmentAuthBackendNotConfiguredError extends Schema.TaggedErrorClass<DesktopLocalEnvironmentAuthBackendNotConfiguredError>()(
   "DesktopLocalEnvironmentAuthBackendNotConfiguredError",
@@ -42,7 +43,7 @@ export class DesktopLocalEnvironmentAuth extends Context.Service<
 >()("@t3tools/desktop/backend/DesktopLocalEnvironmentAuth") {}
 
 export const make = Effect.gen(function* () {
-  const backendManager = yield* DesktopBackendManager.DesktopBackendManager;
+  const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const httpClient = yield* HttpClient.HttpClient;
   const tokenRef = yield* Ref.make(Option.none<string>());
   const mutex = yield* Semaphore.make(1);
@@ -55,14 +56,20 @@ export const make = Effect.gen(function* () {
           return cached.value;
         }
 
-        const configOption = yield* backendManager.currentConfig;
+        const instances = yield* pool.list;
+        const primary = instances.find((instance) => instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID);
+        const configOption = primary === undefined ? Option.none() : yield* primary.currentConfig;
         if (Option.isNone(configOption)) {
           return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
         }
         const config = configOption.value;
+        const credential = config.bootstrap.desktopBootstrapToken;
+        if (!credential) {
+          return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
+        }
         const session = yield* bootstrapRemoteBearerSession({
           httpBaseUrl: config.httpBaseUrl.href,
-          credential: config.bootstrap.desktopBootstrapToken,
+          credential,
           clientMetadata: {
             label: "T3 Code Desktop",
             deviceType: "desktop",

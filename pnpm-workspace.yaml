@@ -5,6 +5,20 @@ packages:
   - packages/*
   - scripts
 
+# Install both Windows and Linux native binaries so the WSL (Linux) backend
+# can load platform-gated optional deps (e.g. @yuuang/ffi-rs-linux-x64-gnu)
+# out of the same node_modules the Windows desktop uses.
+supportedArchitectures:
+  os:
+    - current
+    - linux
+  cpu:
+    - current
+    - x64
+  libc:
+    - current
+    - glibc
+
 catalog:
   "@clerk/backend": 3.8.3-snapshot.v20260622234151
   "@clerk/clerk-js": 6.21.0-snapshot.v20260622234151
