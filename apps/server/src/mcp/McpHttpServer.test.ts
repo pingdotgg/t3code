@@ -1,5 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -34,7 +35,7 @@ const client = McpSchema.McpServerClient.of({
 });
 const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
-  Layer.provideMerge(PreviewAutomationBroker.layer),
+  Layer.provideMerge(PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer))),
 );
 
 it("normalizes empty successful notification responses to accepted", () => {
@@ -54,36 +55,26 @@ it.effect("returns bounded structural preview snapshot failures", () =>
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
       const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-      const requests = yield* broker.connect({
+      const events = yield* broker.connect({
         clientId: "mcp-failure-client",
         environmentId,
-        threadId,
-        tabId,
-        visible: true,
-        supportsAutomation: true,
-        focusedAt: "2026-06-11T00:00:00.000Z",
       });
-      yield* Stream.runForEach(requests, (request) =>
-        broker.respond({
-          requestId: request.requestId,
-          ok: false,
-          error: {
-            _tag: "PreviewAutomationExecutionError",
-            message: "sensitive renderer failure",
-            detail: { consoleOutput: "sensitive browser output" },
-          },
-        }),
+      yield* Stream.runForEach(events, (event) =>
+        event.type === "connected"
+          ? Effect.void
+          : broker.respond({
+              clientId: "mcp-failure-client",
+              connectionId: event.connectionId,
+              requestId: event.request.requestId,
+              ok: false,
+              error: {
+                _tag: "PreviewAutomationExecutionError",
+                message: "sensitive renderer failure",
+                detail: { consoleOutput: "sensitive browser output" },
+              },
+            }),
       ).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
-      yield* broker.reportOwner({
-        clientId: "mcp-failure-client",
-        environmentId,
-        threadId,
-        tabId,
-        visible: true,
-        supportsAutomation: true,
-        focusedAt: "2026-06-11T00:00:00.000Z",
-      });
 
       const snapshot = yield* server
         .callTool({ name: "preview_snapshot", arguments: {} })
@@ -163,60 +154,50 @@ it.effect("registers annotated tools and preserves authenticated request context
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
       const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-      const requests = yield* broker.connect({
+      const events = yield* broker.connect({
         clientId: "mcp-test-client",
         environmentId,
-        threadId,
-        tabId,
-        visible: true,
-        supportsAutomation: true,
-        focusedAt: "2026-06-11T00:00:00.000Z",
       });
-      yield* Stream.runForEach(requests, (request) =>
-        broker.respond({
-          requestId: request.requestId,
-          ok: true,
-          result:
-            request.operation === "snapshot"
-              ? {
-                  url: "http://example.test/",
-                  title: "Example",
-                  loading: false,
-                  visibleText: "Example",
-                  interactiveElements: [],
-                  accessibilityTree: {},
-                  consoleEntries: [],
-                  networkEntries: [],
-                  actionTimeline: [],
-                  screenshot: {
-                    mimeType: "image/png",
-                    data: Buffer.from("png").toString("base64"),
-                    width: 10,
-                    height: 5,
-                  },
-                }
-              : request.operation === "press"
-                ? undefined
-                : {
-                    available: true,
-                    visible: true,
-                    tabId,
-                    url: "http://example.test/",
-                    title: "Example",
-                    loading: false,
-                  },
-        }),
+      yield* Stream.runForEach(events, (event) =>
+        event.type === "connected"
+          ? Effect.void
+          : broker.respond({
+              clientId: "mcp-test-client",
+              connectionId: event.connectionId,
+              requestId: event.request.requestId,
+              ok: true,
+              result:
+                event.request.operation === "snapshot"
+                  ? {
+                      url: "http://example.test/",
+                      title: "Example",
+                      loading: false,
+                      visibleText: "Example",
+                      interactiveElements: [],
+                      accessibilityTree: {},
+                      consoleEntries: [],
+                      networkEntries: [],
+                      actionTimeline: [],
+                      screenshot: {
+                        mimeType: "image/png",
+                        data: Buffer.from("png").toString("base64"),
+                        width: 10,
+                        height: 5,
+                      },
+                    }
+                  : event.request.operation === "press"
+                    ? undefined
+                    : {
+                        available: true,
+                        visible: true,
+                        tabId,
+                        url: "http://example.test/",
+                        title: "Example",
+                        loading: false,
+                      },
+            }),
       ).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
-      yield* broker.reportOwner({
-        clientId: "mcp-test-client",
-        environmentId,
-        threadId,
-        tabId,
-        visible: true,
-        supportsAutomation: true,
-        focusedAt: "2026-06-11T00:00:00.000Z",
-      });
 
       const statusTool = server.tools.find(({ tool }) => tool.name === "preview_status");
       expect(statusTool?.tool.annotations?.readOnlyHint).toBe(true);

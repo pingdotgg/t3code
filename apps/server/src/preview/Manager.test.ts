@@ -151,6 +151,61 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
     }),
   );
 
+  it.effect("resizes a tab and preserves its viewport across navigation reports", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const collector = yield* collectEvents;
+      const opened = yield* manager.open({ threadId, url: "http://localhost:5173" });
+
+      const resized = yield* manager.resize({
+        threadId,
+        tabId: opened.tabId,
+        viewport: { _tag: "freeform", width: 1024, height: 768 },
+      });
+      expect(resized.viewport).toEqual({ _tag: "freeform", width: 1024, height: 768 });
+
+      const navigated = yield* manager.navigate({
+        threadId,
+        tabId: opened.tabId,
+        url: "http://localhost:5173/resized",
+      });
+      expect(navigated.viewport).toEqual(resized.viewport);
+
+      yield* manager.reportStatus({
+        threadId,
+        tabId: opened.tabId,
+        navStatus: { _tag: "Success", url: "http://localhost:5173/resized", title: "Resized" },
+        canGoBack: true,
+        canGoForward: false,
+      });
+      const listed = yield* manager.list({ threadId });
+      expect(listed.sessions[0]?.viewport).toEqual(resized.viewport);
+
+      const events = yield* collector.drain;
+      expect(events.map((event) => event.type)).toEqual([
+        "opened",
+        "resized",
+        "navigated",
+        "navigated",
+      ]);
+    }),
+  );
+
+  it.effect("rejects resize for an unknown tab", () =>
+    Effect.gen(function* () {
+      const manager = yield* PreviewManager.PreviewManager;
+      const error = yield* Effect.flip(
+        manager.resize({
+          threadId: freshThreadId(),
+          tabId: "tab_missing",
+          viewport: { _tag: "fill" },
+        }),
+      );
+      expect(error._tag).toBe("PreviewSessionLookupError");
+    }),
+  );
+
   it.effect("reportStatus emits failed for LoadFailed nav", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();

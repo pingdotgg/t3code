@@ -11,6 +11,7 @@ import {
   applyPreviewServerEvent,
   applyPreviewServerSnapshot,
   readThreadPreviewState,
+  reconcilePreviewServerSessions,
 } from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
 
@@ -50,9 +51,7 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
       if (result.value.sessions.length > 0) {
         recoveringUrl = null;
         recoveryId += 1;
-        for (const snapshot of result.value.sessions) {
-          applyPreviewServerSnapshot(threadRef, snapshot);
-        }
+        reconcilePreviewServerSessions(threadRef, result.value.sessions);
         return;
       }
 
