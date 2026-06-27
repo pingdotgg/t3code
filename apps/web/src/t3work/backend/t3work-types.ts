@@ -105,6 +105,7 @@ export interface ProjectWorkspaceBackendApi {
     readonly workspaceRoot: string;
     readonly linkedRepositoryUrls?: ReadonlyArray<string>;
     readonly setupProfileId?: string;
+    readonly customProfile?: import("@t3tools/t3work-skill-packs").T3WorkProfile;
   }) => Promise<ProjectWorkspaceBootstrapResult>;
   readonly discoverRecipes: (
     input: DiscoverProjectRecipesRequest,

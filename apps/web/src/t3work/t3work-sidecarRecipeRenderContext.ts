@@ -4,7 +4,11 @@ import {
   type RecipeSurface,
 } from "@t3tools/project-recipes";
 import { createQueryable } from "@t3tools/project-context";
-import { getT3WorkProfile, toRecipeProfileContext } from "@t3tools/t3work-skill-packs";
+import {
+  getT3WorkProfile,
+  resolveEnabledSkillPackIds,
+  toRecipeProfileContext,
+} from "@t3tools/t3work-skill-packs";
 
 import type { T3WorkContextAttachment } from "~/t3work/t3work-contextAttachment";
 import { buildAvailableContextKeys } from "~/t3work/t3work-sidecarRecipeContextKeys";
@@ -133,7 +137,7 @@ export function buildRecipeRenderContext(
       title: profile.title,
       ...toRecipeProfileContext(profile),
     },
-    enabledSkillPacks: profile.recommendedSkillPackIds,
+    enabledSkillPacks: resolveEnabledSkillPackIds({ profile }),
     schema: {},
     availableContextKeys: createQueryable(availableContextKeys),
   };

@@ -47,7 +47,8 @@ export function createDurableCallPrimitive(seat: DurablePrimitiveSeat) {
       return await decodeRecorded(call, recorded.result, currentSeq);
     }
 
-    if (currentSeq <= seat.maxRecordedSeq) gapDrift(currentSeq, call.kind, call.refId, seat.filePath);
+    if (currentSeq <= seat.maxRecordedSeq)
+      gapDrift(currentSeq, call.kind, call.refId, seat.filePath);
 
     const result = await call.exec();
     const startedAt = seat.nowIso();

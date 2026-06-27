@@ -14,6 +14,7 @@ import { finalizeCreatedProject } from "./t3work-createProjectFinalization";
 import { isValidAtlassianUrl, normalizeAtlassianUrl } from "./t3work-createProjectUtils";
 import { writeIntegrationCache } from "./t3work-integrationCache";
 import { readT3workProjectSetupProfile } from "~/t3work/t3work-projectSetupProfile";
+import type { T3WorkProfile } from "@t3tools/t3work-skill-packs";
 import { loadProjectsForAccount } from "./t3work-useCreateProjectAccountLoaders";
 import { applyLoadedAccounts, failWithStep } from "./t3work-useCreateProjectHelpers";
 import { loadPersistedAccountsStep } from "./t3work-useCreateProjectLoadPersisted";
@@ -23,6 +24,7 @@ export type AtlassianBasicCredentials = { siteUrl: string; email: string; apiTok
 type CreateProjectOptions = {
   readonly linkedRepositoryUrls?: ReadonlyArray<string>;
   readonly setupProfileId?: string;
+  readonly customProfile?: T3WorkProfile | undefined;
 };
 
 export function useCreateProject() {
@@ -158,6 +160,7 @@ export function useCreateProject() {
           project,
           linkedRepositoryUrls,
           setupProfileId,
+          ...(options?.customProfile ? { customProfile: options.customProfile } : {}),
         });
       } catch (e) {
         fail(e, "Failed to create project", "project");

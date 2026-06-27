@@ -28,8 +28,15 @@ export type {
 } from "./t3work-planningSpaceControllerTypes";
 
 export function usePlanningSpaceController(props: PlanningSpaceProps): PlanningSpaceController {
-  const { tickets, sprintId, currentUser, mutations, ownerCapacities, ownerRoles, onTicketContextMenu } =
-    props;
+  const {
+    tickets,
+    sprintId,
+    currentUser,
+    mutations,
+    ownerCapacities,
+    ownerRoles,
+    onTicketContextMenu,
+  } = props;
 
   const refs = usePlanningSpaceControllerRefs(mutations);
   const vm = usePlanningSpaceViewModel({
@@ -53,9 +60,12 @@ export function usePlanningSpaceController(props: PlanningSpaceProps): PlanningS
   usePlanningSpaceEngineEffects(ctxRef);
   usePlanningSpacePointerEffect(ctxRef);
 
-  const handleSetSubtaskHours = useCallback((subtaskId: string, seconds: number) => {
-    refs.mutationsRef.current?.onSetSubtaskHours?.(subtaskId, seconds);
-  }, [refs.mutationsRef]);
+  const handleSetSubtaskHours = useCallback(
+    (subtaskId: string, seconds: number) => {
+      refs.mutationsRef.current?.onSetSubtaskHours?.(subtaskId, seconds);
+    },
+    [refs.mutationsRef],
+  );
 
   return buildPlanningSpaceControllerReturn({
     ctx,

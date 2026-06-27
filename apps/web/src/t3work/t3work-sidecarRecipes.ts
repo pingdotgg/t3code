@@ -4,6 +4,7 @@ import {
   getBundledT3WorkRecipe,
   getT3WorkProfile,
   listBundledT3WorkRecipes,
+  resolveEnabledSkillPackIds,
   toRecipeProfileContext,
 } from "@t3tools/t3work-skill-packs";
 
@@ -45,6 +46,7 @@ export function buildT3workSidecarRecipeQuickStarts(
   input: T3workSidecarRecipeInput,
 ): ReadonlyArray<T3workSidecarRecipeQuickStart> {
   const profile = getT3WorkProfile(input.profileId);
+  const enabledSkillPacks = resolveEnabledSkillPackIds({ profile });
   const renderContext = buildRecipeRenderContext(input, profile);
   const resolvedSurface = renderContext.surface;
   const projectWorkspaceRoot = input.project.workspace?.rootPath;
@@ -60,7 +62,7 @@ export function buildT3workSidecarRecipeQuickStarts(
     ],
     surface: resolvedSurface,
     ...(input.jiraIssueType ? { jiraIssueType: input.jiraIssueType } : {}),
-    enabledSkillPacks: profile.recommendedSkillPackIds,
+    enabledSkillPacks,
     profile: toRecipeProfileContext(profile),
     availableContextKeys,
   }).filter((result) => result.missingContext.length === 0);

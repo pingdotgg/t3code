@@ -1,6 +1,8 @@
 import { DEFAULT_MODEL, ProviderInstanceId } from "@t3tools/contracts";
 import type { ProjectShellProject } from "@t3tools/project-context";
 
+import type { T3WorkProfile } from "@t3tools/t3work-skill-packs";
+
 import type { BackendApi } from "~/t3work/backend/t3work-types";
 import { syncProjectWorkspaceContext } from "~/t3work/t3work-projectWorkspaceSync";
 import { randomUUID } from "~/lib/utils";
@@ -13,6 +15,7 @@ export async function finalizeCreatedProject(input: {
   project: ProjectShellProject;
   linkedRepositoryUrls: ReadonlyArray<string>;
   setupProfileId: string;
+  customProfile?: T3WorkProfile | undefined;
 }): Promise<ProjectShellProject> {
   if (!input.project.workspace?.rootPath) {
     throw new Error("Created project is missing a managed workspace root.");
@@ -45,6 +48,7 @@ export async function finalizeCreatedProject(input: {
       workspaceRoot: input.project.workspace.rootPath,
       linkedRepositoryUrls: input.linkedRepositoryUrls,
       setupProfileId: input.setupProfileId,
+      ...(input.customProfile ? { customProfile: input.customProfile } : {}),
     });
     const bootstrappedProject = applyWorkspaceBootstrapToProject(input.project, bootstrap);
     try {

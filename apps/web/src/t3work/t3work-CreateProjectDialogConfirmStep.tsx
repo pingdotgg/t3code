@@ -6,7 +6,10 @@ import {
   listT3workProjectSetupCardOptions,
   T3workProjectSetupProfileCards,
 } from "~/t3work/t3work-ProjectSetupProfileCards";
+import { T3workCloneProjectSetupProfileDialog } from "~/t3work/t3work-CloneProjectSetupProfileDialog";
+import { T3workProjectSetupConfirmPreviewView } from "~/t3work/t3work-ProjectSetupConfirmPreviewView";
 import type { T3WorkProjectSetupProfileId } from "~/t3work/t3work-projectSetup";
+import type { T3WorkProfile } from "@t3tools/t3work-skill-packs";
 
 export function ConfirmStep({
   selectedProject,
@@ -20,6 +23,8 @@ export function ConfirmStep({
   onRemoveRepository,
   onAddRepositories,
   onDiscoveredRepositoryUrlsChange,
+  customProfile,
+  onCustomProfileChange,
 }: {
   selectedProject: ExternalProject | null;
   setupProfileId: T3WorkProjectSetupProfileId;
@@ -32,20 +37,38 @@ export function ConfirmStep({
   onRemoveRepository: (url: string) => void;
   onAddRepositories: (urls: ReadonlyArray<string>) => void;
   onDiscoveredRepositoryUrlsChange: (urls: ReadonlyArray<string>) => void;
+  customProfile?: T3WorkProfile | undefined;
+  onCustomProfileChange: (profile: T3WorkProfile | undefined) => void;
 }) {
   return (
     <section className="space-y-6">
       <div className="space-y-3">
-        <div>
-          <h3 className="text-sm font-semibold">How should t3work work with you?</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Choose the default tone for this project workspace.
-          </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold">How should t3work work with you?</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Choose the default tone for this project workspace.
+            </p>
+          </div>
+          <T3workCloneProjectSetupProfileDialog
+            sourceProfileId={setupProfileId}
+            onClone={(profile) => {
+              onCustomProfileChange(profile);
+              onSetupProfileChange(profile.id);
+            }}
+          />
         </div>
         <T3workProjectSetupProfileCards
           compact
           selectedProfileId={setupProfileId}
-          onSelectProfile={onSetupProfileChange}
+          onSelectProfile={(profileId) => {
+            onCustomProfileChange(undefined);
+            onSetupProfileChange(profileId);
+          }}
+        />
+        <T3workProjectSetupConfirmPreviewView
+          profileId={setupProfileId}
+          {...(customProfile ? { customProfile } : {})}
         />
       </div>
 

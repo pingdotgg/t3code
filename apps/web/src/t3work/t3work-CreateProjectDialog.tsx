@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ProjectShellProject } from "@t3tools/project-context";
+import type { T3WorkProfile } from "@t3tools/t3work-skill-packs";
 import { splitRepositoryInput } from "~/t3work/components/t3work-linkedRepositories";
 import { useAtlassianOAuth } from "~/t3work/hooks/t3work-useAtlassianOAuth";
 import { useCreateProject } from "~/t3work/hooks/t3work-useCreateProject";
@@ -47,6 +48,7 @@ export function CreateProjectDialog({
     [],
   );
   const [newRepositoryUrl, setNewRepositoryUrl] = useState("");
+  const [customProfile, setCustomProfile] = useState<T3WorkProfile | undefined>(undefined);
 
   useEffect(() => {
     void loadPersistedAccounts();
@@ -69,6 +71,7 @@ export function CreateProjectDialog({
     const project = await setup.createProject(selectedProject, {
       linkedRepositoryUrls,
       setupProfileId,
+      ...(customProfile ? { customProfile } : {}),
     });
     onCreated(project);
   };
@@ -160,6 +163,8 @@ export function CreateProjectDialog({
                 setLinkedRepositoryUrls((current) => [...new Set([...current, ...urls])])
               }
               onDiscoveredRepositoryUrlsChange={handleDiscoveredRepositoryUrlsChange}
+              customProfile={customProfile}
+              onCustomProfileChange={setCustomProfile}
             />
           ) : null}
           {setup.step === "creating" ? (

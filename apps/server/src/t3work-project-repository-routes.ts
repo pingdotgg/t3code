@@ -66,9 +66,12 @@ export const t3workProjectWorkspaceBootstrapRouteLayer = HttpRouter.add(
         )
       : { managedFileHashes: {} };
     const setupProfileId = resolveT3WorkProjectSetupProfileId(
-      input.setupProfileId ?? persistedSetupState.profileId,
+      input.customProfile?.id ?? input.setupProfileId ?? persistedSetupState.profileId,
     );
-    const previewSetupFiles = renderT3WorkProjectSetupFiles({ profileId: setupProfileId });
+    const previewSetupFiles = renderT3WorkProjectSetupFiles({
+      profileId: setupProfileId,
+      ...(input.customProfile ? { customProfile: input.customProfile } : {}),
+    });
     const writeDecisions = new Map<
       string,
       ReturnType<typeof resolveT3WorkProjectSetupWriteDecision>
@@ -104,6 +107,7 @@ export const t3workProjectWorkspaceBootstrapRouteLayer = HttpRouter.add(
     const setupFiles = renderT3WorkProjectSetupFiles({
       profileId: setupProfileId,
       managedFileHashes: nextManagedFileHashes,
+      ...(input.customProfile ? { customProfile: input.customProfile } : {}),
     });
     for (const file of setupFiles) {
       const targetPath = path.join(workspaceRoot, file.relativePath);

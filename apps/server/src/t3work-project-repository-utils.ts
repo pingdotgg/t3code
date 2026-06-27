@@ -8,6 +8,7 @@ export type BootstrapWorkspaceRequest = {
   readonly workspaceRoot: string;
   readonly linkedRepositoryUrls?: ReadonlyArray<string>;
   readonly setupProfileId?: string;
+  readonly customProfile?: import("@t3tools/t3work-skill-packs").T3WorkProfile;
 };
 
 export type LinkedRepositoryBootstrapResult = {

@@ -8,35 +8,37 @@ import type { PlanningItemRef } from "./t3work-planningSpaceInteractions";
 import type { PlanningSpaceViewModel } from "./t3work-planningSpaceViewModel";
 import type { PlanningSpaceControllerRefs } from "./t3work-usePlanningSpaceControllerRefs";
 
-export function buildPlanningSpaceControllerReturn(input: {
-  readonly ctx: PlanningSpaceCtx;
-  readonly vm: PlanningSpaceViewModel;
-  readonly handleSetSubtaskHours: (subtaskId: string, seconds: number) => void;
-  readonly ownerRoles: PlanningSpaceProps["ownerRoles"];
-  readonly ownerCapacities: PlanningSpaceProps["ownerCapacities"];
-  readonly onTicketContextMenu: PlanningSpaceProps["onTicketContextMenu"];
-} & Pick<
-  PlanningSpaceControllerRefs,
-  | "textFilter"
-  | "setTextFilter"
-  | "stateFilters"
-  | "setStateFilters"
-  | "solo"
-  | "setSolo"
-  | "showFilters"
-  | "setShowFilters"
-  | "spotlight"
-  | "epicDetailId"
-  | "contextMenu"
-  | "toast"
-  | "setRailUserOpen"
-  | "grouping"
-  | "atFullBand"
-  | "assignTarget"
-  | "dragActive"
-  | "railUserOpen"
-  | "detailItem"
->): PlanningSpaceController {
+export function buildPlanningSpaceControllerReturn(
+  input: {
+    readonly ctx: PlanningSpaceCtx;
+    readonly vm: PlanningSpaceViewModel;
+    readonly handleSetSubtaskHours: (subtaskId: string, seconds: number) => void;
+    readonly ownerRoles: PlanningSpaceProps["ownerRoles"];
+    readonly ownerCapacities: PlanningSpaceProps["ownerCapacities"];
+    readonly onTicketContextMenu: PlanningSpaceProps["onTicketContextMenu"];
+  } & Pick<
+    PlanningSpaceControllerRefs,
+    | "textFilter"
+    | "setTextFilter"
+    | "stateFilters"
+    | "setStateFilters"
+    | "solo"
+    | "setSolo"
+    | "showFilters"
+    | "setShowFilters"
+    | "spotlight"
+    | "epicDetailId"
+    | "contextMenu"
+    | "toast"
+    | "setRailUserOpen"
+    | "grouping"
+    | "atFullBand"
+    | "assignTarget"
+    | "dragActive"
+    | "railUserOpen"
+    | "detailItem"
+  >,
+): PlanningSpaceController {
   const railDefaultOpen = input.grouping !== "owner" && !input.atFullBand;
   const railOpen =
     input.assignTarget !== null || input.dragActive

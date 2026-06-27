@@ -8,9 +8,7 @@ import {
   initialInteractionState,
 } from "./t3work-planningSpaceInteractions";
 import type { PlanningSpaceEngine } from "./t3work-planningSpaceRenderer";
-import type {
-  PlanningNodeKind,
-} from "./t3work-planningSpaceControllerTypes";
+import type { PlanningNodeKind } from "./t3work-planningSpaceControllerTypes";
 import type {
   PlanningSpaceGrouping,
   PlanningSpaceMutations,
