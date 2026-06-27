@@ -10,10 +10,11 @@ import {
   loadPersistedAuths,
   providerForAccount,
   providerForPersistedAuths,
+  replaceAtlassianAuths,
   savePersistedAuths,
-  setAtlassianAuth,
 } from "./t3work-atlassian-auth-store.ts";
 import {
+  T3workAtlassianError,
   errorResponse,
   okJson,
   readJsonBody,
@@ -56,9 +57,7 @@ export const t3workAtlassianConnectBasicRouteLayer = HttpRouter.add(
       () => provider.listAccounts(),
       "Failed to connect to Atlassian.",
     );
-    for (const account of accounts) {
-      setAtlassianAuth(account.id, input.auth);
-    }
+    replaceAtlassianAuths(accounts.map((account) => ({ accountId: account.id, auth: input.auth })));
     yield* savePersistedAuths;
     return okJson({ accounts });
   }).pipe(Effect.catch(errorResponse)),
@@ -86,6 +85,12 @@ export const t3workAtlassianConnectOAuthRouteLayer = HttpRouter.add(
   Effect.gen(function* () {
     yield* loadPersistedAuths;
     const input = yield* readJsonBody<OAuthConnectInput>();
+    if (!input.auth.token.refreshToken?.trim()) {
+      return yield* new T3workAtlassianError({
+        message:
+          "Atlassian OAuth did not return a refresh token. Reconnect Atlassian and approve offline access.",
+      });
+    }
     const now = yield* Clock.currentTimeMillis;
     const expiresAt = now + input.auth.token.expiresIn * 1000;
     const auths: ReadonlyArray<JiraApiAuth> = input.auth.sites.map((site) => ({
@@ -111,14 +116,14 @@ export const t3workAtlassianConnectOAuthRouteLayer = HttpRouter.add(
       () => provider.listAccounts(),
       "Failed to connect to Atlassian.",
     );
-    for (const account of accounts) {
-      const auth = auths.find(
-        (candidate) => candidate.kind === "oauth" && candidate.cloudId === account.id,
-      );
-      if (auth) {
-        setAtlassianAuth(account.id, auth);
-      }
-    }
+    replaceAtlassianAuths(
+      accounts.flatMap((account) => {
+        const auth = auths.find(
+          (candidate) => candidate.kind === "oauth" && candidate.cloudId === account.id,
+        );
+        return auth ? [{ accountId: account.id, auth }] : [];
+      }),
+    );
     yield* savePersistedAuths;
     return okJson({ accounts });
   }).pipe(Effect.catch(errorResponse)),

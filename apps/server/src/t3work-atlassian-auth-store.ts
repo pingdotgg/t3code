@@ -8,13 +8,12 @@ import {
 import { MockIntegrationProvider } from "@t3tools/integrations-core/mock";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
-import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
-import { ServerConfig } from "./config.ts";
-import { toAtlassianError, tryAtlassianPromise } from "./t3work-atlassian-http.ts";
-import { t3workRandomUUID } from "./t3work-random.ts";
+import { T3workAtlassianError, tryAtlassianPromise } from "./t3work-atlassian-http.ts";
+import {
+  loadPersistedAtlassianAuthsPayload,
+  type PersistedAtlassianAuths,
+  savePersistedAtlassianAuthsPayload,
+} from "./t3work-atlassian-auth-persistence.ts";
 
 export type BasicConnectInput = {
   readonly auth: {
@@ -33,47 +32,6 @@ export type OAuthConnectInput = {
   };
 };
 
-type PersistedAtlassianAuths = {
-  readonly version: 1;
-  readonly auths: ReadonlyArray<{
-    readonly accountId: string;
-    readonly auth: JiraApiAuth;
-  }>;
-};
-
-const ATLASSIAN_AUTH_SECRET_NAME = "t3work-atlassian-auths";
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
-
-const PersistedJiraApiAuth = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal("oauth"),
-    cloudId: Schema.String,
-    siteUrl: Schema.optional(Schema.String),
-    accessToken: Schema.String,
-    refreshToken: Schema.optional(Schema.String),
-    expiresAt: Schema.optional(Schema.Number),
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("basic"),
-    siteUrl: Schema.String,
-    email: Schema.String,
-    apiToken: Schema.String,
-  }),
-]);
-const PersistedAtlassianAuths = Schema.Struct({
-  version: Schema.Literal(1),
-  auths: Schema.Array(
-    Schema.Struct({
-      accountId: Schema.String,
-      auth: PersistedJiraApiAuth,
-    }),
-  ),
-});
-const PersistedAtlassianAuthsJson = fromJsonStringPretty(PersistedAtlassianAuths);
-const decodePersistedAtlassianAuths = Schema.decodeEffect(PersistedAtlassianAuthsJson);
-const encodePersistedAtlassianAuths = Schema.encodeEffect(PersistedAtlassianAuthsJson);
-
 const mockProvider = new MockIntegrationProvider();
 const atlassianAuths = new Map<string, JiraApiAuth>();
 const OAUTH_REFRESH_SKEW_MS = 60_000;
@@ -85,64 +43,25 @@ function persistedAuthsPayload(): PersistedAtlassianAuths {
   };
 }
 
-const atlassianAuthSecretPath = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const serverConfig = yield* ServerConfig;
-  yield* fileSystem
-    .makeDirectory(serverConfig.secretsDir, { recursive: true })
-    .pipe(Effect.mapError(toAtlassianError("Failed to prepare Atlassian settings directory.")));
-  yield* fileSystem
-    .chmod(serverConfig.secretsDir, 0o700)
-    .pipe(Effect.mapError(toAtlassianError("Failed to secure Atlassian settings directory.")));
-  return path.join(serverConfig.secretsDir, `${ATLASSIAN_AUTH_SECRET_NAME}.bin`);
-});
-
 export const loadPersistedAuths = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const secretPath = yield* atlassianAuthSecretPath;
-  const persisted = yield* fileSystem.readFile(secretPath).pipe(
-    Effect.map((bytes) => Uint8Array.from(bytes)),
-    Effect.catch((cause) =>
-      cause.reason._tag === "NotFound"
-        ? Effect.succeed(null)
-        : Effect.fail(toAtlassianError("Failed to load persisted Atlassian settings.")(cause)),
-    ),
-  );
-  if (!persisted) return;
-
-  const parsed = yield* decodePersistedAtlassianAuths(textDecoder.decode(persisted)).pipe(
-    Effect.mapError(toAtlassianError("Failed to parse persisted Atlassian settings.")),
-  );
-
+  const parsed = yield* loadPersistedAtlassianAuthsPayload;
+  if (!parsed) return;
+  atlassianAuths.clear();
   for (const entry of parsed.auths) {
     atlassianAuths.set(entry.accountId, entry.auth);
   }
 });
 
-export const savePersistedAuths = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const secretPath = yield* atlassianAuthSecretPath;
-  const encoded = yield* encodePersistedAtlassianAuths(persistedAuthsPayload()).pipe(
-    Effect.mapError(toAtlassianError("Failed to encode Atlassian settings.")),
-  );
-  const tempPath = `${secretPath}.${t3workRandomUUID()}.tmp`;
-  yield* Effect.gen(function* () {
-    yield* fileSystem.writeFile(tempPath, textEncoder.encode(encoded));
-    yield* fileSystem.chmod(tempPath, 0o600);
-    yield* fileSystem.rename(tempPath, secretPath);
-    yield* fileSystem.chmod(secretPath, 0o600);
-  }).pipe(
-    Effect.catch((cause) =>
-      fileSystem.remove(tempPath).pipe(
-        Effect.ignore,
-        Effect.flatMap(() =>
-          Effect.fail(toAtlassianError("Failed to persist Atlassian settings.")(cause)),
-        ),
-      ),
-    ),
-  );
-});
+export const savePersistedAuths = Effect.suspend(() =>
+  savePersistedAtlassianAuthsPayload(persistedAuthsPayload()),
+);
+
+function missingRefreshTokenError() {
+  return new T3workAtlassianError({
+    message:
+      "Atlassian OAuth token expired and no refresh token is stored. Reconnect Atlassian to grant offline access.",
+  });
+}
 
 function atlassianOAuthClientConfig(): { clientId: string; clientSecret?: string } {
   const clientId =
@@ -158,13 +77,17 @@ function atlassianOAuthClientConfig(): { clientId: string; clientSecret?: string
 
 function refreshOAuthAuthIfNeeded(accountId: string, auth: JiraApiAuth) {
   return Effect.gen(function* () {
-    if (auth.kind !== "oauth" || !auth.refreshToken || !auth.expiresAt) {
+    if (auth.kind !== "oauth" || auth.expiresAt === undefined) {
       return auth;
     }
 
     const now = yield* Clock.currentTimeMillis;
     if (auth.expiresAt - now > OAUTH_REFRESH_SKEW_MS) {
       return auth;
+    }
+
+    if (!auth.refreshToken) {
+      return yield* missingRefreshTokenError();
     }
 
     const config = atlassianOAuthClientConfig();
@@ -203,13 +126,39 @@ export function providerForAccount(accountId: string) {
 export function providerForPersistedAuths() {
   return Effect.gen(function* () {
     yield* loadPersistedAuths;
-    const auths = yield* Effect.all(
-      [...atlassianAuths].map(([accountId, auth]) => refreshOAuthAuthIfNeeded(accountId, auth)),
+    const refreshResults = yield* Effect.all(
+      [...atlassianAuths].map(([accountId, auth]) =>
+        refreshOAuthAuthIfNeeded(accountId, auth).pipe(
+          Effect.map((refreshedAuth) => ({ _tag: "success" as const, auth: refreshedAuth })),
+          Effect.catch((error) => Effect.succeed({ _tag: "failure" as const, accountId, error })),
+        ),
+      ),
     );
+    const auths: JiraApiAuth[] = [];
+    for (const result of refreshResults) {
+      if (result._tag === "success") {
+        auths.push(result.auth);
+      }
+    }
+    if (auths.length === 0) {
+      const failure = refreshResults.find((result) => result._tag === "failure");
+      if (failure) {
+        return yield* failure.error;
+      }
+    }
     return auths.length > 0 ? AtlassianIntegrationProvider.fromMultipleAuths(auths) : null;
   });
 }
 
 export function setAtlassianAuth(accountId: string, auth: JiraApiAuth): void {
   atlassianAuths.set(accountId, auth);
+}
+
+export function replaceAtlassianAuths(
+  entries: ReadonlyArray<{ readonly accountId: string; readonly auth: JiraApiAuth }>,
+): void {
+  atlassianAuths.clear();
+  for (const entry of entries) {
+    atlassianAuths.set(entry.accountId, entry.auth);
+  }
 }
