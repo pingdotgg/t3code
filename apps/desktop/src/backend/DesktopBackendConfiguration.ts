@@ -191,9 +191,12 @@ interface WslPreflightFailure {
   // Fatal: the WSL distro is misconfigured (no node, wrong version, missing
   // build tools) and retrying won't help — surface it and (wsl-only) fall back
   // to Windows. Non-fatal: transient (WSL not ready yet, wslpath while it
-  // boots) so the manager keeps retrying until it self-heals.
+  // boots), with a bounded window for self-healing before fallback.
   readonly fatal: boolean;
+  readonly retryLimit?: number;
 }
+
+const WSL_TRANSIENT_PREFLIGHT_RETRY_LIMIT = 12;
 
 const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(function* (input: {
   readonly distro: string | null;
@@ -510,10 +513,16 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   });
 
   if (preflight._tag === "Failed") {
+    const retryLimit =
+      preflight.retryLimit ?? (preflight.fatal ? undefined : WSL_TRANSIENT_PREFLIGHT_RETRY_LIMIT);
     return {
       ...baseConfig,
       args: [...distroArgs, "--", "node", "--version"],
-      preflightFailure: Option.some({ reason: preflight.reason, fatal: preflight.fatal }),
+      preflightFailure: Option.some({
+        reason: preflight.reason,
+        fatal: preflight.fatal,
+        ...(retryLimit === undefined ? {} : { retryLimit }),
+      }),
     } satisfies DesktopBackendManager.DesktopBackendStartConfig;
   }
 

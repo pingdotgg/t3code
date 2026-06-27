@@ -596,6 +596,7 @@ describe("DesktopBackendConfiguration", () => {
         const failure = Option.getOrThrow(config.preflightFailure);
 
         assert.isFalse(failure.fatal);
+        assert.equal(failure.retryLimit, 12);
         assert.include(failure.reason, "timed out");
       }).pipe(
         Effect.provide(
