@@ -14,3 +14,14 @@ iOS 16 support fork. That fork was created from VVTerm's custom-I/O Ghostty fork
 
 Ghostty's MIT license applies to the vendored framework. Keep this notice in sync when updating
 `Vendor/libghostty`.
+
+## Ghostty / libghostty-vt
+
+The Android terminal renderer vendors upstream `libghostty-vt` shared libraries and C headers.
+
+- Upstream project: https://github.com/ghostty-org/ghostty
+- Vendored revision: `9f62873bf195e4d8a762d768a1405a5f2f7b1697`
+- License: MIT
+
+Ghostty's MIT license applies to the vendored Android libraries. Keep this notice in sync when
+updating `Vendor/libghostty-vt`.
