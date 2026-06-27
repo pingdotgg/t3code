@@ -27,6 +27,10 @@ it("exports provider-compatible object schemas with described parameters", () =>
     expect(schema.type, `${tool.name} must export a top-level object schema`).toBe("object");
     expect(schema.anyOf, `${tool.name} must not export a root anyOf`).toBeUndefined();
     expect(schema.oneOf, `${tool.name} must not export a root oneOf`).toBeUndefined();
+    expect(
+      schema.properties?.tabId,
+      `${tool.name} must allow an explicit collaborative browser tab target`,
+    ).toBeDefined();
     for (const [field, fieldSchema] of Object.entries(schema.properties ?? {})) {
       expect(
         schemaHasDescription(fieldSchema),

@@ -8,13 +8,13 @@ import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { cn } from "~/lib/utils";
 
-import { useActiveBrowserRecordingTabId } from "./browserRecording";
+import { stopBrowserRecording, useActiveBrowserRecordingTabId } from "./browserRecording";
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { browserViewportSettingKey } from "./browserViewportLayout";
-import { reconcileLockedAspectRatio } from "./browserDeviceToolbarState";
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
+import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
 
@@ -46,7 +46,8 @@ export function HostedBrowserWebview(props: {
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const webviewRef = useRef<ElectronWebview | null>(null);
-  const [lockedAspectRatio, setLockedAspectRatio] = useState<number | null>(null);
+  const [aspectRatioLocked, setAspectRatioLocked] = useState(false);
+  const activeRecordingTabId = useActiveBrowserRecordingTabId();
   const presentation = useBrowserSurfaceStore(
     useShallow((state) => {
       const current = state.byTabId[tabId];
@@ -56,9 +57,12 @@ export function HostedBrowserWebview(props: {
       };
     }),
   );
-  const recording = useActiveBrowserRecordingTabId() === tabId;
-
   usePreviewBridge({ threadRef, tabId });
+
+  useEffect(() => {
+    if (presentation.visible || activeRecordingTabId !== tabId) return;
+    void stopBrowserRecording(tabId).catch(() => undefined);
+  }, [activeRecordingTabId, presentation.visible, tabId]);
 
   useEffect(() => {
     const lease = acquireDesktopTab(tabId);
@@ -115,9 +119,11 @@ export function HostedBrowserWebview(props: {
   const viewportHeight = viewport._tag === "fill" ? null : viewport.height;
   const viewportAspectRatio =
     viewportWidth === null || viewportHeight === null ? null : viewportWidth / viewportHeight;
-  useEffect(() => {
-    setLockedAspectRatio((current) => reconcileLockedAspectRatio(current, viewportAspectRatio));
-  }, [viewportAspectRatio]);
+  const lockedAspectRatio =
+    aspectRatioLocked && viewportAspectRatio !== null ? viewportAspectRatio : null;
+  const handleAspectRatioChange = useCallback((aspectRatio: number | null) => {
+    setAspectRatioLocked(aspectRatio !== null);
+  }, []);
   const hiddenSize =
     viewport._tag !== "fill"
       ? {
@@ -170,24 +176,11 @@ export function HostedBrowserWebview(props: {
 
   if (!config) return null;
 
-  const wrapperStyle =
-    active && lastRect
-      ? {
-          left: lastRect.x,
-          top: lastRect.y,
-          width: lastRect.width,
-          height: lastRect.height,
-          zIndex: 30,
-          pointerEvents: "auto" as const,
-        }
-      : {
-          left: 0,
-          top: 0,
-          width: hiddenSize.width,
-          height: hiddenSize.height,
-          zIndex: recording ? 0 : -1,
-          pointerEvents: "none" as const,
-        };
+  const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
+    active,
+    rect: lastRect,
+    hiddenSize,
+  });
 
   return (
     <div
@@ -203,7 +196,7 @@ export function HostedBrowserWebview(props: {
             setting={effectiveViewport}
             width={Math.max(1, Math.round(containerSize.width))}
             aspectRatio={lockedAspectRatio}
-            onAspectRatioChange={setLockedAspectRatio}
+            onAspectRatioChange={handleAspectRatioChange}
             onChange={commitViewportChange}
           />
         ) : null}

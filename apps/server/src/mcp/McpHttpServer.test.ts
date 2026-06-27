@@ -15,6 +15,7 @@ import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
 const tabId = PreviewTabId.make("tab-mcp-test");
+const alternateTabId = PreviewTabId.make("tab-mcp-alternate");
 const invocation = {
   environmentId,
   threadId,
@@ -154,49 +155,53 @@ it.effect("registers annotated tools and preserves authenticated request context
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
       const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const routedRequests: Array<{
+        readonly operation: string;
+        readonly tabId?: string | undefined;
+      }> = [];
       const events = yield* broker.connect({
         clientId: "mcp-test-client",
         environmentId,
       });
-      yield* Stream.runForEach(events, (event) =>
-        event.type === "connected"
-          ? Effect.void
-          : broker.respond({
-              clientId: "mcp-test-client",
-              connectionId: event.connectionId,
-              requestId: event.request.requestId,
-              ok: true,
-              result:
-                event.request.operation === "snapshot"
-                  ? {
-                      url: "http://example.test/",
-                      title: "Example",
-                      loading: false,
-                      visibleText: "Example",
-                      interactiveElements: [],
-                      accessibilityTree: {},
-                      consoleEntries: [],
-                      networkEntries: [],
-                      actionTimeline: [],
-                      screenshot: {
-                        mimeType: "image/png",
-                        data: Buffer.from("png").toString("base64"),
-                        width: 10,
-                        height: 5,
-                      },
-                    }
-                  : event.request.operation === "press"
-                    ? undefined
-                    : {
-                        available: true,
-                        visible: true,
-                        tabId,
-                        url: "http://example.test/",
-                        title: "Example",
-                        loading: false,
-                      },
-            }),
-      ).pipe(Effect.forkScoped);
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Effect.void;
+        routedRequests.push(event.request);
+        return broker.respond({
+          clientId: "mcp-test-client",
+          connectionId: event.connectionId,
+          requestId: event.request.requestId,
+          ok: true,
+          result:
+            event.request.operation === "snapshot"
+              ? {
+                  url: "http://example.test/",
+                  title: "Example",
+                  loading: false,
+                  visibleText: "Example",
+                  interactiveElements: [],
+                  accessibilityTree: {},
+                  consoleEntries: [],
+                  networkEntries: [],
+                  actionTimeline: [],
+                  screenshot: {
+                    mimeType: "image/png",
+                    data: Buffer.from("png").toString("base64"),
+                    width: 10,
+                    height: 5,
+                  },
+                }
+              : event.request.operation === "press"
+                ? undefined
+                : {
+                    available: true,
+                    visible: true,
+                    tabId,
+                    url: "http://example.test/",
+                    title: "Example",
+                    loading: false,
+                  },
+        });
+      }).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
 
       const statusTool = server.tools.find(({ tool }) => tool.name === "preview_status");
@@ -239,7 +244,7 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(malformed.isError).toBe(true);
 
       const snapshot = yield* server
-        .callTool({ name: "preview_snapshot", arguments: {} })
+        .callTool({ name: "preview_snapshot", arguments: { tabId: alternateTabId } })
         .pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.provideService(McpSchema.McpServerClient, client),
@@ -249,6 +254,9 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(snapshot.structuredContent).toMatchObject({
         screenshot: { mimeType: "image/png", width: 10, height: 5 },
       });
+      expect(routedRequests.find(({ operation }) => operation === "snapshot")?.tabId).toBe(
+        alternateTabId,
+      );
 
       const press = yield* server
         .callTool({ name: "preview_press", arguments: { key: "Enter" } })

@@ -50,6 +50,21 @@ export const PREVIEW_AUTOMATION_OPERATIONS = [
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_OPERATIONS);
 export type PreviewAutomationOperation = typeof PreviewAutomationOperation.Type;
 
+const PreviewAutomationTabTargetFields = {
+  tabId: Schema.optional(
+    PreviewTabId.annotate({
+      description:
+        "Exact collaborative browser tab to target. Omit to use this agent session's current tab.",
+    }),
+  ).annotate({
+    description:
+      "Exact collaborative browser tab to target. Omit to use this agent session's current tab.",
+  }),
+};
+
+export const PreviewAutomationTabTargetInput = Schema.Struct(PreviewAutomationTabTargetFields);
+export type PreviewAutomationTabTargetInput = typeof PreviewAutomationTabTargetInput.Type;
+
 export const PreviewAutomationStatus = Schema.Struct({
   available: Schema.Boolean,
   visible: Schema.Boolean,
@@ -65,6 +80,7 @@ export const PreviewAutomationStatus = Schema.Struct({
 export type PreviewAutomationStatus = typeof PreviewAutomationStatus.Type;
 
 export const PreviewAutomationOpenInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
   url: Schema.optional(BoundedUrl).annotate({
     description:
       "Optional initial page URL, for example https://t3.chat or localhost:5173. Omit to open a blank tab.",
@@ -77,13 +93,21 @@ export const PreviewAutomationOpenInput = Schema.Struct({
   reuseExistingTab: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "Reuse the thread's active browser tab when available. Defaults to true; set false to create a new tab.",
+        "Reuse tabId when supplied, otherwise this agent session's current tab. Defaults to true; set false to create a new tab.",
     }),
   ),
-}).annotate({
-  description:
-    "Opens the collaborative browser for the current thread. Use preview_navigate afterward when readiness waiting matters.",
-});
+})
+  .check(
+    Schema.makeFilter(
+      (input) =>
+        !(input.tabId !== undefined && input.reuseExistingTab === false) ||
+        "tabId cannot be combined with reuseExistingTab=false.",
+    ),
+  )
+  .annotate({
+    description:
+      "Opens the collaborative browser for the current thread. Use preview_navigate afterward when readiness waiting matters.",
+  });
 export type PreviewAutomationOpenInput = typeof PreviewAutomationOpenInput.Type;
 
 export const BrowserNavigationTarget = Schema.Union([
@@ -117,6 +141,7 @@ export const BrowserNavigationTarget = Schema.Union([
 export type BrowserNavigationTarget = typeof BrowserNavigationTarget.Type;
 
 export const PreviewAutomationNavigateInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
   url: Schema.optional(BoundedUrl).annotate({
     description:
       "Website URL, for example https://t3.chat. Use this for public pages and directly reachable URLs.",
@@ -155,6 +180,7 @@ export const PreviewAutomationNavigateInput = Schema.Struct({
 export type PreviewAutomationNavigateInput = typeof PreviewAutomationNavigateInput.Type;
 
 export const PreviewAutomationResizeInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
   mode: Schema.Literals(["fill", "freeform", "preset"]).annotate({
     description:
       "Viewport mode: fill follows the preview panel, freeform uses exact independently resizable dimensions, and preset uses a named device size.",
@@ -239,6 +265,7 @@ const LegacySelector = TrimmedNonEmptyString.annotate({
 });
 
 export const PreviewAutomationClickInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
   selector: Schema.optional(LegacySelector).annotate({
     description:
       "Legacy CSS selector such as button[type='submit']. Prefer locator for resilient role/text targeting.",
@@ -277,6 +304,7 @@ export const PreviewAutomationClickInput = Schema.Struct({
 export type PreviewAutomationClickInput = typeof PreviewAutomationClickInput.Type;
 
 export const PreviewAutomationTypeInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
   text: Schema.String.annotate({ description: "Literal text to insert." }),
   selector: Schema.optional(LegacySelector).annotate({
     description: "Legacy CSS selector for the input. Prefer locator.",
@@ -306,6 +334,7 @@ export const PreviewAutomationTypeInput = Schema.Struct({
 export type PreviewAutomationTypeInput = typeof PreviewAutomationTypeInput.Type;
 
 export const PreviewAutomationPressInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
   key: Schema.String.check(Schema.isTrimmed())
     .check(
       Schema.isNonEmpty({
@@ -326,6 +355,7 @@ export const PreviewAutomationPressInput = Schema.Struct({
 export type PreviewAutomationPressInput = typeof PreviewAutomationPressInput.Type;
 
 export const PreviewAutomationScrollInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
   deltaX: Schema.optional(
     Schema.Finite.annotate({
       description: "Horizontal scroll delta in CSS pixels. Positive scrolls right. Defaults to 0.",
@@ -360,6 +390,7 @@ export const PreviewAutomationScrollInput = Schema.Struct({
 export type PreviewAutomationScrollInput = typeof PreviewAutomationScrollInput.Type;
 
 export const PreviewAutomationEvaluateInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
   expression: Schema.String.check(Schema.isTrimmed())
     .check(
       Schema.isNonEmpty({
@@ -388,6 +419,7 @@ export const PreviewAutomationEvaluateInput = Schema.Struct({
 export type PreviewAutomationEvaluateInput = typeof PreviewAutomationEvaluateInput.Type;
 
 export const PreviewAutomationWaitForInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
   selector: Schema.optional(LegacySelector).annotate({
     description: "Legacy CSS selector that must match an element. Prefer locator.",
   }),
@@ -537,6 +569,7 @@ export const PreviewAutomationRequest = Schema.Struct({
   requestId: TrimmedNonEmptyString,
   threadId: ThreadId,
   tabId: Schema.optional(PreviewTabId),
+  tabIdExplicit: Schema.optional(Schema.Boolean),
   operation: PreviewAutomationOperation,
   input: Schema.Unknown,
   timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)),

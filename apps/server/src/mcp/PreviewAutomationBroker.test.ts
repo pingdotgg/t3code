@@ -15,6 +15,7 @@ import {
   type PreviewAutomationStreamEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
@@ -80,6 +81,187 @@ it.effect("atomically registers a connected host and correlates its response", (
       });
 
       expect(result).toEqual({ available: true });
+    }),
+  ),
+);
+
+it.effect("targets multiple tabs explicitly while retaining a default tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const appTabId = PreviewTabId.make("tab-web-app");
+      const simulatorTabId = PreviewTabId.make("tab-ios-simulator");
+      const openedTabIds = [appTabId, simulatorTabId];
+      let openIndex = 0;
+      const routedRequests: RoutedRequest[] = [];
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) => {
+        routedRequests.push(request);
+        return broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result:
+            request.operation === "open"
+              ? { available: true, tabId: openedTabIds[openIndex++] }
+              : { url: "http://localhost:3200" },
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      yield* broker.invoke({ scope, operation: "open", input: { reuseExistingTab: false } });
+      yield* broker.invoke({ scope, operation: "open", input: { reuseExistingTab: false } });
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+      yield* broker.invoke({ scope, operation: "snapshot", input: {}, tabId: appTabId });
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+
+      expect(routedRequests).toHaveLength(5);
+      expect(routedRequests[0]?.tabId).toBeUndefined();
+      expect(routedRequests[1]?.tabId).toBe(appTabId);
+      expect(routedRequests[2]?.tabId).toBe(simulatorTabId);
+      expect(routedRequests[2]?.tabIdExplicit).toBe(false);
+      expect(routedRequests[3]?.tabId).toBe(appTabId);
+      expect(routedRequests[3]?.tabIdExplicit).toBe(true);
+      expect(routedRequests[4]?.tabId).toBe(appTabId);
+    }),
+  ),
+);
+
+it.effect("does not let an older response replace a newer explicit tab target", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const olderTabId = PreviewTabId.make("tab-older-request");
+      const newerTabId = PreviewTabId.make("tab-newer-request");
+      const releaseOlderResponse = yield* Deferred.make<void>();
+      const routedRequests: RoutedRequest[] = [];
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) => {
+        routedRequests.push(request);
+        const response = Effect.gen(function* () {
+          if (request.tabId === olderTabId) {
+            yield* Deferred.await(releaseOlderResponse);
+          }
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: { url: "http://localhost:3200" },
+          });
+          if (request.tabId === newerTabId) {
+            yield* Deferred.succeed(releaseOlderResponse, undefined);
+          }
+        });
+        return response.pipe(Effect.forkScoped, Effect.asVoid);
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const older = yield* broker
+        .invoke({ scope, operation: "snapshot", input: {}, tabId: olderTabId })
+        .pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      const newer = yield* broker
+        .invoke({ scope, operation: "snapshot", input: {}, tabId: newerTabId })
+        .pipe(Effect.forkScoped);
+      yield* Fiber.join(newer);
+      yield* Fiber.join(older);
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+
+      expect(routedRequests.at(-1)?.tabId).toBe(newerTabId);
+    }),
+  ),
+);
+
+it.effect("does not replace the default tab with a globally stopped recording tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const browsingTabId = PreviewTabId.make("tab-session-b");
+      const recordingTabId = PreviewTabId.make("tab-session-a-recording");
+      const routedRequests: RoutedRequest[] = [];
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) => {
+        routedRequests.push(request);
+        return broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result:
+            request.operation === "open"
+              ? { available: true, tabId: browsingTabId }
+              : request.operation === "recordingStop"
+                ? { id: "recording-1", tabId: recordingTabId }
+                : { url: "http://localhost:3200" },
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      yield* broker.invoke({ scope, operation: "open", input: {} });
+      yield* broker.invoke({ scope, operation: "recordingStop", input: {} });
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+
+      expect(routedRequests.at(-1)?.tabId).toBe(browsingTabId);
+    }),
+  ),
+);
+
+it.effect("does not let a no-tab response suppress an earlier tab decision", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const initialTabId = PreviewTabId.make("tab-initial");
+      const openedTabId = PreviewTabId.make("tab-opened-late");
+      const releaseOpenResponse = yield* Deferred.make<void>();
+      const routedRequests: RoutedRequest[] = [];
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) => {
+        routedRequests.push(request);
+        const marker =
+          typeof request.input === "object" && request.input !== null && "marker" in request.input
+            ? request.input.marker
+            : undefined;
+        const response = Effect.gen(function* () {
+          if (marker === "older") {
+            yield* Deferred.await(releaseOpenResponse);
+          }
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result:
+              request.operation === "open"
+                ? { available: true, tabId: marker === "older" ? openedTabId : initialTabId }
+                : { url: "http://localhost:3200" },
+          });
+          if (marker === "newer") {
+            yield* Deferred.succeed(releaseOpenResponse, undefined);
+          }
+        });
+        return response.pipe(Effect.forkScoped, Effect.asVoid);
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      yield* broker.invoke({ scope, operation: "open", input: {} });
+      const older = yield* broker
+        .invoke({
+          scope,
+          operation: "open",
+          input: { marker: "older", reuseExistingTab: false },
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      const newer = yield* broker
+        .invoke({ scope, operation: "snapshot", input: { marker: "newer" } })
+        .pipe(Effect.forkScoped);
+      yield* Fiber.join(newer);
+      yield* Fiber.join(older);
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+
+      expect(routedRequests.at(-1)?.tabId).toBe(openedTabId);
     }),
   ),
 );
@@ -632,7 +814,9 @@ it.effect("fails over a pinned provider session only after its host disconnects"
   Effect.scoped(
     Effect.gen(function* () {
       const broker = yield* makeBroker;
+      const firstTabId = PreviewTabId.make("tab-on-first-host");
       let firstConnectionId = "";
+      let secondRoutedTabId: PreviewTabId | undefined;
       const firstRequests = requestsFrom(
         yield* broker.connect(makeHost({ clientId: "client-first" })),
         (connectionId) => {
@@ -648,18 +832,19 @@ it.effect("fails over a pinned provider session only after its host disconnects"
           connectionId: request.connectionId,
           requestId: request.requestId,
           ok: true,
-          result: "first",
+          result: request.operation === "open" ? { host: "first", tabId: firstTabId } : "first",
         }),
       ).pipe(Effect.forkScoped);
-      yield* Stream.runForEach(secondRequests, (request) =>
-        broker.respond({
+      yield* Stream.runForEach(secondRequests, (request) => {
+        secondRoutedTabId = request.tabId;
+        return broker.respond({
           clientId: "client-second",
           connectionId: request.connectionId,
           requestId: request.requestId,
           ok: true,
           result: "second",
-        }),
-      ).pipe(Effect.forkScoped);
+        });
+      }).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
 
       yield* broker.focusHost({
@@ -668,7 +853,10 @@ it.effect("fails over a pinned provider session only after its host disconnects"
         connectionId: firstConnectionId,
         focused: true,
       });
-      expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe("first");
+      expect(yield* broker.invoke({ scope, operation: "open", input: {} })).toEqual({
+        host: "first",
+        tabId: firstTabId,
+      });
 
       yield* Fiber.interrupt(firstConsumer);
       yield* Effect.yieldNow;
@@ -676,6 +864,7 @@ it.effect("fails over a pinned provider session only after its host disconnects"
       expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe(
         "second",
       );
+      expect(secondRoutedTabId).toBeUndefined();
     }),
   ),
 );
@@ -736,6 +925,53 @@ it.effect("keeps a replacement stream authoritative when the old stream finalize
       expect(replacementConnectionId).not.toBe(firstConnectionId);
       const result = yield* broker.invoke<string>({ scope, operation: "status", input: {} });
       expect(result).toBe("replacement");
+    }),
+  ),
+);
+
+it.effect("does not carry a tab id across a replacement automation stream", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const openedTabId = PreviewTabId.make("tab-first-webcontents");
+      const firstRequests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(firstRequests, (request) =>
+        broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result:
+            request.operation === "open"
+              ? { host: "first", tabId: openedTabId }
+              : { host: "first" },
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      expect(yield* broker.invoke({ scope, operation: "open", input: {} })).toEqual({
+        host: "first",
+        tabId: openedTabId,
+      });
+
+      const routedRequests: RoutedRequest[] = [];
+      const replacementRequests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(replacementRequests, (request) => {
+        routedRequests.push(request);
+        return broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "replacement",
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe(
+        "replacement",
+      );
+      expect(routedRequests.at(-1)?.tabId).toBeUndefined();
     }),
   ),
 );

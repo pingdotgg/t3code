@@ -11,6 +11,7 @@ import {
 import {
   PreviewAutomationHost,
   PreviewAutomationError,
+  PreviewAutomationOpenInput,
   PreviewAutomationResizeInput,
   PreviewAutomationResizeResult,
   PreviewAutomationStatus,
@@ -22,6 +23,7 @@ const decodeNavStatus = Schema.decodeUnknownSync(PreviewNavStatus);
 const decodeServer = Schema.decodeUnknownSync(DiscoveredLocalServer);
 const decodeViewport = Schema.decodeUnknownSync(PreviewViewportSetting);
 const decodeResizeInput = Schema.decodeUnknownSync(PreviewAutomationResizeInput);
+const decodeOpenInput = Schema.decodeUnknownSync(PreviewAutomationOpenInput);
 const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResult);
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
@@ -125,6 +127,20 @@ describe("PreviewAutomationResizeInput", () => {
         viewport: { width: 180, height: 120 },
       }).viewport,
     ).toEqual({ width: 180, height: 120 });
+  });
+});
+
+describe("preview automation tab targeting", () => {
+  it("accepts an explicit tab and rejects contradictory open behavior", () => {
+    expect(decodeResizeInput({ tabId: "tab-app", mode: "fill" })).toMatchObject({
+      tabId: "tab-app",
+      mode: "fill",
+    });
+    expect(decodeOpenInput({ tabId: "tab-app", reuseExistingTab: true })).toMatchObject({
+      tabId: "tab-app",
+      reuseExistingTab: true,
+    });
+    expect(() => decodeOpenInput({ tabId: "tab-app", reuseExistingTab: false })).toThrow();
   });
 });
 
