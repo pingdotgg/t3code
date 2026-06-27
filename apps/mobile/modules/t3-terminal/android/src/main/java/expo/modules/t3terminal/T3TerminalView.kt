@@ -3,13 +3,15 @@ package expo.modules.t3terminal
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
 import android.view.KeyEvent
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
-import androidx.core.widget.doAfterTextChanged
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -65,6 +67,15 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       applyTheme()
     }
 
+  var focusRequest: Double = 0.0
+    set(value) {
+      val previous = field
+      field = value
+      if (value != previous && value > 0) {
+        requestKeyboardFocus()
+      }
+    }
+
   var backgroundColorHex: String = "#24292E"
     set(value) {
       field = value
@@ -117,6 +128,18 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     if (width != oldWidth || height != oldHeight) emitResize()
   }
 
+  override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+    super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    val childWidthSpec = MeasureSpec.makeMeasureSpec(measuredWidth, MeasureSpec.EXACTLY)
+    val childHeightSpec = MeasureSpec.makeMeasureSpec(measuredHeight, MeasureSpec.EXACTLY)
+    container.measure(childWidthSpec, childHeightSpec)
+  }
+
+  override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+    container.layout(0, 0, right - left, bottom - top)
+    if (changed) emitResize()
+  }
+
   fun cleanup() {
     if (isCleanedUp) return
     isCleanedUp = true
@@ -135,13 +158,21 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     inputView.typeface = Typeface.MONOSPACE
     inputView.textSize = max(fontSize, 13f)
     inputView.alpha = 0.01f
-    inputView.imeOptions = EditorInfo.IME_ACTION_SEND or EditorInfo.IME_FLAG_NO_EXTRACT_UI
-    inputView.inputType = android.text.InputType.TYPE_CLASS_TEXT or
-      android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+    inputView.isFocusableInTouchMode = true
+    inputView.imeOptions = EditorInfo.IME_ACTION_SEND or
+      EditorInfo.IME_FLAG_NO_EXTRACT_UI or
+      EditorInfo.IME_FLAG_NO_FULLSCREEN or
+      EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+    inputView.inputType = InputType.TYPE_CLASS_TEXT or
+      InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or
+      InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
     inputView.setPadding(0, 0, 0, 0)
     inputView.setOnEditorActionListener { _, actionId, event ->
-      val isEnter = actionId == EditorInfo.IME_ACTION_SEND ||
-        event?.keyCode == KeyEvent.KEYCODE_ENTER
+      val isKeyUp = event?.action == KeyEvent.ACTION_UP
+      val isImeSend = actionId == EditorInfo.IME_ACTION_SEND && !isKeyUp
+      val isHardwareEnter = event?.keyCode == KeyEvent.KEYCODE_ENTER &&
+        event.action == KeyEvent.ACTION_DOWN
+      val isEnter = isImeSend || isHardwareEnter
       if (isEnter) {
         onInput(mapOf("data" to "\n"))
         true
@@ -150,26 +181,54 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       }
     }
     inputView.setOnKeyListener { _, keyCode, event ->
-      if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_DEL) {
-        onInput(mapOf("data" to "\u007F"))
-        true
-      } else {
-        false
+      if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+      when {
+        keyCode == KeyEvent.KEYCODE_DEL -> {
+          onInput(mapOf("data" to "\u007F"))
+          true
+        }
+        // Hardware keyboard Ctrl+A..Z -> control bytes 0x01..0x1A (Ctrl+C, Ctrl+Z, ...).
+        event.isCtrlPressed && keyCode in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> {
+          onInput(
+            mapOf("data" to (keyCode - KeyEvent.KEYCODE_A + 1).toChar().toString()),
+          )
+          true
+        }
+        else -> false
       }
     }
-    inputView.doAfterTextChanged { editable ->
-      if (clearingInput) return@doAfterTextChanged
-      val text = editable?.toString().orEmpty()
-      if (text.isEmpty()) return@doAfterTextChanged
-      onInput(mapOf("data" to text))
-      clearingInput = true
-      inputView.text?.clear()
-      clearingInput = false
-    }
+    inputView.addTextChangedListener(
+      object : TextWatcher {
+        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+
+        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+          if (clearingInput || s == null || count <= 0) return
+          val end = (start + count).coerceAtMost(s.length)
+          if (start >= end) return
+          val insertedText = s.subSequence(start, end).toString()
+          if (insertedText.isNotEmpty()) {
+            onInput(mapOf("data" to insertedText))
+          }
+        }
+
+        override fun afterTextChanged(editable: Editable?) {
+          if (clearingInput || editable.isNullOrEmpty()) return
+          clearingInput = true
+          editable.clear()
+          clearingInput = false
+        }
+      },
+    )
   }
 
   private fun emitResize() {
-    if (width <= 0 || height <= 0 || isCleanedUp) return
+    if (
+      width <= 0 ||
+        height <= 0 ||
+        terminalCanvas.width <= 0 ||
+        terminalCanvas.height <= 0 ||
+        isCleanedUp
+    ) return
     val nextCols = (terminalCanvas.usableWidth() / terminalCanvas.cellWidthPx)
       .toInt()
       .coerceIn(2, 400)

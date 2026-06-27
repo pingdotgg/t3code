@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODULE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VENDOR_DIR="${MODULE_DIR}/Vendor/libghostty-vt"
+PATCH_DIR="${SCRIPT_DIR}/libghostty-android-patches"
 
 GHOSTTY_REVISION="${GHOSTTY_REVISION:-9f62873bf195e4d8a762d768a1405a5f2f7b1697}"
 GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-${HOME}/.cache/t3code/ghostty-${GHOSTTY_REVISION:0:8}}"
@@ -80,6 +81,23 @@ ensure_ghostty_source() {
     die "expected Ghostty ${GHOSTTY_REVISION}, found ${actual_revision}"
 }
 
+apply_ghostty_patches() {
+  [[ -d "${PATCH_DIR}" ]] || return
+
+  local patch_file patch_name
+  for patch_file in "${PATCH_DIR}"/*.patch; do
+    [[ -e "${patch_file}" ]] || continue
+    patch_name="$(basename "${patch_file}")"
+    if git -C "${GHOSTTY_SOURCE_DIR}" apply --reverse --check "${patch_file}" >/dev/null 2>&1; then
+      log "patch already applied: ${patch_name}"
+      continue
+    fi
+    log "applying patch: ${patch_name}"
+    git -C "${GHOSTTY_SOURCE_DIR}" apply --check "${patch_file}"
+    git -C "${GHOSTTY_SOURCE_DIR}" apply "${patch_file}"
+  done
+}
+
 if [[ -z "${ANDROID_NDK_HOME}" ]]; then
   die "ANDROID_NDK_HOME must point to an installed Android NDK"
 fi
@@ -87,6 +105,7 @@ fi
 
 ensure_zig
 ensure_ghostty_source
+apply_ghostty_patches
 
 strip_tool="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt"
 strip_tool="$(find "${strip_tool}" -path '*/bin/llvm-strip' -print -quit)"
