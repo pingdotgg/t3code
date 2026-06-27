@@ -104,7 +104,7 @@ function writeDevelopmentLauncherScript(targetBinaryPath, electronBinaryPath) {
   const envEntries = [
     ["VITE_DEV_SERVER_URL", process.env.VITE_DEV_SERVER_URL],
     ["T3CODE_PORT", process.env.T3CODE_PORT],
-    ["T3CODE_HOME", process.env.T3CODE_HOME],
+    ["TUTORATLAS_HOME", process.env.TUTORATLAS_HOME],
     ["T3CODE_COMMIT_HASH", process.env.T3CODE_COMMIT_HASH],
     ["T3CODE_OTLP_TRACES_URL", process.env.T3CODE_OTLP_TRACES_URL],
     ["T3CODE_OTLP_EXPORT_INTERVAL_MS", process.env.T3CODE_OTLP_EXPORT_INTERVAL_MS],

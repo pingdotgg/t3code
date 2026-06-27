@@ -31,7 +31,7 @@ const DESKTOP_DEV_LOOPBACK_HOST = "127.0.0.1";
 const DEV_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::1", "::"] as const;
 
 export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
-  path.join(NodeOS.homedir(), ".t3"),
+  path.join(NodeOS.homedir(), ".tutoratlas"),
 );
 
 const MODE_ARGS = {
@@ -138,7 +138,7 @@ interface CreateDevRunnerEnvInput {
   readonly baseEnv: NodeJS.ProcessEnv;
   readonly serverOffset: number;
   readonly webOffset: number;
-  readonly t3Home: string | undefined;
+  readonly tutoratlasHome: string | undefined;
   readonly noBrowser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
   readonly logWebSocketEvents: boolean | undefined;
@@ -152,7 +152,7 @@ export function createDevRunnerEnv({
   baseEnv,
   serverOffset,
   webOffset,
-  t3Home,
+  tutoratlasHome,
   noBrowser,
   autoBootstrapProjectFromCwd,
   logWebSocketEvents,
@@ -163,7 +163,7 @@ export function createDevRunnerEnv({
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
-    const resolvedBaseDir = yield* resolveBaseDir(t3Home);
+    const resolvedBaseDir = yield* resolveBaseDir(tutoratlasHome);
     const isDesktopMode = mode === "dev:desktop";
 
     const output: NodeJS.ProcessEnv = {
@@ -172,7 +172,7 @@ export function createDevRunnerEnv({
       VITE_DEV_SERVER_URL:
         devUrl?.toString() ??
         `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
-      T3CODE_HOME: resolvedBaseDir,
+      TUTORATLAS_HOME: resolvedBaseDir,
     };
 
     if (!isDesktopMode) {
@@ -381,7 +381,7 @@ export function resolveModePortOffsets<R = NetService.NetService>({
 
 interface DevRunnerCliInput {
   readonly mode: DevMode;
-  readonly t3Home: string | undefined;
+  readonly tutoratlasHome: string | undefined;
   readonly noBrowser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
   readonly logWebSocketEvents: boolean | undefined;
@@ -426,7 +426,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       baseEnv: hostEnvironment,
       serverOffset,
       webOffset,
-      t3Home: input.t3Home,
+      tutoratlasHome: input.tutoratlasHome,
       noBrowser: input.noBrowser,
       autoBootstrapProjectFromCwd: input.autoBootstrapProjectFromCwd,
       logWebSocketEvents: input.logWebSocketEvents,
@@ -441,7 +441,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         : "";
 
     yield* Effect.logInfo(
-      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${String(env.T3CODE_HOME)}`,
+      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${String(env.TUTORATLAS_HOME)}`,
     );
 
     if (input.dryRun) {
@@ -489,9 +489,9 @@ const devRunnerCli = Command.make("dev-runner", {
   mode: Argument.choice("mode", DEV_RUNNER_MODES).pipe(
     Argument.withDescription("Development mode to run."),
   ),
-  t3Home: Flag.string("home-dir").pipe(
-    Flag.withDescription("Base directory for all TutorAtlas data (equivalent to T3CODE_HOME)."),
-    Flag.withFallbackConfig(optionalStringConfig("T3CODE_HOME")),
+  tutoratlasHome: Flag.string("home-dir").pipe(
+    Flag.withDescription("Base directory for all TutorAtlas data (equivalent to TUTORATLAS_HOME)."),
+    Flag.withFallbackConfig(optionalStringConfig("TUTORATLAS_HOME")),
   ),
   noBrowser: Flag.boolean("no-browser").pipe(
     Flag.withDescription("Browser auto-open toggle (equivalent to T3CODE_NO_BROWSER)."),
