@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -24,31 +25,32 @@ import {
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
 import * as PlatformError from "effect/PlatformError";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
-import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
-import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
-import * as OpenCodeRuntime from "../opencodeRuntime.ts";
-import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
-import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistryHydration.ts";
 import {
-  haveProvidersChanged,
-  mergeProviderSnapshot,
-  mergeProviderSnapshots,
-  ProviderRegistryLive,
-  selectProvidersByKind,
-} from "./ProviderRegistry.ts";
-import * as ServerConfig from "../../config.ts";
-import * as ServerSettingsModule from "../../serverSettings.ts";
-import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
-import type { ProviderInstance } from "../ProviderDriver.ts";
-import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
-import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+  checkCodexProviderStatus,
+  type CodexAppServerProviderSnapshot,
+} from "./Layers/CodexProvider.ts";
+import { checkClaudeProviderStatus } from "./Layers/ClaudeProvider.ts";
+import * as OpenCodeRuntime from "./opencodeRuntime.ts";
+import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
+import { ProviderInstanceRegistryHydrationLive } from "./Layers/ProviderInstanceRegistryHydration.ts";
+import * as ProviderRegistry from "./ProviderRegistry.ts";
+import * as ServerConfig from "../config.ts";
+import * as ServerSettingsModule from "../serverSettings.ts";
+import {
+  readProviderStatusCache,
+  resolveProviderStatusCachePath,
+  writeProviderStatusCache,
+} from "./providerStatusCache.ts";
+import type { ProviderInstance } from "./ProviderDriver.ts";
+import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodedDefaultServerSettings = encodeServerSettings(DEFAULT_SERVER_SETTINGS);
@@ -471,7 +473,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
       );
     });
 
-    describe("ProviderRegistryLive", () => {
+    describe("ProviderRegistry", () => {
       it("treats equal provider snapshots as unchanged", () => {
         const providers = [
           {
@@ -502,7 +504,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           },
         ] as const satisfies ReadonlyArray<ServerProvider>;
 
-        assert.strictEqual(haveProvidersChanged(providers, [...providers]), false);
+        assert.strictEqual(ProviderRegistry.haveProvidersChanged(providers, [...providers]), false);
       });
 
       it("preserves previously discovered provider models when a refresh returns none", () => {
@@ -540,9 +542,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           models: [],
         } satisfies ServerProvider;
 
-        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
-          ...previousProvider.models,
-        ]);
+        assert.deepStrictEqual(
+          ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+          [...previousProvider.models],
+        );
       });
 
       it("fills missing capabilities from the previous provider snapshot", () => {
@@ -589,9 +592,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           ],
         } satisfies ServerProvider;
 
-        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
-          ...previousProvider.models,
-        ]);
+        assert.deepStrictEqual(
+          ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+          [...previousProvider.models],
+        );
       });
 
       it.effect("does not run provider probes during layer construction", () =>
@@ -650,10 +654,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const runtimeServices = yield* Layer.build(
-            ProviderRegistryLive.pipe(
+            ProviderRegistry.layer.pipe(
               Layer.provideMerge(instanceRegistryLayer),
               Layer.provideMerge(
-                ServerConfig.layerTest(process.cwd(), {
+                ServerConfig.ServerConfig.layerTest(process.cwd(), {
                   prefix: "t3-provider-registry-background-refresh-",
                 }),
               ),
@@ -718,8 +722,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           models: [],
         } satisfies ServerProvider;
 
-        const mergedProviders = mergeProviderSnapshots(previousProviders, [refreshedCursor]);
-        const persistedProviders = selectProvidersByKind(
+        const mergedProviders = ProviderRegistry.mergeProviderSnapshots(previousProviders, [
+          refreshedCursor,
+        ]);
+        const persistedProviders = ProviderRegistry.selectProvidersByKind(
           mergedProviders,
           new Set([ProviderDriverKind.make("cursor")]),
         );
@@ -805,10 +811,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const runtimeServices = yield* Layer.build(
-            ProviderRegistryLive.pipe(
+            ProviderRegistry.layer.pipe(
               Layer.provideMerge(instanceRegistryLayer),
               Layer.provideMerge(
-                ServerConfig.layerTest(process.cwd(), {
+                ServerConfig.ServerConfig.layerTest(process.cwd(), {
                   prefix: "t3-provider-registry-merged-persist-",
                 }),
               ),
@@ -845,6 +851,105 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               models: [...initialProvider.models],
             });
           }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
+      it.effect("only keeps hydrated cache state while the boot snapshot is still initial", () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const codexDriver = ProviderDriverKind.make("codex");
+          const codexInstanceId = ProviderInstanceId.make("codex");
+          const fallbackProvider = {
+            instanceId: codexInstanceId,
+            driver: codexDriver,
+            status: "warning",
+            enabled: true,
+            installed: false,
+            auth: { status: "unknown" },
+            checkedAt: "2026-04-29T10:01:00.000Z",
+            version: null,
+            models: [],
+            slashCommands: [],
+            skills: [],
+            message: "Codex provider status has not been checked in this session yet.",
+          } as const satisfies ServerProvider;
+          const cachedProvider = {
+            ...fallbackProvider,
+            status: "ready",
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-04-29T10:00:00.000Z",
+            version: "1.0.0",
+            message: "Loaded from the provider status cache.",
+          } as const satisfies ServerProvider;
+          const loadProviders = (snapshotState: "initial" | "live") =>
+            Effect.gen(function* () {
+              const instance = {
+                instanceId: codexInstanceId,
+                driverKind: codexDriver,
+                continuationIdentity: {
+                  driverKind: codexDriver,
+                  continuationKey: "codex:instance:codex",
+                },
+                displayName: undefined,
+                enabled: true,
+                snapshot: {
+                  maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: codexDriver,
+                    packageName: null,
+                  }),
+                  getSnapshot: Effect.succeed(fallbackProvider),
+                  isInitialSnapshot: () => snapshotState === "initial",
+                  refresh: Effect.succeed(fallbackProvider),
+                  streamChanges: Stream.empty,
+                },
+                adapter: {} as ProviderInstance["adapter"],
+                textGeneration: {} as ProviderInstance["textGeneration"],
+              } satisfies ProviderInstance;
+              const instanceRegistryLayer = Layer.succeed(
+                ProviderInstanceRegistry.ProviderInstanceRegistry,
+                {
+                  getInstance: (instanceId) =>
+                    Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
+                  listInstances: Effect.succeed([instance]),
+                  listUnavailable: Effect.succeed([]),
+                  streamChanges: Stream.empty,
+                  subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
+                    PubSub.subscribe(pubsub),
+                  ),
+                },
+              );
+              const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+                prefix: `t3-provider-registry-cache-${snapshotState}-`,
+              });
+              const configLayer = ServerConfig.layerTest(process.cwd(), baseDir);
+              const config = yield* ServerConfig.ServerConfig.pipe(Effect.provide(configLayer));
+              const filePath = yield* resolveProviderStatusCachePath({
+                cacheDir: config.providerStatusCacheDir,
+                instanceId: codexInstanceId,
+              });
+              yield* writeProviderStatusCache({ filePath, provider: cachedProvider });
+
+              const scope = yield* Scope.make();
+              yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+              const runtimeServices = yield* Layer.build(
+                Layer.fresh(
+                  ProviderRegistry.layer.pipe(
+                    Layer.provideMerge(instanceRegistryLayer),
+                    Layer.provideMerge(configLayer),
+                    Layer.provideMerge(NodeServices.layer),
+                  ),
+                ),
+              ).pipe(Scope.provide(scope));
+
+              return yield* ProviderRegistry.ProviderRegistry.pipe(
+                Effect.flatMap((registry) => registry.getProviders),
+                Effect.provide(runtimeServices),
+              );
+            });
+
+          assert.deepStrictEqual(yield* loadProviders("initial"), [cachedProvider]);
+          assert.deepStrictEqual(yield* loadProviders("live"), [fallbackProvider]);
         }),
       );
 
@@ -902,10 +1007,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const runtimeServices = yield* Layer.build(
-            ProviderRegistryLive.pipe(
+            ProviderRegistry.layer.pipe(
               Layer.provideMerge(instanceRegistryLayer),
               Layer.provideMerge(
-                ServerConfig.layerTest(process.cwd(), {
+                ServerConfig.ServerConfig.layerTest(process.cwd(), {
                   prefix: "t3-provider-registry-refresh-failure-",
                 }),
               ),
@@ -1009,10 +1114,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const runtimeServices = yield* Layer.build(
-            ProviderRegistryLive.pipe(
+            ProviderRegistry.layer.pipe(
               Layer.provideMerge(instanceRegistryLayer),
               Layer.provideMerge(
-                ServerConfig.layerTest(process.cwd(), {
+                ServerConfig.ServerConfig.layerTest(process.cwd(), {
                   prefix: "t3-provider-registry-sync-failure-",
                 }),
               ),
@@ -1102,13 +1207,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           );
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-          const providerRegistryLayer = ProviderRegistryLive.pipe(
+          const providerRegistryLayer = ProviderRegistry.layer.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
             Layer.provideMerge(
-              ServerConfig.layerTest(process.cwd(), {
+              ServerConfig.ServerConfig.layerTest(process.cwd(), {
                 prefix: "t3-provider-registry-",
               }),
             ),
@@ -1119,7 +1224,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 ProviderEventLoggers.NoOpProviderEventLoggers,
               ),
             ),
-            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.provideMerge(OpenCodeRuntime.layer),
             // NO spawner mock — `ChildProcessSpawner` is supplied by the
             // outer `NodeServices.layer` on `it.layer(...)` and will
             // genuinely spawn a subprocess. The missing-binary ENOENT is
@@ -1194,13 +1299,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           );
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-          const providerRegistryLayer = ProviderRegistryLive.pipe(
+          const providerRegistryLayer = ProviderRegistry.layer.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
             Layer.provideMerge(
-              ServerConfig.layerTest(process.cwd(), {
+              ServerConfig.ServerConfig.layerTest(process.cwd(), {
                 prefix: "t3-provider-registry-",
               }),
             ),
@@ -1211,7 +1316,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 ProviderEventLoggers.NoOpProviderEventLoggers,
               ),
             ),
-            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.provideMerge(OpenCodeRuntime.layer),
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
                 spawnedCommands.push((command as { readonly command: string }).command);
@@ -1315,13 +1420,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           );
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-          const providerRegistryLayer = ProviderRegistryLive.pipe(
+          const providerRegistryLayer = ProviderRegistry.layer.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
             Layer.provideMerge(
-              ServerConfig.layerTest(process.cwd(), {
+              ServerConfig.ServerConfig.layerTest(process.cwd(), {
                 prefix: "t3-provider-registry-",
               }),
             ),
@@ -1332,7 +1437,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 ProviderEventLoggers.NoOpProviderEventLoggers,
               ),
             ),
-            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.provideMerge(OpenCodeRuntime.layer),
             Layer.provideMerge(NodeServices.layer),
           );
           const runtimeServices = yield* Layer.build(providerRegistryLayer).pipe(
@@ -1376,13 +1481,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             let cursorSpawned = false;
             const scope = yield* Scope.make();
             yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-            const providerRegistryLayer = ProviderRegistryLive.pipe(
+            const providerRegistryLayer = ProviderRegistry.layer.pipe(
               Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
               Layer.provideMerge(
                 Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
               ),
               Layer.provideMerge(
-                ServerConfig.layerTest(process.cwd(), {
+                ServerConfig.ServerConfig.layerTest(process.cwd(), {
                   prefix: "t3-provider-registry-",
                 }),
               ),
@@ -1393,7 +1498,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   ProviderEventLoggers.NoOpProviderEventLoggers,
                 ),
               ),
-              Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+              Layer.provideMerge(OpenCodeRuntime.layer),
               Layer.provideMerge(
                 mockCommandSpawnerLayer((command, args) => {
                   if (command === "agent") {

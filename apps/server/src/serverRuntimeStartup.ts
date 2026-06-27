@@ -33,7 +33,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
+import * as ProviderSessionReaper from "./provider/ProviderSessionReaper.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,

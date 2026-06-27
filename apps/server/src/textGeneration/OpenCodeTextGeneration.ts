@@ -309,7 +309,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
                       (cause) =>
                         new TextGenerationError({
                           operation: input.operation,
-                          detail: OpenCodeRuntime.openCodeRuntimeErrorDetail(cause),
+                          detail: OpenCodeRuntime.OpenCodeRuntimeError.detailFromCause(cause),
                           cause,
                         }),
                     ),

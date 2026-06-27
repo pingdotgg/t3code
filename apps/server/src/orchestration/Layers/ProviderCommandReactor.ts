@@ -30,8 +30,8 @@ import { increment, orchestrationEventsProcessedTotal } from "../../observabilit
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
-import { ProviderService } from "../../provider/Services/ProviderService.ts";
-import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import * as ProviderService from "../../provider/ProviderService.ts";
+import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -190,8 +190,8 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-  const providerService = yield* ProviderService;
-  const providerRegistry = yield* ProviderRegistry;
+  const providerService = yield* ProviderService.ProviderService;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;

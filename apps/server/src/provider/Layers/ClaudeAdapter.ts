@@ -2893,6 +2893,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         new ProviderAdapterProcessError({
           provider: PROVIDER,
           threadId: context.session.threadId,
+          stage: "runtime-stream",
           detail: "Claude runtime stream failed.",
           cause,
         }),
@@ -2905,6 +2906,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               new ProviderAdapterProcessError({
                 provider: PROVIDER,
                 threadId: context.session.threadId,
+                stage: "runtime-event",
                 detail: "Failed to process Claude runtime event.",
                 cause,
               }),
@@ -2992,6 +2994,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         new ProviderAdapterProcessError({
           provider: PROVIDER,
           threadId: context.session.threadId,
+          stage: "runtime-query-close",
           detail: "Failed to close Claude runtime query.",
           cause,
         }),
@@ -3515,6 +3518,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           new ProviderAdapterProcessError({
             provider: PROVIDER,
             threadId,
+            stage: "session-start",
             detail: "Failed to start Claude runtime session.",
             cause,
           }),

@@ -116,7 +116,7 @@ function mapCodexRuntimeError(
   return new ProviderAdapterRequestError({
     provider: PROVIDER,
     method,
-    detail: error.message,
+    detail: "Codex runtime request failed.",
     cause: error,
   });
 }
@@ -1432,7 +1432,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               new ProviderAdapterProcessError({
                 provider: PROVIDER,
                 threadId: input.threadId,
-                detail: cause.message,
+                stage: "session-runtime-create",
+                detail: "Failed to create Codex runtime session.",
                 cause,
               }),
           ),
@@ -1461,7 +1462,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               new ProviderAdapterProcessError({
                 provider: PROVIDER,
                 threadId: input.threadId,
-                detail: cause.message,
+                stage: "session-start",
+                detail: "Failed to start Codex runtime session.",
                 cause,
               }),
           ),
@@ -1508,7 +1510,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           new ProviderAdapterRequestError({
             provider: PROVIDER,
             method: "turn/start",
-            detail: `Failed to read attachment file: ${cause.message}.`,
+            detail: "Failed to read attachment file.",
             cause,
           }),
       ),

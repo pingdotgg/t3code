@@ -12,7 +12,6 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 const isAcpProcessExitedError = Schema.is(EffectAcpErrors.AcpProcessExitedError);
-const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
 export function mapAcpToAdapterError(
   provider: ProviderDriverKind,
@@ -27,18 +26,10 @@ export function mapAcpToAdapterError(
       cause: error,
     });
   }
-  if (isAcpRequestError(error)) {
-    return new ProviderAdapterRequestError({
-      provider,
-      method,
-      detail: error.message,
-      cause: error,
-    });
-  }
   return new ProviderAdapterRequestError({
     provider,
     method,
-    detail: error.message,
+    detail: "ACP request failed.",
     cause: error,
   });
 }

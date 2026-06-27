@@ -8,14 +8,10 @@ import * as Schema from "effect/Schema";
 import { beforeEach } from "vite-plus/test";
 
 import { OpenCodeSettings } from "@t3tools/contracts";
-import { ServerConfig } from "../../config.ts";
-import {
-  OpenCodeRuntime,
-  OpenCodeRuntimeError,
-  type OpenCodeRuntimeShape,
-} from "../opencodeRuntime.ts";
-import { checkOpenCodeProviderStatus } from "./OpenCodeProvider.ts";
-import type { OpenCodeInventory } from "../opencodeRuntime.ts";
+import * as Config from "../../config.ts";
+import * as OpenCodeRuntime from "../opencodeRuntime.ts";
+import { checkOpenCodeProviderStatus, OpenCodeProbeError } from "./OpenCodeProvider.ts";
+
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
@@ -52,7 +48,7 @@ const runtimeMock = {
   },
 };
 
-const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
+const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
   startOpenCodeServerProcess: () =>
     Effect.succeed({
       url: "http://127.0.0.1:4301",
@@ -76,7 +72,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
   runOpenCodeCommand: () =>
     runtimeMock.state.runVersionError
       ? Effect.fail(
-          new OpenCodeRuntimeError({
+          new OpenCodeRuntime.OpenCodeRuntimeError({
             operation: "runOpenCodeCommand",
             detail: runtimeMock.state.runVersionError.message,
             cause: runtimeMock.state.runVersionError,
@@ -84,25 +80,27 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         )
       : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
   createOpenCodeSdkClient: () =>
-    ({}) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+    ({}) as unknown as ReturnType<
+      OpenCodeRuntime.OpenCodeRuntime["Service"]["createOpenCodeSdkClient"]
+    >,
   loadOpenCodeInventory: () =>
     runtimeMock.state.inventoryError
       ? Effect.fail(
-          new OpenCodeRuntimeError({
+          new OpenCodeRuntime.OpenCodeRuntimeError({
             operation: "loadOpenCodeInventory",
             detail: runtimeMock.state.inventoryError.message,
             cause: runtimeMock.state.inventoryError,
           }),
         )
-      : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory),
+      : Effect.succeed(runtimeMock.state.inventory as OpenCodeRuntime.OpenCodeInventory),
 };
 
 beforeEach(() => {
   runtimeMock.reset();
 });
 
-const testLayer = Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble).pipe(
-  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+const testLayer = Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble).pipe(
+  Layer.provideMerge(Config.ServerConfig.layerTest(process.cwd(), process.cwd())),
   Layer.provideMerge(NodeServices.layer),
 );
 
@@ -115,6 +113,24 @@ const makeOpenCodeSettings = (overrides?: Partial<OpenCodeSettings>): OpenCodeSe
     customModels: [],
     ...overrides,
   });
+
+it("structures OpenCode probe failures without deriving messages from causes", () => {
+  const cause = new Error("401 Unauthorized");
+  const runtimeError = new OpenCodeRuntime.OpenCodeRuntimeError({
+    operation: "loadOpenCodeInventory",
+    detail: cause.message,
+    cause,
+  });
+  const probeError = OpenCodeProbeError.fromCause("load-inventory")(runtimeError);
+  const versionProbeError = OpenCodeProbeError.fromCause("probe-version")(runtimeError);
+
+  NodeAssert.equal(probeError.operation, "load-inventory");
+  NodeAssert.equal(probeError.detail, "401 Unauthorized");
+  NodeAssert.strictEqual(probeError.cause, runtimeError);
+  NodeAssert.strictEqual(runtimeError.cause, cause);
+  NodeAssert.equal(probeError.message, "OpenCode probe failed during load-inventory.");
+  NodeAssert.equal(versionProbeError.message, "OpenCode probe failed during probe-version.");
+});
 
 it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
   it.effect("shows a codex-style missing binary message", () =>
@@ -212,7 +228,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
       runtimeMock.state.inventoryError = new Error("401 Unauthorized");
       const snapshot = yield* checkOpenCodeProviderStatus(
         makeOpenCodeSettings({
-          serverUrl: "http://127.0.0.1:9999",
+          serverUrl: "http://url-user:url-password@127.0.0.1:9999/private?token=secret#fragment",
           serverPassword: "secret-password",
         }),
         process.cwd(),
@@ -245,6 +261,28 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
       NodeAssert.equal(
         snapshot.message,
         "Couldn't reach the configured OpenCode server at http://127.0.0.1:9999. Check that the server is running and the URL is correct.",
+      );
+      NodeAssert.doesNotMatch(
+        snapshot.message ?? "",
+        /url-user|url-password|private|token|secret|fragment/,
+      );
+    }),
+  );
+
+  it.effect("keeps IPv6 brackets in configured server diagnostics", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventoryError = new Error("fetch failed: connect ECONNREFUSED ::1:9999");
+      const snapshot = yield* checkOpenCodeProviderStatus(
+        makeOpenCodeSettings({
+          serverUrl: "http://[::1]:9999/private",
+          serverPassword: "secret-password",
+        }),
+        process.cwd(),
+      );
+
+      NodeAssert.equal(
+        snapshot.message,
+        "Couldn't reach the configured OpenCode server at http://[::1]:9999. Check that the server is running and the URL is correct.",
       );
     }),
   );

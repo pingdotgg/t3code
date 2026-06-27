@@ -1,5 +1,5 @@
 /**
- * ProviderInstanceRegistryLive — runtime implementation of
+ * ProviderInstanceRegistry — runtime implementation of
  * `ProviderInstanceRegistry` plus its sibling mutator.
  *
  * Materializes every entry in a `ProviderInstanceConfigMap`:
@@ -30,7 +30,7 @@
  * tears every instance down in reverse order; closing a single instance
  * (via `reconcile` removing it) leaves the rest untouched.
  *
- * @module provider/Layers/ProviderInstanceRegistryLive
+ * @module provider/ProviderInstanceRegistry
  */
 import {
   defaultInstanceIdForDriver,
@@ -48,19 +48,86 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import { buildUnavailableProviderSnapshot } from "../unavailableProviderSnapshot.ts";
-import {
+import { buildUnavailableProviderSnapshot } from "./unavailableProviderSnapshot.ts";
+import type { AnyProviderDriver, ProviderInstance } from "./ProviderDriver.ts";
+
+export class ProviderInstanceRegistry extends Context.Service<
   ProviderInstanceRegistry,
-  type ProviderInstanceRegistryShape,
-} from "../Services/ProviderInstanceRegistry.ts";
-import {
+  {
+    /**
+     * Look up one instance by id. Returns `undefined` (not `Option`) when the
+     * id is unknown; callers branch on absence and emit the appropriate domain
+     * error.
+     */
+    readonly getInstance: (
+      instanceId: ProviderInstanceId,
+    ) => Effect.Effect<ProviderInstance | undefined>;
+
+    /**
+     * Every available (driver-registered, successfully created) instance, in
+     * stable settings-author order.
+     */
+    readonly listInstances: Effect.Effect<ReadonlyArray<ProviderInstance>>;
+
+    /**
+     * Wire-shape shadow snapshots for instances whose driver is unknown to this
+     * build or whose config failed to decode. Suitable for merging directly
+     * into `ProviderRegistry` output.
+     */
+    readonly listUnavailable: Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    /**
+     * Push notification stream emitted whenever the registry's contents change.
+     * The payload is `void` because consumers always re-pull `listInstances`
+     * and `listUnavailable` together.
+     *
+     * `Stream.fromPubSub` defers `PubSub.subscribe` until the stream starts
+     * running, so forking a consumer races the next publish. Hot-reload
+     * consumers that cannot miss a publish should use `subscribeChanges`
+     * instead, which acquires the subscription synchronously before the
+     * consumer loop is forked.
+     */
+    readonly streamChanges: Stream.Stream<void>;
+
+    /**
+     * Acquire a scoped subscription to the change channel synchronously in the
+     * caller's fiber. Consumers typically `yield*` this in the same fiber that
+     * forks their consumer loop, then drain it with `PubSub.take` or
+     * `Stream.fromSubscription`. Because the subscription is registered before
+     * this effect returns, no subsequent publish can land in a gap.
+     */
+    readonly subscribeChanges: Effect.Effect<PubSub.Subscription<void>, never, Scope.Scope>;
+  }
+>()("t3/provider/ProviderInstanceRegistry") {}
+
+/**
+ * Internal mutation boundary used only by registry hydration.
+ *
+ * `reconcile` diffs by instance id, closes removed or replaced child scopes
+ * before creating replacements, materializes additions in fresh child scopes,
+ * and publishes one change tick after the batch. Reapplying an unchanged map
+ * is a no-op.
+ */
+export class ProviderInstanceRegistryMutator extends Context.Service<
   ProviderInstanceRegistryMutator,
-  type ProviderInstanceRegistryMutatorShape,
-} from "../Services/ProviderInstanceRegistryMutator.ts";
-import type { AnyProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
+  {
+    /**
+     * Bring the live registry in line with the supplied config map. The
+     * operation closes removed or replaced scopes before creating replacements
+     * and publishes a single change tick after the batch. Reapplying an
+     * unchanged map is a no-op.
+     *
+     * The effect never fails: individual driver creation failures become
+     * unavailable shadow snapshots, keeping settings-watcher loops alive when
+     * one entry is invalid.
+     */
+    readonly reconcile: (configMap: ProviderInstanceConfigMap) => Effect.Effect<void>;
+  }
+>()("t3/provider/ProviderInstanceRegistry/ProviderInstanceRegistryMutator") {}
 
 /**
  * Live registry entry: the materialized `ProviderInstance` + the fresh
@@ -92,6 +159,8 @@ interface RegistryState {
  */
 const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
   Equal.equals(a, b);
+
+const formatSchemaIssue = SchemaIssue.makeFormatterDefault();
 
 const decodedConfigEnabled = (config: unknown): boolean | undefined => {
   if (!config || typeof config !== "object" || globalThis.Array.isArray(config)) {
@@ -137,12 +206,13 @@ const buildEntry = <R>(input: {
     const decoder = Schema.decodeUnknownEffect(driver.configSchema);
     const decodeResult = yield* decoder(entry.config ?? driver.defaultConfig()).pipe(Effect.result);
     if (decodeResult._tag === "Failure") {
-      const issue = decodeResult.failure;
-      const detail = issue.message ?? String(issue);
+      const cause = decodeResult.failure;
+      const detail = formatSchemaIssue(cause.issue);
       yield* Effect.logError("Failed to decode provider instance config", {
         instanceId: rawInstanceId,
         driver: entry.driver,
         detail,
+        cause,
       });
       return {
         kind: "unavailable" as const,
@@ -180,6 +250,7 @@ const buildEntry = <R>(input: {
         instanceId: rawInstanceId,
         driver: entry.driver,
         detail: createResult.failure.detail,
+        cause: createResult.failure,
       });
       yield* Scope.close(childScope, Exit.void).pipe(Effect.ignore);
       return {
@@ -315,9 +386,9 @@ const makeReconcile = <R>(input: {
  * Build the registry's runtime state from a concrete configMap. Returns a
  * record containing:
  *
- *   - `registry`: the read-only `ProviderInstanceRegistryShape` to expose
+ *   - `registry`: the read-only `ProviderInstanceRegistry["Service"]` to expose
  *     under `ProviderInstanceRegistry`.
- *   - `mutator`: the `ProviderInstanceRegistryMutatorShape` to expose
+ *   - `mutator`: the `ProviderInstanceRegistryMutator["Service"]` to expose
  *     under `ProviderInstanceRegistryMutator`.
  *   - `reconcile`: the raw reconcile function, provided for convenience so
  *     boot-time layers can hydrate an initial map before publishing the
@@ -327,13 +398,13 @@ const makeReconcile = <R>(input: {
  * created during `reconcile`. Closing that scope closes every live
  * instance.
  */
-export const makeProviderInstanceRegistry = <R>(input: {
+export const make = <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
   readonly configMap: ProviderInstanceConfigMap;
 }): Effect.Effect<
   {
-    readonly registry: ProviderInstanceRegistryShape;
-    readonly mutator: ProviderInstanceRegistryMutatorShape;
+    readonly registry: ProviderInstanceRegistry["Service"];
+    readonly mutator: ProviderInstanceRegistryMutator["Service"];
   },
   never,
   R | Scope.Scope
@@ -362,14 +433,14 @@ export const makeProviderInstanceRegistry = <R>(input: {
 
     const state: RegistryState = { entries, unavailable, changes };
     const reconcileWithR = makeReconcile({ state, driversById, parentScope });
-    const reconcile: ProviderInstanceRegistryMutatorShape["reconcile"] = (configMap) =>
+    const reconcile: ProviderInstanceRegistryMutator["Service"]["reconcile"] = (configMap) =>
       reconcileWithR(configMap).pipe(Effect.provideContext(driverContext));
 
     // Hydrate the initial configMap synchronously so callers can read
     // `listInstances` immediately after this effect completes.
     yield* reconcile(input.configMap);
 
-    const registry: ProviderInstanceRegistryShape = {
+    const registry = ProviderInstanceRegistry.of({
       getInstance: (id) => Ref.get(entries).pipe(Effect.map((map) => map.get(id)?.instance)),
       listInstances: Ref.get(entries).pipe(
         Effect.map(
@@ -395,9 +466,9 @@ export const makeProviderInstanceRegistry = <R>(input: {
       get subscribeChanges() {
         return PubSub.subscribe(changes);
       },
-    };
+    });
 
-    const mutator: ProviderInstanceRegistryMutatorShape = { reconcile };
+    const mutator = ProviderInstanceRegistryMutator.of({ reconcile });
 
     return { registry, mutator };
   });
@@ -409,15 +480,15 @@ export const makeProviderInstanceRegistry = <R>(input: {
  * wiring up the settings watcher.
  *
  * Only exposes the public registry tag — hot-reload consumers should use
- * `ProviderInstanceRegistryMutableLayer` (below) or the hydration layer.
+ * `mutableLayer` (below) or the hydration layer.
  */
-export const ProviderInstanceRegistryLayer = <R>(input: {
+export const layer = <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
   readonly configMap: ProviderInstanceConfigMap;
 }): Layer.Layer<ProviderInstanceRegistry, never, R> =>
   Layer.effect(
     ProviderInstanceRegistry,
-    makeProviderInstanceRegistry(input).pipe(Effect.map((built) => built.registry)),
+    make(input).pipe(Effect.map((built) => built.registry)),
   ) as Layer.Layer<ProviderInstanceRegistry, never, R>;
 
 /**
@@ -426,12 +497,12 @@ export const ProviderInstanceRegistryLayer = <R>(input: {
  * changes. Tests that exercise the mutator directly can pair this Layer
  * with a test-local `ServerSettingsService`.
  */
-export const ProviderInstanceRegistryMutableLayer = <R>(input: {
+export const mutableLayer = <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
   readonly configMap: ProviderInstanceConfigMap;
 }): Layer.Layer<ProviderInstanceRegistry | ProviderInstanceRegistryMutator, never, R> =>
   Layer.effectContext(
-    makeProviderInstanceRegistry(input).pipe(
+    make(input).pipe(
       Effect.map(({ registry, mutator }) =>
         Context.make(ProviderInstanceRegistry, registry).pipe(
           Context.add(ProviderInstanceRegistryMutator, mutator),

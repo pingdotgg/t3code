@@ -206,21 +206,16 @@ function nowIso(): string {
   return "2026-01-01T00:00:00.000Z";
 }
 
-function sessionNotFound(
-  provider: ProviderDriverKind,
-  threadId: ThreadId,
-): ProviderAdapterSessionNotFoundError {
-  return new ProviderAdapterSessionNotFoundError({
-    provider,
-    threadId: String(threadId),
-  });
-}
-
 function missingSessionEffect(
   provider: ProviderDriverKind,
   threadId: ThreadId,
 ): Effect.Effect<never, ProviderAdapterError> {
-  return Effect.fail(sessionNotFound(provider, threadId));
+  return Effect.fail(
+    new ProviderAdapterSessionNotFoundError({
+      provider,
+      threadId: String(threadId),
+    }),
+  );
 }
 
 export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapterHarnessOptions) =>
@@ -517,7 +512,12 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
             ? Effect.sync(() => {
                 state.queuedResponses.push(response);
               })
-            : Effect.fail(sessionNotFound(provider, threadId)),
+            : Effect.fail(
+                new ProviderAdapterSessionNotFoundError({
+                  provider,
+                  threadId: String(threadId),
+                }),
+              ),
         ),
       );
 

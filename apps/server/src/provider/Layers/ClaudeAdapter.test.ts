@@ -327,6 +327,7 @@ describe("ClaudeAdapterLive", () => {
         .pipe(Effect.flip);
 
       assert.instanceOf(error, ProviderAdapterProcessError);
+      assert.equal(error.stage, "session-start");
       assert.equal(error.detail, "Failed to start Claude runtime session.");
       assert.strictEqual(error.cause, cause);
       assert.notMatch(error.message, /credential material/u);

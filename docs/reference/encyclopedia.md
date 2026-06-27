@@ -167,7 +167,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [11]: ../apps/server/src/orchestration/Layers/ProjectionPipeline.ts
 [12]: ../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
 [13]: ../apps/server/src/orchestration/Services/RuntimeReceiptBus.ts
-[14]: ../apps/server/src/provider/Layers/ProviderService.ts
+[14]: ../apps/server/src/provider/ProviderService.ts
 [15]: ../apps/server/src/provider/Services/ProviderAdapter.ts
 [16]: ./provider-architecture.md
 [17]: ../apps/server/src/provider/Layers/CodexAdapter.ts

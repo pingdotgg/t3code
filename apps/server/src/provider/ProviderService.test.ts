@@ -30,6 +30,7 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -41,23 +42,27 @@ import {
   ProviderUnsupportedError,
   ProviderValidationError,
   type ProviderAdapterError,
-} from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
-import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
-import * as ProviderService from "../Services/ProviderService.ts";
-import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
-import { makeProviderServiceLive } from "./ProviderService.ts";
+} from "./Errors.ts";
+import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ProviderService from "./ProviderService.ts";
+import * as ProviderSessionDirectory from "./ProviderSessionDirectory.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
-import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
+import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
-} from "../../persistence/Layers/Sqlite.ts";
-import * as ServerSettings from "../../serverSettings.ts";
-import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
-import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
+} from "../persistence/Layers/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
+import { makeAdapterRegistryMock } from "./testUtils/providerAdapterRegistryMock.ts";
+
+// Several tests build two ProviderService instances in one scope to simulate a
+// process restart. Construct a fresh Layer for each build so Layer memoization
+// cannot reuse the first service instance.
+const makeFreshProviderServiceLayer = (options?: ProviderService.ProviderServiceOptions) =>
+  Layer.effect(ProviderService.ProviderService, ProviderService.make(options));
 
 const defaultServerSettingsLayer = ServerSettings.ServerSettingsService.layerTest();
 
@@ -284,11 +289,11 @@ function makeProviderServiceLayer() {
   const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
     Layer.provide(SqlitePersistenceMemory),
   );
-  const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+  const directoryLayer = ProviderSessionDirectory.layer.pipe(Layer.provide(runtimeRepositoryLayer));
 
   const layer = it.layer(
     Layer.mergeAll(
-      makeProviderServiceLive().pipe(
+      makeFreshProviderServiceLayer().pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(defaultServerSettingsLayer),
@@ -337,9 +342,11 @@ it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
     const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
       Layer.provide(SqlitePersistenceMemory),
     );
-    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+    const directoryLayer = ProviderSessionDirectory.layer.pipe(
+      Layer.provide(runtimeRepositoryLayer),
+    );
     const providerLayer = Layer.mergeAll(
-      makeProviderServiceLive().pipe(
+      makeFreshProviderServiceLayer().pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(defaultServerSettingsLayer),
@@ -397,8 +404,10 @@ it.effect("ProviderServiceLive rejects new sessions for disabled providers", () 
     const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
       Layer.provide(SqlitePersistenceMemory),
     );
-    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
-    const providerLayer = makeProviderServiceLive().pipe(
+    const directoryLayer = ProviderSessionDirectory.layer.pipe(
+      Layer.provide(runtimeRepositoryLayer),
+    );
+    const providerLayer = makeFreshProviderServiceLayer().pipe(
       Layer.provide(providerAdapterLayer),
       Layer.provide(directoryLayer),
       Layer.provide(defaultServerSettingsLayer),
@@ -479,10 +488,10 @@ it.effect(
       const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
         Layer.provide(SqlitePersistenceMemory),
       );
-      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+      const directoryLayer = ProviderSessionDirectory.layer.pipe(
         Layer.provide(runtimeRepositoryLayer),
       );
-      const providerLayer = makeProviderServiceLive().pipe(
+      const providerLayer = makeFreshProviderServiceLayer().pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(serverSettingsLayer),
@@ -551,8 +560,10 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
     const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
       Layer.provide(SqlitePersistenceMemory),
     );
-    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
-    const providerLayer = makeProviderServiceLive().pipe(
+    const directoryLayer = ProviderSessionDirectory.layer.pipe(
+      Layer.provide(runtimeRepositoryLayer),
+    );
+    const providerLayer = makeFreshProviderServiceLayer().pipe(
       Layer.provide(providerAdapterLayer),
       Layer.provide(directoryLayer),
       Layer.provide(defaultServerSettingsLayer),
@@ -596,8 +607,10 @@ it.effect("ProviderServiceLive writes canonical events to the emitting thread se
     const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
       Layer.provide(SqlitePersistenceMemory),
     );
-    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
-    const providerLayer = makeProviderServiceLive({
+    const directoryLayer = ProviderSessionDirectory.layer.pipe(
+      Layer.provide(runtimeRepositoryLayer),
+    );
+    const providerLayer = makeFreshProviderServiceLayer({
       canonicalEventLogger: {
         filePath: "memory://provider-canonical-events",
         write: (event, threadId) => {
@@ -656,7 +669,9 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
     const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
       Layer.provide(persistenceLayer),
     );
-    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+    const directoryLayer = ProviderSessionDirectory.layer.pipe(
+      Layer.provide(runtimeRepositoryLayer),
+    );
 
     yield* Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
@@ -667,7 +682,7 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
       });
     }).pipe(Effect.provide(directoryLayer));
 
-    const providerLayer = makeProviderServiceLive().pipe(
+    const providerLayer = makeFreshProviderServiceLayer().pipe(
       Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
       Layer.provide(directoryLayer),
       Layer.provide(defaultServerSettingsLayer),
@@ -728,10 +743,10 @@ it.effect(
         [ProviderDriverKind.make("codex")]: firstCodex.adapter,
       });
 
-      const firstDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+      const firstDirectoryLayer = ProviderSessionDirectory.layer.pipe(
         Layer.provide(runtimeRepositoryLayer),
       );
-      const firstProviderLayer = makeProviderServiceLive().pipe(
+      const firstProviderLayer = makeFreshProviderServiceLayer().pipe(
         Layer.provide(
           Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, firstRegistry),
         ),
@@ -787,10 +802,10 @@ it.effect(
       const secondRegistry = makeAdapterRegistryMock({
         [ProviderDriverKind.make("codex")]: secondCodex.adapter,
       });
-      const secondDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+      const secondDirectoryLayer = ProviderSessionDirectory.layer.pipe(
         Layer.provide(runtimeRepositoryLayer),
       );
-      const secondProviderLayer = makeProviderServiceLive().pipe(
+      const secondProviderLayer = makeFreshProviderServiceLayer().pipe(
         Layer.provide(
           Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, secondRegistry),
         ),
@@ -1071,6 +1086,18 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       const exit = yield* Effect.exit(provider.listSessions());
       assert.equal(Exit.hasDies(exit), true);
+      const defect = Exit.findDefect(exit);
+      assert.equal(Result.isSuccess(defect), true);
+      if (Result.isSuccess(defect)) {
+        assert.instanceOf(defect.success, ProviderService.ProviderSessionBindingCorrelationError);
+        assert.deepInclude(defect.success, {
+          threadId,
+          sessionProvider: ProviderDriverKind.make("codex"),
+          bindingProvider: ProviderDriverKind.make("claudeAgent"),
+          sessionInstanceId: codexInstanceId,
+          bindingInstanceId: claudeAgentInstanceId,
+        });
+      }
       yield* directory.upsert({
         threadId,
         provider: ProviderDriverKind.make("codex"),
@@ -1298,10 +1325,10 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const firstRegistry = makeAdapterRegistryMock({
         [ProviderDriverKind.make("claudeAgent")]: firstClaude.adapter,
       });
-      const firstDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+      const firstDirectoryLayer = ProviderSessionDirectory.layer.pipe(
         Layer.provide(runtimeRepositoryLayer),
       );
-      const firstProviderLayer = makeProviderServiceLive().pipe(
+      const firstProviderLayer = makeFreshProviderServiceLayer().pipe(
         Layer.provide(
           Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, firstRegistry),
         ),
@@ -1336,10 +1363,10 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const secondRegistry = makeAdapterRegistryMock({
         [ProviderDriverKind.make("claudeAgent")]: secondClaude.adapter,
       });
-      const secondDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+      const secondDirectoryLayer = ProviderSessionDirectory.layer.pipe(
         Layer.provide(runtimeRepositoryLayer),
       );
-      const secondProviderLayer = makeProviderServiceLive().pipe(
+      const secondProviderLayer = makeFreshProviderServiceLayer().pipe(
         Layer.provide(
           Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, secondRegistry),
         ),
@@ -1404,10 +1431,10 @@ routing.layer("ProviderServiceLive routing", (it) => {
         const firstRegistry = makeAdapterRegistryMock({
           [ProviderDriverKind.make("claudeAgent")]: firstClaude.adapter,
         });
-        const firstDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+        const firstDirectoryLayer = ProviderSessionDirectory.layer.pipe(
           Layer.provide(runtimeRepositoryLayer),
         );
-        const firstProviderLayer = makeProviderServiceLive().pipe(
+        const firstProviderLayer = makeFreshProviderServiceLayer().pipe(
           Layer.provide(
             Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, firstRegistry),
           ),
@@ -1437,10 +1464,10 @@ routing.layer("ProviderServiceLive routing", (it) => {
         const secondRegistry = makeAdapterRegistryMock({
           [ProviderDriverKind.make("claudeAgent")]: secondClaude.adapter,
         });
-        const secondDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+        const secondDirectoryLayer = ProviderSessionDirectory.layer.pipe(
           Layer.provide(runtimeRepositoryLayer),
         );
-        const secondProviderLayer = makeProviderServiceLive().pipe(
+        const secondProviderLayer = makeFreshProviderServiceLayer().pipe(
           Layer.provide(
             Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, secondRegistry),
           ),
@@ -1783,6 +1810,25 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
 
 const validation = makeProviderServiceLayer();
 validation.layer("ProviderServiceLive validation", (it) => {
+  it.effect("rejects whitespace-only turns without attachments", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+
+      validation.codex.sendTurn.mockClear();
+      const failure = yield* provider
+        .sendTurn({
+          threadId: asThreadId("thread-whitespace-only"),
+          input: " \n\t ",
+          attachments: [],
+        })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.equal(failure.operation, "ProviderService.sendTurn");
+      assert.equal(validation.codex.sendTurn.mock.calls.length, 0);
+    }),
+  );
+
   it.effect("rejects session starts without an explicit provider instance id", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

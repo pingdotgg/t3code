@@ -64,7 +64,7 @@ export class ProviderAdapterRequestError extends Schema.TaggedErrorClass<Provide
   },
 ) {
   override get message(): string {
-    return `Provider adapter request failed (${this.provider}) for ${this.method}: ${this.detail}`;
+    return `Provider adapter request failed (${this.provider}) for ${this.method}.`;
   }
 }
 
@@ -76,12 +76,13 @@ export class ProviderAdapterProcessError extends Schema.TaggedErrorClass<Provide
   {
     provider: Schema.String,
     threadId: Schema.String,
+    stage: Schema.String,
     detail: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Provider adapter process error (${this.provider}) for thread ${this.threadId}: ${this.detail}`;
+    return `Provider adapter process failed (${this.provider}) during ${this.stage} for thread ${this.threadId}.`;
   }
 }
 
@@ -170,6 +171,8 @@ export class ProviderSessionNotFoundError extends Schema.TaggedErrorClass<Provid
     return `Unknown provider thread: ${this.threadId}`;
   }
 }
+
+export const isProviderSessionNotFoundError = Schema.is(ProviderSessionNotFoundError);
 
 /**
  * ProviderSessionDirectoryPersistenceError - Session directory persistence failure.

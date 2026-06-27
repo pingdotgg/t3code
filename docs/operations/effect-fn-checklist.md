@@ -41,7 +41,7 @@ Effect.fn("name")(
 
 ## Suggested Order
 
-- [ ] `apps/server/src/provider/Layers/ProviderService.ts`
+- [ ] `apps/server/src/provider/ProviderService.ts`
 - [x] `apps/server/src/provider/Layers/ClaudeAdapter.ts`
 - [x] `apps/server/src/provider/Layers/CodexAdapter.ts`
 - [x] `apps/server/src/git/Layers/GitCore.ts`
@@ -98,20 +98,20 @@ Effect.fn("name")(
 - [x] `Effect.forEach(..., entry => Effect.gen(...))` callbacks around `L305`
 - [x] Remaining apply helpers in this file
 
-### `apps/server/src/provider/Layers/ProviderService.ts` (`24`)
+### `apps/server/src/provider/ProviderService.ts` (`24`)
 
-- [ ] [makeProviderService](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/ProviderService.ts#L134)
-- [ ] [recoverSessionForThread](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/ProviderService.ts#L196)
-- [ ] [resolveRoutableSession](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/ProviderService.ts#L255)
-- [ ] [startSession](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/ProviderService.ts#L284)
-- [ ] [sendTurn](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/ProviderService.ts#L347)
-- [ ] [interruptTurn](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/ProviderService.ts#L393)
-- [ ] [respondToRequest](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/ProviderService.ts#L411)
-- [ ] [respondToUserInput](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/ProviderService.ts#L430)
-- [ ] [stopSession](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/ProviderService.ts#L445)
-- [ ] [listSessions](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/ProviderService.ts#L466)
-- [ ] [rollbackConversation](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/ProviderService.ts#L516)
-- [ ] [runStopAll](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/ProviderService.ts#L538)
+- [ ] [makeProviderService](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/ProviderService.ts#L134)
+- [ ] [recoverSessionForThread](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/ProviderService.ts#L196)
+- [ ] [resolveRoutableSession](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/ProviderService.ts#L255)
+- [ ] [startSession](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/ProviderService.ts#L284)
+- [ ] [sendTurn](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/ProviderService.ts#L347)
+- [ ] [interruptTurn](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/ProviderService.ts#L393)
+- [ ] [respondToRequest](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/ProviderService.ts#L411)
+- [ ] [respondToUserInput](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/ProviderService.ts#L430)
+- [ ] [stopSession](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/ProviderService.ts#L445)
+- [ ] [listSessions](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/ProviderService.ts#L466)
+- [ ] [rollbackConversation](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/ProviderService.ts#L516)
+- [ ] [runStopAll](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/ProviderService.ts#L538)
 
 ### `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts` (`14`)
 
@@ -174,7 +174,7 @@ Effect.fn("name")(
 - [ ] [packages/shared/src/DrainableWorker.ts](/Users/julius/Development/Work/codething-mvp/packages/shared/src/DrainableWorker.ts) (`4`)
 - [ ] [apps/server/src/wsServer/pushBus.ts](/Users/julius/Development/Work/codething-mvp/apps/server/src/wsServer/pushBus.ts) (`4`)
 - [ ] [apps/server/src/wsServer.ts](/Users/julius/Development/Work/codething-mvp/apps/server/src/wsServer.ts) (`4`)
-- [ ] [apps/server/src/provider/Layers/ProviderRegistry.ts](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/ProviderRegistry.ts) (`4`)
+- [ ] [apps/server/src/provider/ProviderRegistry.ts](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/ProviderRegistry.ts) (`4`)
 - [ ] [apps/server/src/persistence/Layers/Sqlite.ts](/Users/julius/Development/Work/codething-mvp/apps/server/src/persistence/Layers/Sqlite.ts) (`4`)
 - [ ] [apps/server/src/orchestration/Layers/ProviderCommandReactor.ts](/Users/julius/Development/Work/codething-mvp/apps/server/src/orchestration/Layers/ProviderCommandReactor.ts) (`4`)
 - [ ] [apps/server/src/main.ts](/Users/julius/Development/Work/codething-mvp/apps/server/src/main.ts) (`4`)
@@ -183,7 +183,7 @@ Effect.fn("name")(
 - [ ] [apps/server/src/serverLayers.ts](/Users/julius/Development/Work/codething-mvp/apps/server/src/serverLayers.ts) (`3`)
 - [ ] [apps/server/src/telemetry/Layers/AnalyticsService.ts](/Users/julius/Development/Work/codething-mvp/apps/server/src/telemetry/Layers/AnalyticsService.ts) (`2`)
 - [ ] [apps/server/src/telemetry/Identify.ts](/Users/julius/Development/Work/codething-mvp/apps/server/src/telemetry/Identify.ts) (`2`)
-- [ ] [apps/server/src/provider/Layers/ProviderAdapterRegistry.ts](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/ProviderAdapterRegistry.ts) (`2`)
+- [ ] [apps/server/src/provider/ProviderAdapterRegistry.ts](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/ProviderAdapterRegistry.ts) (`2`)
 - [ ] [apps/server/src/provider/Layers/CodexProvider.ts](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/CodexProvider.ts) (`2`)
 - [ ] [apps/server/src/provider/Layers/ClaudeProvider.ts](/Users/julius/Development/Work/codething-mvp/apps/server/src/provider/Layers/ClaudeProvider.ts) (`2`)
 - [ ] [apps/server/src/persistence/NodeSqliteClient.ts](/Users/julius/Development/Work/codething-mvp/apps/server/src/persistence/NodeSqliteClient.ts) (`2`)

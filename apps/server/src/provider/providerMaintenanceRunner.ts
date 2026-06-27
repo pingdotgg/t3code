@@ -9,18 +9,19 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
-import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
 import { enrichProviderSnapshotWithVersionAdvisory } from "./providerMaintenance.ts";
 import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
@@ -39,26 +40,84 @@ export interface ProviderMaintenanceCommandResult {
   readonly stderrTruncated: boolean;
 }
 
-export interface ProviderMaintenanceRunnerShape {
-  readonly updateProvider: (
-    target:
-      | ProviderDriverKind
-      | {
-          readonly provider: ProviderDriverKind;
-          readonly instanceId?: ProviderInstanceId | undefined;
-        },
-  ) => Effect.Effect<ServerProviderUpdatedPayload, ServerProviderUpdateError>;
-}
-
 export class ProviderMaintenanceRunner extends Context.Service<
   ProviderMaintenanceRunner,
-  ProviderMaintenanceRunnerShape
+  {
+    readonly updateProvider: (
+      target:
+        | ProviderDriverKind
+        | {
+            readonly provider: ProviderDriverKind;
+            readonly instanceId?: ProviderInstanceId | undefined;
+          },
+    ) => Effect.Effect<ServerProviderUpdatedPayload, ServerProviderUpdateError>;
+  }
 >()("t3/provider/providerMaintenanceRunner") {}
 
-class ProviderMaintenanceCommandError extends Data.TaggedError("ProviderMaintenanceCommandError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+const platformFailureFields = {
+  failureTag: Schema.NullOr(Schema.String),
+  failureModule: Schema.String,
+  failureMethod: Schema.String,
+  failureDescription: Schema.NullOr(Schema.String),
+  failurePathOrDescriptor: Schema.NullOr(Schema.Union([Schema.String, Schema.Number])),
+} as const;
+
+interface PlatformFailureAttributes {
+  readonly failureTag: string | null;
+  readonly failureModule: string;
+  readonly failureMethod: string;
+  readonly failureDescription: string | null;
+  readonly failurePathOrDescriptor: string | number | null;
+}
+
+function platformFailureAttributes(cause: PlatformError.PlatformError): PlatformFailureAttributes {
+  const { reason } = cause;
+  return {
+    failureTag: reason._tag === "BadArgument" ? null : reason._tag,
+    failureModule: reason.module,
+    failureMethod: reason.method,
+    failureDescription: reason.description || null,
+    failurePathOrDescriptor:
+      "pathOrDescriptor" in reason ? (reason.pathOrDescriptor ?? null) : null,
+  };
+}
+
+function formatPlatformFailure(attributes: PlatformFailureAttributes): string {
+  const tag = attributes.failureTag === null ? "" : `${attributes.failureTag}: `;
+  const path =
+    attributes.failurePathOrDescriptor === null
+      ? ""
+      : ` (${String(attributes.failurePathOrDescriptor)})`;
+  const description =
+    attributes.failureDescription === null ? "" : `: ${attributes.failureDescription}`;
+  return `${tag}${attributes.failureModule}.${attributes.failureMethod}${path}${description}`;
+}
+
+class ProviderMaintenanceCommandSpawnError extends Schema.TaggedErrorClass<ProviderMaintenanceCommandSpawnError>()(
+  "ProviderMaintenanceCommandSpawnError",
+  {
+    command: Schema.String,
+    ...platformFailureFields,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to run update command ${this.command}: ${formatPlatformFailure(this)}`;
+  }
+}
+
+class ProviderMaintenanceCommandCollectError extends Schema.TaggedErrorClass<ProviderMaintenanceCommandCollectError>()(
+  "ProviderMaintenanceCommandCollectError",
+  {
+    command: Schema.String,
+    ...platformFailureFields,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return formatPlatformFailure(this);
+  }
+}
 
 interface VerifiedProviderRefresh {
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -80,8 +139,9 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
           .pipe(
             Effect.mapError(
               (cause) =>
-                new ProviderMaintenanceCommandError({
-                  message: `Failed to run update command ${input.command}: ${cause.message}`,
+                new ProviderMaintenanceCommandSpawnError({
+                  command: input.command,
+                  ...platformFailureAttributes(cause),
                   cause,
                 }),
             ),
@@ -104,8 +164,9 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
         ).pipe(
           Effect.mapError(
             (cause) =>
-              new ProviderMaintenanceCommandError({
-                message: cause instanceof Error ? cause.message : "Update command failed to run.",
+              new ProviderMaintenanceCommandCollectError({
+                command: input.command,
+                ...platformFailureAttributes(cause),
                 cause,
               }),
           ),
@@ -191,7 +252,7 @@ function makeUpdateState(input: {
 }
 
 export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
-  const providerRegistry = yield* ProviderRegistry;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const runMaintenanceCommand = (command: string, args: ReadonlyArray<string>) =>
@@ -265,7 +326,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
           Effect.catchCause((cause) =>
             Effect.logWarning("Provider post-update version verification failed", {
               provider,
-              cause: Cause.pretty(cause),
+              cause,
             }).pipe(
               Effect.as<VerifiedProviderRefresh>({
                 providers,
@@ -277,7 +338,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       }),
     );
 
-  const updateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
+  const updateProvider: ProviderMaintenanceRunner["Service"]["updateProvider"] = Effect.fn(
     "ProviderMaintenanceRunner.updateProvider",
   )(function* (target) {
     const provider = typeof target === "string" ? target : target.provider;
@@ -404,6 +465,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             ? new ServerProviderUpdateError({
                 provider,
                 reason: error.reason,
+                cause: error,
               })
             : error,
         ),

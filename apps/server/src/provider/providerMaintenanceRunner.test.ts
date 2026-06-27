@@ -15,10 +15,11 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
-import { ProviderRegistry, type ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import {
   makeProviderMaintenanceCapabilities,
@@ -177,7 +178,7 @@ function makeRegistry(
       );
     });
 
-    const registry: ProviderRegistryShape = {
+    const registry: ProviderRegistry.ProviderRegistry["Service"] = {
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
@@ -194,13 +195,13 @@ function makeRegistry(
   });
 }
 
-const makeTestRunner = (registry: ProviderRegistryShape) =>
+const makeTestRunner = (registry: ProviderRegistry.ProviderRegistry["Service"]) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
     Effect.provide(
       ProviderMaintenanceRunner.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
-            Layer.succeed(ProviderRegistry, registry),
+            Layer.succeed(ProviderRegistry.ProviderRegistry, registry),
             Layer.succeed(ProviderVersionCache, new Map()),
           ),
         ),
@@ -460,6 +461,10 @@ describe("providerMaintenanceRunner", () => {
         assert.strictEqual(isServerProviderUpdateError(error), true);
         if (isServerProviderUpdateError(error)) {
           assert.include(error.reason, "already running");
+          assert.strictEqual(isServerProviderUpdateError(error.cause), true);
+          if (isServerProviderUpdateError(error.cause)) {
+            assert.strictEqual(error.cause.provider, "unknown");
+          }
         }
       }
 

@@ -132,7 +132,7 @@ sequenceDiagram
 [5]: ../apps/server/src/wsServer/pushBus.ts
 [6]: ../packages/contracts/src/ws.ts
 [7]: ../apps/server/src/serverLayers.ts
-[8]: ../apps/server/src/provider/Layers/ProviderService.ts
+[8]: ../apps/server/src/provider/ProviderService.ts
 [9]: ../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
 [10]: ../apps/server/src/orchestration/Layers/OrchestrationEngine.ts
 [11]: ../packages/contracts/src/orchestration.ts

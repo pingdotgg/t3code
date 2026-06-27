@@ -25,39 +25,37 @@
  * rather than failing the boot Layer, matching the previous best-effort
  * behavior of `server.ts`.
  *
- * @module provider/Layers/ProviderEventLoggers
+ * @module provider/ProviderEventLoggers
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { ServerConfig } from "../../config.ts";
-import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
-
-export interface ProviderEventLoggersShape {
-  readonly native: EventNdjsonLogger | undefined;
-  readonly canonical: EventNdjsonLogger | undefined;
-}
+import * as Config from "../config.ts";
+import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./Layers/EventNdjsonLogger.ts";
 
 /**
  * Shared logger pair for native + canonical provider event streams.
  *
  * Service value is intentionally a struct of two optional loggers rather
  * than two parallel tags. Construction site is one place
- * (`ProviderEventLoggersLive`); consumers (drivers, `ProviderService`) read
+ * (`layer`); consumers (drivers, `ProviderService`) read
  * one tag and pluck the field they need.
  */
 export class ProviderEventLoggers extends Context.Service<
   ProviderEventLoggers,
-  ProviderEventLoggersShape
->()("t3/provider/Layers/ProviderEventLoggers") {}
+  {
+    readonly native: EventNdjsonLogger | undefined;
+    readonly canonical: EventNdjsonLogger | undefined;
+  }
+>()("t3/provider/ProviderEventLoggers") {}
 
 /**
  * Constant value used by tests / boot layers that want to opt out of native
  * + canonical logging entirely. Keeps the tag non-optional in the type
  * system while letting the runtime treat absence as a no-op.
  */
-export const NoOpProviderEventLoggers: ProviderEventLoggersShape = {
+export const NoOpProviderEventLoggers: ProviderEventLoggers["Service"] = {
   native: undefined,
   canonical: undefined,
 };
@@ -67,19 +65,15 @@ export const NoOpProviderEventLoggers: ProviderEventLoggersShape = {
  * If the directory create fails for either stream, the corresponding field
  * is `undefined` and writes from that stream become no-ops downstream.
  */
-export const ProviderEventLoggersLive = Layer.effect(
-  ProviderEventLoggers,
-  Effect.gen(function* () {
-    const { providerEventLogPath } = yield* ServerConfig;
-    const native = yield* makeEventNdjsonLogger(providerEventLogPath, {
-      stream: "native",
-    });
-    const canonical = yield* makeEventNdjsonLogger(providerEventLogPath, {
-      stream: "canonical",
-    });
-    return {
-      native,
-      canonical,
-    } satisfies ProviderEventLoggersShape;
-  }),
-);
+export const make = Effect.gen(function* () {
+  const { providerEventLogPath } = yield* Config.ServerConfig;
+  const native = yield* makeEventNdjsonLogger(providerEventLogPath, {
+    stream: "native",
+  });
+  const canonical = yield* makeEventNdjsonLogger(providerEventLogPath, {
+    stream: "canonical",
+  });
+  return ProviderEventLoggers.of({ native, canonical });
+});
+
+export const layer = Layer.effect(ProviderEventLoggers, make);

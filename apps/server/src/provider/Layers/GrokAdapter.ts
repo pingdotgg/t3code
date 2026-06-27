@@ -33,7 +33,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import { ServerConfig } from "../../config.ts";
+import * as Config from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   ProviderAdapterProcessError,
@@ -230,7 +230,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const serverConfig = yield* Effect.service(ServerConfig);
+    const serverConfig = yield* Effect.service(Config.ServerConfig);
     const crypto = yield* Crypto.Crypto;
     const nativeEventLogger =
       options?.nativeEventLogger ??
@@ -602,7 +602,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 new ProviderAdapterProcessError({
                   provider: PROVIDER,
                   threadId: input.threadId,
-                  detail: cause.message,
+                  stage: "session-start",
+                  detail: "Failed to start the Grok ACP session process.",
                   cause,
                 }),
             ),
@@ -971,7 +972,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                           new ProviderAdapterRequestError({
                             provider: PROVIDER,
                             method: "session/prompt",
-                            detail: cause.message,
+                            detail: `Failed to read attachment '${attachment.id}'.`,
                             cause,
                           }),
                       ),

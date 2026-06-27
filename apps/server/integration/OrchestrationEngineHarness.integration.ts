@@ -33,17 +33,13 @@ import { makeSqlitePersistenceLive } from "../src/persistence/Layers/Sqlite.ts";
 import { ProjectionCheckpointRepository } from "../src/persistence/Services/ProjectionCheckpoints.ts";
 import { ProjectionPendingApprovalRepository } from "../src/persistence/Services/ProjectionPendingApprovals.ts";
 import { makeAdapterRegistryMock } from "../src/provider/testUtils/providerAdapterRegistryMock.ts";
-import { ProviderAdapterRegistry } from "../src/provider/Services/ProviderAdapterRegistry.ts";
+import * as ProviderAdapterRegistry from "../src/provider/ProviderAdapterRegistry.ts";
 import { makeProviderRegistryLayer } from "../src/provider/testUtils/providerRegistryMock.ts";
-import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
+import * as ProviderSessionDirectory from "../src/provider/ProviderSessionDirectory.ts";
 import { ServerSettingsService } from "../src/serverSettings.ts";
-import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
+import * as ProviderService from "../src/provider/ProviderService.ts";
 import { makeCodexAdapter } from "../src/provider/Layers/CodexAdapter.ts";
-import {
-  NoOpProviderEventLoggers,
-  ProviderEventLoggers,
-} from "../src/provider/Layers/ProviderEventLoggers.ts";
-import { ProviderService } from "../src/provider/Services/ProviderService.ts";
+import * as ProviderEventLoggers from "../src/provider/ProviderEventLoggers.ts";
 import { AnalyticsService } from "../src/telemetry/Services/AnalyticsService.ts";
 import { CheckpointReactorLive } from "../src/orchestration/Layers/CheckpointReactor.ts";
 import * as RepositoryIdentityResolver from "../src/project/RepositoryIdentityResolver.ts";
@@ -178,7 +174,7 @@ export interface OrchestrationIntegrationHarness {
   readonly adapterHarness: TestProviderAdapterHarness | null;
   readonly engine: OrchestrationEngineShape;
   readonly snapshotQuery: ProjectionSnapshotQuery["Service"];
-  readonly providerService: ProviderService["Service"];
+  readonly providerService: ProviderService.ProviderService["Service"];
   readonly checkpointStore: CheckpointStore.CheckpointStore["Service"];
   readonly checkpointRepository: ProjectionCheckpointRepository["Service"];
   readonly pendingApprovalRepository: ProjectionPendingApprovalRepository["Service"];
@@ -241,7 +237,7 @@ export const makeOrchestrationIntegrationHarness = (
         });
     const fakeRegistry = adapterHarness
       ? Layer.succeed(
-          ProviderAdapterRegistry,
+          ProviderAdapterRegistry.ProviderAdapterRegistry,
           makeAdapterRegistryMock({ [adapterHarness.provider]: adapterHarness.adapter }),
         )
       : null;
@@ -262,11 +258,11 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provide(OrchestrationEventStoreLive),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     );
-    const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+    const providerSessionDirectoryLayer = ProviderSessionDirectory.layer.pipe(
       Layer.provide(ProviderSessionRuntimeRepositoryLive),
     );
     const realCodexRegistry = Layer.effect(
-      ProviderAdapterRegistry,
+      ProviderAdapterRegistry.ProviderAdapterRegistry,
       Effect.gen(function* () {
         const codexSettings = yield* decodeCodexSettings({});
         const codexAdapter = yield* makeCodexAdapter(codexSettings);
@@ -279,15 +275,18 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
-    const providerEventLoggersLayer = Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers);
+    const providerEventLoggersLayer = Layer.succeed(
+      ProviderEventLoggers.ProviderEventLoggers,
+      ProviderEventLoggers.NoOpProviderEventLoggers,
+    );
     const providerLayer = useRealCodex
-      ? makeProviderServiceLive().pipe(
+      ? ProviderService.layer.pipe(
           Layer.provide(providerSessionDirectoryLayer),
           Layer.provide(realCodexRegistry),
           Layer.provide(AnalyticsService.layerTest),
           Layer.provide(providerEventLoggersLayer),
         )
-      : makeProviderServiceLive().pipe(
+      : ProviderService.layer.pipe(
           Layer.provide(providerSessionDirectoryLayer),
           Layer.provide(fakeRegistry!),
           Layer.provide(AnalyticsService.layerTest),
@@ -395,7 +394,7 @@ export const makeOrchestrationIntegrationHarness = (
       runtime.runPromise(Effect.service(ProjectionSnapshotQuery)),
     ).pipe(Effect.orDie);
     const providerService = yield* tryRuntimePromise("load ProviderService service", () =>
-      runtime.runPromise(Effect.service(ProviderService)),
+      runtime.runPromise(Effect.service(ProviderService.ProviderService)),
     ).pipe(Effect.orDie);
     const checkpointStore = yield* tryRuntimePromise("load CheckpointStore service", () =>
       runtime.runPromise(Effect.service(CheckpointStore.CheckpointStore)),

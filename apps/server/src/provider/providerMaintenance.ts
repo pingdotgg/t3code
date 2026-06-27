@@ -357,7 +357,9 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   const env = options?.env ?? (yield* readCommandLookupEnv);
   const resolvedCommandPath =
     (yield* resolveCommandPath(binaryPath, { env }).pipe(
-      Effect.catchTag("CommandResolutionError", () => Effect.succeed(null)),
+      Effect.catchTags({
+        CommandResolutionError: () => Effect.succeed(null),
+      }),
     )) ?? (hasPathSeparator(binaryPath) ? binaryPath : null);
   if (!resolvedCommandPath) {
     return resolver.resolve(options);
