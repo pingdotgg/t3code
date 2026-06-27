@@ -868,3 +868,23 @@ label:has(> select#reasoning-effort) select {
 .dark .model-picker-list::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.15);
 }
+
+/* When an interactive overlay (menu, select, popover, combobox, autocomplete) is open
+   but no dialog is covering it, lower toast z-index so the overlay renders above toasts. */
+body:has(
+    [data-slot="menu-positioner"],
+    [data-slot="select-positioner"],
+    [data-slot="popover-positioner"],
+    [data-slot="combobox-positioner"],
+    [data-slot="autocomplete-positioner"]
+  ):not(
+    :has(
+      [data-slot="dialog-backdrop"],
+      [data-slot="command-dialog-backdrop"],
+      [data-slot="sheet-backdrop"],
+      [data-slot="alert-dialog-backdrop"]
+    )
+  )
+  [data-slot="toast-viewport"] {
+  z-index: 40;
+}
