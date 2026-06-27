@@ -356,9 +356,11 @@ export const RootStack = createNativeStackNavigator({
       screen: ReviewCommentComposerSheet,
       linking: `${THREAD_LINKING_PREFIX}/review-comment`,
       options: {
-        presentation: "formSheet",
-        sheetAllowedDetents: [0.55, 0.92],
-        sheetGrabberVisible: true,
+        // Android cannot host the keyboard-driven comment composer inside a
+        // formSheet; use a full-screen modal there instead.
+        presentation: Platform.OS === "android" ? "fullScreenModal" : "formSheet",
+        sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.55, 0.92],
+        sheetGrabberVisible: Platform.OS !== "android",
       },
     }),
     ThreadFiles: createNativeStackScreen({

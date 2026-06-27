@@ -19,6 +19,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject
 import {
   ActivityIndicator,
   Image,
+  Platform,
   Pressable,
   useColorScheme,
   View,
@@ -67,7 +68,7 @@ import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerComm
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
  * Exported so the parent can compute feed overlap / content insets.
  */
-export const COMPOSER_COLLAPSED_CHROME = 60;
+export const COMPOSER_COLLAPSED_CHROME = Platform.OS === "android" ? 120 : 60;
 
 /**
  * Height of the expanded composer (card + toolbar + vertical padding, excluding safe-area inset).
@@ -113,12 +114,18 @@ export interface ThreadComposerProps {
 /**
  * The pill / card container — renders as LiquidGlassView on supported
  * iOS 26+ devices (progressive blur, native morph), opaque View otherwise.
+ * Exported so NewTaskDraftScreen can render the same composer chrome.
  */
 // One timing for every piece of the expanded↔compact morph so the surface,
 // toolbar, and siblings move together instead of popping between layouts.
-const COMPOSER_LAYOUT_TRANSITION = LinearTransition.duration(220);
+// Android gets NO layout transition: the composer rides the keyboard via
+// KeyboardStickyView (frame-synced to the IME), and a time-based morph
+// running alongside that translate reads as jitter. Snapping the layout and
+// letting the keyboard-synced slide be the only motion looks native there.
+const COMPOSER_LAYOUT_TRANSITION =
+  Platform.OS === "android" ? undefined : LinearTransition.duration(220);
 
-function ComposerSurface(props: {
+export function ComposerSurface(props: {
   readonly children: ReactNode;
   readonly style: ViewStyle;
   readonly isDarkMode: boolean;
@@ -254,14 +261,23 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
+  // Android: expansion starts on touch-down. Waiting for the native focus
+  // event to round-trip through JS starts the 220ms morph after the IME is
+  // already animating in, so the two play serially and look jittery.
+  const [eagerExpand, setEagerExpand] = useState(false);
   const wasExpandedBeforePreviewRef = useRef(false);
   const inFlightThreadIdsRef = useRef(new Set<string>());
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
-  const isExpanded = isFocused;
+  const isExpanded = isFocused || eagerExpand || (Platform.OS === "android" && hasContent);
   const canSend = hasContent;
+
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    onExpandedChange?.(isExpanded);
+  }, [isExpanded, onExpandedChange]);
 
   const onPressImage = useCallback(
     (uri: string) => {
@@ -280,12 +296,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const handleFocus = useCallback(() => {
     setIsFocused(true);
-    onExpandedChange?.(true);
+    if (Platform.OS !== "android") {
+      onExpandedChange?.(true);
+    }
   }, [onExpandedChange]);
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
-    onExpandedChange?.(false);
+    setEagerExpand(false);
+    if (Platform.OS !== "android") {
+      onExpandedChange?.(false);
+    }
   }, [onExpandedChange]);
   const showStopAction =
     props.selectedThread.session?.status === "running" ||
@@ -766,7 +787,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             </Animated.View>
           ) : null}
 
-          <View style={isExpanded ? undefined : { flex: 1, minWidth: 0 }}>
+          <View
+            style={isExpanded ? undefined : { flex: 1, minWidth: 0 }}
+            onTouchStart={
+              Platform.OS === "android" && !isExpanded ? () => setEagerExpand(true) : undefined
+            }
+          >
             <ComposerEditor
               ref={inputRef}
               multiline
@@ -781,7 +807,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               onBlur={handleBlur}
               onSubmit={handleSend}
               scrollEnabled={isExpanded}
-              contentInsetVertical={isExpanded ? 0 : 6}
+              // Android: collapsed single line centers natively (gravity) in
+              // a pill-height box matching the send button; iOS keeps insets.
+              singleLineCentered={!isExpanded}
+              contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
               style={
                 isExpanded
                   ? {
@@ -851,8 +880,45 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           ) : null}
         </ComposerSurface>
 
-        {/* Toolbar row — matches draft page layout (expanded only) */}
-        {isExpanded ? (
+        {Platform.OS === "android" && !isExpanded ? (
+          // Collapsed Android toolbar shows exactly three controls, so skip
+          // the scroller and let the two selector pills flex to fill the row.
+          <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
+            <ComposerToolbarButton
+              accessibilityLabel="Add attachment"
+              icon="plus"
+              onPress={() => void props.onPickDraftImages()}
+              showChevron={false}
+            />
+            <ControlPillMenu
+              style={{ flex: 1, minWidth: 0 }}
+              actions={modelMenuActions}
+              onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
+            >
+              <ComposerToolbarTrigger
+                accessibilityLabel="Model"
+                iconNode={<ProviderIcon provider={currentModelOption?.providerDriver} size={16} />}
+                label={currentModelOption?.label ?? currentModelSelection.model}
+                style={{ maxWidth: "100%", width: "100%" }}
+              />
+            </ControlPillMenu>
+            <ControlPillMenu
+              // The reasoning/config label runs longer than most model names,
+              // so it gets a larger share of the row.
+              style={{ flex: 1.4, minWidth: 0 }}
+              actions={optionsMenuActions}
+              onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
+            >
+              <ComposerToolbarTrigger
+                accessibilityLabel="Configuration"
+                icon="slider.horizontal.3"
+                label={configurationLabel}
+                style={{ maxWidth: "100%", width: "100%" }}
+              />
+            </ControlPillMenu>
+          </ComposerToolbarRow>
+        ) : isExpanded ? (
+          // Toolbar row — matches draft page layout (expanded only)
           <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(120)}>
             <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
               <ComposerToolbarScroller
@@ -860,6 +926,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 fadeTransparent={toolbarFadeTransparent}
               >
                 <ComposerToolbarButton
+                  accessibilityLabel="Add attachment"
                   icon="plus"
                   onPress={() => void props.onPickDraftImages()}
                   showChevron={false}
@@ -888,6 +955,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 </ControlPillMenu>
                 {showStopAction ? (
                   <ComposerToolbarButton
+                    accessibilityLabel="Stop"
                     icon="stop.fill"
                     variant="danger"
                     onPress={props.onStopThread}

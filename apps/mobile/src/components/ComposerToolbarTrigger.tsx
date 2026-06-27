@@ -1,4 +1,3 @@
-import { SymbolView } from "expo-symbols";
 import type { ComponentProps, ReactNode } from "react";
 import { useCallback, useMemo, useState } from "react";
 import {
@@ -16,6 +15,7 @@ import {
 import { useThemeColor } from "../lib/useThemeColor";
 import { cn } from "../lib/cn";
 import { AppText as Text } from "./AppText";
+import { SymbolView } from "./AppSymbol";
 
 export const COMPOSER_TOOLBAR_CONTROL_HEIGHT = 44;
 export const COMPOSER_TOOLBAR_GAP = 8;

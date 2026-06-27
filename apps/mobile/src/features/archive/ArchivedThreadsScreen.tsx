@@ -75,6 +75,10 @@ function ArchivedThreadsHeader(props: {
 }) {
   const { width } = useWindowDimensions();
   const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
+  const searchBackgroundColor = useThemeColor("--color-input");
+  const searchIconColor = useThemeColor("--color-icon");
+  const searchPlaceholderColor = useThemeColor("--color-placeholder");
+  const searchTextColor = useThemeColor("--color-foreground");
   const usesNativeChrome = Platform.OS === "ios";
   const usesCompactMailToolbar = Platform.OS === "ios" && width < 700;
   const archiveFilterMenu = {
@@ -156,6 +160,14 @@ function ArchivedThreadsHeader(props: {
                   : {
                       placement: "stacked" as const,
                     }),
+                ...(Platform.OS === "android"
+                  ? {
+                      barTintColor: searchBackgroundColor,
+                      headerIconColor: searchIconColor,
+                      hintTextColor: searchPlaceholderColor,
+                      textColor: searchTextColor,
+                    }
+                  : {}),
                 autoCapitalize: "none",
                 hideNavigationBar: false,
                 obscureBackground: false,

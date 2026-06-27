@@ -3,12 +3,17 @@ import type {
   SidebarProjectGroupingMode,
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
+import type { MenuAction } from "@react-native-menu/menu";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
-import { useCallback, useRef } from "react";
-import { Platform } from "react-native";
+import { useCallback, useMemo, useRef } from "react";
+import { Platform, Pressable, Text as RNText, TextInput, View } from "react-native";
 import type { SearchBarCommands } from "react-native-screens";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
+import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
+import { SymbolView } from "../../components/AppSymbol";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
@@ -30,6 +35,7 @@ const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Pl
 
 export function HomeHeader(props: {
   readonly environments: ReadonlyArray<HomeHeaderEnvironment>;
+  readonly searchQuery: string;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
@@ -42,6 +48,265 @@ export function HomeHeader(props: {
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
 }) {
+  if (Platform.OS === "android") {
+    return <AndroidHomeHeader {...props} />;
+  }
+
+  return <IosHomeHeader {...props} />;
+}
+
+type HomeHeaderProps = Parameters<typeof HomeHeader>[0];
+
+function checkedMenuTitle(checked: boolean, title: string) {
+  return checked ? `✓ ${title}` : title;
+}
+
+function AndroidHomeHeader(props: HomeHeaderProps) {
+  const insets = useSafeAreaInsets();
+  const iconColor = useThemeColor("--color-icon");
+  const mutedColor = useThemeColor("--color-foreground-muted");
+  const subtleColor = useThemeColor("--color-subtle");
+  const headerColor = useThemeColor("--color-header");
+  const headerBorderColor = useThemeColor("--color-header-border");
+  const inputColor = useThemeColor("--color-input");
+  const inputBorderColor = useThemeColor("--color-input-border");
+  const placeholderColor = useThemeColor("--color-placeholder");
+  const hasCustomListOptions = hasCustomHomeListOptions(props);
+  const menuActions = useMemo<MenuAction[]>(
+    () => [
+      {
+        id: "environment",
+        title: "Environment",
+        subactions: [
+          {
+            id: "environment:all",
+            title: checkedMenuTitle(props.selectedEnvironmentId === null, "All environments"),
+          },
+          ...props.environments.map((environment) => ({
+            id: `environment:${environment.environmentId}`,
+            title: checkedMenuTitle(
+              props.selectedEnvironmentId === environment.environmentId,
+              environment.label,
+            ),
+          })),
+        ],
+      },
+      {
+        id: "project-sort",
+        title: "Sort projects",
+        subactions: PROJECT_SORT_OPTIONS.map((option) => ({
+          id: `project-sort:${option.value}`,
+          title: checkedMenuTitle(props.projectSortOrder === option.value, option.label),
+        })),
+      },
+      {
+        id: "thread-sort",
+        title: "Sort threads",
+        subactions: THREAD_SORT_OPTIONS.map((option) => ({
+          id: `thread-sort:${option.value}`,
+          title: checkedMenuTitle(props.threadSortOrder === option.value, option.label),
+        })),
+      },
+      {
+        id: "project-grouping",
+        title: "Group projects",
+        subactions: PROJECT_GROUPING_OPTIONS.map((option) => ({
+          id: `project-grouping:${option.value}`,
+          title: checkedMenuTitle(props.projectGroupingMode === option.value, option.label),
+        })),
+      },
+    ],
+    [
+      props.environments,
+      props.projectGroupingMode,
+      props.projectSortOrder,
+      props.selectedEnvironmentId,
+      props.threadSortOrder,
+    ],
+  );
+  const handleMenuAction = useCallback(
+    (event: { nativeEvent: { event: string } }) => {
+      const id = event.nativeEvent.event;
+      if (id === "environment:all") {
+        props.onEnvironmentChange(null);
+        return;
+      }
+
+      if (id.startsWith("environment:")) {
+        const environmentId = id.slice("environment:".length);
+        const environment = props.environments.find(
+          (candidate) => candidate.environmentId === environmentId,
+        );
+        if (environment) {
+          props.onEnvironmentChange(environment.environmentId);
+        }
+        return;
+      }
+
+      const projectSort = PROJECT_SORT_OPTIONS.find(
+        (option) => id === `project-sort:${option.value}`,
+      );
+      if (projectSort) {
+        props.onProjectSortOrderChange(projectSort.value);
+        return;
+      }
+
+      const threadSort = THREAD_SORT_OPTIONS.find((option) => id === `thread-sort:${option.value}`);
+      if (threadSort) {
+        props.onThreadSortOrderChange(threadSort.value);
+        return;
+      }
+
+      const grouping = PROJECT_GROUPING_OPTIONS.find(
+        (option) => id === `project-grouping:${option.value}`,
+      );
+      if (grouping) {
+        props.onProjectGroupingModeChange(grouping.value);
+      }
+    },
+    [props],
+  );
+
+  return (
+    <>
+      <NativeStackScreenOptions options={{ headerShown: false }} />
+      <View
+        style={{
+          backgroundColor: headerColor,
+          borderBottomColor: headerBorderColor,
+          borderBottomWidth: 1,
+          paddingTop: Math.max(insets.top, 12),
+          paddingBottom: 12,
+          paddingHorizontal: 16,
+        }}
+      >
+        <View style={{ alignSelf: "center", gap: 12, maxWidth: 720, width: "100%" }}>
+          <View style={{ alignItems: "center", flexDirection: "row", gap: 10 }}>
+            <View style={{ alignItems: "center", flexDirection: "row", flex: 1, gap: 8 }}>
+              <RNText
+                style={{
+                  color: iconColor,
+                  fontFamily: "DMSans_700Bold",
+                  fontSize: MOBILE_TYPOGRAPHY.title.fontSize,
+                  letterSpacing: -0.5,
+                }}
+              >
+                T3 Code
+              </RNText>
+              <View
+                style={{
+                  backgroundColor: subtleColor,
+                  borderRadius: 99,
+                  paddingHorizontal: 8,
+                  paddingVertical: 3,
+                }}
+              >
+                <RNText
+                  style={{
+                    color: mutedColor,
+                    fontFamily: "DMSans_700Bold",
+                    fontSize: MOBILE_TYPOGRAPHY.micro.fontSize,
+                    letterSpacing: 1.1,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Alpha
+                </RNText>
+              </View>
+            </View>
+
+            <ControlPillMenu
+              actions={menuActions}
+              isAnchoredToRight
+              onPressAction={handleMenuAction}
+            >
+              <Pressable
+                accessibilityLabel="Filter and sort threads"
+                accessibilityRole="button"
+                style={{
+                  alignItems: "center",
+                  backgroundColor: subtleColor,
+                  borderRadius: 99,
+                  height: 44,
+                  justifyContent: "center",
+                  width: 44,
+                }}
+              >
+                <SymbolView
+                  name={
+                    hasCustomListOptions
+                      ? "line.3.horizontal.decrease.circle.fill"
+                      : "line.3.horizontal.decrease.circle"
+                  }
+                  size={18}
+                  tintColor={iconColor}
+                  type="monochrome"
+                />
+              </Pressable>
+            </ControlPillMenu>
+            <ControlPill
+              accessibilityLabel="Open settings"
+              icon="gearshape"
+              onPress={props.onOpenSettings}
+            />
+            <ControlPill
+              accessibilityLabel="New task"
+              icon="square.and.pencil"
+              onPress={props.onStartNewTask}
+            />
+          </View>
+
+          <View
+            style={{
+              alignItems: "center",
+              backgroundColor: inputColor,
+              borderColor: inputBorderColor,
+              borderRadius: 16,
+              borderWidth: 1,
+              flexDirection: "row",
+              gap: 10,
+              minHeight: 48,
+              paddingHorizontal: 14,
+            }}
+          >
+            <SymbolView name="magnifyingglass" size={17} tintColor={mutedColor} type="monochrome" />
+            <TextInput
+              accessibilityLabel="Search threads"
+              autoCapitalize="none"
+              onChangeText={props.onSearchQueryChange}
+              placeholder="Search threads"
+              placeholderTextColor={placeholderColor}
+              style={{
+                color: iconColor,
+                flex: 1,
+                fontFamily: "DMSans_400Regular",
+                fontSize: MOBILE_TYPOGRAPHY.body.fontSize,
+                paddingVertical: 10,
+              }}
+              value={props.searchQuery}
+            />
+            {props.searchQuery.length > 0 ? (
+              <Pressable
+                accessibilityLabel="Clear search"
+                hitSlop={10}
+                onPress={() => props.onSearchQueryChange("")}
+              >
+                <SymbolView
+                  name="xmark.circle.fill"
+                  size={17}
+                  tintColor={mutedColor}
+                  type="monochrome"
+                />
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      </View>
+    </>
+  );
+}
+
+function IosHomeHeader(props: HomeHeaderProps) {
   const searchBarRef = useRef<SearchBarCommands>(null);
   const iconColor = useThemeColor("--color-icon");
   const hasCustomListOptions = hasCustomHomeListOptions(props);

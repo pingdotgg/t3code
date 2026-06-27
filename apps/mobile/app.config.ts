@@ -8,6 +8,15 @@ const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
+const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
+
+const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
+
+if (isIosPersonalTeamBuild && !personalTeamBundleIdentifier) {
+  throw new Error(
+    "T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID is required when T3CODE_IOS_PERSONAL_TEAM=1.",
+  );
+}
 
 const VARIANT_CONFIG: Record<
   AppVariant,
@@ -62,6 +71,30 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 }
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
+const iosBundleIdentifier =
+  isIosPersonalTeamBuild && personalTeamBundleIdentifier
+    ? personalTeamBundleIdentifier
+    : variant.iosBundleIdentifier;
+
+const widgetsPlugin = [
+  "expo-widgets",
+  {
+    bundleIdentifier: `${iosBundleIdentifier}.widgets`,
+    groupIdentifier: `group.${iosBundleIdentifier}`,
+    enablePushNotifications: true,
+    // Agent activity can update many times an hour; without the
+    // frequent-updates entitlement iOS throttles the update budget sooner.
+    frequentUpdates: true,
+    widgets: [
+      {
+        name: "AgentActivity",
+        displayName: "Agent Activity",
+        description: "Shows the current state of active T3 Code agents.",
+        supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
+      },
+    ],
+  },
+] satisfies NonNullable<ExpoConfig["plugins"]>[number];
 
 const config: ExpoConfig = {
   name: variant.appName,
@@ -88,15 +121,20 @@ const config: ExpoConfig = {
   ios: {
     icon: variant.iosIcon,
     supportsTablet: true,
-    bundleIdentifier: variant.iosBundleIdentifier,
-    // Pin code signing to the T3 Tools team so non-interactive `expo run:ios`
-    // does not fall back to a personal team (which cannot sign app groups,
-    // Sign in with Apple, or push notification entitlements).
-    appleTeamId: "ARK85ZXQ4Z",
-    associatedDomains: [
-      `applinks:${variant.relyingParty}`,
-      `webcredentials:${variant.relyingParty}`,
-    ],
+    bundleIdentifier: iosBundleIdentifier,
+    ...(isIosPersonalTeamBuild
+      ? {}
+      : {
+          // Pin code signing to the T3 Tools team so non-interactive `expo run:ios`
+          // does not fall back to a personal team (which cannot sign app groups,
+          // Sign in with Apple, or push notification entitlements). Personal-team
+          // builds opt out explicitly via T3CODE_IOS_PERSONAL_TEAM=1.
+          appleTeamId: "ARK85ZXQ4Z",
+          associatedDomains: [
+            `applinks:${variant.relyingParty}`,
+            `webcredentials:${variant.relyingParty}`,
+          ],
+        }),
     infoPlist: {
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
@@ -121,10 +159,40 @@ const config: ExpoConfig = {
     favicon: "./assets/favicon.png",
   },
   plugins: [
-    "expo-font",
+    "expo-asset",
+    [
+      "expo-font",
+      {
+        // Embeds DM Sans as native Android font resources (res/font) so
+        // native chrome themed by the config plugins (alert dialogs) can use
+        // the app typeface; JS font loading via @expo-google-fonts is
+        // unaffected.
+        android: {
+          fonts: [
+            {
+              fontFamily: "DM Sans",
+              fontDefinitions: [
+                {
+                  path: "node_modules/@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf",
+                  weight: 400,
+                },
+                {
+                  path: "node_modules/@expo-google-fonts/dm-sans/500Medium/DMSans_500Medium.ttf",
+                  weight: 500,
+                },
+                {
+                  path: "node_modules/@expo-google-fonts/dm-sans/700Bold/DMSans_700Bold.ttf",
+                  weight: 700,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ],
     "expo-secure-store",
     "expo-sqlite",
-    ["@clerk/expo", { theme: "./clerk-theme.json" }],
+    ["@clerk/expo", { theme: "./clerk-theme.json", appleSignIn: !isIosPersonalTeamBuild }],
     "expo-web-browser",
     [
       "expo-camera",
@@ -165,28 +233,13 @@ const config: ExpoConfig = {
     // expo-widgets' — its dangerous mod wipes ios/ExpoWidgetsTarget/ (which
     // would delete the asset catalog) and its xcodeproj mod creates the widget
     // target (which must exist before the compile phase can be attached).
-    "./plugins/withWidgetLogoAsset.cjs",
-    [
-      "expo-widgets",
-      {
-        bundleIdentifier: `${variant.iosBundleIdentifier}.widgets`,
-        groupIdentifier: `group.${variant.iosBundleIdentifier}`,
-        enablePushNotifications: true,
-        // Agent activity can update many times an hour; without the
-        // frequent-updates entitlement iOS throttles the update budget sooner.
-        frequentUpdates: true,
-        widgets: [
-          {
-            name: "AgentActivity",
-            displayName: "Agent Activity",
-            description: "Shows the current state of active T3 Code agents.",
-            supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
-          },
-        ],
-      },
-    ],
+    ...(!isIosPersonalTeamBuild ? ["./plugins/withWidgetLogoAsset.cjs", widgetsPlugin] : []),
     "./plugins/withIosSceneLifecycle.cjs",
     "./plugins/withAndroidCleartextTraffic.cjs",
+    "./plugins/withAndroidGradleHeap.cjs",
+    "./plugins/withAndroidModernPopupMenu.cjs",
+    "./plugins/withAndroidModernAlertDialog.cjs",
+    ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
   ],
   extra: {
     appVariant: APP_VARIANT,

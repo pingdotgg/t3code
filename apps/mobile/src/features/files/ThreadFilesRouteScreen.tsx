@@ -18,7 +18,9 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 
-import { AppText as Text } from "../../components/AppText";
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { cn } from "../../lib/cn";
@@ -254,7 +256,9 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
   const colorScheme = useColorScheme();
+  const isAndroid = Platform.OS === "android";
   const highlightTheme = colorScheme === "dark" ? "dark" : "light";
+  const iconColor = String(useThemeColor("--color-icon-muted"));
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
     props.route.params,
   );
@@ -374,6 +378,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
           Only genuinely dynamic options are set here. */}
       <NativeStackScreenOptions
         options={{
+          headerShown: !isAndroid,
           unstable_headerSubtitle:
             Platform.OS === "ios" && projectName.length > 0 ? projectName : undefined,
           // No refresh button: the list already supports pull-to-refresh.
@@ -402,22 +407,55 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
               },
         }}
       />
-      {layout.usesSplitView ? (
-        <NativeHeaderToolbar placement="left">
-          <NativeHeaderToolbar.Button
-            accessibilityLabel={panes.primarySidebarVisible ? "Maximize files" : "Show threads"}
-            icon={
-              panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left"
-            }
-            onPress={togglePrimarySidebar}
-            separateBackground
+      {isAndroid ? (
+        <>
+          <AndroidScreenHeader
+            title="Files"
+            subtitle={projectName}
+            onBack={handleReturnToThread}
+            actions={[
+              {
+                accessibilityLabel: "Refresh files",
+                icon: "arrow.clockwise",
+                onPress: entriesQuery.refresh,
+              },
+            ]}
           />
-        </NativeHeaderToolbar>
-      ) : null}
-      {usesCompactMailToolbar ? null : (
-        <NativeHeaderToolbar placement="bottom">
-          <NativeHeaderToolbar.SearchBarSlot />
-        </NativeHeaderToolbar>
+          <View className="flex-row items-center gap-2 border-b border-border px-3 py-2">
+            <SymbolView name="magnifyingglass" size={17} tintColor={iconColor} type="monochrome" />
+            <TextInput
+              accessibilityLabel="Search files"
+              autoCapitalize="none"
+              autoCorrect={false}
+              className="min-h-10 flex-1 rounded-xl py-2 text-sm"
+              placeholder="Search files"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+          </View>
+        </>
+      ) : (
+        <>
+          {layout.usesSplitView ? (
+            <NativeHeaderToolbar placement="left">
+              <NativeHeaderToolbar.Button
+                accessibilityLabel={panes.primarySidebarVisible ? "Maximize files" : "Show threads"}
+                icon={
+                  panes.primarySidebarVisible
+                    ? "arrow.up.left.and.arrow.down.right"
+                    : "sidebar.left"
+                }
+                onPress={togglePrimarySidebar}
+                separateBackground
+              />
+            </NativeHeaderToolbar>
+          ) : null}
+          {usesCompactMailToolbar ? null : (
+            <NativeHeaderToolbar placement="bottom">
+              <NativeHeaderToolbar.SearchBarSlot />
+            </NativeHeaderToolbar>
+          )}
+        </>
       )}
       <FileTreeBrowser
         entries={entriesData?.entries ?? []}

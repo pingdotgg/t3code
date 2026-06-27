@@ -1,12 +1,13 @@
-import { NativeHeaderToolbar } from "../../native/StackHeader";
+import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNavigation } from "@react-navigation/native";
 import { SymbolView } from "expo-symbols";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useMemo } from "react";
-import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useProjects, useThreadShells } from "../../state/entities";
@@ -111,21 +112,39 @@ export function NewTaskRouteScreen() {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <NativeHeaderToolbar placement="right">
-        {layout.usesSplitView ? (
+      {Platform.OS === "android" ? (
+        <>
+          {/* Android renders its own in-screen header instead of the native bar. */}
+          <NativeStackScreenOptions options={{ headerShown: false }} />
+          <AndroidScreenHeader
+            title="Choose project"
+            onBack={layout.usesSplitView ? () => navigation.goBack() : undefined}
+            actions={[
+              {
+                accessibilityLabel: "Add project",
+                icon: "plus",
+                onPress: () => navigation.navigate("NewTaskSheet", { screen: "AddProject" }),
+              },
+            ]}
+          />
+        </>
+      ) : (
+        <NativeHeaderToolbar placement="right">
+          {layout.usesSplitView ? (
+            <NativeHeaderToolbar.Button
+              accessibilityLabel="Close new task"
+              icon="xmark"
+              onPress={() => navigation.goBack()}
+              separateBackground
+            />
+          ) : null}
           <NativeHeaderToolbar.Button
-            accessibilityLabel="Close new task"
-            icon="xmark"
-            onPress={() => navigation.goBack()}
+            icon="plus"
+            onPress={() => navigation.navigate("NewTaskSheet", { screen: "AddProject" })}
             separateBackground
           />
-        ) : null}
-        <NativeHeaderToolbar.Button
-          icon="plus"
-          onPress={() => navigation.navigate("NewTaskSheet", { screen: "AddProject" })}
-          separateBackground
-        />
-      </NativeHeaderToolbar>
+        </NativeHeaderToolbar>
+      )}
 
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"

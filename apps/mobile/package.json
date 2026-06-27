@@ -3,6 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "main": "index.ts",
+  "expo": {
+    "autolinking": {
+      "buildFromSource": [
+        "react-native-screens",
+        "@react-native-menu/menu"
+      ]
+    }
+  },
   "scripts": {
     "dev": "expo start --clear",
     "dev:client": "APP_VARIANT=development expo start --dev-client --scheme t3code-dev --clear",
@@ -23,6 +31,7 @@
     "ios:dev": "APP_VARIANT=development EXPO_NO_GIT_STATUS=1 expo prebuild --clean --platform ios && expo run:ios",
     "ios:preview": "APP_VARIANT=preview EXPO_NO_GIT_STATUS=1 expo prebuild --clean --platform ios && expo run:ios",
     "ios:prod": "APP_VARIANT=production EXPO_NO_GIT_STATUS=1 expo prebuild --clean --platform ios && expo run:ios",
+    "ios:release": "APP_VARIANT=production EXPO_NO_GIT_STATUS=1 expo prebuild --clean --platform ios && expo run:ios --configuration Release --no-bundler",
     "eas:ios:dev": "eas build --profile development -p ios",
     "eas:ios:preview": "eas build --profile preview -p ios",
     "eas:ios:preview:dev": "eas build --profile preview:dev -p ios",
@@ -64,6 +73,7 @@
     "@t3tools/mobile-review-diff-native": "file:./modules/t3-review-diff",
     "@t3tools/mobile-terminal-native": "file:./modules/t3-terminal",
     "@t3tools/shared": "workspace:*",
+    "@tabler/icons-react-native": "^3.44.0",
     "clsx": "^2.1.1",
     "diff": "8.0.3",
     "effect": "catalog:",
