@@ -253,6 +253,32 @@ export function ArchivedThreadsPanel() {
     [],
   );
 
+  const showArchivedBulkActionException = useCallback((title: string, error: unknown) => {
+    const errors = error instanceof AggregateError ? error.errors : [error];
+    const failureMessages = [
+      ...new Set(
+        errors.map((entry) => (entry instanceof Error ? entry.message : "An error occurred.")),
+      ),
+    ];
+    const shownFailureMessages = failureMessages.slice(0, 3);
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title,
+        description: [
+          `One or more archived thread actions failed unexpectedly.`,
+          failureMessages.length <= 1
+            ? (shownFailureMessages[0] ?? "An error occurred.")
+            : `Failures: ${shownFailureMessages.join("; ")}${
+                failureMessages.length > shownFailureMessages.length
+                  ? `; ${failureMessages.length - shownFailureMessages.length} more`
+                  : ""
+              }`,
+        ].join(" "),
+      }),
+    );
+  }, []);
+
   const handleUnarchiveThread = useCallback(
     async (threadRef: ScopedThreadRef) => {
       const result = await unarchiveThread(threadRef);
@@ -307,19 +333,30 @@ export function ArchivedThreadsPanel() {
         ].join("\n"),
       );
       if (!confirmed) return;
-      const failures = await runArchivedProjectThreadActions(threads, (thread) =>
-        unarchiveThread(scopeThreadRef(thread.environmentId, thread.id)),
-      );
-      if (failures.length > 0) {
-        showArchivedBulkActionFailure(
-          "Archived threads not fully unarchived",
-          failures,
-          threads.length,
+      try {
+        const failures = await runArchivedProjectThreadActions(threads, (thread) =>
+          unarchiveThread(scopeThreadRef(thread.environmentId, thread.id)),
         );
+        if (failures.length > 0) {
+          showArchivedBulkActionFailure(
+            "Archived threads not fully unarchived",
+            failures,
+            threads.length,
+          );
+        }
+      } catch (error) {
+        showArchivedBulkActionException("Archived threads not fully unarchived", error);
+      } finally {
+        refreshArchivedThreads();
       }
-      refreshArchivedThreads();
     },
-    [confirmArchivedAction, refreshArchivedThreads, showArchivedBulkActionFailure, unarchiveThread],
+    [
+      confirmArchivedAction,
+      refreshArchivedThreads,
+      showArchivedBulkActionException,
+      showArchivedBulkActionFailure,
+      unarchiveThread,
+    ],
   );
 
   const handleDeleteProjectThreads = useCallback(
@@ -338,23 +375,29 @@ export function ArchivedThreadsPanel() {
         );
         if (!confirmed) return;
       }
-      const failures = await runArchivedProjectThreadActions(threads, (thread) =>
-        deleteThread(scopeThreadRef(thread.environmentId, thread.id)),
-      );
-      if (failures.length > 0) {
-        showArchivedBulkActionFailure(
-          "Archived threads not fully deleted",
-          failures,
-          threads.length,
+      try {
+        const failures = await runArchivedProjectThreadActions(threads, (thread) =>
+          deleteThread(scopeThreadRef(thread.environmentId, thread.id)),
         );
+        if (failures.length > 0) {
+          showArchivedBulkActionFailure(
+            "Archived threads not fully deleted",
+            failures,
+            threads.length,
+          );
+        }
+      } catch (error) {
+        showArchivedBulkActionException("Archived threads not fully deleted", error);
+      } finally {
+        refreshArchivedThreads();
       }
-      refreshArchivedThreads();
     },
     [
       confirmArchivedAction,
       confirmThreadDelete,
       deleteThread,
       refreshArchivedThreads,
+      showArchivedBulkActionException,
       showArchivedBulkActionFailure,
     ],
   );
