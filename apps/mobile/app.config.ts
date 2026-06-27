@@ -163,6 +163,7 @@ const config: ExpoConfig = {
         ],
       },
     ],
+    "./plugins/withIosSceneLifecycle.cjs",
     "./plugins/withAndroidCleartextTraffic.cjs",
   ],
   extra: {

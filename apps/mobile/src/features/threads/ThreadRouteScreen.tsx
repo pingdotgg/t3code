@@ -570,8 +570,10 @@ function ThreadRouteContent(
         options={{
           headerShown: true,
           headerTransparent: USES_NATIVE_GLASS_HEADER,
+          headerBlurEffect: USES_NATIVE_GLASS_HEADER ? "systemThinMaterial" : undefined,
+          headerShadowVisible: false,
           ...(USES_NATIVE_GLASS_HEADER
-            ? {}
+            ? { headerStyle: { backgroundColor: "transparent" } }
             : {
                 headerStyle: { backgroundColor: "transparent" },
                 headerShadowVisible: false,
@@ -580,10 +582,10 @@ function ThreadRouteContent(
           headerBackVisible: !layout.usesSplitView,
           headerBackTitle: "",
           scrollEdgeEffects: {
-            // iOS 27 beta currently renders automatic/soft as transparent.
-            // Keep UIKit's subtler automatic style on iOS 26 and use its
-            // native hard edge treatment on iOS 27+.
-            top: TOP_SCROLL_EDGE_EFFECT,
+            // The native header material handles the effect on iOS 27 because
+            // this virtualized list is not discoverable by the stack's native
+            // first-descendant scroll-view lookup.
+            top: USES_NATIVE_GLASS_HEADER ? "hidden" : TOP_SCROLL_EDGE_EFFECT,
             bottom: "hidden",
             left: "hidden",
             right: "hidden",
