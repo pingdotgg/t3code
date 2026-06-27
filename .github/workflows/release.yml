@@ -659,6 +659,9 @@ jobs:
       - name: Build CLI package
         run: vp run --filter t3 build
 
+      - name: Smoke test bundled CLI
+        run: bun --filter=t3 run smoke:cli-bundle
+
       - name: Publish CLI package
         run: node apps/server/scripts/cli.ts publish --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --app-version "${{ needs.preflight.outputs.version }}" --verbose
 

@@ -17,6 +17,7 @@
   "scripts": {
     "dev": "node --watch src/bin.ts",
     "build:bundle": "vp pack",
+    "smoke:cli-bundle": "node scripts/smoke-cli-bundle.ts",
     "start": "node dist/bin.mjs",
     "typecheck": "tsgo --noEmit",
     "test": "vp test run"

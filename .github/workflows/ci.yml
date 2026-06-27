@@ -34,6 +34,9 @@ jobs:
       - name: Build desktop pipeline
         run: vp run build:desktop
 
+      - name: Smoke test bundled CLI
+        run: bun --filter=t3 run smoke:cli-bundle
+
       - name: Verify preload bundle output
         run: |
           test -f apps/desktop/dist-electron/preload.cjs
