@@ -67,6 +67,7 @@ import {
   parseReviewCommentMessageSegments,
   type ReviewInlineComment,
 } from "../review/reviewCommentSelection";
+import type { ReviewDiffTheme } from "../review/shikiReviewHighlighter";
 import { resolveNativeReviewDiffView } from "../diffs/nativeReviewDiffSurface";
 import {
   buildNativeReviewDiffData,
@@ -91,6 +92,7 @@ import {
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { ThreadWorkGroupToggle, ThreadWorkLog } from "./thread-work-log";
+import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
 
@@ -203,6 +205,12 @@ const MARKDOWN_COLORS = {
   },
 } as const;
 
+const MARKDOWN_MONO_FONT = Platform.select({
+  ios: "ui-monospace",
+  android: "monospace",
+  default: "monospace",
+});
+
 interface MarkdownStyleSets {
   readonly user: MarkdownStyleSet;
   readonly assistant: MarkdownStyleSet;
@@ -274,6 +282,110 @@ const MarkdownExternalLink = memo(function MarkdownExternalLink(props: {
     </NativeText>
   );
 });
+
+function MarkdownCodeBlock(props: {
+  readonly backgroundColor: string;
+  readonly borderColor: string;
+  readonly content: string;
+  readonly headerTextColor: string;
+  readonly fontSize: number;
+  readonly highlightCode: boolean;
+  readonly language?: string | null;
+  readonly lineHeight: number;
+  readonly textColor: string;
+  readonly theme: ReviewDiffTheme;
+}) {
+  const highlighted = useMarkdownCodeHighlight({
+    code: props.content,
+    enabled: props.highlightCode && Boolean(props.language?.trim()),
+    language: props.language,
+    theme: props.theme,
+  });
+  let tokenOffset = 0;
+
+  return (
+    <View
+      className="my-3 min-w-0 max-w-full self-stretch overflow-hidden rounded-lg border"
+      style={{ backgroundColor: props.backgroundColor, borderColor: props.borderColor }}
+    >
+      {props.language ? (
+        <View className="border-b px-3.5 py-2" style={{ borderBottomColor: props.borderColor }}>
+          <NativeText
+            className="font-mono uppercase opacity-70"
+            style={{
+              color: props.headerTextColor,
+              fontSize: props.fontSize,
+              ...(Platform.OS === "android" ? { includeFontPadding: false } : null),
+            }}
+          >
+            {props.language}
+          </NativeText>
+        </View>
+      ) : null}
+      <ScrollView
+        horizontal
+        bounces={false}
+        nestedScrollEnabled={Platform.OS === "android"}
+        showsHorizontalScrollIndicator={false}
+        contentContainerClassName="px-3.5 py-3"
+      >
+        <NativeText
+          selectable
+          className="font-mono"
+          style={{
+            color: props.textColor,
+            fontSize: props.fontSize,
+            lineHeight: props.lineHeight,
+            ...(Platform.OS === "android" ? { includeFontPadding: false } : null),
+          }}
+        >
+          {highlighted
+            ? highlighted.map((line, lineIndex) => {
+                const lineStartOffset = tokenOffset;
+                const lineText = line.map((token) => token.content).join("");
+                const renderedLine = (
+                  <NativeText key={`line:${lineStartOffset}:${lineText}`}>
+                    {line.map((token) => {
+                      const startOffset = tokenOffset;
+                      tokenOffset += token.content.length;
+                      const fontStyle =
+                        token.fontStyle !== null && (token.fontStyle & 1) === 1
+                          ? ("italic" as const)
+                          : ("normal" as const);
+                      const fontWeight =
+                        token.fontStyle !== null && (token.fontStyle & 2) === 2
+                          ? ("700" as const)
+                          : ("400" as const);
+
+                      return (
+                        <NativeText
+                          key={`${startOffset}:${token.content}:${token.color ?? ""}:${
+                            token.fontStyle ?? ""
+                          }`}
+                          style={{
+                            color: token.color ?? props.textColor,
+                            fontStyle,
+                            fontWeight,
+                          }}
+                        >
+                          {token.content}
+                        </NativeText>
+                      );
+                    })}
+                    {lineIndex + 1 < highlighted.length ? "\n" : ""}
+                  </NativeText>
+                );
+                if (lineIndex + 1 < highlighted.length) {
+                  tokenOffset += 1;
+                }
+                return renderedLine;
+              })
+            : props.content}
+        </NativeText>
+      </ScrollView>
+    </View>
+  );
+}
 
 function useReviewCommentColors(): ReviewCommentColors {
   const colorScheme = useColorScheme();
@@ -366,7 +478,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
       fontFamilies: {
         regular: regularFontFamily,
         heading: boldFontFamily,
-        mono: "ui-monospace",
+        mono: MARKDOWN_MONO_FONT,
       },
       headingWeight: "700",
       borderRadius: {
@@ -519,51 +631,19 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
             soft_break: () => <NativeText>{"\n"}</NativeText>,
           }
         : {}),
-      code_block: ({ content, language }) => (
-        <View
-          className="my-3 overflow-hidden rounded-[10px] border"
-          style={{
-            backgroundColor: blockBackgroundColor,
-            borderColor: markdownHrColor,
-          }}
-        >
-          {language ? (
-            <View
-              className="border-b px-3.5 py-2"
-              style={{
-                borderBottomColor: markdownHrColor,
-              }}
-            >
-              <NativeText
-                className="font-mono uppercase opacity-70"
-                style={{
-                  color: markdownBodyColor,
-                  fontSize: markdownFontSizes.codeBlockFontSize,
-                }}
-              >
-                {language}
-              </NativeText>
-            </View>
-          ) : null}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            bounces={false}
-            contentContainerClassName="px-3.5 py-3"
-          >
-            <NativeText
-              selectable
-              className="font-mono"
-              style={{
-                color: blockTextColor,
-                fontSize: markdownFontSizes.codeBlockFontSize,
-                lineHeight: markdownFontSizes.codeBlockLineHeight,
-              }}
-            >
-              {content}
-            </NativeText>
-          </ScrollView>
-        </View>
+      code_block: ({ content = "", language }) => (
+        <MarkdownCodeBlock
+          backgroundColor={blockBackgroundColor}
+          borderColor={markdownHrColor}
+          content={content}
+          fontSize={markdownFontSizes.codeBlockFontSize}
+          headerTextColor={markdownBodyColor}
+          highlightCode={highlightCode}
+          language={language}
+          lineHeight={markdownFontSizes.codeBlockLineHeight}
+          textColor={blockTextColor}
+          theme={themeMode}
+        />
       ),
     });
 
