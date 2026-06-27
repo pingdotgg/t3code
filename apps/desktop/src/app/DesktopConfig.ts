@@ -35,7 +35,7 @@ const compactEnv = (env: Readonly<Record<string, string | undefined>>): Record<s
 export const DesktopConfig = Config.all({
   appDataDirectory: trimmedString("APPDATA"),
   xdgConfigHome: trimmedString("XDG_CONFIG_HOME"),
-  t3Home: trimmedString("T3CODE_HOME"),
+  tutoratlasHome: trimmedString("TUTORATLAS_HOME"),
   tutoratlasWorkspace: trimmedString("TUTORATLAS_WORKSPACE"),
   devServerUrl: Config.url("VITE_DEV_SERVER_URL").pipe(Config.option),
   appUserModelIdOverride: trimmedString("T3CODE_DESKTOP_APP_USER_MODEL_ID"),
