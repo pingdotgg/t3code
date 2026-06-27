@@ -288,6 +288,28 @@ function readJson(path) {
   }
 }
 
+function removeAppBundle(appBundlePath) {
+  NodeFS.rmSync(appBundlePath, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+}
+
+function copyAppBundle(sourceAppBundlePath, targetAppBundlePath) {
+  if (hostPlatform === "darwin") {
+    // ditto preserves bundle symlinks reliably on macOS; cpSync can fail with
+    // "Operation not permitted" when locale directories are left behind.
+    runChecked("ditto", [sourceAppBundlePath, targetAppBundlePath]);
+    return;
+  }
+
+  // verbatimSymlinks keeps the framework's relative symlinks intact
+  // (e.g. Resources -> Versions/Current/Resources). Without it cpSync
+  // rewrites them to absolute paths into node_modules, which escape the
+  // bundle and crash sandboxed helper processes (icudtl.dat not found).
+  NodeFS.cpSync(sourceAppBundlePath, targetAppBundlePath, {
+    recursive: true,
+    verbatimSymlinks: true,
+  });
+}
+
 function buildMacLauncher(electronBinaryPath) {
   const sourceAppBundlePath = NodePath.resolve(NodePath.dirname(electronBinaryPath), "../..");
   const runtimeDir = NodePath.join(desktopDir, ".electron-runtime");
@@ -326,15 +348,17 @@ function buildMacLauncher(electronBinaryPath) {
     return targetBinaryPath;
   }
 
-  NodeFS.rmSync(targetAppBundlePath, { recursive: true, force: true });
-  // verbatimSymlinks keeps the framework's relative symlinks intact
-  // (e.g. Resources -> Versions/Current/Resources). Without it cpSync
-  // rewrites them to absolute paths into node_modules, which escape the
-  // bundle and crash sandboxed helper processes (icudtl.dat not found).
-  NodeFS.cpSync(sourceAppBundlePath, targetAppBundlePath, {
-    recursive: true,
-    verbatimSymlinks: true,
-  });
+  removeAppBundle(targetAppBundlePath);
+  try {
+    copyAppBundle(sourceAppBundlePath, targetAppBundlePath);
+  } catch (firstError) {
+    removeAppBundle(targetAppBundlePath);
+    try {
+      copyAppBundle(sourceAppBundlePath, targetAppBundlePath);
+    } catch {
+      throw firstError;
+    }
+  }
   patchMainBundleInfoPlist(targetAppBundlePath, iconPath);
   patchHelperBundleInfoPlists(targetAppBundlePath);
   if (isDevelopment) {

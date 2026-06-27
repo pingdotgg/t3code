@@ -17,6 +17,7 @@
     "pnpm-workspace.yaml",
     "apps/server/vite.config.ts",
     "apps/desktop/scripts/electron-launcher.mjs",
+    "apps/desktop/scripts/dev-electron.mjs",
     "apps/server/package.json",
     "apps/server/src/server.ts",
     "apps/server/src/server.test.ts",

@@ -13,7 +13,15 @@ const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
 
 const port = Number(process.env.PORT ?? 5733);
-const host = process.env.HOST?.trim() || "localhost";
+const configuredHost = process.env.HOST?.trim();
+// Bind the dev server to IPv4 loopback by default. The desktop Electron proxy
+// targets `127.0.0.1` (see dev-runner desktop mode), but `localhost` resolves
+// to `::1` (IPv6) on macOS — binding `localhost` left the IPv4 proxy fetch with
+// `net::ERR_CONNECTION_REFUSED` and a black window. `127.0.0.1` is still
+// reachable from browsers via `localhost` (IPv4 fallback), and the HMR client
+// keeps connecting via `localhost` so it matches the page origin.
+const host = configuredHost || "127.0.0.1";
+const hmrHost = configuredHost === "127.0.0.1" ? "localhost" : configuredHost || "localhost";
 const configuredWsUrl = process.env.VITE_WS_URL?.trim();
 const defaultDevWsUrl = "ws://localhost:3773";
 const configuredRelayUrl = repoEnv.VITE_T3CODE_RELAY_URL?.trim() || "";
@@ -162,7 +170,7 @@ export default defineConfig(() => {
         // inside Electron's BrowserWindow. Vite 8 uses console.debug for
         // connection logs — enable "Verbose" in DevTools to see them.
         protocol: "ws",
-        host,
+        host: hmrHost,
         clientPort: port,
       },
     },

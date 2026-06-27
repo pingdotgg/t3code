@@ -2,6 +2,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import {
   desktopDir,
@@ -33,24 +34,109 @@ const watchedDirectories = [
 const forcedShutdownTimeoutMs = 1_500;
 const restartDebounceMs = 120;
 const childTreeGracePeriodMs = 1_200;
+const supervisorLockPath = NodePath.join(desktopDir, ".dev-electron-supervisor.pid");
 const remoteDebuggingPort = process.env.T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT?.trim();
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone dev script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
 
-await waitForResources({
-  baseDir: desktopDir,
-  files: requiredFiles,
-  tcpHost: devServer.hostname,
-  tcpPort: port,
-});
-
-const childEnv = { ...process.env };
-delete childEnv.ELECTRON_RUN_AS_NODE;
-const devProtocolClient = resolveDevProtocolClient();
-if (devProtocolClient) {
-  childEnv.T3CODE_DESKTOP_APP_USER_MODEL_ID = devProtocolClient.appBundleId;
-  childEnv.T3CODE_DESKTOP_PROTOCOL_REGISTRATION_MANAGED = "1";
+function readSupervisorPid() {
+  try {
+    const value = Number.parseInt(NodeFS.readFileSync(supervisorLockPath, "utf8").trim(), 10);
+    return Number.isInteger(value) && value > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function retireSupervisorLock() {
+  if (readSupervisorPid() === process.pid) {
+    NodeFS.rmSync(supervisorLockPath, { force: true });
+  }
+}
+
+function listOtherDevElectronSupervisorPids() {
+  if (hostPlatform === "win32") {
+    return [];
+  }
+
+  const result = NodeChildProcess.spawnSync(
+    "pgrep",
+    ["-f", `${desktopDir}/scripts/dev-electron.mjs`],
+    { encoding: "utf8" },
+  );
+  if (result.status !== 0) {
+    return [];
+  }
+
+  return result.stdout
+    .trim()
+    .split("\n")
+    .map((line) => Number.parseInt(line, 10))
+    .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
+}
+
+async function terminateSupervisorPid(pid) {
+  if (!isProcessAlive(pid)) {
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline && isProcessAlive(pid)) {
+    await NodeTimersPromises.setTimeout(100);
+  }
+
+  if (!isProcessAlive(pid)) {
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // ignore
+  }
+}
+
+async function acquireSupervisorLock() {
+  const stalePid = readSupervisorPid();
+  if (stalePid !== undefined && stalePid !== process.pid) {
+    await terminateSupervisorPid(stalePid);
+  }
+
+  for (const orphanPid of listOtherDevElectronSupervisorPids()) {
+    await terminateSupervisorPid(orphanPid);
+  }
+
+  NodeFS.writeFileSync(supervisorLockPath, `${process.pid}\n`);
+}
+
+function waitForDevServer() {
+  return waitForResources({
+    baseDir: desktopDir,
+    files: requiredFiles,
+    tcpHost: devServer.hostname,
+    tcpPort: port,
+  });
+}
+
+await acquireSupervisorLock();
+await waitForDevServer();
+
+const devProtocolClient = resolveDevProtocolClient();
 
 let shuttingDown = false;
 let restartTimer = null;
@@ -58,6 +144,16 @@ let currentApp = null;
 let restartQueue = Promise.resolve();
 const expectedExits = new WeakSet();
 const watchers = [];
+
+function buildChildEnv() {
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  if (devProtocolClient) {
+    env.T3CODE_DESKTOP_APP_USER_MODEL_ID = devProtocolClient.appBundleId;
+    env.T3CODE_DESKTOP_PROTOCOL_REGISTRATION_MANAGED = "1";
+  }
+  return env;
+}
 
 function killChildTreeByPid(pid, signal) {
   if (hostPlatform === "win32" || typeof pid !== "number") {
@@ -91,7 +187,7 @@ function startApp() {
   const electronCommand = resolveElectronLaunchCommand(launchArgs);
   const app = NodeChildProcess.spawn(electronCommand.electronPath, electronCommand.args, {
     cwd: desktopDir,
-    env: childEnv,
+    env: buildChildEnv(),
     stdio: "inherit",
   });
 
@@ -174,6 +270,7 @@ function scheduleRestart() {
       .then(async () => {
         await stopApp();
         if (!shuttingDown) {
+          await waitForDevServer();
           startApp();
         }
       });
@@ -228,6 +325,7 @@ async function shutdown(exitCode) {
     setTimeout(resolve, childTreeGracePeriodMs);
   });
   killChildTree("KILL");
+  retireSupervisorLock();
 
   process.exit(exitCode);
 }

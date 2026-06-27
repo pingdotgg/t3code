@@ -31,6 +31,7 @@ apps/server/__fixtures__/t3work-timer-e2e-*/
 worktrees/
 dist-electron/
 .electron-runtime/
+apps/desktop/.dev-electron-supervisor.pid
 apps/server/~/.t3code/
 ~/.t3code/
 .t3work-runs/

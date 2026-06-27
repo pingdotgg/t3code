@@ -25,6 +25,10 @@ Prefix policy:
   - Bundle `src/t3work-bin.ts` alongside existing server bin.
 - `apps/web/package.json`
   - Add migrated t3work dependencies used by the main app route.
+- `apps/desktop/scripts/electron-launcher.mjs`
+  - Use `ditto` on macOS when copying the Electron app bundle so dev launcher rebuilds preserve bundle symlinks and avoid locale copy failures.
+- `apps/desktop/scripts/dev-electron.mjs`
+  - Serialize desktop Electron dev supervision with a PID lock, orphan cleanup, and Vite readiness checks so restarts do not race stale processes or an unavailable dev server.
 - `apps/web/vite.config.ts`
   - Add dev proxy/defaults and compile-time constants used by migrated t3work route.
 - `apps/web/src/routeTree.gen.ts`
