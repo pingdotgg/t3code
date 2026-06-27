@@ -365,6 +365,29 @@ export class DesktopBuildNoArtifactsProducedError extends Schema.TaggedErrorClas
   }
 }
 
+export class WslNodePtyPrebuildMissingError extends Schema.TaggedErrorClass<WslNodePtyPrebuildMissingError>()(
+  "WslNodePtyPrebuildMissingError",
+  {
+    prebuildPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `WSL node-pty prebuild not found at ${this.prebuildPath}.`;
+  }
+}
+
+export class WslNodePtyManifestReadError extends Schema.TaggedErrorClass<WslNodePtyManifestReadError>()(
+  "WslNodePtyManifestReadError",
+  {
+    manifestPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not read node-pty version from ${this.manifestPath}.`;
+  }
+}
+
 export class LinuxIconResizeError extends Schema.TaggedErrorClass<LinuxIconResizeError>()(
   "LinuxIconResizeError",
   {
@@ -1470,8 +1493,8 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
     .exists(input.prebuildPath)
     .pipe(Effect.orElseSucceed(() => false));
   if (!prebuildExists) {
-    return yield* new BuildScriptError({
-      message: `WSL node-pty prebuild not found at ${input.prebuildPath}.`,
+    return yield* new WslNodePtyPrebuildMissingError({
+      prebuildPath: input.prebuildPath,
     });
   }
 
@@ -1480,12 +1503,13 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
   const nodePtyLink = path.join(input.stageAppDir, "node_modules", "node-pty");
   const nodePtyDir = yield* fs.realPath(nodePtyLink).pipe(Effect.orElseSucceed(() => nodePtyLink));
 
-  const pkgRaw = yield* fs.readFileString(path.join(nodePtyDir, "package.json"));
+  const manifestPath = path.join(nodePtyDir, "package.json");
+  const pkgRaw = yield* fs.readFileString(manifestPath);
   const manifest = yield* decodeNodePtyManifest(pkgRaw).pipe(
     Effect.mapError(
       (cause) =>
-        new BuildScriptError({
-          message: `Could not read node-pty version from ${nodePtyDir}.`,
+        new WslNodePtyManifestReadError({
+          manifestPath,
           cause,
         }),
     ),
@@ -1676,7 +1700,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     // host's (win32), so promote the Linux x64 fff binaries too; without them
     // file-finding in WSL fails to load @ff-labs/fff-bin-linux-x64-gnu.
     ...(options.platform === "win"
-      ? resolveFffNativeDependencies("linux", "x64", serverPackageJson.dependencies["@ff-labs/fff-node"])
+      ? resolveFffNativeDependencies(
+          "linux",
+          "x64",
+          serverPackageJson.dependencies["@ff-labs/fff-node"],
+        )
       : {}),
   };
   const stagePnpmConfig = createStagePnpmConfig(workspacePatchedDependencies, stageDependencies);

@@ -325,7 +325,11 @@ const loadSecondaryConnectionRegistration = Effect.fn(
     scopes: AuthStandardClientScopes,
     clientMetadata: clientMetadata(),
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
-  const connectionId = desktopLocalConnectionId(descriptor.environmentId);
+  // Keep the desktop pool's stable backend id in the connection id. The
+  // descriptor environment id still scopes projects and RPC state, while the
+  // backend id lets desktop-only operations (notably the WSL folder picker)
+  // route back to the instance that owns the environment.
+  const connectionId = desktopLocalConnectionId(entry.id);
   // Prefer the desktop's bootstrap label (it identifies the backend and distro,
   // e.g. "WSL: Ubuntu") over the generic descriptor label, so consumers can show
   // a meaningful name without recovering it from the bootstrap list later.

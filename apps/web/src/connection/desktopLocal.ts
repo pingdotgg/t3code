@@ -15,15 +15,23 @@ import { PRIMARY_LOCAL_ENVIRONMENT_ID, type DesktopEnvironmentBootstrap } from "
  */
 export const DESKTOP_LOCAL_CONNECTION_ID_PREFIX = "local:";
 
-export function desktopLocalConnectionId(environmentId: string): string {
-  return `${DESKTOP_LOCAL_CONNECTION_ID_PREFIX}${environmentId}`;
+export function desktopLocalConnectionId(backendId: string): string {
+  return `${DESKTOP_LOCAL_CONNECTION_ID_PREFIX}${backendId}`;
 }
 
-export function isDesktopLocalConnectionTarget(target: ConnectionTarget): boolean {
+export function isDesktopLocalConnectionTarget(
+  target: ConnectionTarget,
+): target is Extract<ConnectionTarget, { readonly _tag: "BearerConnectionTarget" }> {
   return (
     target._tag === "BearerConnectionTarget" &&
     target.connectionId.startsWith(DESKTOP_LOCAL_CONNECTION_ID_PREFIX)
   );
+}
+
+export function desktopLocalBackendId(target: ConnectionTarget): string | null {
+  return isDesktopLocalConnectionTarget(target)
+    ? target.connectionId.slice(DESKTOP_LOCAL_CONNECTION_ID_PREFIX.length)
+    : null;
 }
 
 /**

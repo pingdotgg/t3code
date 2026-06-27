@@ -136,6 +136,11 @@ import {
 } from "~/state/desktopNetworkAccess";
 import { desktopSshHostsStateAtom } from "~/state/desktopSshHosts";
 import {
+  desktopWslStateAtom,
+  refreshDesktopWslState,
+  setDesktopWslStateSnapshot,
+} from "~/state/desktopWslState";
+import {
   type EnvironmentPresentation,
   useEnvironments,
   usePrimaryEnvironment,
@@ -1536,7 +1541,9 @@ function SavedBackendListRow({
               size="xs"
               variant="outline"
               disabled={isConnecting || removingEnvironmentId === environmentId}
-              onClick={() => void (isConnected ? onRemove(environmentId) : onConnect(environmentId))}
+              onClick={() =>
+                void (isConnected ? onRemove(environmentId) : onConnect(environmentId))
+              }
             >
               {isConnected
                 ? removingEnvironmentId === environmentId
@@ -2096,10 +2103,8 @@ export function ConnectionsSettings() {
   const [isUpdatingDesktopServerExposure, setIsUpdatingDesktopServerExposure] = useState(false);
   const [isDesktopServerExposureDialogOpen, setIsDesktopServerExposureDialogOpen] = useState(false);
   const [isUpdatingTailscaleServe, setIsUpdatingTailscaleServe] = useState(false);
-  const [desktopWslState, setDesktopWslState] = useState<DesktopWslState | null>(null);
   const [isUpdatingWslBackend, setIsUpdatingWslBackend] = useState(false);
-  const [desktopWslError, setDesktopWslError] = useState<string | null>(null);
-  const [isLoadingWslState, setIsLoadingWslState] = useState(false);
+  const [desktopWslMutationError, setDesktopWslMutationError] = useState<string | null>(null);
   // Pending WSL setting change waiting on user confirmation. Set when
   // the user tries a destructive change (disable, switch distro,
   // toggle wsl-only) while the WSL backend has saved-env state on this
@@ -2158,6 +2163,12 @@ export function ConnectionsSettings() {
       ? desktopSshHostsStateAtom
       : null,
   );
+  const desktopWsl = useEnvironmentQuery(
+    canManageLocalBackend && desktopBridge ? desktopWslStateAtom : null,
+  );
+  const desktopWslState = desktopWsl.data;
+  const desktopWslError = desktopWslMutationError ?? desktopWsl.error;
+  const isLoadingWslState = desktopWsl.isPending && desktopWsl.data === null;
   const discoveredSshHosts = desktopSshHosts.data ?? EMPTY_DISCOVERED_SSH_HOSTS;
   const unsavedDiscoveredSshHosts = useMemo(
     () =>
@@ -2859,17 +2870,17 @@ export function ConnectionsSettings() {
     async (apply: () => Promise<DesktopWslState>) => {
       if (!desktopBridge) return;
       setIsUpdatingWslBackend(true);
-      setDesktopWslError(null);
+      setDesktopWslMutationError(null);
       try {
         const next = await apply();
-        setDesktopWslState(next);
+        setDesktopWslStateSnapshot(next);
         // The connection platform source polls the desktop bootstrap list and
         // reconciles the environment catalog automatically, so toggling the WSL
         // backend on/off or switching distros is picked up here without an
         // explicit renderer reconcile.
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to update WSL backend.";
-        setDesktopWslError(message);
+        setDesktopWslMutationError(message);
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -2879,7 +2890,7 @@ export function ConnectionsSettings() {
         );
         await desktopBridge
           .getWslState()
-          .then((state) => setDesktopWslState(state))
+          .then((state) => setDesktopWslStateSnapshot(state))
           .catch(() => undefined);
       } finally {
         setIsUpdatingWslBackend(false);
@@ -2888,40 +2899,12 @@ export function ConnectionsSettings() {
     [desktopBridge],
   );
 
-  // Load the WSL backend state from the desktop bridge. Clears the error only on
-  // success, so a failed load's message stays visible (including across an
-  // in-flight retry, rather than the row flickering away), and tracks a loading
-  // flag for the retry control. Reused by the retry control in renderWslRow.
+  // Reload the keep-alive WSL state atom. Clearing the mutation error before
+  // refresh lets the atom-owned load error become the visible retry state.
   const loadWslState = useCallback(() => {
-    if (!desktopBridge) {
-      return;
-    }
-    setIsLoadingWslState(true);
-    void desktopBridge
-      .getWslState()
-      .then((state) => {
-        setDesktopWslState(state);
-        setDesktopWslError(null);
-      })
-      .catch((error: unknown) => {
-        setDesktopWslError(error instanceof Error ? error.message : "Failed to load WSL state.");
-      })
-      .finally(() => {
-        setIsLoadingWslState(false);
-      });
-  }, [desktopBridge]);
-
-  // Seed the WSL backend state on mount (and when local-backend management
-  // becomes available). Without this, desktopWslState stays null and
-  // renderWslRow() bails, hiding the WSL settings UI entirely. The broader
-  // desktop access-management state is owned by desktopNetworkAccess upstream;
-  // this only owns the WSL picker's state.
-  useEffect(() => {
-    if (!canManageLocalBackend) {
-      return;
-    }
-    loadWslState();
-  }, [canManageLocalBackend, loadWslState]);
+    setDesktopWslMutationError(null);
+    refreshDesktopWslState();
+  }, []);
 
   // True when a desktop-local WSL backend is currently registered as an
   // environment on this machine. We use this as a proxy for "the user has work
@@ -3174,8 +3157,9 @@ export function ConnectionsSettings() {
         />
         {desktopWslState.enabled ? (
           <SettingsRow
-            title="Run WSL only"
+            title="WSL only"
             description="Stop the Windows backend and run only the WSL backend. Useful if you develop entirely inside WSL and don't want a second backend process. T3 Code restarts when you change this."
+            className="bg-muted/20 pl-7 sm:pl-8"
             control={
               <Switch
                 checked={desktopWslState.wslOnly}
