@@ -7,7 +7,13 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { provisionDesktopSshEnvironment } from "./platform.ts";
+import {
+  canRetainCachedPlatformRegistrationAfterRefreshFailure,
+  canReuseCachedPlatformRegistration,
+  provisionDesktopSshEnvironment,
+  secondaryBearerExpiresAtEpochMs,
+  secondaryBearerRefreshAtEpochMs,
+} from "./platform.ts";
 
 const TARGET: DesktopSshEnvironmentTarget = {
   alias: "devbox",
@@ -85,4 +91,43 @@ describe("desktop SSH pairing", () => {
       expect(calls).toEqual(["ensure", "descriptor"]);
     }),
   );
+});
+
+describe("desktop-local bearer cache", () => {
+  const registration = {} as never;
+
+  it("refreshes a secondary bearer before it expires", () => {
+    const issuedAtEpochMs = 10_000;
+    const refreshAtEpochMs = secondaryBearerRefreshAtEpochMs(issuedAtEpochMs, 60);
+    const expiresAtEpochMs = secondaryBearerExpiresAtEpochMs(issuedAtEpochMs, 60);
+    const cached = {
+      expiresAtEpochMs,
+      signature: "secondary-signature",
+      registration,
+      refreshAtEpochMs,
+    };
+
+    expect(refreshAtEpochMs).toBe(65_000);
+    expect(canReuseCachedPlatformRegistration(cached, cached.signature, 64_999)).toBe(true);
+    expect(canReuseCachedPlatformRegistration(cached, cached.signature, 65_000)).toBe(false);
+    expect(
+      canRetainCachedPlatformRegistrationAfterRefreshFailure(cached, cached.signature, 69_999),
+    ).toBe(true);
+    expect(
+      canRetainCachedPlatformRegistrationAfterRefreshFailure(cached, cached.signature, 70_000),
+    ).toBe(false);
+  });
+
+  it("does not cache credentials whose lifetime is shorter than the refresh skew", () => {
+    const refreshAtEpochMs = secondaryBearerRefreshAtEpochMs(10_000, 3);
+    const cached = {
+      expiresAtEpochMs: secondaryBearerExpiresAtEpochMs(10_000, 3),
+      signature: "secondary-signature",
+      registration,
+      refreshAtEpochMs,
+    };
+
+    expect(refreshAtEpochMs).toBe(10_000);
+    expect(canReuseCachedPlatformRegistration(cached, cached.signature, 10_000)).toBe(false);
+  });
 });

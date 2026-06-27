@@ -135,11 +135,7 @@ import {
   refreshDesktopNetworkAccessState,
 } from "~/state/desktopNetworkAccess";
 import { desktopSshHostsStateAtom } from "~/state/desktopSshHosts";
-import {
-  desktopWslStateAtom,
-  refreshDesktopWslState,
-  setDesktopWslStateSnapshot,
-} from "~/state/desktopWslState";
+import { desktopWslStateAtom, refreshDesktopWslState } from "~/state/desktopWslState";
 import {
   type EnvironmentPresentation,
   useEnvironments,
@@ -2872,8 +2868,8 @@ export function ConnectionsSettings() {
       setIsUpdatingWslBackend(true);
       setDesktopWslMutationError(null);
       try {
-        const next = await apply();
-        setDesktopWslStateSnapshot(next);
+        await apply();
+        refreshDesktopWslState();
         // The connection platform source polls the desktop bootstrap list and
         // reconciles the environment catalog automatically, so toggling the WSL
         // backend on/off or switching distros is picked up here without an
@@ -2888,10 +2884,7 @@ export function ConnectionsSettings() {
             description: message,
           }),
         );
-        await desktopBridge
-          .getWslState()
-          .then((state) => setDesktopWslStateSnapshot(state))
-          .catch(() => undefined);
+        refreshDesktopWslState();
       } finally {
         setIsUpdatingWslBackend(false);
       }

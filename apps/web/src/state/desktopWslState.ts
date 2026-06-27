@@ -1,7 +1,6 @@
 import type { DesktopBridge, DesktopWslState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { Atom } from "effect/unstable/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -33,10 +32,6 @@ function getDesktopWslStateBridge(): DesktopWslStateBridge | undefined {
 }
 
 export function createDesktopWslStateAtom(getBridge: () => DesktopWslStateBridge | undefined) {
-  return createDesktopWslStateAtoms(getBridge).stateAtom;
-}
-
-function createDesktopWslStateAtoms(getBridge: () => DesktopWslStateBridge | undefined) {
   const loadDesktopWslState = Effect.fn("loadDesktopWslState")(function* () {
     const bridge = getBridge();
     if (!bridge) {
@@ -48,7 +43,7 @@ function createDesktopWslStateAtoms(getBridge: () => DesktopWslStateBridge | und
     });
   });
 
-  const loadAtom = Atom.make(loadDesktopWslState()).pipe(
+  return Atom.make(loadDesktopWslState()).pipe(
     Atom.swr({
       staleTime: DESKTOP_WSL_STATE_STALE_TIME_MS,
       revalidateOnMount: true,
@@ -56,29 +51,10 @@ function createDesktopWslStateAtoms(getBridge: () => DesktopWslStateBridge | und
     Atom.keepAlive,
     Atom.withLabel("desktop:wsl-state:load"),
   );
-
-  const snapshotAtom = Atom.make<DesktopWslState | null>(null).pipe(
-    Atom.keepAlive,
-    Atom.withLabel("desktop:wsl-state:snapshot"),
-  );
-
-  const stateAtom = Atom.make((get) => {
-    const snapshot = get(snapshotAtom);
-    return snapshot ? AsyncResult.success(snapshot) : get(loadAtom);
-  }).pipe(Atom.keepAlive, Atom.withLabel("desktop:wsl-state"));
-
-  return { loadAtom, snapshotAtom, stateAtom };
 }
 
-const desktopWslStateAtoms = createDesktopWslStateAtoms(getDesktopWslStateBridge);
-
-export const desktopWslStateAtom = desktopWslStateAtoms.stateAtom;
+export const desktopWslStateAtom = createDesktopWslStateAtom(getDesktopWslStateBridge);
 
 export function refreshDesktopWslState(): void {
-  appAtomRegistry.set(desktopWslStateAtoms.snapshotAtom, null);
-  appAtomRegistry.refresh(desktopWslStateAtoms.loadAtom);
-}
-
-export function setDesktopWslStateSnapshot(state: DesktopWslState): void {
-  appAtomRegistry.set(desktopWslStateAtoms.snapshotAtom, state);
+  appAtomRegistry.refresh(desktopWslStateAtom);
 }

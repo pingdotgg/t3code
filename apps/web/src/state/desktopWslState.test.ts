@@ -65,4 +65,33 @@ describe("desktopWslState", () => {
     );
     registry.dispose();
   });
+
+  it("replaces cached state with refreshed live desktop state", async () => {
+    const refreshedState: DesktopWslState = {
+      ...wslState,
+      preflightError: "WSL backend stopped unexpectedly.",
+    };
+    let currentState = wslState;
+    const getWslState = vi.fn(async () => currentState);
+    const atom = createDesktopWslStateAtom(() => ({ getWslState }));
+    const registry = AtomRegistry.make();
+    registry.mount(atom);
+
+    await vi.waitFor(() => {
+      expect(AsyncResult.value(registry.get(atom))).toEqual(
+        expect.objectContaining({ _tag: "Some", value: wslState }),
+      );
+    });
+
+    currentState = refreshedState;
+    registry.refresh(atom);
+
+    await vi.waitFor(() => {
+      expect(AsyncResult.value(registry.get(atom))).toEqual(
+        expect.objectContaining({ _tag: "Some", value: refreshedState }),
+      );
+    });
+    expect(getWslState).toHaveBeenCalledTimes(2);
+    registry.dispose();
+  });
 });

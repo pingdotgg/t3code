@@ -32,6 +32,7 @@ import {
   type DesktopSshEnvironmentTarget,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -319,6 +320,7 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
     Effect.mapError(mapRemoteEnvironmentError),
   );
+  const issuedAtEpochMs = yield* Clock.currentTimeMillis;
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl,
     credential: entry.bootstrapToken,
@@ -334,31 +336,79 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   // e.g. "WSL: Ubuntu") over the generic descriptor label, so consumers can show
   // a meaningful name without recovering it from the bootstrap list later.
   const label = entry.label || descriptor.label;
-  return new BearerConnectionRegistration({
-    target: new BearerConnectionTarget({
-      environmentId: descriptor.environmentId,
-      label,
-      connectionId,
+  return {
+    registration: new BearerConnectionRegistration({
+      target: new BearerConnectionTarget({
+        environmentId: descriptor.environmentId,
+        label,
+        connectionId,
+      }),
+      profile: new BearerConnectionProfile({
+        connectionId,
+        environmentId: descriptor.environmentId,
+        label,
+        httpBaseUrl,
+        wsBaseUrl,
+      }),
+      credential: new BearerConnectionCredential({ token: access.access_token }),
     }),
-    profile: new BearerConnectionProfile({
-      connectionId,
-      environmentId: descriptor.environmentId,
-      label,
-      httpBaseUrl,
-      wsBaseUrl,
-    }),
-    credential: new BearerConnectionCredential({ token: access.access_token }),
-  });
+    expiresAtEpochMs: secondaryBearerExpiresAtEpochMs(issuedAtEpochMs, access.expires_in),
+    refreshAtEpochMs: secondaryBearerRefreshAtEpochMs(issuedAtEpochMs, access.expires_in),
+  };
 });
 
 // Poll cadence for the desktop bootstrap topology. There is no change event on
 // the bridge, so the renderer polls; successful registrations are cached by a
-// signature of their endpoint + token so a steady-state poll does no network.
+// signature of their endpoint + token until bearer credentials approach expiry.
 const PLATFORM_POLL_INTERVAL = "3 seconds";
+const SECONDARY_BEARER_REFRESH_SKEW_MS = 5_000;
+
+export function secondaryBearerExpiresAtEpochMs(
+  issuedAtEpochMs: number,
+  expiresInSeconds: number,
+): number {
+  return issuedAtEpochMs + Math.max(0, expiresInSeconds * 1_000);
+}
+
+export function secondaryBearerRefreshAtEpochMs(
+  issuedAtEpochMs: number,
+  expiresInSeconds: number,
+): number {
+  return Math.max(
+    issuedAtEpochMs,
+    secondaryBearerExpiresAtEpochMs(issuedAtEpochMs, expiresInSeconds) -
+      SECONDARY_BEARER_REFRESH_SKEW_MS,
+  );
+}
 
 interface CachedPlatformRegistration {
   readonly signature: string;
   readonly registration: PlatformConnectionRegistration;
+  readonly expiresAtEpochMs?: number;
+  readonly refreshAtEpochMs?: number;
+}
+
+export function canReuseCachedPlatformRegistration(
+  cached: CachedPlatformRegistration,
+  signature: string,
+  nowEpochMs: number,
+): boolean {
+  return (
+    cached.signature === signature &&
+    (cached.refreshAtEpochMs === undefined || nowEpochMs < cached.refreshAtEpochMs)
+  );
+}
+
+export function canRetainCachedPlatformRegistrationAfterRefreshFailure(
+  cached: CachedPlatformRegistration,
+  signature: string,
+  nowEpochMs: number,
+): boolean {
+  return (
+    cached.signature === signature &&
+    cached.expiresAtEpochMs !== undefined &&
+    nowEpochMs < cached.expiresAtEpochMs
+  );
 }
 
 const platformConnectionSourceLayer = Layer.effect(
@@ -377,6 +427,7 @@ const platformConnectionSourceLayer = Layer.effect(
     // from the cache; a failed entry is skipped and retried on the next poll.
     const buildPlatformRegistrations = Effect.gen(function* () {
       const previous = yield* Ref.get(cacheRef);
+      const nowEpochMs = yield* Clock.currentTimeMillis;
       const next = new Map<string, CachedPlatformRegistration>();
       const registrations: Array<PlatformConnectionRegistration> = [];
 
@@ -384,7 +435,10 @@ const platformConnectionSourceLayer = Layer.effect(
       if (primaryTarget !== null) {
         const signature = `primary|${primaryTarget.target.httpBaseUrl}|${primaryTarget.target.wsBaseUrl}`;
         const cached = previous.get(PRIMARY_LOCAL_ENVIRONMENT_ID);
-        if (cached !== undefined && cached.signature === signature) {
+        if (
+          cached !== undefined &&
+          canReuseCachedPlatformRegistration(cached, signature, nowEpochMs)
+        ) {
           next.set(PRIMARY_LOCAL_ENVIRONMENT_ID, cached);
           registrations.push(cached.registration);
         } else {
@@ -405,7 +459,10 @@ const platformConnectionSourceLayer = Layer.effect(
       for (const bootstrap of readDesktopSecondaryBootstraps()) {
         const signature = `${bootstrap.httpBaseUrl}|${bootstrap.wsBaseUrl}|${bootstrap.bootstrapToken ?? ""}`;
         const cached = previous.get(bootstrap.id);
-        if (cached !== undefined && cached.signature === signature) {
+        if (
+          cached !== undefined &&
+          canReuseCachedPlatformRegistration(cached, signature, nowEpochMs)
+        ) {
           next.set(bootstrap.id, cached);
           registrations.push(cached.registration);
           continue;
@@ -420,9 +477,15 @@ const platformConnectionSourceLayer = Layer.effect(
           Effect.option,
         );
         if (Option.isSome(built)) {
-          const cacheEntry = { signature, registration: built.value };
+          const cacheEntry = { signature, ...built.value };
           next.set(bootstrap.id, cacheEntry);
-          registrations.push(built.value);
+          registrations.push(built.value.registration);
+        } else if (
+          cached !== undefined &&
+          canRetainCachedPlatformRegistrationAfterRefreshFailure(cached, signature, nowEpochMs)
+        ) {
+          next.set(bootstrap.id, cached);
+          registrations.push(cached.registration);
         }
       }
 
