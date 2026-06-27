@@ -80,6 +80,7 @@
 //       envs, routes pickFolder by env id. (38e8477a)
 
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -177,13 +178,30 @@ export type BackendInstanceFactoryRequirements =
   | HttpClient.HttpClient
   | DesktopObservability.DesktopBackendOutputLogFactory;
 
-interface RegisteredInstance {
+interface ActiveRegisteredInstance {
+  readonly _tag: "Active";
   readonly instance: DesktopBackendInstance;
   // None for the primary (which lives in the pool's own layer scope and
   // is never unregistered); Some for instances added via register, whose
   // scope unregister closes to stop them.
   readonly scope: Option.Option<Scope.Closeable>;
 }
+
+interface ClosingRegisteredInstance {
+  readonly _tag: "Closing";
+  readonly done: Deferred.Deferred<void>;
+}
+
+type RegisteredInstance = ActiveRegisteredInstance | ClosingRegisteredInstance;
+
+type RegisterAction =
+  | { readonly _tag: "Registered"; readonly instance: DesktopBackendInstance }
+  | { readonly _tag: "Wait"; readonly done: Deferred.Deferred<void> };
+
+type UnregisterAction =
+  | { readonly _tag: "Absent" }
+  | { readonly _tag: "Wait"; readonly done: Deferred.Deferred<void> }
+  | { readonly _tag: "Close"; readonly entry: ActiveRegisteredInstance };
 
 export const layer = Layer.effect(
   DesktopBackendPool,
@@ -285,66 +303,134 @@ export const layer = Layer.effect(
       ReadonlyMap<BackendInstanceId, RegisteredInstance>
     >(
       new Map([
-        [DesktopBackendManager.PRIMARY_INSTANCE_ID, { instance: primary, scope: Option.none() }],
+        [
+          DesktopBackendManager.PRIMARY_INSTANCE_ID,
+          { _tag: "Active", instance: primary, scope: Option.none() },
+        ],
       ]),
     );
 
     const register: DesktopBackendPool["Service"]["register"] = (spec) =>
-      SynchronizedRef.modifyEffect(instancesRef, (current) => {
-        if (current.has(spec.id)) {
-          return Effect.fail(new DesktopBackendPoolInstanceAlreadyRegisteredError({ id: spec.id }));
-        }
-        return Effect.gen(function* () {
-          // Forked from the pool's layer scope so the registered
-          // instance auto-stops on layer teardown. unregister() still
-          // closes the scope eagerly when invoked.
-          const instanceScope = yield* Scope.fork(layerScope, "sequential");
-          const instance = yield* DesktopBackendManager.makeBackendInstance(spec).pipe(
-            Scope.provide(instanceScope),
-            Effect.provide(factoryContext),
-          );
-          const next = new Map(current);
-          next.set(spec.id, { instance, scope: Option.some(instanceScope) });
-          return [instance, next as ReadonlyMap<BackendInstanceId, RegisteredInstance>] as const;
-        });
-      });
+      Effect.suspend(() =>
+        SynchronizedRef.modifyEffect(
+          instancesRef,
+          (
+            current,
+          ): Effect.Effect<
+            readonly [RegisterAction, ReadonlyMap<BackendInstanceId, RegisteredInstance>],
+            DesktopBackendPoolInstanceAlreadyRegisteredError
+          > => {
+            const existing = current.get(spec.id);
+            if (existing?._tag === "Active") {
+              return Effect.fail(
+                new DesktopBackendPoolInstanceAlreadyRegisteredError({ id: spec.id }),
+              );
+            }
+            if (existing?._tag === "Closing") {
+              return Effect.succeed([
+                { _tag: "Wait", done: existing.done } as const,
+                current,
+              ] as const);
+            }
+            return Effect.gen(function* () {
+              // Provide the captured factory services first, then the child scope
+              // last so instance finalizers are owned by the unregisterable scope.
+              const instanceScope = yield* Scope.fork(layerScope, "sequential");
+              const instance = yield* DesktopBackendManager.makeBackendInstance(spec).pipe(
+                Effect.provide(factoryContext),
+                Scope.provide(instanceScope),
+              );
+              const next = new Map(current);
+              next.set(spec.id, {
+                _tag: "Active",
+                instance,
+                scope: Option.some(instanceScope),
+              });
+              return [
+                { _tag: "Registered", instance } as const,
+                next as ReadonlyMap<BackendInstanceId, RegisteredInstance>,
+              ] as const;
+            });
+          },
+        ).pipe(
+          Effect.flatMap((result) =>
+            result._tag === "Registered"
+              ? Effect.succeed(result.instance)
+              : Deferred.await(result.done).pipe(Effect.andThen(register(spec))),
+          ),
+        ),
+      );
 
     const unregister: DesktopBackendPool["Service"]["unregister"] = (id) =>
       Effect.gen(function* () {
         if (id === DesktopBackendManager.PRIMARY_INSTANCE_ID) {
           return yield* new DesktopBackendPoolCannotUnregisterPrimaryError();
         }
-        // Keep the registry lock until the old scope has fully closed. A
-        // concurrent register for the same id must not start a replacement on
-        // the old backend's port while its stop finalizer is still running.
-        yield* SynchronizedRef.modifyEffect(instancesRef, (current) => {
-          const entry = current.get(id);
-          if (entry === undefined) {
+        const done = yield* Deferred.make<void>();
+        const action = yield* SynchronizedRef.modifyEffect(
+          instancesRef,
+          (
+            current,
+          ): Effect.Effect<
+            readonly [UnregisterAction, ReadonlyMap<BackendInstanceId, RegisteredInstance>]
+          > => {
+            const entry = current.get(id);
+            if (entry === undefined) {
+              return Effect.succeed([{ _tag: "Absent" } as const, current] as const);
+            }
+            if (entry._tag === "Closing") {
+              return Effect.succeed([
+                { _tag: "Wait", done: entry.done } as const,
+                current,
+              ] as const);
+            }
+            const next = new Map(current);
+            next.set(id, { _tag: "Closing", done });
+            return Effect.succeed([
+              { _tag: "Close", entry } as const,
+              next as ReadonlyMap<BackendInstanceId, RegisteredInstance>,
+            ] as const);
+          },
+        );
+
+        if (action._tag === "Absent") return;
+        if (action._tag === "Wait") {
+          yield* Deferred.await(action.done);
+          return;
+        }
+
+        const finish = SynchronizedRef.modifyEffect(instancesRef, (current) => {
+          const closing = current.get(id);
+          if (closing?._tag !== "Closing" || closing.done !== done) {
             return Effect.succeed([undefined, current] as const);
           }
-          return Option.match(entry.scope, {
-            onNone: () => Effect.void,
-            onSome: (scope) => Scope.close(scope, Exit.void).pipe(Effect.ignore),
-          }).pipe(
-            Effect.map(() => {
-              const next = new Map(current);
-              next.delete(id);
-              return [
-                undefined,
-                next as ReadonlyMap<BackendInstanceId, RegisteredInstance>,
-              ] as const;
-            }),
-          );
-        });
+          const next = new Map(current);
+          next.delete(id);
+          return Effect.succeed([
+            undefined,
+            next as ReadonlyMap<BackendInstanceId, RegisteredInstance>,
+          ] as const);
+        }).pipe(Effect.andThen(Deferred.succeed(done, undefined)), Effect.asVoid);
+        yield* Option.match(action.entry.scope, {
+          onNone: () => Effect.void,
+          onSome: (scope) => Scope.close(scope, Exit.void).pipe(Effect.ignore),
+        }).pipe(Effect.ensuring(finish));
       });
 
     return DesktopBackendPool.of({
       get: (id) =>
         SynchronizedRef.get(instancesRef).pipe(
-          Effect.map((instances) => Option.fromNullishOr(instances.get(id)?.instance)),
+          Effect.map((instances) => {
+            const entry = instances.get(id);
+            return entry?._tag === "Active" ? Option.some(entry.instance) : Option.none();
+          }),
         ),
       list: SynchronizedRef.get(instancesRef).pipe(
-        Effect.map((instances) => Array.from(instances.values(), (entry) => entry.instance)),
+        Effect.map((instances) =>
+          Array.from(instances.values()).flatMap((entry) =>
+            entry._tag === "Active" ? [entry.instance] : [],
+          ),
+        ),
       ),
       primary: Effect.succeed(primary),
       register,
