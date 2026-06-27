@@ -99,15 +99,17 @@ export function useSourceControlThreadMetadataRouting(
 
   const handleSourceControlThreadRefChange = useCallback(
     async (metadata: SourceControlThreadRefChange) => {
-      if (!activeThreadRef) return;
       if (!isServerThread) {
-        setDraftThreadContext(draftId ?? activeThreadRef, {
+        const target = draftId ?? activeThreadRef;
+        if (!target) return;
+        setDraftThreadContext(target, {
           branch: metadata.branch,
           worktreePath: metadata.worktreePath,
         });
         return;
       }
 
+      if (!activeThreadRef) return;
       const targetThreadKey = scopedThreadKey(activeThreadRef);
       const requestSequence =
         (metadataUpdateSequenceByThreadKeyRef.current[targetThreadKey] ?? 0) + 1;
