@@ -1,5 +1,4 @@
 import { CommandId, type ThreadId as ThreadIdType } from "@t3tools/contracts";
-import type { ProjectRecipeRenderContext } from "@t3tools/project-recipes";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -21,8 +20,10 @@ import {
   createT3workThreadToolBinding,
 } from "./t3work-toolBrokerBinding.ts";
 import { t3workRandomUUID } from "./t3work-random.ts";
+import { buildPrelaunchView } from "./t3work-toolBrokerPrelaunchView.ts";
 import { makeStartChildThread } from "./t3work-toolBrokerStartChild.ts";
 import { T3workThreadToolContextStore } from "./t3work-threadToolContextStore.ts";
+import { buildThreadWorkspaceView } from "./t3work-toolBrokerViewWorkspace.ts";
 
 const createT3workToolBroker = Effect.fn("createT3workToolBroker")(function* () {
   const query = yield* ProjectionSnapshotQuery;
@@ -75,25 +76,10 @@ const createT3workToolBroker = Effect.fn("createT3workToolBroker")(function* () 
               interactionMode: thread.interactionMode,
               messageCount: thread.messages.length,
               latestTurnId: thread.latestTurn?.turnId ?? null,
+              ...buildThreadWorkspaceView({ thread, project }),
             }
           : null,
       };
-    });
-
-  const loadPrelaunchView = (input: {
-    readonly workspaceRoot: string;
-    readonly callerKind: "visibility" | "view.preRender";
-    readonly renderContext: ProjectRecipeRenderContext;
-  }) =>
-    Effect.succeed({
-      surface: input.renderContext.surface,
-      state: { callerKind: input.callerKind, renderContext: input.renderContext },
-      project: {
-        title: input.renderContext.project.title,
-        provider: input.renderContext.project.provider ?? null,
-        workspaceRoot: input.workspaceRoot,
-      },
-      thread: null,
     });
 
   const setBacklogAssigneeFilter = (toolContext: T3workTurnToolContext, mode: "current-user") =>
@@ -209,7 +195,8 @@ const createT3workToolBroker = Effect.fn("createT3workToolBroker")(function* () 
         workspaceRoot,
         callerKind,
         allowedToolGroups,
-        readView: () => loadPrelaunchView({ workspaceRoot, callerKind, renderContext }),
+        readView: () =>
+          Effect.succeed(buildPrelaunchView({ workspaceRoot, callerKind, renderContext })),
       }),
     );
 

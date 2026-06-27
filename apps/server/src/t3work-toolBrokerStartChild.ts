@@ -23,6 +23,7 @@ import {
   resolveStartChildHandoffPlacement,
 } from "./t3work-toolBrokerStartChildHandoff.ts";
 import { t3workRandomUUID } from "./t3work-random.ts";
+import { buildStartChildResult } from "./t3work-toolBrokerStartChildResult.ts";
 import {
   createChildThreadToolContext,
   readThreadDisplayModeFromToolContext,
@@ -188,30 +189,25 @@ export function makeStartChildThread(input: {
       }
 
       const reasoningEffort = readModelSelectionReasoningEffort(modelSelection);
-      const requestedModel = args.model;
-      const modelNormalizedFrom =
-        requestedModel && requestedModel !== modelSelection.model ? requestedModel : undefined;
-
-      return {
-        ok: true,
-        project_id: thread.projectId,
-        project_session_id: childThreadId,
+      return buildStartChildResult({
+        projectId: thread.projectId,
+        childThreadId,
         name: args.name,
+        executionScope: args.executionScope,
         started,
-        interaction_mode: interactionMode,
-        runtime_mode: thread.runtimeMode,
+        interactionMode,
+        runtimeMode: thread.runtimeMode,
         model: modelSelection.model,
-        ...(modelNormalizedFrom ? { model_normalized_from: modelNormalizedFrom } : {}),
-        setup_script_status: setupScriptStatus,
-        navigate_to: { target: "project_session", project_session_id: childThreadId },
-        ...(requestedKickoffMode ? { requested_kickoff_mode: requestedKickoffMode } : {}),
-        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-        ...(repoFullName ? { repo_full_name: repoFullName } : {}),
-        ...(repoRef ? { repo_ref: repoRef } : {}),
-        ...(branch ? { branch } : {}),
-        ...(worktreePath ? { worktree_path: worktreePath } : {}),
-        ...(setupScriptTerminalId ? { setup_script_terminal_id: setupScriptTerminalId } : {}),
-        ...(startupError ? { startup_error: startupError } : {}),
-      };
+        ...(args.model ? { requestedModel: args.model } : {}),
+        setupScriptStatus,
+        ...(requestedKickoffMode ? { requestedKickoffMode } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+        repoFullName,
+        repoRef,
+        branch,
+        worktreePath,
+        setupScriptTerminalId,
+        ...(startupError ? { startupError } : {}),
+      });
     });
 }

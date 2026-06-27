@@ -216,11 +216,13 @@ Effective live tool shape:
 ```ts
 type StartChildThreadInput = {
   name: string;
+  execution_scope: "metarepo" | "repository";
   kickoff_prompt?: string;
   kickoff_mode?: "plan" | "interactive" | "autopilot";
   model?: string;
   reasoning_effort?: "low" | "medium" | "high";
   repo_full_name?: string;
+  repo_ref?: string;
 };
 
 type StartChildThreadResult = {
@@ -228,6 +230,7 @@ type StartChildThreadResult = {
   project_id: string;
   project_session_id: string;
   name: string;
+  execution_scope: "metarepo" | "repository";
   started: boolean;
   interaction_mode: "plan" | "default";
   runtime_mode: "approval-required" | "auto-accept-edits" | "full-access";
@@ -251,8 +254,9 @@ Rules:
 - no user approval required for MVP
 - child thread is created in background
 - current page does not navigate
-- `repo_full_name` selects a linked repository and creates a fresh worktree/branch
-- without `repo_full_name`, the child session uses the project meta workspace
+- `execution_scope` is required on every call
+- `execution_scope: "repository"` requires `repo_full_name`, selects a linked repository, and creates a fresh worktree/branch
+- `execution_scope: "metarepo"` forbids `repo_full_name` and `repo_ref`, and keeps the child in the project metarepo workspace
 - `kickoff_prompt` is optional; when present, the first turn starts immediately
 - a recipe-owned kickoff flow may still pause after thread creation and wait for a structured kickoff submission before the first agent turn starts
 - durable handoff activity cards are recorded on both the parent and child threads
@@ -268,7 +272,8 @@ First live-slice limitation:
 
 Default depends on the task.
 
-If the handoff is repository work, use a linked repository and a new worktree.
+If the handoff is repository work, call `t3work.thread.start_child` with
+`execution_scope: "repository"`, a linked `repo_full_name`, and a new worktree.
 
 Example:
 
@@ -277,14 +282,16 @@ Goal: "Fix flaky checkout tests in repo payments-api."
 Workspace: linked repository payments-api, new worktree required.
 ```
 
-If the handoff is meta-level project work, use the `t3work` meta workspace and no
-worktree by default.
+If the handoff is meta-level project work, call `t3work.thread.start_child` with
+`execution_scope: "metarepo"` and no repository fields. The project metarepo is the
+workspace that holds project context, references, recipes, skills, and synthesis outputs;
+it is not a linked implementation repository.
 
 Example:
 
 ```text
 Goal: "Summarize cross-ticket sprint risk."
-Workspace: project meta workspace, no repository worktree.
+Workspace: project metarepo workspace, no repository worktree.
 ```
 
 Because a `t3work` project may link multiple repositories, the handoff tool must make

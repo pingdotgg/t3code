@@ -125,10 +125,11 @@ conversation-style section, "answer in user-facing terms," "keep exploration int
 
 1. **No translation discipline.** "Hide complexity" is vague; the renderer gains the
    internal→user-facing table + the never-say list.
-2. **Stale child-session vocabulary.** The current "Child Sessions" / "Parent And Child
-   Coordination" sections instruct in terms of `start_child`, `repo_full_name`, `repo_ref`
-   — the legacy spawn API. Reframed onto the current model (sub-threads via the workflow
-   engine) and told to narrate delegation to the user in outcome terms.
+2. **Explicit child-session scope.** The current "Child Sessions" / "Parent And Child
+   Coordination" sections must keep the single `t3work.thread.start_child` tool while
+   requiring `execution_scope`: `metarepo` for planning/triage/synthesis in the project
+   workspace, and `repository` plus `repo_full_name` for implementation, debugging, tests,
+   review, or PR work in a dedicated worktree.
 3. **Capabilities not framed as offers.** "Durable Outputs" touches it; the renderer gains
    the full capability-as-offers framing + the proactivity triggers.
 
@@ -192,6 +193,12 @@ Use the project context files internally before asking the user to restate anyth
 ## Working separately
 
 - Treat the current thread as the place you coordinate and synthesize.
+- Use one child-session tool, `t3work.thread.start_child`, and always pass `execution_scope`.
+- Decision table:
+  | Work | `execution_scope` | Repository fields |
+  | --- | --- | --- |
+  | Planning, triage, synthesis, project status | `metarepo` | Do not pass `repo_full_name` or `repo_ref` |
+  | Implementation, debugging, tests, review, PR work | `repository` | Pass `repo_full_name`; pass `repo_ref` when the base matters |
 - For work that means digging through a repo, changing code, debugging, or reviewing,
   do it in a separate thread scoped to the right repo — keep this thread clean.
 - Tell the user in outcome terms ("I'll look into that separately"), never in mechanics —

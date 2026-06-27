@@ -4,9 +4,11 @@ import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 
 export type T3workStartChildKickoffMode = "plan" | "interactive" | "autopilot";
 export type T3workStartChildReasoningEffort = "low" | "medium" | "high";
+export type T3workStartChildExecutionScope = "metarepo" | "repository";
 
 export type T3workStartChildArgs = {
   readonly name: string;
+  readonly executionScope: T3workStartChildExecutionScope;
   readonly ticketId?: string;
   readonly kickoffPrompt?: string;
   readonly kickoffMode?: T3workStartChildKickoffMode;
@@ -30,6 +32,10 @@ const START_CHILD_REASONING_EFFORTS = new Set<T3workStartChildReasoningEffort>([
   "medium",
   "high",
 ]);
+const START_CHILD_EXECUTION_SCOPES = new Set<T3workStartChildExecutionScope>([
+  "metarepo",
+  "repository",
+]);
 
 export const readStartChildArgs = (value: unknown): T3workStartChildArgsResult => {
   if (!value || typeof value !== "object" || globalThis.Array.isArray(value)) {
@@ -45,6 +51,7 @@ export const readStartChildArgs = (value: unknown): T3workStartChildArgsResult =
     readonly ticket_id?: unknown;
     readonly kickoff_prompt?: unknown;
     readonly kickoff_mode?: unknown;
+    readonly execution_scope?: unknown;
     readonly model?: unknown;
     readonly reasoning_effort?: unknown;
     readonly repo_full_name?: unknown;
@@ -60,6 +67,24 @@ export const readStartChildArgs = (value: unknown): T3workStartChildArgsResult =
   }
 
   const name = rawName.trim();
+  if (typeof candidate.execution_scope !== "string") {
+    return {
+      ok: false,
+      message:
+        "t3work.thread.start_child requires 'execution_scope' set to 'metarepo' or 'repository'.",
+    };
+  }
+  const executionScope = candidate.execution_scope
+    .trim()
+    .toLowerCase() as T3workStartChildExecutionScope;
+  if (!START_CHILD_EXECUTION_SCOPES.has(executionScope)) {
+    return {
+      ok: false,
+      message:
+        "t3work.thread.start_child 'execution_scope' must be exactly 'metarepo' or 'repository'. Use 'metarepo' for project planning/triage/synthesis and 'repository' for code, tests, debugging, review, or PR work.",
+    };
+  }
+
   const ticketId =
     typeof candidate.ticket_id === "string" && candidate.ticket_id.trim().length > 0
       ? candidate.ticket_id.trim()
@@ -124,11 +149,18 @@ export const readStartChildArgs = (value: unknown): T3workStartChildArgsResult =
       ? candidate.repo_ref.trim()
       : undefined;
 
-  if (repoRef && !repoFullName) {
+  if (executionScope === "repository" && !repoFullName) {
     return {
       ok: false,
       message:
-        "t3work.thread.start_child 'repo_ref' requires 'repo_full_name' so the child can be scoped to a linked repository.",
+        "t3work.thread.start_child with execution_scope='repository' requires 'repo_full_name' so the runtime can create a dedicated linked-repository worktree.",
+    };
+  }
+  if (executionScope === "metarepo" && (repoFullName || repoRef)) {
+    return {
+      ok: false,
+      message:
+        "t3work.thread.start_child with execution_scope='metarepo' must not include 'repo_full_name' or 'repo_ref'; use execution_scope='repository' with 'repo_full_name' for repository work.",
     };
   }
 
@@ -136,6 +168,7 @@ export const readStartChildArgs = (value: unknown): T3workStartChildArgsResult =
     ok: true,
     value: {
       name,
+      executionScope,
       ...(ticketId ? { ticketId } : {}),
       ...(kickoffPrompt ? { kickoffPrompt } : {}),
       ...(kickoffMode ? { kickoffMode } : {}),

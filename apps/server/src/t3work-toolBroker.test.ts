@@ -68,6 +68,19 @@ describe("T3workToolBrokerLive", () => {
         thread: expect.objectContaining({ id: threadId, title: "Original title" }),
       }),
     );
+    expect(result.structuredContent).toEqual(
+      expect.objectContaining({
+        thread: expect.objectContaining({
+          executionScope: "metarepo",
+          workspace: expect.objectContaining({
+            executionScope: "metarepo",
+            currentWorkspaceRoot: "/workspace/project-1",
+            projectWorkspaceRoot: "/workspace/project-1",
+            worktreePath: null,
+          }),
+        }),
+      }),
+    );
   });
 
   it("dispatches thread metadata updates for rename", async () => {
@@ -184,6 +197,7 @@ describe("T3workToolBrokerLive", () => {
           tool: "t3work.thread.start_child",
           arguments: {
             name: "Child session",
+            execution_scope: "metarepo",
             kickoff_prompt: "Investigate the flaky checkout flow",
             kickoff_mode: "plan",
             model: "gpt-5.4",
@@ -216,6 +230,7 @@ describe("T3workToolBrokerLive", () => {
           ok: true,
           project_session_id: expect.any(String),
           name: "Child session",
+          execution_scope: "metarepo",
           started: true,
           requested_kickoff_mode: "plan",
           interaction_mode: "plan",
@@ -325,6 +340,7 @@ describe("T3workToolBrokerLive", () => {
           tool: "t3work.thread.start_child",
           arguments: {
             name: "Sibling ticket session",
+            execution_scope: "metarepo",
             ticket_id: "proj-456",
           },
         });
@@ -393,6 +409,7 @@ describe("T3workToolBrokerLive", () => {
           tool: "t3work.thread.start_child",
           arguments: {
             name: "Child session",
+            execution_scope: "metarepo",
           },
         });
       }).pipe(
@@ -407,6 +424,7 @@ describe("T3workToolBrokerLive", () => {
         structuredContent: expect.objectContaining({
           ok: true,
           name: "Child session",
+          execution_scope: "metarepo",
           started: false,
           interaction_mode: "default",
           setup_script_status: "not-requested",
@@ -423,6 +441,8 @@ describe("T3workToolBrokerLive", () => {
             title: "Child session",
             runtimeMode: "full-access",
             interactionMode: "default",
+            branch: null,
+            worktreePath: null,
           }),
         ],
       ]),
@@ -493,6 +513,7 @@ describe("T3workToolBrokerLive", () => {
           tool: "t3work.thread.start_child",
           arguments: {
             name: "Review repo child",
+            execution_scope: "repository",
             repo_full_name: "pingdotgg/t3code",
             repo_ref: "release/7.0",
           },
@@ -544,6 +565,7 @@ describe("T3workToolBrokerLive", () => {
         structuredContent: expect.objectContaining({
           ok: true,
           name: "Review repo child",
+          execution_scope: "repository",
           started: false,
           repo_full_name: "pingdotgg/t3code",
           repo_ref: "release/7.0",

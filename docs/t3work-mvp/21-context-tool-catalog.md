@@ -527,11 +527,16 @@ remains planned catalog scope.
 result vocabulary aligned with Copilot session tooling:
 
 - `name` for the child session title
+- required `execution_scope` (`metarepo` or `repository`)
 - optional `kickoff_prompt`
 - optional `kickoff_mode` (`plan`, `interactive`, `autopilot`)
 - optional `model` and `reasoning_effort`
-- optional `repo_full_name` for linked-repository worktree handoffs
+- `repo_full_name` required for `repository` scope and forbidden for `metarepo` scope
 - result metadata including `project_session_id`, navigation hint, and repo/worktree details
+
+`metarepo` means the project workspace that holds project context, references, recipes,
+skills, and cross-repository synthesis. `repository` means a linked implementation
+repository and always runs in a dedicated worktree.
 
 The first live slice creates project-level child sessions with durable parent/child
 activity cards. Visual parent-thread or work-item attachment metadata remains planned.

@@ -76,6 +76,12 @@ Use these project files internally before asking the user to restate context:
 ## Working Separately
 
 - Treat the current thread as where you coordinate and synthesize.
+- Use one child-session tool, \`t3work.thread.start_child\`, and always pass \`execution_scope\`.
+- Decision table:
+  | Work | \`execution_scope\` | Repository fields |
+  | --- | --- | --- |
+  | Planning, triage, synthesis, project status | \`metarepo\` | Do not pass \`repo_full_name\` or \`repo_ref\` |
+  | Implementation, debugging, tests, review, PR work | \`repository\` | Pass \`repo_full_name\`; pass \`repo_ref\` when the base matters |
 - For work that means digging through a repository, changing code, debugging, validation, or code review, do it in a separate thread scoped to the right repository, and keep this thread clean.
 - Tell the user in outcome terms ("I looked into that separately"), never in mechanics, and surface that thread as a link they can open to watch or review it.
 - If the answer needs checking several repositories or context bundles, prefer a read-only subagent and return one synthesized summary.

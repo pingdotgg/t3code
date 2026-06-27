@@ -16,6 +16,12 @@ const START_CHILD_INPUT_SCHEMA = {
       description: "Name for the new child session.",
       minLength: 1,
     },
+    execution_scope: {
+      type: "string",
+      description:
+        "Required execution scope. Use 'metarepo' for project planning, triage, and synthesis in the project workspace. Use 'repository' for implementation, debugging, tests, review, or PR work in a dedicated linked-repository worktree.",
+      enum: ["metarepo", "repository"],
+    },
     ticket_id: {
       type: "string",
       description:
@@ -47,17 +53,17 @@ const START_CHILD_INPUT_SCHEMA = {
     repo_full_name: {
       type: "string",
       description:
-        "Optional linked repository to open in a fresh scoped worktree, for example 'owner/repo' or 'github.com/owner/repo'.",
+        "Required when execution_scope is 'repository' and forbidden when execution_scope is 'metarepo'. Linked repository to open in a fresh scoped worktree, for example 'owner/repo' or 'github.com/owner/repo'.",
       minLength: 1,
     },
     repo_ref: {
       type: "string",
       description:
-        "Optional branch, tag, or commit to use as the base ref for that scoped worktree. When omitted, the linked repository default branch is used.",
+        "Optional branch, tag, or commit to use as the base ref for the repository scoped worktree. Only valid when execution_scope is 'repository'. When omitted, the linked repository default branch is used.",
       minLength: 1,
     },
   },
-  required: ["name"],
+  required: ["name", "execution_scope"],
 } as const;
 
 export const IMPLEMENTED_T3WORK_TOOL_CATALOG = {
@@ -103,7 +109,7 @@ export const IMPLEMENTED_T3WORK_TOOL_CATALOG = {
     label: "Start child session",
     title: "Start child session",
     description:
-      "Create a child t3work session from the current thread and optionally start it immediately. When repo_full_name is provided, the runtime prepares a dedicated scoped worktree for that linked repository; use repo_ref to choose the base branch, tag, or commit.",
+      "Create a child t3work session from the current thread and optionally start it immediately. execution_scope is required: 'metarepo' stays in the project metarepo workspace without repo_full_name; 'repository' requires repo_full_name and prepares a dedicated scoped worktree for that linked repository.",
     capabilities: ["write"],
     kind: "thread",
     surfaces: ["thread"],
