@@ -63,6 +63,24 @@ private final class ComposerTextView: UITextView {
 
   var onPasteImages: (([String]) -> Void)?
   var onAttributedMutation: (() -> Void)?
+  var onSubmit: (() -> Void)?
+
+  override var keyCommands: [UIKeyCommand]? {
+    var commands = super.keyCommands ?? []
+    let submit = UIKeyCommand(
+      input: "\r",
+      modifierFlags: .command,
+      action: #selector(submitMessage(_:))
+    )
+    submit.discoverabilityTitle = "Send Message"
+    submit.wantsPriorityOverSystemBehavior = true
+    commands.append(submit)
+    return commands
+  }
+
+  @objc private func submitMessage(_ sender: UIKeyCommand) {
+    onSubmit?()
+  }
 
   override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
     if action == #selector(paste(_:)) {
@@ -299,6 +317,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
   let onComposerSelectionChange = EventDispatcher()
   let onComposerFocus = EventDispatcher()
   let onComposerBlur = EventDispatcher()
+  let onComposerSubmit = EventDispatcher()
   let onComposerPasteImages = EventDispatcher()
   let onComposerContentSizeChange = EventDispatcher()
 
@@ -319,6 +338,9 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     }
     textView.onAttributedMutation = { [weak self] in
       self?.emitTextChange()
+    }
+    textView.onSubmit = { [weak self] in
+      self?.onComposerSubmit([:])
     }
     addSubview(textView)
 

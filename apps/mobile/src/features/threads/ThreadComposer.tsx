@@ -209,6 +209,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
   const wasExpandedBeforePreviewRef = useRef(false);
+  const sendInFlightRef = useRef(false);
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
@@ -448,9 +449,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
 
-  const handleSend = useCallback(() => {
-    void onSendMessage();
-  }, [onSendMessage]);
+  const handleSend = useCallback(async () => {
+    if (!canSend || sendInFlightRef.current) return;
+    sendInFlightRef.current = true;
+    try {
+      await onSendMessage();
+    } finally {
+      sendInFlightRef.current = false;
+    }
+  }, [canSend, onSendMessage]);
   const handleCommandSelect = useCallback(
     (item: ComposerCommandItem) => {
       if (!composerTrigger) return;
@@ -706,6 +713,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               placeholder={props.placeholder}
               onFocus={handleFocus}
               onBlur={handleBlur}
+              onSubmit={handleSend}
               scrollEnabled={isExpanded}
               contentInsetVertical={isExpanded ? 0 : 6}
               style={

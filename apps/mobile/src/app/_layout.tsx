@@ -32,6 +32,7 @@ import {
 } from "../features/layout/AdaptiveWorkspaceLayout";
 import { deriveStableFormSheetDetent } from "../lib/layout";
 import { useThemeColor } from "../lib/useThemeColor";
+import { HardwareKeyboardCommandProvider } from "../features/keyboard/HardwareKeyboardCommandProvider";
 
 function AppNavigator() {
   const pathname = usePathname();
@@ -157,11 +158,13 @@ export default function RootLayout() {
         <GestureHandlerRootView style={{ flex: 1 }}>
           <KeyboardProvider statusBarTranslucent>
             <SafeAreaProvider>
-              {fontsLoaded ? (
-                <AppNavigator />
-              ) : (
-                <LoadingScreen message="Loading remote workspace…" />
-              )}
+              <HardwareKeyboardCommandProvider>
+                {fontsLoaded ? (
+                  <AppNavigator />
+                ) : (
+                  <LoadingScreen message="Loading remote workspace…" />
+                )}
+              </HardwareKeyboardCommandProvider>
             </SafeAreaProvider>
           </KeyboardProvider>
         </GestureHandlerRootView>

@@ -1,6 +1,6 @@
 {
   "platforms": ["apple"],
   "apple": {
-    "modules": ["T3NativeControlsModule"]
+    "modules": ["T3NativeControlsModule", "T3KeyboardCommandsModule"]
   }
 }

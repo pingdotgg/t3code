@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  constrainAuxiliaryPaneWidth,
+  constrainPrimarySidebarWidth,
   deriveCenteredContentHorizontalPadding,
   deriveFileInspectorPaneLayout,
   deriveLayout,
@@ -9,6 +11,20 @@ import {
   SPLIT_LAYOUT_MIN_HEIGHT,
   SPLIT_LAYOUT_MIN_WIDTH,
 } from "./layout";
+
+describe("resizable pane constraints", () => {
+  it("keeps a preferred sidebar width across large windows and clamps it in a narrow split view", () => {
+    expect(constrainPrimarySidebarWidth(430, 1_366)).toBe(430);
+    expect(constrainPrimarySidebarWidth(430, 744)).toBe(384);
+    expect(constrainPrimarySidebarWidth(100, 1_366)).toBe(280);
+  });
+
+  it("preserves a useful main pane while constraining a trailing pane", () => {
+    expect(constrainAuxiliaryPaneWidth({ preferredWidth: 440, availableWidth: 1_100 })).toBe(440);
+    expect(constrainAuxiliaryPaneWidth({ preferredWidth: 440, availableWidth: 900 })).toBe(340);
+    expect(constrainAuxiliaryPaneWidth({ preferredWidth: 100, availableWidth: 1_100 })).toBe(260);
+  });
+});
 
 describe("deriveCenteredContentHorizontalPadding", () => {
   it("keeps the minimum padding while the viewport fits the reading width", () => {
@@ -230,6 +246,39 @@ describe("deriveWorkspacePaneLayout", () => {
       auxiliaryPaneVisible: true,
       auxiliaryPaneWidth: 276,
     });
+  });
+
+  it("uses a preferred inspector width when all three panes still fit", () => {
+    const layout = deriveLayout({ width: 1_366, height: 1_024 });
+
+    expect(
+      deriveWorkspacePaneLayout({
+        layout,
+        viewportWidth: 1_366,
+        primarySidebarPreferredVisible: true,
+        auxiliaryPanePreferredVisible: true,
+        auxiliaryPaneRole: "inspector",
+        auxiliaryPanePreferredWidth: 420,
+      }),
+    ).toMatchObject({
+      primarySidebarVisible: true,
+      auxiliaryPaneVisible: true,
+      auxiliaryPaneWidth: 420,
+    });
+  });
+
+  it("clamps a preferred supplementary width before squeezing the main pane", () => {
+    const layout = deriveLayout({ width: 1_366, height: 1_024 });
+
+    expect(
+      deriveWorkspacePaneLayout({
+        layout,
+        viewportWidth: 1_366,
+        primarySidebarPreferredVisible: true,
+        auxiliaryPanePreferredVisible: true,
+        auxiliaryPanePreferredWidth: 460,
+      }).auxiliaryPaneWidth,
+    ).toBe(426);
   });
 
   it("respects a hidden auxiliary-pane preference", () => {
