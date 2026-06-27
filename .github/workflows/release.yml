@@ -2,9 +2,8 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*.*.*"
-      - "!v*-nightly.*"
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       channel:
@@ -25,45 +24,8 @@ permissions:
   id-token: none
 
 jobs:
-  check_changes:
-    name: Check for changes since last nightly
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    outputs:
-      has_changes: ${{ steps.check.outputs.has_changes }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - id: check
-        name: Compare HEAD to last nightly tag
-        run: |
-          last_nightly_tag=$(git tag --list 'v*-nightly.*' 'nightly-v*' --sort=-creatordate | head -n 1)
-          if [[ -z "$last_nightly_tag" ]]; then
-            echo "No previous nightly tag found. Proceeding with release."
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          last_nightly_sha=$(git rev-parse "$last_nightly_tag^{commit}")
-          head_sha=$(git rev-parse HEAD)
-
-          if [[ "$last_nightly_sha" == "$head_sha" ]]; then
-            echo "No changes on main since last nightly release ($last_nightly_tag). Skipping."
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "Changes detected on main since $last_nightly_tag ($last_nightly_sha → $head_sha). Proceeding."
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-          fi
-
   preflight:
     name: Preflight
-    needs: [check_changes]
-    if: |
-      !failure() && !cancelled() &&
-      (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -101,69 +63,17 @@ jobs:
           DISPATCH_VERSION: ${{ github.event.inputs.version }}
           NIGHTLY_DATE: ${{ github.run_started_at }}
           NIGHTLY_SHA: ${{ github.sha }}
+          NIGHTLY_RUN_NUMBER: ${{ github.run_number }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           fork_marker="tarik02"
-          release_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
-          release_year="${release_date:0:4}"
-          release_month=$((10#${release_date:4:2}))
-          release_day=$((10#${release_date:6:2}))
 
           trim() {
             local value="$1"
             value="${value#"${value%%[![:space:]]*}"}"
             value="${value%"${value##*[![:space:]]}"}"
             printf '%s' "$value"
-          }
-
-          next_stable_version() {
-            local day_slot=$((release_day * 100))
-            local max_sequence=0
-            local regex="^v?${release_year}\.${release_month}\.([0-9]+)\+${fork_marker}(\.[0-9]+)?$"
-
-            for tag in $(git tag --list); do
-              if [[ "$tag" =~ $regex ]]; then
-                patch="${BASH_REMATCH[1]}"
-                if (( patch == release_day || patch == day_slot || patch == day_slot + 1 )); then
-                  sequence=1
-                elif (( patch > day_slot + 1 && patch < day_slot + 100 )); then
-                  sequence=$((patch - day_slot))
-                else
-                  continue
-                fi
-                if (( sequence > max_sequence )); then
-                  max_sequence="$sequence"
-                fi
-              fi
-            done
-
-            local next_sequence=$((max_sequence + 1))
-            local patch="$day_slot"
-            if (( next_sequence > 1 )); then
-              patch=$((day_slot + next_sequence))
-            fi
-            printf '%s.%s.%s+%s' "$release_year" "$release_month" "$patch" "$fork_marker"
-          }
-
-          next_nightly_version() {
-            local max_sequence=0
-            local regex="^v?${release_year}\.${release_month}\.${release_day}-nightly\.${release_date}(\.([0-9]+))?\+${fork_marker}$"
-
-            for tag in $(git tag --list); do
-              if [[ "$tag" =~ $regex ]]; then
-                sequence="${BASH_REMATCH[2]:-1}"
-                if (( sequence > max_sequence )); then
-                  max_sequence="$sequence"
-                fi
-              fi
-            done
-
-            local next_sequence=$((max_sequence + 1))
-            local sequence_suffix=""
-            if (( next_sequence > 1 )); then
-              sequence_suffix=".$next_sequence"
-            fi
-            printf '%s.%s.%s-nightly.%s%s+%s' \
-              "$release_year" "$release_month" "$release_day" "$release_date" "$sequence_suffix" "$fork_marker"
           }
 
           normalize_stable_version() {
@@ -180,28 +90,56 @@ jobs:
             fi
           }
 
-          if [[ "${GITHUB_EVENT_NAME}" == "schedule" || ( "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-stable}" == "nightly" ) ]]; then
-            version="$(next_nightly_version)"
-            short_sha="${NIGHTLY_SHA:0:12}"
+          package_version="$(node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
 
-            echo "release_channel=nightly" >> "$GITHUB_OUTPUT"
-            echo "version=$version" >> "$GITHUB_OUTPUT"
-            echo "tag=v$version" >> "$GITHUB_OUTPUT"
-            echo "name=T3 Code Nightly $version ($short_sha)" >> "$GITHUB_OUTPUT"
-            echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
-            echo "cli_dist_tag=nightly" >> "$GITHUB_OUTPUT"
-            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
-            echo "make_latest=false" >> "$GITHUB_OUTPUT"
-          else
-            if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+          const files = [
+            "apps/server/package.json",
+            "apps/desktop/package.json",
+            "apps/web/package.json",
+            "packages/contracts/package.json",
+          ];
+          const versions = files.map((file) => JSON.parse(readFileSync(file, "utf8")).version);
+          if (new Set(versions).size !== 1) {
+            console.error(`Release package versions differ: ${versions.join(", ")}`);
+            process.exit(1);
+          }
+          console.log(versions[0]);
+          NODE
+          )"
+
+          stable_from_main=false
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            if [[ -n "${BEFORE_SHA:-}" && ! "$BEFORE_SHA" =~ ^0+$ ]]; then
+              changed_files="$(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")"
+            else
+              changed_files="$(git diff-tree --root --no-commit-id --name-only -r "$GITHUB_SHA")"
+            fi
+            if [[ "$HEAD_COMMIT_MESSAGE" == *"prepare stable release"* ]] &&
+              grep -qx "apps/server/package.json" <<< "$changed_files" &&
+              grep -qx "apps/desktop/package.json" <<< "$changed_files" &&
+              grep -qx "apps/web/package.json" <<< "$changed_files" &&
+              grep -qx "packages/contracts/package.json" <<< "$changed_files" &&
+              [[ "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+${fork_marker}(\.[0-9]+)?$ ]]; then
+              stable_from_main=true
+            fi
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-stable}" == "stable" ]] || [[ "$stable_from_main" == "true" ]]; then
+            if [[ "$stable_from_main" == "true" ]]; then
+              version="$package_version"
+            else
               raw="$(trim "${DISPATCH_VERSION:-}")"
               if [[ -n "$raw" ]]; then
                 version="$(normalize_stable_version "$raw")"
               else
-                version="$(next_stable_version)"
+                stable_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
+                version="$(
+                  node scripts/resolve-fork-stable-release.ts \
+                    --date "$stable_date" \
+                    --version-only
+                )"
               fi
-            else
-              version="$(normalize_stable_version "$GITHUB_REF_NAME")"
             fi
 
             echo "release_channel=stable" >> "$GITHUB_OUTPUT"
@@ -212,6 +150,19 @@ jobs:
             echo "cli_dist_tag=latest" >> "$GITHUB_OUTPUT"
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
             echo "make_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            nightly_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
+
+            node scripts/resolve-nightly-release.ts \
+              --date "$nightly_date" \
+              --run-number "$NIGHTLY_RUN_NUMBER" \
+              --sha "$NIGHTLY_SHA" \
+              --github-output
+
+            echo "release_channel=nightly" >> "$GITHUB_OUTPUT"
+            echo "cli_dist_tag=nightly" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check
@@ -898,7 +849,7 @@ jobs:
 
   finalize:
     name: Finalize release
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
+    if: false # Disabled for the fork: stable release versions are committed through release PRs before release.
     needs: [preflight, release]
     runs-on: ubuntu-latest
     timeout-minutes: 10

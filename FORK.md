@@ -6,10 +6,10 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 
 ### Release And CI
 
-- Fork workflows disable scheduled releases, relay jobs, hosted deploys, and fork-unsafe publish paths.
+- Fork workflows create/update a daily stable release PR while main-branch pushes produce nightly releases.
 - Release build jobs skip relay client tracing config because the relay config job is disabled.
 - Release builds publish updater metadata against the fork repository.
-- Fork release versions are derived in the release workflow and committed back to main after release.
+- Fork stable release versions are committed through release PRs before release artifacts are built and tagged.
 - macOS release signing is separate from Apple notarization.
 - Self-signed macOS signing certificates are trusted during release builds.
 
