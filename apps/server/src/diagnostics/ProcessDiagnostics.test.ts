@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -255,6 +255,54 @@ describe("ProcessDiagnostics", () => {
       expect(error.message).toBe(
         `Process diagnostics query 'ps' failed with exit code 17 in '${process.cwd()}'.`,
       );
+    }),
+  );
+
+  it.effect("parses Windows process rows through Schema JSON decoding", () =>
+    Effect.gen(function* () {
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            mockHandle({
+              stdout: JSON.stringify([
+                {
+                  ProcessId: 10,
+                  ParentProcessId: 1,
+                  Name: "node.exe",
+                  CommandLine: "node server.js",
+                  Status: "Running",
+                  WorkingSetSize: 2048,
+                  PercentProcessorTime: 12.5,
+                },
+                {
+                  ProcessId: "not-a-number",
+                  ParentProcessId: 1,
+                  Name: "ignored.exe",
+                },
+              ]),
+            }),
+          ),
+        ),
+      );
+
+      const rows = yield* ProcessDiagnostics.readProcessRows.pipe(
+        Effect.provide(spawnerLayer),
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+
+      assert.deepEqual(rows, [
+        {
+          pid: 10,
+          ppid: 1,
+          pgid: null,
+          status: "Running",
+          cpuPercent: 12.5,
+          rssBytes: 2048,
+          elapsed: "",
+          command: "node server.js",
+        },
+      ]);
     }),
   );
 

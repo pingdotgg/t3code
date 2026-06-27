@@ -120,6 +120,9 @@ const ProcessDiagnosticsError = Schema.Union([
 ]);
 type ProcessDiagnosticsError = typeof ProcessDiagnosticsError.Type;
 const isProcessDiagnosticsError = Schema.is(ProcessDiagnosticsError);
+const decodeWindowsProcessRowsJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Unknown),
+);
 
 function parsePositiveInt(value: string): number | null {
   const parsed = Number.parseInt(value, 10);
@@ -236,16 +239,16 @@ function normalizeWindowsProcessRow(value: unknown): ProcessRow | null {
 
 function parseWindowsProcessRows(output: string): ReadonlyArray<ProcessRow> {
   if (output.trim().length === 0) return [];
-  try {
-    const parsed = JSON.parse(output) as unknown;
-    const records = Array.isArray(parsed) ? parsed : [parsed];
-    return records.flatMap((record) => {
-      const row = normalizeWindowsProcessRow(record);
-      return row ? [row] : [];
-    });
-  } catch {
-    return [];
-  }
+  return Option.match(decodeWindowsProcessRowsJson(output), {
+    onNone: () => [],
+    onSome: (parsed) => {
+      const records = Array.isArray(parsed) ? parsed : [parsed];
+      return records.flatMap((record) => {
+        const row = normalizeWindowsProcessRow(record);
+        return row ? [row] : [];
+      });
+    },
+  });
 }
 
 export function buildDescendantEntries(

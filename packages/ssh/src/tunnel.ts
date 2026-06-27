@@ -56,6 +56,7 @@ const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const REMOTE_READY_TIMEOUT_MS = 15_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
+const isSshReadinessError = Schema.is(SshReadinessError);
 
 export interface RemoteT3RunnerOptions {
   readonly packageSpec?: string;
@@ -233,7 +234,7 @@ function applyScriptPlaceholders(
 }
 
 export function describeReadinessCause(cause: unknown): unknown {
-  if (cause instanceof SshReadinessError) {
+  if (isSshReadinessError(cause)) {
     return {
       _tag: cause._tag,
       message: cause.message,
@@ -922,7 +923,7 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
         });
       }).pipe(
         Effect.mapError((cause) =>
-          cause instanceof SshReadinessError
+          isSshReadinessError(cause)
             ? cause
             : new SshReadinessError({
                 message: `Backend readiness probe failed at ${requestUrl}.`,
@@ -943,7 +944,7 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
 
   const result = yield* readinessClient.execute(HttpClientRequest.get(requestUrl)).pipe(
     Effect.mapError((cause) =>
-      cause instanceof SshReadinessError
+      isSshReadinessError(cause)
         ? cause
         : new SshReadinessError({
             message: `Backend readiness probe failed at ${requestUrl}.`,

@@ -5,12 +5,15 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
 import {
   DesktopSshEnvironmentRequestError,
   fetchSshEnvironmentDescriptor,
 } from "./sshEnvironment.ts";
+
+const isSshHttpBridgeError = Schema.is(SshHttpBridgeError);
 
 function jsonResponse(request: HttpClientRequest.HttpClientRequest, body: unknown, status = 200) {
   return HttpClientResponse.fromWeb(
@@ -83,7 +86,7 @@ describe("SSH environment IPC", () => {
 
       assert.instanceOf(error, DesktopSshEnvironmentRequestError);
       assert.equal(error.operation, "fetch-environment-descriptor");
-      assert.equal(error.cause instanceof SshHttpBridgeError, false);
+      assert.equal(isSshHttpBridgeError(error.cause), false);
     }).pipe(Effect.provide(layer));
   });
 

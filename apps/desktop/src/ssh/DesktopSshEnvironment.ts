@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
@@ -69,6 +70,8 @@ export interface DesktopSshEnvironmentLayerOptions {
   readonly resolveCliRunner?: Effect.Effect<SshTunnel.RemoteT3RunnerOptions>;
 }
 
+const isSshPasswordPromptError = Schema.is(SshPasswordPromptError);
+
 function discoverDesktopSshHostsEffect(input?: { readonly homeDir?: string }) {
   return discoverSshHosts(input ?? {});
 }
@@ -77,7 +80,7 @@ export function isDesktopSshPasswordPromptCancellation(
   error: unknown,
 ): error is SshPasswordPromptError {
   return (
-    error instanceof SshPasswordPromptError &&
+    isSshPasswordPromptError(error) &&
     DesktopSshPasswordPrompts.isDesktopSshPasswordPromptCancellation(error.cause)
   );
 }
