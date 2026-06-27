@@ -79,23 +79,45 @@ describe("applyWslEnvironmentConfiguration", () => {
     ],
   };
 
-  it("resolves a default-distro backend to its installed distro", () => {
+  it("preserves a live default-distro backend instance id", () => {
     expect(
       applyWslEnvironmentConfiguration(
         [{ environmentId: "env-wsl", backendId: "wsl:default" }],
         "env-primary",
         ubuntuConfiguration,
       ),
-    ).toEqual([{ environmentId: "env-wsl", backendId: "wsl:Ubuntu" }]);
+    ).toEqual([{ environmentId: "env-wsl", backendId: "wsl:default" }]);
   });
 
-  it("represents the primary environment as WSL in WSL-only mode", () => {
+  it("does not route a newly reported default distro to a live default sentinel", () => {
+    const candidates = applyWslEnvironmentConfiguration(
+      [{ environmentId: "env-wsl", backendId: "wsl:default" }],
+      "env-primary",
+      ubuntuConfiguration,
+    );
+
+    expect(
+      resolveWslProjectSelection("\\\\wsl.localhost\\Ubuntu\\home\\theo\\repo", candidates),
+    ).toBeNull();
+  });
+
+  it("represents an explicitly configured WSL-only primary by its distro", () => {
+    expect(
+      applyWslEnvironmentConfiguration([], "env-primary", {
+        ...ubuntuConfiguration,
+        wslOnly: true,
+        distro: "ubuntu",
+      }),
+    ).toEqual([{ environmentId: "env-primary", backendId: "wsl:Ubuntu" }]);
+  });
+
+  it("preserves default tracking for a WSL-only primary", () => {
     expect(
       applyWslEnvironmentConfiguration([], "env-primary", {
         ...ubuntuConfiguration,
         wslOnly: true,
       }),
-    ).toEqual([{ environmentId: "env-primary", backendId: "wsl:Ubuntu" }]);
+    ).toEqual([{ environmentId: "env-primary", backendId: "wsl:default" }]);
   });
 
   it("does not represent the primary environment for a missing configured distro", () => {
@@ -131,7 +153,7 @@ describe("resolveProjectPickerTarget", () => {
     ).toBe("wsl:Ubuntu-22.04");
   });
 
-  it("routes a WSL-only primary picker to the default distro when configured", () => {
+  it("routes a default-tracking WSL-only primary picker through the live sentinel", () => {
     expect(
       resolveProjectPickerTarget({
         browseEnvironmentId: "env-primary",
@@ -139,7 +161,7 @@ describe("resolveProjectPickerTarget", () => {
         desktopInstanceId: null,
         wslConfiguration: { ...ubuntuConfiguration, distro: null },
       }),
-    ).toBe("wsl:Debian");
+    ).toBe("wsl:default");
   });
 
   it("preserves combo-mode routing for primary and WSL backends", () => {

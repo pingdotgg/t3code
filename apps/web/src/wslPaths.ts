@@ -24,6 +24,7 @@ export interface WslProjectSelection<TEnvironmentId extends string = string> ext
 
 const WSL_UNC_PREFIXES = ["\\\\wsl.localhost\\", "\\\\wsl$\\"] as const;
 const WSL_DISTRO_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+const WSL_DEFAULT_BACKEND_ID = "wsl:default";
 
 export function parseWslUncPath(input: string): WslUncPath | null {
   const normalized = input.trim().replaceAll("/", "\\");
@@ -70,10 +71,12 @@ function resolveConfiguredWslBackendId(
     return null;
   }
 
-  const selectedDistro =
-    configuration.distro ?? configuration.distros.find((distro) => distro.isDefault)?.name;
+  if (configuration.distro === null) {
+    return configuration.distros.some((distro) => distro.isDefault) ? WSL_DEFAULT_BACKEND_ID : null;
+  }
+
   const installedDistro = configuration.distros.find(
-    (distro) => distro.name.toLowerCase() === selectedDistro?.toLowerCase(),
+    (distro) => distro.name.toLowerCase() === configuration.distro?.toLowerCase(),
   );
   return installedDistro ? `wsl:${installedDistro.name}` : null;
 }
@@ -109,28 +112,19 @@ export function applyWslEnvironmentConfiguration<TEnvironmentId extends string>(
     return candidates;
   }
 
-  const concreteBackendId = resolveConfiguredWslBackendId(configuration);
-  if (!concreteBackendId) {
+  const configuredBackendId = resolveConfiguredWslBackendId(configuration);
+  if (!configuredBackendId) {
     return candidates;
   }
-
-  const resolvedCandidates = candidates.map((candidate) =>
-    candidate.backendId.toLowerCase() === "wsl:default"
-      ? { ...candidate, backendId: concreteBackendId }
-      : candidate,
-  );
 
   if (
     configuration.enabled &&
     configuration.wslOnly &&
     primaryEnvironmentId !== null &&
-    !resolvedCandidates.some((candidate) => candidate.environmentId === primaryEnvironmentId)
+    !candidates.some((candidate) => candidate.environmentId === primaryEnvironmentId)
   ) {
-    return [
-      ...resolvedCandidates,
-      { environmentId: primaryEnvironmentId, backendId: concreteBackendId },
-    ];
+    return [...candidates, { environmentId: primaryEnvironmentId, backendId: configuredBackendId }];
   }
 
-  return resolvedCandidates;
+  return candidates;
 }
