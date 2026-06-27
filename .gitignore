@@ -14,7 +14,7 @@ build/
 .logs/
 release/
 release-mock/
-.t3
+.tutoratlas
 .idea/
 apps/web/.playwright
 apps/web/playwright-report
