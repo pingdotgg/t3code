@@ -1,0 +1,190 @@
+diff --git a/ios/RNSScreen.mm b/ios/RNSScreen.mm
+index 69d4d9a..6192c4a 100644
+--- a/ios/RNSScreen.mm
++++ b/ios/RNSScreen.mm
+@@ -26,8 +26,10 @@
+ #import "RNSScreenFooter.h"
+ #import "RNSScreenStack.h"
+ #import "RNSScreenStackHeaderConfig.h"
++#import "RNSScrollViewMarkerComponentView.h"
+ #import "RNSScrollViewFinder.h"
+ #import "RNSScrollViewHelper.h"
++#import "RNSScrollViewSeeking.h"
+ #import "RNSTabBarController.h"
+ 
+ #import "RNSDefines.h"
+@@ -61,6 +63,8 @@ struct ContentWrapperBox {
+   ContentWrapperBox _contentWrapperBox;
+   bool _sheetHasInitialDetentSet;
+   BOOL _shouldUpdateScrollEdgeEffects;
++  __weak UIScrollView *_markedContentScrollView;
++  __weak RNSScrollViewMarkerComponentView *_markedContentScrollViewMarker;
+   UITapGestureRecognizer *_backdropTapGestureRecognizer;
+   RCTSurfaceTouchHandler *_touchHandler;
+   react::RNSScreenShadowNode::ConcreteState::Shared _state;
+@@ -1146,10 +1150,24 @@ RNS_IGNORE_SUPER_CALL_END
+ 
+ - (void)updateContentScrollViewEdgeEffectsIfExists
+ {
++  if (_markedContentScrollView != nil && _markedContentScrollViewMarker != nil) {
++    [RNSScrollEdgeEffectApplicator applyToScrollView:_markedContentScrollView
++                                        withProvider:_markedContentScrollViewMarker];
++    return;
++  }
++
+   [RNSScrollEdgeEffectApplicator applyToScrollView:[RNSScrollViewFinder findScrollViewInFirstDescendantChainFrom:self]
+                                       withProvider:self];
+ }
+ 
++- (void)registerDescendantScrollView:(nonnull UIScrollView *)scrollView
++                           fromMarker:(nonnull RNSScrollViewMarkerComponentView *)marker
++{
++  _markedContentScrollView = scrollView;
++  _markedContentScrollViewMarker = marker;
++  [RNSScrollEdgeEffectApplicator applyToScrollView:scrollView withProvider:marker];
++}
++
+ #pragma mark - RNSSafeAreaProviding
+ 
+ - (UIEdgeInsets)providerSafeAreaInsets
+diff --git a/ios/gamma/scroll-view-marker/RNSScrollViewMarkerComponentView.h b/ios/gamma/scroll-view-marker/RNSScrollViewMarkerComponentView.h
+index 4badf56..7703df9 100644
+--- a/ios/gamma/scroll-view-marker/RNSScrollViewMarkerComponentView.h
++++ b/ios/gamma/scroll-view-marker/RNSScrollViewMarkerComponentView.h
+@@ -1,10 +1,11 @@
+ #pragma once
+ 
+ #import "RNSReactBaseView.h"
++#import "RNSScrollEdgeEffectApplicator.h"
+ 
+ NS_ASSUME_NONNULL_BEGIN
+ 
+-@interface RNSScrollViewMarkerComponentView : RNSReactBaseView
++@interface RNSScrollViewMarkerComponentView : RNSReactBaseView <RNSScrollEdgeEffectProviding>
+ 
+ @end
+ 
+diff --git a/ios/gamma/scroll-view-marker/RNSScrollViewMarkerComponentView.mm b/ios/gamma/scroll-view-marker/RNSScrollViewMarkerComponentView.mm
+index 52c61c8..f536579 100644
+--- a/ios/gamma/scroll-view-marker/RNSScrollViewMarkerComponentView.mm
++++ b/ios/gamma/scroll-view-marker/RNSScrollViewMarkerComponentView.mm
+@@ -2,6 +2,7 @@
+ #import "RNSConversions-ScrollViewMarker.h"
+ #import "RNSEnums.h"
+ #import "RNSScrollEdgeEffectApplicator.h"
++#import "RNSScrollViewFinder.h"
+ #import "RNSScrollViewSeeking.h"
+ 
+ #import <React/RCTMountingTransactionObserving.h>
+@@ -57,17 +58,15 @@ namespace react = facebook::react;
+  */
+ - (nullable UIScrollView *)findScrollView
+ {
+-  // It allows 0 for cases where the child is unmounted
+-  RCTAssert(
+-      self.subviews.count <= 1,
+-      @"[RNScreens] ScrollViewMarker expects at most a single child. Subviews: %@",
+-      self.subviews);
+-
+-  UIScrollView *_Nullable foundScrollView = [self resolveScrollViewFromChildView:self.subviews.firstObject];
++  for (UIView *subview in self.subviews) {
++    UIScrollView *_Nullable foundScrollView = [self resolveScrollViewFromChildView:subview];
++    if (foundScrollView != nil) {
++      return foundScrollView;
++    }
++  }
+ 
+-  RCTAssert(foundScrollView != nil, @"[RNScreens] Failed to find ScrollView"); // debug assertion only
+-  return foundScrollView;
++  return nil;
+ }
+ 
+ - (nullable id<RNSScrollViewSeeking>)findFirstSeekingAncestor
+ {
+@@ -122,7 +123,8 @@ namespace react = facebook::react;
+ /**
+  * Tries to resolve UIScrollView from the passed childView.
+  *
+- * Currently it supports only direct `UIScrollView` or react-native's `<ScrollView />` component.
++ * Handles direct scroll views and scroll views hidden under wrapper views such
++ * as keyboard-aware list components.
+  */
+ - (nullable UIScrollView *)resolveScrollViewFromChildView:(nullable UIView *)childView
+ {
+@@ -138,7 +140,7 @@ namespace react = facebook::react;
+     return static_cast<RCTScrollViewComponentView *>(childView).scrollView;
+   }
+ 
+-  return nil;
++  return [RNSScrollViewFinder findScrollViewInFirstDescendantChainFrom:childView];
+ }
+ 
+ #pragma mark - Override
+diff --git a/lib/commonjs/index.js b/lib/commonjs/index.js
+index de25040..48bb962 100644
+--- a/lib/commonjs/index.js
++++ b/lib/commonjs/index.js
+@@ -202,6 +202,7 @@ var _utils = require("./utils");
+ var _flags = require("./flags");
+ var _useTransitionProgress = _interopRequireDefault(require("./useTransitionProgress"));
+ var _tabs = require("./components/tabs");
++var _scrollViewMarker = require("./components/gamma/scroll-view-marker");
+ Object.keys(_tabs).forEach(function (key) {
+   if (key === "default" || key === "__esModule") return;
+   if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
+@@ -213,7 +214,18 @@ Object.keys(_tabs).forEach(function (key) {
+     }
+   });
+ });
++Object.keys(_scrollViewMarker).forEach(function (key) {
++  if (key === "default" || key === "__esModule") return;
++  if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
++  if (key in exports && exports[key] === _scrollViewMarker[key]) return;
++  Object.defineProperty(exports, key, {
++    enumerable: true,
++    get: function () {
++      return _scrollViewMarker[key];
++    }
++  });
++});
+ function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+ function _getRequireWildcardCache(e) { if ("function" != typeof WeakMap) return null; var r = new WeakMap(), t = new WeakMap(); return (_getRequireWildcardCache = function (e) { return e ? t : r; })(e); }
+ function _interopRequireWildcard(e, r) { if (!r && e && e.__esModule) return e; if (null === e || "object" != typeof e && "function" != typeof e) return { default: e }; var t = _getRequireWildcardCache(r); if (t && t.has(e)) return t.get(e); var n = { __proto__: null }, a = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var u in e) if ("default" !== u && {}.hasOwnProperty.call(e, u)) { var i = a ? Object.getOwnPropertyDescriptor(e, u) : null; i && (i.get || i.set) ? Object.defineProperty(n, u, i) : n[u] = e[u]; } return n.default = e, t && t.set(e, n), n; }
+-//# sourceMappingURL=index.js.map
+\ No newline at end of file
++//# sourceMappingURL=index.js.map
+diff --git a/lib/module/index.js b/lib/module/index.js
+index 07caaf7..ba2e9c5 100644
+--- a/lib/module/index.js
++++ b/lib/module/index.js
+@@ -43,4 +43,5 @@ export { default as useTransitionProgress } from './useTransitionProgress';
+  * EXPERIMENTAL API BELOW. MIGHT CHANGE W/O ANY NOTICE
+  */
+ export * from './components/tabs';
+-//# sourceMappingURL=index.js.map
+\ No newline at end of file
++export * from './components/gamma/scroll-view-marker';
++//# sourceMappingURL=index.js.map
+diff --git a/lib/typescript/index.d.ts b/lib/typescript/index.d.ts
+index 8e4480f..7a2c094 100644
+--- a/lib/typescript/index.d.ts
++++ b/lib/typescript/index.d.ts
+@@ -32,5 +32,6 @@ export { default as useTransitionProgress } from './useTransitionProgress';
+  * EXPERIMENTAL API BELOW. MIGHT CHANGE W/O ANY NOTICE
+  */
+ export * from './components/tabs';
++export * from './components/gamma/scroll-view-marker';
+ export type * from './components/shared/types';
+-//# sourceMappingURL=index.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=index.d.ts.map
+diff --git a/src/index.tsx b/src/index.tsx
+index a405aec..cd649bd 100644
+--- a/src/index.tsx
++++ b/src/index.tsx
+@@ -66,4 +66,5 @@ export { default as useTransitionProgress } from './useTransitionProgress';
+  * EXPERIMENTAL API BELOW. MIGHT CHANGE W/O ANY NOTICE
+  */
+ export * from './components/tabs';
++export * from './components/gamma/scroll-view-marker';
+ export type * from './components/shared/types';

@@ -12,6 +12,7 @@ import { useProjects, useThreadShells } from "../../state/entities";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
+import { useAdaptiveWorkspaceLayout } from "../../features/layout/AdaptiveWorkspaceLayout";
 
 function deriveProjectEmptyState(catalogState: WorkspaceState): {
   readonly title: string;
@@ -73,6 +74,7 @@ export default function NewTaskRoute() {
   const threads = useThreadShells();
   const { state: catalogState } = useWorkspaceState();
   const router = useRouter();
+  const { layout } = useAdaptiveWorkspaceLayout();
   const insets = useSafeAreaInsets();
   const chevronColor = useThemeColor("--color-chevron");
   const accentColor = useThemeColor("--color-icon-muted");
@@ -110,6 +112,14 @@ export default function NewTaskRoute() {
     <View collapsable={false} className="flex-1 bg-sheet">
       <Stack.Screen options={{ title: "Choose project" }} />
       <Stack.Toolbar placement="right">
+        {layout.usesSplitView ? (
+          <Stack.Toolbar.Button
+            accessibilityLabel="Close new task"
+            icon="xmark"
+            onPress={() => router.dismiss()}
+            separateBackground
+          />
+        ) : null}
         <Stack.Toolbar.Button
           icon="plus"
           onPress={() => router.push("/new/add-project")}

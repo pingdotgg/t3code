@@ -24,10 +24,36 @@ private enum GhosttyRuntime {
 
 private final class TerminalInputField: UITextField {
   var onDeleteBackward: (() -> Void)?
+  var onInsert: ((String) -> Void)?
+
+  override var keyCommands: [UIKeyCommand]? {
+    [
+      command(input: "\t", modifiers: UIKeyModifierFlags(), action: #selector(handleTab)),
+      command(input: "\t", modifiers: .shift, action: #selector(handleBackTab)),
+    ]
+  }
 
   override func deleteBackward() {
     onDeleteBackward?()
     super.deleteBackward()
+  }
+
+  private func command(
+    input: String,
+    modifiers: UIKeyModifierFlags,
+    action: Selector
+  ) -> UIKeyCommand {
+    let command = UIKeyCommand(input: input, modifierFlags: modifiers, action: action)
+    command.wantsPriorityOverSystemBehavior = true
+    return command
+  }
+
+  @objc private func handleTab() {
+    onInsert?("\t")
+  }
+
+  @objc private func handleBackTab() {
+    onInsert?("\u{1B}[Z")
   }
 }
 
@@ -108,6 +134,15 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     }
   }
 
+  var focusRequest: Double = 0 {
+    didSet {
+      guard oldValue != focusRequest else { return }
+      DispatchQueue.main.async { [weak self] in
+        self?.requestKeyboardFocus()
+      }
+    }
+  }
+
   var appearanceScheme: String = TerminalAppearanceScheme.dark.rawValue {
     didSet {
       guard oldValue != appearanceScheme else { return }
@@ -166,6 +201,9 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     inputField.addTarget(self, action: #selector(handleInputEditingDidBegin), for: .editingDidBegin)
     inputField.onDeleteBackward = { [weak self] in
       self?.emitInput("\u{7F}")
+    }
+    inputField.onInsert = { [weak self] data in
+      self?.emitInput(data)
     }
 
     focusTapGesture.addTarget(self, action: #selector(handleViewportTap))

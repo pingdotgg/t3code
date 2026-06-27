@@ -75,6 +75,33 @@ export interface BuildNativeReviewDiffDataInput {
   readonly comments?: ReadonlyArray<ReviewInlineComment>;
 }
 
+interface CachedNativeReviewDiffData {
+  readonly commentsKey: string;
+  readonly data: NativeReviewDiffData;
+}
+
+const nativeReviewDiffDataCache = new WeakMap<ReviewParsedDiff, CachedNativeReviewDiffData>();
+
+function buildReviewCommentsCacheKey(comments: ReadonlyArray<ReviewInlineComment>): string {
+  if (comments.length === 0) {
+    return "none";
+  }
+
+  return comments
+    .map((comment) =>
+      [
+        comment.id,
+        comment.sectionId,
+        comment.filePath,
+        comment.startIndex,
+        comment.endIndex,
+        comment.rangeLabel,
+        comment.text,
+      ].join("\u001f"),
+    )
+    .join("\u001e");
+}
+
 export function createNativeReviewDiffTheme(
   scheme: TerminalAppearanceScheme,
 ): NativeReviewDiffTheme {
@@ -429,4 +456,27 @@ export function buildNativeReviewDiffData(
     additions: parsedDiff.additions,
     deletions: parsedDiff.deletions,
   };
+}
+
+/**
+ * Reuses the expensive flattened native row model across React development
+ * render probes and unrelated draft updates. Only the latest comment version
+ * is retained for each parsed diff so editing a comment cannot grow the cache.
+ */
+export function getCachedNativeReviewDiffData(
+  input: BuildNativeReviewDiffDataInput,
+): NativeReviewDiffData {
+  const comments = input.comments ?? [];
+  const commentsKey = buildReviewCommentsCacheKey(comments);
+  const cached = nativeReviewDiffDataCache.get(input.parsedDiff);
+  if (cached?.commentsKey === commentsKey) {
+    return cached.data;
+  }
+
+  const data = buildNativeReviewDiffData({
+    parsedDiff: input.parsedDiff,
+    comments,
+  });
+  nativeReviewDiffDataCache.set(input.parsedDiff, { commentsKey, data });
+  return data;
 }

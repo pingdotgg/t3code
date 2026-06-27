@@ -25,6 +25,8 @@ import {
   hasCloudPublicConfig,
   resolveRelayClerkTokenOptions,
 } from "../../features/cloud/publicConfig";
+import { useAdaptiveWorkspaceLayout } from "../../features/layout/AdaptiveWorkspaceLayout";
+import { WorkspaceSidebarToolbar } from "../../features/layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
 import { loadPreferences } from "../../lib/storage";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -34,7 +36,25 @@ type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
 
 export default function SettingsRouteScreen() {
-  return hasCloudPublicConfig() ? <ConfiguredSettingsRouteScreen /> : <LocalSettingsRouteScreen />;
+  const router = useRouter();
+  const { layout } = useAdaptiveWorkspaceLayout();
+
+  return (
+    <>
+      <WorkspaceSidebarToolbar />
+      {layout.usesSplitView ? (
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Button
+            accessibilityLabel="Close settings"
+            icon="xmark"
+            onPress={() => router.back()}
+            separateBackground
+          />
+        </Stack.Toolbar>
+      ) : null}
+      {hasCloudPublicConfig() ? <ConfiguredSettingsRouteScreen /> : <LocalSettingsRouteScreen />}
+    </>
+  );
 }
 
 function LocalSettingsRouteScreen() {

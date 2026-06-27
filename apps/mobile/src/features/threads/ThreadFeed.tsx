@@ -25,6 +25,9 @@ import {
   ActivityIndicator,
   Image,
   Linking,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -35,9 +38,10 @@ import {
   View,
 } from "react-native";
 import { TouchableOpacity } from "react-native-gesture-handler";
+import { ScrollViewMarker } from "react-native-screens";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { SharedValue } from "react-native-reanimated";
+import { type SharedValue } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import {
@@ -63,7 +67,7 @@ import {
 } from "../review/nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "../review/reviewModel";
 import { cn } from "../../lib/cn";
-import type { LayoutVariant } from "../../lib/layout";
+import { deriveCenteredContentHorizontalPadding, type LayoutVariant } from "../../lib/layout";
 import { buildThreadFilesNavigation } from "../../lib/routes";
 import { MOBILE_CODE_SURFACE, MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
@@ -105,7 +109,10 @@ export interface ThreadFeedProps {
   readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
+  readonly contentMaxWidth?: number;
   readonly layoutVariant?: LayoutVariant;
+  readonly usesAutomaticContentInsets?: boolean;
+  readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
 }
 
@@ -1120,8 +1127,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const foldSettleFrameRef = useRef<number | null>(null);
   const foldSettleSecondFrameRef = useRef<number | null>(null);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
+  const headerMaterialVisibleRef = useRef(false);
   const previousLatestTurnRef = useRef(props.latestTurn);
-  const { width: viewportWidth } = useWindowDimensions();
+  const { width: windowWidth } = useWindowDimensions();
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    props.layoutVariant === "split" ? 0 : windowWidth,
+  );
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const [interactionState, setInteractionState] = useState<{
     readonly copiedRowId: string | null;
@@ -1140,7 +1151,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     headers?: Record<string, string>;
   } | null>(null);
   const horizontalPadding = props.layoutVariant === "split" ? 20 : 16;
-  const contentWidth = Math.max(0, viewportWidth - horizontalPadding * 2);
+  const contentHorizontalPadding = deriveCenteredContentHorizontalPadding({
+    viewportWidth,
+    maxContentWidth: props.contentMaxWidth ?? null,
+    minimumPadding: horizontalPadding,
+  });
+  const contentWidth = Math.max(0, viewportWidth - contentHorizontalPadding * 2);
   const userBubbleMaxWidth = contentWidth * 0.85;
   const reviewCommentBubbleWidth = Math.min(Math.max(280, contentWidth * 0.85), contentWidth);
   const insets = useSafeAreaInsets();
@@ -1188,6 +1204,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       markdownStyles,
       reviewCommentColors,
       userBubbleColor,
+      viewportWidth,
     }),
     [
       copiedRowId,
@@ -1196,8 +1213,34 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       markdownStyles,
       reviewCommentColors,
       userBubbleColor,
+      viewportWidth,
     ],
   );
+  const reportHeaderMaterialVisibility = useCallback(
+    (visible: boolean) => {
+      if (headerMaterialVisibleRef.current === visible) {
+        return;
+      }
+      headerMaterialVisibleRef.current = visible;
+      props.onHeaderMaterialVisibilityChange?.(visible);
+    },
+    [props.onHeaderMaterialVisibilityChange],
+  );
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      reportHeaderMaterialVisibility(event.nativeEvent.contentOffset.y + topContentInset > 6);
+    },
+    [reportHeaderMaterialVisibility, topContentInset],
+  );
+  const handleViewportLayout = useCallback((event: LayoutChangeEvent) => {
+    const nextWidth = Math.round(event.nativeEvent.layout.width);
+    setViewportWidth((current) => (Math.abs(current - nextWidth) > 1 ? nextWidth : current));
+  }, []);
+
+  useEffect(() => {
+    reportHeaderMaterialVisibility(false);
+  }, [props.threadId, reportHeaderMaterialVisibility]);
+
   const expandedWorkGroupIds = useMemo(() => {
     const ids = new Set<string>();
     for (const [groupId, expanded] of Object.entries(expandedWorkGroups)) {
@@ -1217,6 +1260,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       ),
     [expandedTurnIds, expandedWorkGroupIds, props.feed, props.latestTurn],
   );
+
   const anchoredEndSpace = useMemo(
     () =>
       resolveChatListAnchoredEndSpace(
@@ -1451,47 +1495,67 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   return (
     <>
-      <View style={{ flex: 1 }}>
-        <KeyboardAwareLegendList
-          ref={props.listRef}
-          key={props.threadId}
+      <View style={{ flex: 1 }} onLayout={handleViewportLayout}>
+        <ScrollViewMarker
           style={{ flex: 1 }}
-          automaticallyAdjustsScrollIndicatorInsets={false}
-          scrollIndicatorInsets={{ top: topContentInset, bottom: 0 }}
-          {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-          contentInsetEndAdjustment={props.contentInsetEndAdjustment}
-          freeze={props.freeze}
-          maintainScrollAtEnd={
-            disclosureToggleSettling
-              ? false
-              : {
-                  animated: false,
-                  on: {
-                    dataChange: true,
-                    itemLayout: true,
-                    layout: true,
-                  },
-                }
-          }
-          maintainVisibleContentPosition={maintainVisibleContentPosition}
-          data={presentedFeed}
-          extraData={listAppearanceData}
-          renderItem={renderItem}
-          keyExtractor={(entry) => entry.id}
-          getItemType={(entry) =>
-            entry.type === "message" ? `message:${entry.message.role}` : entry.type
-          }
-          keyboardShouldPersistTaps="always"
-          keyboardDismissMode="none"
-          keyboardLiftBehavior="whenAtEnd"
-          estimatedItemSize={180}
-          initialScrollAtEnd
-          ListHeaderComponent={<View style={{ height: topContentInset }} />}
-          contentContainerStyle={{
-            paddingTop: 12,
-            paddingHorizontal: horizontalPadding,
+          scrollEdgeEffects={{
+            top: "automatic",
+            right: "hidden",
+            bottom: "hidden",
+            left: "hidden",
           }}
-        />
+        >
+          <KeyboardAwareLegendList
+            ref={props.listRef}
+            key={props.threadId}
+            style={{ flex: 1 }}
+            contentInsetAdjustmentBehavior="never"
+            automaticallyAdjustsScrollIndicatorInsets={false}
+            {...(props.usesAutomaticContentInsets
+              ? {
+                  contentInset: { top: topContentInset, left: 0, right: 0, bottom: 0 },
+                  scrollIndicatorInsets: { top: 0, left: 0, right: 0, bottom: 0 },
+                }
+              : { scrollIndicatorInsets: { top: topContentInset, bottom: 0 } })}
+            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+            contentInsetEndAdjustment={props.contentInsetEndAdjustment}
+            freeze={props.freeze}
+            maintainScrollAtEnd={
+              disclosureToggleSettling
+                ? false
+                : {
+                    animated: false,
+                    on: {
+                      dataChange: true,
+                      itemLayout: true,
+                      layout: true,
+                    },
+                  }
+            }
+            maintainVisibleContentPosition={maintainVisibleContentPosition}
+            data={presentedFeed}
+            extraData={listAppearanceData}
+            renderItem={renderItem}
+            keyExtractor={(entry) => entry.id}
+            getItemType={(entry) =>
+              entry.type === "message" ? `message:${entry.message.role}` : entry.type
+            }
+            keyboardShouldPersistTaps="always"
+            keyboardDismissMode="none"
+            keyboardLiftBehavior="whenAtEnd"
+            estimatedItemSize={180}
+            initialScrollAtEnd
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            ListHeaderComponent={
+              props.usesAutomaticContentInsets ? null : <View style={{ height: topContentInset }} />
+            }
+            contentContainerStyle={{
+              paddingTop: 12,
+              paddingHorizontal: contentHorizontalPadding,
+            }}
+          />
+        </ScrollViewMarker>
         {props.feed.length === 0 ? (
           <View pointerEvents="none" style={StyleSheet.absoluteFill}>
             <ThreadFeedPlaceholder

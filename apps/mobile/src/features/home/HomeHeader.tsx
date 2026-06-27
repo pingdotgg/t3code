@@ -3,60 +3,26 @@ import type {
   SidebarProjectGroupingMode,
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
-import {
-  DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE,
-  DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
-  DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
-} from "@t3tools/contracts";
 import { Stack } from "expo-router";
+import { useCallback, useRef } from "react";
 import { Text as RNText, View } from "react-native";
+import type { SearchBarCommands } from "react-native-screens";
 
 import { useThemeColor } from "../../lib/useThemeColor";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import type { HomeProjectSortOrder } from "./homeThreadList";
+import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
+import {
+  hasCustomHomeListOptions,
+  PROJECT_GROUPING_OPTIONS,
+  PROJECT_SORT_OPTIONS,
+  THREAD_SORT_OPTIONS,
+} from "./home-list-options";
 
 export interface HomeHeaderEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
 }
-
-const PROJECT_SORT_OPTIONS: ReadonlyArray<{
-  readonly value: HomeProjectSortOrder;
-  readonly label: string;
-}> = [
-  { value: "updated_at", label: "Last user message" },
-  { value: "created_at", label: "Created at" },
-];
-
-const THREAD_SORT_OPTIONS: ReadonlyArray<{
-  readonly value: SidebarThreadSortOrder;
-  readonly label: string;
-}> = [
-  { value: "updated_at", label: "Last user message" },
-  { value: "created_at", label: "Created at" },
-];
-
-const PROJECT_GROUPING_OPTIONS: ReadonlyArray<{
-  readonly value: SidebarProjectGroupingMode;
-  readonly label: string;
-  readonly subtitle: string;
-}> = [
-  {
-    value: "repository",
-    label: "Group by repository",
-    subtitle: "Combine matching repositories across environments",
-  },
-  {
-    value: "repository_path",
-    label: "Group by repository path",
-    subtitle: "Combine only matching paths within a repository",
-  },
-  {
-    value: "separate",
-    label: "Keep separate",
-    subtitle: "Show every project path separately",
-  },
-];
 
 export function HomeHeader(props: {
   readonly environments: ReadonlyArray<HomeHeaderEnvironment>;
@@ -72,14 +38,16 @@ export function HomeHeader(props: {
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
 }) {
+  const searchBarRef = useRef<SearchBarCommands>(null);
   const iconColor = useThemeColor("--color-icon");
   const mutedColor = useThemeColor("--color-foreground-muted");
   const subtleColor = useThemeColor("--color-subtle");
-  const hasCustomListOptions =
-    props.selectedEnvironmentId !== null ||
-    props.projectSortOrder !== DEFAULT_SIDEBAR_PROJECT_SORT_ORDER ||
-    props.threadSortOrder !== DEFAULT_SIDEBAR_THREAD_SORT_ORDER ||
-    props.projectGroupingMode !== DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE;
+  const hasCustomListOptions = hasCustomHomeListOptions(props);
+  const focusSearch = useCallback(() => {
+    searchBarRef.current?.focus();
+    return searchBarRef.current !== null;
+  }, []);
+  useHardwareKeyboardCommand("focusSearch", focusSearch);
 
   return (
     <>
@@ -92,6 +60,7 @@ export function HomeHeader(props: {
           headerTintColor: iconColor,
           headerTitle: "",
           headerSearchBarOptions: {
+            ref: searchBarRef,
             placeholder: "Search threads",
             hideNavigationBar: false,
             onChangeText: (event) => {

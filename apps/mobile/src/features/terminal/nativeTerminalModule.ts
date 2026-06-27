@@ -23,6 +23,7 @@ interface TerminalResizeEvent {
 
 export interface NativeTerminalSurfaceProps extends ViewProps {
   readonly appearanceScheme?: "light" | "dark";
+  readonly focusRequest?: number;
   readonly themeConfig?: string;
   readonly backgroundColor?: string;
   readonly foregroundColor?: string;

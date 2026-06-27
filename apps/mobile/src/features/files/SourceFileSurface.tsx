@@ -20,13 +20,13 @@ import type { ReviewHighlightedToken } from "../review/shikiReviewHighlighter";
 import { cn } from "../../lib/cn";
 import { MOBILE_CODE_SURFACE } from "../../lib/typography";
 import {
-  buildNativeSourceRows,
   buildNativeSourceTokens,
   NATIVE_SOURCE_CONTENT_WIDTH,
   NATIVE_SOURCE_ROW_HEIGHT,
   NATIVE_SOURCE_STYLE,
   nativeSourceRowId,
 } from "./nativeSourceFileAdapter";
+import { prepareSourceFileDocument } from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
 
 const SOURCE_LINE_HEIGHT = MOBILE_CODE_SURFACE.rowHeight;
@@ -40,10 +40,6 @@ interface SourceFileSurfaceProps {
 }
 
 type SourceHighlightStatus = "highlighting" | "ready" | "error";
-
-function splitSourceLines(contents: string): ReadonlyArray<string> {
-  return contents.replace(/\r\n?/g, "\n").split("\n");
-}
 
 const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
   readonly index: number;
@@ -119,11 +115,8 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
 function useSourceFileModel(props: SourceFileSurfaceProps) {
   const colorScheme = useColorScheme();
   const theme: "dark" | "light" = colorScheme === "dark" ? "dark" : "light";
-  const normalizedContents = useMemo(
-    () => props.contents.replace(/\r\n?/g, "\n"),
-    [props.contents],
-  );
-  const lines = useMemo(() => splitSourceLines(normalizedContents), [normalizedContents]);
+  const document = useMemo(() => prepareSourceFileDocument(props.contents), [props.contents]);
+  const { contents: normalizedContents, lines, rowsJson } = document;
   const targetIndex =
     props.initialLine !== null && props.initialLine !== undefined && props.initialLine > 0
       ? Math.min(Math.floor(props.initialLine) - 1, Math.max(0, lines.length - 1))
@@ -140,7 +133,7 @@ function useSourceFileModel(props: SourceFileSurfaceProps) {
       ? "ready"
       : "highlighting";
 
-  return { lines, status, targetIndex, theme, tokens };
+  return { lines, rowsJson, status, targetIndex, theme, tokens };
 }
 
 function SourceHighlightStatusView(props: { readonly status: SourceHighlightStatus }) {
@@ -163,8 +156,7 @@ function NativeSourceFileSurface(
   },
 ) {
   const { NativeView } = props;
-  const { lines, status, targetIndex, theme, tokens } = useSourceFileModel(props);
-  const rowsJson = useMemo(() => JSON.stringify(buildNativeSourceRows(lines)), [lines]);
+  const { rowsJson, status, targetIndex, theme, tokens } = useSourceFileModel(props);
   const tokensJson = useMemo(() => JSON.stringify(buildNativeSourceTokens(tokens)), [tokens]);
   const selectedRowIdsJson = useMemo(
     () => JSON.stringify(targetIndex === null ? [] : [nativeSourceRowId(targetIndex)]),
@@ -176,11 +168,11 @@ function NativeSourceFileSurface(
     <View className="relative flex-1 bg-card">
       <SourceHighlightStatusView status={status} />
       <NativeView
-        key={props.path}
         collapsable={false}
         testID="source-native-code-view"
         style={{ flex: 1 }}
         appearanceScheme={theme}
+        contentResetKey={props.path}
         contentWidth={NATIVE_SOURCE_CONTENT_WIDTH}
         initialRowIndex={targetIndex ?? -1}
         rowHeight={NATIVE_SOURCE_ROW_HEIGHT}

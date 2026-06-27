@@ -23,9 +23,16 @@ import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-wo
 import { vcsEnvironment } from "../../../state/vcs";
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
 
-export function GitOverviewSheet() {
+export function GitOverviewSheet(
+  props: {
+    readonly headerInset?: number;
+    readonly presentation?: "sheet" | "inspector";
+  } = {},
+) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const presentation = props.presentation ?? "sheet";
+  const isInspector = presentation === "inspector";
   const { environmentId, threadId } = useLocalSearchParams<{
     environmentId: EnvironmentId;
     threadId: ThreadId;
@@ -120,10 +127,12 @@ export function GitOverviewSheet() {
         return;
       }
 
-      router.dismiss();
+      if (!isInspector) {
+        router.dismiss();
+      }
       await gitActions.onRunSelectedThreadGitAction(input);
     },
-    [environmentId, gitActions, gitStatus.data, isDefaultRef, router, threadId],
+    [environmentId, gitActions, gitStatus.data, isDefaultRef, isInspector, router, threadId],
   );
 
   const onPressMenuItem = useCallback(
@@ -152,10 +161,24 @@ export function GitOverviewSheet() {
   );
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      <View style={{ minHeight: 16, paddingTop: 8 }} />
+    <View
+      collapsable={false}
+      className={isInspector ? "flex-1 border-l border-border bg-sheet" : "flex-1 bg-sheet"}
+    >
+      <View
+        style={{
+          minHeight: isInspector ? (props.headerInset ?? 0) : 16,
+          paddingTop: isInspector ? (props.headerInset ?? 0) : 8,
+        }}
+      />
 
-      <View className="items-center gap-1 px-5 pb-3 pt-4">
+      <View
+        className={
+          isInspector
+            ? "gap-1 border-b border-border px-4 pb-4 pt-3"
+            : "items-center gap-1 px-5 pb-3 pt-4"
+        }
+      >
         <Pressable
           className="absolute right-3 top-4 h-9 w-9 items-center justify-center rounded-full bg-subtle"
           style={{ zIndex: 1, opacity: busy ? 0.45 : 1 }}
@@ -174,9 +197,11 @@ export function GitOverviewSheet() {
           className="text-xs font-t3-bold uppercase text-foreground-muted"
           style={{ letterSpacing: 1 }}
         >
-          Branch
+          {isInspector ? "Repository" : "Branch"}
         </Text>
-        <Text className="text-3xl font-t3-bold">{currentBranchLabel}</Text>
+        <Text className={isInspector ? "pr-10 text-xl font-t3-bold" : "text-3xl font-t3-bold"}>
+          {currentBranchLabel}
+        </Text>
         <Text className="text-foreground-secondary text-sm font-medium leading-[19px]">
           {statusSummary(gitStatus.data)}
         </Text>
@@ -187,12 +212,18 @@ export function GitOverviewSheet() {
         style={{ flex: 1 }}
         contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
         contentContainerStyle={{
-          paddingHorizontal: 20,
+          paddingHorizontal: isInspector ? 12 : 20,
           paddingTop: 8,
           gap: 14,
         }}
       >
-        <View className="overflow-hidden rounded-[22px] border border-border bg-card px-4 py-1">
+        <View
+          className={
+            isInspector
+              ? "overflow-hidden rounded-2xl border border-border bg-card px-3 py-1"
+              : "overflow-hidden rounded-[22px] border border-border bg-card px-4 py-1"
+          }
+        >
           {sheetMenuItems.map(({ item, disabledReason }, index) => (
             <View key={`${item.id}-${item.label}`}>
               {index > 0 ? (

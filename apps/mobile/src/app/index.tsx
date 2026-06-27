@@ -1,17 +1,7 @@
-import type {
-  EnvironmentId,
-  SidebarProjectGroupingMode,
-  SidebarThreadSortOrder,
-} from "@t3tools/contracts";
-import {
-  DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE,
-  DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
-  DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
-} from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
-import { useRouter } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { Stack, useRouter } from "expo-router";
+import { useMemo, useState } from "react";
 
 import { useProjects, useThreadShells } from "../state/entities";
 import { useWorkspaceState } from "../state/workspace";
@@ -19,34 +9,22 @@ import { buildThreadRoutePath } from "../lib/routes";
 import { useSavedRemoteConnections } from "../state/use-remote-environment-registry";
 import { HomeScreen } from "../features/home/HomeScreen";
 import { HomeHeader } from "../features/home/HomeHeader";
-import type { HomeProjectSortOrder } from "../features/home/homeThreadList";
+import { useHomeListOptions } from "../features/home/home-list-options";
 import { useThreadListActions } from "../features/home/useThreadListActions";
-
-interface HomeListOptions {
-  readonly selectedEnvironmentId: EnvironmentId | null;
-  readonly projectSortOrder: HomeProjectSortOrder;
-  readonly threadSortOrder: SidebarThreadSortOrder;
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
-}
+import { useAdaptiveWorkspaceLayout } from "../features/layout/AdaptiveWorkspaceLayout";
+import { WorkspaceEmptyDetail } from "../features/layout/WorkspaceEmptyDetail";
+import { WorkspaceSidebarToolbar } from "../features/layout/workspace-sidebar-toolbar";
 
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
 export default function HomeRouteScreen() {
+  const { layout } = useAdaptiveWorkspaceLayout();
   const projects = useProjects();
   const threads = useThreadShells();
   const { state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
-  const [listOptions, setListOptions] = useState<HomeListOptions>({
-    selectedEnvironmentId: null,
-    projectSortOrder:
-      DEFAULT_SIDEBAR_PROJECT_SORT_ORDER === "manual"
-        ? "updated_at"
-        : DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
-    threadSortOrder: DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
-    projectGroupingMode: DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE,
-  });
   const { archiveThread, confirmDeleteThread } = useThreadListActions();
   const environments = useMemo(
     () =>
@@ -62,23 +40,35 @@ export default function HomeRouteScreen() {
       ),
     [savedConnectionsById],
   );
-  const selectedEnvironmentId = environments.some(
-    (environment) => environment.environmentId === listOptions.selectedEnvironmentId,
-  )
-    ? listOptions.selectedEnvironmentId
-    : null;
-  const setSelectedEnvironmentId = useCallback((environmentId: EnvironmentId | null) => {
-    setListOptions((current) => ({ ...current, selectedEnvironmentId: environmentId }));
-  }, []);
-  const setProjectSortOrder = useCallback((projectSortOrder: HomeProjectSortOrder) => {
-    setListOptions((current) => ({ ...current, projectSortOrder }));
-  }, []);
-  const setThreadSortOrder = useCallback((threadSortOrder: SidebarThreadSortOrder) => {
-    setListOptions((current) => ({ ...current, threadSortOrder }));
-  }, []);
-  const setProjectGroupingMode = useCallback((projectGroupingMode: SidebarProjectGroupingMode) => {
-    setListOptions((current) => ({ ...current, projectGroupingMode }));
-  }, []);
+  const availableEnvironmentIds = useMemo(
+    () => new Set(environments.map((environment) => environment.environmentId)),
+    [environments],
+  );
+  const {
+    options: listOptions,
+    setSelectedEnvironmentId,
+    setProjectGroupingMode,
+    setProjectSortOrder,
+    setThreadSortOrder,
+  } = useHomeListOptions(availableEnvironmentIds);
+  const selectedEnvironmentId = listOptions.selectedEnvironmentId;
+
+  if (layout.usesSplitView) {
+    return (
+      <>
+        <Stack.Screen
+          options={{
+            headerShown: true,
+            headerTransparent: true,
+            headerShadowVisible: false,
+            headerTitle: "",
+          }}
+        />
+        <WorkspaceSidebarToolbar />
+        <WorkspaceEmptyDetail />
+      </>
+    );
+  }
 
   return (
     <>

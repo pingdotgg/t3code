@@ -66,6 +66,10 @@ function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
 }
 
 export function ThreadGitControls(props: {
+  readonly auxiliaryPaneControl?: {
+    readonly accessibilityLabel: string;
+    readonly onPress: () => void;
+  };
   readonly currentBranch: string | null;
   readonly gitStatus: VcsStatusResult | null;
   readonly gitOperationLabel: string | null;
@@ -73,6 +77,8 @@ export function ThreadGitControls(props: {
   readonly canOpenFiles: boolean;
   readonly projectScripts: ReadonlyArray<ProjectScript>;
   readonly terminalSessions: ReadonlyArray<TerminalMenuSession>;
+  readonly onOpenFilesInspector?: () => void;
+  readonly onOpenGitInspector?: () => void;
   readonly onOpenTerminal: (terminalId?: string | null) => void;
   readonly onOpenNewTerminal: () => void;
   readonly onRunProjectScript: (script: ProjectScript) => Promise<void>;
@@ -183,6 +189,14 @@ export function ThreadGitControls(props: {
 
   return (
     <Stack.Toolbar placement="right">
+      {props.auxiliaryPaneControl ? (
+        <Stack.Toolbar.Button
+          accessibilityLabel={props.auxiliaryPaneControl.accessibilityLabel}
+          icon="sidebar.right"
+          onPress={props.auxiliaryPaneControl.onPress}
+          separateBackground
+        />
+      ) : null}
       <Stack.Toolbar.Menu icon="terminal" disabled={!props.canOpenTerminal} separateBackground>
         {props.projectScripts.length > 0 ? (
           props.projectScripts.map((script) => (
@@ -259,19 +273,29 @@ export function ThreadGitControls(props: {
         <Stack.Toolbar.MenuAction
           icon="folder"
           disabled={!props.canOpenFiles}
-          onPress={() => router.push(buildThreadFilesNavigation({ environmentId, threadId }))}
+          onPress={() => {
+            if (props.onOpenFilesInspector) {
+              props.onOpenFilesInspector();
+              return;
+            }
+            router.push(buildThreadFilesNavigation({ environmentId, threadId }));
+          }}
           subtitle="Browse this workspace"
         >
           <Stack.Toolbar.Label>Files</Stack.Toolbar.Label>
         </Stack.Toolbar.MenuAction>
         <Stack.Toolbar.MenuAction
           icon="ellipsis.circle"
-          onPress={() =>
+          onPress={() => {
+            if (props.onOpenGitInspector) {
+              props.onOpenGitInspector();
+              return;
+            }
             router.push({
               pathname: "/threads/[environmentId]/[threadId]/git",
               params: { environmentId, threadId },
-            })
-          }
+            });
+          }}
           subtitle="Commit, files, branches"
         >
           <Stack.Toolbar.Label>More</Stack.Toolbar.Label>

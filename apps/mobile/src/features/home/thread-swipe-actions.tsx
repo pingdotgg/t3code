@@ -1,8 +1,11 @@
 import { SymbolView } from "expo-symbols";
-import type { ComponentProps } from "react";
-import type { ColorValue } from "react-native";
+import * as Haptics from "expo-haptics";
+import { useCallback, useRef, type ComponentProps, type ReactNode } from "react";
+import type { ColorValue, StyleProp, ViewStyle } from "react-native";
 import { Pressable, View } from "react-native";
-import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from "react-native-gesture-handler/ReanimatedSwipeable";
 import Animated, {
   Extrapolation,
   interpolate,
@@ -25,6 +28,100 @@ export const THREAD_SWIPE_SPRING = {
   overshootClamping: true,
   stiffness: 330,
 };
+
+interface ThreadSwipePrimaryAction {
+  readonly accessibilityLabel: string;
+  readonly icon: ComponentProps<typeof SymbolView>["name"];
+  readonly label: string;
+  readonly onPress: () => void;
+}
+
+export function ThreadSwipeable(props: {
+  readonly backgroundColor: ColorValue;
+  readonly children: (close: () => void) => ReactNode;
+  readonly containerStyle?: StyleProp<ViewStyle>;
+  readonly enableTrackpadSwipe?: boolean;
+  readonly fullSwipeWidth: number;
+  readonly onDelete: () => void;
+  readonly onSwipeableClose?: (methods: SwipeableMethods) => void;
+  readonly onSwipeableWillOpen?: (methods: SwipeableMethods) => void;
+  readonly primaryAction: ThreadSwipePrimaryAction;
+  readonly simultaneousWithExternalGesture?: ComponentProps<
+    typeof ReanimatedSwipeable
+  >["simultaneousWithExternalGesture"];
+  readonly threadTitle: string;
+}) {
+  const swipeableRef = useRef<SwipeableMethods | null>(null);
+  const fullSwipeArmedRef = useRef(false);
+  const fullSwipeThreshold = Math.max(THREAD_SWIPE_ACTIONS_WIDTH + 44, props.fullSwipeWidth * 0.58);
+  const close = useCallback(() => swipeableRef.current?.close(), []);
+  const handleFullSwipeArmedChange = useCallback((armed: boolean) => {
+    if (armed && !fullSwipeArmedRef.current && process.env.EXPO_OS === "ios") {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+    fullSwipeArmedRef.current = armed;
+  }, []);
+
+  return (
+    <ReanimatedSwipeable
+      ref={swipeableRef}
+      animationOptions={THREAD_SWIPE_SPRING}
+      childrenContainerStyle={{ backgroundColor: props.backgroundColor }}
+      containerStyle={[{ backgroundColor: props.backgroundColor }, props.containerStyle]}
+      dragOffsetFromRightEdge={8}
+      enableTrackpadTwoFingerGesture={props.enableTrackpadSwipe ?? true}
+      friction={1}
+      onSwipeableClose={() => {
+        fullSwipeArmedRef.current = false;
+        if (swipeableRef.current) {
+          props.onSwipeableClose?.(swipeableRef.current);
+        }
+      }}
+      onSwipeableOpenStartDrag={() => {
+        if (swipeableRef.current) {
+          props.onSwipeableWillOpen?.(swipeableRef.current);
+        }
+      }}
+      onSwipeableWillOpen={() => {
+        const methods = swipeableRef.current;
+        if (!methods) {
+          return;
+        }
+
+        props.onSwipeableWillOpen?.(methods);
+        if (fullSwipeArmedRef.current) {
+          fullSwipeArmedRef.current = false;
+          methods.close();
+          props.onDelete();
+        }
+      }}
+      overshootFriction={1}
+      overshootRight
+      renderRightActions={(_progress, translation, methods) => (
+        <ThreadSwipeActions
+          backgroundColor={props.backgroundColor}
+          fullSwipeThreshold={fullSwipeThreshold}
+          onDelete={props.onDelete}
+          onFullSwipeArmedChange={handleFullSwipeArmedChange}
+          primaryAction={{
+            ...props.primaryAction,
+            onPress: () => {
+              methods.close();
+              props.primaryAction.onPress();
+            },
+          }}
+          swipeableMethods={methods}
+          threadTitle={props.threadTitle}
+          translation={translation}
+        />
+      )}
+      rightThreshold={THREAD_SWIPE_ACTIONS_WIDTH * 0.42}
+      simultaneousWithExternalGesture={props.simultaneousWithExternalGesture}
+    >
+      {props.children(close)}
+    </ReanimatedSwipeable>
+  );
+}
 
 function SwipeActionButton(props: {
   readonly accessibilityLabel: string;
@@ -179,12 +276,7 @@ export function ThreadSwipeActions(props: {
   readonly fullSwipeThreshold: number;
   readonly onDelete: () => void;
   readonly onFullSwipeArmedChange: (armed: boolean) => void;
-  readonly primaryAction: {
-    readonly accessibilityLabel: string;
-    readonly icon: ComponentProps<typeof SymbolView>["name"];
-    readonly label: string;
-    readonly onPress: () => void;
-  };
+  readonly primaryAction: ThreadSwipePrimaryAction;
   readonly swipeableMethods: SwipeableMethods;
   readonly threadTitle: string;
   readonly translation: SharedValue<number>;
