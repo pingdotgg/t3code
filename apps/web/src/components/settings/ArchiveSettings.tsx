@@ -568,7 +568,7 @@ export function ArchivedThreadsPanel() {
                     {projectThreads.map((thread) => (
                       <div
                         key={thread.id}
-                        className="group relative grid grid-cols-[minmax(0,1fr)_4.75rem_4.75rem] items-center gap-2 rounded-md px-2 py-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-within:bg-accent focus-within:text-foreground"
+                        className="group relative grid grid-cols-[minmax(0,1fr)_4.75rem_4.75rem_1.75rem] items-center gap-2 rounded-md px-2 py-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-within:bg-accent focus-within:text-foreground"
                         onContextMenu={(event) => {
                           event.preventDefault();
                           void (async () => {
@@ -605,6 +605,7 @@ export function ArchivedThreadsPanel() {
                         <div className="pointer-events-none truncate text-right font-mono text-[11px] text-muted-foreground/75 transition-[color,opacity] duration-150 group-hover:opacity-0 group-hover:text-current group-focus-within:opacity-0 group-focus-within:text-current">
                           {formatRelativeTimeLabel(thread.createdAt)}
                         </div>
+                        <div aria-hidden="true" />
                         <div
                           className="pointer-events-none absolute top-1/2 right-1 z-10 flex -translate-y-1/2 items-center gap-1 rounded-md bg-accent/95 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
                           onClick={(event) => event.stopPropagation()}
