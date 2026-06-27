@@ -13,7 +13,7 @@ const { events, onFrame, registrySet, save, startScreencast, stopScreencast } = 
       tabId: "recording-tab",
       path: "/tmp/recording-test.webm",
       mimeType: "video/webm" as const,
-      sizeBytes: 0,
+      sizeBytes: 5,
       createdAt: "2026-06-26T00:00:00.000Z",
     })),
     startScreencast: vi.fn(async () => {
@@ -47,6 +47,8 @@ import {
 } from "./browserRecording";
 
 class FakeMediaRecorder {
+  static emitData = true;
+
   static isTypeSupported(): boolean {
     return true;
   }
@@ -66,6 +68,14 @@ class FakeMediaRecorder {
 
   stop(): void {
     this.state = "inactive";
+    if (FakeMediaRecorder.emitData) {
+      for (const listener of this.listeners.get("dataavailable") ?? []) {
+        const event = new Event("dataavailable") as Event & { data: Blob };
+        Object.defineProperty(event, "data", { value: new Blob(["video"]) });
+        if (typeof listener === "function") listener(event);
+        else listener.handleEvent(event);
+      }
+    }
     for (const listener of this.listeners.get("stop") ?? []) {
       if (typeof listener === "function") listener(new Event("stop"));
       else listener.handleEvent(new Event("stop"));
@@ -73,9 +83,10 @@ class FakeMediaRecorder {
   }
 }
 
-describe("browser recording surface preparation", () => {
+describe("browser recording lifecycle", () => {
   beforeEach(() => {
     events.length = 0;
+    FakeMediaRecorder.emitData = true;
     vi.clearAllMocks();
     vi.stubGlobal("window", globalThis);
     vi.stubGlobal("MediaRecorder", FakeMediaRecorder as unknown as typeof MediaRecorder);
@@ -103,16 +114,10 @@ describe("browser recording surface preparation", () => {
     vi.unstubAllGlobals();
   });
 
-  it("makes an inactive guest paintable before starting its screencast", async () => {
+  it("starts the native screencast before publishing the recording", async () => {
     await startBrowserRecording("recording-tab");
 
-    expect(events).toEqual([
-      "publish:recording-tab",
-      "paint:1",
-      "paint:2",
-      "start-screencast",
-      "publish:recording-tab",
-    ]);
+    expect(events).toEqual(["start-screencast", "publish:recording-tab"]);
 
     await stopBrowserRecording("recording-tab");
   });
@@ -181,28 +186,15 @@ describe("browser recording surface preparation", () => {
     expect(save).toHaveBeenCalledOnce();
   });
 
-  it("does not start a screencast after stopping during the paint wait", async () => {
-    const frameCallbacks: FrameRequestCallback[] = [];
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-      frameCallbacks.push(callback);
-      return frameCallbacks.length;
+  it("rejects an empty recording instead of saving a corrupt artifact", async () => {
+    FakeMediaRecorder.emitData = false;
+    await startBrowserRecording("recording-tab");
+
+    await expect(stopBrowserRecording("recording-tab")).rejects.toMatchObject({
+      _tag: "BrowserRecordingOperationError",
+      operation: "validate-artifact",
     });
-
-    const startPromise = startBrowserRecording("recording-tab");
-    const rejectedStart = expect(startPromise).rejects.toBeInstanceOf(
-      BrowserRecordingOperationError,
-    );
-    await vi.waitFor(() => expect(frameCallbacks).toHaveLength(1));
-
-    const stopPromise = stopBrowserRecording("recording-tab");
-    frameCallbacks.shift()?.(1);
-    expect(frameCallbacks).toHaveLength(1);
-    frameCallbacks.shift()?.(2);
-
-    await rejectedStart;
-    await stopPromise;
-    expect(startScreencast).not.toHaveBeenCalled();
-    expect(events).toEqual(["publish:recording-tab", "clear", "clear"]);
+    expect(save).not.toHaveBeenCalled();
   });
 
   it("stops a screencast that finishes starting after cancellation", async () => {

@@ -172,6 +172,7 @@ export function showContextMenuFallback<T extends string>(
       menu.style.left = `${preferredLeft}px`;
       menu.style.top = `${preferredTop}px`;
       menu.dataset.level = String(level);
+      menu.dataset.nativeSurfaceOverlay = "";
 
       const inner = document.createElement("div");
       inner.className =

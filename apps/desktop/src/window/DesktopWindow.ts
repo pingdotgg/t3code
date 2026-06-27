@@ -186,7 +186,6 @@ export const make = Effect.gen(function* () {
     Electron.BrowserWindow,
     DesktopWindowError
   > {
-    yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);
@@ -208,7 +207,6 @@ export const make = Effect.gen(function* () {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
-        webviewTag: true,
       },
     });
 
@@ -217,20 +215,6 @@ export const make = Effect.gen(function* () {
     }
 
     yield* previewManager.setMainWindow(window);
-    window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
-      if (
-        typeof params.partition !== "string" ||
-        !previewManager.isBrowserPartition(params.partition)
-      ) {
-        event.preventDefault();
-        return;
-      }
-      webPreferences.sandbox = true;
-      webPreferences.nodeIntegration = false;
-      webPreferences.nodeIntegrationInSubFrames = false;
-      webPreferences.contextIsolation = false;
-    });
-
     window.webContents.on("context-menu", (event, params) => {
       event.preventDefault();
 

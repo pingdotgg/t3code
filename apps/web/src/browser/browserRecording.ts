@@ -56,6 +56,7 @@ export class BrowserRecordingOperationError extends Schema.TaggedErrorClass<Brow
       "start-screencast",
       "stop-screencast",
       "stop-media-recorder",
+      "validate-artifact",
       "save-artifact",
       "cleanup",
     ]),
@@ -67,6 +68,8 @@ export class BrowserRecordingOperationError extends Schema.TaggedErrorClass<Brow
     return `Browser recording operation ${this.operation} failed for tab ${this.tabId}.`;
   }
 }
+
+const isBrowserRecordingOperationError = Schema.is(BrowserRecordingOperationError);
 
 type BrowserRecordingLifecycle =
   | { readonly phase: "starting" }
@@ -92,22 +95,9 @@ const activeBrowserRecordingTabIdAtom = Atom.make<string | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("preview:active-browser-recording-tab"),
 );
-const browserRecordingSurfaceTabIdAtom = Atom.make<string | null>(null).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("preview:browser-recording-surface-tab"),
-);
 
 export function useActiveBrowserRecordingTabId(): string | null {
   return useAtomValue(activeBrowserRecordingTabIdAtom);
-}
-
-/**
- * The tab whose guest must remain paintable for Chromium screencast frames.
- * This becomes active one paint before the public recording state so a
- * background webview is visible to Chromium before Page.startScreencast.
- */
-export function useBrowserRecordingSurfaceTabId(): string | null {
-  return useAtomValue(browserRecordingSurfaceTabIdAtom);
 }
 
 let active: ActiveRecording | null = null;
@@ -146,31 +136,12 @@ const stopMediaRecorder = async (recorder: MediaRecorder): Promise<void> => {
   await stopped;
 };
 
-const waitForBrowserRecordingSurfacePaint = (): Promise<void> =>
-  new Promise((resolve) => {
-    let settled = false;
-    let secondFrameId: number | null = null;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timeoutId);
-      window.cancelAnimationFrame(firstFrameId);
-      if (secondFrameId !== null) window.cancelAnimationFrame(secondFrameId);
-      resolve();
-    };
-    const timeoutId = window.setTimeout(finish, 100);
-    const firstFrameId = window.requestAnimationFrame(() => {
-      secondFrameId = window.requestAnimationFrame(finish);
-    });
-  });
-
 const clearActiveRecording = (recording: ActiveRecording): void => {
   if (active !== recording) return;
   active = null;
   unsubscribeFrames?.();
   unsubscribeFrames = null;
   appAtomRegistry.set(activeBrowserRecordingTabIdAtom, null);
-  appAtomRegistry.set(browserRecordingSurfaceTabIdAtom, null);
 };
 
 const recordingStartupCancelledError = (
@@ -268,11 +239,6 @@ export async function startBrowserRecording(tabId: string): Promise<string> {
         cause,
       });
     }
-    appAtomRegistry.set(browserRecordingSurfaceTabIdAtom, tabId);
-    await waitForBrowserRecordingSurfacePaint();
-    if (!isRecordingStarting(recording)) {
-      throw recordingStartupCancelledError(recording);
-    }
     try {
       await bridge.recording.startScreencast(tabId);
     } catch (cause) {
@@ -353,13 +319,28 @@ const finalizeBrowserRecording = async (
     }
     try {
       const blob = new Blob(recording.chunks, { type: recording.mimeType });
+      if (blob.size === 0) {
+        throw new BrowserRecordingOperationError({
+          operation: "validate-artifact",
+          tabId,
+          cause: new Error("The browser recording contained no encoded media data."),
+        });
+      }
       const artifact = await bridge.recording.save(
         tabId,
         recording.mimeType,
         new Uint8Array(await blob.arrayBuffer()),
       );
+      if (artifact.sizeBytes <= 0) {
+        throw new BrowserRecordingOperationError({
+          operation: "validate-artifact",
+          tabId,
+          cause: new Error("The saved browser recording artifact is empty."),
+        });
+      }
       result = { _tag: "Success", artifact };
     } catch (cause) {
+      if (isBrowserRecordingOperationError(cause)) throw cause;
       throw new BrowserRecordingOperationError({
         operation: "save-artifact",
         tabId,

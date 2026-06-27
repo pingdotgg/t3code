@@ -3,6 +3,7 @@ import { ipcRenderer } from "electron";
 import { getElementContext } from "react-grab/primitives";
 import type {
   DesktopPreviewAnnotationTheme,
+  DesktopPreviewPointerEvent,
   PickedElementPayload,
   PickedElementStackFrame,
   PreviewAnnotationPayload,
@@ -15,6 +16,7 @@ import type {
 
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
 import {
+  AGENT_POINTER_CHANNEL,
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   CANCEL_PICK_CHANNEL,
@@ -99,6 +101,53 @@ const reportHumanKeyInput = (event: KeyboardEvent): void => {
 
 window.addEventListener("pointerdown", reportHumanPointerInput, true);
 window.addEventListener("keydown", reportHumanKeyInput, true);
+
+let agentCursor: HTMLDivElement | null = null;
+
+const ensureAgentCursor = (): HTMLDivElement => {
+  if (agentCursor?.isConnected) return agentCursor;
+  const cursor = document.createElement("div");
+  cursor.setAttribute("data-t3code-agent-cursor", "");
+  cursor.style.cssText = [
+    "position:fixed",
+    "left:0",
+    "top:0",
+    "width:18px",
+    "height:18px",
+    "border-radius:9999px",
+    "border:2px solid white",
+    "background:#2563eb",
+    "box-shadow:0 1px 5px rgb(0 0 0 / 35%)",
+    "pointer-events:none",
+    "opacity:0",
+    "transform:translate(-50%, -50%)",
+    "transition:left 160ms ease-out, top 160ms ease-out, opacity 80ms linear",
+    "z-index:2147483647",
+  ].join(";");
+  (document.body ?? document.documentElement).append(cursor);
+  agentCursor = cursor;
+  return cursor;
+};
+
+ipcRenderer.on(AGENT_POINTER_CHANNEL, (_event, value: unknown) => {
+  if (typeof value !== "object" || value === null) return;
+  const pointer = value as Partial<DesktopPreviewPointerEvent>;
+  if (typeof pointer.x !== "number" || typeof pointer.y !== "number") return;
+  const cursor = ensureAgentCursor();
+  cursor.style.left = `${pointer.x}px`;
+  cursor.style.top = `${pointer.y}px`;
+  cursor.style.opacity = "1";
+  if (pointer.phase === "click") {
+    cursor.animate(
+      [
+        { transform: "translate(-50%, -50%) scale(1)" },
+        { transform: "translate(-50%, -50%) scale(0.72)" },
+        { transform: "translate(-50%, -50%) scale(1)" },
+      ],
+      { duration: 180, easing: "ease-out" },
+    );
+  }
+});
 
 const nextId = (prefix: string): string => {
   idSequence += 1;

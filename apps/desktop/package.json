@@ -9,6 +9,7 @@
     "start": "node scripts/start-electron.mjs",
     "typecheck": "tsgo --noEmit",
     "test": "vp test run --passWithNoTests",
+    "smoke-test:preview-native": "node scripts/native-preview-smoke-test.mjs",
     "smoke-test": "node scripts/smoke-test.mjs"
   },
   "dependencies": {

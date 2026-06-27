@@ -32,7 +32,7 @@ export class PreviewAutomationOverlayTimeoutError extends Schema.TaggedErrorClas
   }
 
   override get message(): string {
-    return `Preview webview for request ${this.requestId} on environment ${this.environmentId} thread ${this.threadId} did not register within ${this.timeoutMs}ms.`;
+    return `Native preview view for request ${this.requestId} on environment ${this.environmentId} thread ${this.threadId} did not initialize within ${this.timeoutMs}ms.`;
   }
 }
 

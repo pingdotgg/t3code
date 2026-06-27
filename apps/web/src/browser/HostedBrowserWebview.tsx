@@ -1,37 +1,26 @@
 "use client";
 
-import type { PreviewViewportSetting, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  DesktopPreviewSurfaceFrame,
+  PreviewViewportSetting,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import { useShallow } from "zustand/react/shallow";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
-import { cn } from "~/lib/utils";
-
-import { useBrowserRecordingSurfaceTabId } from "./browserRecording";
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { browserViewportSettingKey } from "./browserViewportLayout";
 import { reconcileLockedAspectRatio } from "./browserDeviceToolbarState";
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
-import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
+import {
+  shouldPresentNativeSurface,
+  subscribeToNativeSurfaceOcclusion,
+} from "./nativeSurfaceOcclusion";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
-
-interface ElectronWebview extends HTMLElement {
-  src: string;
-  partition: string;
-  preload?: string;
-  webpreferences?: string;
-  getWebContentsId: () => number;
-  executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
-}
-
-declare global {
-  interface HTMLElementTagNameMap {
-    webview: ElectronWebview;
-  }
-}
 
 export function HostedBrowserWebview(props: {
   readonly threadRef: ScopedThreadRef;
@@ -41,12 +30,12 @@ export function HostedBrowserWebview(props: {
   readonly zoomFactor: number;
 }) {
   const { threadRef, tabId, initialUrl, viewport, zoomFactor } = props;
-  const config = usePreviewWebviewConfig(threadRef.environmentId);
-  const [initialSrc] = useState(() => initialUrl ?? "about:blank");
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const webviewRef = useRef<ElectronWebview | null>(null);
+  const occlusionCaptureRequestedRef = useRef(false);
   const [lockedAspectRatio, setLockedAspectRatio] = useState<number | null>(null);
+  const [surfaceOccluded, setSurfaceOccluded] = useState(false);
+  const [occlusionFrame, setOcclusionFrame] = useState<DesktopPreviewSurfaceFrame | null>(null);
   const presentation = useBrowserSurfaceStore(
     useShallow((state) => {
       const current = state.byTabId[tabId];
@@ -56,60 +45,29 @@ export function HostedBrowserWebview(props: {
       };
     }),
   );
-  const recording = useBrowserRecordingSurfaceTabId() === tabId;
-
   usePreviewBridge({ threadRef, tabId });
 
   useEffect(() => {
-    const lease = acquireDesktopTab(tabId);
+    const lease = acquireDesktopTab(tabId, threadRef.environmentId, initialUrl);
     tabLeaseRef.current = lease;
     return () => {
       if (tabLeaseRef.current === lease) tabLeaseRef.current = null;
+      void previewBridge?.setSurface(tabId, { x: 0, y: 0, width: 1, height: 1 }, false, 1);
       lease.release();
     };
-  }, [tabId]);
-
-  const setWebviewRef = useCallback((node: HTMLElement | null) => {
-    webviewRef.current = node as ElectronWebview | null;
-    if (node && !node.hasAttribute("allowpopups")) node.setAttribute("allowpopups", "true");
-  }, []);
-
-  useEffect(() => {
-    const webview = webviewRef.current;
-    const bridge = previewBridge;
-    if (!webview || !config || !bridge) return;
-    let disposed = false;
-    const register = () => {
-      const lease = tabLeaseRef.current;
-      if (!lease) return;
-      void (async () => {
-        try {
-          // The main-process tab and the DOM webview are created by separate
-          // effects. Wait for the former so registration cannot race and fail
-          // with PreviewTabNotFoundError on a fast about:blank attachment.
-          await lease.ready;
-          if (disposed || webviewRef.current !== webview) return;
-          const webContentsId = webview.getWebContentsId();
-          if (Number.isInteger(webContentsId) && webContentsId > 0) {
-            await bridge.registerWebview(tabId, webContentsId);
-          }
-        } catch {
-          // did-attach/dom-ready will retry if the guest was not ready yet.
-        }
-      })();
-    };
-    webview.addEventListener("did-attach", register);
-    webview.addEventListener("dom-ready", register);
-    register();
-    return () => {
-      disposed = true;
-      webview.removeEventListener("did-attach", register);
-      webview.removeEventListener("dom-ready", register);
-    };
-  }, [config, tabId]);
+  }, [initialUrl, tabId, threadRef.environmentId]);
 
   const active = presentation.visible && presentation.rect !== null;
   const lastRect = presentation.rect;
+  useEffect(() => {
+    if (!active || !lastRect) return;
+    return subscribeToNativeSurfaceOcclusion(lastRect, setSurfaceOccluded);
+  }, [active, lastRect]);
+  const presentNativeSurface = shouldPresentNativeSurface(
+    active,
+    surfaceOccluded,
+    occlusionFrame !== null,
+  );
   const normalizedZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
   const viewportWidth = viewport._tag === "fill" ? null : viewport.width;
   const viewportHeight = viewport._tag === "fill" ? null : viewport.height;
@@ -168,8 +126,6 @@ export function HostedBrowserWebview(props: {
     wrapper.scrollTo({ left: 0, top: 0 });
   }, [tabId, viewport._tag, viewportHeight, viewportWidth]);
 
-  if (!config) return null;
-
   const wrapperStyle =
     active && lastRect
       ? {
@@ -181,18 +137,56 @@ export function HostedBrowserWebview(props: {
           pointerEvents: "auto" as const,
         }
       : {
-          // Chromium must keep painting a background guest while recording
-          // so Page.startScreencast continues to emit frames. Every other
-          // inactive guest is both hidden and moved offscreen; z-index alone
-          // is not a reliable visibility boundary for Electron webviews.
           left: -100_000,
           top: -100_000,
           width: hiddenSize.width,
           height: hiddenSize.height,
-          zIndex: recording ? 0 : -1,
+          zIndex: -1,
           pointerEvents: "none" as const,
-          visibility: recording ? ("visible" as const) : ("hidden" as const),
+          visibility: "hidden" as const,
         };
+
+  useEffect(() => {
+    if (!active || !surfaceOccluded) occlusionCaptureRequestedRef.current = false;
+    const bridge = previewBridge;
+    const lease = tabLeaseRef.current;
+    if (!bridge || !lease) return;
+    let cancelled = false;
+    const bounds =
+      active && lastRect
+        ? {
+            x: Math.round(lastRect.x + layout.viewportX),
+            y: Math.round(lastRect.y + layout.viewportY),
+            width: Math.max(1, Math.round(layout.viewportWidth)),
+            height: Math.max(1, Math.round(layout.viewportHeight)),
+          }
+        : {
+            x: 0,
+            y: 0,
+            width: Math.max(1, Math.round(layout.viewportWidth)),
+            height: Math.max(1, Math.round(layout.viewportHeight)),
+          };
+    void lease.ready
+      .then(async () => {
+        if (cancelled) return;
+        if (active && surfaceOccluded && !occlusionCaptureRequestedRef.current) {
+          occlusionCaptureRequestedRef.current = true;
+          const frame = await bridge.captureSurfaceFrame(tabId);
+          if (cancelled) return;
+          setOcclusionFrame(frame);
+          return;
+        }
+        await bridge.setSurface(tabId, bounds, presentNativeSurface, layout.viewportScale);
+        if (cancelled) return;
+        if (!surfaceOccluded && presentNativeSurface) {
+          setOcclusionFrame(null);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [active, lastRect, layout, presentNativeSurface, surfaceOccluded, tabId]);
 
   return (
     <div
@@ -212,12 +206,7 @@ export function HostedBrowserWebview(props: {
             onChange={commitViewportChange}
           />
         ) : null}
-        <webview
-          ref={setWebviewRef}
-          src={initialSrc}
-          partition={config.partition}
-          webpreferences={config.webPreferences}
-          {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}
+        <div
           data-preview-tab={tabId}
           data-preview-viewport-mode={effectiveViewport._tag}
           data-preview-viewport-key={browserViewportSettingKey(effectiveViewport)}
@@ -231,11 +220,8 @@ export function HostedBrowserWebview(props: {
               ? Math.max(1, Math.round(layout.viewportHeight / normalizedZoomFactor))
               : effectiveViewport.height
           }
-          aria-hidden={active ? undefined : true}
-          className={cn(
-            "absolute flex overflow-hidden bg-background",
-            active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
-          )}
+          aria-hidden={!active}
+          className="pointer-events-none absolute bg-background"
           style={{
             left: layout.viewportX,
             top: layout.viewportY,
@@ -244,7 +230,17 @@ export function HostedBrowserWebview(props: {
             transform: layout.viewportScale < 1 ? `scale(${layout.viewportScale})` : undefined,
             transformOrigin: "top left",
           }}
-        />
+        >
+          {active && surfaceOccluded && occlusionFrame ? (
+            <img
+              alt=""
+              aria-hidden="true"
+              className="size-full"
+              draggable={false}
+              src={`data:${occlusionFrame.mimeType};base64,${occlusionFrame.data}`}
+            />
+          ) : null}
+        </div>
         {active && effectiveViewport._tag !== "fill" ? (
           <>
             <BrowserViewportResizeHandles

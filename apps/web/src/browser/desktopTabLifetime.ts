@@ -1,3 +1,5 @@
+import type { EnvironmentId } from "@t3tools/contracts";
+
 import { previewBridge } from "~/components/preview/previewBridge";
 
 interface DesktopTabLease {
@@ -13,13 +15,17 @@ export interface AcquiredDesktopTab {
   readonly release: () => void;
 }
 
-export function acquireDesktopTab(tabId: string): AcquiredDesktopTab {
+export function acquireDesktopTab(
+  tabId: string,
+  environmentId: EnvironmentId,
+  initialUrl: string | null,
+): AcquiredDesktopTab {
   const current =
     leases.get(tabId) ??
     ({
       references: 0,
       closeTimer: null,
-      ready: previewBridge?.createTab(tabId) ?? Promise.resolve(),
+      ready: previewBridge?.createTab(tabId, environmentId, initialUrl) ?? Promise.resolve(),
     } satisfies DesktopTabLease);
   if (current.closeTimer !== null) window.clearTimeout(current.closeTimer);
   current.references += 1;

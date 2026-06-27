@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 const { closeTab, createTab } = vi.hoisted(() => ({
   closeTab: vi.fn(async () => undefined),
@@ -13,6 +14,11 @@ import { acquireDesktopTab } from "./desktopTabLifetime";
 
 describe("desktopTabLifetime", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", {
+      clearTimeout: globalThis.clearTimeout,
+      setTimeout: globalThis.setTimeout,
+    });
     closeTab.mockClear();
     createTab.mockClear();
   });
@@ -25,10 +31,12 @@ describe("desktopTabLifetime", () => {
       }),
     );
 
-    const first = acquireDesktopTab("tab_readiness");
-    const second = acquireDesktopTab("tab_readiness");
+    const environmentId = "env_test" as EnvironmentId;
+    const first = acquireDesktopTab("tab_readiness", environmentId, "https://example.com");
+    const second = acquireDesktopTab("tab_readiness", environmentId, "https://example.com");
 
     expect(createTab).toHaveBeenCalledOnce();
+    expect(createTab).toHaveBeenCalledWith("tab_readiness", environmentId, "https://example.com");
     expect(first.ready).toBe(second.ready);
 
     let ready = false;
@@ -41,5 +49,10 @@ describe("desktopTabLifetime", () => {
     resolveCreation?.();
     await first.ready;
     expect(ready).toBe(true);
+
+    first.release();
+    second.release();
+    await vi.runAllTimersAsync();
+    expect(closeTab).toHaveBeenCalledWith("tab_readiness");
   });
 });

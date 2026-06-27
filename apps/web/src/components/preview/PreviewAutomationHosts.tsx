@@ -36,6 +36,7 @@ import {
 } from "~/browser/browserRecording";
 import { resolveBrowserRecordingStopTarget } from "~/browser/browserRecordingScope";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
+import { acquireDesktopTab } from "~/browser/desktopTabLifetime";
 import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
@@ -43,6 +44,7 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { previewBridge } from "./previewBridge";
+import { replayDesktopPreviewState } from "./desktopPreviewState";
 import {
   PreviewAutomationNavigationTimeoutError,
   PreviewAutomationOperationError,
@@ -69,10 +71,17 @@ const waitForDesktopOverlay = async (
 ): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
-    const state = readThreadPreviewState(threadRef);
-    if (state.desktopByTabId[tabId] && previewBridge) {
-      const status = await previewBridge.automation.status(tabId);
-      if (status.available) return;
+    if (previewBridge) {
+      try {
+        const nativeState = await replayDesktopPreviewState(threadRef, tabId);
+        if (nativeState?.webContentsId != null) {
+          const status = await previewBridge.automation.status(tabId);
+          if (status.available) return;
+        }
+      } catch {
+        // Native view creation and renderer reconciliation can overlap. Retry
+        // until the request deadline instead of depending on event ordering.
+      }
     }
     await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
   }
@@ -82,6 +91,20 @@ const waitForDesktopOverlay = async (
     threadId: threadRef.threadId,
     timeoutMs,
   });
+};
+
+const waitForLeasedDesktopOverlay = (
+  threadRef: ScopedThreadRef,
+  requestId: string,
+  tabId: string,
+  environmentId: EnvironmentId,
+  initialUrl: string | null,
+  timeoutMs: number,
+): Promise<void> => {
+  const lease = acquireDesktopTab(tabId, environmentId, initialUrl);
+  return lease.ready
+    .then(() => waitForDesktopOverlay(threadRef, requestId, tabId, timeoutMs))
+    .finally(lease.release);
 };
 
 const waitForNavigationReadiness = async (
@@ -116,21 +139,16 @@ const waitForNavigationReadiness = async (
   });
 };
 
-interface ExecutablePreviewWebview extends Element {
-  readonly executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
-}
-
-const findPreviewWebview = (tabId: string): ExecutablePreviewWebview | null =>
-  Array.from(document.querySelectorAll<ExecutablePreviewWebview>("webview[data-preview-tab]")).find(
+const findPreviewSurface = (tabId: string): Element | null =>
+  Array.from(document.querySelectorAll("[data-preview-tab]")).find(
     (candidate) => candidate.getAttribute("data-preview-tab") === tabId,
   ) ?? null;
 
-const readWebviewViewport = async (
-  webview: ExecutablePreviewWebview,
-): Promise<PreviewRenderedViewportSize | null> => {
-  const value = await webview.executeJavaScript(
-    "({ width: window.innerWidth, height: window.innerHeight })",
-  );
+const readNativeViewport = async (tabId: string): Promise<PreviewRenderedViewportSize | null> => {
+  if (!previewBridge) return null;
+  const value = await previewBridge.automation.evaluate(tabId, {
+    expression: "({ width: window.innerWidth, height: window.innerHeight })",
+  });
   if (typeof value !== "object" || value === null) return null;
   const { width, height } = value as { readonly width?: unknown; readonly height?: unknown };
   return typeof width === "number" &&
@@ -144,16 +162,13 @@ const readWebviewViewport = async (
 };
 
 const readRenderedViewport = async (tabId: string): Promise<PreviewRenderedViewportSize | null> => {
-  const webview = findPreviewWebview(tabId);
-  if (!webview) return null;
-  return await readWebviewViewport(webview);
+  if (!findPreviewSurface(tabId)) return null;
+  return await readNativeViewport(tabId);
 };
 
-const readDeclaredViewport = (
-  webview: ExecutablePreviewWebview | null,
-): PreviewRenderedViewportSize | null => {
-  const width = Number(webview?.getAttribute("data-preview-css-width"));
-  const height = Number(webview?.getAttribute("data-preview-css-height"));
+const readDeclaredViewport = (surface: Element | null): PreviewRenderedViewportSize | null => {
+  const width = Number(surface?.getAttribute("data-preview-css-width"));
+  const height = Number(surface?.getAttribute("data-preview-css-height"));
   return Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0
     ? { width, height }
     : null;
@@ -172,10 +187,10 @@ const waitForRenderedViewport = async (
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
     try {
-      const webview = findPreviewWebview(tabId);
-      const appliedSettingKey = webview?.getAttribute("data-preview-viewport-key") ?? null;
-      const declaredViewport = readDeclaredViewport(webview);
-      const renderedViewport = webview ? await readWebviewViewport(webview) : null;
+      const surface = findPreviewSurface(tabId);
+      const appliedSettingKey = surface?.getAttribute("data-preview-viewport-key") ?? null;
+      const declaredViewport = readDeclaredViewport(surface);
+      const renderedViewport = surface ? await readNativeViewport(tabId) : null;
       if (
         renderedViewport &&
         isPreviewViewportReady({
@@ -215,9 +230,12 @@ const currentStatus = async (
     ...(viewportSetting === undefined ? {} : { viewportSetting }),
     ...(viewport === null ? {} : { viewport }),
   };
-  if (tabId && previewBridge && state.desktopByTabId[tabId]) {
-    const status = await previewBridge.automation.status(tabId);
-    return { ...status, visible, ...viewportStatus };
+  if (tabId && previewBridge) {
+    const nativeState = await replayDesktopPreviewState(threadRef, tabId).catch(() => null);
+    if (nativeState?.webContentsId != null) {
+      const status = await previewBridge.automation.status(tabId);
+      return { ...status, visible, ...viewportStatus };
+    }
   }
   const navStatus = snapshot?.navStatus;
   return {
@@ -364,10 +382,14 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               useRightPanelStore.getState().openBrowser(threadRef, activeTabId);
             }
             if (activeSnapshot && previewAutomationOpenNeedsOverlay(input, activeSnapshot)) {
-              await waitForDesktopOverlay(
+              const initialUrl =
+                activeSnapshot.navStatus._tag === "Idle" ? null : activeSnapshot.navStatus.url;
+              await waitForLeasedDesktopOverlay(
                 threadRef,
                 request.requestId,
                 activeTabId,
+                environmentId,
+                initialUrl,
                 request.timeoutMs,
               );
             }

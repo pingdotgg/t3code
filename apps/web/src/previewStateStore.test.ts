@@ -295,6 +295,7 @@ describe("previewStateStore (single-tab)", () => {
       canGoForward: false,
       loading: false,
       zoomFactor: 1,
+      focused: false,
       controller: "none",
     });
     const state = readThreadPreviewState(ref);
@@ -312,6 +313,7 @@ describe("previewStateStore (single-tab)", () => {
       canGoForward: false,
       loading: false,
       zoomFactor: 1,
+      focused: false,
       controller: "none",
     });
     setActivePreviewTab(ref, first.tabId);
@@ -357,6 +359,7 @@ describe("previewStateStore (single-tab)", () => {
       canGoForward: false,
       loading: false,
       zoomFactor: 1,
+      focused: false,
       controller: "none",
     });
 

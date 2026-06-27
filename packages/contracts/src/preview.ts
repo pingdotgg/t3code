@@ -1,10 +1,10 @@
 /**
  * Preview - Schemas for the in-app browser preview surface.
  *
- * The preview is desktop-only (Chromium <webview>); the server tracks per-thread
- * tab metadata so it survives client reconnects and multi-window. The desktop
- * renderer mediates: it owns the actual <webview> and reports navigation back to
- * the server via these RPCs, the server fans events to all subscribers.
+ * The preview is desktop-only. The server tracks per-thread tab metadata so it
+ * survives client reconnects and multi-window, while the desktop process owns
+ * the native Chromium tab surfaces. Navigation is reported through these RPCs
+ * and the server fans events out to all subscribers.
  *
  * @module Preview
  */

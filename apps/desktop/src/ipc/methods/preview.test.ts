@@ -37,18 +37,25 @@ describe("preview IPC methods", () => {
     expect(fromPartition).not.toHaveBeenCalled();
   });
 
-  effectIt.effect("rejects invalid webContents ids before resolving the preview service", () =>
-    Effect.map(
-      PreviewIpc.registerWebview
-        .handler({ tabId: "tab-1", webContentsId: 0 })
-        .pipe(Effect.provideService(PreviewManager.PreviewManager, null as never), Effect.exit),
-      (exit) => {
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isSuccess(exit)) return;
-        const error = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(error) && Schema.isSchemaError(error.value)).toBe(true);
-        expect(fromPartition).not.toHaveBeenCalled();
-      },
-    ),
+  effectIt.effect(
+    "rejects invalid native surface bounds before resolving the preview service",
+    () =>
+      Effect.map(
+        PreviewIpc.setSurface
+          .handler({
+            tabId: "tab-1",
+            bounds: { x: 0, y: 0, width: 0, height: 800 },
+            visible: true,
+            scale: 1,
+          })
+          .pipe(Effect.provideService(PreviewManager.PreviewManager, null as never), Effect.exit),
+        (exit) => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isSuccess(exit)) return;
+          const error = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(error) && Schema.isSchemaError(error.value)).toBe(true);
+          expect(fromPartition).not.toHaveBeenCalled();
+        },
+      ),
   );
 });

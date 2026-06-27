@@ -441,6 +441,7 @@ export interface DesktopPreviewTabState {
   canGoForward: boolean;
   /** Current zoom factor (1.0 = 100%). */
   zoomFactor: number;
+  focused: boolean;
   controller: "human" | "agent" | "none";
   updatedAt: string;
 }
@@ -477,6 +478,7 @@ export const DesktopPreviewTabStateSchema: Schema.Codec<DesktopPreviewTabState> 
   canGoBack: Schema.Boolean,
   canGoForward: Schema.Boolean,
   zoomFactor: Schema.Number,
+  focused: Schema.Boolean,
   controller: Schema.Literals(["human", "agent", "none"]),
   updatedAt: Schema.String,
 });
@@ -498,36 +500,6 @@ export const DesktopPreviewPointerEventSchema: Schema.Codec<DesktopPreviewPointe
     y: Schema.Number,
     sequence: Schema.Int,
     createdAt: Schema.String,
-  });
-
-/**
- * Static config a renderer needs to mount a preview `<webview>`. Returned
- * atomically by `DesktopPreviewBridge.getPreviewConfig()` so the renderer
- * doesn't have to wait on three separate IPC round-trips before the webview
- * can attach.
- */
-export interface DesktopPreviewWebviewConfig {
-  /** `persist:t3code-preview` (or whatever the desktop chose). */
-  partition: string;
-  /**
-   * Canonical `<webview webpreferences="...">` string. Encodes the security
-   * posture (sandboxed but contextIsolation off so the picker preload can
-   * read the page's React DevTools hook). Always present.
-   */
-  webPreferences: string;
-  /**
-   * Absolute `file://`-style URL to the picker preload bundle. Set to null
-   * when the bundle isn't present (older builds, broken install) — the
-   * renderer must then disable element-pick affordances.
-   */
-  preloadUrl: string | null;
-}
-
-export const DesktopPreviewWebviewConfigSchema: Schema.Codec<DesktopPreviewWebviewConfig> =
-  Schema.Struct({
-    partition: Schema.String,
-    webPreferences: Schema.String,
-    preloadUrl: Schema.NullOr(Schema.String),
   });
 
 export interface DesktopPreviewAnnotationTheme {
@@ -626,6 +598,22 @@ export const DesktopPreviewScreenshotArtifactSchema: Schema.Codec<DesktopPreview
     createdAt: Schema.String,
   });
 
+/** Lightweight in-memory frame used while native preview content is occluded by app chrome. */
+export interface DesktopPreviewSurfaceFrame {
+  mimeType: "image/png";
+  data: string;
+  width: number;
+  height: number;
+}
+
+export const DesktopPreviewSurfaceFrameSchema: Schema.Codec<DesktopPreviewSurfaceFrame> =
+  Schema.Struct({
+    mimeType: Schema.Literal("image/png"),
+    data: Schema.String,
+    width: Schema.Int,
+    height: Schema.Int,
+  });
+
 /**
  * Single stack frame captured by react-grab's `getElementContext`. We surface
  * the source file/line so coding agents can jump straight to the JSX that
@@ -646,7 +634,7 @@ export const PickedElementStackFrameSchema: Schema.Codec<PickedElementStackFrame
 });
 
 /**
- * A successful element pick from the preview webview. All fields are
+ * A successful element pick from the preview page. All fields are
  * best-effort — pages that don't ship a React fiber tree (or aren't running
  * in dev) will still produce a usable payload (selector + html preview),
  * just without component / source attribution.
@@ -821,18 +809,27 @@ export const DesktopPreviewTabInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
 });
 
-export const DesktopPreviewRegisterWebviewInputSchema = Schema.Struct({
+export const DesktopPreviewCreateTabInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
-  webContentsId: Schema.Int.check(Schema.isGreaterThan(0)),
+  environmentId: EnvironmentId,
+  initialUrl: Schema.NullOr(Schema.String),
+});
+
+export const DesktopPreviewSurfaceInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  bounds: Schema.Struct({
+    x: Schema.Int,
+    y: Schema.Int,
+    width: Schema.Int.check(Schema.isGreaterThan(0)),
+    height: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
+  visible: Schema.Boolean,
+  scale: Schema.Number.check(Schema.isGreaterThan(0)),
 });
 
 export const DesktopPreviewNavigateInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   url: Schema.String,
-});
-
-export const DesktopPreviewConfigInputSchema = Schema.Struct({
-  environmentId: EnvironmentId,
 });
 
 export const DesktopPreviewAnnotationThemeInputSchema = Schema.Struct({
@@ -936,9 +933,24 @@ export interface DesktopBridge {
 }
 
 export interface DesktopPreviewBridge {
-  createTab: (tabId: string) => Promise<void>;
+  createTab: (
+    tabId: string,
+    environmentId: EnvironmentId,
+    initialUrl: string | null,
+  ) => Promise<void>;
+  getTabState: (tabId: string) => Promise<DesktopPreviewTabState | null>;
   closeTab: (tabId: string) => Promise<void>;
-  registerWebview: (tabId: string, webContentsId: number) => Promise<void>;
+  setSurface: (
+    tabId: string,
+    bounds: {
+      readonly x: number;
+      readonly y: number;
+      readonly width: number;
+      readonly height: number;
+    },
+    visible: boolean,
+    scale: number,
+  ) => Promise<void>;
   navigate: (tabId: string, url: string) => Promise<void>;
   goBack: (tabId: string) => Promise<void>;
   goForward: (tabId: string) => Promise<void>;
@@ -948,29 +960,23 @@ export interface DesktopPreviewBridge {
   resetZoom: (tabId: string) => Promise<void>;
   /** Reload bypassing the HTTP cache. */
   hardReload: (tabId: string) => Promise<void>;
-  /** Open the guest webview's DevTools (detached). */
+  /** Open the preview page's DevTools (detached). */
   openDevTools: (tabId: string) => Promise<void>;
   /** Drop cookies + storage data for the preview partition (all tabs). */
   clearCookies: () => Promise<void>;
   /** Drop the HTTP cache for the preview partition (all tabs). */
   clearCache: () => Promise<void>;
-  /**
-   * One-shot config for mounting a preview `<webview>`. Replaces three
-   * earlier round-trip calls (`getBrowserPartition`, `getWebviewPreferences`,
-   * `getPickPreloadPath`) so adding a new field here only requires touching
-   * the contract + main, not the renderer's mount logic.
-   */
-  getPreviewConfig: (environmentId: EnvironmentId) => Promise<DesktopPreviewWebviewConfig>;
   setAnnotationTheme: (theme: DesktopPreviewAnnotationTheme) => Promise<void>;
   /**
    * Activate the in-page element picker for the given tab. Resolves with
    * the picked payload, or `null` when the user cancels (Escape / nav). The
-   * promise rejects if the picker can't be activated (no webview, etc.).
+   * promise rejects if the picker can't be activated (no native view, etc.).
    */
   pickElement: (tabId: string) => Promise<PreviewAnnotationPayload | null>;
   /** Cancel an in-flight preview annotation session. */
   cancelPickElement: (tabId: string) => Promise<void>;
   captureScreenshot: (tabId: string) => Promise<DesktopPreviewScreenshotArtifact>;
+  captureSurfaceFrame: (tabId: string) => Promise<DesktopPreviewSurfaceFrame>;
   revealArtifact: (path: string) => Promise<void>;
   copyArtifactToClipboard: (path: string) => Promise<void>;
   recording: {
