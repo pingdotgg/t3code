@@ -451,14 +451,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const handleSend = useCallback(async () => {
     const threadId = props.selectedThread.id;
-    if (!canSend || inFlightThreadIdsRef.current.has(threadId)) return;
+    if (inFlightThreadIdsRef.current.has(threadId)) return;
     inFlightThreadIdsRef.current.add(threadId);
     try {
       await onSendMessage();
     } finally {
       inFlightThreadIdsRef.current.delete(threadId);
     }
-  }, [canSend, onSendMessage, props.selectedThread.id]);
+  }, [onSendMessage, props.selectedThread.id]);
   const handleCommandSelect = useCallback(
     (item: ComposerCommandItem) => {
       if (!composerTrigger) return;

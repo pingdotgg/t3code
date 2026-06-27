@@ -536,6 +536,22 @@ export function ThreadFilesTreeScreen() {
     [projectName],
   );
 
+  if (selectedThread === null || environmentId === null || threadId === null) {
+    if (fileInspector.supported) {
+      return (
+        <ThreadRouteScreen
+          onReturnToThread={handleReturnToThread}
+          renderInspector={renderInspector}
+        />
+      );
+    }
+    return <LoadingScreen message="Opening files..." messagePlacement="above-spinner" />;
+  }
+
+  if (cwd === null) {
+    return <FilesUnavailable />;
+  }
+
   if (fileInspector.supported) {
     return (
       <ThreadRouteScreen
@@ -543,14 +559,6 @@ export function ThreadFilesTreeScreen() {
         renderInspector={renderInspector}
       />
     );
-  }
-
-  if (selectedThread === null || environmentId === null || threadId === null) {
-    return <LoadingScreen message="Opening files..." messagePlacement="above-spinner" />;
-  }
-
-  if (cwd === null) {
-    return <FilesUnavailable />;
   }
 
   return (

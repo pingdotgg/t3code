@@ -152,10 +152,16 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
   );
   const environmentId = firstRouteParam(params.environmentId);
   const threadId = firstRouteParam(params.threadId);
-  const selectedThreadKey =
-    environmentId !== null && threadId !== null
-      ? scopedThreadKey(EnvironmentId.make(environmentId), ThreadId.make(threadId))
-      : null;
+  const selectedThreadKey = useMemo(() => {
+    if (environmentId === null || threadId === null) {
+      return null;
+    }
+    try {
+      return scopedThreadKey(EnvironmentId.make(environmentId), ThreadId.make(threadId));
+    } catch {
+      return null;
+    }
+  }, [environmentId, threadId]);
   const activateAuxiliaryPaneRole = useCallback((role: WorkspaceAuxiliaryPaneRole) => {
     const owner = Symbol(role);
     activeRoleOwner.current = owner;

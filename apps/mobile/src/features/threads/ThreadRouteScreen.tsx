@@ -254,7 +254,9 @@ function ThreadRouteContent(
   const inspectorMode =
     inspectorSelection?.routeThreadIdentity === routeThreadIdentity
       ? inspectorSelection.mode
-      : null;
+      : fileInspector.supported && selectedThreadCwd !== null
+        ? "files"
+        : null;
 
   useEffect(() => {
     setInspectorSelection((current) => {

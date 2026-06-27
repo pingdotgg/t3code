@@ -558,6 +558,8 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     rowsDecodeGeneration += 1
     tokensDecodeGeneration += 1
     contentView.tokensByRowId = [:]
+    rows = []
+    contentView.rows = []
     hasAppliedInitialRowIndex = false
     lastVisibleFileId = nil
     pendingScrollFileId = nil
@@ -658,6 +660,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     contentView.invalidateVisibleViewport()
     contentView.setNeedsDisplay()
     applyInitialRowIndexIfNeeded()
+    applyPendingScrollIfNeeded()
     emitVisibleFileIfNeeded()
 
     let debugKey = "\(rows.count):\(Int(bounds.width)):\(Int(bounds.height)):\(Int(height))"
