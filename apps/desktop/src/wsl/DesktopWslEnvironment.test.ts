@@ -14,6 +14,7 @@ import {
   DesktopWslDistroListError,
   formatMissingToolsReason,
   formatNodePtyProbeFailureReason,
+  formatWslShellTransportFailureReason,
   parseNodePath,
   parseResolvedPath,
   parseToolchainReport,
@@ -96,6 +97,14 @@ describe("formatNodePtyProbeFailureReason", () => {
 
   it("leaves other node-pty load failures to the compatibility diagnostic", () => {
     expect(formatNodePtyProbeFailureReason(1)).toBeNull();
+  });
+});
+
+describe("formatWslShellTransportFailureReason", () => {
+  it("distinguishes timeouts and spawn failures from normal shell exit codes", () => {
+    expect(formatWslShellTransportFailureReason("timeout")).toContain("timed out");
+    expect(formatWslShellTransportFailureReason("spawn")).toContain("could not start wsl.exe");
+    expect(formatWslShellTransportFailureReason(null)).toBeNull();
   });
 });
 

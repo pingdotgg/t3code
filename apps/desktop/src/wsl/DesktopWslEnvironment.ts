@@ -97,9 +97,28 @@ interface ShellResult {
   readonly exitCode: number;
   readonly stdout: string;
   readonly stderr: string;
+  readonly transportFailure: "timeout" | "spawn" | null;
 }
 
-const TIMEOUT_RESULT: ShellResult = { exitCode: 124, stdout: "", stderr: "\n[timeout]" };
+const TIMEOUT_RESULT: ShellResult = {
+  exitCode: 124,
+  stdout: "",
+  stderr: "\n[timeout]",
+  transportFailure: "timeout",
+};
+
+export const formatWslShellTransportFailureReason = (
+  failure: ShellResult["transportFailure"],
+): string | null => {
+  switch (failure) {
+    case "timeout":
+      return "WSL backend preflight timed out while probing for Node.js. WSL may be slow to start; retry, or check that the distro is healthy.";
+    case "spawn":
+      return "WSL backend preflight could not start wsl.exe to probe for Node.js. Check that WSL is installed and the distro is accessible.";
+    case null:
+      return null;
+  }
+};
 
 // Reuse the SSH remote resolver so WSL and SSH discover version-managed Node
 // the same way. Passing the engine range lets the resolver fall through to
@@ -151,6 +170,7 @@ const runWslShell = (
         exitCode: exitCode as unknown as number,
         stdout: decodeUtf8(concatChunks(stdoutBytes)),
         stderr: decodeUtf8(concatChunks(stderrBytes)),
+        transportFailure: null,
       } satisfies ShellResult;
     }),
   ).pipe(
@@ -161,6 +181,7 @@ const runWslShell = (
         exitCode: 127,
         stdout: "",
         stderr: `\n${error.message}`,
+        transportFailure: "spawn",
       }),
     ),
   );
@@ -356,6 +377,11 @@ const ensureNodePtyImpl = (
     );
     const nodePath = parseNodePath(probe.stdout);
     const resolvedPath = parseResolvedPath(probe.stdout);
+
+    const transportFailureReason = formatWslShellTransportFailureReason(probe.transportFailure);
+    if (transportFailureReason !== null) {
+      return { ok: false, reason: transportFailureReason } as const;
+    }
 
     // No node at all, even after the shared resolver repaired PATH. Surface
     // the specific, actionable toolchain message rather than a confusing
