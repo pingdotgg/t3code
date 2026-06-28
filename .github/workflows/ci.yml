@@ -1,101 +1,126 @@
 name: CI
 
 on:
-  pull_request:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Optional reason for manually running this disabled workflow.
+        required: false
+        type: string
+
+permissions: {}
 
 jobs:
-  check:
-    name: Check
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+  disabled:
+    name: Disabled
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: true
-
-      - name: Ensure Electron runtime is installed
-        run: vp run --filter @t3tools/desktop ensure:electron
-
-      - name: Check
-        run: vp check
-
-      - name: Typecheck
-        run: vpr typecheck
-
-      - name: Build desktop pipeline
-        run: vp run build:desktop
-
-      - name: Verify preload bundle output
+      - name: Explain disabled state
         run: |
-          test -f apps/desktop/dist-electron/preload.cjs
-          grep -nE "desktopBridge|getLocalEnvironmentBootstrap|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.cjs
-          grep -n "__clerk_internal_electron_passkeys" apps/desktop/dist-electron/preload.cjs
+          echo "This workflow is intentionally manual-only."
+          echo "Automatic triggers were removed to prevent unwanted GitHub Actions usage."
 
-  test:
-    name: Test
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: true
-
-      - name: Ensure Electron runtime is installed
-        run: vp run --filter @t3tools/desktop ensure:electron
-
-      - name: Test
-        run: vp run test
-
-  mobile_native_static_analysis:
-    name: Mobile Native Static Analysis
-    runs-on: blacksmith-12vcpu-macos-26
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: true
-
-      - name: Install mobile native static analysis tools
-        run: brew bundle install --file apps/mobile/Brewfile
-
-      - name: Lint mobile native sources
-        run: vp run lint:mobile
-
-  release_smoke:
-    name: Release Smoke
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: true
-
-      - name: Exercise release-only workflow steps
-        run: node scripts/release-smoke.ts
+# Previous workflow body is kept below for reference.
+# Restore the relevant triggers and jobs only when this workflow should run again.
+#
+# name: CI
+#
+# on:
+#   pull_request:
+#   push:
+#     branches:
+#       - main
+#
+# jobs:
+#   check:
+#     name: Check
+#     runs-on: blacksmith-8vcpu-ubuntu-2404
+#     timeout-minutes: 10
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v6
+#
+#       - name: Setup Vite+
+#         uses: voidzero-dev/setup-vp@v1
+#         with:
+#           node-version-file: package.json
+#           cache: true
+#           run-install: true
+#
+#       - name: Ensure Electron runtime is installed
+#         run: vp run --filter @t3tools/desktop ensure:electron
+#
+#       - name: Check
+#         run: vp check
+#
+#       - name: Typecheck
+#         run: vpr typecheck
+#
+#       - name: Build desktop pipeline
+#         run: vp run build:desktop
+#
+#       - name: Verify preload bundle output
+#         run: |
+#           test -f apps/desktop/dist-electron/preload.cjs
+#           grep -nE "desktopBridge|getLocalEnvironmentBootstrap|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.cjs
+#           grep -n "__clerk_internal_electron_passkeys" apps/desktop/dist-electron/preload.cjs
+#
+#   test:
+#     name: Test
+#     runs-on: blacksmith-8vcpu-ubuntu-2404
+#     timeout-minutes: 10
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v6
+#
+#       - name: Setup Vite+
+#         uses: voidzero-dev/setup-vp@v1
+#         with:
+#           node-version-file: package.json
+#           cache: true
+#           run-install: true
+#
+#       - name: Ensure Electron runtime is installed
+#         run: vp run --filter @t3tools/desktop ensure:electron
+#
+#       - name: Test
+#         run: vp run test
+#
+#   mobile_native_static_analysis:
+#     name: Mobile Native Static Analysis
+#     runs-on: blacksmith-12vcpu-macos-26
+#     timeout-minutes: 10
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v6
+#
+#       - name: Setup Vite+
+#         uses: voidzero-dev/setup-vp@v1
+#         with:
+#           node-version-file: package.json
+#           cache: true
+#           run-install: true
+#
+#       - name: Install mobile native static analysis tools
+#         run: brew bundle install --file apps/mobile/Brewfile
+#
+#       - name: Lint mobile native sources
+#         run: vp run lint:mobile
+#
+#   release_smoke:
+#     name: Release Smoke
+#     runs-on: blacksmith-8vcpu-ubuntu-2404
+#     timeout-minutes: 10
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v6
+#
+#       - name: Setup Vite+
+#         uses: voidzero-dev/setup-vp@v1
+#         with:
+#           node-version-file: package.json
+#           cache: true
+#           run-install: true
+#
+#       - name: Exercise release-only workflow steps
+#         run: node scripts/release-smoke.ts
