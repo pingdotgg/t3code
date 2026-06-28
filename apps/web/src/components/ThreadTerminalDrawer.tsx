@@ -111,15 +111,6 @@ function fitTerminalSafely(fitAddon: FitAddon): boolean {
   }
 }
 
-function runtimeEnvSignature(runtimeEnv: Record<string, string> | undefined): string {
-  if (!runtimeEnv) return "";
-  return JSON.stringify(
-    Object.entries(runtimeEnv)
-      .filter(([key, value]) => key.length > 0 && typeof value === "string")
-      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey)),
-  );
-}
-
 function normalizeComputedColor(value: string | null | undefined, fallback: string): string {
   const normalizedValue = value?.trim().toLowerCase();
   if (
@@ -293,7 +284,6 @@ interface TerminalViewportProps {
   terminalLabel: string;
   cwd: string;
   worktreePath?: string | null;
-  runtimeEnv?: Record<string, string>;
   onSessionExited: () => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   focusRequestId: number;
@@ -306,7 +296,6 @@ interface TerminalViewportProps {
 interface TerminalLaunchLocation {
   readonly cwd: string;
   readonly worktreePath?: string | null;
-  readonly runtimeEnv?: Record<string, string>;
 }
 
 export function TerminalViewport({
@@ -317,7 +306,6 @@ export function TerminalViewport({
   terminalLabel,
   cwd,
   worktreePath,
-  runtimeEnv,
   onSessionExited,
   onAddTerminalContext,
   focusRequestId,
@@ -352,7 +340,6 @@ export function TerminalViewport({
   const selectionActionOpenRef = useRef(false);
   const selectionActionTimerRef = useRef<number | null>(null);
   const keybindingsRef = useRef(keybindings);
-  const runtimeEnvKey = useMemo(() => runtimeEnvSignature(runtimeEnv), [runtimeEnv]);
   const handleSessionExited = useEffectEvent(() => {
     onSessionExited();
   });
@@ -365,9 +352,9 @@ export function TerminalViewport({
     terminal: {
       threadId,
       terminalId,
+      projectId,
       cwd,
       ...(worktreePath !== undefined ? { worktreePath } : {}),
-      ...(runtimeEnv ? { env: runtimeEnv } : {}),
     },
   });
   const writeTerminal = useEffectEvent((data: string) =>
@@ -742,7 +729,7 @@ export function TerminalViewport({
     // autoFocus is intentionally omitted;
     // it is only read at mount time and must not trigger terminal teardown/recreation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, environmentId, projectId, runtimeEnvKey, terminalId, threadId, worktreePath]);
+  }, [cwd, environmentId, projectId, terminalId, threadId, worktreePath]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -846,7 +833,6 @@ interface ThreadTerminalDrawerProps {
   projectId: ProjectId;
   cwd: string;
   worktreePath?: string | null;
-  runtimeEnv?: Record<string, string>;
   visible?: boolean;
   height: number;
   terminalIds: string[];
@@ -908,7 +894,6 @@ export default function ThreadTerminalDrawer({
   projectId,
   cwd,
   worktreePath,
-  runtimeEnv,
   visible = true,
   height,
   terminalIds,
@@ -1094,11 +1079,10 @@ export default function ThreadTerminalDrawer({
         terminalLaunchLocationsById?.get(terminalId) ?? {
           cwd,
           ...(worktreePath !== undefined ? { worktreePath } : {}),
-          ...(runtimeEnv ? { runtimeEnv } : {}),
         }
       );
     },
-    [cwd, runtimeEnv, terminalLaunchLocationsById, worktreePath],
+    [cwd, terminalLaunchLocationsById, worktreePath],
   );
   const splitTerminalActionLabel = hasReachedSplitLimit
     ? `Split Terminal Horizontally (max ${MAX_TERMINALS_PER_GROUP} per group)`
@@ -1377,9 +1361,6 @@ export default function ThreadTerminalDrawer({
                           {...(terminalLaunchLocation.worktreePath !== undefined
                             ? { worktreePath: terminalLaunchLocation.worktreePath }
                             : {})}
-                          {...(terminalLaunchLocation.runtimeEnv
-                            ? { runtimeEnv: terminalLaunchLocation.runtimeEnv }
-                            : {})}
                           onSessionExited={() => onCloseTerminal(terminalId)}
                           onAddTerminalContext={onAddTerminalContext}
                           focusRequestId={focusRequestId}
@@ -1405,9 +1386,6 @@ export default function ThreadTerminalDrawer({
                   cwd={activeTerminalLaunchLocation.cwd}
                   {...(activeTerminalLaunchLocation.worktreePath !== undefined
                     ? { worktreePath: activeTerminalLaunchLocation.worktreePath }
-                    : {})}
-                  {...(activeTerminalLaunchLocation.runtimeEnv
-                    ? { runtimeEnv: activeTerminalLaunchLocation.runtimeEnv }
                     : {})}
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
                   onAddTerminalContext={onAddTerminalContext}

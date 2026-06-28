@@ -306,6 +306,7 @@ export function ThreadTerminalRouteScreen() {
         ? {
             threadId: selectedThread.id,
             terminalId,
+            projectId: selectedThread.projectId,
             cwd: launchLocation.cwd,
             worktreePath: launchLocation.worktreePath,
             cols: initialAttachGridSize.cols,

@@ -9,17 +9,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import {
-  LaunchEnv,
-  type LaunchEnvShape,
-  type ResolvedLaunchEnvForThread,
-} from "../Services/LaunchEnv.ts";
+  ProjectLaunchEnv,
+  type ProjectLaunchEnvShape,
+  type ResolvedProjectLaunchEnvForThread,
+} from "../Services/ProjectLaunchEnv.ts";
 import {
-  LaunchEnvProjectLookupError,
-  LaunchEnvThreadLookupError,
-} from "../Services/LaunchEnvErrors.ts";
-import { mergeResolvedLaunchEnv } from "../launchEnvUtils.ts";
+  ProjectLaunchEnvProjectLookupError,
+  ProjectLaunchEnvThreadLookupError,
+} from "../Services/ProjectLaunchEnvErrors.ts";
+import { mergeResolvedProjectLaunchEnv } from "../projectLaunchEnvUtils.ts";
 
-export type LaunchEnvTestFixtures = {
+export type ProjectLaunchEnvTestFixtures = {
   readonly t3Home: string;
   readonly projects?: ReadonlyArray<OrchestrationProjectShell>;
   readonly threads?: ReadonlyArray<OrchestrationThreadShell>;
@@ -31,10 +31,12 @@ const toProjectMap = (projects: ReadonlyArray<OrchestrationProjectShell> | undef
 const toThreadMap = (threads: ReadonlyArray<OrchestrationThreadShell> | undefined) =>
   new Map((threads ?? []).map((thread) => [thread.id, thread] as const));
 
-export const makeLaunchEnvTestShape = (fixtures: LaunchEnvTestFixtures): LaunchEnvShape => {
-  const resolve: LaunchEnvShape["resolve"] = (input) =>
+export const makeProjectLaunchEnvTestShape = (
+  fixtures: ProjectLaunchEnvTestFixtures,
+): ProjectLaunchEnvShape => {
+  const resolve: ProjectLaunchEnvShape["resolve"] = (input) =>
     Effect.succeed(
-      mergeResolvedLaunchEnv({
+      mergeResolvedProjectLaunchEnv({
         t3Home: fixtures.t3Home,
         ...(input.extraEnv !== undefined ? { extraEnv: input.extraEnv } : {}),
         context: {
@@ -49,8 +51,8 @@ export const makeLaunchEnvTestShape = (fixtures: LaunchEnvTestFixtures): LaunchE
   const projectsById = toProjectMap(fixtures.projects);
   const threadsById = toThreadMap(fixtures.threads);
 
-  const resolveForThread: LaunchEnvShape["resolveForThread"] = Effect.fn(
-    "LaunchEnv.resolveForThread",
+  const resolveForThread: ProjectLaunchEnvShape["resolveForThread"] = Effect.fn(
+    "ProjectLaunchEnv.resolveForThread",
   )(function* (input) {
     const threadOption = yield* Effect.succeed(
       Option.fromNullishOr(threadsById.get(ThreadId.make(input.threadId))),
@@ -65,7 +67,7 @@ export const makeLaunchEnvTestShape = (fixtures: LaunchEnvTestFixtures): LaunchE
       onNone: () => {
         if (input.projectId === undefined) {
           return Effect.fail(
-            new LaunchEnvThreadLookupError({
+            new ProjectLaunchEnvThreadLookupError({
               threadId: input.threadId,
               terminalId: input.terminalId,
             }),
@@ -85,7 +87,7 @@ export const makeLaunchEnvTestShape = (fixtures: LaunchEnvTestFixtures): LaunchE
           onSome: Effect.succeed,
           onNone: () =>
             Effect.fail(
-              new LaunchEnvProjectLookupError({
+              new ProjectLaunchEnvProjectLookupError({
                 projectId: String(projectId),
                 reason: "notFound",
               }),
@@ -106,7 +108,7 @@ export const makeLaunchEnvTestShape = (fixtures: LaunchEnvTestFixtures): LaunchE
       projectId,
       worktreePath,
       env,
-    } satisfies ResolvedLaunchEnvForThread;
+    } satisfies ResolvedProjectLaunchEnvForThread;
   });
 
   return {
@@ -115,13 +117,13 @@ export const makeLaunchEnvTestShape = (fixtures: LaunchEnvTestFixtures): LaunchE
   };
 };
 
-export const launchEnvTestStub = (fixtures: {
+export const projectLaunchEnvTestStub = (fixtures: {
   readonly t3Home: string;
   readonly projectId: ProjectId;
-}): LaunchEnvShape => {
-  const resolve: LaunchEnvShape["resolve"] = (input) =>
+}): ProjectLaunchEnvShape => {
+  const resolve: ProjectLaunchEnvShape["resolve"] = (input) =>
     Effect.succeed(
-      mergeResolvedLaunchEnv({
+      mergeResolvedProjectLaunchEnv({
         t3Home: fixtures.t3Home,
         ...(input.extraEnv !== undefined ? { extraEnv: input.extraEnv } : {}),
         context: {
@@ -146,20 +148,20 @@ export const launchEnvTestStub = (fixtures: {
             (entry): entry is [string, string] => entry[1] !== undefined,
           ),
         ),
-      } satisfies ResolvedLaunchEnvForThread),
+      } satisfies ResolvedProjectLaunchEnvForThread),
   };
 };
 
-export const LaunchEnvTestLayer = {
+export const ProjectLaunchEnvTestLayer = {
   stub: (input: { readonly t3Home: string; readonly projectId: ProjectId }) =>
-    Layer.succeed(LaunchEnv, launchEnvTestStub(input)),
+    Layer.succeed(ProjectLaunchEnv, projectLaunchEnvTestStub(input)),
 
-  withFixtures: (fixtures: LaunchEnvTestFixtures) =>
-    Layer.succeed(LaunchEnv, makeLaunchEnvTestShape(fixtures)),
+  withFixtures: (fixtures: ProjectLaunchEnvTestFixtures) =>
+    Layer.succeed(ProjectLaunchEnv, makeProjectLaunchEnvTestShape(fixtures)),
 };
 
 /** Default CLI/unit-test layer: resolve-only stub with a fixed project id. */
-export const defaultLaunchEnvTestLayer = LaunchEnvTestLayer.stub({
+export const defaultProjectLaunchEnvTestLayer = ProjectLaunchEnvTestLayer.stub({
   t3Home: "/tmp/t3-launch-env-test",
   projectId: ProjectId.make("project-1"),
 });

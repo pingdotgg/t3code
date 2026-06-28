@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isManagedRuntimeEnvKey, stripManagedRuntimeEnvKeys } from "./launchEnv.ts";
+import { isManagedRuntimeEnvKey, stripManagedRuntimeEnvKeys } from "./projectLaunchEnv.ts";
 
-describe("launchEnv", () => {
+describe("projectLaunchEnv", () => {
   it("identifies managed runtime env keys", () => {
     expect(isManagedRuntimeEnvKey("T3CODE_PORT")).toBe(true);
     expect(isManagedRuntimeEnvKey("t3code_home")).toBe(true);
+    expect(isManagedRuntimeEnvKey("T3_MCP_BEARER_TOKEN")).toBe(true);
     expect(isManagedRuntimeEnvKey("CUSTOM_FLAG")).toBe(false);
   });
 
@@ -14,6 +15,7 @@ describe("launchEnv", () => {
       stripManagedRuntimeEnvKeys({
         T3CODE_PORT: "3773",
         T3CODE_HOME: "/tmp/.t3",
+        T3_MCP_BEARER_TOKEN: "token",
         CUSTOM_FLAG: "1",
       }),
     ).toEqual({

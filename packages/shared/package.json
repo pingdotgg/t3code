@@ -87,9 +87,9 @@
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
     },
-    "./launchEnv": {
-      "types": "./src/launchEnv.ts",
-      "import": "./src/launchEnv.ts"
+    "./projectLaunchEnv": {
+      "types": "./src/projectLaunchEnv.ts",
+      "import": "./src/projectLaunchEnv.ts"
     },
     "./orchestrationTiming": {
       "types": "./src/orchestrationTiming.ts",

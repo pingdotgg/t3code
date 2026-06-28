@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_TERMINAL_ID,
+  ProjectId,
   type TerminalAttachStreamEvent,
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
@@ -27,6 +28,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { ProjectLaunchEnv } from "../projectLaunchEnv/Services/ProjectLaunchEnv.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
@@ -213,6 +215,7 @@ interface CreateManagerOptions {
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
   ptyAdapter?: FakePtyAdapter;
+  projectLaunchEnv?: ProjectLaunchEnv["Service"];
 }
 
 interface ManagerFixture {
@@ -253,6 +256,9 @@ const createManager = (
         processKillGraceMs: options.processKillGraceMs ?? 1,
         ...(options.maxRetainedInactiveSessions !== undefined
           ? { maxRetainedInactiveSessions: options.maxRetainedInactiveSessions }
+          : {}),
+        ...(options.projectLaunchEnv !== undefined
+          ? { projectLaunchEnv: options.projectLaunchEnv }
           : {}),
       });
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
@@ -1336,13 +1342,26 @@ it.layer(
 
   it.effect("injects runtime env overrides into spawned terminals", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        projectLaunchEnv: ProjectLaunchEnv.of({
+          resolve: () => Effect.succeed({}),
+          resolveForThread: (input) =>
+            Effect.succeed({
+              projectId: input.projectId ?? ProjectId.make("project-1"),
+              worktreePath: "/repo/worktree-a",
+              env: {
+                T3CODE_PROJECT_ROOT: "/repo",
+                T3CODE_WORKTREE_PATH: "/repo/worktree-a",
+                CUSTOM_FLAG: "1",
+              },
+            }),
+        }),
+      });
       yield* manager.open(
         openInput({
           env: {
-            T3CODE_PROJECT_ROOT: "/repo",
-            T3CODE_WORKTREE_PATH: "/repo/worktree-a",
-            CUSTOM_FLAG: "1",
+            T3CODE_PROJECT_ROOT: "/client-spoof",
+            CUSTOM_FLAG: "client-spoof",
           },
         }),
       );

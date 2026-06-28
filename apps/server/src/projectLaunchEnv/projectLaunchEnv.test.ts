@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildLaunchContextEnv, mergeResolvedLaunchEnv } from "./launchEnvUtils.ts";
+import { buildLaunchContextEnv, mergeResolvedProjectLaunchEnv } from "./projectLaunchEnvUtils.ts";
 
-describe("launchEnvUtils", () => {
+describe("projectLaunchEnvUtils", () => {
   it("builds launch context env", () => {
     expect(
       buildLaunchContextEnv({
@@ -21,7 +21,7 @@ describe("launchEnvUtils", () => {
 
   it("merges custom env with authoritative server and launch values", () => {
     expect(
-      mergeResolvedLaunchEnv({
+      mergeResolvedProjectLaunchEnv({
         extraEnv: {
           T3CODE_PROJECT_ROOT: "/custom-root",
           T3CODE_PORT: "3773",

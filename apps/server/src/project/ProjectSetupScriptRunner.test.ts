@@ -89,7 +89,7 @@ describe("ProjectSetupScriptRunner", () => {
   });
 
   it.effect(
-    "opens the deterministic setup terminal with worktree env and writes the command",
+    "opens the deterministic setup terminal with project launch context and writes the command",
     () => {
       const open = vi.fn(() =>
         Effect.succeed({
@@ -135,12 +135,9 @@ describe("ProjectSetupScriptRunner", () => {
         expect(open).toHaveBeenCalledWith({
           threadId: "thread-1",
           terminalId: "setup-setup",
+          projectId: ProjectId.make("project-1"),
           cwd: "/repo/worktrees/a",
           worktreePath: "/repo/worktrees/a",
-          env: {
-            T3CODE_PROJECT_ROOT: "/repo/project",
-            T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
-          },
         });
         expect(write).toHaveBeenCalledWith({
           threadId: "thread-1",

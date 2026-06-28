@@ -36,7 +36,7 @@ import { makeAdapterRegistryMock } from "../src/provider/testUtils/providerAdapt
 import { ProviderAdapterRegistry } from "../src/provider/Services/ProviderAdapterRegistry.ts";
 import { makeProviderRegistryLayer } from "../src/provider/testUtils/providerRegistryMock.ts";
 import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
-import { LaunchEnvLive } from "../src/launchEnv/Layers/LaunchEnvLive.ts";
+import { ProjectLaunchEnvLive } from "../src/projectLaunchEnv/Layers/ProjectLaunchEnvLive.ts";
 import { ServerSettingsService } from "../src/serverSettings.ts";
 import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
 import { makeCodexAdapter } from "../src/provider/Layers/CodexAdapter.ts";
@@ -390,7 +390,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(serverConfigLayer),
       Layer.provide(persistenceLayer),
       Layer.provideMerge(
-        LaunchEnvLive.pipe(
+        ProjectLaunchEnvLive.pipe(
           Layer.provide(serverConfigLayer),
           Layer.provide(projectionSnapshotQueryLayer),
         ),

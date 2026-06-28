@@ -5,20 +5,20 @@ import * as Option from "effect/Option";
 
 import { ServerConfig } from "../../config.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { LaunchEnv, type LaunchEnvShape } from "../Services/LaunchEnv.ts";
-import { mergeResolvedLaunchEnv } from "../launchEnvUtils.ts";
+import { ProjectLaunchEnv, type ProjectLaunchEnvShape } from "../Services/ProjectLaunchEnv.ts";
+import { mergeResolvedProjectLaunchEnv } from "../projectLaunchEnvUtils.ts";
 import {
-  LaunchEnvProjectLookupError,
-  LaunchEnvThreadLookupError,
-} from "../Services/LaunchEnvErrors.ts";
+  ProjectLaunchEnvProjectLookupError,
+  ProjectLaunchEnvThreadLookupError,
+} from "../Services/ProjectLaunchEnvErrors.ts";
 
-export const makeLaunchEnv = Effect.fn("makeLaunchEnv")(function* () {
+export const makeProjectLaunchEnv = Effect.fn("makeProjectLaunchEnv")(function* () {
   const serverConfig = yield* ServerConfig;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
 
-  const resolve: LaunchEnvShape["resolve"] = (input) =>
+  const resolve: ProjectLaunchEnvShape["resolve"] = (input) =>
     Effect.succeed(
-      mergeResolvedLaunchEnv({
+      mergeResolvedProjectLaunchEnv({
         t3Home: serverConfig.baseDir,
         ...(input.extraEnv !== undefined ? { extraEnv: input.extraEnv } : {}),
         context: {
@@ -30,15 +30,15 @@ export const makeLaunchEnv = Effect.fn("makeLaunchEnv")(function* () {
       }),
     );
 
-  const resolveForThread: LaunchEnvShape["resolveForThread"] = Effect.fn(
-    "LaunchEnv.resolveForThread",
+  const resolveForThread: ProjectLaunchEnvShape["resolveForThread"] = Effect.fn(
+    "ProjectLaunchEnv.resolveForThread",
   )(function* (input) {
     const threadOption = yield* projectionSnapshotQuery
       .getThreadShellById(ThreadId.make(input.threadId))
       .pipe(
         Effect.mapError(
           (cause) =>
-            new LaunchEnvThreadLookupError({
+            new ProjectLaunchEnvThreadLookupError({
               threadId: input.threadId,
               terminalId: input.terminalId,
               cause,
@@ -55,7 +55,7 @@ export const makeLaunchEnv = Effect.fn("makeLaunchEnv")(function* () {
       onNone: () => {
         if (input.projectId === undefined) {
           return Effect.fail(
-            new LaunchEnvThreadLookupError({
+            new ProjectLaunchEnvThreadLookupError({
               threadId: input.threadId,
               terminalId: input.terminalId,
             }),
@@ -72,7 +72,7 @@ export const makeLaunchEnv = Effect.fn("makeLaunchEnv")(function* () {
     const projectOption = yield* projectionSnapshotQuery.getProjectShellById(projectId).pipe(
       Effect.mapError(
         (cause) =>
-          new LaunchEnvProjectLookupError({
+          new ProjectLaunchEnvProjectLookupError({
             projectId: String(projectId),
             reason: "statFailed",
             cause,
@@ -84,7 +84,7 @@ export const makeLaunchEnv = Effect.fn("makeLaunchEnv")(function* () {
       onSome: Effect.succeed,
       onNone: () =>
         Effect.fail(
-          new LaunchEnvProjectLookupError({
+          new ProjectLaunchEnvProjectLookupError({
             projectId: String(projectId),
             reason: "notFound",
           }),
@@ -110,7 +110,7 @@ export const makeLaunchEnv = Effect.fn("makeLaunchEnv")(function* () {
   return {
     resolve,
     resolveForThread,
-  } satisfies LaunchEnvShape;
+  } satisfies ProjectLaunchEnvShape;
 });
 
-export const LaunchEnvLive = Layer.effect(LaunchEnv, makeLaunchEnv());
+export const ProjectLaunchEnvLive = Layer.effect(ProjectLaunchEnv, makeProjectLaunchEnv());

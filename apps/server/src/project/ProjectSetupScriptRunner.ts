@@ -1,5 +1,5 @@
 import { ProjectId } from "@t3tools/contracts";
-import { projectScriptRuntimeEnv, setupProjectScript } from "@t3tools/shared/projectScripts";
+import { setupProjectScript } from "@t3tools/shared/projectScripts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -133,18 +133,14 @@ export const make = Effect.gen(function* () {
 
     const terminalId = input.preferredTerminalId ?? `setup-${script.id}`;
     const cwd = input.worktreePath;
-    const env = projectScriptRuntimeEnv({
-      project: { cwd: project.workspaceRoot },
-      worktreePath: input.worktreePath,
-    });
 
     yield* terminalManager
       .open({
         threadId: input.threadId,
         terminalId,
+        projectId: project.id,
         cwd,
         worktreePath: input.worktreePath,
-        env,
       })
       .pipe(
         Effect.mapError(

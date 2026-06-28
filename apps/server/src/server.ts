@@ -70,7 +70,7 @@ import * as SourceControlProviderRegistry from "./sourceControl/SourceControlPro
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import { ObservabilityLive } from "./observability/Layers/Observability.ts";
-import { LaunchEnvLive } from "./launchEnv/Layers/LaunchEnvLive.ts";
+import { ProjectLaunchEnvLive } from "./projectLaunchEnv/Layers/ProjectLaunchEnvLive.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
@@ -162,7 +162,7 @@ const PlatformServicesLive = Layer.unwrap(
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
 
-const LaunchEnvLayerLive = LaunchEnvLive.pipe(
+const ProjectLaunchEnvLayerLive = ProjectLaunchEnvLive.pipe(
   Layer.provideMerge(OrchestrationInfrastructureLayerLive),
   Layer.provideMerge(PersistenceLayerLive),
 );
@@ -172,6 +172,7 @@ const PortScannerLayerLive = PortScanner.layer.pipe(Layer.provide(ProcessRunner.
 const TerminalLayerLive = TerminalManager.layer.pipe(
   Layer.provide(PtyAdapterLive),
   Layer.provide(PortScannerLayerLive),
+  Layer.provide(ProjectLaunchEnvLayerLive),
 );
 
 const ReactorLayerLive = Layer.empty.pipe(
@@ -186,7 +187,7 @@ const ReactorLayerLive = Layer.empty.pipe(
       Layer.provideMerge(RuntimeReceiptBusLive),
     ),
   ),
-  Layer.provide(LaunchEnvLayerLive),
+  Layer.provide(ProjectLaunchEnvLayerLive),
 );
 
 const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(

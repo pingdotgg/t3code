@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 
-export class LaunchEnvProjectLookupError extends Schema.TaggedErrorClass<LaunchEnvProjectLookupError>()(
-  "LaunchEnvProjectLookupError",
+export class ProjectLaunchEnvProjectLookupError extends Schema.TaggedErrorClass<ProjectLaunchEnvProjectLookupError>()(
+  "ProjectLaunchEnvProjectLookupError",
   {
     projectId: Schema.String,
     reason: Schema.Enum({ notFound: "notFound", statFailed: "statFailed" }),
@@ -15,8 +15,8 @@ export class LaunchEnvProjectLookupError extends Schema.TaggedErrorClass<LaunchE
   }
 }
 
-export class LaunchEnvThreadLookupError extends Schema.TaggedErrorClass<LaunchEnvThreadLookupError>()(
-  "LaunchEnvThreadLookupError",
+export class ProjectLaunchEnvThreadLookupError extends Schema.TaggedErrorClass<ProjectLaunchEnvThreadLookupError>()(
+  "ProjectLaunchEnvThreadLookupError",
   {
     threadId: Schema.String,
     terminalId: Schema.optional(Schema.String),

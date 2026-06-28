@@ -4,7 +4,7 @@ import {
   isManagedRuntimeEnvKey,
   stripManagedRuntimeEnvKeys,
   type EnvRecord,
-} from "../launchEnv/launchEnvUtils.ts";
+} from "../projectLaunchEnv/projectLaunchEnvUtils.ts";
 
 export function mergeProviderInstanceEnvironment(
   environment: ProviderInstanceEnvironment | undefined,

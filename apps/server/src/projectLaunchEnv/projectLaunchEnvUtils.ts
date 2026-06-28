@@ -2,19 +2,19 @@ import {
   type EnvRecord,
   isManagedRuntimeEnvKey,
   stripManagedRuntimeEnvKeys,
-} from "@t3tools/shared/launchEnv";
+} from "@t3tools/shared/projectLaunchEnv";
 
 export type { EnvRecord };
 export { isManagedRuntimeEnvKey, stripManagedRuntimeEnvKeys };
 
-export interface LaunchEnvContextInput {
+export interface ProjectLaunchEnvContextInput {
   readonly projectRoot: string;
   readonly projectId: string;
   readonly threadId: string;
   readonly worktreePath?: string | null | undefined;
 }
 
-export function buildLaunchContextEnv(input: LaunchEnvContextInput): Record<string, string> {
+export function buildLaunchContextEnv(input: ProjectLaunchEnvContextInput): Record<string, string> {
   const env: Record<string, string> = {
     T3CODE_PROJECT_ROOT: input.projectRoot,
     T3CODE_PROJECT_ID: input.projectId,
@@ -26,10 +26,10 @@ export function buildLaunchContextEnv(input: LaunchEnvContextInput): Record<stri
   return env;
 }
 
-export function mergeResolvedLaunchEnv(input: {
+export function mergeResolvedProjectLaunchEnv(input: {
   readonly t3Home: string;
   readonly extraEnv?: EnvRecord;
-  readonly context: LaunchEnvContextInput;
+  readonly context: ProjectLaunchEnvContextInput;
 }): Record<string, string> {
   return {
     ...stripManagedRuntimeEnvKeys(input.extraEnv),

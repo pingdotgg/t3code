@@ -37,7 +37,8 @@ import {
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
-import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import { stripManagedRuntimeEnvKeys } from "@t3tools/shared/projectLaunchEnv";
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
@@ -554,12 +555,8 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       {
         readonly cwd: string;
         readonly worktreePath: string | null;
-        readonly runtimeEnv: Record<string, string>;
       }
     >();
-    if (!project) {
-      return next;
-    }
 
     for (const session of drawerTerminalSessions) {
       const summary = session.state.summary;
@@ -571,15 +568,11 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       next.set(session.target.terminalId, {
         cwd: launchContext?.cwd ?? summary.cwd,
         worktreePath: worktreePathForLaunch,
-        runtimeEnv: projectScriptRuntimeEnv({
-          project: { cwd: project.workspaceRoot },
-          worktreePath: worktreePathForLaunch,
-        }),
       });
     }
 
     return next;
-  }, [drawerTerminalSessions, launchContext, project]);
+  }, [drawerTerminalSessions, launchContext]);
   const serverOrderedTerminalIds = useMemo(
     () => drawerTerminalSessions.map((session) => session.target.terminalId),
     [drawerTerminalSessions],
@@ -624,17 +617,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         : null),
     [effectiveWorktreePath, launchContext?.cwd, project],
   );
-  const runtimeEnv = useMemo(
-    () =>
-      project
-        ? projectScriptRuntimeEnv({
-            project: { cwd: project.workspaceRoot },
-            worktreePath: effectiveWorktreePath,
-          })
-        : {},
-    [effectiveWorktreePath, project],
-  );
-
   const bumpFocusRequestId = useCallback(() => {
     if (!visible) {
       return;
@@ -650,7 +632,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   );
 
   const splitTerminal = useCallback(() => {
-    if (!cwd) {
+    if (!cwd || !project) {
       return;
     }
     const terminalId = nextTerminalId(serverOrderedTerminalIds);
@@ -661,16 +643,16 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       input: {
         threadId,
         terminalId,
+        projectId: project.id,
         cwd,
         ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
-        env: runtimeEnv,
       },
     });
   }, [
     bumpFocusRequestId,
     cwd,
     effectiveWorktreePath,
-    runtimeEnv,
+    project,
     serverOrderedTerminalIds,
     storeSplitTerminal,
     threadId,
@@ -678,7 +660,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     openTerminal,
   ]);
   const splitTerminalVertical = useCallback(() => {
-    if (!cwd) {
+    if (!cwd || !project) {
       return;
     }
     const terminalId = nextTerminalId(serverOrderedTerminalIds);
@@ -689,9 +671,9 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       input: {
         threadId,
         terminalId,
+        projectId: project.id,
         cwd,
         ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
-        env: runtimeEnv,
       },
     });
   }, [
@@ -699,7 +681,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     cwd,
     effectiveWorktreePath,
     openTerminal,
-    runtimeEnv,
+    project,
     serverOrderedTerminalIds,
     storeSplitTerminalVertical,
     threadId,
@@ -707,7 +689,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   ]);
 
   const createNewTerminal = useCallback(() => {
-    if (!cwd) {
+    if (!cwd || !project) {
       return;
     }
     const terminalId = nextTerminalId(serverOrderedTerminalIds);
@@ -718,16 +700,16 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       input: {
         threadId,
         terminalId,
+        projectId: project.id,
         cwd,
         ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
-        env: runtimeEnv,
       },
     });
   }, [
     bumpFocusRequestId,
     cwd,
     effectiveWorktreePath,
-    runtimeEnv,
+    project,
     serverOrderedTerminalIds,
     storeNewTerminal,
     threadId,
@@ -800,7 +782,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         projectId={project.id}
         cwd={cwd}
         worktreePath={effectiveWorktreePath}
-        runtimeEnv={runtimeEnv}
         visible={visible}
         height={terminalUiState.terminalHeight}
         // Known-session order is MRU and changes on focus; persisted store order keeps sidebar labels stable.
@@ -893,16 +874,6 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
         : null),
     [activeSummary?.cwd, launchContext?.cwd, project, worktreePath],
   );
-  const runtimeEnv = useMemo(
-    () =>
-      project
-        ? projectScriptRuntimeEnv({
-            project: { cwd: project.workspaceRoot },
-            worktreePath,
-          })
-        : {},
-    [project, worktreePath],
-  );
   const terminalLabelsById = useMemo(() => {
     const labels = new Map<string, string>();
     for (const terminalId of surface.terminalIds) {
@@ -919,7 +890,6 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       {
         readonly cwd: string;
         readonly worktreePath: string | null;
-        readonly runtimeEnv: Record<string, string>;
       }
     >();
     for (const terminalId of surface.terminalIds) {
@@ -941,10 +911,6 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       locations.set(terminalId, {
         cwd: terminalCwd,
         worktreePath: terminalWorktreePath,
-        runtimeEnv: projectScriptRuntimeEnv({
-          project: { cwd: project.workspaceRoot },
-          worktreePath: terminalWorktreePath,
-        }),
       });
     }
     return locations;
@@ -967,7 +933,6 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       projectId={project.id}
       cwd={cwd}
       worktreePath={worktreePath}
-      runtimeEnv={runtimeEnv}
       height={0}
       terminalIds={surface.terminalIds}
       activeTerminalId={surface.activeTerminalId}
@@ -2321,12 +2286,9 @@ function ChatViewContent(props: ChatViewProps) {
         input: {
           threadId: activeThreadId,
           terminalId,
+          projectId: activeProject.id,
           cwd: cwdForOpen,
           ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-          env: projectScriptRuntimeEnv({
-            project: { cwd: activeProject.workspaceRoot },
-            worktreePath: activeThreadWorktreePath,
-          }),
         },
       });
       return;
@@ -2368,12 +2330,9 @@ function ChatViewContent(props: ChatViewProps) {
         input: {
           threadId: activeThreadId,
           terminalId,
+          projectId: activeProject.id,
           cwd: cwdForOpen,
           ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-          env: projectScriptRuntimeEnv({
-            project: { cwd: activeProject.workspaceRoot },
-            worktreePath: activeThreadWorktreePath,
-          }),
         },
       });
     },
@@ -2407,12 +2366,9 @@ function ChatViewContent(props: ChatViewProps) {
       input: {
         threadId: activeThreadId,
         terminalId,
+        projectId: activeProject.id,
         cwd: cwdForOpen,
         ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-        env: projectScriptRuntimeEnv({
-          project: { cwd: activeProject.workspaceRoot },
-          worktreePath: activeThreadWorktreePath,
-        }),
       },
     });
   }, [
@@ -2496,13 +2452,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
       setTerminalFocusRequestId((value) => value + 1);
 
-      const runtimeEnv = projectScriptRuntimeEnv({
-        project: {
-          cwd: activeProject.workspaceRoot,
-        },
-        worktreePath: targetWorktreePath,
-        ...(options?.env ? { extraEnv: options.env } : {}),
-      });
+      const customRuntimeEnv = options?.env ? { env: stripManagedRuntimeEnvKeys(options.env) } : {};
       const targetTerminalId = shouldCreateNewTerminal
         ? nextTerminalId(activeKnownTerminalIds)
         : baseTerminalId;
@@ -2510,18 +2460,20 @@ function ChatViewContent(props: ChatViewProps) {
         ? {
             threadId: activeThreadId,
             terminalId: targetTerminalId,
+            projectId: activeProject.id,
             cwd: targetCwd,
             ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
-            env: runtimeEnv,
+            ...customRuntimeEnv,
             cols: SCRIPT_TERMINAL_COLS,
             rows: SCRIPT_TERMINAL_ROWS,
           }
         : {
             threadId: activeThreadId,
             terminalId: targetTerminalId,
+            projectId: activeProject.id,
             cwd: targetCwd,
             ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
-            env: runtimeEnv,
+            ...customRuntimeEnv,
           };
 
       if (shouldCreateNewTerminal) {
@@ -2840,12 +2792,9 @@ function ChatViewContent(props: ChatViewProps) {
       input: {
         threadId: activeThreadId,
         terminalId,
+        projectId: activeProject.id,
         cwd,
         ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-        env: projectScriptRuntimeEnv({
-          project: { cwd: activeProject.workspaceRoot },
-          worktreePath: activeThreadWorktreePath,
-        }),
       },
     });
   }, [
@@ -2880,12 +2829,9 @@ function ChatViewContent(props: ChatViewProps) {
         input: {
           threadId: activeThreadId,
           terminalId,
+          projectId: activeProject.id,
           cwd,
           ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-          env: projectScriptRuntimeEnv({
-            project: { cwd: activeProject.workspaceRoot },
-            worktreePath: activeThreadWorktreePath,
-          }),
         },
       });
     },

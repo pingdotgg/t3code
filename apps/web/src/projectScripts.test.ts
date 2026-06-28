@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { stripManagedRuntimeEnvKeys } from "@t3tools/shared/launchEnv";
+import { stripManagedRuntimeEnvKeys } from "@t3tools/shared/projectLaunchEnv";
 import { projectScriptCwd, setupProjectScript } from "@t3tools/shared/projectScripts";
 
 import {

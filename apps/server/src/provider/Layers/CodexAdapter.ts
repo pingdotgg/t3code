@@ -1432,13 +1432,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           input.modelSelection?.instanceId === boundInstanceId
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
+        const environment = mergeProviderSessionEnvironment(options?.environment, input.env);
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
           cwd: input.cwd ?? process.cwd(),
           binaryPath: codexConfig.binaryPath,
-          environment: mergeProviderSessionEnvironment(options?.environment, input.env),
+          environment,
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
@@ -1451,7 +1452,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(mcpSession
             ? {
                 environment: {
-                  ...(options?.environment ?? process.env),
+                  ...environment,
                   T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
                 },
                 appServerArgs: [
