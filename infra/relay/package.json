@@ -9,7 +9,7 @@
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
-    "@clerk/backend": "3.6.1",
+    "@clerk/backend": "catalog:",
     "@effect/sql-pg": "catalog:",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",

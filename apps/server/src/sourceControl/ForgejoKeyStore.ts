@@ -1,4 +1,4 @@
-import * as os from "node:os";
+import * as NodeOS from "node:os";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 export interface ForgejoCredential {
   readonly host: string;
@@ -26,15 +27,17 @@ export class ForgejoKeyStore extends Context.Service<ForgejoKeyStore, ForgejoKey
 
 export const defaultKeysPath = Effect.fn("defaultKeysPath")(function* () {
   const { join } = yield* Path.Path;
-  const home = os.homedir();
-  if (process.platform === "darwin") {
+  const platform = yield* HostProcessPlatform;
+  const env = yield* HostProcessEnvironment;
+  const home = NodeOS.homedir();
+  if (platform === "darwin") {
     return join(home, "Library", "Application Support", "Cyborus.forgejo-cli", "keys.json");
   }
-  if (process.platform === "win32") {
-    const base = process.env["APPDATA"] ?? join(home, "AppData", "Roaming");
+  if (platform === "win32") {
+    const base = env["APPDATA"] ?? join(home, "AppData", "Roaming");
     return join(base, "Cyborus", "forgejo-cli", "data", "keys.json");
   }
-  const base = process.env["XDG_DATA_HOME"] ?? join(home, ".local", "share");
+  const base = env["XDG_DATA_HOME"] ?? join(home, ".local", "share");
   return join(base, "forgejo-cli", "keys.json");
 });
 
@@ -66,7 +69,7 @@ export function parseKeysFile(content: string): Map<string, ForgejoCredential> {
   return store;
 }
 
-export const make = Effect.fn("makeForgejoKeyStore")(function* () {
+export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const overridePath = yield* Config.string("T3CODE_FORGEJO_KEYS_PATH").pipe(Config.option);
   const keysPath = Option.isSome(overridePath) ? overridePath.value : yield* defaultKeysPath();
@@ -96,4 +99,4 @@ export const make = Effect.fn("makeForgejoKeyStore")(function* () {
   });
 });
 
-export const layer = Layer.effect(ForgejoKeyStore, make());
+export const layer = Layer.effect(ForgejoKeyStore, make);

@@ -233,7 +233,7 @@ function responseError(
   );
 }
 
-export const make = Effect.fn("makeForgejoApi")(function* () {
+export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const fileSystem = yield* FileSystem.FileSystem;
   const keyStore = yield* ForgejoKeyStore.ForgejoKeyStore;
@@ -593,4 +593,4 @@ export const make = Effect.fn("makeForgejoApi")(function* () {
   });
 });
 
-export const layer = Layer.effect(ForgejoApi, make()).pipe(Layer.provide(ForgejoKeyStore.layer));
+export const layer = Layer.effect(ForgejoApi, make).pipe(Layer.provide(ForgejoKeyStore.layer));

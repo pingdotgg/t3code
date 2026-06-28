@@ -1,4 +1,4 @@
-import { scopeProjectRef } from "@t3tools/client-runtime";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -20,6 +20,12 @@ export interface SidebarProjectSnapshot extends Project {
   displayName: string;
   groupedProjectCount: number;
   environmentPresence: EnvironmentPresence;
+  // True iff every non-primary member of this group lives in a
+  // desktopLocal env (today: the WSL backend). The sidebar uses this
+  // to differentiate "lives on this machine but in a sandbox" from
+  // "lives on a real remote" so the project header can pick a
+  // container icon instead of the generic cloud icon.
+  allRemoteMembersAreDesktopLocal: boolean;
   memberProjects: readonly SidebarProjectGroupMember[];
   memberProjectRefs: readonly ScopedProjectRef[];
   remoteEnvironmentLabels: readonly string[];
@@ -44,6 +50,11 @@ export function buildSidebarProjectSnapshots(input: {
   settings: ProjectGroupingSettings;
   primaryEnvironmentId: EnvironmentId | null;
   resolveEnvironmentLabel: (environmentId: EnvironmentId) => string | null;
+  // Returns true when an env id maps to a desktopLocal saved-env
+  // record (today: the WSL backend). Defaults to "false for every
+  // env" so callers that don't care about the distinction get the
+  // legacy behavior.
+  isDesktopLocalEnvironment?: (environmentId: EnvironmentId) => boolean;
 }): SidebarProjectSnapshot[] {
   const groupedMembers = new Map<string, SidebarProjectGroupMember[]>();
   for (const project of input.projects) {
@@ -86,14 +97,17 @@ export function buildSidebarProjectSnapshots(input: {
       input.primaryEnvironmentId !== null
         ? members.some((member) => member.environmentId !== input.primaryEnvironmentId)
         : false;
-    const remoteEnvironmentLabels = members
-      .filter(
-        (member) =>
-          input.primaryEnvironmentId !== null &&
-          member.environmentId !== input.primaryEnvironmentId,
-      )
+    const remoteMembers = members.filter(
+      (member) =>
+        input.primaryEnvironmentId !== null && member.environmentId !== input.primaryEnvironmentId,
+    );
+    const remoteEnvironmentLabels = remoteMembers
       .flatMap((member) => (member.environmentLabel ? [member.environmentLabel] : []))
       .filter((label, index, labels) => labels.indexOf(label) === index);
+    const isDesktopLocal = input.isDesktopLocalEnvironment ?? (() => false);
+    const allRemoteMembersAreDesktopLocal =
+      remoteMembers.length > 0 &&
+      remoteMembers.every((member) => isDesktopLocal(member.environmentId));
 
     result.push({
       ...representative,
@@ -104,10 +118,11 @@ export function buildSidebarProjectSnapshots(input: {
               representative,
               members,
             })
-          : representative.name,
+          : representative.title,
       groupedProjectCount: members.length,
       environmentPresence:
         hasLocal && hasRemote ? "mixed" : hasRemote ? "remote-only" : "local-only",
+      allRemoteMembersAreDesktopLocal,
       memberProjects: members,
       memberProjectRefs: members.map((member) => scopeProjectRef(member.environmentId, member.id)),
       remoteEnvironmentLabels,

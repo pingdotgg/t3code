@@ -8,15 +8,25 @@ import * as ForgejoPullRequests from "./forgejoPullRequests.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as SourceControlProviderDiscovery from "./SourceControlProviderDiscovery.ts";
 
-function providerError(
-  operation: string,
-  cause: ForgejoApi.ForgejoApiError,
-): SourceControlProviderError {
+function providerError(input: {
+  readonly operation: string;
+  readonly cwd: string;
+  readonly reference?: string;
+  readonly repository?: string;
+  readonly cause: ForgejoApi.ForgejoApiError;
+}): SourceControlProviderError {
   return new SourceControlProviderError({
     provider: "forgejo",
-    operation,
-    detail: cause.detail,
-    cause,
+    operation: input.operation,
+    cwd: input.cwd,
+    ...(input.reference !== undefined
+      ? { reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.reference) }
+      : {}),
+    ...(input.repository !== undefined
+      ? { repository: SourceControlProvider.transportSafeSourceControlErrorValue(input.repository) }
+      : {}),
+    detail: input.cause.detail,
+    cause: input.cause,
   });
 }
 
@@ -112,7 +122,7 @@ export const discovery = {
     "Install the Forgejo CLI (`fj`) from https://codeberg.org/forgejo-contrib/forgejo-cli and run `fj auth login <host>`.",
 } satisfies SourceControlProviderDiscovery.SourceControlCliDiscoverySpec;
 
-export const make = Effect.fn("makeForgejoSourceControlProvider")(function* () {
+export const make = Effect.gen(function* () {
   const forgejo = yield* ForgejoApi.ForgejoApi;
 
   return SourceControlProvider.SourceControlProvider.of({
@@ -130,13 +140,27 @@ export const make = Effect.fn("makeForgejoSourceControlProvider")(function* () {
         })
         .pipe(
           Effect.map((items) => items.map(toChangeRequest)),
-          Effect.mapError((error) => providerError("listChangeRequests", error)),
+          Effect.mapError((error) =>
+            providerError({
+              operation: "listChangeRequests",
+              cwd: input.cwd,
+              reference: input.headSelector,
+              cause: error,
+            }),
+          ),
         );
     },
     getChangeRequest: (input) =>
       forgejo.getPullRequest(input).pipe(
         Effect.map(toChangeRequest),
-        Effect.mapError((error) => providerError("getChangeRequest", error)),
+        Effect.mapError((error) =>
+          providerError({
+            operation: "getChangeRequest",
+            cwd: input.cwd,
+            reference: input.reference,
+            cause: error,
+          }),
+        ),
       ),
     createChangeRequest: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
@@ -151,23 +175,50 @@ export const make = Effect.fn("makeForgejoSourceControlProvider")(function* () {
           title: input.title,
           bodyFile: input.bodyFile,
         })
-        .pipe(Effect.mapError((error) => providerError("createChangeRequest", error)));
+        .pipe(
+          Effect.mapError((error) =>
+            providerError({
+              operation: "createChangeRequest",
+              cwd: input.cwd,
+              reference: input.headSelector,
+              cause: error,
+            }),
+          ),
+        );
     },
     getRepositoryCloneUrls: (input) =>
-      forgejo
-        .getRepositoryCloneUrls(input)
-        .pipe(Effect.mapError((error) => providerError("getRepositoryCloneUrls", error))),
+      forgejo.getRepositoryCloneUrls(input).pipe(
+        Effect.mapError((error) =>
+          providerError({
+            operation: "getRepositoryCloneUrls",
+            cwd: input.cwd,
+            repository: input.repository,
+            cause: error,
+          }),
+        ),
+      ),
     createRepository: (input) =>
-      forgejo
-        .createRepository(input)
-        .pipe(Effect.mapError((error) => providerError("createRepository", error))),
+      forgejo.createRepository(input).pipe(
+        Effect.mapError((error) =>
+          providerError({
+            operation: "createRepository",
+            cwd: input.cwd,
+            repository: input.repository,
+            cause: error,
+          }),
+        ),
+      ),
     getDefaultBranch: (input) =>
       forgejo
         .getDefaultBranch({
           cwd: input.cwd,
           ...(input.context ? { context: input.context } : {}),
         })
-        .pipe(Effect.mapError((error) => providerError("getDefaultBranch", error))),
+        .pipe(
+          Effect.mapError((error) =>
+            providerError({ operation: "getDefaultBranch", cwd: input.cwd, cause: error }),
+          ),
+        ),
     checkoutChangeRequest: (input) =>
       forgejo
         .checkoutPullRequest({
@@ -176,8 +227,17 @@ export const make = Effect.fn("makeForgejoSourceControlProvider")(function* () {
           reference: input.reference,
           ...(input.force !== undefined ? { force: input.force } : {}),
         })
-        .pipe(Effect.mapError((error) => providerError("checkoutChangeRequest", error))),
+        .pipe(
+          Effect.mapError((error) =>
+            providerError({
+              operation: "checkoutChangeRequest",
+              cwd: input.cwd,
+              reference: input.reference,
+              cause: error,
+            }),
+          ),
+        ),
   });
 });
 
-export const layer = Layer.effect(SourceControlProvider.SourceControlProvider, make());
+export const layer = Layer.effect(SourceControlProvider.SourceControlProvider, make);

@@ -7,6 +7,7 @@ import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "rea
 
 import { AppText as Text } from "../../components/AppText";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 
 export type ComposerCommandItem =
   | {
@@ -156,14 +157,22 @@ const CommandRow = memo(function CommandRow(props: {
         <SymbolView name={iconName} size={14} tintColor={iconColor} type="monochrome" />
       ) : null}
       <Text
-        className="text-[14px] font-t3-medium text-foreground"
+        className="text-base font-t3-medium text-foreground"
         numberOfLines={1}
         style={{ flexShrink: 0 }}
       >
         {props.item.label}
       </Text>
       {props.item.description ? (
-        <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: 12, color: "#a1a1aa" }}>
+        <Text
+          numberOfLines={1}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
+            color: "#a1a1aa",
+          }}
+        >
           {props.item.description}
         </Text>
       ) : null}
@@ -182,7 +191,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
       {label ? (
         <View style={{ paddingHorizontal: 14, paddingTop: 10, paddingBottom: 4 }}>
           <Text
-            className="text-[10px] font-t3-bold text-foreground-muted"
+            className="text-3xs font-t3-bold text-foreground-muted"
             style={{ letterSpacing: 0.8, textTransform: "uppercase" }}
           >
             {label}
@@ -206,7 +215,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
         </ScrollView>
       ) : (
         <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
-          <Text className="text-[12px] text-foreground-tertiary">
+          <Text className="text-xs text-foreground-tertiary">
             {emptyText(props.triggerKind, props.isLoading)}
           </Text>
         </View>

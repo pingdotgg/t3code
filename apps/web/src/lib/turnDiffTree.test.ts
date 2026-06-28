@@ -5,9 +5,9 @@ import { buildTurnDiffTree, summarizeTurnDiffStats } from "./turnDiffTree";
 describe("summarizeTurnDiffStats", () => {
   it("sums only files with numeric additions/deletions", () => {
     const stat = summarizeTurnDiffStats([
-      { path: "README.md", additions: 3, deletions: 1 },
-      { path: "docs/notes.md" },
-      { path: "src/index.ts", additions: 5, deletions: 2 },
+      { path: "README.md", kind: "modified", additions: 3, deletions: 1 },
+      { path: "docs/notes.md", kind: "modified", additions: 0, deletions: 0 },
+      { path: "src/index.ts", kind: "modified", additions: 5, deletions: 2 },
     ]);
 
     expect(stat).toEqual({ additions: 8, deletions: 3 });
@@ -17,9 +17,9 @@ describe("summarizeTurnDiffStats", () => {
 describe("buildTurnDiffTree", () => {
   it("builds nested directory nodes with aggregated stats", () => {
     const tree = buildTurnDiffTree([
-      { path: "src/index.ts", additions: 2, deletions: 1 },
-      { path: "src/components/Button.tsx", additions: 4, deletions: 2 },
-      { path: "README.md", additions: 1, deletions: 0 },
+      { path: "src/index.ts", kind: "modified", additions: 2, deletions: 1 },
+      { path: "src/components/Button.tsx", kind: "modified", additions: 4, deletions: 2 },
+      { path: "README.md", kind: "modified", additions: 1, deletions: 0 },
     ]);
 
     expect(tree).toEqual([
@@ -60,10 +60,10 @@ describe("buildTurnDiffTree", () => {
     ]);
   });
 
-  it("keeps files without stat values and excludes them from directory totals", () => {
+  it("keeps zero-valued file stats and includes only their numeric contribution", () => {
     const tree = buildTurnDiffTree([
-      { path: "docs/notes.md" },
-      { path: "docs/todo.md", additions: 1, deletions: 1 },
+      { path: "docs/notes.md", kind: "modified", additions: 0, deletions: 0 },
+      { path: "docs/todo.md", kind: "modified", additions: 1, deletions: 1 },
     ]);
 
     expect(tree).toEqual([
@@ -77,7 +77,7 @@ describe("buildTurnDiffTree", () => {
             kind: "file",
             name: "notes.md",
             path: "docs/notes.md",
-            stat: null,
+            stat: { additions: 0, deletions: 0 },
           },
           {
             kind: "file",
@@ -92,7 +92,7 @@ describe("buildTurnDiffTree", () => {
 
   it("normalizes file paths with windows separators", () => {
     const tree = buildTurnDiffTree([
-      { path: "apps\\web\\src\\index.ts", additions: 2, deletions: 1 },
+      { path: "apps\\web\\src\\index.ts", kind: "modified", additions: 2, deletions: 1 },
     ]);
 
     expect(tree).toEqual([
@@ -115,8 +115,8 @@ describe("buildTurnDiffTree", () => {
 
   it("compacts only single-directory chains and stops at branch points", () => {
     const tree = buildTurnDiffTree([
-      { path: "apps/server/src/index.ts", additions: 2, deletions: 1 },
-      { path: "apps/server/main.ts", additions: 4, deletions: 0 },
+      { path: "apps/server/src/index.ts", kind: "modified", additions: 2, deletions: 1 },
+      { path: "apps/server/main.ts", kind: "modified", additions: 4, deletions: 0 },
     ]);
 
     expect(tree).toEqual([
@@ -153,8 +153,8 @@ describe("buildTurnDiffTree", () => {
 
   it("preserves leading/trailing whitespace in path segments", () => {
     const tree = buildTurnDiffTree([
-      { path: "a/file.ts", additions: 1, deletions: 0 },
-      { path: " a/file.ts", additions: 2, deletions: 0 },
+      { path: "a/file.ts", kind: "modified", additions: 1, deletions: 0 },
+      { path: " a/file.ts", kind: "modified", additions: 2, deletions: 0 },
     ]);
 
     expect(tree).toHaveLength(2);

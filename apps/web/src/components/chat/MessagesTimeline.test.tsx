@@ -13,16 +13,63 @@ vi.mock("@legendapp/list/react", async () => {
     renderItem: (args: { item: { id: string } }) => ReactNode;
     ListHeaderComponent?: ReactNode;
     ListFooterComponent?: ReactNode;
+    anchoredEndSpace?: {
+      anchorIndex: number;
+      anchorMaxSize?: number;
+      anchorOffset?: number;
+      onReady?: (info: { anchorIndex: number }) => void;
+      onSizeChanged?: (size: number) => void;
+    };
+    contentInsetEndAdjustment?: number;
+    className?: string;
+    maintainScrollAtEnd?: boolean;
+    maintainVisibleContentPosition?:
+      | boolean
+      | {
+          data?: boolean;
+          size?: boolean;
+          shouldRestorePosition?: (item: { id: string }) => boolean;
+        };
     ref?: Ref<LegendListRef>;
-  }) => (
-    <div data-testid={legendListTestId}>
-      {props.ListHeaderComponent}
-      {props.data.map((item) => (
-        <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
-      ))}
-      {props.ListFooterComponent}
-    </div>
-  );
+  }) => {
+    if (props.anchoredEndSpace) {
+      props.anchoredEndSpace.onSizeChanged?.(240);
+      props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
+    }
+    return (
+      <div
+        data-testid={legendListTestId}
+        data-anchor-index={props.anchoredEndSpace?.anchorIndex}
+        data-anchor-max-size={props.anchoredEndSpace?.anchorMaxSize}
+        data-anchor-offset={props.anchoredEndSpace?.anchorOffset}
+        data-anchor-on-ready={Boolean(props.anchoredEndSpace?.onReady)}
+        data-content-inset-end={props.contentInsetEndAdjustment}
+        data-class-name={props.className}
+        data-maintain-scroll-at-end={props.maintainScrollAtEnd}
+        data-maintain-visible-content-position={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? "object"
+            : props.maintainVisibleContentPosition
+        }
+        data-maintain-visible-content-position-data={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? props.maintainVisibleContentPosition.data
+            : undefined
+        }
+        data-maintain-visible-content-position-size={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? props.maintainVisibleContentPosition.size
+            : undefined
+        }
+      >
+        {props.ListHeaderComponent}
+        {props.data.map((item) => (
+          <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
+        ))}
+        {props.ListFooterComponent}
+      </div>
+    );
+  };
 
   return { LegendList };
 });
@@ -97,6 +144,7 @@ function buildProps() {
     activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
     latestTurn: null,
+    runningTurnId: null,
     turnDiffSummaryByAssistantMessageId: new Map(),
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
@@ -109,6 +157,10 @@ function buildProps() {
     resolvedTheme: "light" as const,
     timestampFormat: "locale" as const,
     workspaceRoot: undefined,
+    anchorMessageId: null,
+    onAnchorReady: () => {},
+    onAnchorSizeChanged: () => {},
+    contentInsetEndAdjustment: 0,
     onIsAtEndChange: () => {},
   };
 }
@@ -128,13 +180,64 @@ function buildUserTimelineEntry(text: string) {
       id: MessageId.make("message-1"),
       role: "user" as const,
       text,
+      turnId: null,
       createdAt: MESSAGE_CREATED_AT,
+      updatedAt: MESSAGE_CREATED_AT,
       streaming: false,
     },
   };
 }
 
 describe("MessagesTimeline", () => {
+  it("anchors a sent attachment message using its measured height", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const onAnchorReady = vi.fn();
+    const onAnchorSizeChanged = vi.fn();
+    const firstEntry = buildUserTimelineEntry("First prompt.");
+    const secondEntry = {
+      ...buildUserTimelineEntry("Newest prompt."),
+      id: "entry-2",
+      message: {
+        ...buildUserTimelineEntry("Newest prompt.").message,
+        id: MessageId.make("message-2"),
+        attachments: [
+          {
+            type: "image" as const,
+            id: "attachment-1",
+            name: "screenshot.png",
+            mimeType: "image/png",
+            sizeBytes: 1,
+            previewUrl: "data:image/png;base64,iVBORw0KGgo=",
+          },
+        ],
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        anchorMessageId={secondEntry.message.id}
+        onAnchorReady={onAnchorReady}
+        onAnchorSizeChanged={onAnchorSizeChanged}
+        contentInsetEndAdjustment={144}
+        timelineEntries={[firstEntry, secondEntry]}
+      />,
+    );
+
+    expect(markup).toContain('data-anchor-index="1"');
+    expect(markup).toContain('data-anchor-offset="16"');
+    expect(markup).toContain('data-anchor-on-ready="true"');
+    expect(markup).not.toContain("data-anchor-max-size=");
+    expect(markup).toContain('data-content-inset-end="144"');
+    expect(markup).toContain("[overflow-anchor:none]");
+    expect(markup).not.toContain("data-maintain-scroll-at-end=");
+    expect(markup).toContain('data-maintain-visible-content-position="object"');
+    expect(markup).toContain('data-maintain-visible-content-position-data="true"');
+    expect(markup).toContain('data-maintain-visible-content-position-size="false"');
+    expect(onAnchorReady).toHaveBeenCalledOnce();
+    expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
+    expect(onAnchorSizeChanged).toHaveBeenCalledWith(secondEntry.message.id, 240);
+  });
+
   it("renders collapse controls for long user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -191,6 +294,33 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Show full message");
   }, 20_000);
 
+  it("renders chips for standalone element-pick context messages", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "<element_context>",
+              "- <SubmitButton> (Button.tsx:12):",
+              "  url: https://example.com/dashboard",
+              "  selector: button.submit",
+              "  source: /repo/src/Button.tsx:12:5",
+              "  html:",
+              '  <button class="submit">Save</button>',
+              "</element_context>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("SubmitButton");
+    expect(markup).not.toContain("&lt;element_context");
+    expect(markup).not.toContain("<element_context");
+  });
+
   it("keeps the copy button for collapsed long user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -227,7 +357,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Context compacted");
-    expect(markup).toContain("work log");
+    expect(markup).toContain("Work Log");
   });
 
   it("formats changed file paths from the workspace root", async () => {
@@ -280,7 +410,9 @@ describe("MessagesTimeline", () => {
                 "```",
                 "</review_comment>",
               ].join("\n"),
+              turnId: null,
               createdAt: "2026-03-17T19:12:28.000Z",
+              updatedAt: "2026-03-17T19:12:28.000Z",
               streaming: false,
             },
           },
@@ -318,7 +450,9 @@ describe("MessagesTimeline", () => {
                 "```",
                 "</review_comment>",
               ].join("\n"),
+              turnId: null,
               createdAt: "2026-03-17T19:12:28.000Z",
+              updatedAt: "2026-03-17T19:12:28.000Z",
               streaming: false,
             },
           },
