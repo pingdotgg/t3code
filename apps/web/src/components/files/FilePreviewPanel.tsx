@@ -20,6 +20,7 @@ import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPre
 import { useAssetUrlState } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
+import { usePreviewFileFreshness } from "~/hooks/usePreviewFileFreshness";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
@@ -798,6 +799,9 @@ export default function FilePreviewPanel({
   // The open file may live in a non-anchor repo; read/write against its root.
   const fileCwd = fileRoot ?? cwd;
   const file = useProjectFileQuery(environmentId, fileCwd, relativePath, !isImage);
+  // The read-file query is cached, so refetch when an agent turn edits files or
+  // the window regains focus — otherwise the preview shows stale on-disk content.
+  usePreviewFileFreshness(threadRef, relativePath, file.refresh);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   // Reading markdown rendered is a preference, not a property of one file. Keeping
   // it on the panel meant a thread switch dropped it and forced source back.
