@@ -426,6 +426,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     : environment.appRoot;
   const wslEntryPath = environment.path.join(wslAppRoot, "apps/server/dist/bin.mjs");
 
+  yield* wslEnvironment.preWarm(input.distro);
+
   const preflight = yield* runWslPreflight({
     distro: input.distro,
     windowsEntryPath: wslEntryPath,
