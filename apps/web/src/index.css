@@ -102,7 +102,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-native-controls-inset: 0px;
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;
-  --thread-details-panel-width: clamp(18rem, 24vw, 21rem);
+  --chat-content-max-width: 46rem;
+  --thread-details-panel-width: 19.5rem;
   --thread-details-panel-inset: 0px;
 }
 
@@ -408,11 +409,18 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
   }
 
+  .chat-content-lane {
+    margin-inline: auto;
+    width: 100%;
+    min-width: 0;
+    max-width: var(--chat-content-max-width);
+  }
+
   [data-thread-details-inline-reserved="true"] {
     --thread-details-panel-inset: var(--thread-details-panel-width);
   }
 
-  .messages-timeline-scroll {
+  .messages-timeline-row-frame {
     padding-inline-start: 0.75rem;
     padding-inline-end: calc(0.75rem + var(--thread-details-panel-inset));
   }
@@ -491,7 +499,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   @media (min-width: 40rem) {
-    .messages-timeline-scroll {
+    .messages-timeline-row-frame {
       padding-inline-start: 1.25rem;
       padding-inline-end: calc(1.25rem + var(--thread-details-panel-inset));
     }

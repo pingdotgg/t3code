@@ -366,22 +366,30 @@ export const cursorAgentSdkRunnerLiveLayer: Layer.Layer<CursorAgentSdkRunner, ne
 
               let callbacksReady = false;
               const pendingUpdates: Array<InteractionUpdate> = [];
+              let callbackFailure: { readonly cause: unknown } | undefined;
               let callbackChain = Promise.resolve();
               let runId = "";
               const dispatchUpdate = (update: InteractionUpdate): Promise<void> => {
-                callbackChain = callbackChain.then(() =>
-                  Effect.runPromiseWith(context)(
-                    log({
-                      direction: "incoming",
-                      stage: "decoded",
-                      payload: {
-                        type: "interaction.update",
-                        runId,
-                        update,
-                      },
-                    }).pipe(Effect.andThen(sendInput.onDelta?.(update) ?? Effect.void)),
-                  ),
-                );
+                callbackChain = callbackChain
+                  .then(() => {
+                    if (callbackFailure !== undefined) {
+                      return;
+                    }
+                    return Effect.runPromiseWith(context)(
+                      log({
+                        direction: "incoming",
+                        stage: "decoded",
+                        payload: {
+                          type: "interaction.update",
+                          runId,
+                          update,
+                        },
+                      }).pipe(Effect.andThen(sendInput.onDelta?.(update) ?? Effect.void)),
+                    );
+                  })
+                  .catch((cause) => {
+                    callbackFailure ??= { cause };
+                  });
                 return callbackChain;
               };
 
@@ -424,6 +432,9 @@ export const cursorAgentSdkRunnerLiveLayer: Layer.Layer<CursorAgentSdkRunner, ne
                   try: async () => {
                     const result = await run.wait();
                     await callbackChain;
+                    if (callbackFailure !== undefined) {
+                      throw callbackFailure.cause;
+                    }
                     return result;
                   },
                   catch: (cause) => runnerError(cause, "run.wait"),

@@ -511,14 +511,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       parentThreadLink === null ? (
         TIMELINE_LIST_HEADER
       ) : (
-        <div className="mx-auto w-full min-w-0 max-w-3xl pt-1 sm:pt-2">
-          <TimelineSystemDivider
-            label="Subagent of"
-            detail={parentThreadLink.title}
-            icon={BotIcon}
-            actionLabel="Open parent thread"
-            onAction={() => onOpenThread(parentThreadLink.threadId)}
-          />
+        <div className="messages-timeline-row-frame">
+          <div className="chat-content-lane pt-1 sm:pt-2">
+            <TimelineSystemDivider
+              label="Subagent of"
+              detail={parentThreadLink.title}
+              icon={BotIcon}
+              actionLabel="Open parent thread"
+              onAction={() => onOpenThread(parentThreadLink.threadId)}
+            />
+          </div>
         </div>
       ),
     [onOpenThread, parentThreadLink],
@@ -528,8 +530,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // from TimelineRowCtx, which propagates through LegendList's memo.
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
-      <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip" data-timeline-root="true">
-        <TimelineRowContent row={item} />
+      <div className="messages-timeline-row-frame">
+        <div className="chat-content-lane overflow-x-clip" data-timeline-root="true">
+          <TimelineRowContent row={item} />
+        </div>
       </div>
     ),
     [],
@@ -548,24 +552,50 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   return (
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
-        <LegendList<MessagesTimelineRow>
-          ref={listRef}
-          data={rows}
-          keyExtractor={keyExtractor}
-          getItemType={getItemType}
-          renderItem={renderItem}
-          estimatedItemSize={90}
-          initialScrollAtEnd
-          {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-          contentInsetEndAdjustment={contentInsetEndAdjustment}
-          maintainScrollAtEnd={!foldToggleSettling}
-          maintainScrollAtEndThreshold={0.1}
-          maintainVisibleContentPosition
-          onScroll={handleScroll}
-          className="messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain"
-          ListHeaderComponent={listHeader}
-          ListFooterComponent={TIMELINE_LIST_FOOTER}
-        />
+        <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
+          <LegendList<MessagesTimelineRow>
+            ref={listRef}
+            data={rows}
+            keyExtractor={keyExtractor}
+            getItemType={getItemType}
+            renderItem={renderItem}
+            estimatedItemSize={90}
+            initialScrollAtEnd
+            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+            contentInsetEndAdjustment={contentInsetEndAdjustment}
+            maintainScrollAtEnd={
+              anchoredEndSpace
+                ? false
+                : {
+                    animated: false,
+                    on: {
+                      dataChange: true,
+                      itemLayout: true,
+                      layout: true,
+                    },
+                  }
+            }
+            maintainVisibleContentPosition={maintainVisibleContentPosition}
+            onScroll={handleScroll}
+            className="messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]"
+            ListHeaderComponent={listHeader}
+            ListFooterComponent={TIMELINE_LIST_FOOTER}
+          />
+          <TimelineMinimap
+            items={minimapItems}
+            bottomInset={contentInsetEndAdjustment}
+            hasPersistentGutter={minimapHasPersistentGutter}
+            stripMap={minimapStripMap}
+            onSelect={(item) => {
+              onManualNavigation();
+              void listRef.current?.scrollToIndex({
+                index: item.rowIndex,
+                animated: true,
+                viewOffset: 24,
+              });
+            }}
+          />
+        </div>
       </TimelineRowActivityCtx>
     </TimelineRowCtx>
   );

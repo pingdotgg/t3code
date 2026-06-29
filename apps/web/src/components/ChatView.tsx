@@ -5932,7 +5932,7 @@ function ChatViewContent(props: ChatViewProps) {
                 ref={attachDraftHeroTransitionGroupRef}
                 className="chat-composer-horizontal-inset w-full"
               >
-                <div className="relative mx-auto h-full w-full max-w-208 overflow-clip rounded-t-[20px]">
+                <div className="chat-content-lane relative h-full overflow-clip rounded-t-[20px]">
                   <div className="chat-composer-shared-blur absolute -inset-8" />
                 </div>
               </div>

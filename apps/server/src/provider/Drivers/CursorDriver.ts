@@ -1,9 +1,8 @@
 /**
- * CursorDriver — `ProviderDriver` for the Cursor Agent (`cursor-agent`) runtime.
+ * CursorDriver — `ProviderDriver` for the Cursor Agent SDK runtime.
  *
- * Provider status and model discovery use the official Cursor SDK when an API
- * key is configured. The ACP CLI remains the compatibility fallback for
- * installations that authenticate through the local Cursor binary.
+ * Provider status, model discovery, and orchestration use the official Cursor
+ * SDK and require CURSOR_API_KEY in the provider instance environment.
  *
  * Text generation is supported via the ACP runtime — `makeCursorTextGeneration`
  * drives `runtime.prompt` with a structured-output schema and collects the
@@ -103,10 +102,6 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
   defaultConfig: (): CursorSettings => decodeCursorSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
-      const crypto = yield* Crypto.Crypto;
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -149,9 +144,6 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const checkProvider = checkCursorProviderStatus(effectiveConfig, processEnv).pipe(
         Effect.map(stampIdentity),
         Effect.provide(CursorSdkCatalogLive),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
@@ -163,8 +155,8 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         initialSnapshot: (settings) =>
           buildInitialCursorProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
-        // Model catalog and capabilities come exclusively from Cursor's
-        // list_available_models extension method during provider checks.
+        // Model catalog and capabilities come from Cursor's SDK catalog during
+        // provider checks.
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
           enrichCursorSnapshot({
             settings: settings.provider,
