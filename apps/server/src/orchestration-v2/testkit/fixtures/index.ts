@@ -31,6 +31,7 @@ import { assertSubagentContinueOutput } from "./subagent_continue/codex_output.t
 import { subagentContinueInput } from "./subagent_continue/input.ts";
 import { assertSubagentV2Output } from "./subagent_v2/codex_output.ts";
 import { subagentV2Input } from "./subagent_v2/input.ts";
+import { assertSubagentV2NestedOutput } from "./subagent_v2_nested/codex_output.ts";
 import { assertClaudeThreadRollbackOutput } from "./thread_rollback/claude_output.ts";
 import { assertThreadRollbackOutput } from "./thread_rollback/codex_output.ts";
 import { threadRollbackInput } from "./thread_rollback/input.ts";
@@ -333,6 +334,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         transcriptFile: new URL("./subagent_v2/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         assertOutput: assertSubagentV2Output,
+      },
+    ],
+  },
+  {
+    name: "subagent_v2_nested",
+    buildInput: subagentV2Input,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("codex"),
+        transcriptFile: new URL("./subagent_v2_nested/codex_transcript.ndjson", import.meta.url),
+        modelSelection: CODEX_MODEL_SELECTION,
+        assertOutput: assertSubagentV2NestedOutput,
       },
     ],
   },
