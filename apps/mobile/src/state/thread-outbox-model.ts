@@ -1,32 +1,38 @@
 import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
-import { CommandId, EnvironmentId, IsoDateTime, MessageId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  IsoDateTime,
+  MessageId,
+  ModelSelection,
+  ProviderInteractionMode,
+  RuntimeMode,
+  ThreadId,
+  type ModelSelection as ModelSelectionType,
+  type ProviderInteractionMode as ProviderInteractionModeType,
+  type RuntimeMode as RuntimeModeType,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 
-const THREAD_OUTBOX_SCHEMA_VERSION = 1;
+const THREAD_OUTBOX_SCHEMA_VERSION = 2;
 const THREAD_OUTBOX_MAX_RETRY_DELAY_MS = 16_000;
 
-const DraftComposerImageAttachmentSchema = Schema.Struct({
-  id: Schema.String,
-  previewUri: Schema.String,
-  type: Schema.Literal("image"),
-  name: Schema.String,
-  mimeType: Schema.String,
-  sizeBytes: Schema.Number,
-  dataUrl: Schema.String,
-});
-
 export const QueuedThreadMessageSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(THREAD_OUTBOX_SCHEMA_VERSION),
+  schemaVersion: Schema.Literals([1, THREAD_OUTBOX_SCHEMA_VERSION]),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   messageId: MessageId,
   commandId: CommandId,
   text: Schema.String,
   attachments: Schema.Array(DraftComposerImageAttachmentSchema),
+  modelSelection: Schema.optional(ModelSelection),
+  runtimeMode: Schema.optional(RuntimeMode),
+  interactionMode: Schema.optional(ProviderInteractionMode),
   createdAt: IsoDateTime,
 });
 
@@ -40,7 +46,35 @@ export interface QueuedThreadMessage {
   readonly commandId: CommandId;
   readonly text: string;
   readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
+  readonly modelSelection?: ModelSelectionType;
+  readonly runtimeMode?: RuntimeModeType;
+  readonly interactionMode?: ProviderInteractionModeType;
   readonly createdAt: string;
+}
+
+export interface ThreadSettingsSnapshot {
+  readonly modelSelection: ModelSelectionType;
+  readonly runtimeMode: RuntimeModeType;
+  readonly interactionMode: ProviderInteractionModeType;
+}
+
+export function resolveQueuedThreadSettings(
+  message: QueuedThreadMessage,
+  thread: ThreadSettingsSnapshot,
+): ThreadSettingsSnapshot {
+  return {
+    modelSelection: message.modelSelection ?? thread.modelSelection,
+    runtimeMode: message.runtimeMode ?? thread.runtimeMode,
+    interactionMode: message.interactionMode ?? thread.interactionMode,
+  };
+}
+
+export function modelSelectionsEqual(left: ModelSelectionType, right: ModelSelectionType): boolean {
+  return (
+    left.instanceId === right.instanceId &&
+    left.model === right.model &&
+    JSON.stringify(left.options ?? null) === JSON.stringify(right.options ?? null)
+  );
 }
 
 export function encodeQueuedThreadMessage(message: QueuedThreadMessage): unknown {
@@ -118,4 +152,22 @@ export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
     return true;
   }
   return isTransportConnectionErrorMessage(errorMessage(error));
+}
+
+export type ThreadOutboxCommandStage = "settings-sync" | "start-turn";
+export type ThreadOutboxFailureAction = "retry" | "discard";
+
+export function resolveThreadOutboxFailureAction(input: {
+  readonly stage: ThreadOutboxCommandStage;
+  readonly error: unknown;
+  readonly interrupted: boolean;
+}): ThreadOutboxFailureAction {
+  if (
+    input.stage === "settings-sync" ||
+    input.interrupted ||
+    shouldRetryThreadOutboxDelivery(input.error)
+  ) {
+    return "retry";
+  }
+  return "discard";
 }

@@ -1,6 +1,7 @@
 import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import type {
   EnvironmentId,
+  MessageId,
   ModelSelection,
   OrchestrationThreadShell,
   ProviderInteractionMode,
@@ -91,7 +92,7 @@ export interface ThreadComposerProps {
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
-  readonly onSendMessage: () => Promise<void>;
+  readonly onSendMessage: () => Promise<MessageId | null>;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
@@ -447,9 +448,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
 
   const handleSend = useCallback(() => {
-    void onSendMessage().then(() => {
-      inputRef.current?.blur();
-    });
+    void onSendMessage();
   }, [onSendMessage]);
   const handleCommandSelect = useCallback(
     (item: ComposerCommandItem) => {

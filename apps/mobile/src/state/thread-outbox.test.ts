@@ -1,11 +1,21 @@
 import { describe, expect, it } from "@effect/vitest";
-import { CommandId, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  MessageId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { AtomRegistry } from "effect/unstable/reactivity";
 
 import {
   decodeQueuedThreadMessage,
+  encodeQueuedThreadMessage,
   groupQueuedThreadMessages,
+  modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
+  resolveThreadOutboxFailureAction,
+  resolveQueuedThreadSettings,
   shouldRetryThreadOutboxDelivery,
   threadOutboxRetryDelayMs,
   type QueuedThreadMessage,
@@ -64,6 +74,54 @@ describe("thread outbox", () => {
         environmentId: "environment-1",
       }),
     ).toThrow();
+  });
+
+  it("persists the exact selector snapshot while remaining compatible with v1 messages", () => {
+    const legacyMessage = queuedMessage({
+      messageId: "message-1",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+    const selectedMessage = {
+      ...legacyMessage,
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+        options: [{ id: "reasoningEffort", value: "xhigh" }],
+      },
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    } satisfies QueuedThreadMessage;
+
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(selectedMessage))).toEqual(
+      selectedMessage,
+    );
+    expect(
+      resolveQueuedThreadSettings(legacyMessage, {
+        modelSelection: selectedMessage.modelSelection,
+        runtimeMode: selectedMessage.runtimeMode,
+        interactionMode: selectedMessage.interactionMode,
+      }),
+    ).toEqual({
+      modelSelection: selectedMessage.modelSelection,
+      runtimeMode: selectedMessage.runtimeMode,
+      interactionMode: selectedMessage.interactionMode,
+    });
+  });
+
+  it("compares model options as part of the queued settings change", () => {
+    const base = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4",
+      options: [{ id: "reasoningEffort", value: "medium" }],
+    } as const;
+
+    expect(modelSelectionsEqual(base, base)).toBe(true);
+    expect(
+      modelSelectionsEqual(base, {
+        ...base,
+        options: [{ id: "reasoningEffort", value: "xhigh" }],
+      }),
+    ).toBe(false);
   });
 
   it("backs off queued delivery retries and caps them at sixteen seconds", () => {
@@ -270,5 +328,24 @@ describe("thread outbox", () => {
       }),
     ).toBe(true);
     expect(shouldRetryThreadOutboxDelivery(new Error("Thread no longer exists"))).toBe(false);
+  });
+
+  it("retains queued messages when settings synchronization fails before startTurn", () => {
+    const deterministicFailure = new Error("Thread no longer exists");
+
+    expect(
+      resolveThreadOutboxFailureAction({
+        stage: "settings-sync",
+        error: deterministicFailure,
+        interrupted: false,
+      }),
+    ).toBe("retry");
+    expect(
+      resolveThreadOutboxFailureAction({
+        stage: "start-turn",
+        error: deterministicFailure,
+        interrupted: false,
+      }),
+    ).toBe("discard");
   });
 });
