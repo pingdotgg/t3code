@@ -6,6 +6,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { DraftId } from "../composerDraftStore";
 import {
+  filterVisibleSourceControlSurfaces,
+  isSourceControlAvailable,
+  resolveVisibleSourceControlSurface,
   resolveSourceControlDraftMetadataTarget,
   runSourceControlServerMetadataUpdate,
   sourceControlMetadataErrorFromFailure,
@@ -46,6 +49,55 @@ describe("resolveSourceControlDraftMetadataTarget", () => {
     expect(resolveSourceControlDraftMetadataTarget({ activeThreadRef: null, draftId: null })).toBe(
       null,
     );
+  });
+});
+
+describe("source control right panel surface visibility", () => {
+  const sourceControlSurface = { id: "source-control", kind: "source-control" } as const;
+  const planSurface = { id: "plan", kind: "plan" } as const;
+
+  it("requires both a thread ref and Git cwd before making Source Control available", () => {
+    expect(isSourceControlAvailable({ activeThreadRef, gitCwd: "/repo" })).toBe(true);
+    expect(isSourceControlAvailable({ activeThreadRef: null, gitCwd: "/repo" })).toBe(false);
+    expect(isSourceControlAvailable({ activeThreadRef, gitCwd: null })).toBe(false);
+  });
+
+  it("hides unavailable Source Control surfaces without affecting other surfaces", () => {
+    expect(
+      filterVisibleSourceControlSurfaces({
+        sourceControlAvailable: false,
+        surfaces: [sourceControlSurface, planSurface],
+      }),
+    ).toEqual([planSurface]);
+
+    const surfaces = [sourceControlSurface, planSurface];
+    expect(
+      filterVisibleSourceControlSurfaces({
+        sourceControlAvailable: true,
+        surfaces,
+      }),
+    ).toBe(surfaces);
+  });
+
+  it("clears an unavailable active Source Control surface", () => {
+    expect(
+      resolveVisibleSourceControlSurface({
+        sourceControlAvailable: false,
+        surface: sourceControlSurface,
+      }),
+    ).toBe(null);
+    expect(
+      resolveVisibleSourceControlSurface({
+        sourceControlAvailable: false,
+        surface: planSurface,
+      }),
+    ).toBe(planSurface);
+    expect(
+      resolveVisibleSourceControlSurface({
+        sourceControlAvailable: true,
+        surface: sourceControlSurface,
+      }),
+    ).toBe(sourceControlSurface);
   });
 });
 

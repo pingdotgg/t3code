@@ -4,10 +4,10 @@
 
 Branch maintenance snapshot for the latest upstream merge resolution:
 
-- Generated from `upstream/main` `a9b1190a11276927caf573d92c33c5346fc4c076` with starting branch HEAD `f28c6bd19bbe16e6295315c126451d94a38960d3`; the merge created local merge commit `1f3e0060888a726d177d5c2c973901068139683c`.
-- Shared refs at merge time: `origin/main` `32d8580bf4cc1a80b782b3b13507320e511b1976`, local `main` `72200a3c363da256b8d839b8337728b94d884bd5`.
-- Effective branch delta after the merge: `53 ahead / 0 behind upstream/main`, `55 ahead / 355 behind origin/main`, `55 ahead / 360 behind local main`; fork diff size is `56 files changed, 14616 insertions(+), 312 deletions(-)` against the `upstream/main` tree.
-- Merge note: upstream commits `44fb34ad5b348185518568ad205e8ac6841afe18` and `a9b1190a11276927caf573d92c33c5346fc4c076` brought preview browser surface, automation, and recording stabilization plus desktop parallel WSL/Windows backend support with a mode picker. Git auto-merged `packages/contracts/src/ipc.ts` cleanly so upstream's new desktop window/WSL IPC contracts coexist with the branch's existing Version Control panel RPC/contracts; there were no conflict markers or manual conflict resolutions. No Version Control panel customization was retired, no upstream implementation made this branch's panel work obsolete, and no new source-control fork customization was introduced by the merge.
+- Generated from `upstream/main` `2448212367b4348f39eaf5c2635eea6896218cba` with starting branch HEAD `8e6897f06338220ad919126de1d33118c6ab9951`; the merge created local merge commit `e25707a5aae1cc647c317270ab7775687958177e`.
+- Shared refs at merge time: `origin/main` `750e1072f3967326b74d2b44806304df32c34d0a`, local `main` `08ff2c6ff4869ead7eb87ebefb3b107384a784c0`.
+- Effective branch delta after the merge: `57 ahead / 0 behind upstream/main`, `59 ahead / 381 behind origin/main`, `59 ahead / 383 behind local main`; fork diff size is `56 files changed, 14625 insertions(+), 312 deletions(-)` against the `upstream/main` tree.
+- Merge note: upstream commits `fda648623dc054f999578acfab478a1d885d8fe8` and `2448212367b4348f39eaf5c2635eea6896218cba` brought restored chat scroll affordances, a timeline minimap, timeline scroll anchoring helpers/tests, and v0.0.28 package metadata. Git auto-merged `apps/web/src/components/ChatView.tsx`, `apps/web/src/components/BranchToolbar.tsx`, chat composer/timeline files, package metadata, and `pnpm-lock.yaml` cleanly, so upstream's restored chat navigation behavior coexists with the branch's right-panel Version Control integration; there were no conflict markers or manual conflict resolutions. No Version Control panel customization was retired, no upstream implementation made this branch's panel work obsolete, and no new source-control fork customization was introduced by the merge.
 
 T3 Code includes a Git-backed Version Control surface in the right panel. The panel is scoped to the active environment and repository cwd, uses server-owned Git operations, and reuses the existing VCS status, source-control provider, and WebSocket RPC infrastructure rather than shelling out from React.
 
@@ -21,8 +21,7 @@ Primary implementation files:
 - `apps/web/src/components/source-control/SourceControlPanel.logic.ts`
 - `apps/web/src/state/sourceControlPanel.ts`
 - `apps/web/src/components/ChatView.tsx`
-- `apps/web/src/components/ChatView.sourceControl.ts`, which exports
-  `useSourceControlThreadMetadataRouting` for server and draft thread metadata routing
+- `apps/web/src/components/ChatView.sourceControl.ts`, which exports source-control right-panel availability/surface helpers and `useSourceControlThreadMetadataRouting` for server and draft thread metadata routing
 - `apps/web/src/components/RightPanelTabs.tsx`
 - `apps/server/src/sourceControl/SourceControlPanelService.ts`
 - `apps/server/src/vcs/VcsStatusBroadcaster.ts`
@@ -35,6 +34,8 @@ Primary implementation files:
 ## Entry Points And Host Behavior
 
 Version Control is a singleton right-panel surface with kind `source-control`. Users open it from the existing right-panel surface picker; it is not duplicated into the main chat header, project sidebar, or conversation timeline. Availability is project/repository based: the surface is enabled when a thread or draft-thread ref exists for right-panel state and the active project resolves to a repository cwd.
+
+`ChatView.sourceControl.ts` owns the source-control-specific right-panel availability, visible-surface filtering, and open-surface callback so upstream chat timeline and minimap changes in `ChatView.tsx` stay separate from Version Control panel glue.
 
 Right-panel integration is owned by:
 

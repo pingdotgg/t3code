@@ -9,6 +9,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ComposerThreadTarget, DraftId } from "../composerDraftStore";
+import { type RightPanelSurface, useRightPanelStore } from "../rightPanelStore";
 import {
   clearThreadErrorRecord,
   retainThreadKeyRecord,
@@ -49,6 +50,20 @@ interface SourceControlThreadMetadataRouting {
   readonly handleSourceControlThreadRefChange: (
     input: SourceControlThreadRefChange,
   ) => Promise<void>;
+}
+
+interface UseSourceControlRightPanelSurfaceInput {
+  readonly activeRightPanelSurface: RightPanelSurface | null;
+  readonly activeThreadRef: ScopedThreadRef | null;
+  readonly gitCwd: string | null;
+  readonly rightPanelSurfaces: readonly RightPanelSurface[];
+}
+
+interface SourceControlRightPanelSurfaceState {
+  readonly addSourceControlSurface: () => void;
+  readonly sourceControlAvailable: boolean;
+  readonly visibleActiveRightPanelSurface: RightPanelSurface | null;
+  readonly visibleRightPanelSurfaces: readonly RightPanelSurface[];
 }
 
 interface SourceControlServerMetadataUpdateInput {
@@ -106,6 +121,31 @@ export function resolveSourceControlDraftMetadataTarget(input: {
   return input.draftId ?? input.activeThreadRef;
 }
 
+export function isSourceControlAvailable(input: {
+  readonly activeThreadRef: ScopedThreadRef | null;
+  readonly gitCwd: string | null;
+}): boolean {
+  return input.activeThreadRef !== null && input.gitCwd !== null;
+}
+
+export function filterVisibleSourceControlSurfaces(input: {
+  readonly surfaces: readonly RightPanelSurface[];
+  readonly sourceControlAvailable: boolean;
+}): readonly RightPanelSurface[] {
+  return input.sourceControlAvailable
+    ? input.surfaces
+    : input.surfaces.filter((surface) => surface.kind !== "source-control");
+}
+
+export function resolveVisibleSourceControlSurface(input: {
+  readonly surface: RightPanelSurface | null;
+  readonly sourceControlAvailable: boolean;
+}): RightPanelSurface | null {
+  return input.surface?.kind === "source-control" && !input.sourceControlAvailable
+    ? null
+    : input.surface;
+}
+
 export async function runSourceControlServerMetadataUpdate(
   input: SourceControlServerMetadataUpdateInput,
 ): Promise<SourceControlServerMetadataUpdateResult> {
@@ -153,6 +193,36 @@ export async function runSourceControlServerMetadataUpdate(
   return {
     _tag: "Failure",
     message: sourceControlMetadataErrorFromFailure(squashAtomCommandFailure(result)),
+  };
+}
+
+export function useSourceControlRightPanelSurfaceState(
+  input: UseSourceControlRightPanelSurfaceInput,
+): SourceControlRightPanelSurfaceState {
+  const { activeRightPanelSurface, activeThreadRef, gitCwd, rightPanelSurfaces } = input;
+  const sourceControlAvailable = isSourceControlAvailable({ activeThreadRef, gitCwd });
+  const visibleRightPanelSurfaces = useMemo(
+    () =>
+      filterVisibleSourceControlSurfaces({
+        sourceControlAvailable,
+        surfaces: rightPanelSurfaces,
+      }),
+    [rightPanelSurfaces, sourceControlAvailable],
+  );
+  const visibleActiveRightPanelSurface = resolveVisibleSourceControlSurface({
+    sourceControlAvailable,
+    surface: activeRightPanelSurface,
+  });
+  const addSourceControlSurface = useCallback(() => {
+    if (!activeThreadRef || !sourceControlAvailable) return;
+    useRightPanelStore.getState().open(activeThreadRef, "source-control");
+  }, [activeThreadRef, sourceControlAvailable]);
+
+  return {
+    addSourceControlSurface,
+    sourceControlAvailable,
+    visibleActiveRightPanelSurface,
+    visibleRightPanelSurfaces,
   };
 }
 
