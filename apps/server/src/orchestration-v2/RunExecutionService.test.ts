@@ -20,8 +20,10 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
@@ -250,4 +252,210 @@ it.effect("rechecks run ownership immediately before calling the provider", () =
     assert.equal(yield* Ref.get(guardCalls), 2);
     assert.equal(yield* Ref.get(providerStarts), 0);
   }).pipe(Effect.provide(RunExecutionTestLayer)),
+);
+
+it.effect("keeps ingesting owned child events after the root turn terminalizes", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:run-execution-late-child");
+    const childThreadId = ThreadId.make("thread:run-execution-late-child:child");
+    const runId = RunId.make("run:run-execution-late-child");
+    const attemptId = RunAttemptId.make("attempt:run-execution-late-child");
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const providerSessionId = ProviderSessionId.make("session:run-execution-late-child");
+    const providerThreadId = ProviderThreadId.make("provider-thread:run-execution-late-child");
+    const childProviderThreadId = ProviderThreadId.make(
+      "provider-thread:run-execution-late-child:child",
+    );
+    const rootProviderTurnId = ProviderTurnId.make("provider-turn:run-execution-late-child");
+    const childProviderTurnId = ProviderTurnId.make("provider-turn:run-execution-late-child:child");
+    const rootNodeId = NodeId.make("node:run-execution-late-child");
+    const childNodeId = NodeId.make("node:run-execution-late-child:child");
+    const subagentNodeId = NodeId.make("node:run-execution-late-child:subagent");
+    const childMessageIngested = yield* Deferred.make<void>();
+    const order = yield* Ref.make<ReadonlyArray<string>>([]);
+    const testLayer = runExecutionServiceLayer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
+          Layer.mock(EventSinkV2)({
+            write: () => Effect.succeed([]),
+            writeWithEffects: (input) =>
+              Effect.gen(function* () {
+                if (
+                  input.events.some(
+                    (event) => event.type === "run.updated" && event.runId === runId,
+                  )
+                ) {
+                  yield* Ref.update(order, (current) => [...current, "root-finalized"]);
+                }
+                return [];
+              }),
+            writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
+          }),
+          idAllocatorLayer,
+          Layer.mock(ProviderEventIngestorV2)({
+            ingestNormalized: (input) =>
+              Effect.gen(function* () {
+                if (
+                  input.event.type === "message.updated" &&
+                  input.event.message.threadId === childThreadId
+                ) {
+                  yield* Ref.update(order, (current) => [...current, "child-message"]);
+                  yield* Deferred.succeed(childMessageIngested, undefined).pipe(Effect.ignore);
+                }
+                return [];
+              }),
+          }),
+          ServerSettingsService.layerTest(),
+        ),
+      ),
+    );
+    const events: ReadonlyArray<ProviderAdapterV2Event> = [
+      {
+        type: "app_thread.created",
+        driver,
+        appThread: {
+          id: childThreadId,
+          lineage: {
+            parentThreadId: threadId,
+            relationshipToParent: "subagent",
+            rootThreadId: threadId,
+          },
+        },
+      } as ProviderAdapterV2Event,
+      {
+        type: "provider_thread.updated",
+        driver,
+        providerThread: {
+          id: childProviderThreadId,
+          appThreadId: childThreadId,
+        },
+      } as ProviderAdapterV2Event,
+      {
+        type: "subagent.updated",
+        driver,
+        subagent: {
+          id: subagentNodeId,
+          threadId,
+          runId,
+          status: "running",
+        },
+      } as ProviderAdapterV2Event,
+      {
+        type: "provider_turn.updated",
+        driver,
+        threadId: childThreadId,
+        providerTurn: {
+          id: childProviderTurnId,
+          providerThreadId: childProviderThreadId,
+          nodeId: childNodeId,
+          runAttemptId: null,
+          status: "running",
+        },
+      } as ProviderAdapterV2Event,
+      {
+        type: "turn.terminal",
+        driver,
+        providerThreadId,
+        providerTurnId: rootProviderTurnId,
+        runOrdinal: 1,
+        status: "completed",
+        failure: null,
+        threadDisposition: "reusable",
+      },
+      {
+        type: "message.updated",
+        driver,
+        message: {
+          id: MessageId.make("message:run-execution-late-child:child"),
+          threadId: childThreadId,
+          runId: null,
+          nodeId: childNodeId,
+          role: "assistant",
+          text: "Hello.",
+          streaming: false,
+        },
+      } as ProviderAdapterV2Event,
+      {
+        type: "provider_turn.updated",
+        driver,
+        threadId: childThreadId,
+        providerTurn: {
+          id: childProviderTurnId,
+          providerThreadId: childProviderThreadId,
+          nodeId: childNodeId,
+          runAttemptId: null,
+          status: "completed",
+        },
+      } as ProviderAdapterV2Event,
+      {
+        type: "subagent.updated",
+        driver,
+        subagent: {
+          id: subagentNodeId,
+          threadId,
+          runId,
+          status: "completed",
+        },
+      } as ProviderAdapterV2Event,
+    ];
+
+    yield* Effect.gen(function* () {
+      const runExecution = yield* RunExecutionServiceV2;
+      yield* runExecution.startRootRun({
+        commandId: CommandId.make("command:run-execution-late-child"),
+        appThread: { id: threadId } as OrchestrationV2AppThread,
+        providerSessionId,
+        session: {
+          events: Stream.fromIterable(events),
+          startTurn: () => Effect.void,
+        } as unknown as ProviderAdapterV2SessionRuntime,
+        run: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId,
+        } as OrchestrationV2Run,
+        rootNode: { id: rootNodeId } as OrchestrationV2ExecutionNode,
+        checkpointScope: {
+          id: CheckpointScopeId.make("checkpoint-scope:run-execution-late-child"),
+        } as OrchestrationV2CheckpointScope,
+        providerThread: {
+          id: providerThreadId,
+          driver,
+        } as OrchestrationV2ProviderThread,
+        attempt: {
+          id: attemptId,
+          providerTurnId: rootProviderTurnId,
+        } as OrchestrationV2RunAttempt,
+        attemptId,
+        providerTurnOrdinal: 1,
+        message: {
+          messageId: MessageId.make("message:run-execution-late-child:user"),
+          text: "Spawn a child and finish.",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        },
+      });
+    }).pipe(Effect.provide(testLayer));
+
+    const observed = yield* Deferred.await(childMessageIngested).pipe(
+      Effect.timeoutOption("2 seconds"),
+    );
+    assert.isTrue(Option.isSome(observed), "child message was not ingested after root terminal");
+    assert.deepEqual(yield* Ref.get(order), ["root-finalized", "child-message"]);
+  }),
 );
