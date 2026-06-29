@@ -776,6 +776,17 @@ export type CodexDynamicToolItem = Extract<
   { readonly type: "mcpToolCall" | "dynamicToolCall" }
 >;
 
+type CodexCollabAgentToolCallItem = Extract<
+  CodexSchema.V2ItemCompletedNotification__ThreadItem,
+  { readonly type: "collabAgentToolCall" }
+>;
+
+type CodexSubAgentActivityItem = Extract<
+  | CodexSchema.V2ItemStartedNotification__ThreadItem
+  | CodexSchema.V2ItemCompletedNotification__ThreadItem,
+  { readonly type: "subAgentActivity" }
+>;
+
 export interface CodexAgentMessageDeltaUpdate {
   readonly turnId: string;
   readonly itemId: string;
@@ -1569,160 +1580,181 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             });
           });
 
-        const registerSubagentThreads = (input: {
+        const registerSubagentThread = (input: {
           readonly context: ActiveCodexTurnContext;
-          readonly item: Extract<
-            CodexSchema.V2ItemCompletedNotification__ThreadItem,
-            { type: "collabAgentToolCall" }
-          >;
+          readonly nativeThreadId: string;
+          readonly nativeItemId: string;
+          readonly nativeToolCallId: string;
+          readonly prompt: string;
+          readonly title: string | null;
+          readonly model: string | null;
+          readonly ordinal: number;
+          readonly emitInitialPrompt: boolean;
         }) =>
           Effect.gen(function* () {
-            if (input.item.tool !== "spawnAgent" || input.item.receiverThreadIds.length === 0) {
+            const registeredSubagents = yield* Ref.get(subagentThreads);
+            if (registeredSubagents.has(input.nativeThreadId)) {
               return;
             }
 
             const now = yield* DateTime.now;
-            for (const [index, nativeThreadId] of input.item.receiverThreadIds.entries()) {
-              const registeredSubagents = yield* Ref.get(subagentThreads);
-              if (registeredSubagents.has(nativeThreadId)) {
-                continue;
-              }
+            const subagentNodeId = idAllocator.derive.nodeFromProviderItem({
+              driver: CODEX_PROVIDER,
+              nativeItemId: input.nativeItemId,
+            });
+            const childRootNodeId = idAllocator.derive.nodeFromProviderItem({
+              driver: CODEX_PROVIDER,
+              nativeItemId: `${input.nativeItemId}:thread-root`,
+            });
+            const childThreadId = idAllocator.derive.threadFromProviderThread({
+              driver: CODEX_PROVIDER,
+              nativeThreadId: input.nativeThreadId,
+            });
+            const turnItemOrdinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
+            const providerThread = {
+              id: idAllocator.derive.providerThread({
+                driver: CODEX_PROVIDER,
+                nativeThreadId: input.nativeThreadId,
+              }),
+              driver: CODEX_PROVIDER,
+              providerInstanceId: input.context.input.modelSelection.instanceId,
+              providerSessionId: input.context.providerThread.providerSessionId,
+              appThreadId: childThreadId,
+              ownerNodeId: null,
+              nativeThreadRef: {
+                driver: CODEX_PROVIDER,
+                nativeId: input.nativeThreadId,
+                strength: "strong" as const,
+              },
+              nativeConversationHeadRef: null,
+              status: "idle" as const,
+              firstRunOrdinal: null,
+              lastRunOrdinal: null,
+              handoffIds: [],
+              forkedFrom: {
+                providerThreadId: input.context.providerThread.id,
+                providerTurnId: input.context.providerTurnId,
+              },
+              createdAt: now,
+              updatedAt: now,
+            } satisfies OrchestrationV2ProviderThread;
+            const task = {
+              id: subagentNodeId,
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              parentNodeId: input.context.rootNodeId,
+              origin: "provider_native",
+              createdBy: "agent",
+              driver: CODEX_PROVIDER,
+              providerInstanceId: input.context.input.modelSelection.instanceId,
+              providerThreadId: providerThread.id,
+              childThreadId,
+              nativeTaskRef: codexNativeItemRef(input.nativeItemId),
+              prompt: input.prompt,
+              title: input.title,
+              model: input.model,
+              status: "running",
+              result: null,
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+            } satisfies OrchestrationV2Subagent;
+            const subagent = {
+              parentContext: input.context,
+              providerThread,
+              subagentNodeId,
+              childRootNodeId,
+              childThreadId,
+              nativeToolCallId: input.nativeToolCallId,
+              ordinal: input.ordinal,
+              startedAt: now,
+              turnItemId: idAllocator.derive.turnItemFromProviderItem({
+                driver: CODEX_PROVIDER,
+                nativeItemId: input.nativeItemId,
+              }),
+              turnItemOrdinal,
+              task,
+            } satisfies CodexSubagentThreadContext;
 
-              const nativeItemId = `${input.item.id}:${nativeThreadId}`;
-              const subagentNodeId = idAllocator.derive.nodeFromProviderItem({
-                driver: CODEX_PROVIDER,
-                nativeItemId,
-              });
-              const childRootNodeId = idAllocator.derive.nodeFromProviderItem({
-                driver: CODEX_PROVIDER,
-                nativeItemId: `${nativeItemId}:thread-root`,
-              });
-              const childThreadId = idAllocator.derive.threadFromProviderThread({
-                driver: CODEX_PROVIDER,
-                nativeThreadId,
-              });
-              const turnItemOrdinal = yield* resolveItemOrdinal(input.context, nativeItemId);
-              const providerThread = {
-                id: idAllocator.derive.providerThread({
-                  driver: CODEX_PROVIDER,
-                  nativeThreadId,
-                }),
-                driver: CODEX_PROVIDER,
-                providerInstanceId: input.context.input.modelSelection.instanceId,
-                providerSessionId: input.context.providerThread.providerSessionId,
-                appThreadId: childThreadId,
-                ownerNodeId: null,
-                nativeThreadRef: {
-                  driver: CODEX_PROVIDER,
-                  nativeId: nativeThreadId,
-                  strength: "strong" as const,
-                },
-                nativeConversationHeadRef: null,
-                status: "idle" as const,
-                firstRunOrdinal: null,
-                lastRunOrdinal: null,
-                handoffIds: [],
-                forkedFrom: {
-                  providerThreadId: input.context.providerThread.id,
-                  providerTurnId: input.context.providerTurnId,
-                },
-                createdAt: now,
-                updatedAt: now,
-              } satisfies OrchestrationV2ProviderThread;
-              const task = {
+            yield* Ref.update(subagentThreads, (current) => {
+              const updated = new Map(current);
+              updated.set(input.nativeThreadId, subagent);
+              return updated;
+            });
+            const childThread = makeSubagentChildThread({
+              parentThread: input.context.input.appThread,
+              childThreadId,
+              parentNodeId: subagentNodeId,
+              activeProviderThreadId: providerThread.id,
+              providerInstanceId: input.context.input.modelSelection.instanceId,
+              modelSelection: {
+                ...input.context.input.modelSelection,
+                model: task.model ?? input.context.input.modelSelection.model,
+              },
+              title: subagentThreadTitle({
+                parentTitle: input.context.input.appThread.title,
+                prompt: task.prompt,
+                title: task.title,
+                ordinal: input.ordinal,
+              }),
+              now,
+              createdBy: "agent",
+              creationSource: "provider",
+            });
+            yield* emitProviderEvent({
+              type: "app_thread.created",
+              driver: CODEX_PROVIDER,
+              appThread: childThread,
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              driver: CODEX_PROVIDER,
+              node: {
                 id: subagentNodeId,
                 threadId: input.context.input.threadId,
                 runId: input.context.input.runId,
                 parentNodeId: input.context.rootNodeId,
-                origin: "provider_native",
-                createdBy: "agent",
-                driver: CODEX_PROVIDER,
-                providerInstanceId: input.context.input.modelSelection.instanceId,
-                providerThreadId: providerThread.id,
-                childThreadId,
-                nativeTaskRef: codexNativeItemRef(nativeItemId),
-                prompt: input.item.prompt ?? "",
-                title: null,
-                model:
-                  typeof input.item.model === "string" && input.item.model.length > 0
-                    ? input.item.model
-                    : null,
+                rootNodeId: input.context.rootNodeId,
+                kind: "subagent",
                 status: "running",
-                result: null,
+                countsForRun: false,
+                providerThreadId: providerThread.id,
+                providerTurnId: input.context.providerTurnId,
+                nativeItemRef: codexNativeItemRef(input.nativeToolCallId),
+                runtimeRequestId: null,
+                checkpointScopeId: null,
                 startedAt: now,
                 completedAt: null,
-                updatedAt: now,
-              } satisfies OrchestrationV2Subagent;
-              const subagent = {
-                parentContext: input.context,
-                providerThread,
-                subagentNodeId,
-                childRootNodeId,
-                childThreadId,
-                nativeToolCallId: input.item.id,
-                ordinal: index + 1,
-                startedAt: now,
-                turnItemId: idAllocator.derive.turnItemFromProviderItem({
-                  driver: CODEX_PROVIDER,
-                  nativeItemId,
-                }),
-                turnItemOrdinal,
-                task,
-              } satisfies CodexSubagentThreadContext;
-
-          const emitProviderEvent = (event: ProviderAdapterV2Event) =>
-            Queue.offer(events, event).pipe(Effect.asVoid);
-
-          const findActiveTurnByNativeThreadId = (nativeThreadId: string) =>
-            Effect.gen(function* () {
-              const turns = Array.from((yield* Ref.get(activeTurns)).values());
-              return turns.find(
-                (context) =>
-                  context.input.providerThread.nativeThreadRef?.nativeId === nativeThreadId,
-              );
+              },
             });
-
-          const resolveItemOrdinal = (context: ActiveCodexTurnContext, nativeItemId: string) =>
-            Effect.gen(function* () {
-              const existing = (yield* Ref.get(itemOrdinals)).get(nativeItemId);
-              if (existing !== undefined) {
-                return existing;
-              }
-
-              const turnKey = context.nativeTurnId;
-              const nextWithinTurn = yield* Ref.modify(nextItemOrdinalsByTurn, (current) => {
-                const next = (current.get(turnKey) ?? 0) + 1;
-                const updated = new Map(current);
-                updated.set(turnKey, next);
-                return [next, updated];
-              });
-              const nextOrdinal = context.providerTurnOrdinal * 100 + nextWithinTurn;
-              yield* Ref.update(itemOrdinals, (current) => {
-                const updated = new Map(current);
-                updated.set(nativeItemId, nextOrdinal);
-                return updated;
-              });
-              const childThread = makeSubagentChildThread({
-                parentThread: input.context.input.appThread,
-                childThreadId,
-                parentNodeId: subagentNodeId,
-                activeProviderThreadId: providerThread.id,
-                providerInstanceId: input.context.input.modelSelection.instanceId,
-                modelSelection: {
-                  ...input.context.input.modelSelection,
-                  model: task.model ?? input.context.input.modelSelection.model,
-                },
-                title: subagentThreadTitle({
-                  parentTitle: input.context.input.appThread.title,
-                  prompt: task.prompt,
-                  title: task.title,
-                  ordinal: index + 1,
-                }),
-                now,
-                createdBy: "agent",
-                creationSource: "provider",
-              });
-              const promptNativeItemId = `${nativeItemId}:prompt`;
+            yield* emitProviderEvent({
+              type: "node.updated",
+              driver: CODEX_PROVIDER,
+              node: {
+                id: childRootNodeId,
+                threadId: childThreadId,
+                runId: null,
+                parentNodeId: null,
+                rootNodeId: childRootNodeId,
+                kind: "root_turn",
+                status: "running",
+                countsForRun: false,
+                providerThreadId: providerThread.id,
+                providerTurnId: null,
+                nativeItemRef: codexNativeItemRef(input.nativeItemId),
+                runtimeRequestId: null,
+                checkpointScopeId: null,
+                startedAt: now,
+                completedAt: null,
+              },
+            });
+            yield* emitProviderEvent({
+              type: "provider_thread.updated",
+              driver: CODEX_PROVIDER,
+              providerThread,
+            });
+            if (input.emitInitialPrompt && input.prompt.length > 0) {
+              const promptNativeItemId = `${input.nativeItemId}:prompt`;
               const promptArtifacts = makeSubagentConversationArtifacts({
                 messageId: idAllocator.derive.messageFromProviderItem({
                   driver: CODEX_PROVIDER,
@@ -1738,61 +1770,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 providerTurnId: null,
                 nativeItemRef: codexNativeItemRef(promptNativeItemId),
                 role: "user",
-                text: task.prompt,
+                text: input.prompt,
                 ordinal: 100,
                 now,
-              });
-              yield* emitProviderEvent({
-                type: "app_thread.created",
-                driver: CODEX_PROVIDER,
-                appThread: childThread,
-              });
-              yield* emitProviderEvent({
-                type: "node.updated",
-                driver: CODEX_PROVIDER,
-                node: {
-                  id: subagentNodeId,
-                  threadId: input.context.input.threadId,
-                  runId: input.context.input.runId,
-                  parentNodeId: input.context.rootNodeId,
-                  rootNodeId: input.context.rootNodeId,
-                  kind: "subagent",
-                  status: "running",
-                  countsForRun: false,
-                  providerThreadId: providerThread.id,
-                  providerTurnId: input.context.providerTurnId,
-                  nativeItemRef: codexNativeItemRef(input.item.id),
-                  runtimeRequestId: null,
-                  checkpointScopeId: null,
-                  startedAt: now,
-                  completedAt: null,
-                },
-              });
-              yield* emitProviderEvent({
-                type: "node.updated",
-                driver: CODEX_PROVIDER,
-                node: {
-                  id: childRootNodeId,
-                  threadId: childThreadId,
-                  runId: null,
-                  parentNodeId: null,
-                  rootNodeId: childRootNodeId,
-                  kind: "root_turn",
-                  status: "running",
-                  countsForRun: false,
-                  providerThreadId: providerThread.id,
-                  providerTurnId: null,
-                  nativeItemRef: codexNativeItemRef(nativeItemId),
-                  runtimeRequestId: null,
-                  checkpointScopeId: null,
-                  startedAt: now,
-                  completedAt: null,
-                },
-              });
-              yield* emitProviderEvent({
-                type: "provider_thread.updated",
-                driver: CODEX_PROVIDER,
-                providerThread,
               });
               yield* emitProviderEvent({
                 type: "message.updated",
@@ -1804,41 +1784,91 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 driver: CODEX_PROVIDER,
                 turnItem: promptArtifacts.turnItem,
               });
-              yield* emitSubagentTaskUpdate({
-                subagent,
-                status: "running",
-              });
-
-          const resolvePlanId = (context: ActiveCodexTurnContext, planKey: string) =>
-            Effect.gen(function* () {
-              const existing = (yield* Ref.get(planIds)).get(planKey);
-              if (existing !== undefined) {
-                return existing;
-              }
-              const planId = yield* idAllocator.allocate.plan({
-                threadId: context.input.threadId,
-                runId: context.input.runId,
-                provider: CODEX_PROVIDER,
-              });
-              yield* Ref.update(planIds, (current) => {
-                const updated = new Map(current);
-                updated.set(planKey, planId);
-                return updated;
-              });
-              return planId;
+            }
+            yield* emitSubagentTaskUpdate({
+              subagent,
+              status: "running",
             });
 
-        const updateSubagentStates = (input: {
-          readonly item: Extract<
-            CodexSchema.V2ItemCompletedNotification__ThreadItem,
-            { type: "collabAgentToolCall" }
-          >;
+            const pendingTurns = yield* Ref.modify(pendingSubagentTurns, (current) => {
+              const pending = current.get(input.nativeThreadId) ?? [];
+              const updated = new Map(current);
+              updated.delete(input.nativeThreadId);
+              return [pending, updated];
+            });
+            for (const pendingTurn of pendingTurns) {
+              yield* emitSubagentProviderTurnStarted(subagent, pendingTurn);
+            }
+          });
+
+        const registerSubagentThreads = (input: {
+          readonly context: ActiveCodexTurnContext;
+          readonly item: CodexCollabAgentToolCallItem;
         }) =>
           Effect.gen(function* () {
-            if (input.item.tool !== "spawnAgent") {
+            if (input.item.tool !== "spawnAgent" || input.item.receiverThreadIds.length === 0) {
               return;
             }
 
+            for (const [index, nativeThreadId] of input.item.receiverThreadIds.entries()) {
+              const model =
+                typeof input.item.model === "string" && input.item.model.length > 0
+                  ? input.item.model
+                  : null;
+              yield* registerSubagentThread({
+                context: input.context,
+                nativeThreadId,
+                nativeItemId: `${input.item.id}:${nativeThreadId}`,
+                nativeToolCallId: input.item.id,
+                prompt: input.item.prompt ?? "",
+                title: null,
+                model,
+                ordinal: index + 1,
+                emitInitialPrompt: true,
+              });
+            }
+          });
+
+        const registerSubagentActivity = (input: {
+          readonly context: ActiveCodexTurnContext;
+          readonly item: CodexSubAgentActivityItem;
+        }) =>
+          Effect.gen(function* () {
+            if (input.item.kind === "started") {
+              const registeredSubagents = yield* Ref.get(subagentThreads);
+              const ordinal =
+                Array.from(registeredSubagents.values()).filter(
+                  (subagent) => subagent.parentContext.rootNodeId === input.context.rootNodeId,
+                ).length + 1;
+              yield* registerSubagentThread({
+                context: input.context,
+                nativeThreadId: input.item.agentThreadId,
+                nativeItemId: `${input.item.id}:${input.item.agentThreadId}`,
+                nativeToolCallId: input.item.id,
+                prompt: "",
+                title: input.item.agentPath,
+                model: null,
+                ordinal,
+                emitInitialPrompt: false,
+              });
+              return;
+            }
+
+            const subagent = (yield* Ref.get(subagentThreads)).get(input.item.agentThreadId);
+            if (subagent === undefined) {
+              return;
+            }
+
+            if (input.item.kind === "interrupted") {
+              yield* emitSubagentTaskUpdate({
+                subagent,
+                status: "interrupted",
+              });
+            }
+          });
+
+        const updateSubagentStates = (input: { readonly item: CodexCollabAgentToolCallItem }) =>
+          Effect.gen(function* () {
             const subagents = yield* Ref.get(subagentThreads);
             for (const [nativeThreadId, state] of Object.entries(input.item.agentsStates)) {
               const subagent = subagents.get(nativeThreadId);
@@ -3379,6 +3409,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               }
             }
 
+            if (payload.item.type === "subAgentActivity") {
+              yield* registerSubagentActivity({
+                context,
+                item: payload.item,
+              });
+              return;
+            }
+
             if (payload.item.type === "commandExecution") {
               const artifacts = yield* buildCommandExecutionArtifacts(context, payload.item);
               yield* emitProviderEvent({
@@ -3561,6 +3599,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 steps,
               });
               yield* updateSubagentStates({
+                item: payload.item,
+              });
+              return;
+            }
+
+            if (payload.item.type === "subAgentActivity") {
+              yield* registerSubagentActivity({
+                context,
                 item: payload.item,
               });
               return;

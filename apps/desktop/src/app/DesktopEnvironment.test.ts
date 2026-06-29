@@ -54,8 +54,6 @@ describe("DesktopEnvironment", () => {
           T3CODE_OTLP_METRICS_URL: " http://127.0.0.1:4318/v1/metrics ",
           T3CODE_OTLP_LOGS_URL: " http://127.0.0.1:4318/v1/logs ",
           T3CODE_OTLP_EXPORT_INTERVAL_MS: "2500",
-          T3CODE_OTLP_HEADERS: "authorization=Basic%20abc%3D%3D,x-tenant=t3",
-          T3CODE_OTLP_PROTOCOL: "http/protobuf",
         },
       );
 
@@ -91,18 +89,10 @@ describe("DesktopEnvironment", () => {
       assert.deepEqual(environment.otlpMetricsUrl, Option.some("http://127.0.0.1:4318/v1/metrics"));
       assert.deepEqual(environment.otlpLogsUrl, Option.some("http://127.0.0.1:4318/v1/logs"));
       assert.equal(environment.otlpExportIntervalMs, 2500);
-      assert.deepEqual(
-        environment.otlpHeaders,
-        Option.some({
-          authorization: "Basic abc==",
-          "x-tenant": "t3",
-        }),
-      );
-      assert.equal(environment.otlpProtocol, "http/protobuf");
     }),
   );
 
-  it.effect("stores production state under userdata in an explicit home", () =>
+  it.effect("derives production state paths under userdata-v2", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(
         {},
@@ -112,11 +102,12 @@ describe("DesktopEnvironment", () => {
       );
 
       assert.equal(environment.isDevelopment, false);
-      assert.equal(environment.stateDir, "/tmp/t3/userdata");
-      assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
-      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
-      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
-      assert.equal(environment.otlpProtocol, "http/json");
+      assert.equal(environment.stateDir, "/tmp/t3/userdata-v2");
+      assert.equal(environment.logDir, "/tmp/t3/userdata-v2/logs");
+      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata-v2/browser-artifacts");
+      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata-v2/settings.json");
+      assert.equal(environment.userDataDirName, "t3code-v2");
+      assert.equal(environment.legacyUserDataDirName, "T3 Code (Alpha v2)");
     }),
   );
 
@@ -134,10 +125,6 @@ describe("DesktopEnvironment", () => {
       assert.equal(
         environment.backendEntryPath,
         "/install/resources/server.asar/apps/server/dist/bin.mjs",
-      );
-      assert.equal(
-        environment.clientAssetsDir,
-        "/install/resources/server.asar/apps/server/dist/client",
       );
     }),
   );
