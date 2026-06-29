@@ -146,7 +146,7 @@ function isWindowFocused(): boolean {
   return typeof document === "undefined" ? true : document.hasFocus();
 }
 
-function syncNativeSidebarVibrancy(enabled: boolean, persist = true): void {
+function syncNativeSidebarVibrancy(enabled: boolean): void {
   if (typeof window === "undefined") {
     return;
   }
@@ -159,7 +159,7 @@ function syncNativeSidebarVibrancy(enabled: boolean, persist = true): void {
   }
 
   void bridge
-    .setVibrancy(enabled, { persist })
+    .setVibrancy(enabled)
     .then((nativeVibrancyEnabled) => {
       if (requestId !== nativeVibrancyRequestId) {
         return;
@@ -220,19 +220,18 @@ export function useAppFont() {
 
   useEffect(() => {
     applySidebarTranslucency(sidebarTranslucency);
+    syncNativeSidebarVibrancy(sidebarTranslucency !== "off");
   }, [sidebarTranslucency]);
 
   useEffect(() => {
-    const syncFocusedTranslucency = (persist: boolean) => {
-      const focused = isWindowFocused();
-      setWindowFocusedAttribute(focused);
-      syncNativeSidebarVibrancy(sidebarTranslucency !== "off" && focused, persist);
+    const syncFocusedTranslucency = () => {
+      setWindowFocusedAttribute(isWindowFocused());
     };
 
-    syncFocusedTranslucency(false);
+    syncFocusedTranslucency();
 
     const onFocusChange = () => {
-      syncFocusedTranslucency(false);
+      syncFocusedTranslucency();
     };
     window.addEventListener("focus", onFocusChange);
     window.addEventListener("blur", onFocusChange);
@@ -240,7 +239,7 @@ export function useAppFont() {
       window.removeEventListener("focus", onFocusChange);
       window.removeEventListener("blur", onFocusChange);
     };
-  }, [sidebarTranslucency]);
+  }, []);
 
   return {
     uiFont,

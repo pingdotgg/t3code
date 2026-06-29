@@ -272,6 +272,14 @@ html:is(
     saturate(var(--sidebar-backdrop-saturation));
 }
 
+html[data-native-vibrancy="true"] [data-thread-item] {
+  contain: paint;
+}
+
+html[data-native-vibrancy="true"] [data-thread-item] [class*="transition-opacity"] {
+  transition-duration: 0ms !important;
+}
+
 html[data-ui-font="geist"] {
   --app-font-sans-stack:
     "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
