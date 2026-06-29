@@ -515,7 +515,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           <TimelineSystemDivider
             label="Subagent of"
             detail={parentThreadLink.title}
-            icon={GitForkIcon}
+            icon={BotIcon}
             actionLabel="Open parent thread"
             onAction={() => onOpenThread(parentThreadLink.threadId)}
           />

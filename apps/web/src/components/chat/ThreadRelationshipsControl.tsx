@@ -11,6 +11,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
   BotIcon,
+  CornerLeftUpIcon,
   GitForkIcon,
   GitMergeIcon,
   LoaderCircleIcon,
@@ -44,6 +45,21 @@ function relationshipLabel(edge: ThreadRelationshipEdge, currentThreadId: Thread
     return edge.sourceThreadId === currentThreadId ? "Subagent" : "Parent agent";
   }
   return edge.sourceThreadId === currentThreadId ? "Fork" : "Parent thread";
+}
+
+function isParentRelationship(edge: ThreadRelationshipEdge, currentThreadId: ThreadId): boolean {
+  return edge.kind !== "transfer" && edge.targetThreadId === currentThreadId;
+}
+
+function relationshipSortKey(input: {
+  readonly edge: ThreadRelationshipEdge;
+  readonly threadId: ThreadId;
+  readonly currentThreadId: ThreadId;
+  readonly mergeTargetThreadId: ThreadId | null;
+}): number {
+  if (isParentRelationship(input.edge, input.currentThreadId)) return 0;
+  if (input.threadId === input.mergeTargetThreadId) return 1;
+  return 2;
 }
 
 function statusDotClass(status: string | null): string {
@@ -88,8 +104,18 @@ export function ThreadRelationshipsPanel(props: {
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
   const relationshipRows = immediateThreadRelationships(graph, props.threadId).toSorted(
     (left, right) =>
-      Number(right.threadId === mergeTargetThreadId) -
-      Number(left.threadId === mergeTargetThreadId),
+      relationshipSortKey({
+        edge: left.edge,
+        threadId: left.threadId,
+        currentThreadId: props.threadId,
+        mergeTargetThreadId,
+      }) -
+      relationshipSortKey({
+        edge: right.edge,
+        threadId: right.threadId,
+        currentThreadId: props.threadId,
+        mergeTargetThreadId,
+      }),
   );
   const canMerge = mergeTargetThreadId !== null && latestCompletedRun !== null;
   const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
@@ -181,7 +207,12 @@ export function ThreadRelationshipsPanel(props: {
             const node = graph.nodes.get(threadId);
             const isSubagent = edge.kind === "subagent";
             const isMergeTarget = threadId === mergeTargetThreadId;
-            const RelationshipIcon = isSubagent ? BotIcon : GitForkIcon;
+            const isParent = isParentRelationship(edge, props.threadId);
+            const RelationshipIcon = isParent
+              ? CornerLeftUpIcon
+              : isSubagent
+                ? BotIcon
+                : GitForkIcon;
             const relationship = relationshipLabel(edge, props.threadId);
             const threadTitle = relationshipThreadTitle({
               title: node?.thread?.title ?? threadId,
