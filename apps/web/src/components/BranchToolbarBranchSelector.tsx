@@ -22,12 +22,17 @@ import {
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { usePaginatedBranches } from "../state/queries";
-import { useProject, useThread } from "../state/entities";
+import { useProject, useThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
+import {
+  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_ROW_CLASS,
+} from "./chat/threadDetailsPanelStyles";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import {
@@ -60,6 +65,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface BranchToolbarBranchSelectorProps {
   className?: string;
+  displayMode?: "toolbar" | "panel";
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
@@ -94,6 +100,7 @@ function getBranchTriggerLabel(input: {
 
 export function BranchToolbarBranchSelector({
   className,
+  displayMode = "toolbar",
   environmentId,
   threadId,
   draftId,
@@ -125,8 +132,8 @@ export function BranchToolbarBranchSelector({
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
   );
-  const serverThread = useThread(threadRef);
-  const serverSession = serverThread?.session ?? null;
+  const serverThread = useThreadShell(threadRef);
+  const serverSession = serverThread?.runtime ?? null;
   const draftThread = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
   );
@@ -531,7 +538,7 @@ export function BranchToolbarBranchSelector({
     resolvedActiveBranch,
   });
 
-  // PR pill shown next to the branch selector when the active branch has one.
+  // Change request state is compact in the composer and gets a dedicated row in the panel.
   const branchPr = resolveThreadPr(resolvedActiveBranch, branchStatusQuery.data ?? null);
   const branchPrStatus = prStatusIndicator(branchPr, branchStatusQuery.data?.sourceControlProvider);
   // Action-oriented tooltip (the pill opens the PR), distinct from the sidebar's
@@ -540,6 +547,9 @@ export function BranchToolbarBranchSelector({
     ? `Open ${sourceControlPresentation.terminology.singular} #${branchPr.number} (${branchPr.state}) in browser`
     : "";
   const openPrLink = useOpenPrLink();
+  const panelPrLabel = branchPr
+    ? `#${branchPr.number}${branchPr.title.trim() ? `: ${branchPr.title}` : ""}`
+    : "";
 
   function renderPickerItem(itemValue: string, index: number) {
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
@@ -637,8 +647,14 @@ export function BranchToolbarBranchSelector({
       open={isBranchMenuOpen}
       value={resolvedActiveBranch}
     >
-      <div className={cn("flex min-w-0 items-center gap-1", className)}>
-        {branchPr && branchPrStatus ? (
+      <div
+        className={cn(
+          "flex min-w-0",
+          displayMode === "panel" ? "w-full flex-col items-stretch" : "items-center gap-1",
+          className,
+        )}
+      >
+        {displayMode !== "panel" && branchPr && branchPrStatus ? (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -660,16 +676,62 @@ export function BranchToolbarBranchSelector({
           </Tooltip>
         ) : null}
         <ComboboxTrigger
-          render={<Button variant="ghost" size="xs" />}
-          className="min-w-0 text-muted-foreground/70 hover:text-foreground/80"
+          render={<Button variant="ghost" size={displayMode === "panel" ? "sm" : "xs"} />}
+          className={cn(
+            "min-w-0 text-muted-foreground/70 hover:text-foreground/80",
+            displayMode === "panel" && THREAD_DETAILS_PANEL_ROW_CLASS,
+          )}
           disabled={isInitialBranchesLoadPending || isBranchActionPending}
         >
-          <GitBranchIcon className="size-3 shrink-0 opacity-70" />
-          <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
-          <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
+          <GitBranchIcon
+            className={cn(
+              "size-3 shrink-0 opacity-70",
+              displayMode === "panel" && THREAD_DETAILS_PANEL_ICON_CLASS,
+            )}
+          />
+          <span
+            className={cn(
+              "min-w-0 max-w-[240px] truncate",
+              displayMode === "panel" && "max-w-none flex-1 text-left",
+            )}
+          >
+            {triggerLabel}
+          </span>
+          <ChevronDownIcon
+            className={cn(
+              "size-3 shrink-0 opacity-50",
+              displayMode === "panel" && THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+            )}
+          />
         </ComboboxTrigger>
+        {displayMode === "panel" && branchPr && branchPrStatus ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className={THREAD_DETAILS_PANEL_ROW_CLASS}
+                  aria-label={branchPrTooltip}
+                  onClick={(event) => openPrLink(event, branchPrStatus.url)}
+                />
+              }
+            >
+              <ChangeRequestStatusIcon
+                className={cn(THREAD_DETAILS_PANEL_ICON_CLASS, branchPrStatus.colorClass)}
+              />
+              <span className="min-w-0 flex-1 truncate text-left">{panelPrLabel}</span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">{branchPrStatus.tooltip}</TooltipPopup>
+          </Tooltip>
+        ) : null}
       </div>
-      <ComboboxPopup align="end" side="top" className="flex w-80 flex-col">
+      <ComboboxPopup
+        align={displayMode === "panel" ? "start" : "end"}
+        side={displayMode === "panel" ? "bottom" : "top"}
+        className="flex w-80 flex-col"
+      >
         <div className="shrink-0 px-3 pt-2.5">
           <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
             <SearchIcon

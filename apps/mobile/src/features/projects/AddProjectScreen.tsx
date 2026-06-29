@@ -471,7 +471,6 @@ function useCreateProject(environment: EnvironmentOption | null) {
         commandId: CommandId.make(uuidv4()),
         projectId,
         workspaceRoot,
-        createdAt: new Date().toISOString(),
       });
       const result = await createProject({
         environmentId: environment.environmentId,

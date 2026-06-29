@@ -16,6 +16,9 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/bin.ts",
+    "record:codex-replay": "bun scripts/record-codex-app-server-replay-fixture.ts",
+    "record:claude-replay": "bun scripts/record-claude-agent-sdk-replay-fixture.ts",
+    "record:cursor-replay": "node --env-file-if-exists=../../.env --experimental-strip-types scripts/record-cursor-agent-sdk-replay-fixture.ts",
     "build:bundle": "vp pack",
     "start": "node dist/bin.mjs",
     "typecheck": "tsgo --noEmit",
@@ -23,6 +26,9 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.170",
+    "@connectrpc/connect": "1.7.0",
+    "@connectrpc/connect-node": "1.7.0",
+    "@cursor/sdk": "1.0.19",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/platform-node-shared": "catalog:",

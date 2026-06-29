@@ -6,6 +6,10 @@ import {
   ConnectionTargetStore,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
   EnvironmentCacheStore,
+  ORCHESTRATION_CACHE_SCHEMA_VERSION,
+  StoredOrchestrationShellSnapshot,
+  StoredOrchestrationThreadSnapshot,
+  decodeOrDiscardOrchestrationCache,
   registerConnectionInCatalog,
   removeCatalogValue,
   removeConnectionFromCatalog,
@@ -17,12 +21,7 @@ import {
   CredentialStore,
   ProfileStore,
 } from "@t3tools/client-runtime/connection";
-import {
-  EnvironmentId,
-  OrchestrationShellSnapshot,
-  OrchestrationThread,
-  ThreadId,
-} from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -37,20 +36,9 @@ const CATALOG_STORE_NAME = "catalog";
 const SHELL_STORE_NAME = "shell";
 const THREAD_STORE_NAME = "thread";
 const CATALOG_KEY = "document";
-const SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION = 1;
-
-const StoredShellSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION),
-  environmentId: EnvironmentId,
-  snapshot: OrchestrationShellSnapshot,
-});
+const StoredShellSnapshot = StoredOrchestrationShellSnapshot;
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
-const StoredThreadSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(1),
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-  thread: OrchestrationThread,
-});
+const StoredThreadSnapshot = StoredOrchestrationThreadSnapshot;
 const StoredThreadSnapshotJson = Schema.fromJsonString(StoredThreadSnapshot);
 const ConnectionCatalogDocumentJson = Schema.fromJsonString(ConnectionCatalogDocument);
 const decodeConnectionCatalogDocument = Schema.decodeUnknownEffect(ConnectionCatalogDocumentJson);
@@ -429,25 +417,24 @@ export const connectionStorageLayer = Layer.effectContext(
             if (typeof raw !== "string") {
               return Effect.succeed(Option.none());
             }
-            return decodeStoredShellSnapshot(raw).pipe(
-              Effect.mapError((cause) => persistenceError("load-shell", cause)),
-              Effect.map((stored) =>
-                stored.environmentId === environmentId
-                  ? Option.some(stored.snapshot)
-                  : Option.none(),
+            return decodeOrDiscardOrchestrationCache(
+              decodeStoredShellSnapshot(raw).pipe(
+                Effect.mapError((cause) => persistenceError("load-shell", cause)),
+                Effect.map((stored) =>
+                  stored.environmentId === environmentId
+                    ? Option.some(stored.snapshot)
+                    : Option.none(),
+                ),
               ),
+              removeDatabaseValue(database, SHELL_STORE_NAME, environmentId),
             );
           }),
-          Effect.mapError((cause) =>
-            cause._tag === "ConnectionPersistenceError"
-              ? cause
-              : persistenceError("load-shell", cause),
-          ),
+          Effect.mapError((cause) => persistenceError("load-shell", cause)),
         ),
       saveShell: (environmentId, snapshot) =>
         Effect.gen(function* () {
           const encoded = yield* encodeStoredShellSnapshot({
-            schemaVersion: SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION,
+            schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
             environmentId,
             snapshot,
           }).pipe(Effect.mapError((cause) => persistenceError("save-shell", cause)));
@@ -469,33 +456,36 @@ export const connectionStorageLayer = Layer.effectContext(
             if (typeof raw !== "string") {
               return Effect.succeed(Option.none());
             }
-            return decodeStoredThreadSnapshot(raw).pipe(
-              Effect.mapError((cause) => persistenceError("load-thread", cause)),
-              Effect.map((stored) =>
-                stored.environmentId === environmentId && stored.threadId === threadId
-                  ? Option.some(stored.thread)
-                  : Option.none(),
+            return decodeOrDiscardOrchestrationCache(
+              decodeStoredThreadSnapshot(raw).pipe(
+                Effect.mapError((cause) => persistenceError("load-thread", cause)),
+                Effect.map((stored) =>
+                  stored.environmentId === environmentId && stored.threadId === threadId
+                    ? Option.some(stored.thread)
+                    : Option.none(),
+                ),
+              ),
+              removeDatabaseValue(
+                database,
+                THREAD_STORE_NAME,
+                threadCacheKey(environmentId, threadId),
               ),
             );
           }),
-          Effect.mapError((cause) =>
-            cause._tag === "ConnectionPersistenceError"
-              ? cause
-              : persistenceError("load-thread", cause),
-          ),
+          Effect.mapError((cause) => persistenceError("load-thread", cause)),
         ),
       saveThread: (environmentId, thread) =>
         Effect.gen(function* () {
           const encoded = yield* encodeStoredThreadSnapshot({
-            schemaVersion: 1,
+            schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
             environmentId,
-            threadId: thread.id,
+            threadId: thread.thread.id,
             thread,
           }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
           yield* writeDatabaseValue(
             database,
             THREAD_STORE_NAME,
-            threadCacheKey(environmentId, thread.id),
+            threadCacheKey(environmentId, thread.thread.id),
             encoded,
           );
         }).pipe(

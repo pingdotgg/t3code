@@ -11,12 +11,14 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
-  OrchestrationProposedPlanId,
-  OrchestrationCheckpointFile,
-  OrchestrationCheckpointStatus,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import {
+  OrchestrationCheckpointFile,
+  OrchestrationCheckpointStatus,
+  OrchestrationProposedPlanId,
+} from "@t3tools/contracts/legacy-orchestration";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";

@@ -1,4 +1,4 @@
-import { ProjectId } from "@t3tools/contracts";
+import { ProjectId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptRuntimeEnv, setupProjectScript } from "@t3tools/shared/projectScripts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -6,8 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as ProjectService from "./ProjectService.ts";
 
 export interface ProjectSetupScriptRunnerResultNoScript {
   readonly status: "no-script";
@@ -31,6 +31,10 @@ export interface ProjectSetupScriptRunnerInput {
   readonly projectCwd?: string;
   readonly worktreePath: string;
   readonly preferredTerminalId?: string;
+  readonly project?: {
+    readonly workspaceRoot: string;
+    readonly scripts: ReadonlyArray<ProjectScript>;
+  };
 }
 
 export class ProjectSetupScriptOperationError extends Schema.TaggedErrorClass<ProjectSetupScriptOperationError>()(
@@ -79,7 +83,7 @@ export class ProjectSetupScriptRunner extends Context.Service<
 >()("t3/project/ProjectSetupScriptRunner") {}
 
 export const make = Effect.gen(function* () {
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const projects = yield* ProjectService.ProjectService;
   const terminalManager = yield* TerminalManager.TerminalManager;
 
   const runForThread: ProjectSetupScriptRunner["Service"]["runForThread"] = Effect.fn(
@@ -91,23 +95,27 @@ export const make = Effect.gen(function* () {
       ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
       ...(input.projectCwd === undefined ? {} : { projectCwd: input.projectCwd }),
     };
-    const projectById = input.projectId
-      ? yield* projectionSnapshotQuery.getProjectShellById(ProjectId.make(input.projectId)).pipe(
-          Effect.map(Option.getOrUndefined),
-          Effect.mapError(
-            (cause) =>
-              new ProjectSetupScriptOperationError({
-                ...errorContext,
-                operation: "resolveProject",
-                cause,
-              }),
-          ),
-        )
-      : null;
+    const suppliedProject = input.project;
+    const projectById =
+      suppliedProject ??
+      (input.projectId
+        ? yield* projects.getById(ProjectId.make(input.projectId)).pipe(
+            Effect.map(Option.getOrUndefined),
+            Effect.mapError(
+              (cause) =>
+                new ProjectSetupScriptOperationError({
+                  ...errorContext,
+                  operation: "resolveProject",
+                  cause,
+                }),
+            ),
+          )
+        : null);
     const project =
+      suppliedProject ??
       projectById ??
       (input.projectCwd
-        ? yield* projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(input.projectCwd).pipe(
+        ? yield* projects.getByWorkspaceRoot(input.projectCwd).pipe(
             Effect.map(Option.getOrUndefined),
             Effect.mapError(
               (cause) =>

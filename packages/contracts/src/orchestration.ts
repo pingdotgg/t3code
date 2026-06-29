@@ -1,11 +1,6 @@
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as SchemaIssue from "effect/SchemaIssue";
-import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
-import { ProviderOptionSelections } from "./model.ts";
-import { RepositoryIdentity } from "./environment.ts";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -15,210 +10,54 @@ import {
   MessageId,
   NonNegativeInt,
   ProjectId,
-  ProviderItemId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas.ts";
+import { ChatAttachment, UploadChatAttachment } from "./chatAttachment.ts";
+import { ModelSelection } from "./modelSelection.ts";
+import {
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  ProviderApprovalDecision,
+  ProviderInteractionMode,
+  ProviderUserInputAnswers,
+  RuntimeMode,
+} from "./providerPolicy.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { Project, ProjectScript } from "./project.ts";
+import { OrchestrationProjectShell } from "./orchestrationProject.ts";
+import {
+  ApplicationEventMetadata,
+  ApplicationProjectCreatedEvent,
+  ApplicationProjectDeletedEvent,
+  ApplicationProjectMetaUpdatedEvent,
+} from "./applicationEvent.ts";
 
-export const ORCHESTRATION_WS_METHODS = {
-  dispatchCommand: "orchestration.dispatchCommand",
-  getTurnDiff: "orchestration.getTurnDiff",
-  getFullThreadDiff: "orchestration.getFullThreadDiff",
-  replayEvents: "orchestration.replayEvents",
-  getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
-  subscribeShell: "orchestration.subscribeShell",
-  subscribeThread: "orchestration.subscribeThread",
-} as const;
+export { OrchestrationProjectShell } from "./orchestrationProject.ts";
 
-export const ProviderApprovalPolicy = Schema.Literals([
-  "untrusted",
-  "on-failure",
-  "on-request",
-  "never",
-]);
-export type ProviderApprovalPolicy = typeof ProviderApprovalPolicy.Type;
-export const ProviderSandboxMode = Schema.Literals([
-  "read-only",
-  "workspace-write",
-  "danger-full-access",
-]);
-export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
+export {
+  ApplicationProjectCreatedPayload as ProjectCreatedPayload,
+  ApplicationProjectDeletedPayload as ProjectDeletedPayload,
+  ApplicationProjectMetaUpdatedPayload as ProjectMetaUpdatedPayload,
+} from "./applicationEvent.ts";
 
-/**
- * `ModelSelection` — selection of a model on a configured provider instance.
- *
- * The routing key is `instanceId` (a user-defined slug identifying one
- * configured provider instance). Drivers, credentials, working-directory
- * bindings, and any other per-instance state are recovered from the
- * runtime registry via the instance id.
- *
- * Wire legacy: persisted selections produced before the driver/instance
- * split carried a `provider: <driver-id>` field instead. The schema absorbs
- * that shape via a pre-decoding transform — `{provider, model}` is promoted
- * to `{instanceId: defaultInstanceIdForDriver(provider), model}`. No
- * post-decode compatibility code lives in the runtime; the transform is the
- * only compat surface.
- */
-const ModelSelectionWire = Schema.Struct({
-  instanceId: ProviderInstanceId,
-  model: TrimmedNonEmptyString,
-  options: Schema.optionalKey(ProviderOptionSelections),
-});
+export {
+  OrchestrationGetFullThreadDiffError,
+  OrchestrationGetFullThreadDiffInput,
+  OrchestrationGetFullThreadDiffResult,
+  OrchestrationGetTurnDiffError,
+  OrchestrationGetTurnDiffInput,
+  OrchestrationGetTurnDiffResult,
+  ThreadTurnDiff,
+  TurnCountRange,
+} from "./checkpointDiff.ts";
 
-// Source shape for persisted legacy payloads. Fields are typed as
-// `Schema.Unknown` so malformed drafts still make it into the transform and
-// fail validation through the target schema (with proper error messages)
-// rather than at the source-struct layer where the error is less actionable.
-const ModelSelectionSource = Schema.Struct({
-  provider: Schema.optional(Schema.Unknown),
-  instanceId: Schema.optional(Schema.Unknown),
-  model: Schema.Unknown,
-  options: Schema.optional(Schema.Unknown),
-});
-
-export const ModelSelection = ModelSelectionSource.pipe(
-  Schema.decodeTo(
-    ModelSelectionWire,
-    SchemaTransformation.transformOrFail({
-      decode: (raw) => {
-        // Resolve the routing key: prefer an explicit `instanceId`; fall
-        // back to promoting the legacy `provider` slug (the canonical
-        // `defaultInstanceIdForDriver` mapping) so persisted rollout-era
-        // payloads decode without data loss. The target schema brands the
-        // string as `ProviderInstanceId`.
-        const instanceIdSource =
-          raw.instanceId !== undefined
-            ? raw.instanceId
-            : typeof raw.provider === "string"
-              ? raw.provider
-              : undefined;
-        const base: Record<string, unknown> = {
-          instanceId: instanceIdSource,
-          model: raw.model,
-        };
-        if (raw.options !== undefined) base.options = raw.options;
-        return Effect.succeed(base as typeof ModelSelectionWire.Encoded);
-      },
-      encode: (value) => {
-        const base: Record<string, unknown> = {
-          model: value.model,
-          instanceId: value.instanceId,
-        };
-        if (value.options !== undefined) base.options = value.options;
-        return Effect.succeed(base as typeof ModelSelectionSource.Encoded);
-      },
-    }),
-  ),
-);
-export type ModelSelection = typeof ModelSelection.Type;
-
-export const RuntimeMode = Schema.Literals([
-  "approval-required",
-  "auto-accept-edits",
-  "full-access",
-]);
-export type RuntimeMode = typeof RuntimeMode.Type;
-export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
-export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
-export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
-export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
-export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
-export type ProviderRequestKind = typeof ProviderRequestKind.Type;
-export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
-export type AssistantDeliveryMode = typeof AssistantDeliveryMode.Type;
-export const ProviderApprovalDecision = Schema.Literals([
-  "accept",
-  "acceptForSession",
-  "decline",
-  "cancel",
-]);
-export type ProviderApprovalDecision = typeof ProviderApprovalDecision.Type;
-export const ProviderUserInputAnswers = Schema.Record(Schema.String, Schema.Unknown);
-export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
-
-export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
-export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
-export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
-const CHAT_ATTACHMENT_ID_MAX_CHARS = 128;
 // Correlation id is command id by design in this model.
 export const CorrelationId = CommandId;
 export type CorrelationId = typeof CorrelationId.Type;
 
-const ChatAttachmentId = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(CHAT_ATTACHMENT_ID_MAX_CHARS),
-  Schema.isPattern(/^[a-z0-9_-]+$/i),
-);
-export type ChatAttachmentId = typeof ChatAttachmentId.Type;
-
-export const ChatImageAttachment = Schema.Struct({
-  type: Schema.Literal("image"),
-  id: ChatAttachmentId,
-  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
-  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^image\//i)),
-  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)),
-});
-export type ChatImageAttachment = typeof ChatImageAttachment.Type;
-
-const UploadChatImageAttachment = Schema.Struct({
-  type: Schema.Literal("image"),
-  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
-  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^image\//i)),
-  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)),
-  dataUrl: TrimmedNonEmptyString.check(
-    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS),
-  ),
-});
-export type UploadChatImageAttachment = typeof UploadChatImageAttachment.Type;
-
-export const ChatAttachment = Schema.Union([ChatImageAttachment]);
-export type ChatAttachment = typeof ChatAttachment.Type;
-const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
-export type UploadChatAttachment = typeof UploadChatAttachment.Type;
-
-export const ProjectScriptIcon = Schema.Literals([
-  "play",
-  "test",
-  "lint",
-  "configure",
-  "build",
-  "debug",
-]);
-export type ProjectScriptIcon = typeof ProjectScriptIcon.Type;
-
-export const ProjectScript = Schema.Struct({
-  id: TrimmedNonEmptyString,
-  name: TrimmedNonEmptyString,
-  command: TrimmedNonEmptyString,
-  icon: ProjectScriptIcon,
-  runOnWorktreeCreate: Schema.Boolean,
-  /**
-   * URL to open in the in-app browser preview when this script runs (or
-   * when the user explicitly requests a preview). Optional; only honored on
-   * the desktop build.
-   */
-  previewUrl: Schema.optional(TrimmedNonEmptyString),
-  /**
-   * When true, automatically open the preview panel pointed at `previewUrl`
-   * the moment this script starts. Ignored without `previewUrl` or on web.
-   */
-  autoOpenPreview: Schema.optional(Schema.Boolean),
-});
-export type ProjectScript = typeof ProjectScript.Type;
-
-export const OrchestrationProject = Schema.Struct({
-  id: ProjectId,
-  title: TrimmedNonEmptyString,
-  workspaceRoot: TrimmedNonEmptyString,
-  repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
-  defaultModelSelection: Schema.NullOr(ModelSelection),
-  scripts: Schema.Array(ProjectScript),
-  createdAt: IsoDateTime,
-  updatedAt: IsoDateTime,
-  deletedAt: Schema.NullOr(IsoDateTime),
-});
+export const OrchestrationProject = Project.mapFields(Struct.omit(["faviconPath"]));
 export type OrchestrationProject = typeof OrchestrationProject.Type;
 
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
@@ -375,18 +214,6 @@ export const OrchestrationReadModel = Schema.Struct({
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
 
-export const OrchestrationProjectShell = Schema.Struct({
-  id: ProjectId,
-  title: TrimmedNonEmptyString,
-  workspaceRoot: TrimmedNonEmptyString,
-  repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
-  defaultModelSelection: Schema.NullOr(ModelSelection),
-  scripts: Schema.Array(ProjectScript),
-  createdAt: IsoDateTime,
-  updatedAt: IsoDateTime,
-});
-export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
-
 export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -470,10 +297,11 @@ export const ProjectCreateCommand = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  scripts: Schema.optional(Schema.Array(ProjectScript)),
   createdAt: IsoDateTime,
 });
 
-const ProjectMetaUpdateCommand = Schema.Struct({
+export const ProjectMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("project.meta.update"),
   commandId: CommandId,
   projectId: ProjectId,
@@ -483,12 +311,19 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
-const ProjectDeleteCommand = Schema.Struct({
+export const ProjectDeleteCommand = Schema.Struct({
   type: Schema.Literal("project.delete"),
   commandId: CommandId,
   projectId: ProjectId,
   force: Schema.optional(Schema.Boolean),
 });
+
+export const ProjectOrchestrationCommand = Schema.Union([
+  ProjectCreateCommand,
+  ProjectMetaUpdateCommand,
+  ProjectDeleteCommand,
+]);
+export type ProjectOrchestrationCommand = typeof ProjectOrchestrationCommand.Type;
 
 const ThreadCreateCommand = Schema.Struct({
   type: Schema.Literal("thread.create"),
@@ -810,32 +645,6 @@ export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"])
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
-export const ProjectCreatedPayload = Schema.Struct({
-  projectId: ProjectId,
-  title: TrimmedNonEmptyString,
-  workspaceRoot: TrimmedNonEmptyString,
-  repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
-  defaultModelSelection: Schema.NullOr(ModelSelection),
-  scripts: Schema.Array(ProjectScript),
-  createdAt: IsoDateTime,
-  updatedAt: IsoDateTime,
-});
-
-export const ProjectMetaUpdatedPayload = Schema.Struct({
-  projectId: ProjectId,
-  title: Schema.optional(TrimmedNonEmptyString),
-  workspaceRoot: Schema.optional(TrimmedNonEmptyString),
-  repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
-  defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
-  scripts: Schema.optional(Schema.Array(ProjectScript)),
-  updatedAt: IsoDateTime,
-});
-
-export const ProjectDeletedPayload = Schema.Struct({
-  projectId: ProjectId,
-  deletedAt: IsoDateTime,
-});
-
 export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
@@ -977,13 +786,7 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
   activity: OrchestrationThreadActivity,
 });
 
-export const OrchestrationEventMetadata = Schema.Struct({
-  providerTurnId: Schema.optional(TrimmedNonEmptyString),
-  providerItemId: Schema.optional(ProviderItemId),
-  adapterKey: Schema.optional(TrimmedNonEmptyString),
-  requestId: Schema.optional(ApprovalRequestId),
-  ingestedAt: Schema.optional(IsoDateTime),
-});
+export const OrchestrationEventMetadata = ApplicationEventMetadata;
 export type OrchestrationEventMetadata = typeof OrchestrationEventMetadata.Type;
 
 const EventBaseFields = {
@@ -999,21 +802,9 @@ const EventBaseFields = {
 } as const;
 
 export const OrchestrationEvent = Schema.Union([
-  Schema.Struct({
-    ...EventBaseFields,
-    type: Schema.Literal("project.created"),
-    payload: ProjectCreatedPayload,
-  }),
-  Schema.Struct({
-    ...EventBaseFields,
-    type: Schema.Literal("project.meta-updated"),
-    payload: ProjectMetaUpdatedPayload,
-  }),
-  Schema.Struct({
-    ...EventBaseFields,
-    type: Schema.Literal("project.deleted"),
-    payload: ProjectDeletedPayload,
-  }),
+  ApplicationProjectCreatedEvent,
+  ApplicationProjectMetaUpdatedEvent,
+  ApplicationProjectDeletedEvent,
   Schema.Struct({
     ...EventBaseFields,
     type: Schema.Literal("thread.created"),
@@ -1127,28 +918,6 @@ export type OrchestrationThreadStreamItem = typeof OrchestrationThreadStreamItem
 export const OrchestrationCommandReceiptStatus = Schema.Literals(["accepted", "rejected"]);
 export type OrchestrationCommandReceiptStatus = typeof OrchestrationCommandReceiptStatus.Type;
 
-export const TurnCountRange = Schema.Struct({
-  fromTurnCount: NonNegativeInt,
-  toTurnCount: NonNegativeInt,
-}).check(
-  Schema.makeFilter(
-    (input) =>
-      input.fromTurnCount <= input.toTurnCount ||
-      new SchemaIssue.InvalidValue(Option.some(input.fromTurnCount), {
-        message: "fromTurnCount must be less than or equal to toTurnCount",
-      }),
-    { identifier: "OrchestrationTurnDiffRange" },
-  ),
-);
-
-export const ThreadTurnDiff = TurnCountRange.mapFields(
-  Struct.assign({
-    threadId: ThreadId,
-    diff: Schema.String,
-  }),
-  { unsafePreserveChecks: true },
-);
-
 export const ProviderSessionRuntimeStatus = Schema.Literals([
   "starting",
   "running",
@@ -1182,109 +951,3 @@ export type ProjectionPendingApprovalStatus = typeof ProjectionPendingApprovalSt
 
 export const ProjectionPendingApprovalDecision = Schema.NullOr(ProviderApprovalDecision);
 export type ProjectionPendingApprovalDecision = typeof ProjectionPendingApprovalDecision.Type;
-
-export const DispatchResult = Schema.Struct({
-  sequence: NonNegativeInt,
-});
-export type DispatchResult = typeof DispatchResult.Type;
-
-export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
-  Struct.assign({
-    threadId: ThreadId,
-    ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
-  }),
-  { unsafePreserveChecks: true },
-);
-export type OrchestrationGetTurnDiffInput = typeof OrchestrationGetTurnDiffInput.Type;
-
-export const OrchestrationGetTurnDiffResult = ThreadTurnDiff;
-export type OrchestrationGetTurnDiffResult = typeof OrchestrationGetTurnDiffResult.Type;
-
-export const OrchestrationGetFullThreadDiffInput = Schema.Struct({
-  threadId: ThreadId,
-  toTurnCount: NonNegativeInt,
-  ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
-});
-export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThreadDiffInput.Type;
-
-export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
-export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
-
-export const OrchestrationReplayEventsInput = Schema.Struct({
-  fromSequenceExclusive: NonNegativeInt,
-});
-export type OrchestrationReplayEventsInput = typeof OrchestrationReplayEventsInput.Type;
-
-const OrchestrationReplayEventsResult = Schema.Array(OrchestrationEvent);
-export type OrchestrationReplayEventsResult = typeof OrchestrationReplayEventsResult.Type;
-
-export const OrchestrationRpcSchemas = {
-  dispatchCommand: {
-    input: ClientOrchestrationCommand,
-    output: DispatchResult,
-  },
-  getTurnDiff: {
-    input: OrchestrationGetTurnDiffInput,
-    output: OrchestrationGetTurnDiffResult,
-  },
-  getFullThreadDiff: {
-    input: OrchestrationGetFullThreadDiffInput,
-    output: OrchestrationGetFullThreadDiffResult,
-  },
-  replayEvents: {
-    input: OrchestrationReplayEventsInput,
-    output: OrchestrationReplayEventsResult,
-  },
-  getArchivedShellSnapshot: {
-    input: Schema.Struct({}),
-    output: OrchestrationShellSnapshot,
-  },
-  subscribeThread: {
-    input: OrchestrationSubscribeThreadInput,
-    output: OrchestrationThreadStreamItem,
-  },
-  subscribeShell: {
-    input: Schema.Struct({}),
-    output: OrchestrationShellStreamItem,
-  },
-} as const;
-
-export class OrchestrationGetSnapshotError extends Schema.TaggedErrorClass<OrchestrationGetSnapshotError>()(
-  "OrchestrationGetSnapshotError",
-  {
-    message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
-
-export class OrchestrationDispatchCommandError extends Schema.TaggedErrorClass<OrchestrationDispatchCommandError>()(
-  "OrchestrationDispatchCommandError",
-  {
-    message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
-
-export class OrchestrationGetTurnDiffError extends Schema.TaggedErrorClass<OrchestrationGetTurnDiffError>()(
-  "OrchestrationGetTurnDiffError",
-  {
-    message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
-
-export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass<OrchestrationGetFullThreadDiffError>()(
-  "OrchestrationGetFullThreadDiffError",
-  {
-    message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
-
-export class OrchestrationReplayEventsError extends Schema.TaggedErrorClass<OrchestrationReplayEventsError>()(
-  "OrchestrationReplayEventsError",
-  {
-    message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}

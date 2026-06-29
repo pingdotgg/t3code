@@ -21,11 +21,7 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
 
 const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
   McpSessionRegistry.__testing
-    .make({
-      now,
-      idleTimeoutMs: 100,
-      maximumLifetimeMs: 1_000,
-    })
+    .make({ now })
     .pipe(
       Effect.provideService(HttpServer.HttpServer, httpServer),
       Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
@@ -47,6 +43,7 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
 
     const resolved = yield* registry.resolve(token);
     expect(resolved?.threadId).toBe(threadId);
+    expect(resolved?.capabilities).toEqual(new Set(["preview", "orchestration"]));
 
     yield* registry.revokeThread(threadId);
     expect(yield* registry.resolve(token)).toBeUndefined();
@@ -75,7 +72,7 @@ it.effect("builds MCP endpoints from the bound server host", () =>
   }),
 );
 
-it.effect("expires credentials after inactivity", () =>
+it.effect("keeps credentials valid until they are explicitly revoked", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;
     const registry = yield* makeRegistry(() => timestamp);
@@ -84,7 +81,12 @@ it.effect("expires credentials after inactivity", () =>
       providerInstanceId: ProviderInstanceId.make("claude"),
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
-    timestamp += 101;
+    const resolved = yield* registry.resolve(token);
+    expect(resolved?.providerSessionId).toBe(issued.config.providerSessionId);
+    timestamp += 365 * 24 * 60 * 60 * 1_000;
+    expect(yield* registry.resolve(token)).toEqual(resolved);
+
+    yield* registry.revokeProviderSession(issued.config.providerSessionId);
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
 );

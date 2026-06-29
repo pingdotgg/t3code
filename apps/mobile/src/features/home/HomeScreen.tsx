@@ -60,14 +60,16 @@ interface HomeScreenProps {
 /* ─── Status indicator colors ────────────────────────────────────────── */
 
 function statusColors(thread: EnvironmentThreadShell): { bg: string; fg: string } {
-  switch (thread.session?.status) {
+  switch (thread.runtime?.status) {
     case "running":
+    case "waiting":
       return { bg: "rgba(249,115,22,0.14)", fg: "#f97316" };
-    case "ready":
+    case "completed":
       return { bg: "rgba(34,197,94,0.14)", fg: "#22c55e" };
+    case "queued":
     case "starting":
       return { bg: "rgba(59,130,246,0.14)", fg: "#3b82f6" };
-    case "error":
+    case "failed":
       return { bg: "rgba(239,68,68,0.14)", fg: "#ef4444" };
     default:
       return { bg: "rgba(163,163,163,0.10)", fg: "#a3a3a3" };
@@ -161,7 +163,7 @@ function deriveEmptyState(props: {
 
   return {
     title: "No threads yet",
-    detail: "Create a task to start a new coding session in one of your connected projects.",
+    detail: "Create a task to start a new coding runtime in one of your connected projects.",
     loading: false,
   };
 }
@@ -544,7 +546,7 @@ export function HomeScreen(props: HomeScreenProps) {
         ) : !hasResults ? (
           <EmptyState
             title="No threads yet"
-            detail="Create a task to start a new coding session."
+            detail="Create a task to start a new coding runtime."
           />
         ) : (
           projectGroups.map((group) => {

@@ -1,8 +1,8 @@
 import {
   EnvironmentId,
-  ORCHESTRATION_WS_METHODS,
-  type OrchestrationShellSnapshot,
-  type OrchestrationShellStreamItem,
+  ORCHESTRATION_V2_WS_METHODS,
+  type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ShellStreamItem,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -21,6 +21,7 @@ import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { makeEnvironmentShellState } from "./shell.ts";
+import { v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -29,11 +30,9 @@ const TARGET = new PrimaryConnectionTarget({
   wsBaseUrl: "wss://environment.example.test",
 });
 
-const LIVE_SHELL_SNAPSHOT: OrchestrationShellSnapshot = {
+const LIVE_SHELL_SNAPSHOT: OrchestrationV2ShellSnapshot = {
+  ...v2ShellSnapshot,
   snapshotSequence: 1,
-  projects: [],
-  threads: [],
-  updatedAt: "2026-06-06T00:00:00.000Z",
 };
 
 function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
@@ -49,9 +48,9 @@ function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
 describe("environment shell synchronization", () => {
   it.effect("publishes live state before persistence and preserves it when ready", () =>
     Effect.gen(function* () {
-      const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+      const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
       const client = {
-        [ORCHESTRATION_WS_METHODS.subscribeShell]: () => Stream.fromQueue(events),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () => Stream.fromQueue(events),
       } as unknown as WsRpcProtocolClient;
       const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
       const activeSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(

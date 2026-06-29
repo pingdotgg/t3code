@@ -4,13 +4,7 @@ import {
   type ComposerPathSearchTarget,
 } from "@t3tools/client-runtime/state/threads";
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
-import type {
-  EnvironmentId,
-  OrchestrationThread,
-  ThreadId,
-  VcsListRefsResult,
-  VcsRef,
-} from "@t3tools/contracts";
+import type { VcsListRefsResult, VcsRef } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -20,7 +14,6 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { orchestrationEnvironment } from "./orchestration";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
-import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
 
 const COMPOSER_PATH_SEARCH_DEBOUNCE_MS = 120;
@@ -28,13 +21,6 @@ const COMPOSER_PATH_SEARCH_LIMIT = 80;
 const VCS_REF_LIST_LIMIT = 100;
 const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
 const INITIAL_BRANCH_CURSORS = [undefined] as const;
-
-export interface ThreadDetailView {
-  readonly data: OrchestrationThread | null;
-  readonly error: string | null;
-  readonly isPending: boolean;
-  readonly isDeleted: boolean;
-}
 
 function useDebouncedValue<A>(value: A, delayMs: number): A {
   const [debounced, setDebounced] = useState(value);
@@ -49,19 +35,6 @@ function useDebouncedValue<A>(value: A, delayMs: number): A {
   }, [delayMs, value]);
 
   return debounced;
-}
-
-export function useThreadDetail(
-  environmentId: EnvironmentId | null,
-  threadId: ThreadId | null,
-): ThreadDetailView {
-  const state = useEnvironmentThread(environmentId, threadId);
-  return {
-    data: Option.getOrNull(state.data),
-    error: Option.getOrNull(state.error),
-    isPending: state.status === "synchronizing",
-    isDeleted: state.status === "deleted",
-  };
 }
 
 export function useBranches(target: VcsRefTarget) {

@@ -514,6 +514,19 @@ describe("chat/editor shortcuts", () => {
     );
   });
 
+  it("resolves a user-configured thread panel shortcut without assigning a default", () => {
+    const bindings = compile([
+      { shortcut: modShortcut("b", { shiftKey: true }), command: "threadPanel.toggle" },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "b", metaKey: true, shiftKey: true }), bindings, {
+        platform: "MacIntel",
+      }),
+      "threadPanel.toggle",
+    );
+  });
+
   it("matches diff.toggle shortcut outside terminal focus", () => {
     assert.isTrue(
       isDiffToggleShortcut(event({ key: "d", metaKey: true }), DEFAULT_BINDINGS, {

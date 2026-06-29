@@ -54,6 +54,13 @@ export function resolveLockedWorkspaceLabel(activeWorktreePath: string | null): 
   return activeWorktreePath ? "Worktree" : "Local checkout";
 }
 
+export function resolveWorkspaceDisplayName(path: string | null): string | null {
+  if (!path) return null;
+  const normalizedPath = path.replace(/[\\/]+$/, "");
+  if (normalizedPath.length === 0) return path;
+  return normalizedPath.split(/[\\/]/).at(-1) ?? normalizedPath;
+}
+
 export function resolveEffectiveEnvMode(input: {
   activeWorktreePath: string | null;
   hasServerThread: boolean;

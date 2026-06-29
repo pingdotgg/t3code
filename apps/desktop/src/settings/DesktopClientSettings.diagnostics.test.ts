@@ -83,7 +83,7 @@ describe("DesktopClientSettings diagnostics", () => {
       _tag: "PermissionDenied",
       module: "FileSystem",
       method: "readFileString",
-      pathOrDescriptor: `${baseDir}/userdata/client-settings.json`,
+      pathOrDescriptor: `${baseDir}/userdata-v2/client-settings.json`,
     });
 
     return Effect.gen(function* () {

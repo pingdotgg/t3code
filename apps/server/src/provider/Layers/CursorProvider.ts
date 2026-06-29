@@ -1,7 +1,9 @@
 import * as NodeOS from "node:os";
+import type { SDKModel, SDKUser } from "@cursor/sdk";
 import type {
   CursorSettings,
   ModelCapabilities,
+  ProviderOptionDescriptor,
   ProviderOptionSelection,
   ServerProvider,
   ServerProviderAuth,
@@ -44,8 +46,10 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
+import { cursorSdkParameterPriority, cursorSdkProviderOptionId } from "../cursorSdkModel.ts";
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import { CursorListAvailableModelsResponse } from "../acp/CursorAcpExtension.ts";
+import { CursorSdkCatalog } from "./CursorSdkCatalog.ts";
 
 const decodeCursorListAvailableModelsResponse = Schema.decodeUnknownEffect(
   CursorListAvailableModelsResponse,
@@ -61,6 +65,7 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 });
 
 const CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const CURSOR_SDK_CATALOG_TIMEOUT_MS = 15_000;
 const CURSOR_PARAMETERIZED_MODEL_PICKER_MIN_VERSION_DATE = 2026_04_08;
 const CURSOR_CLI_INSTALLATION_DOCS_URL = "https://cursor.com/docs/cli/installation";
 const CURSOR_ACP_MODEL_DISCOVERY_FAILED_MESSAGE = [
@@ -377,6 +382,112 @@ function buildCursorDiscoveredModels(
       } satisfies ServerProviderModel,
     ];
   });
+}
+
+function cursorSdkDefaultParameterValue(model: SDKModel, parameterId: string): string | undefined {
+  return model.variants
+    ?.find((variant) => variant.isDefault)
+    ?.params.find((parameter) => parameter.id === parameterId)?.value;
+}
+
+export function buildCursorCapabilitiesFromSdkModel(model: SDKModel): ModelCapabilities {
+  const seen = new Set<string>();
+  const optionDescriptors: Array<ProviderOptionDescriptor> = [];
+  const parameters = (model.parameters ?? [])
+    .map((parameter, index) => ({ parameter, index }))
+    .toSorted(
+      (left, right) =>
+        cursorSdkParameterPriority(left.parameter.id) -
+          cursorSdkParameterPriority(right.parameter.id) || left.index - right.index,
+    );
+  for (const { parameter } of parameters) {
+    const nativeId = parameter.id.trim();
+    const id = cursorSdkProviderOptionId(nativeId);
+    if (!nativeId || !id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+
+    const values = parameter.values.flatMap((entry) => {
+      const value = entry.value.trim();
+      if (!value) {
+        return [];
+      }
+      return [
+        {
+          value,
+          label: entry.displayName?.trim() || value,
+        },
+      ];
+    });
+    if (values.length === 0) {
+      continue;
+    }
+
+    const label = parameter.displayName?.trim() || toTitleCaseWords(id);
+    const defaultValue = cursorSdkDefaultParameterValue(model, nativeId);
+    const normalizedValues = new Set(values.map((entry) => entry.value.toLowerCase()));
+    if (values.length === 2 && normalizedValues.has("true") && normalizedValues.has("false")) {
+      if (defaultValue === "true" || defaultValue === "false") {
+        optionDescriptors.push(
+          buildBooleanOptionDescriptor({
+            id,
+            label,
+            currentValue: defaultValue === "true",
+          }),
+        );
+      } else {
+        optionDescriptors.push(buildBooleanOptionDescriptor({ id, label }));
+      }
+      continue;
+    }
+
+    optionDescriptors.push(
+      buildSelectOptionDescriptor({
+        id,
+        label,
+        options: values.map((entry) => ({
+          ...entry,
+          ...(entry.value === defaultValue ? { isDefault: true } : {}),
+        })),
+      }),
+    );
+  }
+
+  return createModelCapabilities({ optionDescriptors });
+}
+
+export function buildCursorDiscoveredModelsFromSdk(
+  models: ReadonlyArray<SDKModel>,
+): ReadonlyArray<ServerProviderModel> {
+  const seen = new Set<string>();
+  return models.flatMap((model) => {
+    const slug = model.id.trim();
+    const name = model.displayName.trim();
+    if (!slug || !name || seen.has(slug)) {
+      return [];
+    }
+    seen.add(slug);
+    return [
+      {
+        slug,
+        name,
+        isCustom: false,
+        capabilities: buildCursorCapabilitiesFromSdkModel(model),
+      } satisfies ServerProviderModel,
+    ];
+  });
+}
+
+function cursorSdkAuth(user: SDKUser): ServerProviderAuth {
+  const email = user.userEmail?.trim();
+  const apiKeyName = user.apiKeyName.trim();
+  return {
+    status: "authenticated",
+    type: "api-key",
+    label: apiKeyName ? `Cursor API key (${apiKeyName})` : "Cursor API key",
+    ...(email ? { email } : {}),
+  };
 }
 
 function buildCursorDiscoveredModelsFromAvailableModelsResponse(
@@ -992,7 +1103,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | CursorSdkCatalog | FileSystem.FileSystem | Path.Path
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = getCursorFallbackModels(cursorSettings);
@@ -1010,6 +1121,68 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
         auth: { status: "unknown" },
         message: "Cursor is disabled in T3 Code settings.",
       },
+    });
+  }
+
+  const sdkApiKey = environment?.CURSOR_API_KEY?.trim();
+  if (sdkApiKey) {
+    const sdkCatalog = yield* CursorSdkCatalog;
+    const catalogResult = yield* sdkCatalog
+      .read(sdkApiKey)
+      .pipe(Effect.timeoutOption(CURSOR_SDK_CATALOG_TIMEOUT_MS), Effect.result);
+
+    if (Result.isFailure(catalogResult)) {
+      yield* Effect.logWarning("Cursor SDK catalog probe failed", {
+        cause: catalogResult.failure.cause,
+      });
+      const authenticationFailure = catalogResult.failure.authenticationFailure;
+      return buildServerProvider({
+        presentation: CURSOR_PRESENTATION,
+        enabled: cursorSettings.enabled,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version: null,
+          status: "error",
+          auth: { status: authenticationFailure ? "unauthenticated" : "unknown" },
+          message: authenticationFailure
+            ? "Cursor SDK authentication failed. Check CURSOR_API_KEY."
+            : "Cursor SDK catalog request failed. Check server logs for details.",
+        },
+      });
+    }
+
+    if (Option.isNone(catalogResult.success)) {
+      return buildServerProvider({
+        presentation: CURSOR_PRESENTATION,
+        enabled: cursorSettings.enabled,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version: null,
+          status: "error",
+          auth: { status: "unknown" },
+          message: `Cursor SDK catalog request timed out after ${CURSOR_SDK_CATALOG_TIMEOUT_MS}ms.`,
+        },
+      });
+    }
+
+    const snapshot = catalogResult.success.value;
+    const discoveredModels = buildCursorDiscoveredModelsFromSdk(snapshot.models);
+    return buildCursorProviderSnapshot({
+      checkedAt,
+      cursorSettings,
+      parsed: {
+        version: null,
+        status: "ready",
+        auth: cursorSdkAuth(snapshot.user),
+      },
+      discoveredModels,
+      ...(discoveredModels.length === 0
+        ? { discoveryWarning: "Cursor SDK model discovery returned no built-in models." }
+        : {}),
     });
   }
 
@@ -1120,8 +1293,9 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
  *
  * Used by `CursorDriver` as the `makeManagedServerProvider.enrichSnapshot`
  * hook: republishes update/version advisory metadata without performing any
- * model or capability discovery. Cursor model data comes exclusively from
- * `cursor/list_available_models` during provider status checks.
+ * model or capability discovery. Provider status checks source Cursor model
+ * data from the SDK when an API key is configured, with ACP discovery as the
+ * compatibility fallback.
  */
 export const enrichCursorSnapshot = (input: {
   readonly settings: CursorSettings;

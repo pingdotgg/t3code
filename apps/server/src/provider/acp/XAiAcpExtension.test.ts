@@ -10,6 +10,7 @@ import { describe, expect } from "vite-plus/test";
 
 import {
   extractXAiAskUserQuestions,
+  extractXAiAcpSubagentUpdate,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   makeXAiPromptCompletionRuntime,
@@ -38,6 +39,65 @@ const makePromptCompletionRuntime = (env: NodeJS.ProcessEnv) =>
 const decodeXAiAskUserQuestionRequest = Schema.decodeUnknownSync(XAiAskUserQuestionRequest);
 
 describe("XAiAcpExtension", () => {
+  it("recognizes Grok Task starts as native subagents", () => {
+    expect(
+      extractXAiAcpSubagentUpdate({
+        toolCallId: "task-1",
+        title: "Task",
+        status: "inProgress",
+        data: {
+          rawInput: {
+            description: "Explore server architecture",
+            prompt: "Audit apps/server.",
+            subagent_type: "generalPurpose",
+            model: "composer-2.5-fast",
+          },
+        },
+      }),
+    ).toEqual({
+      nativeTaskId: "task-1",
+      prompt: "Audit apps/server.",
+      title: "Explore server architecture",
+      model: "composer-2.5-fast",
+      status: "running",
+      childSessionId: null,
+      result: null,
+    });
+  });
+
+  it("extracts Grok child session lineage from completed Task output", () => {
+    expect(
+      extractXAiAcpSubagentUpdate({
+        toolCallId: "task-1",
+        title: "Task",
+        status: "completed",
+        data: {
+          rawInput: {
+            description: "Explore server architecture",
+            prompt: "Audit apps/server.",
+            subagent_type: "generalPurpose",
+          },
+          rawOutput: {
+            type: "Text",
+            text: [
+              "Server audit complete.",
+              "",
+              "Agent ID: 019f0220-e192-7c41-9e9d-b406bc3459c8 (resume supported)",
+            ].join("\n"),
+          },
+        },
+      }),
+    ).toEqual({
+      nativeTaskId: "task-1",
+      prompt: "Audit apps/server.",
+      title: "Explore server architecture",
+      model: null,
+      status: "completed",
+      childSessionId: "019f0220-e192-7c41-9e9d-b406bc3459c8",
+      result: "Server audit complete.",
+    });
+  });
+
   it("extracts questions from the real xAI ask_user_question payload shape", () => {
     const questions = extractXAiAskUserQuestions({
       sessionId: "session-1",

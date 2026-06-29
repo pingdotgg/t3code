@@ -70,6 +70,7 @@ export function useCreateProjectThread() {
         environmentId: input.project.environmentId,
         input: {
           commandId: CommandId.make(metadata.commandId),
+          creationSource: "mobile",
           threadId,
           message: {
             messageId: MessageId.make(metadata.messageId),

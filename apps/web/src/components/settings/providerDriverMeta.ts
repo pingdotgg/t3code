@@ -1,4 +1,5 @@
 import {
+  AcpRegistrySettings,
   ClaudeSettings,
   CodexSettings,
   CursorSettings,
@@ -7,7 +8,15 @@ import {
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
-import { ClaudeAI, CursorIcon, GrokIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import {
+  ACPRegistryIcon,
+  ClaudeAI,
+  CursorIcon,
+  GrokIcon,
+  type Icon,
+  OpenAI,
+  OpenCodeIcon,
+} from "../Icons";
 
 type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
@@ -24,6 +33,8 @@ export interface ProviderClientDefinition {
   readonly label: string;
   readonly icon: Icon;
   readonly settingsSchema: ProviderSettingsSchema;
+  /** Whether this driver has a built-in default instance backed by legacy settings. */
+  readonly hasDefaultInstance?: boolean;
   /**
    * Optional short label rendered as a `variant="warning"` badge next to
    * the instance title. Used to flag drivers that still ship under an
@@ -60,6 +71,14 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     icon: GrokIcon,
     badgeLabel: "Early Access",
     settingsSchema: GrokSettings,
+  },
+  {
+    value: ProviderDriverKind.make("acpRegistry"),
+    label: "ACP Registry",
+    icon: ACPRegistryIcon,
+    badgeLabel: "V2 Preview",
+    settingsSchema: AcpRegistrySettings,
+    hasDefaultInstance: false,
   },
   {
     value: ProviderDriverKind.make("opencode"),

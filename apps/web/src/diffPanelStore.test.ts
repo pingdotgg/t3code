@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId, TurnId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, RunId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "./diffPanelStore";
@@ -17,7 +17,7 @@ describe("diffPanelStore", () => {
 
   it("clears incompatible selection fields when changing scopes", () => {
     const store = useDiffPanelStore.getState();
-    store.selectTurn(THREAD_REF, TurnId.make("turn-1"), "src/app.ts");
+    store.selectTurn(THREAD_REF, RunId.make("turn-1"), "src/app.ts");
     store.selectGitScope(THREAD_REF, "unstaged");
 
     expect(
@@ -31,7 +31,7 @@ describe("diffPanelStore", () => {
   });
 
   it("increments the reveal request when opening the same turn file again", () => {
-    const turnId = TurnId.make("turn-1");
+    const turnId = RunId.make("turn-1");
     useDiffPanelStore.getState().selectTurn(THREAD_REF, turnId, "src/app.ts");
     useDiffPanelStore.getState().selectTurn(THREAD_REF, turnId, "src/app.ts");
 
@@ -51,8 +51,8 @@ describe("diffPanelStore", () => {
   });
 
   it("reconciles a missing turn selection to the latest available turn", () => {
-    const missingTurnId = TurnId.make("turn-missing");
-    const latestTurnId = TurnId.make("turn-latest");
+    const missingTurnId = RunId.make("turn-missing");
+    const latestTurnId = RunId.make("turn-latest");
     useDiffPanelStore.getState().selectTurn(THREAD_REF, missingTurnId, "src/app.ts");
     useDiffPanelStore.getState().reconcileTurnSelection(THREAD_REF, [latestTurnId]);
 

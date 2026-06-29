@@ -1,4 +1,4 @@
-import { type ApprovalRequestId } from "@t3tools/contracts";
+import { type RuntimeRequestId } from "@t3tools/contracts";
 import { memo, useEffect, useEffectEvent, useRef, useState } from "react";
 import { type PendingUserInput } from "../../session-logic";
 import {
@@ -10,7 +10,7 @@ import { cn } from "~/lib/utils";
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
-  respondingRequestIds: ApprovalRequestId[];
+  respondingRequestIds: RuntimeRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
   onToggleOption: (questionId: string, optionLabel: string) => void;
@@ -59,6 +59,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 }) {
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
+  const canRespond = prompt.responseCapability === "live";
+  const responseDisabled = isResponding || !canRespond;
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const onAdvanceRef = useRef(onAdvance);
   const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
@@ -120,7 +122,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // outside editable fields. Multi-select prompts toggle options in place; single-
   // select prompts keep the existing auto-advance behavior.
   useEffect(() => {
-    if (!activeQuestion || isResponding) return;
+    if (!activeQuestion || responseDisabled) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
@@ -144,7 +146,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, isResponding]);
+  }, [activeQuestion, responseDisabled]);
 
   if (!activeQuestion) {
     return null;
@@ -165,6 +167,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         ) : null}
       </div>
       <p className="text-sm text-foreground/90">{activeQuestion.question}</p>
+      {!canRespond ? (
+        <p className="mt-1 text-xs text-muted-foreground">
+          This request belonged to a provider process that is no longer available. Interrupt or
+          restart the run to continue.
+        </p>
+      ) : null}
       {activeQuestion.multiSelect ? (
         <p className="mt-1 text-xs text-muted-foreground/65">Select one or more options.</p>
       ) : null}
@@ -182,8 +190,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             isSelected
               ? "border-primary/30 bg-primary/8 text-foreground"
               : "border-transparent bg-muted/22 text-foreground/85 hover:border-border/45 hover:bg-muted/34",
-            isResponding && "opacity-50 cursor-not-allowed",
-            !isResponding && "cursor-pointer",
+            responseDisabled && "opacity-50 cursor-not-allowed",
+            !responseDisabled && "cursor-pointer",
           );
           const content = (
             <>
@@ -211,8 +219,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             <button
               key={`${activeQuestion.id}:${option.label}`}
               type="button"
-              disabled={isResponding}
+              disabled={responseDisabled}
+              aria-disabled={responseDisabled}
               onClick={() => {
+                if (responseDisabled) return;
                 handleOptionSelection(activeQuestion.id, option.label);
               }}
               className={className}

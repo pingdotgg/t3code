@@ -6,8 +6,8 @@
  *
  * @module ProjectionSnapshotQuery
  */
+import type { CheckpointRef, ProjectId, ThreadId } from "@t3tools/contracts";
 import type {
-  CheckpointRef,
   OrchestrationCheckpointSummary,
   OrchestrationProject,
   OrchestrationProjectShell,
@@ -15,9 +15,7 @@ import type {
   OrchestrationShellSnapshot,
   OrchestrationThread,
   OrchestrationThreadShell,
-  ProjectId,
-  ThreadId,
-} from "@t3tools/contracts";
+} from "@t3tools/contracts/legacy-orchestration";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
 import type * as Effect from "effect/Effect";
@@ -78,6 +76,17 @@ export interface ProjectionSnapshotQueryShape {
    * lightweight navigation state without hydrating every thread body.
    */
   readonly getShellSnapshot: () => Effect.Effect<
+    OrchestrationShellSnapshot,
+    ProjectionRepositoryError
+  >;
+
+  /**
+   * Read the shell snapshot with null optional repository metadata.
+   *
+   * Transactional callers use this method and enrich the returned projects
+   * only after their transaction has closed.
+   */
+  readonly getShellSnapshotWithoutEnrichment: () => Effect.Effect<
     OrchestrationShellSnapshot,
     ProjectionRepositoryError
   >;

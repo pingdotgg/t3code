@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import type * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import type { AcpToolCallState } from "./AcpRuntimeModel.ts";
 
 const XAiPromptCompleteNotification = Schema.Struct({
   sessionId: Schema.String,
@@ -24,6 +25,81 @@ interface PendingXAiPromptCompletion {
 
 const completedXAiPromptIdLimit = 128;
 const xAiStopReasonMissingMetaKey = "xAiStopReasonMissing";
+
+export interface XAiAcpSubagentUpdate {
+  readonly nativeTaskId: string;
+  readonly prompt: string;
+  readonly title: string | null;
+  readonly model: string | null;
+  readonly status: "running" | "completed" | "failed";
+  readonly childSessionId: string | null;
+  readonly result: string | null;
+}
+
+function unknownRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function xAiTaskOutputText(toolCall: AcpToolCallState): string | undefined {
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  const rawOutputText = nonEmptyString(rawOutput?.text);
+  if (rawOutputText !== undefined) return rawOutputText;
+  const content = toolCall.data.content;
+  if (!Array.isArray(content)) return undefined;
+  const text = content
+    .flatMap((entry) => {
+      const record = unknownRecord(entry);
+      const nested = unknownRecord(record?.content);
+      return nonEmptyString(nested?.text) ?? nonEmptyString(record?.text) ?? [];
+    })
+    .join("\n")
+    .trim();
+  return text.length > 0 ? text : undefined;
+}
+
+/**
+ * Recognizes Grok's private `Task` tool envelope without teaching the generic
+ * ACP adapter about xAI tool names or result formatting.
+ */
+export function extractXAiAcpSubagentUpdate(
+  toolCall: AcpToolCallState,
+): XAiAcpSubagentUpdate | undefined {
+  const rawInput = unknownRecord(toolCall.data.rawInput);
+  const isTask =
+    toolCall.title === "Task" ||
+    rawInput?.variant === "CursorTask" ||
+    nonEmptyString(rawInput?.subagent_type) !== undefined;
+  if (!isTask || rawInput === undefined) return undefined;
+
+  const output = xAiTaskOutputText(toolCall);
+  const childSessionId =
+    output?.match(/(?:^|\n)Agent ID:\s*([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\b/i)?.[1] ??
+    null;
+  const result =
+    output?.replace(/(?:^|\n)Agent ID:\s*[0-9a-f-]+[^\n]*(?:\n|$)/gi, "\n").trim() || null;
+  const status =
+    toolCall.status === "failed"
+      ? "failed"
+      : toolCall.status === "completed"
+        ? "completed"
+        : "running";
+
+  return {
+    nativeTaskId: toolCall.toolCallId,
+    prompt: nonEmptyString(rawInput.prompt) ?? "",
+    title: nonEmptyString(rawInput.description) ?? null,
+    model: nonEmptyString(rawInput.model) ?? null,
+    status,
+    childSessionId,
+    result,
+  };
+}
 
 const XAiAskUserQuestionOption = Schema.Struct({
   label: Schema.String,
@@ -86,6 +162,17 @@ export function extractXAiAskUserQuestions(
           }))
         : [{ label: "OK", description: "Continue" }],
   }));
+}
+
+export function extractXAiAskUserQuestionIdentity(params: XAiAskUserQuestionRequest): {
+  readonly sessionId: string;
+  readonly toolCallId: string;
+} {
+  const unwrapped = unwrapAskUserQuestionParams(params);
+  return {
+    sessionId: unwrapped.sessionId,
+    toolCallId: unwrapped.toolCallId,
+  };
 }
 
 interface XAiAskUserQuestionAnnotation {

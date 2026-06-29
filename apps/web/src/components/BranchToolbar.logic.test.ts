@@ -11,6 +11,7 @@ import {
   resolveEnvModeLabel,
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
+  resolveWorkspaceDisplayName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 
@@ -165,6 +166,18 @@ describe("resolveLockedWorkspaceLabel", () => {
 
   it("uses a shorter label for an attached worktree", () => {
     expect(resolveLockedWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Worktree");
+  });
+});
+
+describe("resolveWorkspaceDisplayName", () => {
+  it("returns the final folder for POSIX and Windows paths", () => {
+    expect(resolveWorkspaceDisplayName("/repo/.t3/worktrees/feature-a")).toBe("feature-a");
+    expect(resolveWorkspaceDisplayName("C:\\code\\project\\feature-b\\")).toBe("feature-b");
+  });
+
+  it("handles missing and root paths", () => {
+    expect(resolveWorkspaceDisplayName(null)).toBeNull();
+    expect(resolveWorkspaceDisplayName("/")).toBe("/");
   });
 });
 

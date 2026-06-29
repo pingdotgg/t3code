@@ -328,7 +328,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
-      assert.equal(join(baseDir, "userdata"), resolved.stateDir);
+      assert.equal(join(baseDir, "userdata-v2"), resolved.stateDir);
     }),
   );
 

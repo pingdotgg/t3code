@@ -13,6 +13,8 @@
   --workspace-native-controls-inset: 0px;
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;
+  --thread-details-panel-width: clamp(18rem, 24vw, 21rem);
+  --thread-details-panel-inset: 0px;
 }
 
 [data-slot="sidebar-wrapper"] {
@@ -146,20 +148,38 @@
     @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
   }
 
-  .chat-composer-horizontal-inset {
-    padding-inline-start: calc(env(safe-area-inset-left) + 0.75rem);
-    padding-inline-end: calc(env(safe-area-inset-right) + 0.75rem);
+  [data-thread-details-inline-reserved="true"] {
+    --thread-details-panel-inset: var(--thread-details-panel-width);
   }
 
-  .chat-composer-glass,
+  .messages-timeline-scroll {
+    padding-inline-start: 0.75rem;
+    padding-inline-end: calc(0.75rem + var(--thread-details-panel-inset));
+  }
+
+  .chat-scroll-to-bottom {
+    inset-inline-start: 0;
+    inset-inline-end: var(--thread-details-panel-inset);
+  }
+
+  .chat-composer-horizontal-inset {
+    padding-inline-start: calc(env(safe-area-inset-left) + 0.75rem);
+    padding-inline-end: calc(
+      env(safe-area-inset-right) + 0.75rem + var(--thread-details-panel-inset)
+    );
+  }
+
+  .floating-glass-surface,
   .chat-composer-lower-chrome {
     background: color-mix(in srgb, var(--card) 20%, transparent);
   }
 
-  .chat-composer-glass {
+  .floating-glass-surface {
     box-shadow:
       0 18px 48px -20px rgb(0 0 0 / 28%),
       0 4px 14px -7px rgb(0 0 0 / 22%);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
   }
 
   .chat-composer-shared-blur {
@@ -167,12 +187,12 @@
     backdrop-filter: blur(16px);
   }
 
-  .dark .chat-composer-glass,
+  .dark .floating-glass-surface,
   .dark .chat-composer-lower-chrome {
     background: color-mix(in srgb, var(--card) 45%, transparent);
   }
 
-  .dark .chat-composer-glass {
+  .dark .floating-glass-surface {
     box-shadow:
       0 18px 48px -20px rgb(0 0 0 / 60%),
       0 4px 14px -7px rgb(0 0 0 / 40%);
@@ -185,14 +205,21 @@
   }
 
   @media (min-width: 40rem) {
+    .messages-timeline-scroll {
+      padding-inline-start: 1.25rem;
+      padding-inline-end: calc(1.25rem + var(--thread-details-panel-inset));
+    }
+
     .chat-composer-horizontal-inset {
       padding-inline-start: calc(env(safe-area-inset-left) + 1.25rem);
-      padding-inline-end: calc(env(safe-area-inset-right) + 1.25rem);
+      padding-inline-end: calc(
+        env(safe-area-inset-right) + 1.25rem + var(--thread-details-panel-inset)
+      );
     }
   }
 
   @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-    .chat-composer-glass,
+    .floating-glass-surface,
     .chat-composer-lower-chrome {
       background: var(--card);
     }

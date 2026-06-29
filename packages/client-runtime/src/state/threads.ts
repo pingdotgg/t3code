@@ -1,8 +1,8 @@
 import {
-  ORCHESTRATION_WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId as EnvironmentIdType,
-  type OrchestrationThread,
-  type OrchestrationThreadStreamItem,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadStreamItem,
   type ThreadId as ThreadIdType,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -19,14 +19,14 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribe } from "../rpc/client.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
-import { applyThreadDetailEvent } from "./threadReducer.ts";
+import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
 export type EnvironmentThreadStatus = "empty" | "cached" | "synchronizing" | "live" | "deleted";
 
 export interface EnvironmentThreadState {
-  readonly data: Option.Option<OrchestrationThread>;
+  readonly data: Option.Option<OrchestrationV2ThreadProjection>;
   readonly status: EnvironmentThreadStatus;
   readonly error: Option.Option<string>;
 }
@@ -37,7 +37,9 @@ export const EMPTY_ENVIRONMENT_THREAD_STATE: EnvironmentThreadState = {
   error: Option.none(),
 };
 
-function statusWithoutLiveData(data: Option.Option<OrchestrationThread>): EnvironmentThreadStatus {
+function statusWithoutLiveData(
+  data: Option.Option<OrchestrationV2ThreadProjection>,
+): EnvironmentThreadStatus {
   return Option.isSome(data) ? "cached" : "empty";
 }
 
@@ -62,7 +64,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           threadId,
           error: error.message,
         }),
-        Effect.as(Option.none<OrchestrationThread>()),
+        Effect.as(Option.none<OrchestrationV2ThreadProjection>()),
       ),
     ),
   );
@@ -72,10 +74,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     error: Option.none(),
   });
   const lastSequence = yield* SubscriptionRef.make(0);
-  const persistence = yield* Queue.sliding<OrchestrationThread>(1);
+  const persistence = yield* Queue.sliding<OrchestrationV2ThreadProjection>(1);
 
   const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
-    thread: OrchestrationThread,
+    thread: OrchestrationV2ThreadProjection,
   ) {
     yield* cache.saveThread(environmentId, thread).pipe(
       Effect.catch((error) =>
@@ -122,7 +124,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     }));
 
   const setThread = Effect.fn("EnvironmentThreadState.setThread")(function* (
-    thread: OrchestrationThread,
+    thread: OrchestrationV2ThreadProjection,
   ) {
     yield* SubscriptionRef.set(state, {
       data: Option.some(thread),
@@ -152,19 +154,19 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   });
 
   const applyItem = Effect.fn("EnvironmentThreadState.applyItem")(function* (
-    item: OrchestrationThreadStreamItem,
+    item: OrchestrationV2ThreadStreamItem,
   ) {
     if (item.kind === "snapshot") {
-      yield* SubscriptionRef.set(lastSequence, item.snapshot.snapshotSequence);
-      yield* setThread(item.snapshot.thread);
+      yield* SubscriptionRef.set(lastSequence, item.snapshotSequence);
+      yield* setThread(item.projection);
       return;
     }
 
     const sequence = yield* SubscriptionRef.get(lastSequence);
-    if (item.event.sequence <= sequence) {
+    if (item.sequence <= sequence) {
       return;
     }
-    yield* SubscriptionRef.set(lastSequence, item.event.sequence);
+    yield* SubscriptionRef.set(lastSequence, item.sequence);
 
     const current = yield* SubscriptionRef.get(state);
     if (Option.isNone(current.data)) {
@@ -173,11 +175,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       }
       return;
     }
-    const result = applyThreadDetailEvent(current.data.value, item.event);
-    if (result.kind === "updated") {
-      yield* setThread(result.thread);
-    } else if (result.kind === "deleted") {
+    if (item.event.type === "thread.deleted") {
       yield* setDeleted();
+      return;
+    }
+    const next = applyOrchestrationV2ProjectionEvent(current.data.value, item.event);
+    if (next !== null) {
+      yield* setThread(next);
     }
   });
 
@@ -197,7 +201,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
   yield* setSynchronizing;
   yield* subscribe(
-    ORCHESTRATION_WS_METHODS.subscribeThread,
+    ORCHESTRATION_V2_WS_METHODS.subscribeThread,
     { threadId },
     {
       onExpectedFailure: setStreamError,
@@ -252,5 +256,4 @@ export * from "./checkpointDiff.ts";
 export * from "./composerPathSearch.ts";
 export * from "./threadCommands.ts";
 export * from "./threadDetail.ts";
-export * from "./threadReducer.ts";
 export * from "./threadShell.ts";

@@ -26,6 +26,12 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
           <span className="text-xs text-muted-foreground">1/{pendingCount}</span>
         ) : null}
       </div>
+      {approval.responseCapability === "not_resumable" ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          This request belonged to a provider process that is no longer available. Interrupt or
+          restart the run to continue.
+        </p>
+      ) : null}
     </div>
   );
 });

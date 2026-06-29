@@ -6,6 +6,7 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildHomeThreadGroups } from "./homeThreadList";
+import { makeThreadShellFixture } from "../../test-fixtures";
 
 function makeProject(
   input: Partial<EnvironmentProject> & Pick<EnvironmentProject, "environmentId" | "id" | "title">,
@@ -25,23 +26,21 @@ function makeThread(
   input: Partial<EnvironmentThreadShell> &
     Pick<EnvironmentThreadShell, "environmentId" | "id" | "projectId" | "title">,
 ): EnvironmentThreadShell {
-  return {
+  return makeThreadShellFixture({
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,
     worktreePath: null,
-    latestTurn: null,
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
     archivedAt: null,
-    session: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
     ...input,
-  };
+  });
 }
 
 function buildGroups(

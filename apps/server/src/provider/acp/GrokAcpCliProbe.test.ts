@@ -66,4 +66,23 @@ describe.runIf(process.env.T3_GROK_ACP_PROBE === "1")("Grok ACP CLI probe", () =
       yield* runtime.setSessionModel(currentModelId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("switches to another advertised model and completes a prompt", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeProbeRuntime;
+      const started = yield* runtime.start();
+      const models = started.sessionSetupResult.models;
+      const targetModel = models?.availableModels.find(
+        ({ modelId }) => modelId !== models.currentModelId,
+      )?.modelId;
+      expect(targetModel).toBeDefined();
+      if (!targetModel) return;
+
+      yield* runtime.setSessionModel(targetModel).pipe(Effect.timeout("20 seconds"));
+      const result = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "Respond with exactly: grok switch ok" }] })
+        .pipe(Effect.timeout("60 seconds"));
+      expect(result.stopReason).toBe("end_turn");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });

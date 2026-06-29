@@ -1,15 +1,15 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import type {
-  ApprovalRequestId,
   EnvironmentId,
   MessageId,
   ModelSelection,
-  OrchestrationThreadShell,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   RuntimeMode,
+  RuntimeRequestId,
   ServerConfig as T3ServerConfig,
   ThreadId,
 } from "@t3tools/contracts";
@@ -43,10 +43,12 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
+import { ThreadRelationshipsBanner } from "./ThreadRelationshipsBanner";
+import { ThreadQueueControl } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 
 export interface ThreadDetailScreenProps {
-  readonly selectedThread: OrchestrationThreadShell;
+  readonly selectedThread: EnvironmentThreadShell;
   readonly contentPresentation: ThreadContentPresentation;
   readonly screenTone: StatusTone;
   readonly connectionError: string | null;
@@ -54,11 +56,11 @@ export interface ThreadDetailScreenProps {
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
   readonly activeWorkStartedAt: string | null;
   readonly activePendingApproval: PendingApproval | null;
-  readonly respondingApprovalId: ApprovalRequestId | null;
+  readonly respondingApprovalId: RuntimeRequestId | null;
   readonly activePendingUserInput: PendingUserInput | null;
   readonly activePendingUserInputDrafts: Record<string, PendingUserInputDraftAnswer>;
   readonly activePendingUserInputAnswers: Record<string, string> | null;
-  readonly respondingUserInputId: ApprovalRequestId | null;
+  readonly respondingUserInputId: RuntimeRequestId | null;
   readonly draftMessage: string;
   readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
@@ -82,16 +84,16 @@ export interface ThreadDetailScreenProps {
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateThreadInteractionMode: (interactionMode: ProviderInteractionMode) => void;
   readonly onRespondToApproval: (
-    requestId: ApprovalRequestId,
+    requestId: RuntimeRequestId,
     decision: ProviderApprovalDecision,
   ) => Promise<unknown>;
   readonly onSelectUserInputOption: (
-    requestId: ApprovalRequestId,
+    requestId: RuntimeRequestId,
     questionId: string,
     label: string,
   ) => void;
   readonly onChangeUserInputCustomAnswer: (
-    requestId: ApprovalRequestId,
+    requestId: RuntimeRequestId,
     questionId: string,
     customAnswer: string,
   ) => void;
@@ -373,17 +375,24 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               key={props.selectedThread.id}
               environmentId={props.environmentId}
               threadId={props.selectedThread.id}
+              threadTitle={props.selectedThread.title}
               workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}
               contentPresentation={props.contentPresentation}
               agentLabel={agentLabel}
-              latestTurn={props.selectedThread.latestTurn}
+              latestRun={props.selectedThread.latestRun}
               listRef={listRef}
               freeze={freeze}
               anchorMessageId={anchorMessageId}
               contentInsetEndAdjustment={contentInsetEndAdjustment}
               contentTopInset={headerHeight}
               contentBottomInset={estimatedOverlayHeight}
+              topAccessory={
+                <ThreadRelationshipsBanner
+                  environmentId={props.environmentId}
+                  threadId={props.selectedThread.id}
+                />
+              }
               layoutVariant={layoutVariant}
               skills={selectedProviderSkills}
             />
@@ -402,6 +411,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               {props.activeWorkStartedAt ? (
                 <WorkingDurationPill startedAt={props.activeWorkStartedAt} />
               ) : null}
+
+              <ThreadQueueControl
+                environmentId={props.environmentId}
+                threadId={props.selectedThread.id}
+              />
 
               {props.activePendingApproval || props.activePendingUserInput ? (
                 <View className="gap-3 px-4 pb-3" style={{ flexShrink: 0 }}>

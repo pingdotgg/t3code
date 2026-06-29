@@ -1,4 +1,4 @@
-import { type TurnId } from "@t3tools/contracts";
+import { type RunId } from "@t3tools/contracts";
 import { memo, useCallback, useMemo, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import {
@@ -15,15 +15,15 @@ import { Button } from "../ui/button";
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
 export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
-  turnId: TurnId;
+  runId: RunId;
   files: ReadonlyArray<TurnDiffFileChange>;
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
   onToggleAllDirectories: () => void;
-  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
 }) {
   const {
-    turnId,
+    runId,
     files,
     allDirectoriesExpanded,
     resolvedTheme,
@@ -60,7 +60,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
             type="button"
             size="xs"
             variant="outline"
-            onClick={() => onOpenTurnDiff(turnId, files[0]?.path)}
+            onClick={() => onOpenTurnDiff(runId, files[0]?.path)}
           >
             View diff
           </Button>
@@ -68,8 +68,8 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
       </div>
       <div className="px-2 pb-2">
         <ChangedFilesTree
-          key={`changed-files-tree:${turnId}`}
-          turnId={turnId}
+          key={`changed-files-tree:${runId}`}
+          runId={runId}
           files={files}
           allDirectoriesExpanded={allDirectoriesExpanded}
           resolvedTheme={resolvedTheme}
@@ -81,13 +81,13 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
 });
 
 export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
-  turnId: TurnId;
+  runId: RunId;
   files: ReadonlyArray<TurnDiffFileChange>;
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
-  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
 }) {
-  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId } = props;
+  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, runId } = props;
   const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
   const directoryPathsKey = useMemo(
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
@@ -172,7 +172,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
         type="button"
         className="group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
-        onClick={() => onOpenTurnDiff(turnId, node.path)}
+        onClick={() => onOpenTurnDiff(runId, node.path)}
       >
         {hasDirectoryNodes || depth > 0 ? (
           <span aria-hidden="true" className="size-3.5 shrink-0" />

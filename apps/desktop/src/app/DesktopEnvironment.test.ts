@@ -78,7 +78,7 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
-  it.effect("derives production state paths under userdata", () =>
+  it.effect("derives production state paths under userdata-v2", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(
         {},
@@ -88,10 +88,12 @@ describe("DesktopEnvironment", () => {
       );
 
       assert.equal(environment.isDevelopment, false);
-      assert.equal(environment.stateDir, "/tmp/t3/userdata");
-      assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
-      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
-      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
+      assert.equal(environment.stateDir, "/tmp/t3/userdata-v2");
+      assert.equal(environment.logDir, "/tmp/t3/userdata-v2/logs");
+      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata-v2/browser-artifacts");
+      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata-v2/settings.json");
+      assert.equal(environment.userDataDirName, "t3code-v2");
+      assert.equal(environment.legacyUserDataDirName, "T3 Code (Alpha v2)");
     }),
   );
 

@@ -1,4 +1,4 @@
-import { EnvironmentId, MessageId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -172,11 +172,13 @@ function buildProps() {
     activeTurnInProgress: false,
     activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
-    latestTurn: null,
-    runningTurnId: null,
+    latestRun: null,
     turnDiffSummaryByAssistantMessageId: new Map(),
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
+    onOpenThread: () => {},
+    onForkFromRun: async () => {},
+    onRollbackCheckpoint: () => {},
     revertTurnCountByUserMessageId: new Map(),
     onRevertUserMessage: () => {},
     isRevertingCheckpoint: false,
@@ -210,7 +212,7 @@ function buildUserTimelineEntry(text: string) {
       id: MessageId.make("message-1"),
       role: "user" as const,
       text,
-      turnId: null,
+      runId: null,
       createdAt: MESSAGE_CREATED_AT,
       updatedAt: MESSAGE_CREATED_AT,
       streaming: false,
@@ -338,6 +340,187 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-user-message-collapsible="false"');
   });
 
+  it("identifies user-role messages sent by another agent", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const entry = buildUserTimelineEntry("Review this area");
+    const agentMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...entry,
+            message: { ...entry.message, createdBy: "agent", creationSource: "provider" },
+          },
+        ]}
+      />,
+    );
+    const userMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(agentMarkup).toContain('data-user-message-attribution="agent"');
+    expect(agentMarkup).toContain("Sent by another agent");
+    expect(userMarkup).not.toContain("Sent by another agent");
+  });
+
+  it("keeps a subagent parent-thread link at the top of an empty timeline", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[]}
+        parentThreadLink={{
+          threadId: ThreadId.make("thread-parent"),
+          title: "Architecture audit",
+        }}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Open parent thread"');
+    expect(markup).toContain("Subagent of");
+    expect(markup).toContain("Architecture audit");
+    expect(markup).not.toContain("Send a message to start the conversation");
+  });
+
+  it("keeps steer intent visible on committed user messages", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const entry = buildUserTimelineEntry("Adjust the current turn");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          { ...entry, message: { ...entry.message, inputIntent: "steer" as const } },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Steered the active turn");
+    expect(markup).toContain(">steer<");
+  });
+
+  it("shows a collapsed disclosure for superseded attempt output", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const runId = RunId.make("run-steered");
+    const supersededAttempt = {
+      id: "attempt-1" as never,
+      runId,
+      attemptOrdinal: 1,
+      rootNodeId: "node-attempt-1" as never,
+      status: "superseded" as const,
+    };
+    const activeAttempt = {
+      id: "attempt-2" as never,
+      runId,
+      attemptOrdinal: 2,
+      rootNodeId: "node-attempt-2" as never,
+      status: "running" as const,
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        latestRun={{
+          runId,
+          status: "running",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: null,
+        }}
+        timelineEntries={[
+          {
+            id: "superseded-response-entry",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            attempt: supersededAttempt,
+            message: {
+              id: MessageId.make("superseded-response"),
+              role: "assistant",
+              text: "Partial response from the old attempt",
+              runId,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+          {
+            id: "active-response-entry",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            attempt: activeAttempt,
+            message: {
+              id: MessageId.make("active-response"),
+              role: "assistant",
+              text: "Current response remains visible",
+              runId,
+              createdAt: "2026-03-17T19:12:29.000Z",
+              updatedAt: "2026-03-17T19:12:29.000Z",
+              streaming: true,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-superseded-attempt-id="attempt-1"');
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain("Superseded attempt");
+    expect(markup).toContain("Partial output retained");
+    expect(markup).toContain("Current response remains visible");
+    expect(markup).not.toContain("Partial response from the old attempt");
+  });
+
+  it("exposes a per-response fork action for completed assistant items", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const projectedItem = {
+      position: 0,
+      visibility: "local",
+      sourceThreadId: "thread-1",
+      sourceItemId: "assistant-item-1",
+      item: {
+        id: "assistant-item-1",
+        threadId: "thread-1",
+        runId: "run-1",
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "completed",
+        title: null,
+        startedAt: null,
+        completedAt: null,
+        updatedAt: {},
+        type: "assistant_message",
+        messageId: "assistant-message-1",
+        text: "Done",
+        streaming: false,
+      },
+    } as never;
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "assistant-message-1",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem,
+            message: {
+              id: MessageId.make("assistant-message-1"),
+              role: "assistant",
+              text: "Done",
+              runId: RunId.make("run-1"),
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Fork from this response"');
+  });
+
   it("renders inline terminal labels with the composer chip UI", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -432,6 +615,263 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Work Log");
   });
 
+  it("renders V2 interruption lifecycle entries as standalone rows", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "interrupt-request",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "interrupt-request",
+              item: {
+                id: "interrupt-request",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 0,
+                status: "completed",
+                title: null,
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "run_interrupt_request",
+                message: "Waiting for the provider to stop.",
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-v2-item-type="run_interrupt_request"');
+    expect(markup).toContain("Interrupt requested");
+    expect(markup).toContain("Waiting for the provider to stop.");
+    expect(markup).not.toContain("Structured details");
+  });
+
+  it("renders created threads as linked cards outside the work log", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "thread-created",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "thread-created",
+              item: {
+                id: "thread-created",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: "node-1",
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "completed",
+                title: "Claude research thread",
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "thread_created",
+                targetThreadId: "thread-2",
+                targetRunId: "run-2",
+                targetProviderInstanceId: "claude-default",
+                targetModel: "claude-sonnet-4-6",
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-v2-item-type="thread_created"');
+    expect(markup).toContain('aria-label="Open Claude research thread"');
+    expect(markup).toContain("Claude research thread");
+    expect(markup).toContain("claude-default · claude-sonnet-4-6");
+    expect(markup).not.toContain("Work Log");
+  });
+
+  it("renders live subagent progress on the persistent linked card", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "subagent-progress",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "subagent-progress",
+              item: {
+                id: "subagent-progress",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: "node-subagent-1",
+                providerThreadId: "provider-thread-1",
+                providerTurnId: "provider-turn-1",
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "running",
+                title: "Package audit",
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "subagent",
+                subagentId: "node-subagent-1",
+                origin: "provider_native",
+                driver: "claudeAgent",
+                providerInstanceId: "claudeAgent",
+                childThreadId: "thread-subagent-1",
+                prompt: "Inspect the package",
+                progress: "Reading src/index.ts",
+                result: null,
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-v2-item-type="subagent"');
+    expect(markup).toContain('aria-label="Open Package audit"');
+    expect(markup).toContain("Reading src/index.ts");
+    expect(markup).not.toContain("Inspect the package");
+    expect(markup).not.toContain("Work Log");
+  });
+
+  it("renders V2 provider failures as standalone error rows", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "provider-error",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "provider-error",
+              item: {
+                id: "provider-error",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: null,
+                providerThreadId: "provider-thread-1",
+                providerTurnId: "provider-turn-1",
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 99,
+                status: "failed",
+                title: null,
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "error",
+                failure: {
+                  class: "validation_error",
+                  message: "Invalid reasoning effort.",
+                  code: "invalid_request",
+                  retryable: false,
+                },
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-v2-item-type="error"');
+    expect(markup).toContain("Provider error");
+    expect(markup).toContain("Invalid reasoning effort.");
+  });
+
+  it("keeps inherited V2 work provenance on the rendered row", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const item = {
+      id: "command-inherited",
+      threadId: "thread-source",
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed",
+      title: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: {},
+      type: "command_execution",
+      input: "pwd",
+      output: "/workspace",
+      exitCode: 0,
+    } as const;
+    const projectedItem = {
+      position: 0,
+      visibility: "inherited",
+      sourceThreadId: "thread-source",
+      sourceItemId: item.id,
+      item,
+    } as const;
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={
+          [
+            {
+              id: item.id,
+              kind: "work",
+              createdAt: MESSAGE_CREATED_AT,
+              entry: {
+                id: item.id,
+                createdAt: MESSAGE_CREATED_AT,
+                runId: null,
+                label: "Ran command",
+                command: item.input,
+                tone: "tool",
+                itemType: item.type,
+                toolLifecycleStatus: "completed",
+                structuredPayload: item,
+                projectedItem,
+              },
+            },
+          ] as never
+        }
+      />,
+    );
+
+    expect(markup).toContain('data-v2-item-type="command_execution"');
+    expect(markup).toContain('data-v2-item-visibility="inherited"');
+    expect(markup).toContain("Inherited");
+  });
+
   it("formats changed file paths from the workspace root", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -447,6 +887,8 @@ describe("MessagesTimeline", () => {
               createdAt: "2026-03-17T19:12:28.000Z",
               label: "Updated files",
               tone: "tool",
+              itemType: "file_change",
+              toolLifecycleStatus: "completed",
               changedFiles: ["C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts"],
             },
           },
@@ -482,7 +924,7 @@ describe("MessagesTimeline", () => {
                 "```",
                 "</review_comment>",
               ].join("\n"),
-              turnId: null,
+              runId: null,
               createdAt: "2026-03-17T19:12:28.000Z",
               updatedAt: "2026-03-17T19:12:28.000Z",
               streaming: false,
@@ -522,7 +964,7 @@ describe("MessagesTimeline", () => {
                 "```",
                 "</review_comment>",
               ].join("\n"),
-              turnId: null,
+              runId: null,
               createdAt: "2026-03-17T19:12:28.000Z",
               updatedAt: "2026-03-17T19:12:28.000Z",
               streaming: false,

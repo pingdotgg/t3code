@@ -3,6 +3,10 @@ import {
   ConnectionRegistrationStore,
   ConnectionTargetStore,
   EnvironmentCacheStore,
+  ORCHESTRATION_CACHE_SCHEMA_VERSION,
+  StoredOrchestrationShellSnapshot,
+  StoredOrchestrationThreadSnapshot,
+  decodeOrDiscardOrchestrationCache,
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
   removeCatalogValue,
@@ -14,12 +18,7 @@ import {
   CredentialStore,
   ProfileStore,
 } from "@t3tools/client-runtime/connection";
-import {
-  EnvironmentId,
-  OrchestrationThread,
-  OrchestrationShellSnapshot,
-  ThreadId,
-} from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -29,31 +28,16 @@ import * as SecureStore from "expo-secure-store";
 
 import { makeCatalogStore, type SecureCatalogStorage } from "./catalog-store";
 
-const SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION = 1;
 const SHELL_SNAPSHOT_CACHE_DIRECTORY = "connection-shell-snapshots";
 const LEGACY_SHELL_SNAPSHOT_CACHE_DIRECTORY = "shell-snapshots";
-const THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION = 1;
 const THREAD_SNAPSHOT_CACHE_DIRECTORY = "connection-thread-snapshots";
 
-const StoredShellSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION),
-  environmentId: EnvironmentId,
-  snapshot: OrchestrationShellSnapshot,
-});
-
-const StoredThreadSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION),
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-  thread: OrchestrationThread,
-});
-
-const LegacyStoredShellSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(1),
-  environmentId: EnvironmentId,
-  snapshotReceivedAt: Schema.String,
-  snapshot: OrchestrationShellSnapshot,
-});
+const StoredShellSnapshot = StoredOrchestrationShellSnapshot;
+const StoredThreadSnapshot = StoredOrchestrationThreadSnapshot;
+const decodeStoredShellSnapshot = Schema.decodeUnknownResult(StoredShellSnapshot);
+const encodeStoredShellSnapshot = Schema.encodeUnknownResult(StoredShellSnapshot);
+const decodeStoredThreadSnapshot = Schema.decodeUnknownResult(StoredThreadSnapshot);
+const encodeStoredThreadSnapshot = Schema.encodeUnknownResult(StoredThreadSnapshot);
 
 function catalogError(operation: string, cause: unknown) {
   return new ConnectionTransientError({
@@ -289,44 +273,50 @@ export const connectionStorageLayer = Layer.effectContext(
               try: () => JSON.parse(raw) as unknown,
               catch: (cause) => shellPersistenceError("load-shell", cause),
             });
-            const stored = yield* Effect.fromResult(
-              Schema.decodeUnknownResult(StoredShellSnapshot)(parsed),
-            ).pipe(Effect.mapError((cause) => shellPersistenceError("load-shell", cause)));
+            const stored = yield* Effect.fromResult(decodeStoredShellSnapshot(parsed)).pipe(
+              Effect.mapError((cause) => shellPersistenceError("load-shell", cause)),
+            );
             return stored.environmentId === environmentId
               ? Option.some(stored.snapshot)
               : Option.none();
           }
 
           const legacyFile = yield* legacyShellSnapshotFile(environmentId, "load-shell");
-          if (!legacyFile.exists) {
-            return Option.none();
+          if (legacyFile.exists) {
+            yield* Effect.try({
+              try: () => legacyFile.delete(),
+              catch: (cause) => shellPersistenceError("load-shell", cause),
+            });
           }
-          const legacyRaw = yield* Effect.tryPromise({
-            try: () => legacyFile.text(),
-            catch: (cause) => shellPersistenceError("load-shell", cause),
-          });
-          const legacyParsed = yield* Effect.try({
-            try: () => JSON.parse(legacyRaw) as unknown,
-            catch: (cause) => shellPersistenceError("load-shell", cause),
-          });
-          const legacyStored = yield* Effect.fromResult(
-            Schema.decodeUnknownResult(LegacyStoredShellSnapshot)(legacyParsed),
-          ).pipe(Effect.mapError((cause) => shellPersistenceError("load-shell", cause)));
-          return legacyStored.environmentId === environmentId
-            ? Option.some(legacyStored.snapshot)
-            : Option.none();
-        }),
+
+          return Option.none();
+        }).pipe((decode) =>
+          decodeOrDiscardOrchestrationCache(
+            decode,
+            shellSnapshotFile(environmentId, "load-shell").pipe(
+              Effect.flatMap((file) =>
+                Effect.try({
+                  try: () => {
+                    if (file.exists) file.delete();
+                  },
+                  catch: (cause) => shellPersistenceError("load-shell", cause),
+                }),
+              ),
+              Effect.catch(() => Effect.void),
+            ),
+          ),
+        ),
       saveShell: (environmentId, snapshot) =>
         Effect.gen(function* () {
           const file = yield* shellSnapshotFile(environmentId, "save-shell");
           const stored = {
-            schemaVersion: SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION,
+            schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
             environmentId,
             snapshot,
           } as const;
-          const encoded = yield* Effect.fromResult(
-            Schema.encodeUnknownResult(StoredShellSnapshot)(stored),
-          ).pipe(Effect.mapError((cause) => shellPersistenceError("save-shell", cause)));
+          const encoded = yield* Effect.fromResult(encodeStoredShellSnapshot(stored)).pipe(
+            Effect.mapError((cause) => shellPersistenceError("save-shell", cause)),
+          );
           yield* Effect.try({
             try: () => {
               if (!file.exists) {
@@ -351,21 +341,36 @@ export const connectionStorageLayer = Layer.effectContext(
             try: () => JSON.parse(raw) as unknown,
             catch: (cause) => shellPersistenceError("load-thread", cause),
           });
-          const stored = yield* Effect.fromResult(
-            Schema.decodeUnknownResult(StoredThreadSnapshot)(parsed),
-          ).pipe(Effect.mapError((cause) => shellPersistenceError("load-thread", cause)));
+          const stored = yield* Effect.fromResult(decodeStoredThreadSnapshot(parsed)).pipe(
+            Effect.mapError((cause) => shellPersistenceError("load-thread", cause)),
+          );
           return stored.environmentId === environmentId && stored.threadId === threadId
             ? Option.some(stored.thread)
             : Option.none();
-        }),
+        }).pipe((decode) =>
+          decodeOrDiscardOrchestrationCache(
+            decode,
+            threadSnapshotFile(environmentId, threadId, "load-thread").pipe(
+              Effect.flatMap((file) =>
+                Effect.try({
+                  try: () => {
+                    if (file.exists) file.delete();
+                  },
+                  catch: (cause) => shellPersistenceError("load-thread", cause),
+                }),
+              ),
+              Effect.catch(() => Effect.void),
+            ),
+          ),
+        ),
       saveThread: (environmentId, thread) =>
         Effect.gen(function* () {
-          const file = yield* threadSnapshotFile(environmentId, thread.id, "save-thread");
+          const file = yield* threadSnapshotFile(environmentId, thread.thread.id, "save-thread");
           const encoded = yield* Effect.fromResult(
-            Schema.encodeUnknownResult(StoredThreadSnapshot)({
-              schemaVersion: THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION,
+            encodeStoredThreadSnapshot({
+              schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
               environmentId,
-              threadId: thread.id,
+              threadId: thread.thread.id,
               thread,
             }),
           ).pipe(Effect.mapError((cause) => shellPersistenceError("save-thread", cause)));

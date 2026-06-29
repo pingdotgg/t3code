@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  threadRuntimeIsActive,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { CommandId, type MessageId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -181,6 +184,7 @@ export function useThreadOutboxDrain(): void {
         environmentId: queuedMessage.environmentId,
         input: {
           commandId: queuedMessage.commandId,
+          creationSource: "mobile",
           threadId: queuedMessage.threadId,
           message: {
             messageId: queuedMessage.messageId,
@@ -225,7 +229,7 @@ export function useThreadOutboxDrain(): void {
         threadExists: thread !== undefined,
         shellStatus: shellStatuses.get(nextQueuedMessage.environmentId) ?? "empty",
         environmentConnected: environment?.connectionState === "connected",
-        threadBusy: thread?.session?.status === "running" || thread?.session?.status === "starting",
+        threadBusy: threadRuntimeIsActive(thread?.runtime),
       });
       if (deliveryAction === "wait") {
         continue;

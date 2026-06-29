@@ -1,9 +1,9 @@
 /**
  * CursorDriver — `ProviderDriver` for the Cursor Agent (`agent`) runtime.
  *
- * Cursor exposes an ACP-based CLI. Model catalog and capability refreshes
- * happen during the managed provider status check via Cursor's
- * `list_available_models` extension method.
+ * Provider status and model discovery use the official Cursor SDK when an API
+ * key is configured. The ACP CLI remains the compatibility fallback for
+ * installations that authenticate through the local Cursor binary.
  *
  * Text generation is supported via the ACP runtime — `makeCursorTextGeneration`
  * drives `runtime.prompt` with a structured-output schema and collects the
@@ -24,14 +24,17 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
+import {
+  CursorAdapterV2Driver,
+  type CursorAdapterV2DriverEnv,
+} from "../../orchestration-v2/Adapters/CursorAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
 import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
   enrichCursorSnapshot,
 } from "../Layers/CursorProvider.ts";
-import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
+import { CursorSdkCatalogLive } from "../Layers/CursorSdkCatalog.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -65,12 +68,12 @@ const UPDATE = makeStaticProviderMaintenanceResolver(
 );
 
 export type CursorDriverEnv =
+  | CursorAdapterV2DriverEnv
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
-  | ProviderEventLoggers
   | ServerConfig
   | ServerSettingsService;
 
@@ -105,7 +108,6 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
-      const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -123,15 +125,29 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         env: processEnv,
       });
 
-      const adapter = yield* makeCursorAdapter(effectiveConfig, {
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+      const orchestrationAdapter = yield* CursorAdapterV2Driver.create({
         instanceId,
-      });
+        displayName,
+        accentColor,
+        environment,
+        enabled,
+        config,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: "Failed to build Cursor orchestration adapter.",
+              cause,
+            }),
+        ),
+      );
       const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
 
       const checkProvider = checkCursorProviderStatus(effectiveConfig, processEnv).pipe(
         Effect.map(stampIdentity),
+        Effect.provide(CursorSdkCatalogLive),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -179,7 +195,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
-        adapter,
+        orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;
     }),

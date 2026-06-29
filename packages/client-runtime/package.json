@@ -63,6 +63,10 @@
       "types": "./src/state/git.ts",
       "default": "./src/state/git.ts"
     },
+    "./state/item-support": {
+      "types": "./src/state/itemSupport.ts",
+      "default": "./src/state/itemSupport.ts"
+    },
     "./state/models": {
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"
@@ -70,6 +74,10 @@
     "./state/orchestration": {
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"
+    },
+    "./state/orchestration-v2-projection": {
+      "types": "./src/state/orchestrationV2Projection.ts",
+      "default": "./src/state/orchestrationV2Projection.ts"
     },
     "./state/presentation": {
       "types": "./src/state/presentation.ts",
@@ -126,6 +134,26 @@
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"
+    },
+    "./state/thread-relationships": {
+      "types": "./src/state/threadRelationships.ts",
+      "default": "./src/state/threadRelationships.ts"
+    },
+    "./state/thread-checkpoints": {
+      "types": "./src/state/threadCheckpoints.ts",
+      "default": "./src/state/threadCheckpoints.ts"
+    },
+    "./state/thread-execution": {
+      "types": "./src/state/threadExecution.ts",
+      "default": "./src/state/threadExecution.ts"
+    },
+    "./state/thread-requests": {
+      "types": "./src/state/threadRequests.ts",
+      "default": "./src/state/threadRequests.ts"
+    },
+    "./state/thread-workflows": {
+      "types": "./src/state/threadWorkflows.ts",
+      "default": "./src/state/threadWorkflows.ts"
     },
     "./state/vcs": {
       "types": "./src/state/vcs.ts",

@@ -45,6 +45,13 @@ import Migration0029 from "./Migrations/029_ProjectionThreadDetailOrderingIndexe
 import Migration0030 from "./Migrations/030_ProjectionThreadShellArchiveIndexes.ts";
 import Migration0031 from "./Migrations/031_AuthAuthorizationScopes.ts";
 import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
+import Migration0033 from "./Migrations/033_OrchestrationV2.ts";
+import Migration0034 from "./Migrations/034_OrchestrationV2Subagents.ts";
+import Migration0035 from "./Migrations/035_OrchestrationV2Foundation.ts";
+import Migration0036 from "./Migrations/036_OrchestrationV2ProviderSessionBindings.ts";
+import Migration0037 from "./Migrations/037_OrchestrationV2ThreadLaunchWorkflows.ts";
+import Migration0038 from "./Migrations/038_ApplicationEventSource.ts";
+import Migration0039 from "./Migrations/039_OrchestrationV2EffectCancellation.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -89,6 +96,13 @@ export const migrationEntries = [
   [30, "ProjectionThreadShellArchiveIndexes", Migration0030],
   [31, "AuthAuthorizationScopes", Migration0031],
   [32, "AuthPairingProofKeyThumbprint", Migration0032],
+  [33, "OrchestrationV2", Migration0033],
+  [34, "OrchestrationV2Subagents", Migration0034],
+  [35, "OrchestrationV2Foundation", Migration0035],
+  [36, "OrchestrationV2ProviderSessionBindings", Migration0036],
+  [37, "OrchestrationV2ThreadLaunchWorkflows", Migration0037],
+  [38, "ApplicationEventSource", Migration0038],
+  [39, "OrchestrationV2EffectCancellation", Migration0039],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

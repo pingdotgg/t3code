@@ -1,12 +1,13 @@
-import { type ApprovalRequestId, type ProviderApprovalDecision } from "@t3tools/contracts";
+import { type RuntimeRequestId, type ProviderApprovalDecision } from "@t3tools/contracts";
 import { memo } from "react";
 import { Button } from "../ui/button";
 
 interface ComposerPendingApprovalActionsProps {
-  requestId: ApprovalRequestId;
+  requestId: RuntimeRequestId;
   isResponding: boolean;
+  canRespond: boolean;
   onRespondToApproval: (
-    requestId: ApprovalRequestId,
+    requestId: RuntimeRequestId,
     decision: ProviderApprovalDecision,
   ) => Promise<unknown>;
 }
@@ -14,6 +15,7 @@ interface ComposerPendingApprovalActionsProps {
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
   requestId,
   isResponding,
+  canRespond,
   onRespondToApproval,
 }: ComposerPendingApprovalActionsProps) {
   return (
@@ -21,7 +23,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
       <Button
         size="sm"
         variant="ghost"
-        disabled={isResponding}
+        disabled={isResponding || !canRespond}
         onClick={() => void onRespondToApproval(requestId, "cancel")}
       >
         Cancel turn
@@ -29,7 +31,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
       <Button
         size="sm"
         variant="destructive-outline"
-        disabled={isResponding}
+        disabled={isResponding || !canRespond}
         onClick={() => void onRespondToApproval(requestId, "decline")}
       >
         Decline
@@ -37,7 +39,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
       <Button
         size="sm"
         variant="outline"
-        disabled={isResponding}
+        disabled={isResponding || !canRespond}
         onClick={() => void onRespondToApproval(requestId, "acceptForSession")}
       >
         Always allow this session
@@ -45,7 +47,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
       <Button
         size="sm"
         variant="default"
-        disabled={isResponding}
+        disabled={isResponding || !canRespond}
         onClick={() => void onRespondToApproval(requestId, "accept")}
       >
         Approve once
