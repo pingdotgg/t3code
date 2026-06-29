@@ -189,7 +189,7 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteStopScript(target), 'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"');
     assert.include(
       buildRemoteLaunchScript(),
-      'DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"',
+      'DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata-v2/server-runtime.json"',
     );
     assert.include(buildRemoteLaunchScript(), "resolve_default_runtime_port()");
     assert.include(

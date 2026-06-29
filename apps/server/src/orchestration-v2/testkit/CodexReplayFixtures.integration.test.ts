@@ -136,6 +136,19 @@ const scenarioExpectations = {
     turnCompletedCount: 0,
     approvalRequestCount: 0,
   },
+  subagent_v2: {
+    outgoing: ["initialize", "initialized", "thread/start", "turn/start"],
+    incoming: [
+      "turn/started",
+      "item/completed/subAgentActivity-started",
+      "turn/started/child",
+      "item/completed/child-answer",
+      "turn/completed",
+    ],
+    turnStartCount: 1,
+    turnCompletedCount: 2,
+    approvalRequestCount: 0,
+  },
   multi_turn: {
     outgoing: ["initialize", "initialized", "thread/start", "turn/start"],
     incoming: ["turn/started", "turn/completed", "item/agentMessage/delta"],

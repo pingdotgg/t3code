@@ -1,13 +1,16 @@
 import {
   CommandId,
   type ModelSelection,
+  type NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type ProviderSessionId,
   type ProviderThreadId,
@@ -53,6 +56,24 @@ export interface ProviderEventRouteIdentity {
 }
 
 type ProviderTerminalEvent = Extract<ProviderAdapterV2Event, { readonly type: "turn.terminal" }>;
+
+function isTerminalProviderTurnStatus(status: OrchestrationV2ProviderTurn["status"]): boolean {
+  return (
+    status === "completed" ||
+    status === "interrupted" ||
+    status === "failed" ||
+    status === "cancelled"
+  );
+}
+
+function isTerminalSubagentStatus(status: OrchestrationV2Subagent["status"]): boolean {
+  return (
+    status === "completed" ||
+    status === "interrupted" ||
+    status === "failed" ||
+    status === "cancelled"
+  );
+}
 
 export function finalProviderThreadStatus(
   disposition: ProviderTerminalEvent["threadDisposition"],
@@ -532,6 +553,82 @@ export const layer: Layer.Layer<
                 : { relatedProviderThreadIds: input.relatedProviderThreadIds }),
             }),
           );
+          const rootTerminalSeen = yield* Ref.make(false);
+          const rootRunFinalized = yield* Ref.make(false);
+          const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
+          const activeChildSubagents = yield* Ref.make<ReadonlySet<NodeId>>(new Set());
+          const finalizeRootRun = (terminal: ProviderTerminalEvent) =>
+            Effect.gen(function* () {
+              if (yield* Ref.get(rootRunFinalized)) {
+                return;
+              }
+              const providerThread = yield* Ref.get(latestProviderThread);
+              yield* writeFinalRunEvents({
+                run: input.run,
+                rootNode: input.rootNode,
+                checkpointScope: input.checkpointScope,
+                providerThread,
+                attempt: input.attempt,
+                ...(input.shouldFinalizeRun === undefined
+                  ? {}
+                  : { shouldFinalizeRun: input.shouldFinalizeRun }),
+                terminal,
+                failureItemPersisted: terminal.status === "failed",
+              }).pipe(
+                Effect.mapError(
+                  (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
+                ),
+              );
+              yield* Ref.set(rootRunFinalized, true);
+            });
+          const trackChildLifecycle = (event: ProviderAdapterV2Event) =>
+            Effect.gen(function* () {
+              const routing = yield* Ref.get(eventRouting);
+              if (event.type === "provider_turn.updated") {
+                const isRoot =
+                  event.providerTurn.runAttemptId === input.attempt.id ||
+                  event.providerTurn.id === routing.rootProviderTurnId;
+                if (!isRoot) {
+                  yield* Ref.update(activeChildProviderTurns, (current) => {
+                    const next = new Set(current);
+                    if (isTerminalProviderTurnStatus(event.providerTurn.status)) {
+                      next.delete(event.providerTurn.id);
+                    } else {
+                      next.add(event.providerTurn.id);
+                    }
+                    return next;
+                  });
+                }
+              }
+              if (event.type === "subagent.updated") {
+                const belongsToRootRun = event.subagent.runId === input.run.id;
+                const belongsToOwnedChildThread =
+                  event.subagent.threadId !== input.run.threadId &&
+                  routing.ownedThreadIds.has(event.subagent.threadId);
+                if (belongsToRootRun || belongsToOwnedChildThread) {
+                  yield* Ref.update(activeChildSubagents, (current) => {
+                    const next = new Set(current);
+                    if (isTerminalSubagentStatus(event.subagent.status)) {
+                      next.delete(event.subagent.id);
+                    } else {
+                      next.add(event.subagent.id);
+                    }
+                    return next;
+                  });
+                }
+              }
+            });
+          const shouldStopProviderEventIngestion = Effect.gen(function* () {
+            if (!(yield* Ref.get(rootTerminalSeen))) {
+              return false;
+            }
+            const childProviderTurns = yield* Ref.get(activeChildProviderTurns);
+            if (childProviderTurns.size > 0) {
+              return false;
+            }
+            const childSubagents = yield* Ref.get(activeChildSubagents);
+            return childSubagents.size === 0;
+          });
           const eventSubscription =
             input.session.subscribeEvents === undefined
               ? { events: input.session.events, close: Effect.void }
@@ -540,8 +637,7 @@ export const layer: Layer.Layer<
             Stream.filterEffect((event) =>
               Ref.modify(eventRouting, (state) => routeProviderEvent(event, routeIdentity, state)),
             ),
-            Stream.takeUntil((event) => event.type === "turn.terminal"),
-            Stream.runForEach((event) =>
+            Stream.tap((event) =>
               Effect.gen(function* () {
                 let storedEventCount = 0;
                 if (shouldDeliverProviderEvent(event, assistantStreamingEnabled)) {
@@ -581,9 +677,14 @@ export const layer: Layer.Layer<
                 }
                 if (event.type === "turn.terminal") {
                   yield* Ref.set(terminalEvent, event);
+                  yield* Ref.set(rootTerminalSeen, true);
+                  yield* finalizeRootRun(event);
                 }
+                yield* trackChildLifecycle(event);
               }),
             ),
+            Stream.takeUntilEffect(() => shouldStopProviderEventIngestion),
+            Stream.runDrain,
             Effect.mapError((cause) => new RunExecutionIngestError({ runId: input.run.id, cause })),
             Effect.flatMap(() =>
               Effect.gen(function* () {
@@ -591,61 +692,54 @@ export const layer: Layer.Layer<
                 if (terminal === null) {
                   return;
                 }
-                const providerThread = yield* Ref.get(latestProviderThread);
-                yield* writeFinalRunEvents({
-                  run: input.run,
-                  rootNode: input.rootNode,
-                  checkpointScope: input.checkpointScope,
-                  providerThread,
-                  attempt: input.attempt,
-                  ...(input.shouldFinalizeRun === undefined
-                    ? {}
-                    : { shouldFinalizeRun: input.shouldFinalizeRun }),
-                  terminal,
-                  failureItemPersisted: terminal.status === "failed",
-                }).pipe(
-                  Effect.mapError(
-                    (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
-                  ),
-                );
+                yield* finalizeRootRun(terminal);
               }),
             ),
             Effect.catchCause((cause) =>
-              Effect.logWarning("orchestration V2 provider event ingestion failed", {
-                runId: input.run.id,
-                cause,
-              }).pipe(
-                Effect.andThen(Ref.get(latestProviderThread)),
-                Effect.flatMap((providerThread) =>
-                  Ref.get(latestTurnItemOrdinal).pipe(
-                    Effect.flatMap((latestItemOrdinal) =>
-                      writeFinalRunEvents({
-                        run: input.run,
-                        rootNode: input.rootNode,
-                        checkpointScope: input.checkpointScope,
-                        providerThread,
-                        attempt: input.attempt,
-                        ...(input.shouldFinalizeRun === undefined
-                          ? {}
-                          : { shouldFinalizeRun: input.shouldFinalizeRun }),
-                        terminal: makeFailedTerminalEvent(
-                          makeProviderFailure({
-                            cause: Cause.squash(cause),
-                            class: "unknown",
-                          }),
-                          latestItemOrdinal + 1,
-                        ),
-                        failureItemPersisted: false,
-                      }),
+              Ref.get(rootRunFinalized).pipe(
+                Effect.flatMap((finalized) =>
+                  Effect.logWarning("orchestration V2 provider event ingestion failed", {
+                    runId: input.run.id,
+                    cause,
+                  }).pipe(
+                    Effect.andThen(
+                      finalized
+                        ? Effect.void
+                        : Ref.get(latestProviderThread).pipe(
+                            Effect.flatMap((providerThread) =>
+                              Ref.get(latestTurnItemOrdinal).pipe(
+                                Effect.flatMap((latestItemOrdinal) =>
+                                  writeFinalRunEvents({
+                                    run: input.run,
+                                    rootNode: input.rootNode,
+                                    checkpointScope: input.checkpointScope,
+                                    providerThread,
+                                    attempt: input.attempt,
+                                    ...(input.shouldFinalizeRun === undefined
+                                      ? {}
+                                      : { shouldFinalizeRun: input.shouldFinalizeRun }),
+                                    terminal: makeFailedTerminalEvent(
+                                      makeProviderFailure({
+                                        cause: Cause.squash(cause),
+                                        class: "unknown",
+                                      }),
+                                      latestItemOrdinal + 1,
+                                    ),
+                                    failureItemPersisted: false,
+                                  }),
+                                ),
+                              ),
+                            ),
+                          ),
+                    ),
+                    Effect.mapError(
+                      (writeCause) =>
+                        new RunExecutionIngestError({
+                          runId: input.run.id,
+                          cause: { ingest: cause, write: writeCause },
+                        }),
                     ),
                   ),
-                ),
-                Effect.mapError(
-                  (writeCause) =>
-                    new RunExecutionIngestError({
-                      runId: input.run.id,
-                      cause: { ingest: cause, write: writeCause },
-                    }),
                 ),
               ),
             ),
