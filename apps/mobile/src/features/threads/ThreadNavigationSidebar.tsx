@@ -16,7 +16,6 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { StatusPill } from "../../components/StatusPill";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
-import { iosNativeGlassButtonTint } from "../../lib/ios-native-chrome";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useWorkspaceState } from "../../state/workspace";
@@ -487,8 +486,6 @@ export function ThreadNavigationSidebar(props: {
   const filterIcon = hasCustomHomeListOptions(options)
     ? "line.3.horizontal.decrease.circle.fill"
     : "line.3.horizontal.decrease.circle";
-  const nativeHeaderButtonTint = iosNativeGlassButtonTint(colorScheme);
-
   if (usesNativeSidebarChrome) {
     const { Screen, ScreenStack, ScreenStackHeaderConfig } =
       require("react-native-screens") as typeof import("react-native-screens");
@@ -559,7 +556,7 @@ export function ThreadNavigationSidebar(props: {
           ],
         },
         sharesBackground: true,
-        tintColor: nativeHeaderButtonTint,
+        tintColor: foregroundColor,
         type: "menu",
         variant: "prominent",
         width: 58,
@@ -570,7 +567,7 @@ export function ThreadNavigationSidebar(props: {
         identifier: "thread-sidebar-settings",
         onPress: props.onOpenSettings,
         sharesBackground: true,
-        tintColor: nativeHeaderButtonTint,
+        tintColor: foregroundColor,
         type: "button",
         variant: "prominent",
         width: 58,

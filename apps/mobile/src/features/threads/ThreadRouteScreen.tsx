@@ -643,15 +643,8 @@ function ThreadRouteContent(
                 allowToolbarIntegration: true,
                 hideNavigationBar: false,
                 placeholder: "Search",
+                placement: "integratedButton",
               }
-            : undefined,
-          unstable_headerRightItems: usesThreadSearchToolbar
-            ? () => [
-                {
-                  activatesSearchController: true,
-                  type: "searchBarPlacement",
-                },
-              ]
             : undefined,
           unstable_navigationItemStyle: usesNativeHeaderGlass ? "editor" : undefined,
         }}

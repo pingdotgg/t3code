@@ -238,8 +238,7 @@ function SidebarColumn(props: {
   const { colors } = props;
   const insets = useSafeAreaInsets();
   const compactTopInset = 18;
-  const headerButtonTint =
-    colors.background === "#050507" ? "rgba(62,62,66,0.88)" : "rgba(255,255,255,0.82)";
+  const headerButtonTint = colors.foreground;
 
   if (props.compact) {
     return (
@@ -435,8 +434,7 @@ function MailWideSidebarNativePane(props: {
   const { colors } = props;
   const insets = useSafeAreaInsets();
   const headerInset = insets.top + 76;
-  const headerButtonTint =
-    colors.background === "#050507" ? "rgba(62,62,66,0.88)" : "rgba(255,255,255,0.82)";
+  const headerButtonTint = colors.foreground;
 
   return (
     <ScreenStack style={styles.stack}>
@@ -490,9 +488,9 @@ function MailWideSidebarNativePane(props: {
                 variant: "prominent",
               },
               {
-                accessibilityLabel: "More sidebar options",
-                icon: { name: "ellipsis", type: "sfSymbol" },
-                identifier: "rns-glass-ipad-more",
+                accessibilityLabel: "Open settings",
+                icon: { name: "gearshape", type: "sfSymbol" },
+                identifier: "rns-glass-ipad-settings",
                 onPress: () => {},
                 sharesBackground: true,
                 tintColor: headerButtonTint,
@@ -525,8 +523,7 @@ function MailWideDetailNativePane(props: {
   const { colors } = props;
   const insets = useSafeAreaInsets();
   const headerInset = insets.top + 88;
-  const headerButtonTint =
-    colors.background === "#050507" ? "rgba(62,62,66,0.88)" : "rgba(255,255,255,0.82)";
+  const headerButtonTint = colors.foreground;
 
   return (
     <ScreenStack style={styles.stack}>
@@ -648,14 +645,6 @@ function MailWideDetailNativePane(props: {
               },
             ] as ComponentProps<typeof ScreenStackHeaderConfig>["headerLeftBarButtonItems"]
           }
-          headerRightBarButtonItems={
-            [
-              {
-                activatesSearchController: true,
-                type: "searchBarPlacement",
-              },
-            ] as ComponentProps<typeof ScreenStackHeaderConfig>["headerRightBarButtonItems"]
-          }
           hideBackButton
           hideShadow={false}
           largeTitle={false}
@@ -678,7 +667,7 @@ function MailWideDetailNativePane(props: {
               onChangeText={(event: NativeSyntheticEvent<{ readonly text?: string }>) => {
                 props.onSearchQueryChange(event.nativeEvent.text ?? "");
               }}
-              placement="automatic"
+              placement="integratedButton"
               placeholder="Search"
               textColor={colors.foreground}
               tintColor={colors.foreground}

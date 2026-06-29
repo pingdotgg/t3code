@@ -1,8 +1,5 @@
-diff --git a/android/src/main/java/expo/modules/router/ExpoRouterModule.kt b/android/src/main/java/expo/modules/router/ExpoRouterModule.kt
-deleted file mode 100644
-index 369cd65886415cb894b858e38604dc59b5c6ba95..0000000000000000000000000000000000000000
 diff --git a/build/react-navigation/native-stack/types.d.ts b/build/react-navigation/native-stack/types.d.ts
-index 6de73e0c33cedbaaaffdcb092ba21fc9ff71862e..ed5a88b308e022b2ef49456dfb21c3a6a8aeea4f 100644
+index 6de73e0c33cedbaaaffdcb092ba21fc9ff71862e..93845c781609c1a46bf71f2c30ef81432fb56bc2 100644
 --- a/build/react-navigation/native-stack/types.d.ts
 +++ b/build/react-navigation/native-stack/types.d.ts
 @@ -306,6 +306,22 @@ export type NativeStackNavigationOptions = {
@@ -28,22 +25,16 @@ index 6de73e0c33cedbaaaffdcb092ba21fc9ff71862e..ed5a88b308e022b2ef49456dfb21c3a6
      /**
       * String or a function that returns a React Element to be used by the header.
       * Defaults to screen `title` or route name.
-@@ -1129,13 +1145,14 @@ export type NativeStackHeaderItemCustom = {
-      */
-     hidesSharedBackground?: boolean;
- };
-+export type NativeStackHeaderRawRNSItem = NonNullable<ScreenStackHeaderConfigProps['headerLeftBarButtonItems']>[number] | NonNullable<ScreenStackHeaderConfigProps['headerRightBarButtonItems']>[number];
- /**
-  * An item that can be displayed in the header.
-  * It can be a button, a menu, spacing, or a custom element.
-  *
-  * On iOS 26, when showing items on the right side of the header,
+@@ -1115,7 +1131,8 @@ export type NativeStackHeaderItemCustom = {
   * if the items don't fit the available space, they will be collapsed into a menu automatically.
   * Items with `type: 'custom'` will not be included in this automatic collapsing behavior.
   */
 -export type NativeStackHeaderItem = NativeStackHeaderItemButton | NativeStackHeaderItemMenu | NativeStackHeaderItemSpacing | NativeStackHeaderItemCustom;
++export type NativeStackHeaderRawRNSItem = NonNullable<ScreenStackHeaderConfigProps['headerLeftBarButtonItems']>[number] | NonNullable<ScreenStackHeaderConfigProps['headerRightBarButtonItems']>[number];
 +export type NativeStackHeaderItem = NativeStackHeaderItemButton | NativeStackHeaderItemMenu | NativeStackHeaderItemSpacing | NativeStackHeaderItemCustom | NativeStackHeaderRawRNSItem;
  export type NativeStackNavigatorProps = DefaultNavigatorOptions<ParamListBase, string | undefined, StackNavigationState<ParamListBase>, NativeStackNavigationOptions, NativeStackNavigationEventMap, NativeStackNavigationProp<ParamListBase>> & StackRouterOptions & NativeStackNavigationConfig;
+ export type NativeStackDescriptor = Descriptor<NativeStackNavigationOptions, NativeStackNavigationProp<ParamListBase>, RouteProp<ParamListBase>>;
+ export type NativeStackDescriptorMap = {
 diff --git a/build/react-navigation/native-stack/views/useHeaderConfigProps.d.ts b/build/react-navigation/native-stack/views/useHeaderConfigProps.d.ts
 index 218c4291fdb57600a45d32fbcefe3707a520fe79..ce3bbadec2d52949d133401f1df01b95899aa5bf 100644
 --- a/build/react-navigation/native-stack/views/useHeaderConfigProps.d.ts
@@ -57,10 +48,10 @@ index 218c4291fdb57600a45d32fbcefe3707a520fe79..ce3bbadec2d52949d133401f1df01b95
  export {};
  //# sourceMappingURL=useHeaderConfigProps.d.ts.map
 diff --git a/build/react-navigation/native-stack/views/useHeaderConfigProps.js b/build/react-navigation/native-stack/views/useHeaderConfigProps.js
-index 2de6d160cedffb4ffb124adf7cd10979ec6ee778..6fb1840deedd52e1d788c6f93982da26d4a58efc 100644
+index 2de6d160cedffb4ffb124adf7cd10979ec6ee778..ed9651d5bcce56594c6a1946b2cb6a8f11f80c7c 100644
 --- a/build/react-navigation/native-stack/views/useHeaderConfigProps.js
 +++ b/build/react-navigation/native-stack/views/useHeaderConfigProps.js
-@@ -18,6 +18,9 @@ const processBarButtonItems = (items, colors, fonts) => {
+@@ -22,6 +22,9 @@ const processBarButtonItems = (items, colors, fonts) => {
              }
              return item;
          }
@@ -70,7 +61,7 @@ index 2de6d160cedffb4ffb124adf7cd10979ec6ee778..6fb1840deedd52e1d788c6f93982da26
          if (item.type === 'button' || item.type === 'menu') {
              if (item.type === 'menu' && item.menu == null) {
                  throw new Error(`Menu item must have a 'menu' property defined: ${JSON.stringify(item)}`);
-@@ -108,7 +108,7 @@ const getMenuItem = (item) => {
+@@ -108,7 +111,7 @@ const getMenuItem = (item) => {
          subtitle: description,
      };
  };
@@ -79,7 +70,7 @@ index 2de6d160cedffb4ffb124adf7cd10979ec6ee778..6fb1840deedd52e1d788c6f93982da26
      const { direction } = (0, native_1.useLocale)();
      const { colors, fonts, dark } = (0, native_1.useTheme)();
      const tintColor = headerTintColor ?? (react_native_1.Platform.OS === 'ios' ? colors.primary : colors.text);
-@@ -270,6 +270,8 @@ function useHeaderConfigProps({ headerBackIcon, headerBackImageSource, headerBac
+@@ -270,6 +273,8 @@ function useHeaderConfigProps({ headerBackIcon, headerBackImageSource, headerBac
          children,
          headerLeftBarButtonItems: processBarButtonItems(leftItems, colors, fonts),
          headerRightBarButtonItems: processBarButtonItems(rightItems, colors, fonts),

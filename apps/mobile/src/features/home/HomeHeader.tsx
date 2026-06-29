@@ -5,11 +5,10 @@ import type {
 } from "@t3tools/contracts";
 import { Stack } from "expo-router";
 import { useCallback, useRef } from "react";
-import { Platform, useColorScheme } from "react-native";
+import { Platform } from "react-native";
 import type { SearchBarCommands } from "react-native-screens";
 
 import { useThemeColor } from "../../lib/useThemeColor";
-import { iosNativeGlassButtonTint } from "../../lib/ios-native-chrome";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import type { HomeProjectSortOrder } from "./homeThreadList";
 import {
@@ -40,9 +39,7 @@ export function HomeHeader(props: {
   readonly onStartNewTask: () => void;
 }) {
   const searchBarRef = useRef<SearchBarCommands>(null);
-  const colorScheme = useColorScheme();
   const iconColor = useThemeColor("--color-icon");
-  const headerButtonTint = iosNativeGlassButtonTint(colorScheme);
   const hasCustomListOptions = hasCustomHomeListOptions(props);
   const focusSearch = useCallback(() => {
     searchBarRef.current?.focus();
@@ -77,7 +74,7 @@ export function HomeHeader(props: {
                     label: "",
                     onPress: props.onOpenSettings,
                     sharesBackground: true,
-                    tintColor: headerButtonTint,
+                    tintColor: iconColor,
                     type: "button",
                     variant: "prominent",
                     width: 58,

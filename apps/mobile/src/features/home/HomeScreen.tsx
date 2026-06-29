@@ -14,7 +14,6 @@ import {
   Platform,
   Pressable,
   ScrollView,
-  useColorScheme,
   useWindowDimensions,
   View,
 } from "react-native";
@@ -30,7 +29,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { nativeTopScrollEdgeEffect } from "../../lib/native-scroll-edge-effect";
-import { iosNativeGlassButtonTint } from "../../lib/ios-native-chrome";
 
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
@@ -383,8 +381,6 @@ export function HomeScreen(props: HomeScreenProps) {
   const accentColor = useThemeColor("--color-icon-muted");
   const foregroundColor = useThemeColor("--color-foreground");
   const screenColor = useThemeColor("--color-screen");
-  const colorScheme = useColorScheme();
-  const nativeHeaderButtonTint = iosNativeGlassButtonTint(colorScheme);
   const hasCustomListOptions = hasCustomHomeListOptions(props);
   const filterMenu = buildHomeListFilterMenu({
     environments: props.environments,
@@ -607,7 +603,7 @@ export function HomeScreen(props: HomeScreenProps) {
                   identifier: "home-settings",
                   onPress: props.onOpenSettings,
                   sharesBackground: true,
-                  tintColor: nativeHeaderButtonTint,
+                  tintColor: foregroundColor,
                   type: "button",
                   variant: "prominent",
                   width: 58,

@@ -86,7 +86,7 @@ index 919b984edc9f91ee9ac26faf257d8a721e26457c..3f54fad0a22d37bb7542679ae9d14088
  
  NS_ASSUME_NONNULL_END
 diff --git a/ios/RNSScreenStackHeaderConfig.mm b/ios/RNSScreenStackHeaderConfig.mm
-index 5970e3e3a624b9498b8dedfc16831df03a274d0c..1e2517d0468f58147b199e3cc898ab660844998e 100644
+index 5970e3e3a624b9498b8dedfc16831df03a274d0c..ec3d02cf912fe0e617ed593e321177be58629a26 100644
 --- a/ios/RNSScreenStackHeaderConfig.mm
 +++ b/ios/RNSScreenStackHeaderConfig.mm
 @@ -30,6 +30,20 @@ namespace react = facebook::react;
@@ -110,7 +110,17 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..1e2517d0468f58147b199e3cc898ab66
  @interface RCTImageLoader (Private)
  - (id<RCTImageCache>)imageCache;
  @end
-@@ -81,6 +95,7 @@ static const NSNumber *const DEFAULT_TITLE_LARGE_FONT_SIZE = @34;
+@@ -47,6 +61,9 @@ static const NSNumber *const DEFAULT_TITLE_LARGE_FONT_SIZE = @34;
+ @end
+ 
+ @interface RNSScreenStackHeaderConfig () <RCTMountingTransactionObserving>
++#if !TARGET_OS_TV
++- (NSArray<UIBarButtonItemGroup *> *)barButtonItemGroupsFromItems:(NSArray<UIBarButtonItem *> *)items;
++#endif
+ @end
+ 
+ @implementation RNSScreenStackHeaderConfig {
+@@ -81,6 +98,7 @@ static const NSNumber *const DEFAULT_TITLE_LARGE_FONT_SIZE = @34;
    self.hidden = YES;
    _reactSubviews = [NSMutableArray new];
    _backTitleVisible = YES;
@@ -118,7 +128,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..1e2517d0468f58147b199e3cc898ab66
    _blurEffect = RNSBlurEffectStyleNone;
  }
  
-@@ -496,6 +511,10 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -496,6 +514,10 @@ RNS_IGNORE_SUPER_CALL_END
  
    if (shouldHide) {
      navitem.title = config.title;
@@ -129,7 +139,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..1e2517d0468f58147b199e3cc898ab66
  
      // Setting navigation bar visibility is split to mitigate iOS 26 bug with bar button items.
      [navctr setNavigationBarHidden:YES animated:animated];
-@@ -512,11 +531,19 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -512,11 +534,19 @@ RNS_IGNORE_SUPER_CALL_END
    }
    navitem.largeTitleDisplayMode =
        config.largeTitle ? UINavigationItemLargeTitleDisplayModeAlways : UINavigationItemLargeTitleDisplayModeNever;
@@ -149,17 +159,34 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..1e2517d0468f58147b199e3cc898ab66
  
  // appearance does not apply to the tvOS so we need to use lagacy customization
  #if TARGET_OS_TV
-@@ -638,9 +665,196 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -637,10 +667,229 @@ RNS_IGNORE_SUPER_CALL_END
+   // This assignment should be done after `navitem.titleView = ...` assignment (iOS 16.0 bug).
    // See: https://github.com/software-mansion/react-native-screens/issues/1570 (comments)
    navitem.title = config.title;
-   navitem.leftBarButtonItems = [config barButtonItemsFromConfigs:config.headerLeftBarButtonItems
+-  navitem.leftBarButtonItems = [config barButtonItemsFromConfigs:config.headerLeftBarButtonItems
 -                                                withCurrentItems:navitem.leftBarButtonItems];
-+                                                withCurrentItems:navitem.leftBarButtonItems
-+                                                  navigationItem:navitem];
-   navitem.rightBarButtonItems = [config barButtonItemsFromConfigs:config.headerRightBarButtonItems
+-  navitem.rightBarButtonItems = [config barButtonItemsFromConfigs:config.headerRightBarButtonItems
 -                                                 withCurrentItems:navitem.rightBarButtonItems];
-+                                                 withCurrentItems:navitem.rightBarButtonItems
-+                                                   navigationItem:navitem];
++  NSArray<UIBarButtonItem *> *leftBarButtonItems = [config barButtonItemsFromConfigs:config.headerLeftBarButtonItems
++                                                                    withCurrentItems:navitem.leftBarButtonItems
++                                                                      navigationItem:navitem];
++  NSArray<UIBarButtonItem *> *rightBarButtonItems = [config barButtonItemsFromConfigs:config.headerRightBarButtonItems
++                                                                     withCurrentItems:navitem.rightBarButtonItems
++                                                                       navigationItem:navitem];
++#if !TARGET_OS_TV
++  if (@available(iOS 16.0, *)) {
++    navitem.leadingItemGroups = [config barButtonItemGroupsFromItems:leftBarButtonItems];
++    navitem.trailingItemGroups = [config barButtonItemGroupsFromItems:rightBarButtonItems];
++    navitem.leftBarButtonItems = nil;
++    navitem.rightBarButtonItems = nil;
++  } else {
++    navitem.leftBarButtonItems = leftBarButtonItems;
++    navitem.rightBarButtonItems = rightBarButtonItems;
++  }
++#else
++  navitem.leftBarButtonItems = leftBarButtonItems;
++  navitem.rightBarButtonItems = rightBarButtonItems;
++#endif
 +  NSDictionary<NSString *, id> *mailSearchToolbarConfig = nil;
 +  for (NSDictionary<NSString *, id> *toolbarConfig in config.headerToolbarItems) {
 +    if (toolbarConfig[@"mailSearchToolbar"]) {
@@ -366,7 +393,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..1e2517d0468f58147b199e3cc898ab66
  
    // Setting navigation bar visibility is split to mitigate iOS 26 bug with bar button items
    // (setting nav bar visibility should be done after `navitem.*BarButtonItems`).
-@@ -773,6 +987,7 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -773,6 +1022,7 @@ RNS_IGNORE_SUPER_CALL_END
  
  - (NSArray<UIBarButtonItem *> *)barButtonItemsFromConfigs:(NSArray<NSDictionary<NSString *, id> *> *)dicts
                                           withCurrentItems:(NSArray<UIBarButtonItem *> *)currentItems
@@ -374,7 +401,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..1e2517d0468f58147b199e3cc898ab66
  {
    if (dicts.count == 0) {
      return currentItems;
-@@ -781,7 +996,161 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -781,7 +1031,190 @@ RNS_IGNORE_SUPER_CALL_END
    [items addObjectsFromArray:currentItems];
    for (NSUInteger i = 0; i < dicts.count; i++) {
      NSDictionary *dict = dicts[i];
@@ -543,6 +570,18 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..1e2517d0468f58147b199e3cc898ab66
 +          }
 +        }
 +        NSNumber *index = dict[@"index"];
++#if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
++        if (@available(iOS 26.0, *)) {
++          NSNumber *sharesBackground = dict[@"sharesBackground"];
++          if (sharesBackground != nil) {
++            item.sharesBackground = sharesBackground.boolValue;
++          }
++          NSNumber *hidesSharedBackground = dict[@"hidesSharedBackground"];
++          if (hidesSharedBackground != nil) {
++            item.hidesSharedBackground = hidesSharedBackground.boolValue;
++          }
++        }
++#endif
 +        if (index != nil && index.integerValue < items.count) {
 +          [items insertObject:item atIndex:index.integerValue];
 +        } else {
@@ -554,7 +593,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..1e2517d0468f58147b199e3cc898ab66
        RNSBarButtonItem *item = [[RNSBarButtonItem alloc] initWithConfig:dict
            action:^(NSString *buttonId) {
              auto eventEmitter = std::static_pointer_cast<const facebook::react::RNSScreenStackHeaderConfigEventEmitter>(
-@@ -809,11 +1178,15 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -809,11 +1242,15 @@ RNS_IGNORE_SUPER_CALL_END
          [items addObject:item];
        }
      } else if (dict[@"spacing"]) {
@@ -574,7 +613,55 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..1e2517d0468f58147b199e3cc898ab66
        NSNumber *index = dict[@"index"];
        if (index.integerValue < items.count) {
          [items insertObject:item atIndex:index.integerValue];
-@@ -1013,6 +1386,8 @@ static RCTResizeMode resizeModeFromCppEquiv(react::ImageResizeMode resizeMode)
+@@ -825,6 +1262,47 @@ RNS_IGNORE_SUPER_CALL_END
+   return items;
+ }
+ 
++#if !TARGET_OS_TV
++- (NSArray<UIBarButtonItemGroup *> *)barButtonItemGroupsFromItems:(NSArray<UIBarButtonItem *> *)items
++{
++  if (items.count == 0) {
++    return @[];
++  }
++
++  NSMutableArray<UIBarButtonItemGroup *> *groups = [NSMutableArray array];
++  NSMutableArray<UIBarButtonItem *> *sharedRun = [NSMutableArray array];
++
++  void (^flushSharedRun)(void) = ^{
++    if (sharedRun.count == 0) {
++      return;
++    }
++    [groups addObject:[UIBarButtonItemGroup fixedGroupWithRepresentativeItem:nil
++                                                                       items:[sharedRun copy]]];
++    [sharedRun removeAllObjects];
++  };
++
++  for (UIBarButtonItem *item in items) {
++    BOOL shouldShareBackground = NO;
++#if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
++    if (@available(iOS 26.0, *)) {
++      shouldShareBackground = item.sharesBackground && !item.hidesSharedBackground;
++    }
++#endif
++
++    if (shouldShareBackground) {
++      [sharedRun addObject:item];
++      continue;
++    }
++
++    flushSharedRun();
++    [groups addObject:[UIBarButtonItemGroup fixedGroupWithRepresentativeItem:nil items:@[ item ]]];
++  }
++
++  flushSharedRun();
++  return groups;
++}
++#endif
++
+ RNS_IGNORE_SUPER_CALL_BEGIN
+ - (void)insertReactSubview:(RNSScreenStackHeaderSubview *)subview atIndex:(NSInteger)atIndex
+ {
+@@ -1013,6 +1491,8 @@ static RCTResizeMode resizeModeFromCppEquiv(react::ImageResizeMode resizeMode)
    }
  
    _title = RCTNSStringFromStringNilIfEmpty(newScreenProps.title);
@@ -583,7 +670,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..1e2517d0468f58147b199e3cc898ab66
    if (newScreenProps.titleFontFamily != oldScreenProps.titleFontFamily) {
      _titleFontFamily = RCTNSStringFromStringNilIfEmpty(newScreenProps.titleFontFamily);
    }
-@@ -1038,6 +1413,7 @@ static RCTResizeMode resizeModeFromCppEquiv(react::ImageResizeMode resizeMode)
+@@ -1038,6 +1518,7 @@ static RCTResizeMode resizeModeFromCppEquiv(react::ImageResizeMode resizeMode)
    _disableBackButtonMenu = newScreenProps.disableBackButtonMenu;
    _backButtonDisplayMode =
        [RNSConvert UINavigationItemBackButtonDisplayModeFromCppEquivalent:newScreenProps.backButtonDisplayMode];
@@ -591,7 +678,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..1e2517d0468f58147b199e3cc898ab66
  
    if (newScreenProps.userInterfaceStyle != oldScreenProps.userInterfaceStyle) {
      _userInterfaceStyle = [RNSConvert UIUserInterfaceStyleFromCppEquivalent:newScreenProps.userInterfaceStyle];
-@@ -1084,6 +1460,18 @@ static RCTResizeMode resizeModeFromCppEquiv(react::ImageResizeMode resizeMode)
+@@ -1084,6 +1565,18 @@ static RCTResizeMode resizeModeFromCppEquiv(react::ImageResizeMode resizeMode)
      _headerRightBarButtonItems = array;
    }
  
@@ -683,10 +770,10 @@ index 52c61c863c53c289569a741445ed08c0355d95ba..cb4d6be752f98e06dfd3b40453c2bd88
  
  #pragma mark - Override
 diff --git a/lib/commonjs/components/ScreenStackHeaderConfig.js b/lib/commonjs/components/ScreenStackHeaderConfig.js
-index 16b979bb3dfb41ff247403f1632c300a9a60d549..4c1b5a7491fb6555cdacb9fa5ddb473d7e9c4556 100644
+index 16b979bb3dfb41ff247403f1632c300a9a60d549..67f52f105966833884344553847f11d0b66e6a4e 100644
 --- a/lib/commonjs/components/ScreenStackHeaderConfig.js
 +++ b/lib/commonjs/components/ScreenStackHeaderConfig.js
-@@ -23,18 +23,35 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
+@@ -23,18 +23,40 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
    } = (0, _TopInsetApplicationContext.useTopInsetApplication)(!props.hidden, props.disableTopInsetApplication ?? false);
    const {
      headerLeftBarButtonItems,
@@ -730,7 +817,7 @@ index 16b979bb3dfb41ff247403f1632c300a9a60d549..4c1b5a7491fb6555cdacb9fa5ddb473d
    } : undefined;
  
    // Handle bar button menu item presses by deep-searching nested menus
-@@ -56,7 +73,7 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
+@@ -56,7 +78,7 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
      };
  
      // Check each bar-button item with a menu
@@ -739,7 +826,7 @@ index 16b979bb3dfb41ff247403f1632c300a9a60d549..4c1b5a7491fb6555cdacb9fa5ddb473d
      for (const item of allItems) {
        if (item && item.type === 'menu' && item.menu) {
          const action = findInMenu(item.menu, event.nativeEvent.menuId);
-@@ -64,6 +81,15 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
+@@ -64,6 +86,15 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
            action.onPress();
            return;
          }
@@ -755,7 +842,7 @@ index 16b979bb3dfb41ff247403f1632c300a9a60d549..4c1b5a7491fb6555cdacb9fa5ddb473d
        }
      }
    } : undefined;
-@@ -71,6 +97,7 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
+@@ -71,6 +102,7 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
      userInterfaceStyle: props.experimental_userInterfaceStyle,
      headerLeftBarButtonItems: preparedHeaderLeftBarButtonItems,
      headerRightBarButtonItems: preparedHeaderRightBarButtonItems,
@@ -764,7 +851,7 @@ index 16b979bb3dfb41ff247403f1632c300a9a60d549..4c1b5a7491fb6555cdacb9fa5ddb473d
      onPressHeaderBarButtonMenuItem: onPressHeaderBarButtonMenuItem,
      ref: ref,
 diff --git a/lib/commonjs/components/helpers/prepareHeaderBarButtonItems.js b/lib/commonjs/components/helpers/prepareHeaderBarButtonItems.js
-index ab93f62e4a7049d63c6681cecbd6cf8b1d07ce10..3a7196894cae4e13ec3357e178f181578407dd2a 100644
+index ab93f62e4a7049d63c6681cecbd6cf8b1d07ce10..b5ea122473b023f84eabdb1914aef09a28c6d525 100644
 --- a/lib/commonjs/components/helpers/prepareHeaderBarButtonItems.js
 +++ b/lib/commonjs/components/helpers/prepareHeaderBarButtonItems.js
 @@ -41,10 +41,31 @@ const prepareMenu = (menu, index, side, path = '') => {
@@ -831,10 +918,10 @@ index de25040bfec8587ca311f5a42661240640989419..bf73f41744e08bc60ffac09029419d19
  function _getRequireWildcardCache(e) { if ("function" != typeof WeakMap) return null; var r = new WeakMap(), t = new WeakMap(); return (_getRequireWildcardCache = function (e) { return e ? t : r; })(e); }
  function _interopRequireWildcard(e, r) { if (!r && e && e.__esModule) return e; if (null === e || "object" != typeof e && "function" != typeof e) return { default: e }; var t = _getRequireWildcardCache(r); if (t && t.has(e)) return t.get(e); var n = { __proto__: null }, a = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var u in e) if ("default" !== u && {}.hasOwnProperty.call(e, u)) { var i = a ? Object.getOwnPropertyDescriptor(e, u) : null; i && (i.get || i.set) ? Object.defineProperty(n, u, i) : n[u] = e[u]; } return n.default = e, t && t.set(e, n), n; }
 diff --git a/lib/module/components/ScreenStackHeaderConfig.js b/lib/module/components/ScreenStackHeaderConfig.js
-index cf15f36f25e51d95c896fbc3a31ccba90156a5b6..5b83738e58d03192452b03d06453292ece929b41 100644
+index cf15f36f25e51d95c896fbc3a31ccba90156a5b6..b1dfe857e0cf06c75088203a7f4157643af479b5 100644
 --- a/lib/module/components/ScreenStackHeaderConfig.js
 +++ b/lib/module/components/ScreenStackHeaderConfig.js
-@@ -19,18 +19,35 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
+@@ -19,18 +19,40 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
    } = useTopInsetApplication(!props.hidden, props.disableTopInsetApplication ?? false);
    const {
      headerLeftBarButtonItems,
@@ -878,7 +965,7 @@ index cf15f36f25e51d95c896fbc3a31ccba90156a5b6..5b83738e58d03192452b03d06453292e
    } : undefined;
  
    // Handle bar button menu item presses by deep-searching nested menus
-@@ -52,7 +69,7 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
+@@ -52,7 +74,7 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
      };
  
      // Check each bar-button item with a menu
@@ -887,7 +974,7 @@ index cf15f36f25e51d95c896fbc3a31ccba90156a5b6..5b83738e58d03192452b03d06453292e
      for (const item of allItems) {
        if (item && item.type === 'menu' && item.menu) {
          const action = findInMenu(item.menu, event.nativeEvent.menuId);
-@@ -60,6 +77,15 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
+@@ -60,6 +82,15 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
            action.onPress();
            return;
          }
@@ -903,7 +990,7 @@ index cf15f36f25e51d95c896fbc3a31ccba90156a5b6..5b83738e58d03192452b03d06453292e
        }
      }
    } : undefined;
-@@ -67,6 +93,7 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
+@@ -67,6 +98,7 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
      userInterfaceStyle: props.experimental_userInterfaceStyle,
      headerLeftBarButtonItems: preparedHeaderLeftBarButtonItems,
      headerRightBarButtonItems: preparedHeaderRightBarButtonItems,
@@ -912,7 +999,7 @@ index cf15f36f25e51d95c896fbc3a31ccba90156a5b6..5b83738e58d03192452b03d06453292e
      onPressHeaderBarButtonMenuItem: onPressHeaderBarButtonMenuItem,
      ref: ref,
 diff --git a/lib/module/components/helpers/prepareHeaderBarButtonItems.js b/lib/module/components/helpers/prepareHeaderBarButtonItems.js
-index 8a70ffd78617147418d628c03c580bb7ff9a8a72..749ca41df55394c264601c56dad2a59970ac0e4d 100644
+index 8a70ffd78617147418d628c03c580bb7ff9a8a72..8dbd0ba2ee61ee54d44cdf286a720ce26af01f26 100644
 --- a/lib/module/components/helpers/prepareHeaderBarButtonItems.js
 +++ b/lib/module/components/helpers/prepareHeaderBarButtonItems.js
 @@ -35,10 +35,31 @@ const prepareMenu = (menu, index, side, path = '') => {
@@ -949,7 +1036,7 @@ index 8a70ffd78617147418d628c03c580bb7ff9a8a72..749ca41df55394c264601c56dad2a599
      if (item.icon?.type === 'imageSource') {
        imageSource = Image.resolveAssetSource(item.icon.imageSource);
 diff --git a/lib/module/index.js b/lib/module/index.js
-index 07caaf7f04c1d6484727b43b694ccf76b1988984..ba2e9c5e0c788a64db13733f403c9087567ac6a0 100644
+index 07caaf7f04c1d6484727b43b694ccf76b1988984..07fd7a57687797c5ae8f685ea70ccf983e262f63 100644
 --- a/lib/module/index.js
 +++ b/lib/module/index.js
 @@ -43,4 +43,5 @@ export { default as useTransitionProgress } from './useTransitionProgress';
@@ -958,8 +1045,9 @@ index 07caaf7f04c1d6484727b43b694ccf76b1988984..ba2e9c5e0c788a64db13733f403c9087
  export * from './components/tabs';
 +export * from './components/gamma/scroll-view-marker';
  //# sourceMappingURL=index.js.map
+\ No newline at end of file
 diff --git a/lib/typescript/fabric/ScreenStackHeaderConfigNativeComponent.d.ts b/lib/typescript/fabric/ScreenStackHeaderConfigNativeComponent.d.ts
-index b7568ecfebd4f4420f2a8d3fec5184d7fc728dd1..ec0e5ec08f0240155beaa3ada54bcda9ddf83415 100644
+index b7568ecfebd4f4420f2a8d3fec5184d7fc728dd1..45f16ef96ee86402c68a1b90edb4a71de05773a9 100644
 --- a/lib/typescript/fabric/ScreenStackHeaderConfigNativeComponent.d.ts
 +++ b/lib/typescript/fabric/ScreenStackHeaderConfigNativeComponent.d.ts
 @@ -9,6 +9,7 @@ type OnPressHeaderBarButtonMenuItemEvent = Readonly<{
@@ -1006,7 +1094,7 @@ index 8e4480f901d5d557244643a32341d46e9a497e68..883c5f264301058cbcd9090bee2702ee
  //# sourceMappingURL=index.d.ts.map
 \ No newline at end of file
 diff --git a/lib/typescript/types.d.ts b/lib/typescript/types.d.ts
-index 3b384e03891e38e936f370372a682d73440e7ec2..9f643bfd4f99fbb36d2a8214fdbf8d207b4cb9ec 100644
+index 3b384e03891e38e936f370372a682d73440e7ec2..9834a915b66c1c5172a2e9aa423599ac4e6af1d8 100644
 --- a/lib/typescript/types.d.ts
 +++ b/lib/typescript/types.d.ts
 @@ -10,6 +10,7 @@ export type SearchBarCommands = {
@@ -1070,7 +1158,7 @@ index 3b384e03891e38e936f370372a682d73440e7ec2..9f643bfd4f99fbb36d2a8214fdbf8d20
      /**
       * Allows for setting text color of the title.
       */
-@@ -1145,8 +1178,33 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
+@@ -1145,8 +1178,37 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
  export interface HeaderBarButtonItemSpacing {
      type: 'spacing';
      spacing: number;
@@ -1109,8 +1197,57 @@ index 3b384e03891e38e936f370372a682d73440e7ec2..9f643bfd4f99fbb36d2a8214fdbf8d20
  /**
   * Custom Screen Transition
   */
+diff --git a/node_modules/.bin/react-native b/node_modules/.bin/react-native
+new file mode 100755
+index 0000000000000000000000000000000000000000..bdc1e9183f552f93e05d5d5501116bc9e3539219
+--- /dev/null
++++ b/node_modules/.bin/react-native
+@@ -0,0 +1,43 @@
++#!/bin/sh
++basedir=$(dirname "$(echo "$0" | sed -e 's,\\,/,g')")
++basedir_win="$basedir"
++exe=""
++msys=""
++
++case `uname -a` in
++  *CYGWIN*|*MINGW*|*MSYS*)
++    if command -v cygpath > /dev/null 2>&1; then
++      basedir_win=`cygpath -w "$basedir"`
++    fi
++    exe=".exe"
++    msys="true"
++  ;;
++  *WSL2*)
++    if command -v wslpath > /dev/null 2>&1; then
++      basedir_win="$(wslpath -w "$basedir" 2> /dev/null)"
++      if [ $? -ne 0 ] || [ -z "$basedir_win" ]; then
++        basedir_win="$basedir"
++      else
++        exe=".exe"
++      fi
++    fi
++  ;;
++esac
++
++if [ -z "$NODE_PATH" ]; then
++  export NODE_PATH="/Users/julius/Developer/t3code/node_modules/.pnpm/react-native@0.85.3_@babel+core@7.29.7_@react-native+metro-config@0.85.3_@babel+core@7._225d580d785074a01bfaff9454beedcb/node_modules/react-native/node_modules:/Users/julius/Developer/t3code/node_modules/.pnpm/react-native@0.85.3_@babel+core@7.29.7_@react-native+metro-config@0.85.3_@babel+core@7._225d580d785074a01bfaff9454beedcb/node_modules:/Users/julius/Developer/t3code/node_modules/.pnpm/node_modules"
++else
++  export NODE_PATH="/Users/julius/Developer/t3code/node_modules/.pnpm/react-native@0.85.3_@babel+core@7.29.7_@react-native+metro-config@0.85.3_@babel+core@7._225d580d785074a01bfaff9454beedcb/node_modules/react-native/node_modules:/Users/julius/Developer/t3code/node_modules/.pnpm/react-native@0.85.3_@babel+core@7.29.7_@react-native+metro-config@0.85.3_@babel+core@7._225d580d785074a01bfaff9454beedcb/node_modules:/Users/julius/Developer/t3code/node_modules/.pnpm/node_modules:$NODE_PATH"
++fi
++if [ -n "$exe" ] && [ -x "$basedir/node.exe" ]; then
++  exec "$basedir/node.exe"  "$basedir_win/../../../../../react-native@0.85.3_@babel+core@7.29.7_@react-native+metro-config@0.85.3_@babel+core@7._225d580d785074a01bfaff9454beedcb/node_modules/react-native/cli.js" "$@"
++elif [ -x "$basedir/node" ]; then
++  exec "$basedir/node"  "$basedir/../../../../../react-native@0.85.3_@babel+core@7.29.7_@react-native+metro-config@0.85.3_@babel+core@7._225d580d785074a01bfaff9454beedcb/node_modules/react-native/cli.js" "$@"
++elif command -v node >/dev/null 2>&1; then
++  exec node  "$basedir/../../../../../react-native@0.85.3_@babel+core@7.29.7_@react-native+metro-config@0.85.3_@babel+core@7._225d580d785074a01bfaff9454beedcb/node_modules/react-native/cli.js" "$@"
++elif [ -n "$exe" ] && command -v node.exe >/dev/null 2>&1; then
++  exec node.exe  "$basedir_win/../../../../../react-native@0.85.3_@babel+core@7.29.7_@react-native+metro-config@0.85.3_@babel+core@7._225d580d785074a01bfaff9454beedcb/node_modules/react-native/cli.js" "$@"
++else
++  exec node  "$basedir/../../../../../react-native@0.85.3_@babel+core@7.29.7_@react-native+metro-config@0.85.3_@babel+core@7._225d580d785074a01bfaff9454beedcb/node_modules/react-native/cli.js" "$@"
++fi
++# cmd-shim-target=/Users/julius/Developer/t3code/node_modules/.pnpm/react-native@0.85.3_@babel+core@7.29.7_@react-native+metro-config@0.85.3_@babel+core@7._225d580d785074a01bfaff9454beedcb/node_modules/react-native/cli.js
 diff --git a/src/components/ScreenStackHeaderConfig.tsx b/src/components/ScreenStackHeaderConfig.tsx
-index 421b3c2545426ae957271bd6515bcf827437541c..7adcf68a0f53f4b49bfb6ad77d6090c110862aea 100644
+index 421b3c2545426ae957271bd6515bcf827437541c..4566c1be1825ccaf487d4b64e96bf461f5d4da86 100644
 --- a/src/components/ScreenStackHeaderConfig.tsx
 +++ b/src/components/ScreenStackHeaderConfig.tsx
 @@ -39,7 +39,11 @@ export const ScreenStackHeaderConfig = React.forwardRef<
@@ -1161,7 +1298,7 @@ index 421b3c2545426ae957271bd6515bcf827437541c..7adcf68a0f53f4b49bfb6ad77d6090c1
          );
          if (
            pressedItem &&
-@@ -73,6 +85,19 @@ export const ScreenStackHeaderConfig = React.forwardRef<
+@@ -73,6 +85,31 @@ export const ScreenStackHeaderConfig = React.forwardRef<
          ) {
            pressedItem.onPress();
          }
@@ -1193,7 +1330,7 @@ index 421b3c2545426ae957271bd6515bcf827437541c..7adcf68a0f53f4b49bfb6ad77d6090c1
        }
      : undefined;
  
-@@ -102,6 +127,7 @@ export const ScreenStackHeaderConfig = React.forwardRef<
+@@ -102,6 +139,7 @@ export const ScreenStackHeaderConfig = React.forwardRef<
          const allItems = [
            ...(preparedHeaderLeftBarButtonItems ?? []),
            ...(preparedHeaderRightBarButtonItems ?? []),
@@ -1201,7 +1338,7 @@ index 421b3c2545426ae957271bd6515bcf827437541c..7adcf68a0f53f4b49bfb6ad77d6090c1
          ];
          for (const item of allItems) {
            if (item && item.type === 'menu' && item.menu) {
-@@ -110,6 +136,17 @@ export const ScreenStackHeaderConfig = React.forwardRef<
+@@ -110,6 +148,17 @@ export const ScreenStackHeaderConfig = React.forwardRef<
                action.onPress();
                return;
              }
@@ -1219,7 +1356,7 @@ index 421b3c2545426ae957271bd6515bcf827437541c..7adcf68a0f53f4b49bfb6ad77d6090c1
            }
          }
        }
-@@ -121,6 +158,7 @@ export const ScreenStackHeaderConfig = React.forwardRef<
+@@ -121,6 +170,7 @@ export const ScreenStackHeaderConfig = React.forwardRef<
        userInterfaceStyle={props.experimental_userInterfaceStyle}
        headerLeftBarButtonItems={preparedHeaderLeftBarButtonItems}
        headerRightBarButtonItems={preparedHeaderRightBarButtonItems}
@@ -1324,7 +1461,7 @@ index a405aec437bd879d8be7a706d29e965d77658899..cd649bd7ab7de7b7131302e8be682ec6
 +export * from './components/gamma/scroll-view-marker';
  export type * from './components/shared/types';
 diff --git a/src/types.tsx b/src/types.tsx
-index 76a83f3acb6fd3f0af7f027798848b7124100286..7d6a81fecd759c393a2ba9bf797ea55e52721f32 100644
+index 76a83f3acb6fd3f0af7f027798848b7124100286..5d0e317fa26844989e8a80c4ffc4d703c22abd8a 100644
 --- a/src/types.tsx
 +++ b/src/types.tsx
 @@ -26,6 +26,7 @@ export type SearchBarCommands = {
@@ -1388,7 +1525,7 @@ index 76a83f3acb6fd3f0af7f027798848b7124100286..7d6a81fecd759c393a2ba9bf797ea55e
    /**
     * Allows for setting text color of the title.
     */
-@@ -1279,11 +1312,42 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
+@@ -1279,11 +1312,46 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
  export interface HeaderBarButtonItemSpacing {
    type: 'spacing';
    spacing: number;
