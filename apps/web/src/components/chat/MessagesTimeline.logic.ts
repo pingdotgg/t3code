@@ -409,6 +409,19 @@ function deriveUnsettledRunId(latestRun: TimelineLatestRun | null): RunId | null
   return isSettled ? null : latestRun.runId;
 }
 
+function timelineEntryFoldRunId(entry: TimelineEntry): RunId | null {
+  if (entry.kind === "message" && entry.message.role === "assistant") {
+    return entry.message.runId ?? null;
+  }
+  if (entry.kind === "work") {
+    return entry.entry.runId ?? null;
+  }
+  if (entry.kind === "event" && timelineEntryIsPersistentResourceCard(entry)) {
+    return entry.projectedItem.item.runId;
+  }
+  return null;
+}
+
 /**
  * Settled turns fold their commentary and tool activity behind a
  * "Worked for ..." row anchored at the turn's first foldable entry; the
@@ -452,12 +465,7 @@ function deriveTurnFolds(input: {
       pendingUserBoundary = entry.message.createdAt;
       continue;
     }
-    const runId =
-      entry.kind === "message" && entry.message.role === "assistant"
-        ? (entry.message.runId ?? null)
-        : entry.kind === "work"
-          ? (entry.entry.runId ?? null)
-          : null;
+    const runId = timelineEntryFoldRunId(entry);
     if (!runId) {
       continue;
     }
@@ -496,8 +504,8 @@ function deriveTurnFolds(input: {
     }
     const hiddenEntryIds = new Set<string>();
     for (const entry of group.entries) {
-      if (entry.id === group.terminalEntry?.id) {
-        continue;
+      if (entry.id !== group.terminalEntry?.id && !timelineEntryIsPersistentResourceCard(entry)) {
+        hiddenEntryIds.add(entry.id);
       }
       // Agent-spawn CTA rows never fold: workflows outlive their launching
       // turn (dynamic spawns, background execution), and folding the CTA
