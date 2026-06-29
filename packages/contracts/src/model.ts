@@ -129,6 +129,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
   codex: "gpt-5.5",
   claudeAgent: "claude-sonnet-4-6",
   cursor: "auto",
+  grok: "grok-build",
   opencode: "openai/gpt-5",
 };
 
@@ -139,6 +140,7 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Record<ProviderKind,
   codex: "gpt-5.4-mini",
   claudeAgent: "claude-haiku-4-5",
   cursor: "composer-2",
+  grok: "grok-build",
   opencode: "openai/gpt-5",
 };
 
@@ -159,6 +161,9 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "gpt-5.2": "gpt-5.2",
   },
   claudeAgent: {
+    fable: "claude-fable-5",
+    "fable-5": "claude-fable-5",
+    "claude-fable-5": "claude-fable-5",
     opus: "claude-opus-4-7",
     "opus-4.7": "claude-opus-4-7",
     "claude-opus-4.7": "claude-opus-4-7",
@@ -185,6 +190,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "opus-4.5-thinking": "claude-opus-4-5",
     "opus-4.5": "claude-opus-4-5",
   },
+  grok: {},
   opencode: {},
 };
 
@@ -194,5 +200,6 @@ export const PROVIDER_DISPLAY_NAMES: Record<ProviderKind, string> = {
   codex: "Codex",
   claudeAgent: "Claude",
   cursor: "Cursor",
+  grok: "Grok",
   opencode: "OpenCode",
 };

@@ -179,6 +179,13 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     binaryDescription: "Path to the Cursor agent binary",
   },
   {
+    provider: "grok",
+    title: "Grok",
+    badgeLabel: "Early Access",
+    binaryPlaceholder: "Grok binary path",
+    binaryDescription: "Path to the Grok binary",
+  },
+  {
     provider: "opencode",
     title: "OpenCode",
     binaryPlaceholder: "OpenCode binary path",
@@ -316,7 +323,9 @@ function getProviderSummary(provider: ServerProvider | undefined) {
   }
   return {
     headline: "Available",
-    detail: provider.message ?? "Installed and ready, but authentication could not be verified.",
+    detail:
+      provider.message ??
+      "Installed and ready. This provider does not expose separate authentication details.",
   };
 }
 
@@ -1617,6 +1626,10 @@ export function ProvidersSettingsPanel() {
         DEFAULT_UNIFIED_SETTINGS.providers.cursor.binaryPath ||
       settings.providers.cursor.customModels.length > 0,
     ),
+    grok: Boolean(
+      settings.providers.grok.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.grok.binaryPath ||
+      settings.providers.grok.customModels.length > 0,
+    ),
     opencode: Boolean(
       settings.providers.opencode.binaryPath !==
         DEFAULT_UNIFIED_SETTINGS.providers.opencode.binaryPath ||
@@ -1633,6 +1646,7 @@ export function ProvidersSettingsPanel() {
     codex: "",
     claudeAgent: "",
     cursor: "",
+    grok: "",
     opencode: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
@@ -2334,7 +2348,9 @@ export function ProvidersSettingsPanel() {
                               ? "gpt-6.7-codex-ultra-preview"
                               : providerCard.provider === "opencode"
                                 ? "openai/gpt-5"
-                                : "claude-sonnet-5-0"
+                                : providerCard.provider === "grok"
+                                  ? "grok-build"
+                                  : "claude-sonnet-5-0"
                           }
                           spellCheck={false}
                         />

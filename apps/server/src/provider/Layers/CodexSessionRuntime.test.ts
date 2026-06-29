@@ -66,6 +66,7 @@ describe("buildTurnStartParams", () => {
         },
       ],
       model: "gpt-5.3-codex",
+      serviceTier: "flex",
       effort: "medium",
       collaborationMode: {
         mode: "plan",
@@ -112,6 +113,7 @@ describe("buildTurnStartParams", () => {
         },
       ],
       model: "gpt-5.3-codex",
+      serviceTier: "flex",
       collaborationMode: {
         mode: "default",
         settings: {
@@ -147,6 +149,7 @@ describe("buildTurnStartParams", () => {
         },
       ],
       model: "gpt-5.3-codex",
+      serviceTier: "flex",
       collaborationMode: {
         mode: "default",
         settings: {
@@ -179,7 +182,21 @@ describe("buildTurnStartParams", () => {
           text: "Review",
         },
       ],
+      serviceTier: "flex",
     });
+  });
+
+  it("preserves fast service tier when requested", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Use fast tier",
+        serviceTier: "fast",
+      }),
+    );
+
+    assert.equal(params.serviceTier, "fast");
   });
 });
 
@@ -231,6 +248,81 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it("defaults thread/start payloads to flex service tier", async () => {
+    const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
+    const client = {
+      request: <M extends "thread/start" | "thread/resume">(
+        method: M,
+        payload: CodexRpc.ClientRequestParamsByMethod[M],
+      ) => {
+        calls.push({ method, payload });
+        return Effect.succeed(
+          makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+        );
+      },
+    };
+
+    await Effect.runPromise(
+      openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+      }),
+    );
+
+    assert.deepStrictEqual(calls, [
+      {
+        method: "thread/start",
+        payload: {
+          cwd: "/tmp/project",
+          approvalPolicy: "never",
+          sandbox: "danger-full-access",
+          model: "gpt-5.3-codex",
+          serviceTier: "flex",
+        },
+      },
+    ]);
+  });
+
+  it("preserves fast service tier in thread/start payloads", async () => {
+    const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
+    const client = {
+      request: <M extends "thread/start" | "thread/resume">(
+        method: M,
+        payload: CodexRpc.ClientRequestParamsByMethod[M],
+      ) => {
+        calls.push({ method, payload });
+        return Effect.succeed(
+          makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+        );
+      },
+    };
+
+    await Effect.runPromise(
+      openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: "fast",
+        resumeThreadId: undefined,
+      }),
+    );
+
+    assert.deepStrictEqual(calls[0]?.payload, {
+      cwd: "/tmp/project",
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
+      model: "gpt-5.3-codex",
+      serviceTier: "fast",
+    });
+  });
+
   it("falls back to thread/start when resume fails recoverably", async () => {
     const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
     const started = makeThreadOpenResponse("fresh-thread");

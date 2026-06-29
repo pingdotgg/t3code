@@ -10,10 +10,12 @@ import { ServerConfig } from "../../config.ts";
 import { ClaudeProviderLive } from "./ClaudeProvider.ts";
 import { CodexProviderLive } from "./CodexProvider.ts";
 import { CursorProviderLive } from "./CursorProvider.ts";
+import { GrokProviderLive } from "./GrokProvider.ts";
 import { OpenCodeProviderLive } from "./OpenCodeProvider.ts";
 import { ClaudeProvider } from "../Services/ClaudeProvider.ts";
 import { CodexProvider } from "../Services/CodexProvider.ts";
 import { CursorProvider } from "../Services/CursorProvider.ts";
+import { GrokProvider } from "../Services/GrokProvider.ts";
 import { OpenCodeProvider } from "../Services/OpenCodeProvider.ts";
 import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
@@ -101,18 +103,19 @@ const ProviderRegistryLiveBase = Layer.effect(
   Effect.gen(function* () {
     const codexProvider = yield* CodexProvider;
     const claudeProvider = yield* ClaudeProvider;
+    const cursorProvider = yield* CursorProvider;
+    const grokProvider = yield* GrokProvider;
     const openCodeProvider = yield* OpenCodeProvider;
     const config = yield* ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
 
-    const cursorProvider = yield* CursorProvider;
-
     const providerSources = createBuiltInProviderSources({
       codex: codexProvider,
       claudeAgent: claudeProvider,
-      opencode: openCodeProvider,
       cursor: cursorProvider,
+      grok: grokProvider,
+      opencode: openCodeProvider,
     }) satisfies ReadonlyArray<ProviderSnapshotSource>;
     const activeProviders = PROVIDER_CACHE_IDS;
     const changesPubSub = yield* Effect.acquireRelease(
@@ -290,6 +293,7 @@ export const ProviderRegistryLive = Layer.unwrap(
   Effect.sync(() =>
     ProviderRegistryLiveBase.pipe(
       Layer.provideMerge(CursorProviderLive),
+      Layer.provideMerge(GrokProviderLive),
       Layer.provideMerge(CodexProviderLive),
       Layer.provideMerge(ClaudeProviderLive),
       Layer.provideMerge(OpenCodeProviderLive),

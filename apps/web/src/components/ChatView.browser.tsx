@@ -6149,6 +6149,102 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("persists draft composer model changes selected from the model picker", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-draft-grok-model-selection-test" as MessageId,
+        targetText: "draft grok model selection test",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            {
+              ...nextFixture.serverConfig.providers[0]!,
+              provider: "codex",
+              models: [
+                {
+                  slug: "gpt-5.3-codex",
+                  name: "GPT-5.3 Codex",
+                  isCustom: false,
+                  capabilities: createModelCapabilities({ optionDescriptors: [] }),
+                },
+              ],
+            },
+            {
+              provider: "grok",
+              displayName: "Grok",
+              enabled: true,
+              installed: true,
+              version: "1.0.0",
+              status: "warning",
+              auth: { status: "unknown" },
+              checkedAt: NOW_ISO,
+              message: "Using fallback model list while provider status refreshes.",
+              models: [
+                {
+                  slug: "grok-build",
+                  name: "Grok Build",
+                  isCustom: false,
+                  capabilities: createModelCapabilities({ optionDescriptors: [] }),
+                },
+              ],
+              slashCommands: [],
+              skills: [],
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+
+      await newThreadButton.click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newDraftId = draftIdFromPath(newThreadPath);
+
+      const modelPicker = await waitForElement(
+        findComposerProviderModelPicker,
+        "Unable to find composer model picker.",
+      );
+      await modelPicker.click();
+
+      const grokButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('[data-model-picker-provider="grok"]'),
+        "Unable to find Grok provider button.",
+      );
+      expect(grokButton.disabled).toBe(false);
+      await grokButton.click();
+
+      await vi.waitFor(() => {
+        expect(document.querySelector(".model-picker-list")?.textContent ?? "").toContain(
+          "Grok Build",
+        );
+      });
+      await page.getByText("Grok Build").click();
+
+      await vi.waitFor(() => {
+        expect(composerDraftFor(newDraftId)).toMatchObject({
+          modelSelectionByProvider: {
+            grok: createModelSelection("grok", "grok-build"),
+          },
+          activeProvider: "grok",
+        });
+        expect(findComposerProviderModelPicker()?.textContent ?? "").toContain("Grok Build");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("prefers draft state over sticky composer settings and defaults", async () => {
     useComposerDraftStore.setState({
       stickyModelSelectionByProvider: {

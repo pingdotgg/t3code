@@ -26,7 +26,7 @@ export const ORCHESTRATION_WS_METHODS = {
   subscribeThread: "orchestration.subscribeThread",
 } as const;
 
-export const ProviderKind = Schema.Literals(["codex", "claudeAgent", "cursor", "opencode"]);
+export const ProviderKind = Schema.Literals(["codex", "claudeAgent", "cursor", "grok", "opencode"]);
 export type ProviderKind = typeof ProviderKind.Type;
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
@@ -64,6 +64,14 @@ export const CursorModelSelection = Schema.Struct({
   options: Schema.optionalKey(ProviderOptionSelections),
 });
 export type CursorModelSelection = typeof CursorModelSelection.Type;
+
+export const GrokModelSelection = Schema.Struct({
+  provider: Schema.Literal("grok"),
+  model: TrimmedNonEmptyString,
+  options: Schema.optionalKey(ProviderOptionSelections),
+});
+export type GrokModelSelection = typeof GrokModelSelection.Type;
+
 export const OpenCodeModelSelection = Schema.Struct({
   provider: Schema.Literal("opencode"),
   model: TrimmedNonEmptyString,
@@ -75,6 +83,7 @@ const ProviderModelSelection = Schema.Union([
   CodexModelSelection,
   ClaudeModelSelection,
   CursorModelSelection,
+  GrokModelSelection,
   OpenCodeModelSelection,
 ]);
 type ProviderModelSelection = typeof ProviderModelSelection.Type;
@@ -127,6 +136,7 @@ function providerKindFromLegacyInstanceId(instanceId: string): ProviderKind | nu
     case "codex":
     case "claudeAgent":
     case "cursor":
+    case "grok":
     case "opencode":
       return trimmed;
     default:

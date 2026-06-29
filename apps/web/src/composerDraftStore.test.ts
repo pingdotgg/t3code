@@ -144,7 +144,7 @@ function resetComposerDraftStore() {
 }
 
 function modelSelection(
-  provider: "codex" | "claudeAgent" | "cursor",
+  provider: ProviderKind,
   model: string,
   options?: Record<string, string | boolean | undefined>,
 ): ModelSelection {
@@ -1346,6 +1346,19 @@ describe("composerDraftStore setModelSelection", () => {
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider.codex).toEqual(
       modelSelection("codex", "gpt-5.3-codex"),
     );
+  });
+
+  it("keeps grok model selections instead of dropping the draft", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setModelSelection(threadRef, modelSelection("grok", "grok-build"));
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toMatchObject({
+      modelSelectionByProvider: {
+        grok: modelSelection("grok", "grok-build"),
+      },
+      activeProvider: "grok",
+    });
   });
 });
 

@@ -53,6 +53,7 @@ const CLAUDE_PRESENTATION = {
   showInteractionModeToggle: true,
 } as const;
 const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111";
+const MINIMUM_CLAUDE_FABLE_5_VERSION = "2.1.170";
 const CLAUDE_CONTEXT_WINDOW_OPTIONS = [
   { value: "200k", label: "200k", isDefault: true },
   { value: "1m", label: "1M" },
@@ -155,6 +156,16 @@ const CLAUDE_OPUS_47_ALIAS_CAPABILITIES = buildClaudeCapabilities({
   promptInjectedValues: CLAUDE_ULTRATHINK_PROMPT_VALUES,
 });
 
+const CLAUDE_FABLE_5_CAPABILITIES = buildClaudeCapabilities({
+  effortOptions: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High", isDefault: true },
+    { value: "xhigh", label: "Extra High" },
+    { value: "max", label: "Max" },
+  ],
+});
+
 const CLAUDE_OPUS_46_CAPABILITIES = buildClaudeCapabilities({
   effortOptions: [
     { value: "low", label: "Low" },
@@ -195,11 +206,13 @@ const CLAUDE_HAIKU_45_CAPABILITIES = buildClaudeCapabilities({
 });
 
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
+  createBuiltInClaudeModel("fable", "Fable", CLAUDE_FABLE_5_CAPABILITIES),
   createBuiltInClaudeModel("best", "Best", CLAUDE_OPUS_47_ALIAS_CAPABILITIES),
   createBuiltInClaudeModel("opus", "Opus", CLAUDE_OPUS_47_CAPABILITIES),
   createBuiltInClaudeModel("sonnet", "Sonnet", CLAUDE_SONNET_46_CAPABILITIES),
   createBuiltInClaudeModel("haiku", "Haiku", CLAUDE_HAIKU_45_CAPABILITIES),
   createBuiltInClaudeModel("opusplan", "Opus Plan", CLAUDE_OPUS_47_ALIAS_CAPABILITIES),
+  createBuiltInClaudeModel("claude-fable-5", "Claude Fable 5", CLAUDE_FABLE_5_CAPABILITIES),
   createBuiltInClaudeModel("claude-opus-4-7", "Claude Opus 4.7", CLAUDE_OPUS_47_CAPABILITIES),
   createBuiltInClaudeModel("claude-opus-4-6", "Claude Opus 4.6", CLAUDE_OPUS_46_CAPABILITIES),
   createBuiltInClaudeModel("claude-opus-4-5", "Claude Opus 4.5", CLAUDE_OPUS_45_CAPABILITIES),
@@ -211,18 +224,31 @@ function supportsClaudeOpus47(version: string | null | undefined): boolean {
   return version ? compareCliVersions(version, MINIMUM_CLAUDE_OPUS_4_7_VERSION) >= 0 : false;
 }
 
+function supportsClaudeFable5(version: string | null | undefined): boolean {
+  return version ? compareCliVersions(version, MINIMUM_CLAUDE_FABLE_5_VERSION) >= 0 : false;
+}
+
 function getBuiltInClaudeModelsForVersion(
   version: string | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
-  if (supportsClaudeOpus47(version)) {
-    return BUILT_IN_MODELS;
+  let models = BUILT_IN_MODELS;
+  if (!supportsClaudeFable5(version)) {
+    models = models.filter((model) => model.slug !== "fable" && model.slug !== "claude-fable-5");
   }
-  return BUILT_IN_MODELS.filter((model) => model.slug !== "claude-opus-4-7");
+  if (!supportsClaudeOpus47(version)) {
+    models = models.filter((model) => model.slug !== "claude-opus-4-7");
+  }
+  return models;
 }
 
 function formatClaudeOpus47UpgradeMessage(version: string | null): string {
   const versionLabel = version ? `v${version}` : "the installed version";
   return `Claude Code ${versionLabel} is too old for Claude Opus 4.7. Upgrade to v${MINIMUM_CLAUDE_OPUS_4_7_VERSION} or newer to access it.`;
+}
+
+function formatClaudeFable5UpgradeMessage(version: string | null): string {
+  const versionLabel = version ? `v${version}` : "the installed version";
+  return `Claude Code ${versionLabel} is too old for Claude Fable 5. Upgrade to v${MINIMUM_CLAUDE_FABLE_5_VERSION} or newer to access it.`;
 }
 
 export function getClaudeModelCapabilities(model: string | null | undefined): ModelCapabilities {
@@ -767,6 +793,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const opus47UpgradeMessage = supportsClaudeOpus47(parsedVersion)
     ? undefined
     : formatClaudeOpus47UpgradeMessage(parsedVersion);
+  const fable5UpgradeMessage = supportsClaudeFable5(parsedVersion)
+    ? undefined
+    : formatClaudeFable5UpgradeMessage(parsedVersion);
+  const upgradeMessage = fable5UpgradeMessage ?? opus47UpgradeMessage;
 
   const slashCommands =
     (resolveSlashCommands
@@ -862,8 +892,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       },
       ...(parsed.message
         ? { message: parsed.message }
-        : opus47UpgradeMessage
-          ? { message: opus47UpgradeMessage }
+        : upgradeMessage
+          ? { message: upgradeMessage }
           : {}),
     },
   });

@@ -15,6 +15,7 @@ import { TextGeneration, type TextGenerationShape } from "../Services/TextGenera
 import { CodexTextGenerationLive } from "./CodexTextGeneration.ts";
 import { ClaudeTextGenerationLive } from "./ClaudeTextGeneration.ts";
 import { CursorTextGenerationLive } from "./CursorTextGeneration.ts";
+import { GrokTextGenerationLive } from "./GrokTextGeneration.ts";
 import { OpenCodeTextGenerationLive } from "./OpenCodeTextGeneration.ts";
 
 // ---------------------------------------------------------------------------
@@ -33,6 +34,10 @@ class CursorTextGen extends Context.Service<CursorTextGen, TextGenerationShape>(
   "forma/git/Layers/RoutingTextGeneration/CursorTextGen",
 ) {}
 
+class GrokTextGen extends Context.Service<GrokTextGen, TextGenerationShape>()(
+  "forma/git/Layers/RoutingTextGeneration/GrokTextGen",
+) {}
+
 class OpenCodeTextGen extends Context.Service<OpenCodeTextGen, TextGenerationShape>()(
   "forma/git/Layers/RoutingTextGeneration/OpenCodeTextGen",
 ) {}
@@ -46,6 +51,7 @@ const makeRoutingTextGeneration = Effect.gen(function* () {
     codex: yield* CodexTextGen,
     claudeAgent: yield* ClaudeTextGen,
     cursor: yield* CursorTextGen,
+    grok: yield* GrokTextGen,
     opencode: yield* OpenCodeTextGen,
   };
 
@@ -85,6 +91,14 @@ const InternalCursorLayer = Layer.effect(
   }),
 ).pipe(Layer.provide(CursorTextGenerationLive));
 
+const InternalGrokLayer = Layer.effect(
+  GrokTextGen,
+  Effect.gen(function* () {
+    const svc = yield* TextGeneration;
+    return svc;
+  }),
+).pipe(Layer.provide(GrokTextGenerationLive));
+
 const InternalOpenCodeLayer = Layer.effect(
   OpenCodeTextGen,
   Effect.gen(function* () {
@@ -100,5 +114,6 @@ export const RoutingTextGenerationLive = Layer.effect(
   Layer.provide(InternalCodexLayer),
   Layer.provide(InternalClaudeLayer),
   Layer.provide(InternalCursorLayer),
+  Layer.provide(InternalGrokLayer),
   Layer.provide(InternalOpenCodeLayer),
 );

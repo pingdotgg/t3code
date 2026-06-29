@@ -58,15 +58,30 @@ export function isProviderEnabled(
   return getProviderSnapshot(providers, provider)?.enabled ?? false;
 }
 
+export function isProviderPickerSelectable(provider: ServerProvider | undefined): boolean {
+  return Boolean(
+    provider &&
+    provider.enabled &&
+    provider.status !== "disabled" &&
+    provider.installed &&
+    provider.models.length > 0,
+  );
+}
+
 export function resolveSelectableProvider(
   providers: ReadonlyArray<ServerProvider>,
   provider: ProviderKind | null | undefined,
 ): ProviderKind {
   const requested = provider ?? "codex";
-  if (isProviderEnabled(providers, requested)) {
+  if (providers.length === 0) {
     return requested;
   }
-  return providers.find((candidate) => candidate.enabled)?.provider ?? requested;
+  if (isProviderPickerSelectable(getProviderSnapshot(providers, requested))) {
+    return requested;
+  }
+  return (
+    providers.find((candidate) => isProviderPickerSelectable(candidate))?.provider ?? requested
+  );
 }
 
 export function getProviderModelCapabilities(

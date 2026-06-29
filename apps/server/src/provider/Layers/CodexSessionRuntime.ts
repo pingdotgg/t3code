@@ -50,6 +50,7 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "unknown thread",
   "does not exist",
 ];
+const CODEX_DEFAULT_SERVICE_TIER = "flex" as const;
 
 export const CodexResumeCursorSchema = Schema.Struct({
   threadId: Schema.String,
@@ -260,6 +261,15 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
   }
 }
 
+function normalizeCodexServiceTier(
+  input:
+    | EffectCodexSchema.V2ThreadStartParams__ServiceTier
+    | EffectCodexSchema.V2TurnStartParams__ServiceTier
+    | undefined,
+): EffectCodexSchema.V2ThreadStartParams__ServiceTier {
+  return input === "fast" ? "fast" : CODEX_DEFAULT_SERVICE_TIER;
+}
+
 function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
@@ -272,7 +282,7 @@ function buildThreadStartParams(input: {
     approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox,
     ...(input.model ? { model: input.model } : {}),
-    ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
+    serviceTier: normalizeCodexServiceTier(input.serviceTier),
   };
 }
 
@@ -360,7 +370,7 @@ export function buildTurnStartParams(input: {
     approvalPolicy: config.approvalPolicy,
     sandboxPolicy: runtimeModeToTurnSandboxPolicy(input.runtimeMode),
     ...(input.model ? { model: input.model } : {}),
-    ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
+    serviceTier: normalizeCodexServiceTier(input.serviceTier),
     ...(input.effort ? { effort: input.effort } : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
   }).pipe(

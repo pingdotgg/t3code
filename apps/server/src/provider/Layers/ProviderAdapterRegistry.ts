@@ -18,6 +18,7 @@ import {
 import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
 import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import { CursorAdapter } from "../Services/CursorAdapter.ts";
+import { GrokAdapter } from "../Services/GrokAdapter.ts";
 import { OpenCodeAdapter } from "../Services/OpenCodeAdapter.ts";
 import { createBuiltInAdapterList } from "../builtInProviderCatalog.ts";
 
@@ -29,14 +30,16 @@ const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(fun
   options?: ProviderAdapterRegistryLiveOptions,
 ) {
   const cursorAdapterOption = yield* Effect.serviceOption(CursorAdapter);
+  const grokAdapterOption = yield* Effect.serviceOption(GrokAdapter);
   const adapters =
     options?.adapters !== undefined
       ? options.adapters
       : createBuiltInAdapterList({
           codex: yield* CodexAdapter,
           claudeAgent: yield* ClaudeAdapter,
-          opencode: yield* OpenCodeAdapter,
           ...(cursorAdapterOption._tag === "Some" ? { cursor: cursorAdapterOption.value } : {}),
+          ...(grokAdapterOption._tag === "Some" ? { grok: grokAdapterOption.value } : {}),
+          opencode: yield* OpenCodeAdapter,
         });
   const byProvider = new Map(adapters.map((adapter) => [adapter.provider, adapter]));
 

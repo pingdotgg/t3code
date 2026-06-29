@@ -22,6 +22,7 @@ import {
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { TooltipProvider } from "../ui/tooltip";
+import { isProviderPickerSelectable } from "../../providerModels";
 
 type ModelPickerItem = {
   slug: string;
@@ -100,13 +101,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     );
   }, [favorites]);
 
-  const readyProviderSet = useMemo(() => {
+  const selectableProviderSet = useMemo(() => {
     if (!props.providers || props.providers.length === 0) {
       return null;
     }
     return new Set(
       props.providers
-        .filter((provider) => provider.status === "ready")
+        .filter((provider) => isProviderPickerSelectable(provider))
         .map((provider) => provider.provider),
     );
   }, [props.providers]);
@@ -114,7 +115,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   // Flatten models into a searchable array
   const flatModels = useMemo(() => {
     return Object.entries(props.modelOptionsByProvider).flatMap(([providerKind, models]) => {
-      if (readyProviderSet && !readyProviderSet.has(providerKind as ProviderKind)) {
+      if (selectableProviderSet && !selectableProviderSet.has(providerKind as ProviderKind)) {
         return [];
       }
       return models.map((m) => ({
@@ -125,7 +126,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         provider: providerKind as ProviderKind,
       })) satisfies Array<ModelPickerItem>;
     });
-  }, [props.modelOptionsByProvider, readyProviderSet]);
+  }, [props.modelOptionsByProvider, selectableProviderSet]);
 
   // Filter models based on search query and selected provider
   const filteredModels = useMemo(() => {

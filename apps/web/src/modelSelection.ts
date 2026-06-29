@@ -191,6 +191,12 @@ export function getCustomModelOptionsByProvider(
       "cursor",
       selectedProvider === "cursor" ? selectedModel : undefined,
     ),
+    grok: getAppModelOptions(
+      settings,
+      providers,
+      "grok",
+      selectedProvider === "grok" ? selectedModel : undefined,
+    ),
     opencode: getAppModelOptions(
       settings,
       providers,

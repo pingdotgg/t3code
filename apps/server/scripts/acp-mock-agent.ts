@@ -17,9 +17,11 @@ const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
+const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
+const xAiPromptCompleteAgentResultJson = process.env.T3_ACP_XAI_PROMPT_COMPLETE_AGENT_RESULT_JSON;
 const sessionId = "mock-session-1";
 
 let currentModeId = "ask";
@@ -35,6 +37,32 @@ function logExit(reason: string): void {
     return;
   }
   appendFileSync(exitLogPath, `${reason}\n`, "utf8");
+}
+
+function promptIdFromRequestMeta(
+  request: Pick<AcpSchema.PromptRequest, "_meta">,
+): string | undefined {
+  const meta = request["_meta"];
+  if (meta === null || typeof meta !== "object") {
+    return undefined;
+  }
+  const promptId = meta.promptId ?? meta.requestId;
+  return typeof promptId === "string" && promptId.length > 0 ? promptId : undefined;
+}
+
+function xAiPromptCompleteAgentResult(): unknown {
+  if (xAiPromptCompleteAgentResultJson) {
+    try {
+      return JSON.parse(xAiPromptCompleteAgentResultJson);
+    } catch {
+      return xAiPromptCompleteAgentResultJson;
+    }
+  }
+  return { text: promptResponseText ?? "hello from xai agent result" };
+}
+
+function writeJsonRpcNotification(method: string, params: unknown): void {
+  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
 }
 
 process.once("SIGTERM", () => {
@@ -213,7 +241,7 @@ const program = Effect.gen(function* () {
   yield* agent.handleInitialize((request) =>
     Effect.sync(() => {
       parameterizedModelPicker =
-        request.clientCapabilities?._meta?.parameterizedModelPicker === true;
+        request.clientCapabilities?.["_meta"]?.parameterizedModelPicker === true;
       return {
         protocolVersion: 1,
         agentCapabilities: { loadSession: true },
@@ -246,6 +274,13 @@ const program = Effect.gen(function* () {
           configOptions: configOptions(),
         }),
       ),
+  );
+
+  yield* agent.handleSetSessionModel((request) =>
+    Effect.sync(() => {
+      currentModelId = request.modelId;
+      return {};
+    }),
   );
 
   yield* agent.handleSetSessionConfigOption((request) =>
@@ -294,6 +329,16 @@ const program = Effect.gen(function* () {
   yield* agent.handlePrompt((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+
+      if (emitXAiPromptCompleteThenHang) {
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
+          stopReason: "end_turn",
+          agentResult: xAiPromptCompleteAgentResult(),
+        });
+        return yield* Effect.never;
+      }
 
       if (emitInterleavedAssistantToolCalls) {
         const toolCallId = "tool-call-1";

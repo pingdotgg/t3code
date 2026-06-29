@@ -650,6 +650,48 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           ),
       );
 
+      it.effect(
+        "includes Claude Fable 5 with high as the default effort on supported versions",
+        () =>
+          Effect.gen(function* () {
+            const status = yield* checkClaudeProviderStatus();
+            assert.isDefined(status.models.find((model) => model.slug === "fable"));
+
+            const fable = status.models.find((model) => model.slug === "claude-fable-5");
+            if (!fable) {
+              assert.fail("Expected Claude Fable 5 to be present for Claude Code v2.1.170.");
+            }
+            if (!fable.capabilities) {
+              assert.fail(
+                "Expected Claude Fable 5 capabilities to be present for Claude Code v2.1.170.",
+              );
+            }
+            const effortDescriptor = fable.capabilities.optionDescriptors?.find(
+              (descriptor) => descriptor.type === "select" && descriptor.id === "effort",
+            );
+            assert.deepStrictEqual(
+              effortDescriptor?.type === "select"
+                ? effortDescriptor.options.find((option) => option.isDefault)
+                : undefined,
+              { id: "high", label: "High", isDefault: true },
+            );
+          }).pipe(
+            Effect.provide(
+              mockSpawnerLayer((args) => {
+                const joined = args.join(" ");
+                if (joined === "--version") return { stdout: "2.1.170\n", stderr: "", code: 0 };
+                if (joined === "auth status")
+                  return {
+                    stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                    stderr: "",
+                    code: 0,
+                  };
+                throw new Error(`Unexpected args: ${joined}`);
+              }),
+            ),
+          ),
+      );
+
       it.effect("includes current Claude alias models and Sonnet max effort", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus();
@@ -698,7 +740,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           );
           assert.strictEqual(
             status.message,
-            "Claude Code v2.1.110 is too old for Claude Opus 4.7. Upgrade to v2.1.111 or newer to access it.",
+            "Claude Code v2.1.110 is too old for Claude Fable 5. Upgrade to v2.1.170 or newer to access it.",
           );
         }).pipe(
           Effect.provide(

@@ -9,7 +9,7 @@ import { Gemini, GithubCopilotIcon } from "../Icons";
 import { AVAILABLE_PROVIDER_OPTIONS, PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
-import { getProviderSnapshot } from "../../providerModels";
+import { getProviderSnapshot, isProviderPickerSelectable } from "../../providerModels";
 
 function describeUnavailableProvider(label: string, live: ServerProvider | undefined): string {
   if (!live) {
@@ -92,15 +92,17 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
           ? getProviderSnapshot(props.providers, option.value)
           : undefined;
 
-        const isDisabled = !liveProvider || liveProvider.status !== "ready";
+        const isDisabled = !isProviderPickerSelectable(liveProvider);
         const isSelected = props.selectedProvider === option.value;
         const badge = option.pickerSidebarBadge;
 
         const providerTooltip = isDisabled
           ? describeUnavailableProvider(option.label, liveProvider)
-          : badge === "new"
-            ? `${option.label} — New`
-            : option.label;
+          : liveProvider && liveProvider.status !== "ready"
+            ? describeUnavailableProvider(option.label, liveProvider)
+            : badge === "new"
+              ? `${option.label} — New`
+              : option.label;
 
         const button = (
           <button

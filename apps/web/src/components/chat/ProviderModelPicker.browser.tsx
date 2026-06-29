@@ -230,6 +230,30 @@ function buildOpenCodeProvider(models: ServerProvider["models"]): ServerProvider
   };
 }
 
+function buildGrokProvider(input?: Partial<ServerProvider>): ServerProvider {
+  return {
+    provider: "grok",
+    displayName: "Grok",
+    enabled: true,
+    installed: true,
+    version: "1.0.0",
+    status: "ready",
+    auth: { status: "unknown" },
+    checkedAt: new Date().toISOString(),
+    models: [
+      {
+        slug: "grok-build",
+        name: "Grok Build",
+        isCustom: false,
+        capabilities: createModelCapabilities({ optionDescriptors: [] }),
+      },
+    ],
+    slashCommands: [],
+    skills: [],
+    ...input,
+  };
+}
+
 async function mountPicker(props: {
   provider: ProviderKind;
   model: string;
@@ -454,6 +478,7 @@ describe("ProviderModelPicker", () => {
       ],
       codex: [{ slug: "gpt-5-codex", name: "GPT-5 Codex" }],
       cursor: [],
+      grok: [],
       opencode: [],
     } as const;
     const screen = await render(
@@ -1066,6 +1091,39 @@ describe("ProviderModelPicker", () => {
     }
   });
 
+  it("allows enabled providers with warning status and models to be selected", async () => {
+    const warningGrok = buildGrokProvider({
+      status: "warning",
+      message: "Using fallback model list while provider status refreshes.",
+    });
+    const mounted = await mountPicker({
+      provider: "codex",
+      model: "gpt-5-codex",
+      lockedProvider: null,
+      providers: [...TEST_PROVIDERS, warningGrok],
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      const grokButton = document.querySelector<HTMLButtonElement>(
+        '[data-model-picker-provider="grok"]',
+      );
+      expect(grokButton).not.toBeNull();
+      expect(grokButton?.disabled).toBe(false);
+
+      await userEvent.click(grokButton!);
+      await vi.waitFor(() => {
+        expect(getVisibleModelNames()).toEqual(["Grok Build"]);
+      });
+
+      await page.getByText("Grok Build").click();
+      expect(mounted.onProviderModelChange).toHaveBeenCalledWith("grok", "grok-build");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("accepts outline trigger styling", async () => {
     const mounted = await mountPicker({
       provider: "codex",
@@ -1081,7 +1139,7 @@ describe("ProviderModelPicker", () => {
       }
       expect(button.className).toContain("border-input");
       expect(button.className).toContain("bg-popover");
-      expect(button.className).toContain("rounded-full");
+      expect(button.className).toContain("rounded-[999px]");
     } finally {
       await mounted.cleanup();
     }

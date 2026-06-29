@@ -60,6 +60,8 @@
         "effect": "catalog:",
         "node-pty": "^1.1.0",
         "open": "^10.1.0",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
       },
       "devDependencies": {
         "@effect/language-service": "catalog:",
@@ -138,6 +140,7 @@
       "version": "0.0.0-alpha.1",
       "dependencies": {
         "@forma/contracts": "workspace:*",
+        "effect": "catalog:",
       },
       "devDependencies": {
         "@effect/language-service": "catalog:",
