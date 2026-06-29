@@ -33,6 +33,7 @@ export interface ProviderClientDefinition {
   readonly label: string;
   readonly icon: Icon;
   readonly settingsSchema: ProviderSettingsSchema;
+  readonly environmentFields?: readonly ProviderEnvironmentFieldDefinition[];
   /** Whether this driver has a built-in default instance backed by legacy settings. */
   readonly hasDefaultInstance?: boolean;
   /**
@@ -43,6 +44,14 @@ export interface ProviderClientDefinition {
    * built-in default or custom — advertises the same marker.
    */
   readonly badgeLabel?: string;
+}
+
+export interface ProviderEnvironmentFieldDefinition {
+  readonly name: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly placeholder?: string;
+  readonly sensitive?: boolean;
 }
 
 export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
@@ -64,6 +73,15 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     icon: CursorIcon,
     badgeLabel: "Early Access",
     settingsSchema: CursorSettings,
+    environmentFields: [
+      {
+        name: "CURSOR_API_KEY",
+        label: "Cursor API key",
+        description: "Required by the Cursor Agent SDK.",
+        placeholder: "Paste API key",
+        sensitive: true,
+      },
+    ],
   },
   {
     value: ProviderDriverKind.make("grok"),
