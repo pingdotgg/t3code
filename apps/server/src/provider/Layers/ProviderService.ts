@@ -560,16 +560,19 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
-        const effectiveResumeCursor =
-          input.resumeCursor ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
-            ? persistedBinding.resumeCursor
-            : undefined);
-        const effectiveCwd =
-          input.cwd ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
+        const persistedCwd =
+          persistedBinding?.providerInstanceId === resolvedInstanceId
             ? readPersistedCwd(persistedBinding.runtimePayload)
-            : undefined);
+            : undefined;
+        const canUsePersistedResumeCursor =
+          persistedBinding?.providerInstanceId === resolvedInstanceId &&
+          (input.cwd === undefined || persistedCwd === undefined || input.cwd === persistedCwd);
+        const effectiveResumeCursor =
+          input.resumeCursor === null
+            ? undefined
+            : (input.resumeCursor ??
+              (canUsePersistedResumeCursor ? persistedBinding.resumeCursor : undefined));
+        const effectiveCwd = input.cwd ?? persistedCwd;
         yield* Effect.annotateCurrentSpan({
           "provider.kind": resolvedProvider,
           "provider.resume_cursor.source":

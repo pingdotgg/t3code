@@ -1020,6 +1020,43 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("does not reuse a persisted resume cursor when an explicit cwd changes", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+
+      const initial = yield* provider.startSession(asThreadId("thread-cwd-changed"), {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-cwd-changed"),
+        cwd: "/tmp/project-before-cwd-change",
+        runtimeMode: "full-access",
+      });
+
+      yield* provider.stopSession({ threadId: initial.threadId });
+      routing.codex.startSession.mockClear();
+
+      yield* provider.startSession(initial.threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: initial.threadId,
+        cwd: "/tmp/project-after-cwd-change",
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(routing.codex.startSession.mock.calls.length, 1);
+      const startInput = routing.codex.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof startInput === "object" && startInput !== null, true);
+      if (startInput && typeof startInput === "object") {
+        const startPayload = startInput as {
+          cwd?: string;
+          resumeCursor?: unknown;
+        };
+        assert.equal(startPayload.cwd, "/tmp/project-after-cwd-change");
+        assert.equal("resumeCursor" in startPayload, false);
+      }
+    }),
+  );
+
   it.effect("routes explicit claudeAgent provider session starts to the claude adapter", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

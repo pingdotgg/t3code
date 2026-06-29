@@ -472,7 +472,7 @@ const make = Effect.gen(function* () {
     });
 
     const startProviderSession = (input?: {
-      readonly resumeCursor?: unknown;
+      readonly resumeCursor?: unknown | null;
       readonly provider?: ProviderDriverKind;
     }) =>
       providerService.startSession(threadId, {
@@ -541,9 +541,11 @@ const make = Effect.gen(function* () {
         return existingSessionThreadId;
       }
 
-      const resumeCursor = shouldRestartForModelChange
-        ? undefined
-        : (activeSession?.resumeCursor ?? undefined);
+      const shouldDiscardResumeCursorForCwdChange = cwdChanged && preferredProvider === "grok";
+      const resumeCursor =
+        shouldRestartForModelChange || shouldDiscardResumeCursorForCwdChange
+          ? null
+          : (activeSession?.resumeCursor ?? undefined);
       yield* Effect.logInfo("provider command reactor restarting provider session", {
         threadId,
         existingSessionThreadId,
@@ -561,6 +563,7 @@ const make = Effect.gen(function* () {
         instanceChanged,
         shouldRestartForModelChange,
         shouldRestartForModelSelectionChange,
+        shouldDiscardResumeCursorForCwdChange,
         hasResumeCursor: resumeCursor !== undefined,
       });
       const restartedSession = yield* startProviderSession(

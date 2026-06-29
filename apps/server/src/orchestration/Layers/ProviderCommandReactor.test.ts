@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+/* oxlint-disable t3code/no-manual-effect-runtime-in-tests */
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -1190,6 +1191,74 @@ describe("ProviderCommandReactor", () => {
       modelSelection: {
         instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-sonnet-4-6",
+      },
+      runtimeMode: "approval-required",
+    });
+  });
+
+  it("discards grok resume cursors when the thread workspace changes", async () => {
+    const harness = await createHarness({
+      threadModelSelection: {
+        instanceId: ProviderInstanceId.make("grok"),
+        model: "grok-build",
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-grok-workspace-1"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-grok-workspace-1"),
+          role: "user",
+          text: "first in project root",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-grok-worktree-change"),
+        threadId: ThreadId.make("thread-1"),
+        worktreePath: "/tmp/provider-project-grok-worktree",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-grok-workspace-2"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-grok-workspace-2"),
+          role: "user",
+          text: "second in worktree",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 2);
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      cwd: "/tmp/provider-project-grok-worktree",
+      resumeCursor: null,
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("grok"),
+        model: "grok-build",
       },
       runtimeMode: "approval-required",
     });
