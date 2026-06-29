@@ -4,6 +4,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type {
   ChatAttachment,
+  OrchestrationV2AppThread,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
   ModelSelection,
@@ -714,6 +715,7 @@ export const resolveCodexRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveRo
 
 interface ActiveCodexTurnContext {
   readonly input: ProviderAdapterV2TurnInput;
+  readonly projectionAppThread: OrchestrationV2AppThread;
   readonly projectionThreadId: ThreadId;
   readonly projectionRunId: ProviderAdapterV2TurnInput["runId"] | null;
   readonly nativeTurnId: string;
@@ -731,6 +733,7 @@ interface ActiveCodexTurnContext {
 interface CodexSubagentThreadContext {
   readonly parentContext: ActiveCodexTurnContext;
   readonly providerThread: OrchestrationV2ProviderThread;
+  readonly childThread: OrchestrationV2AppThread;
   readonly subagentNodeId: OrchestrationV2ExecutionNode["id"];
   readonly childRootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly childThreadId: ThreadId;
@@ -1309,6 +1312,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             });
             const context: ActiveCodexTurnContext = {
               input: input.turnInput,
+              projectionAppThread: input.turnInput.appThread,
               projectionThreadId: input.turnInput.threadId,
               projectionRunId: input.turnInput.runId,
               nativeTurnId: input.nativeTurnId,
@@ -1487,6 +1491,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   });
             const activeContext: ActiveCodexTurnContext = {
               input: subagent.parentContext.input,
+              projectionAppThread: subagent.childThread,
               projectionThreadId: subagent.childThreadId,
               projectionRunId: null,
               nativeTurnId: turn.nativeTurnId,
@@ -1640,9 +1645,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             } satisfies OrchestrationV2ProviderThread;
             const task = {
               id: subagentNodeId,
-              threadId: input.context.input.threadId,
-              runId: input.context.input.runId,
-              parentNodeId: input.context.rootNodeId,
+              threadId: input.context.projectionThreadId,
+              runId: input.context.projectionRunId,
+              parentNodeId: input.context.itemParentNodeId,
               origin: "provider_native",
               createdBy: "agent",
               driver: CODEX_PROVIDER,
@@ -1659,9 +1664,30 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               completedAt: null,
               updatedAt: now,
             } satisfies OrchestrationV2Subagent;
+            const childThread = makeSubagentChildThread({
+              parentThread: input.context.projectionAppThread,
+              childThreadId,
+              parentNodeId: subagentNodeId,
+              activeProviderThreadId: providerThread.id,
+              providerInstanceId: input.context.input.modelSelection.instanceId,
+              modelSelection: {
+                ...input.context.input.modelSelection,
+                model: task.model ?? input.context.input.modelSelection.model,
+              },
+              title: subagentThreadTitle({
+                parentTitle: input.context.projectionAppThread.title,
+                prompt: task.prompt,
+                title: task.title,
+                ordinal: input.ordinal,
+              }),
+              now,
+              createdBy: "agent",
+              creationSource: "provider",
+            });
             const subagent = {
               parentContext: input.context,
               providerThread,
+              childThread,
               subagentNodeId,
               childRootNodeId,
               childThreadId,
@@ -1681,26 +1707,6 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               updated.set(input.nativeThreadId, subagent);
               return updated;
             });
-            const childThread = makeSubagentChildThread({
-              parentThread: input.context.input.appThread,
-              childThreadId,
-              parentNodeId: subagentNodeId,
-              activeProviderThreadId: providerThread.id,
-              providerInstanceId: input.context.input.modelSelection.instanceId,
-              modelSelection: {
-                ...input.context.input.modelSelection,
-                model: task.model ?? input.context.input.modelSelection.model,
-              },
-              title: subagentThreadTitle({
-                parentTitle: input.context.input.appThread.title,
-                prompt: task.prompt,
-                title: task.title,
-                ordinal: input.ordinal,
-              }),
-              now,
-              createdBy: "agent",
-              creationSource: "provider",
-            });
             yield* emitProviderEvent({
               type: "app_thread.created",
               driver: CODEX_PROVIDER,
@@ -1711,9 +1717,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               driver: CODEX_PROVIDER,
               node: {
                 id: subagentNodeId,
-                threadId: input.context.input.threadId,
-                runId: input.context.input.runId,
-                parentNodeId: input.context.rootNodeId,
+                threadId: input.context.projectionThreadId,
+                runId: input.context.projectionRunId,
+                parentNodeId: input.context.itemParentNodeId,
                 rootNodeId: input.context.rootNodeId,
                 kind: "subagent",
                 status: "running",
@@ -4070,7 +4076,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     id: context.subagent.subagentNodeId,
                     threadId: context.subagent.parentContext.projectionThreadId,
                     runId: context.subagent.parentContext.projectionRunId,
-                    parentNodeId: context.subagent.parentContext.rootNodeId,
+                    parentNodeId: context.subagent.parentContext.itemParentNodeId,
                     rootNodeId: context.subagent.parentContext.rootNodeId,
                     kind: "subagent",
                     status,
