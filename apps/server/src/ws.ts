@@ -612,9 +612,14 @@ const makeWsRpcLayer = (
       const enrichOrchestrationEvents = (events: ReadonlyArray<OrchestrationEvent>) =>
         Effect.forEach(events, enrichProjectEvent, { concurrency: 4 });
 
+      const liveStreamBufferCapacity = 1_024;
+
       const bufferLiveStream = <A>(stream: Stream.Stream<A, never, never>) =>
         Effect.gen(function* () {
-          const queue = yield* Queue.unbounded<A>();
+          const queue = yield* Effect.acquireRelease(
+            Queue.bounded<A>(liveStreamBufferCapacity),
+            Queue.shutdown,
+          );
           yield* stream.pipe(
             Stream.runForEach((item) => Queue.offer(queue, item).pipe(Effect.asVoid)),
             Effect.forkScoped,
