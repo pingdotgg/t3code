@@ -42,6 +42,7 @@ export const MESSAGE_STEERING_INITIAL_PROMPT =
   "Respond with exactly: steering fixture initial response";
 export const SUBAGENT_PROMPT =
   "Spawn 2 subagents, one to read package.json and one to read tsconfig.json";
+export const SUBAGENT_V2_PROMPT = "just say hello";
 export const OPENCODE_SUBAGENT_PROMPT =
   "Use the task tool exactly once. Delegate to the general subagent with this prompt: Respond exactly CHILD_OK. After the task completes, respond exactly PARENT_OK.";
 export const SUBAGENT_CONTINUE_PROMPT =
