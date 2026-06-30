@@ -824,11 +824,28 @@ export const make = Effect.gen(function* () {
       branch === null
         ? "origin"
         : ((yield* readConfigValueNullable(cwd, `branch.${branch}.remote`)) ?? "origin");
+    const preferredRemoteUrl = yield* readConfigValueNullable(
+      cwd,
+      `remote.${preferredRemoteName}.url`,
+    );
+    const remoteName = preferredRemoteUrl ? preferredRemoteName : "origin";
     const remoteUrl =
-      (yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ??
-      (yield* readConfigValueNullable(cwd, "remote.origin.url"));
+      preferredRemoteUrl ?? (yield* readConfigValueNullable(cwd, "remote.origin.url"));
+    if (!remoteUrl) return null;
 
-    return remoteUrl ? detectSourceControlProviderFromGitRemoteUrl(remoteUrl) : null;
+    const detected = detectSourceControlProviderFromGitRemoteUrl(remoteUrl);
+    if (detected && detected.kind !== "unknown") {
+      return detected;
+    }
+
+    // Forgejo has no canonical hostname, so static detection returns "unknown" for its
+    // self-hosted instances. Refine THIS branch's remote via `fj auth list` (not origin),
+    // but only adopt the result when it resolves to Forgejo so other providers keep their
+    // existing status behavior.
+    const refined = yield* sourceControlProviders
+      .refineRemoteProvider({ cwd, remoteName, remoteUrl })
+      .pipe(Effect.orElseSucceed(() => null));
+    return refined?.kind === "forgejo" ? refined : detected;
   });
 
   const resolveRemoteRepositoryContext = Effect.fn("resolveRemoteRepositoryContext")(function* (

@@ -90,7 +90,8 @@ function sourceFromParam(value: string | string[] | undefined): AddProjectRemote
     source === "github" ||
     source === "gitlab" ||
     source === "bitbucket" ||
-    source === "azure-devops"
+    source === "azure-devops" ||
+    source === "forgejo"
   ) {
     return source;
   }
