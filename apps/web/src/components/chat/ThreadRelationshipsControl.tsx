@@ -30,14 +30,16 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
-  THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_ICON_ACTION_CLASS,
   THREAD_DETAILS_PANEL_LINK_ROW_CLASS,
   THREAD_DETAILS_PANEL_LINK_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_LINK_SPLIT_PRIMARY_CLASS,
   THREAD_DETAILS_PANEL_LINK_SPLIT_SECONDARY_CLASS,
+  THREAD_DETAILS_PANEL_MENU_POPUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
+
+const THREAD_RELATIONSHIP_ICON_CLASS = "size-4 shrink-0 text-muted-foreground";
 
 function relationshipLabel(edge: ThreadRelationshipEdge, currentThreadId: ThreadId) {
   if (edge.kind === "transfer") return "Context transfer";
@@ -190,7 +192,7 @@ export function ThreadRelationshipsPanel(props: {
               >
                 <MoreHorizontalIcon className="size-3.5" />
               </MenuTrigger>
-              <MenuPopup align="end">
+              <MenuPopup align="end" className={THREAD_DETAILS_PANEL_MENU_POPUP_CLASS}>
                 <MenuItem onClick={() => void detach()}>
                   <UnplugIcon className="size-3.5" />
                   Disconnect agent session
@@ -221,7 +223,7 @@ export function ThreadRelationshipsPanel(props: {
             const relationshipContent = (
               <>
                 <span className="relative -mx-0.5 grid size-4 shrink-0 place-items-center">
-                  <RelationshipIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+                  <RelationshipIcon className={THREAD_RELATIONSHIP_ICON_CLASS} />
                   <span
                     className={cn(
                       "absolute -bottom-1 -right-1 size-2 rounded-full border-2 border-card",
