@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 
-import { useBrowserSurfaceStore } from "./browserSurfaceStore";
+import { acquireBrowserSurface } from "./browserSurfaceStore";
 
 export function BrowserSurfaceSlot(props: {
   readonly tabId: string;
@@ -12,13 +12,13 @@ export function BrowserSurfaceSlot(props: {
   const { tabId, visible, className } = props;
   const elementRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = elementRef.current;
     if (!element) return;
+    const lease = acquireBrowserSurface(tabId);
     const update = () => {
       const rect = element.getBoundingClientRect();
-      useBrowserSurfaceStore.getState().present(
-        tabId,
+      lease.present(
         {
           x: Math.round(rect.x),
           y: Math.round(rect.y),
@@ -37,7 +37,7 @@ export function BrowserSurfaceSlot(props: {
       observer.disconnect();
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
-      useBrowserSurfaceStore.getState().hide(tabId);
+      lease.release();
     };
   }, [tabId, visible]);
 

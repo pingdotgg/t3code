@@ -56,6 +56,7 @@ import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationR
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
 import {
   needsPreviewAutomationSessionSync,
+  resolvePreviewAutomationOpenTab,
   resolvePreviewAutomationTarget,
 } from "./previewAutomationTarget";
 import { isPreviewViewportReady } from "./previewViewportReadiness";
@@ -230,6 +231,16 @@ const currentStatus = async (
   };
 };
 
+const raiseAtomCommandFailure = (result: Parameters<typeof squashAtomCommandFailure>[0]): never => {
+  throw squashAtomCommandFailure(result);
+};
+
+const raisePreviewAutomationHostError = (
+  error: PreviewAutomationRecordingNotActiveError,
+): never => {
+  throw error;
+};
+
 export function PreviewAutomationHosts() {
   const { environments } = useEnvironments();
   if (!isElectron || !previewBridge?.automation) return null;
@@ -304,7 +315,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           registry.refresh(previewEnvironment.list(listTarget));
           const result = await listPreviews(listTarget);
           if (result._tag === "Failure") {
-            throw squashAtomCommandFailure(result);
+            return raiseAtomCommandFailure(result);
           }
           reconcilePreviewServerSessions(threadRef, result.value.sessions);
           state = readThreadPreviewState(threadRef);
@@ -332,8 +343,11 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             return await currentStatus(threadRef, tabId);
           case "open": {
             const input = request.input as PreviewAutomationOpenInput;
-            let activeTabId =
-              (input.reuseExistingTab ?? true) ? (state.snapshot?.tabId ?? null) : null;
+            let activeTabId = resolvePreviewAutomationOpenTab(
+              state,
+              request.tabId,
+              input.reuseExistingTab ?? true,
+            );
             let activeSnapshot = activeTabId
               ? (state.sessions[activeTabId] ?? state.snapshot ?? undefined)
               : undefined;
@@ -348,7 +362,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 },
               });
               if (result._tag === "Failure") {
-                throw squashAtomCommandFailure(result);
+                return raiseAtomCommandFailure(result);
               }
               const snapshot = result.value;
               applyPreviewServerSnapshot(threadRef, snapshot);
@@ -416,7 +430,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               },
             });
             if (result._tag === "Failure") {
-              throw squashAtomCommandFailure(result);
+              return raiseAtomCommandFailure(result);
             }
             updatePreviewServerSnapshot(threadRef, result.value);
             const viewport = await waitForRenderedViewport(
@@ -492,15 +506,20 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "recordingStop": {
             const recordingTabId = readActiveBrowserRecordingTabId();
-            const stopTabId = resolveBrowserRecordingStopTarget(recordingTabId);
+            const stopTabId = resolveBrowserRecordingStopTarget(
+              recordingTabId,
+              request.tabIdExplicit ? request.tabId : undefined,
+            );
             const artifact = stopTabId ? await stopBrowserRecording(stopTabId) : null;
             if (!artifact) {
-              throw new PreviewAutomationRecordingNotActiveError({
-                requestId: request.requestId,
-                environmentId,
-                threadId: request.threadId,
-                tabId,
-              });
+              return raisePreviewAutomationHostError(
+                new PreviewAutomationRecordingNotActiveError({
+                  requestId: request.requestId,
+                  environmentId,
+                  threadId: request.threadId,
+                  tabId,
+                }),
+              );
             }
             return artifact;
           }
