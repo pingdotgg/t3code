@@ -156,6 +156,19 @@ describe("resolveCurrentWorkspaceLabel", () => {
   it("describes the active checkout as a worktree when one is attached", () => {
     expect(resolveCurrentWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Current worktree");
   });
+
+  it("prefers a custom worktree label when one is set", () => {
+    expect(resolveCurrentWorkspaceLabel("/repo/.t3/worktrees/feature-a", "Feature A")).toBe(
+      "Feature A",
+    );
+  });
+
+  it("ignores a blank custom label and falls back to the default", () => {
+    expect(resolveCurrentWorkspaceLabel("/repo/.t3/worktrees/feature-a", "  ")).toBe(
+      "Current worktree",
+    );
+    expect(resolveCurrentWorkspaceLabel(null, "Feature A")).toBe("Current checkout");
+  });
 });
 
 describe("resolveLockedWorkspaceLabel", () => {
@@ -165,6 +178,12 @@ describe("resolveLockedWorkspaceLabel", () => {
 
   it("uses a shorter label for an attached worktree", () => {
     expect(resolveLockedWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Worktree");
+  });
+
+  it("prefers a custom worktree label when one is set", () => {
+    expect(resolveLockedWorkspaceLabel("/repo/.t3/worktrees/feature-a", "Feature A")).toBe(
+      "Feature A",
+    );
   });
 });
 

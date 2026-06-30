@@ -2,7 +2,12 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import { describe, expect, it } from "vite-plus/test";
 
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
-import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "./worktreeCleanup";
+import {
+  formatWorktreeDeleteConfirmation,
+  formatWorktreePathForDisplay,
+  getOrphanedWorktreePathForThread,
+  worktreeDisplayName,
+} from "./worktreeCleanup";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
@@ -106,5 +111,41 @@ describe("formatWorktreePathForDisplay", () => {
   it("ignores trailing slashes", () => {
     const result = formatWorktreePathForDisplay("/tmp/custom-worktrees/my-worktree/");
     expect(result).toBe("my-worktree");
+  });
+});
+
+describe("worktreeDisplayName", () => {
+  const path = "/Users/julius/.t3/worktrees/t3code-mvp/t3code-4e609bb8";
+
+  it("returns the custom label when one is set for the path", () => {
+    expect(worktreeDisplayName(path, "Checkout UI")).toBe("Checkout UI");
+  });
+
+  it("falls back to the path-derived name when no label is set", () => {
+    expect(worktreeDisplayName(path, null)).toBe("t3code-4e609bb8");
+  });
+
+  it("falls back to the path-derived name when the label is blank", () => {
+    expect(worktreeDisplayName(path, "   ")).toBe("t3code-4e609bb8");
+  });
+
+  it("trims surrounding whitespace from the custom label", () => {
+    expect(worktreeDisplayName(path, "  Checkout UI  ")).toBe("Checkout UI");
+  });
+});
+
+describe("formatWorktreeDeleteConfirmation", () => {
+  it("shows both a custom label and the full path for the destructive target", () => {
+    const path = "/Users/julius/.t3/worktrees/t3code-mvp/t3code-4e609bb8";
+
+    expect(formatWorktreeDeleteConfirmation(path, "Checkout UI")).toBe(
+      [
+        "This thread is the only one linked to this worktree:",
+        "Name: Checkout UI",
+        `Path: ${path}`,
+        "",
+        "Delete the worktree too?",
+      ].join("\n"),
+    );
   });
 });

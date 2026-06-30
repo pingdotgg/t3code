@@ -97,6 +97,7 @@ import {
   resolveProjectExpanded,
   useUiStateStore,
 } from "../uiStateStore";
+import { useWorktreeRenameStore } from "../worktreeRenameStore";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
@@ -2123,9 +2124,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
       const threadWorkspacePath =
         thread.worktreePath ?? threadProject?.workspaceRoot ?? project.workspaceRoot ?? null;
+      const worktreePath = thread.worktreePath ?? null;
       const clicked = await api.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
+          ...(worktreePath ? [{ id: "rename-worktree", label: "Rename worktree" } as const] : []),
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
@@ -2136,6 +2139,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       if (clicked === "rename") {
         startThreadRename(threadKey, thread.title);
+        return;
+      }
+
+      if (clicked === "rename-worktree") {
+        if (!worktreePath) {
+          return;
+        }
+        useWorktreeRenameStore.getState().openWorktreeRename(thread.environmentId, worktreePath);
         return;
       }
 

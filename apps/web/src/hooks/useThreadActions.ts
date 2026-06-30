@@ -22,7 +22,12 @@ import { readLocalApi } from "../localApi";
 import { readEnvironmentThreadRefs, readProject, readThreadShell } from "../state/entities";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
-import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
+import {
+  formatWorktreeDeleteConfirmation,
+  getOrphanedWorktreePathForThread,
+  worktreeDisplayName,
+} from "../worktreeCleanup";
+import { resolveWorktreeLabel, useUiStateStore } from "../uiStateStore";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -187,8 +192,15 @@ export function useThreadActions() {
         survivingThreads,
         threadRef.threadId,
       );
+      const worktreeLabel = orphanedWorktreePath
+        ? resolveWorktreeLabel(
+            useUiStateStore.getState(),
+            threadRef.environmentId,
+            orphanedWorktreePath,
+          )
+        : null;
       const displayWorktreePath = orphanedWorktreePath
-        ? formatWorktreePathForDisplay(orphanedWorktreePath)
+        ? worktreeDisplayName(orphanedWorktreePath, worktreeLabel)
         : null;
       const canDeleteWorktree = orphanedWorktreePath !== null && threadProject !== null;
       const localApi = readLocalApi();
@@ -196,12 +208,7 @@ export function useThreadActions() {
       if (canDeleteWorktree && localApi) {
         const confirmationResult = await settlePromise(() =>
           localApi.dialogs.confirm(
-            [
-              "This thread is the only one linked to this worktree:",
-              displayWorktreePath ?? orphanedWorktreePath,
-              "",
-              "Delete the worktree too?",
-            ].join("\n"),
+            formatWorktreeDeleteConfirmation(orphanedWorktreePath, worktreeLabel),
           ),
         );
         if (confirmationResult._tag === "Failure") {
@@ -296,6 +303,11 @@ export function useThreadActions() {
           force: true,
         },
       });
+      if (removeResult._tag === "Success") {
+        useUiStateStore
+          .getState()
+          .setWorktreeLabel(threadRef.environmentId, orphanedWorktreePath, "");
+      }
       const refreshResult =
         removeResult._tag === "Success"
           ? await refreshVcsStatus({

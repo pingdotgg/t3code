@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -11,9 +11,11 @@ import {
   persistState,
   reorderProjects,
   resolveProjectExpanded,
+  resolveWorktreeLabel,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
+  setWorktreeLabel,
   type UiState,
 } from "./uiStateStore";
 
@@ -24,11 +26,15 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
+    worktreeLabelByEnvironment: {},
     ...overrides,
   };
 }
 
 describe("uiStateStore pure functions", () => {
+  const localEnvironmentId = EnvironmentId.make("environment-local");
+  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+
   it("stores server timestamps without moving visit state backwards", () => {
     const threadId = ThreadId.make("thread-1");
     const initialState = makeUiState();
@@ -140,6 +146,49 @@ describe("uiStateStore pure functions", () => {
       defaultAdvertisedEndpointKey: null,
     });
   });
+
+  it("stores, trims, and clears labels keyed by environment and worktree path", () => {
+    const initialState = makeUiState();
+    const path = "/repo/.t3/worktrees/feature-a";
+
+    const labeled = setWorktreeLabel(initialState, localEnvironmentId, path, "  Feature A  ");
+    expect(labeled.worktreeLabelByEnvironment).toEqual({
+      [localEnvironmentId]: { [path]: "Feature A" },
+    });
+    expect(setWorktreeLabel(labeled, localEnvironmentId, path, "Feature A")).toBe(labeled);
+
+    const cleared = setWorktreeLabel(labeled, localEnvironmentId, path, "   ");
+    expect(cleared.worktreeLabelByEnvironment).toEqual({});
+    expect(setWorktreeLabel(initialState, localEnvironmentId, path, "")).toBe(initialState);
+  });
+
+  it("keeps sibling worktree labels independent", () => {
+    const pathA = "/repo/.t3/worktrees/feature-a";
+    const pathB = "/repo/.t3/worktrees/feature-b";
+    const state = setWorktreeLabel(makeUiState(), localEnvironmentId, pathA, "Alpha");
+
+    expect(
+      setWorktreeLabel(state, localEnvironmentId, pathB, "Beta").worktreeLabelByEnvironment,
+    ).toEqual({
+      [localEnvironmentId]: {
+        [pathA]: "Alpha",
+        [pathB]: "Beta",
+      },
+    });
+  });
+
+  it("keeps identical worktree paths independent across environments", () => {
+    const path = "/repo/.t3/worktrees/feature-a";
+    const localState = setWorktreeLabel(makeUiState(), localEnvironmentId, path, "Local");
+    const state = setWorktreeLabel(localState, remoteEnvironmentId, path, "Remote");
+
+    expect(resolveWorktreeLabel(state, localEnvironmentId, path)).toBe("Local");
+    expect(resolveWorktreeLabel(state, remoteEnvironmentId, path)).toBe("Remote");
+
+    const clearedLocal = setWorktreeLabel(state, localEnvironmentId, path, "");
+    expect(resolveWorktreeLabel(clearedLocal, localEnvironmentId, path)).toBeNull();
+    expect(resolveWorktreeLabel(clearedLocal, remoteEnvironmentId, path)).toBe("Remote");
+  });
 });
 
 describe("parsePersistedState", () => {
@@ -161,6 +210,12 @@ describe("parsePersistedState", () => {
           "turn-2": true,
         },
       },
+      worktreeLabelByEnvironment: {
+        "environment-local": {
+          "/repo/.t3/worktrees/feature-a": "  Feature A  ",
+          "/repo/.t3/worktrees/blank": "   ",
+        },
+      },
     });
 
     expect(parsed).toEqual({
@@ -175,6 +230,11 @@ describe("parsePersistedState", () => {
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
+        },
+      },
+      worktreeLabelByEnvironment: {
+        "environment-local": {
+          "/repo/.t3/worktrees/feature-a": "Feature A",
         },
       },
     });
@@ -262,6 +322,11 @@ describe("uiStateStore persistence", () => {
         },
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
+      worktreeLabelByEnvironment: {
+        "environment-local": {
+          "/repo/.t3/worktrees/feature-a": "Feature A",
+        },
+      },
     });
 
     persistState(state);
@@ -281,6 +346,11 @@ describe("uiStateStore persistence", () => {
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
+        },
+      },
+      worktreeLabelByEnvironment: {
+        "environment-local": {
+          "/repo/.t3/worktrees/feature-a": "Feature A",
         },
       },
     });

@@ -11,8 +11,10 @@ import {
 import { memo, useMemo } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
-import { useProject, useThread } from "../state/entities";
 import { useIsMobile } from "../hooks/useMediaQuery";
+import { useWorktreeRenameTrigger } from "../hooks/useWorktreeRenameTrigger";
+import { useProject, useThread } from "../state/entities";
+import { useWorktreeLabel } from "../uiStateStore";
 import {
   type EnvMode,
   type EnvironmentOption,
@@ -81,6 +83,8 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
     () => availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null,
     [availableEnvironments, environmentId],
   );
+  const worktreeLabel = useWorktreeLabel(environmentId, activeWorktreePath);
+  const renameTrigger = useWorktreeRenameTrigger(environmentId, activeWorktreePath);
   const WorkspaceIcon =
     effectiveEnvMode === "worktree"
       ? FolderGit2Icon
@@ -88,10 +92,10 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
         ? FolderGitIcon
         : FolderIcon;
   const workspaceLabel = envModeLocked
-    ? resolveLockedWorkspaceLabel(activeWorktreePath)
+    ? resolveLockedWorkspaceLabel(activeWorktreePath, worktreeLabel)
     : effectiveEnvMode === "worktree"
       ? resolveEnvModeLabel("worktree")
-      : resolveCurrentWorkspaceLabel(activeWorktreePath);
+      : resolveCurrentWorkspaceLabel(activeWorktreePath, worktreeLabel);
   const isLocked = envLocked || envModeLocked;
   const EnvironmentIcon = activeEnvironment?.isPrimary ? MonitorIcon : CloudIcon;
   const icon = showEnvironmentPicker ? (
@@ -115,7 +119,11 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
 
   if (isLocked) {
     return (
-      <span className="inline-flex min-w-0 max-w-[48%] flex-1 items-center justify-start gap-1 rounded-md border border-transparent px-[calc(--spacing(2)-1px)] text-sm font-medium text-muted-foreground/70 md:hidden">
+      <span
+        className="inline-flex min-w-0 max-w-[48%] flex-1 items-center justify-start gap-1 rounded-md border border-transparent px-[calc(--spacing(2)-1px)] text-sm font-medium text-muted-foreground/70 md:hidden"
+        onDoubleClick={renameTrigger.onDoubleClick}
+        onContextMenu={renameTrigger.onContextMenu}
+      >
         {triggerContent}
       </span>
     );
@@ -126,6 +134,8 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
       <MenuTrigger
         render={<Button variant="ghost" size="xs" />}
         className="min-w-0 max-w-[48%] flex-1 justify-start text-muted-foreground/70 hover:text-foreground/80 md:hidden"
+        onDoubleClick={renameTrigger.onDoubleClick}
+        onContextMenu={renameTrigger.onContextMenu}
       >
         {triggerContent}
         <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
@@ -173,7 +183,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                   <FolderIcon className="size-3" />
                 )}
                 <span className="min-w-0 truncate">
-                  {resolveCurrentWorkspaceLabel(activeWorktreePath)}
+                  {resolveCurrentWorkspaceLabel(activeWorktreePath, worktreeLabel)}
                 </span>
               </span>
             </MenuRadioItem>
@@ -267,6 +277,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           )}
           <BranchToolbarEnvModeSelector
             envLocked={envModeLocked}
+            environmentId={environmentId}
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
