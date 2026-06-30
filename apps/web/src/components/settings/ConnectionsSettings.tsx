@@ -1595,7 +1595,22 @@ const DesktopSshHostRow = memo(function DesktopSshHostRow({
       </div>
     </div>
   );
-});
+}, areDesktopSshHostRowPropsEqual);
+
+function areDesktopSshHostRowPropsEqual(
+  previous: Readonly<DesktopSshHostRowProps>,
+  next: Readonly<DesktopSshHostRowProps>,
+): boolean {
+  return (
+    previous.connectingHostAlias === next.connectingHostAlias &&
+    previous.onConnect === next.onConnect &&
+    previous.target.alias === next.target.alias &&
+    previous.target.hostname === next.target.hostname &&
+    previous.target.username === next.target.username &&
+    previous.target.port === next.target.port &&
+    previous.target.source === next.target.source
+  );
+}
 
 function CloudLinkSwitch({
   checked,
@@ -2813,7 +2828,7 @@ export function ConnectionsSettings() {
                 key={`${target.alias}:${target.hostname}:${target.port ?? ""}`}
                 target={target}
                 connectingHostAlias={connectingSshHostAlias}
-                onConnect={(nextTarget) => void handleConnectSshHost(nextTarget)}
+                onConnect={handleConnectSshHost}
               />
             ))}
             {hasLoadedDiscoveredSshHosts &&
