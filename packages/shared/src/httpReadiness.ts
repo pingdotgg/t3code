@@ -5,7 +5,23 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
-export const DEFAULT_HTTP_READY_PROBE_TIMEOUT_MS = 1_000;
+const DEFAULT_HTTP_READY_TIMEOUT = Duration.seconds(30);
+const DEFAULT_HTTP_READY_INTERVAL = Duration.millis(100);
+export const DEFAULT_HTTP_READY_PROBE_TIMEOUT = Duration.seconds(1);
+export const DEFAULT_HTTP_READY_PROBE_TIMEOUT_MS = Duration.toMillis(
+  DEFAULT_HTTP_READY_PROBE_TIMEOUT,
+);
+
+function normalizeDuration(input: {
+  readonly duration: Duration.Input | undefined;
+  readonly durationMs: number | undefined;
+  readonly fallback: Duration.Duration;
+}): Duration.Duration {
+  return Option.getOrElse(
+    Duration.fromInput(input.duration ?? input.durationMs ?? input.fallback),
+    () => input.fallback,
+  );
+}
 
 /**
  * Normalizes an arbitrary readiness probe failure into a plain, structured value
@@ -39,9 +55,10 @@ export function describeReadinessCause(cause: unknown): unknown {
 /**
  * Generic HTTP readiness probe shared by the SSH tunnel and the desktop backend
  * manager. Polls `baseUrl + path` until it returns a 2xx response or the overall
- * `timeoutMs` elapses. Each individual probe is bounded by `probeTimeoutMs` so a
+ * `timeout` elapses. Each individual probe is bounded by `probeTimeout` so a
  * single hung request cannot stall the retry loop, and the retry cadence is
- * `intervalMs` bounded to roughly `timeoutMs / intervalMs` attempts.
+ * `interval` bounded to roughly `timeout / interval` attempts. Legacy `*Ms`
+ * options are still accepted at the boundary and are treated as milliseconds.
  *
  * The error type is left to the caller via `makeError`, so each consumer keeps
  * its own tagged error. `makeError` is called at every failure site; callers can
@@ -53,6 +70,9 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
 >(input: {
   readonly baseUrl: string;
   readonly path?: string;
+  readonly timeout?: Duration.Input;
+  readonly interval?: Duration.Input;
+  readonly probeTimeout?: Duration.Input;
   readonly timeoutMs?: number;
   readonly intervalMs?: number;
   readonly probeTimeoutMs?: number;
@@ -63,10 +83,25 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
     readonly cause: unknown;
   }) => E;
 }): Effect.fn.Return<void, E, HttpClient.HttpClient> {
-  const timeoutMs = input.timeoutMs ?? 30_000;
-  const intervalMs = input.intervalMs ?? 100;
-  const probeTimeoutMs = input.probeTimeoutMs ?? DEFAULT_HTTP_READY_PROBE_TIMEOUT_MS;
-  const retryPolicy = Schedule.spaced(Duration.millis(intervalMs)).pipe(
+  const timeout = normalizeDuration({
+    duration: input.timeout,
+    durationMs: input.timeoutMs,
+    fallback: DEFAULT_HTTP_READY_TIMEOUT,
+  });
+  const interval = normalizeDuration({
+    duration: input.interval,
+    durationMs: input.intervalMs,
+    fallback: DEFAULT_HTTP_READY_INTERVAL,
+  });
+  const probeTimeout = normalizeDuration({
+    duration: input.probeTimeout,
+    durationMs: input.probeTimeoutMs,
+    fallback: DEFAULT_HTTP_READY_PROBE_TIMEOUT,
+  });
+  const timeoutMs = Duration.toMillis(timeout);
+  const intervalMs = Duration.toMillis(interval);
+  const probeTimeoutMs = Duration.toMillis(probeTimeout);
+  const retryPolicy = Schedule.spaced(interval).pipe(
     Schedule.take(Math.max(0, Math.ceil(timeoutMs / intervalMs))),
   );
   const requestUrl = new URL(input.path ?? "/", input.baseUrl).toString();
@@ -103,7 +138,7 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
       Effect.gen(function* () {
         attempt += 1;
         const responseOption = yield* effect.pipe(
-          Effect.timeoutOption(Duration.millis(probeTimeoutMs)),
+          Effect.timeoutOption(probeTimeout),
           Effect.mapError((cause) => fail(cause)),
         );
         return yield* Option.match(responseOption, {
@@ -133,7 +168,7 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
 
   const result = yield* readinessClient.execute(HttpClientRequest.get(requestUrl)).pipe(
     Effect.mapError((cause) => (isMadeError(cause) ? cause : fail(cause))),
-    Effect.timeoutOption(Duration.millis(timeoutMs)),
+    Effect.timeoutOption(timeout),
   );
 
   return yield* Option.match(result, {

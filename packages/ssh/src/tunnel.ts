@@ -11,6 +11,7 @@ import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -843,6 +844,9 @@ const readRemoteServerLogTail = Effect.fn("ssh/tunnel.readRemoteServerLogTail")(
 
 export const waitForHttpReady = (input: {
   readonly baseUrl: string;
+  readonly timeout?: Duration.Input;
+  readonly interval?: Duration.Input;
+  readonly probeTimeout?: Duration.Input;
   readonly timeoutMs?: number;
   readonly intervalMs?: number;
   readonly probeTimeoutMs?: number;
@@ -851,6 +855,9 @@ export const waitForHttpReady = (input: {
   waitForHttpReadyShared({
     baseUrl: input.baseUrl,
     ...(input.path === undefined ? {} : { path: input.path }),
+    ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
+    ...(input.interval === undefined ? {} : { interval: input.interval }),
+    ...(input.probeTimeout === undefined ? {} : { probeTimeout: input.probeTimeout }),
     ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
     ...(input.intervalMs === undefined ? {} : { intervalMs: input.intervalMs }),
     probeTimeoutMs: input.probeTimeoutMs ?? SSH_READY_PROBE_TIMEOUT_MS,

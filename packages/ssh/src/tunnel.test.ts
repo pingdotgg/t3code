@@ -244,9 +244,9 @@ describe("ssh tunnel scripts", () => {
         Effect.result(
           waitForHttpReady({
             baseUrl: "http://127.0.0.1:41773/",
-            timeoutMs: 1_000,
-            intervalMs: 100,
-            probeTimeoutMs: 250,
+            timeout: Duration.seconds(1),
+            interval: Duration.millis(100),
+            probeTimeout: Duration.millis(250),
           }),
         ),
       );
