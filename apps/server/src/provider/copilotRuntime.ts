@@ -454,16 +454,23 @@ export function modelsFromCopilotSdk(input: {
   readonly models: ReadonlyArray<ModelInfo>;
   readonly customModels: ReadonlyArray<string>;
 }): ReadonlyArray<ServerProviderModel> {
-  const builtInModels = input.models.map((model) => {
+  const builtInModels: ServerProviderModel[] = [];
+  const seenBuiltInSlugs = new Set<string>();
+
+  for (const model of input.models) {
     const rawSlug = model.id.trim();
     const slug = normalizeModelSlug(rawSlug, PROVIDER) ?? rawSlug;
-    return {
+    if (seenBuiltInSlugs.has(slug)) {
+      continue;
+    }
+    seenBuiltInSlugs.add(slug);
+    builtInModels.push({
       slug,
       name: trimOrUndefined(model.name) ?? slug,
       isCustom: false,
       capabilities: capabilitiesFromCopilotModel(model),
-    };
-  }) satisfies ReadonlyArray<ServerProviderModel>;
+    });
+  }
 
   return providerModelsFromSettings(
     builtInModels,
