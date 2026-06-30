@@ -722,7 +722,7 @@ function ThreadRouteContent(
                 headerShadowVisible: false,
               }),
           headerTintColor: iconColor,
-          headerTitle: layout.usesSplitView ? "" : selectedThread.title,
+          headerTitle: layout.usesSplitView ? () => null : selectedThread.title,
           headerTitleStyle: usesNativeHeaderGlass
             ? {
                 fontSize: 17,
