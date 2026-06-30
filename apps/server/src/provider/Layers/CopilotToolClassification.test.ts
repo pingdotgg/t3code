@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import * as NodeAssert from "node:assert/strict";
 
 import { describe, it } from "@effect/vitest";
 
@@ -9,12 +9,12 @@ import {
 
 describe("CopilotToolClassification", () => {
   it("classifies Copilot tool lifecycle items consistently", () => {
-    assert.equal(classifyCopilotToolItemType({ toolName: "bash" }), "command_execution");
-    assert.equal(
+    NodeAssert.equal(classifyCopilotToolItemType({ toolName: "bash" }), "command_execution");
+    NodeAssert.equal(
       classifyCopilotToolItemType({ toolName: "Task_complete" }),
       "collab_agent_tool_call",
     );
-    assert.equal(
+    NodeAssert.equal(
       classifyCopilotToolItemType({
         toolName: "update",
         arguments: {
@@ -24,7 +24,7 @@ describe("CopilotToolClassification", () => {
       }),
       "file_change",
     );
-    assert.equal(
+    NodeAssert.equal(
       classifyCopilotToolItemType({
         toolName: "run_in_terminal",
         arguments: {
@@ -33,7 +33,7 @@ describe("CopilotToolClassification", () => {
       }),
       "file_change",
     );
-    assert.equal(
+    NodeAssert.equal(
       classifyCopilotToolItemType({
         toolName: "execute",
         arguments: {
@@ -43,20 +43,20 @@ describe("CopilotToolClassification", () => {
       }),
       "file_change",
     );
-    assert.equal(classifyCopilotToolItemType({ toolName: "Read" }), "dynamic_tool_call");
-    assert.equal(classifyCopilotToolItemType({ toolName: "web_fetch" }), "web_search");
-    assert.equal(classifyCopilotToolItemType({ toolName: "screenshot" }), "image_view");
-    assert.equal(
+    NodeAssert.equal(classifyCopilotToolItemType({ toolName: "Read" }), "dynamic_tool_call");
+    NodeAssert.equal(classifyCopilotToolItemType({ toolName: "web_fetch" }), "web_search");
+    NodeAssert.equal(classifyCopilotToolItemType({ toolName: "screenshot" }), "image_view");
+    NodeAssert.equal(
       classifyCopilotToolItemType({ toolName: "call_tool", mcpServerName: "github" }),
       "mcp_tool_call",
     );
   });
 
   it("detects read-only Copilot tools", () => {
-    assert.equal(isReadOnlyCopilotToolName("Read"), true);
-    assert.equal(isReadOnlyCopilotToolName("read_file"), true);
-    assert.equal(isReadOnlyCopilotToolName("grep"), true);
-    assert.equal(isReadOnlyCopilotToolName("edit_file"), false);
-    assert.equal(isReadOnlyCopilotToolName("bash"), false);
+    NodeAssert.equal(isReadOnlyCopilotToolName("Read"), true);
+    NodeAssert.equal(isReadOnlyCopilotToolName("read_file"), true);
+    NodeAssert.equal(isReadOnlyCopilotToolName("grep"), true);
+    NodeAssert.equal(isReadOnlyCopilotToolName("edit_file"), false);
+    NodeAssert.equal(isReadOnlyCopilotToolName("bash"), false);
   });
 });

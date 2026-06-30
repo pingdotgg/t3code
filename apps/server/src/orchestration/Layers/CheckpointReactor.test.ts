@@ -1051,7 +1051,7 @@ describe("CheckpointReactor", () => {
       true,
     );
     expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
-    expect(fs.readFileSync(path.join(harness.cwd, "README.md"), "utf8")).toBe("v3\n");
+    expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v3\n");
   });
 
   it("executes provider revert and emits thread.reverted for claude sessions", async () => {
@@ -1202,7 +1202,7 @@ describe("CheckpointReactor", () => {
       true,
     );
     expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
-    expect(fs.readFileSync(path.join(harness.cwd, "README.md"), "utf8")).toBe("v3\n");
+    expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v3\n");
     expect(
       gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2)),
     ).toBe(true);

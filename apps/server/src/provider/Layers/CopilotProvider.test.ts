@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import * as NodeAssert from "node:assert/strict";
 
 import { beforeEach, describe, it } from "@effect/vitest";
 import { CopilotSettings } from "@t3tools/contracts";
@@ -74,9 +74,9 @@ describe("CopilotProvider status", () => {
         cwd: process.cwd(),
       });
 
-      assert.equal(snapshot.status, "error");
-      assert.equal(snapshot.installed, true);
-      assert.equal(snapshot.message, "401 Unauthorized");
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(snapshot.message, "401 Unauthorized");
     }),
   );
 
@@ -94,9 +94,9 @@ describe("CopilotProvider status", () => {
         cwd: process.cwd(),
       });
 
-      assert.equal(snapshot.status, "error");
-      assert.equal(snapshot.installed, false);
-      assert.equal(
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.installed, false);
+      NodeAssert.equal(
         snapshot.message,
         "The configured Copilot binary could not be started: /missing/copilot.",
       );
@@ -118,8 +118,8 @@ describe("CopilotProvider status", () => {
       vi.setSystemTime(DateTime.makeUnsafe("2026-06-08T12:01:00.000Z").epochMilliseconds);
       const secondSnapshot = yield* statusCheck;
 
-      assert.equal(firstSnapshot.checkedAt, "2026-06-08T12:00:00.000Z");
-      assert.equal(secondSnapshot.checkedAt, "2026-06-08T12:01:00.000Z");
+      NodeAssert.equal(firstSnapshot.checkedAt, "2026-06-08T12:00:00.000Z");
+      NodeAssert.equal(secondSnapshot.checkedAt, "2026-06-08T12:01:00.000Z");
     }),
   );
 });
