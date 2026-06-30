@@ -53,6 +53,35 @@ import * as Option from "effect/Option";
 
 const PROVIDER = ProviderDriverKind.make("opencode");
 
+/**
+ * Version tag stamped into the OpenCode resume cursor. Bump if the cursor
+ * shape changes so stale-shaped cursors written by older builds are ignored
+ * rather than misread (mirrors GROK_RESUME_VERSION / CURSOR_RESUME_VERSION).
+ */
+const OPENCODE_RESUME_VERSION = 1 as const;
+
+/**
+ * Decode a persisted OpenCode resume cursor back into the upstream `ses_…`
+ * id. Returns `undefined` for anything that isn't a current-version cursor
+ * carrying a non-empty session id, so a malformed or foreign cursor simply
+ * means "no resume" instead of throwing. OpenCode has no dedicated resume
+ * RPC — re-adopting the same session id *is* the resume mechanism, because
+ * the server scopes a conversation's history by session id.
+ */
+function parseOpenCodeResume(raw: unknown): { readonly sessionId: string } | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  if (record.schemaVersion !== OPENCODE_RESUME_VERSION) {
+    return undefined;
+  }
+  if (typeof record.sessionId !== "string" || record.sessionId.trim().length === 0) {
+    return undefined;
+  }
+  return { sessionId: record.sessionId.trim() };
+}
+
 interface OpenCodeTurnSnapshot {
   readonly id: TurnId;
   readonly items: Array<unknown>;
@@ -1031,6 +1060,7 @@ export function makeOpenCodeAdapter(
         const serverUrl = openCodeSettings.serverUrl;
         const serverPassword = openCodeSettings.serverPassword;
         const directory = input.cwd ?? serverConfig.cwd;
+        const resumeSessionId = parseOpenCodeResume(input.resumeCursor)?.sessionId;
         const existing = sessions.get(input.threadId);
         if (existing) {
           yield* stopOpenCodeContext(existing);
@@ -1070,23 +1100,50 @@ export function makeOpenCodeAdapter(
                   }),
                 );
               }
-              const openCodeSession = yield* runOpenCodeSdk("session.create", () =>
-                client.session.create({
-                  title: `T3 Code ${input.threadId}`,
-                  permission: buildOpenCodePermissionRules(input.runtimeMode),
-                }),
-              );
-              if (!openCodeSession.data) {
-                return yield* new OpenCodeRuntimeError({
-                  operation: "session.create",
-                  detail: "OpenCode session.create returned no session payload.",
-                });
-              }
+              // Resume path: when a durable cursor names a prior OpenCode
+              // session, re-adopt that `ses_…` instead of minting a new one.
+              // OpenCode scopes history by session id, so prompting the same
+              // id automatically restores the full prior conversation. We
+              // validate with `session.get` first; a missing/closed session
+              // (or any get failure) falls back to creating a fresh one so a
+              // stale cursor can never wedge the thread.
+              const resumedSession = resumeSessionId
+                ? yield* runOpenCodeSdk("session.get", () =>
+                    client.session.get({ sessionID: resumeSessionId }),
+                  ).pipe(
+                    Effect.map((response) => response.data),
+                    Effect.orElseSucceed(() => undefined),
+                  )
+                : undefined;
+              const created = resumedSession === undefined;
+              const openCodeSession = yield* resumedSession
+                ? Effect.succeed(resumedSession)
+                : Effect.gen(function* () {
+                    if (resumeSessionId) {
+                      yield* Effect.logWarning(
+                        `OpenCode session '${resumeSessionId}' could not be resumed; starting a fresh session.`,
+                      );
+                    }
+                    const createdSession = yield* runOpenCodeSdk("session.create", () =>
+                      client.session.create({
+                        title: `T3 Code ${input.threadId}`,
+                        permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      }),
+                    );
+                    if (!createdSession.data) {
+                      return yield* new OpenCodeRuntimeError({
+                        operation: "session.create",
+                        detail: "OpenCode session.create returned no session payload.",
+                      });
+                    }
+                    return createdSession.data;
+                  });
               return {
                 sessionScope,
                 server,
                 client,
-                openCodeSession: openCodeSession.data,
+                openCodeSession,
+                created,
               };
             }).pipe(Effect.provideService(Scope.Scope, sessionScope)),
           );
@@ -1101,13 +1158,19 @@ export function makeOpenCodeAdapter(
         // and already inserted a session while we were awaiting async work.
         const raceWinner = sessions.get(input.threadId);
         if (raceWinner) {
-          // Another call won the race – clean up the session we just created
-          // (including the remote SDK session) and return the existing one.
-          yield* runOpenCodeSdk("session.abort", () =>
-            started.client.session.abort({
-              sessionID: started.openCodeSession.id,
-            }),
-          ).pipe(Effect.ignore);
+          // Another call won the race – clean up the session we just started
+          // and return the existing one. Only abort the remote SDK session if
+          // we *created* it here; a session we merely resumed is shared upstream
+          // state the race winner is now using, so aborting it would interrupt
+          // them (and `session.abort` is otherwise the wrong tool — it cancels
+          // an in-flight turn rather than disowning a session).
+          if (started.created) {
+            yield* runOpenCodeSdk("session.abort", () =>
+              started.client.session.abort({
+                sessionID: started.openCodeSession.id,
+              }),
+            ).pipe(Effect.ignore);
+          }
           yield* Scope.close(started.sessionScope, Exit.void).pipe(Effect.ignore);
           return raceWinner.session;
         }
@@ -1121,6 +1184,16 @@ export function makeOpenCodeAdapter(
           cwd: directory,
           ...(input.modelSelection ? { model: input.modelSelection.model } : {}),
           threadId: input.threadId,
+          // Durable binding to the upstream OpenCode session. ProviderService
+          // persists this into provider_session_runtime.resume_cursor_json and
+          // feeds it back into `startSession` on the next turn after the
+          // in-memory session is lost (reaper / app or server restart), which
+          // is what lets a follow-up continue the same conversation instead of
+          // silently landing in a new, empty session (issue #3604).
+          resumeCursor: {
+            schemaVersion: OPENCODE_RESUME_VERSION,
+            sessionId: started.openCodeSession.id,
+          },
           createdAt,
           updatedAt: createdAt,
         };
@@ -1286,6 +1359,11 @@ export function makeOpenCodeAdapter(
       return {
         threadId: input.threadId,
         turnId,
+        // Re-surface the durable cursor on every turn so the persisted binding
+        // is refreshed alongside last-seen/runtime state (mirrors Grok/Codex).
+        ...(context.session.resumeCursor !== undefined
+          ? { resumeCursor: context.session.resumeCursor }
+          : {}),
       };
     });
 
