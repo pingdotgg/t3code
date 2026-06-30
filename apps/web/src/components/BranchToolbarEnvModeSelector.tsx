@@ -4,7 +4,8 @@ import { cn } from "../lib/utils";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
-  THREAD_DETAILS_PANEL_ROW_CLASS,
+  THREAD_DETAILS_PANEL_ROW_POPUP_CLASS,
+  THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
 } from "./chat/threadDetailsPanelStyles";
 
 import {
@@ -135,7 +136,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               size={displayMode === "panel" ? "default" : "xs"}
               className={cn(
                 "min-w-0 shrink font-medium",
-                displayMode === "panel" && THREAD_DETAILS_PANEL_ROW_CLASS,
+                displayMode === "panel" && THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
               )}
               aria-label="Workspace"
             />
@@ -172,7 +173,14 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         </TooltipTrigger>
         {workspacePath ? <TooltipPopup side="left">{workspacePath}</TooltipPopup> : null}
       </Tooltip>
-      <SelectPopup>
+      <SelectPopup
+        {...(displayMode === "panel"
+          ? {
+              alignItemWithTrigger: false,
+              popupClassName: THREAD_DETAILS_PANEL_ROW_POPUP_CLASS,
+            }
+          : {})}
+      >
         <SelectGroup>
           <SelectGroupLabel>Workspace</SelectGroupLabel>
           <SelectItem value="local">

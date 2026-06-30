@@ -35,6 +35,7 @@ import { cn } from "../lib/utils";
 import {
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_ROW_POPUP_CLASS,
   THREAD_DETAILS_PANEL_ROW_CLASS,
 } from "./chat/threadDetailsPanelStyles";
 import { parsePullRequestReference } from "../pullRequestReference";
@@ -815,7 +816,10 @@ export function BranchToolbarBranchSelector({
       <ComboboxPopup
         align={displayMode === "panel" ? "start" : "end"}
         side={displayMode === "panel" ? "bottom" : "top"}
-        className="flex w-80 flex-col"
+        className={cn(
+          "flex flex-col",
+          displayMode === "panel" ? THREAD_DETAILS_PANEL_ROW_POPUP_CLASS : "w-80",
+        )}
       >
         <div className="shrink-0 px-3 pt-2.5">
           <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
