@@ -196,6 +196,7 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
       const newClient = yield* createCopilotClient({
         settings: input.settings,
         cwd: input.cwd,
+        binaryPathBaseDirectory: serverConfig.cwd,
         ...(options?.baseDirectory ? { baseDirectory: options.baseDirectory } : {}),
         env: environment,
         platform,
