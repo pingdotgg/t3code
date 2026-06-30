@@ -473,7 +473,13 @@ export async function runProjectScriptInTerminal(input: {
     }
 
     if (waitAfterOpen) {
-      await input.waitForInputReady(openTerminalInput);
+      const readyResult = await input.waitForInputReady(openTerminalInput);
+      if (readyResult._tag === "Failure") {
+        if (!input.isCommandInterrupted(readyResult)) {
+          return { _tag: "Failure", result: readyResult };
+        }
+        return { _tag: "Interrupted" };
+      }
     }
 
     const writeResult = await input.writeTerminal({

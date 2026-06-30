@@ -661,6 +661,57 @@ describe("runProjectScriptInTerminal", () => {
     });
     expect([...reservedTerminalIds]).toEqual([]);
   });
+
+  it("does not write when waiting after open is interrupted", async () => {
+    const reservedTerminalIds = new Set<string>();
+    const interruptedResult = AsyncResult.failure(Cause.interrupt());
+    const showTerminal = vi.fn();
+    const openTerminal = vi.fn(async () => createCommandSuccess());
+    const writeTerminal = vi.fn(async () => createCommandSuccess());
+    const waitForInputReady = vi.fn(async () => interruptedResult);
+    const requireInputReady = vi.fn(async () => createCommandSuccess());
+
+    const result = await runProjectScriptInTerminal({
+      script,
+      threadId: "thread-1",
+      targetCwd: "/repo",
+      targetWorktreePath: null,
+      runtimeEnv,
+      preferNewTerminal: false,
+      knownTerminalIds: ["action-build"],
+      serverTerminalIds: [],
+      visibleTerminalIds: [],
+      runningTerminalIds: [],
+      sessions: [],
+      reservedTerminalIds,
+      isCommandInterrupted: (commandResult) => commandResult === interruptedResult,
+      showTerminal,
+      openTerminal,
+      writeTerminal,
+      waitForInputReady,
+      requireInputReady,
+    });
+
+    expect(result).toEqual({ _tag: "Interrupted" });
+    expect(openTerminal).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      terminalId: "action-build",
+      cwd: "/repo",
+      env: runtimeEnv,
+      cols: 120,
+      rows: 30,
+    });
+    expect(waitForInputReady).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      terminalId: "action-build",
+      cwd: "/repo",
+      env: runtimeEnv,
+      cols: 120,
+      rows: 30,
+    });
+    expect(writeTerminal).not.toHaveBeenCalled();
+    expect([...reservedTerminalIds]).toEqual([]);
+  });
 });
 
 describe("openTerminalAndWaitForInputReady", () => {
