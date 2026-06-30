@@ -30,6 +30,16 @@ export interface ProviderAdapterCapabilities {
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  /**
+   * Declares whether the adapter can resume a prior session via its durable
+   * resume cursor (re-using a stable workflow `threadId`). Optional — when
+   * unset it is treated as `false` everywhere.
+   */
+  readonly supportsSessionResume?: boolean;
+  /** Max characters this provider accepts in a single turn's input. Omitted ⇒ the
+   *  global PROVIDER_SEND_TURN_MAX_INPUT_CHARS (120k) cap applies. Set per adapter
+   *  ONLY when a real, documented/measured per-turn input limit is known. */
+  readonly maxInputChars?: number;
 }
 
 export interface ProviderThreadTurnSnapshot {

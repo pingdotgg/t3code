@@ -41,6 +41,10 @@ export const ProjectionThread = Schema.Struct({
   pendingUserInputCount: NonNegativeInt,
   hasActionableProposedPlan: NonNegativeInt,
   deletedAt: Schema.NullOr(IsoDateTime),
+  // Internal threads (workflow step/intake dispatches) carry projections but
+  // stay out of user-facing thread lists. Optional so ordinary chat-thread
+  // writers stay untouched; absent means visible.
+  hidden: Schema.optional(NonNegativeInt),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;
 

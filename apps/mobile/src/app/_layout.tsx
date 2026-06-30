@@ -118,6 +118,16 @@ function AppNavigatorContent() {
             headerShown: false,
           }}
         />
+        <Stack.Screen
+          name="tickets/[environmentId]/[boardId]/[ticketId]"
+          options={{
+            animation: "slide_from_right",
+            contentStyle: { backgroundColor: "transparent" },
+            gestureEnabled: true,
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen name="needs-you" options={settingsSheetScreenOptions} />
       </Stack>
     </>
   );

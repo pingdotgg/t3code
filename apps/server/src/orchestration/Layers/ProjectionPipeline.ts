@@ -612,6 +612,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
             deletedAt: null,
+            hidden: event.payload.hidden === true ? 1 : 0,
           });
           return;
 

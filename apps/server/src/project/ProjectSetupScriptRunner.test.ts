@@ -42,6 +42,7 @@ const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
     getThreadCheckpointContext: () => Effect.die("unused"),
     getFullThreadDiffContext: () => Effect.die("unused"),
     getThreadShellById: () => Effect.die("unused"),
+    isThreadHidden: () => Effect.die("unused"),
     getThreadDetailById: () => Effect.die("unused"),
   });
 
@@ -51,6 +52,8 @@ const makeTerminalManagerLayer = (
   Layer.succeed(TerminalManager.TerminalManager, {
     ...overrides,
     attachStream: () => Effect.die(new Error("unused")),
+    attachHistoryStream: () => Effect.die(new Error("unused")),
+    getSnapshot: () => Effect.succeed(null),
     resize: () => Effect.void,
     clear: () => Effect.void,
     restart: () => Effect.die(new Error("unused")),

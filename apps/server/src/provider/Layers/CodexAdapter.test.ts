@@ -262,6 +262,12 @@ validationLayer("CodexAdapterLive validation", (it) => {
       NodeAssert.equal(validationRuntimeFactory.factory.mock.calls.length, 0);
     }),
   );
+  it.effect("declares session resume support in its capabilities", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      NodeAssert.equal(adapter.capabilities.supportsSessionResume, true);
+    }),
+  );
   it.effect("maps codex model options before starting a session", () =>
     Effect.gen(function* () {
       validationRuntimeFactory.factory.mockClear();

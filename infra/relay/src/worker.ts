@@ -46,6 +46,7 @@ import * as RelayDb from "./db.ts";
 import { RelayApnsDeliveryDeadLetterQueue, RelayApnsDeliveryQueue } from "./queues.ts";
 import * as RelayConfiguration from "./Config.ts";
 import * as AgentActivityPublisher from "./agentActivity/AgentActivityPublisher.ts";
+import * as BoardTicketPublisher from "./agentActivity/BoardTicketPublisher.ts";
 import * as ApnsClient from "./agentActivity/ApnsClient.ts";
 import * as ApnsDeliveryQueue from "./agentActivity/ApnsDeliveryQueue.ts";
 import * as ApnsDeliveries from "./agentActivity/ApnsDeliveries.ts";
@@ -183,7 +184,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const runtimeLayer = Layer.empty.pipe(
       Layer.provideMerge(MobileRegistrations.layer),
-      Layer.provideMerge(AgentActivityPublisher.layer),
+      Layer.provideMerge(Layer.mergeAll(AgentActivityPublisher.layer, BoardTicketPublisher.layer)),
       Layer.provideMerge(EnvironmentConnector.layer),
       Layer.provideMerge(EnvironmentLinker.layer),
       Layer.provideMerge(EnvironmentPublishSignatures.layer),

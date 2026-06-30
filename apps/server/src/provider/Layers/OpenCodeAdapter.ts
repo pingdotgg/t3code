@@ -82,6 +82,23 @@ interface OpenCodeSessionContext {
   activeAgent: string | undefined;
   activeVariant: string | undefined;
   /**
+   * Set by `interruptTurn` after a successful abort: the abort makes the
+   * server emit a trailing idle (and possibly error) status for the aborted
+   * turn, which `interruptTurn` already settled synchronously. Those stale
+   * events must not settle a newer turn started right after the interrupt,
+   * so idle/error handling is suppressed until the next `busy` status — the
+   * server emits the abort-idle before the next turn's busy, so once busy is
+   * seen any later idle/error is genuine again.
+   *
+   * The flag is also cleared as soon as the abort's terminal stale idle is
+   * consumed, so it can never stick `true` forever: without that, interrupting
+   * and then walking away (no new turn, so no `busy` ever arrives) would
+   * silently swallow every later genuine session.error/idle (M5). The abort's
+   * trailing idle is expected to arrive regardless of whether a new turn was
+   * started, so consuming it is a reliable point to re-arm genuine handling.
+   */
+  suppressSettleEventsUntilBusy: boolean;
+  /**
    * One-shot guard flipped by `stopOpenCodeContext` / `emitUnexpectedExit`.
    * The session lifecycle is owned by `sessionScope`; this Ref exists only
    * so concurrent callers can race the transition safely via `getAndSet`.
@@ -875,6 +892,8 @@ export function makeOpenCodeAdapter(
 
         case "session.status": {
           if (event.properties.status.type === "busy") {
+            // A new turn is running: any idle/error from here on is genuine.
+            context.suppressSettleEventsUntilBusy = false;
             yield* updateProviderSession(context, {
               status: "running",
               activeTurnId: turnId,
@@ -897,6 +916,19 @@ export function makeOpenCodeAdapter(
             break;
           }
 
+          if (event.properties.status.type === "idle" && context.suppressSettleEventsUntilBusy) {
+            // Stale idle caused by interruptTurn's abort — that turn was
+            // already settled there; ignore it so it cannot settle a newer
+            // turn started after the interrupt. The idle is the aborted turn's
+            // terminal status, so clear suppression now that we've consumed it:
+            // otherwise, if the user interrupts and never starts a new turn (no
+            // `busy` ever arrives), a later GENUINE session.error/idle would be
+            // swallowed forever (M5). A preceding stale `session.error` from the
+            // same abort is still suppressed by the error handler below.
+            context.suppressSettleEventsUntilBusy = false;
+            break;
+          }
+
           if (event.properties.status.type === "idle" && turnId) {
             context.activeTurnId = undefined;
             yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
@@ -916,6 +948,12 @@ export function makeOpenCodeAdapter(
         }
 
         case "session.error": {
+          if (context.suppressSettleEventsUntilBusy) {
+            // Error fallout from interruptTurn's abort — that turn was
+            // already settled there; ignore it so it cannot fail a newer
+            // turn started after the interrupt.
+            break;
+          }
           const message = sessionErrorMessage(event.properties.error);
           const activeTurnId = context.activeTurnId;
           context.activeTurnId = undefined;
@@ -1141,6 +1179,7 @@ export function makeOpenCodeAdapter(
           activeTurnId: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
+          suppressSettleEventsUntilBusy: false,
           stopped: yield* Ref.make(false),
           sessionScope: started.sessionScope,
         };
@@ -1214,6 +1253,12 @@ export function makeOpenCodeAdapter(
       const agent = getModelSelectionStringOptionValue(modelSelection, "agent");
       const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
 
+      // Snapshot the pre-prompt state so a failed steer can roll back to the
+      // still-running original turn's agent/variant/model.
+      const previousAgent = context.activeAgent;
+      const previousVariant = context.activeVariant;
+      const previousModel = context.session.model;
+
       context.activeTurnId = turnId;
       context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
       context.activeVariant = variant;
@@ -1252,10 +1297,23 @@ export function makeOpenCodeAdapter(
         // session back to ready with lastError set, emit turn.aborted, then
         // let the typed error propagate. We don't need to rebuild the error
         // here — `toRequestError` already produced the right shape. A failed
-        // steer leaves the still-running original turn untouched.
+        // steer leaves the still-running original turn untouched, but the
+        // pre-prompt agent/variant/model mutations are rolled back so the
+        // adapter keeps reporting the running turn's state; no turn.aborted
+        // is emitted because that turn is still running.
         Effect.tapError((requestError) =>
           steeringTurnId !== undefined
-            ? Effect.void
+            ? Effect.gen(function* () {
+                context.activeTurnId = steeringTurnId;
+                context.activeAgent = previousAgent;
+                context.activeVariant = previousVariant;
+                yield* updateProviderSession(context, {
+                  status: "running",
+                  activeTurnId: steeringTurnId,
+                  ...(previousModel !== undefined ? { model: previousModel } : {}),
+                  lastError: requestError.detail,
+                });
+              })
             : Effect.gen(function* () {
                 context.activeTurnId = undefined;
                 context.activeAgent = undefined;
@@ -1295,11 +1353,18 @@ export function makeOpenCodeAdapter(
         yield* runOpenCodeSdk("session.abort", () =>
           context.client.session.abort({ sessionID: context.openCodeSessionId }),
         ).pipe(Effect.mapError(toRequestError));
-        if (turnId ?? context.activeTurnId) {
+        // The abort makes the server emit a trailing idle/error status for
+        // the aborted turn. We settle the turn synchronously below, so those
+        // stale events must be ignored until the next turn's busy status —
+        // otherwise a late abort-idle could settle a turn started right
+        // after this interrupt.
+        context.suppressSettleEventsUntilBusy = true;
+        const abortedTurnId = turnId ?? context.activeTurnId;
+        if (abortedTurnId) {
           yield* emit({
             ...(yield* buildEventBase({
               threadId,
-              turnId: turnId ?? context.activeTurnId,
+              turnId: abortedTurnId,
             })),
             type: "turn.aborted",
             payload: {
@@ -1307,6 +1372,14 @@ export function makeOpenCodeAdapter(
             },
           });
         }
+        // Settle the turn synchronously instead of waiting for the async SSE
+        // idle event: a prompt sent right after an interrupt must open a fresh
+        // turn rather than be misclassified as a steer of the aborted one.
+        // Mirrors the idle handler's cleanup.
+        context.activeTurnId = undefined;
+        context.activeAgent = undefined;
+        context.activeVariant = undefined;
+        yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
       },
     );
 

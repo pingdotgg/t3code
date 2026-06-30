@@ -245,10 +245,22 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateBoardProposal: TextGeneration.TextGeneration["Service"]["generateBoardProposal"] =
+    () =>
+      // UNSUPPORTED: the Grok ACP runtime has no provable no-tool mode, so we
+      // reject board proposals rather than ship a tool-enabled meta-agent.
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateBoardProposal",
+          detail: "Grok provider not supported for board proposals (no provable no-tool mode).",
+        }),
+      );
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateBoardProposal,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

@@ -67,6 +67,29 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export interface BoardProposalGenerationInput {
+  /**
+   * Fully assembled prompt (metrics + current board definition + instructions).
+   * The caller (the self-improving-boards meta-agent) builds this; the provider
+   * does NOT read any files — the underlying model invocation is no-tool /
+   * read-only so it physically cannot write a board definition.
+   */
+  readonly prompt: string;
+  /** What model and provider to use for generation (model + effort/thinking). */
+  readonly modelSelection: ModelSelection;
+}
+
+export interface BoardProposalGenerationResult {
+  /**
+   * The proposed workflow/board definition. Returned as `unknown` here; the
+   * caller (Task E4) decodes it as a WorkflowDefinition. Schema-enforced via
+   * the provider's structured-output mechanism where supported.
+   */
+  readonly proposedDefinition: unknown;
+  /** Human-readable explanation of why this proposal was made. */
+  readonly rationale: string;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -109,6 +132,20 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /**
+     * Generate a structured board/workflow proposal from an assembled prompt.
+     *
+     * SAFETY: this op MUST run NO-TOOL / read-only. The underlying model
+     * invocation has all tools/filesystem access denied so the meta-agent
+     * cannot itself write a board definition — only the human-gated
+     * `saveBoardDefinition` path applies a proposal. Providers that cannot be
+     * proven no-tool fail with a `TextGenerationError` ("provider not supported
+     * for board proposals") rather than shipping a tool-enabled meta-agent.
+     */
+    readonly generateBoardProposal: (
+      input: BoardProposalGenerationInput,
+    ) => Effect.Effect<BoardProposalGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -119,7 +156,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateBoardProposal";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -158,6 +196,10 @@ export const makeTextGenerationFromRegistry = (
     generateThreadTitle: (input) =>
       resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+      ),
+    generateBoardProposal: (input) =>
+      resolveInstance(registry, "generateBoardProposal", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generateBoardProposal(input)),
       ),
   });
 

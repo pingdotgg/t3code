@@ -212,6 +212,7 @@ describe("Devices", () => {
             notifyOnInput: true,
             notifyOnCompletion: true,
             notifyOnFailure: true,
+            notifyOnBlocked: true,
           },
           liveActivities: {
             enabled: true,
@@ -301,4 +302,86 @@ describe("Devices", () => {
       Effect.provide(Devices.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)))),
     );
   });
+
+  it.effect(
+    "defaults notifyOnBlocked to true when the stored preferences JSON omits the field",
+    () => {
+      const preferencesWithoutBlocked = {
+        notificationsEnabled: true,
+        liveActivitiesEnabled: true,
+        notifyOnApproval: true,
+        notifyOnInput: true,
+        notifyOnCompletion: true,
+        notifyOnFailure: true,
+        // notifyOnBlocked intentionally absent
+      };
+
+      const fakeDb = {
+        select: () => ({
+          from: (_table: unknown) => ({
+            where: (_condition: SQL) =>
+              Effect.succeed([
+                {
+                  deviceId: "device-2",
+                  label: "Old iPhone",
+                  platform: "ios" as const,
+                  iosMajorVersion: 18,
+                  appVersion: "1.0.0",
+                  preferences: preferencesWithoutBlocked,
+                  updatedAt: "2026-06-01T00:00:00.000Z",
+                },
+              ]),
+          }),
+        }),
+      } as unknown as RelayDb.RelayDb["Service"];
+
+      return Effect.gen(function* () {
+        const devices = yield* Devices.Devices;
+        const listed = yield* devices.listForUser({ userId: "user-3" });
+
+        expect(listed[0]?.notifications.notifyOnBlocked).toBe(true);
+      }).pipe(Effect.provide(Devices.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)))));
+    },
+  );
+
+  it.effect(
+    "preserves notifyOnBlocked: false when the stored preferences JSON sets it to false",
+    () => {
+      const preferencesWithBlockedFalse = {
+        notificationsEnabled: true,
+        liveActivitiesEnabled: true,
+        notifyOnApproval: true,
+        notifyOnInput: true,
+        notifyOnCompletion: true,
+        notifyOnFailure: true,
+        notifyOnBlocked: false,
+      };
+
+      const fakeDb = {
+        select: () => ({
+          from: (_table: unknown) => ({
+            where: (_condition: SQL) =>
+              Effect.succeed([
+                {
+                  deviceId: "device-3",
+                  label: "User iPhone",
+                  platform: "ios" as const,
+                  iosMajorVersion: 18,
+                  appVersion: "1.0.0",
+                  preferences: preferencesWithBlockedFalse,
+                  updatedAt: "2026-06-01T00:00:00.000Z",
+                },
+              ]),
+          }),
+        }),
+      } as unknown as RelayDb.RelayDb["Service"];
+
+      return Effect.gen(function* () {
+        const devices = yield* Devices.Devices;
+        const listed = yield* devices.listForUser({ userId: "user-4" });
+
+        expect(listed[0]?.notifications.notifyOnBlocked).toBe(false);
+      }).pipe(Effect.provide(Devices.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)))));
+    },
+  );
 });

@@ -6,6 +6,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   AuthAccessTokenType,
+  AuthAdministrativeScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
   CommandId,
@@ -69,6 +70,7 @@ import * as Socket from "effect/unstable/socket/Socket";
 import { vi } from "vite-plus/test";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+const administrativeScopeText = AuthAdministrativeScopes.join(" ");
 
 import * as ServerConfig from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
@@ -92,6 +94,7 @@ import * as PortScanner from "./preview/PortScanner.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import { ProjectScriptTrust } from "./workflow/Services/ProjectScriptTrust.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -112,6 +115,23 @@ import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import { BoardRegistry } from "./workflow/Services/BoardRegistry.ts";
+import { BoardDiscovery } from "./workflow/Services/BoardDiscovery.ts";
+import { ProjectWorkspaceResolver } from "./workflow/Services/ProjectWorkspaceResolver.ts";
+import { TicketDiffQuery } from "./workflow/Services/TicketDiffQuery.ts";
+import { WorkflowBoardEvents } from "./workflow/Services/WorkflowBoardEvents.ts";
+import { WorkflowBoardSaveLocks } from "./workflow/Services/WorkflowBoardSaveLocks.ts";
+import { WorkflowBoardVersionStore } from "./workflow/Services/WorkflowBoardVersionStore.ts";
+import { WorkflowEngine } from "./workflow/Services/WorkflowEngine.ts";
+import { WorkflowEventStore } from "./workflow/Services/WorkflowEventStore.ts";
+import { WorkflowFileLoader } from "./workflow/Services/WorkflowFileLoader.ts";
+import { WorkflowReadModel } from "./workflow/Services/WorkflowReadModel.ts";
+import { WorkSourceConnectionStore } from "./workflow/Services/WorkSourceConnectionStore.ts";
+import {
+  WorkSourceAuthError,
+  WorkSourceProviderRegistry,
+} from "./workflow/Services/WorkSourceProvider.ts";
+import { WorkflowSourceCommitter } from "./workflow/Services/WorkflowSourceCommitter.ts";
 import * as Data from "effect/Data";
 
 const defaultProjectId = ProjectId.make("project-default");
@@ -374,6 +394,7 @@ const buildAppUnderTest = (options?: {
       ...derivedPaths,
       staticDir: undefined,
       devUrl,
+      webBaseUrl: undefined,
       noBrowser: true,
       startupPresentation: "browser",
       desktopBootstrapToken: defaultDesktopBootstrapToken,
@@ -519,7 +540,85 @@ const buildAppUnderTest = (options?: {
           ...options.layers.vcsStatusBroadcaster,
         })
       : VcsStatusBroadcaster.layer.pipe(Layer.provide(gitWorkflowLayer));
+    const workflowRouteServicesLayer = Layer.mergeAll(
+      Layer.mock(WorkflowEngine)({
+        createTicket: () => Effect.die("unused workflow createTicket"),
+        moveTicket: () => Effect.die("unused workflow moveTicket"),
+        runLane: () => Effect.die("unused workflow runLane"),
+        resolveApproval: () => Effect.die("unused workflow resolveApproval"),
+        cancelStep: () => Effect.die("unused workflow cancelStep"),
+        cancelBoardPipelines: () => Effect.void,
+        completeRecoveredStep: () => Effect.die("unused workflow completeRecoveredStep"),
+      }),
+      Layer.mock(WorkflowReadModel)({
+        registerBoard: () => Effect.void,
+        deleteBoard: () => Effect.void,
+        deleteBoardTicketState: () => Effect.void,
+        getBoard: () => Effect.succeed(null),
+        listTickets: () => Effect.succeed([]),
+        getTicketDetail: () => Effect.succeed(null),
+        listBoardsForProject: () => Effect.succeed([]),
+      }),
+      Layer.mock(WorkflowEventStore)({
+        append: () => Effect.die("unused workflow event append"),
+        readByTicket: () => Stream.empty,
+        readFromSequence: () => Stream.empty,
+        readAll: () => Stream.empty,
+        deleteForBoard: () => Effect.void,
+      }),
+      Layer.mock(BoardRegistry)({
+        register: () => Effect.die("unused workflow board register"),
+        getDefinition: () => Effect.succeed(null),
+        getLane: () => Effect.succeed(null),
+      }),
+      Layer.mock(TicketDiffQuery)({
+        getTicketDiff: () => Effect.die("unused workflow ticket diff"),
+      }),
+      Layer.mock(WorkflowBoardEvents)({
+        publish: () => Effect.void,
+        stream: () => Stream.empty,
+      }),
+      Layer.mock(WorkflowBoardSaveLocks)({
+        withSaveLock: (_boardId, effect) => effect,
+      }),
+      Layer.mock(WorkflowBoardVersionStore)({
+        record: () => Effect.void,
+        list: () => Effect.succeed([]),
+        get: () => Effect.succeed(null),
+        deleteForBoard: () => Effect.void,
+      }),
+      Layer.mock(WorkflowFileLoader)({
+        loadAndRegister: () => Effect.die("unused workflow file load"),
+      }),
+      Layer.mock(BoardDiscovery)({
+        discover: () => Effect.succeed([]),
+        list: () => Effect.succeed([]),
+      }),
+      Layer.mock(ProjectWorkspaceResolver)({
+        resolve: () => Effect.succeed("/tmp/default-project"),
+      }),
+      Layer.mock(ProjectScriptTrust)({
+        isTrusted: () => Effect.succeed(false),
+        setTrusted: () => Effect.void,
+      }),
+      Layer.mock(WorkSourceConnectionStore)({
+        getToken: (connectionRef) => Effect.fail(new WorkSourceAuthError({ connectionRef })),
+        getConnectionAuth: (connectionRef) => Effect.fail(new WorkSourceAuthError({ connectionRef })),
+        create: () => Effect.die("unused work-source connection create"),
+        list: () => Effect.succeed([]),
+        remove: () => Effect.void,
+      }),
+      Layer.mock(WorkSourceProviderRegistry)({
+        get: () => {
+          throw new Error("unused work-source provider registry get");
+        },
+      }),
+      Layer.mock(WorkflowSourceCommitter)({
+        reconcileChunk: () => Effect.die("unused work-source committer reconcileChunk"),
+      }),
+    );
 
+    // @effect-diagnostics-next-line unnecessaryPipeChain:off — split because a single pipe caps at 20 args; merging re-introduces TS2554
     const servedRoutesLayer = HttpRouter.serve(makeRoutesLayer, {
       disableListenLog: true,
       disableLogger: true,
@@ -728,7 +827,9 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.checkpointDiffQuery,
         }),
       ),
-    );
+      // Split into a second `.pipe()`: a single pipe caps at 20 args, and
+      // upstream + the workflow provides together exceed that.
+    ).pipe(Layer.provide(workflowRouteServicesLayer));
 
     const appLayer = servedRoutesLayer.pipe(
       Layer.provide(
@@ -748,6 +849,7 @@ const buildAppUnderTest = (options?: {
       Layer.provide(
         Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({
           awaitCommandReady: Effect.void,
+          awaitWorkflowReady: Effect.void,
           markHttpListening: Effect.void,
           enqueueCommand: (effect) => effect,
           ...options?.layers?.serverRuntimeStartup,
@@ -919,9 +1021,7 @@ const exchangeAccessToken = (
         subject_token: credential,
         subject_token_type: AuthEnvironmentBootstrapTokenType,
         requested_token_type: AuthAccessTokenType,
-        scope:
-          options?.scope ??
-          "orchestration:read orchestration:operate terminal:operate review:write relay:read access:read access:write relay:write",
+        scope: options?.scope ?? administrativeScopeText,
         ...(options?.clientMetadata?.label ? { client_label: options.clientMetadata.label } : {}),
         ...(options?.clientMetadata?.deviceType
           ? { client_device_type: options.clientMetadata.deviceType }
@@ -1363,10 +1463,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(tokenResponse.status, 200);
       assert.equal(tokenBody.issued_token_type, AuthAccessTokenType);
       assert.equal(tokenBody.token_type, "Bearer");
-      assert.equal(
-        tokenBody.scope,
-        "orchestration:read orchestration:operate terminal:operate review:write relay:read access:read access:write relay:write",
-      );
+      assert.equal(tokenBody.scope, administrativeScopeText);
       assert.equal(typeof tokenBody.access_token, "string");
 
       const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
@@ -1384,16 +1481,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(sessionResponse.status, 200);
       assert.equal(sessionBody.authenticated, true);
       assert.equal(sessionBody.sessionMethod, "bearer-access-token");
-      assert.deepEqual(sessionBody.scopes, [
-        "orchestration:read",
-        "orchestration:operate",
-        "terminal:operate",
-        "review:write",
-        "relay:read",
-        "access:read",
-        "access:write",
-        "relay:write",
-      ]);
+      assert.deepEqual(sessionBody.scopes, [...AuthAdministrativeScopes]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

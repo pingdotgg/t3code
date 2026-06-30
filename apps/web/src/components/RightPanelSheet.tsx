@@ -7,6 +7,7 @@ export function RightPanelSheet(props: {
   children: ReactNode;
   open: boolean;
   onClose: () => void;
+  className?: string;
 }) {
   return (
     <Sheet
@@ -21,7 +22,7 @@ export function RightPanelSheet(props: {
         side="right"
         showCloseButton={false}
         keepMounted
-        className={RIGHT_PANEL_SHEET_CLASS_NAME}
+        className={props.className ?? RIGHT_PANEL_SHEET_CLASS_NAME}
       >
         {props.children}
       </SheetPopup>

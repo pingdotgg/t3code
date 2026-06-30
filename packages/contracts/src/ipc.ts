@@ -48,6 +48,8 @@ import type {
 import type {
   TerminalAttachInput,
   TerminalAttachStreamEvent,
+  TerminalHistoryAttachInput,
+  TerminalHistoryAttachStreamEvent,
   TerminalClearInput,
   TerminalCloseInput,
   TerminalMetadataStreamEvent,
@@ -97,7 +99,7 @@ import type {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
-import { EnvironmentId } from "./baseSchemas.ts";
+import { EnvironmentId, type MessageId, type ProjectId } from "./baseSchemas.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { EditorId } from "./editor.ts";
@@ -112,6 +114,55 @@ import type {
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+import type {
+  BoardId,
+  BoardListEntry,
+  BoardSnapshot,
+  BoardStreamItem,
+  LaneKey,
+  StepRunId,
+  TicketAttachment,
+  TicketDiff,
+  TicketId,
+  WorkflowBoardVersionSummary,
+  WorkflowCreateBoardInput,
+  WorkflowImportBoardInput,
+  WorkflowImportBoardResult,
+  WorkflowCreateWorkflowBoardInput,
+  WorkflowCreateWorkflowBoardResult,
+  WorkflowGenerateWorkflowDraftInput,
+  WorkflowGenerateWorkflowDraftResult,
+  WorkflowListBoardTemplatesResult,
+  WorkflowGetBoardDefinitionResult,
+  WorkflowGetBoardVersionResult,
+  WorkflowRenameBoardInput,
+  WorkflowSaveBoardDefinitionInput,
+  WorkflowSaveBoardDefinitionResult,
+  WorkflowIntakeResult,
+  WorkflowTicketArtifactsResult,
+  WorkflowWebhookConfig,
+  WorkflowBoardDigest,
+  WorkflowBoardMetrics,
+  WorkflowDefinitionEncoded,
+  WorkflowDryRunResult,
+  WorkflowDryRunScenario,
+  WorkflowTicketDetailView,
+  AgentSelection,
+  WorkSourceProviderName,
+  WorkflowProposeBoardImprovementInput,
+  WorkflowProposeBoardImprovementResult,
+  WorkflowListBoardProposalsResult,
+  WorkflowGetBoardProposalResult,
+  WorkflowResolveBoardProposalInput,
+  WorkflowResolveBoardProposalResult,
+  WorkflowRevertBoardProposalResult,
+} from "./workflow.ts";
+import type {
+  WorkSourceConnectionView,
+  ListImportableWorkItemsResult,
+  ImportWorkItemsResult,
+} from "./workSource.ts";
+import type { OutboundConnectionView, CreateOutboundConnectionInput } from "./outbound.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -1142,6 +1193,13 @@ export interface EnvironmentApi {
         onResubscribe?: () => void;
       },
     ) => () => void;
+    attachHistory: (
+      input: typeof TerminalHistoryAttachInput.Encoded,
+      callback: (event: TerminalHistoryAttachStreamEvent) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
     write: (input: typeof TerminalWriteInput.Encoded) => Promise<void>;
     resize: (input: typeof TerminalResizeInput.Encoded) => Promise<void>;
     clear: (input: typeof TerminalClearInput.Encoded) => Promise<void>;
@@ -1249,5 +1307,155 @@ export interface EnvironmentApi {
       callback: (servers: DiscoveredLocalServerList) => void,
       options?: { onResubscribe?: () => void },
     ) => () => void;
+  };
+  workflow: {
+    listBoards: (input: {
+      readonly projectId: ProjectId;
+    }) => Promise<ReadonlyArray<BoardListEntry>>;
+    createBoard: (
+      input: WorkflowCreateBoardInput,
+    ) => Promise<{ readonly boardId: BoardId; readonly snapshot: BoardSnapshot }>;
+    importBoard: (input: WorkflowImportBoardInput) => Promise<WorkflowImportBoardResult>;
+    createWorkflowBoard: (
+      input: WorkflowCreateWorkflowBoardInput,
+    ) => Promise<WorkflowCreateWorkflowBoardResult>;
+    generateWorkflowDraft: (
+      input: WorkflowGenerateWorkflowDraftInput,
+    ) => Promise<WorkflowGenerateWorkflowDraftResult>;
+    listBoardTemplates: (input: {}) => Promise<WorkflowListBoardTemplatesResult>;
+    deleteBoard: (input: { readonly boardId: BoardId }) => Promise<void>;
+    renameBoard: (input: WorkflowRenameBoardInput) => Promise<void>;
+    getBoard: (input: { readonly boardId: BoardId }) => Promise<BoardSnapshot>;
+    getBoardDefinition: (input: {
+      readonly boardId: BoardId;
+    }) => Promise<WorkflowGetBoardDefinitionResult>;
+    saveBoardDefinition: (
+      input: WorkflowSaveBoardDefinitionInput,
+    ) => Promise<WorkflowSaveBoardDefinitionResult>;
+    listBoardVersions: (input: {
+      readonly boardId: BoardId;
+    }) => Promise<ReadonlyArray<WorkflowBoardVersionSummary>>;
+    getBoardVersion: (input: {
+      readonly boardId: BoardId;
+      readonly versionId: number;
+    }) => Promise<WorkflowGetBoardVersionResult>;
+    subscribeBoard: (
+      input: { readonly boardId: BoardId },
+      callback: (event: BoardStreamItem) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
+    createTicket: (input: {
+      readonly boardId: BoardId;
+      readonly title: string;
+      readonly description?: string | undefined;
+      readonly initialLane: LaneKey;
+      readonly dependsOn?: ReadonlyArray<TicketId> | undefined;
+      readonly tokenBudget?: number | undefined;
+    }) => Promise<{ readonly ticketId: TicketId }>;
+    editTicket: (input: {
+      readonly ticketId: TicketId;
+      readonly title?: string | undefined;
+      readonly description?: string | undefined;
+      readonly dependsOn?: ReadonlyArray<TicketId> | undefined;
+      readonly tokenBudget?: number | null | undefined;
+    }) => Promise<void>;
+    moveTicket: (input: { readonly ticketId: TicketId; readonly toLane: LaneKey }) => Promise<void>;
+    runLane: (input: { readonly ticketId: TicketId }) => Promise<void>;
+    resolveApproval: (input: {
+      readonly stepRunId: StepRunId;
+      readonly approved: boolean;
+    }) => Promise<void>;
+    answerTicketStep: (input: {
+      readonly stepRunId: StepRunId;
+      readonly text?: string | undefined;
+      readonly attachments?: ReadonlyArray<TicketAttachment> | undefined;
+    }) => Promise<void>;
+    postTicketMessage: (input: {
+      readonly ticketId: TicketId;
+      readonly text?: string | undefined;
+      readonly attachments?: ReadonlyArray<TicketAttachment> | undefined;
+    }) => Promise<void>;
+    editTicketMessage: (input: {
+      readonly ticketId: TicketId;
+      readonly messageId: MessageId;
+      readonly body: string;
+    }) => Promise<void>;
+    setProjectScriptTrust: (input: {
+      readonly projectId: ProjectId;
+      readonly trusted: boolean;
+    }) => Promise<void>;
+    cancelStep: (input: { readonly stepRunId: StepRunId }) => Promise<void>;
+    getTicketDetail: (input: { readonly ticketId: TicketId }) => Promise<WorkflowTicketDetailView>;
+    getTicketDiff: (input: { readonly ticketId: TicketId }) => Promise<TicketDiff>;
+    intakeTickets: (input: {
+      readonly boardId: BoardId;
+      readonly braindump: string;
+      readonly agent: AgentSelection;
+    }) => Promise<WorkflowIntakeResult>;
+    listTicketArtifacts: (input: {
+      readonly ticketId: TicketId;
+    }) => Promise<WorkflowTicketArtifactsResult>;
+    getWebhookConfig: (input: {
+      readonly boardId: BoardId;
+      readonly rotate?: boolean | undefined;
+    }) => Promise<WorkflowWebhookConfig>;
+    getBoardDigest: (input: {
+      readonly boardId: BoardId;
+      readonly windowHours?: number | undefined;
+    }) => Promise<WorkflowBoardDigest>;
+    getBoardMetrics: (input: {
+      readonly boardId: BoardId;
+      readonly windowDays?: number | undefined;
+    }) => Promise<WorkflowBoardMetrics>;
+    dryRunBoard: (input: {
+      readonly definition: WorkflowDefinitionEncoded;
+      readonly startLane: LaneKey;
+      readonly scenario: WorkflowDryRunScenario;
+    }) => Promise<WorkflowDryRunResult>;
+    listWorkSourceConnections: (
+      input: Record<string, never>,
+    ) => Promise<ReadonlyArray<WorkSourceConnectionView>>;
+    createWorkSourceConnection: (input: {
+      readonly provider: WorkSourceProviderName;
+      readonly displayName: string;
+      readonly token: string;
+      readonly authMode?: "pat" | "basic" | "bearer";
+      readonly baseUrl?: string;
+      readonly email?: string;
+    }) => Promise<WorkSourceConnectionView>;
+    deleteWorkSourceConnection: (input: { readonly connectionRef: string }) => Promise<void>;
+    listOutboundConnections: (
+      input: Record<string, never>,
+    ) => Promise<{ readonly connections: ReadonlyArray<OutboundConnectionView> }>;
+    createOutboundConnection: (
+      input: CreateOutboundConnectionInput,
+    ) => Promise<{ readonly connection: OutboundConnectionView }>;
+    deleteOutboundConnection: (input: { readonly connectionRef: string }) => Promise<void>;
+    proposeBoardImprovement: (
+      input: WorkflowProposeBoardImprovementInput,
+    ) => Promise<WorkflowProposeBoardImprovementResult>;
+    listBoardProposals: (input: {
+      readonly boardId: BoardId;
+    }) => Promise<WorkflowListBoardProposalsResult>;
+    getBoardProposal: (input: {
+      readonly proposalId: string;
+    }) => Promise<WorkflowGetBoardProposalResult>;
+    resolveBoardProposal: (
+      input: WorkflowResolveBoardProposalInput,
+    ) => Promise<WorkflowResolveBoardProposalResult>;
+    revertBoardProposal: (input: {
+      readonly proposalId: string;
+    }) => Promise<WorkflowRevertBoardProposalResult>;
+    listImportableWorkItems: (input: {
+      readonly boardId: BoardId;
+    }) => Promise<ListImportableWorkItemsResult>;
+    importWorkItems: (input: {
+      readonly boardId: BoardId;
+      readonly sourceId: string;
+      readonly externalIds: ReadonlyArray<string>;
+      readonly destinationLane?: LaneKey;
+    }) => Promise<ImportWorkItemsResult>;
   };
 }

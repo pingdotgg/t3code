@@ -562,6 +562,123 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect("excludes hidden threads from the archived shell snapshot", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-hidden-archived-test',
+          'Hidden Archived Test',
+          '/tmp/hidden-archived-test',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-04-07T00:00:00.000Z',
+          '2026-04-07T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at,
+          hidden
+        )
+        VALUES
+          (
+            'thread-archived-visible',
+            'project-hidden-archived-test',
+            'Archived Visible Thread',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-04-07T00:00:02.000Z',
+            '2026-04-07T00:00:03.000Z',
+            '2026-04-07T00:00:04.000Z',
+            NULL,
+            0
+          ),
+          (
+            'thread-archived-hidden',
+            'project-hidden-archived-test',
+            'Archived Hidden Thread',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-04-07T00:00:05.000Z',
+            '2026-04-07T00:00:06.000Z',
+            '2026-04-07T00:00:07.000Z',
+            NULL,
+            1
+          )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+        VALUES
+          (${ORCHESTRATION_PROJECTOR_NAMES.projects}, 5, '2026-04-07T00:00:08.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.threads}, 5, '2026-04-07T00:00:08.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.threadMessages}, 5, '2026-04-07T00:00:08.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans}, 5, '2026-04-07T00:00:08.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.threadActivities}, 5, '2026-04-07T00:00:08.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.threadSessions}, 5, '2026-04-07T00:00:08.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.checkpoints}, 5, '2026-04-07T00:00:08.000Z')
+      `;
+
+      const archivedShellSnapshot = yield* snapshotQuery.getArchivedShellSnapshot();
+      assert.deepEqual(
+        archivedShellSnapshot.threads.map((thread) => thread.id),
+        [ThreadId.make("thread-archived-visible")],
+        "hidden archived thread must not appear in archived shell snapshot",
+      );
+    }),
+  );
+
   it.effect(
     "reads targeted project, thread, and count queries without hydrating the full snapshot",
     () =>

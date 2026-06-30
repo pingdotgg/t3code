@@ -17,6 +17,7 @@ import { expandHomePath } from "../pathExpansion.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
+  buildBoardProposalPrompt,
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
@@ -35,6 +36,49 @@ import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 const CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
+
+/**
+ * Build the `codex exec` argv for a structured-output text-generation run.
+ *
+ * `ignoreUserConfig` adds `--ignore-user-config`, which is the no-tool posture
+ * used by the board-proposal op: it stops Codex from loading
+ * `$CODEX_HOME/config.toml`, so configured MCP servers, hooks, skills, and
+ * `developer_instructions` are NOT loaded — the analog of the Claude path's
+ * `--strict-mcp-config --mcp-config "{}"` suppression, and broader. Auth still
+ * uses `CODEX_HOME`, and the model + reasoning effort (+ optional service tier)
+ * are passed explicitly here, so they survive the dropped config. Git ops keep
+ * the user config (they are not no-tool).
+ */
+export function buildCodexExecArgs(input: {
+  readonly model: string;
+  readonly reasoningEffort: string;
+  readonly serviceTier?: string | undefined;
+  readonly schemaPath: string;
+  readonly outputPath: string;
+  readonly imagePaths?: ReadonlyArray<string>;
+  readonly ignoreUserConfig?: boolean;
+}): Array<string> {
+  return [
+    "exec",
+    "--ephemeral",
+    "--skip-git-repo-check",
+    ...(input.ignoreUserConfig ? ["--ignore-user-config"] : []),
+    "-s",
+    "read-only",
+    "--model",
+    input.model,
+    "--config",
+    `model_reasoning_effort="${input.reasoningEffort}"`,
+    ...(input.serviceTier ? ["--config", `service_tier="${input.serviceTier}"`] : []),
+    "--output-schema",
+    input.schemaPath,
+    "--output-last-message",
+    input.outputPath,
+    ...(input.imagePaths ?? []).flatMap((imagePath) => ["--image", imagePath]),
+    "-",
+  ];
+}
+
 /**
  * Build a Codex text-generation closure bound to a specific `CodexSettings`
  * payload. See `makeCodexAdapter` for the overall per-instance rationale.
@@ -97,7 +141,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateBoardProposal",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -116,7 +161,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateBoardProposal",
     attachments: TextGeneration.BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -153,18 +199,23 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     imagePaths = [],
     cleanupPaths = [],
     modelSelection,
+    ignoreUserConfig = false,
   }: {
     operation:
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateBoardProposal";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
     imagePaths?: ReadonlyArray<string>;
     cleanupPaths?: ReadonlyArray<string>;
     modelSelection: ModelSelection;
+    // No-tool posture: drop $CODEX_HOME/config.toml (MCP/hooks/skills/dev-instructions).
+    // Only the board-proposal op sets this; git ops keep the user config.
+    ignoreUserConfig?: boolean;
   }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
     const schemaJson = yield* encodeJsonForOperation(
       operation,
@@ -180,24 +231,15 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const serviceTier = getCodexServiceTierOptionValue(modelSelection);
       const spawnCommand = yield* resolveSpawnCommand(
         codexConfig.binaryPath || "codex",
-        [
-          "exec",
-          "--ephemeral",
-          "--skip-git-repo-check",
-          "-s",
-          "read-only",
-          "--model",
-          modelSelection.model,
-          "--config",
-          `model_reasoning_effort="${reasoningEffort}"`,
-          ...(serviceTier ? ["--config", `service_tier="${serviceTier}"`] : []),
-          "--output-schema",
+        buildCodexExecArgs({
+          model: modelSelection.model,
+          reasoningEffort,
+          serviceTier,
           schemaPath,
-          "--output-last-message",
           outputPath,
-          ...imagePaths.flatMap((imagePath) => ["--image", imagePath]),
-          "-",
-        ],
+          imagePaths,
+          ignoreUserConfig,
+        }),
         { env: resolvedEnvironment },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
@@ -395,10 +437,55 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateBoardProposal: TextGeneration.TextGeneration["Service"]["generateBoardProposal"] =
+    Effect.fn("CodexTextGeneration.generateBoardProposal")(function* (input) {
+      const { prompt, outputSchema } = buildBoardProposalPrompt({ prompt: input.prompt });
+
+      // SAFETY (defense-in-depth): run the board-proposal op from an empty
+      // throwaway temp dir rather than the repo root. `codex exec -s read-only`
+      // prevents writes, but the agent can still READ repo files from process.cwd().
+      // Pointing cwd to an empty temp dir removes the repo from reach entirely,
+      // making this prompt-only egress (only the assembled prompt leaves the
+      // machine). The scoped temp dir is removed when the effect completes.
+      // NOTE: this is ONLY for generateBoardProposal — git ops (generateCommitMessage
+      // etc.) must keep the repo cwd they receive via input.cwd.
+      const generated = yield* fileSystem
+        .makeTempDirectoryScoped({ prefix: "t3code-board-proposal-" })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation: "generateBoardProposal",
+                detail: "Failed to create sandbox working directory for board proposal.",
+                cause,
+              }),
+          ),
+          Effect.flatMap((sandboxCwd) =>
+            runCodexJson({
+              operation: "generateBoardProposal",
+              cwd: sandboxCwd,
+              prompt,
+              outputSchemaJson: outputSchema,
+              modelSelection: input.modelSelection,
+              // No-tool clean room: no MCP servers, hooks, skills, or
+              // developer_instructions from the user's Codex config get loaded.
+              ignoreUserConfig: true,
+            }),
+          ),
+          Effect.scoped,
+        );
+
+      return {
+        proposedDefinition: generated.proposedDefinition,
+        rationale: generated.rationale.trim(),
+      };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateBoardProposal,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

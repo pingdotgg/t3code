@@ -1,0 +1,127 @@
+{
+  "name": "GitHub flow",
+  "settings": {
+    "maxConcurrentTickets": 3
+  },
+  "lanes": [
+    {
+      "key": "backlog",
+      "name": "Backlog",
+      "entry": "manual"
+    },
+    {
+      "key": "implement",
+      "name": "Implement",
+      "entry": "auto",
+      "pipeline": [
+        {
+          "key": "code",
+          "type": "agent",
+          "agent": {
+            "instance": "codex",
+            "model": "gpt-5.5",
+            "options": [
+              {
+                "id": "reasoningEffort",
+                "value": "xhigh"
+              }
+            ]
+          },
+          "instruction": "Implement the requested ticket in this worktree. Keep the change focused, run the relevant checks, and report the verification evidence.",
+          "captureOutput": true
+        },
+        {
+          "key": "review",
+          "type": "agent",
+          "agent": {
+            "instance": "codex",
+            "model": "gpt-5.5",
+            "options": [
+              {
+                "id": "reasoningEffort",
+                "value": "medium"
+              }
+            ]
+          },
+          "instruction": "Review the accumulated diff. Reply LGTM if no blocking issues, or list what must be fixed before opening a PR.",
+          "captureOutput": true
+        }
+      ],
+      "on": {
+        "success": "open_pr",
+        "failure": "needs_attention",
+        "blocked": "needs_attention"
+      }
+    },
+    {
+      "key": "open_pr",
+      "name": "Open PR",
+      "entry": "auto",
+      "pipeline": [
+        {
+          "key": "pr_open",
+          "type": "pullRequest",
+          "action": "open",
+          "draft": false
+        }
+      ],
+      "on": {
+        "success": "in_review",
+        "failure": "needs_attention"
+      }
+    },
+    {
+      "key": "in_review",
+      "name": "In Review",
+      "entry": "manual",
+      "onEvent": [
+        {
+          "name": "ci.failed",
+          "to": "implement"
+        },
+        {
+          "name": "pr.changes_requested",
+          "to": "implement"
+        },
+        {
+          "name": "ci.passed",
+          "when": { "==": [{ "var": "pr.reviewDecision" }, "approved"] },
+          "to": "land"
+        },
+        {
+          "name": "pr.approved",
+          "when": { "==": [{ "var": "pr.ciState" }, "success"] },
+          "to": "land"
+        }
+      ]
+    },
+    {
+      "key": "land",
+      "name": "Land",
+      "entry": "auto",
+      "pipeline": [
+        {
+          "key": "pr_land",
+          "type": "pullRequest",
+          "action": "land",
+          "strategy": "squash"
+        }
+      ],
+      "on": {
+        "success": "done",
+        "failure": "needs_attention"
+      }
+    },
+    {
+      "key": "needs_attention",
+      "name": "Needs Attention",
+      "entry": "manual"
+    },
+    {
+      "key": "done",
+      "name": "Done",
+      "entry": "manual",
+      "terminal": true
+    }
+  ]
+}

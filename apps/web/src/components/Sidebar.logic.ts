@@ -24,6 +24,30 @@ type SidebarProject = {
   updatedAt?: string | undefined;
 };
 
+export interface SidebarBoardRouteIdentity {
+  readonly environmentId: string;
+  readonly boardId: string;
+}
+
+export interface SidebarBoardIdentity extends SidebarBoardRouteIdentity {
+  readonly projectId: string;
+}
+
+export function getSidebarBoardRowKey(board: SidebarBoardIdentity): string {
+  return `${board.environmentId}:${board.projectId}:${board.boardId}`;
+}
+
+export function isSidebarBoardRouteActive(
+  activeRouteBoard: SidebarBoardRouteIdentity | null,
+  board: SidebarBoardIdentity,
+): boolean {
+  return (
+    activeRouteBoard !== null &&
+    activeRouteBoard.environmentId === board.environmentId &&
+    activeRouteBoard.boardId === board.boardId
+  );
+}
+
 export type ThreadTraversalDirection = "previous" | "next";
 
 export interface ThreadStatusPill {
@@ -231,6 +255,20 @@ export function resolveSidebarNewThreadSeedContext(input: {
   return {
     envMode: input.defaultEnvMode,
   };
+}
+
+export function nextDefaultBoardName(existingNames: readonly string[]): string {
+  const existing = new Set(existingNames);
+  const baseName = "Workflow board";
+  if (!existing.has(baseName)) {
+    return baseName;
+  }
+  for (let index = 2; ; index += 1) {
+    const candidate = `${baseName} ${index}`;
+    if (!existing.has(candidate)) {
+      return candidate;
+    }
+  }
 }
 
 export function orderItemsByPreferredIds<TItem, TId>(input: {

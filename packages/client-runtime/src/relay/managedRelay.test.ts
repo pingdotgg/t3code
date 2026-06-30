@@ -483,6 +483,7 @@ describe("ManagedRelayClient", () => {
                 notifyOnInput: true,
                 notifyOnCompletion: true,
                 notifyOnFailure: true,
+                notifyOnBlocked: true,
               },
               liveActivities: {
                 enabled: true,

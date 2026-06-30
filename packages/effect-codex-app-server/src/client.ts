@@ -259,11 +259,19 @@ export const layerChildProcess = (
   handle: ChildProcessSpawner.ChildProcessHandle,
   options: CodexAppServerClientOptions = {},
 ): Layer.Layer<CodexAppServerClient> =>
-  Layer.effect(CodexAppServerClient, makeChildProcessClient(handle, options));
+  // The caller owns the handle and may consume stderr itself — draining it
+  // here would compete for the same chunks and drop diagnostics.
+  Layer.effect(CodexAppServerClient, makeChildProcessClient(handle, options, false));
 
 const makeChildProcessClient = Effect.fn(
   "effect-codex-app-server/CodexAppServerClient.makeChildProcessClient",
-)(function* (handle: ChildProcessSpawner.ChildProcessHandle, options: CodexAppServerClientOptions) {
-  yield* Stream.runDrain(handle.stderr).pipe(Effect.ignore, Effect.forkScoped);
+)(function* (
+  handle: ChildProcessSpawner.ChildProcessHandle,
+  options: CodexAppServerClientOptions,
+  drainStderr: boolean,
+) {
+  if (drainStderr) {
+    yield* Stream.runDrain(handle.stderr).pipe(Effect.ignore, Effect.forkScoped);
+  }
   return yield* make(makeChildStdio(handle), options, makeTerminationError(handle));
 });

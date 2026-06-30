@@ -28,6 +28,7 @@ export function makeRelayDeviceRegistrationRequest(input: {
       notifyOnInput: true,
       notifyOnCompletion: true,
       notifyOnFailure: true,
+      notifyOnBlocked: true,
     },
   };
 }

@@ -37,6 +37,8 @@ function makeFakeCodexBinary(
     forbidReasoningEffort?: boolean;
     stdinMustContain?: string;
     stdinMustNotContain?: string;
+    /** If provided, the binary writes $PWD to this file so tests can assert cwd. */
+    cwdRecordPath?: string;
   },
 ) {
   return Effect.gen(function* () {
@@ -148,6 +150,12 @@ function makeFakeCodexBinary(
         input.output,
         "__T3CODE_FAKE_CODEX_OUTPUT__",
         "fi",
+        ...(input.cwdRecordPath !== undefined
+          ? [
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              `printf "%s" "$PWD" > ${JSON.stringify(input.cwdRecordPath)}`,
+            ]
+          : []),
         `exit ${input.exitCode ?? 0}`,
         "",
       ].join("\n"),
@@ -168,6 +176,8 @@ function withFakeCodexEnv<A, E, R>(
     forbidReasoningEffort?: boolean;
     stdinMustContain?: string;
     stdinMustNotContain?: string;
+    /** If provided, the binary writes $PWD to this file so tests can assert cwd. */
+    cwdRecordPath?: string;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -601,5 +611,83 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
           }
         }),
     ),
+  );
+
+  // ── Prompt-only egress: generateBoardProposal cwd isolation ──────────────
+
+  it.effect("generateBoardProposal runs codex from an empty temp dir (not the repo cwd)", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // Create a named file that the binary will write $PWD into.
+      const cwdRecord = yield* fs.makeTempFileScoped({
+        prefix: "t3code-codex-cwd-record-",
+      });
+
+      yield* withFakeCodexEnv(
+        {
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          output: JSON.stringify({
+            // proposedDefinition is a JSON STRING on the wire (provider schema
+            // types it as a string); the op decodes it back to an object.
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            proposedDefinition: JSON.stringify({
+              lanes: [],
+              name: "Test Board",
+              description: "",
+              triggers: [],
+            }),
+            rationale: "test rationale",
+          }),
+          cwdRecordPath: cwdRecord,
+        },
+        (textGeneration) =>
+          textGeneration.generateBoardProposal({
+            prompt: "Create a simple kanban board.",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          }),
+      );
+
+      const recordedCwd = yield* fs.readFileString(cwdRecord);
+      // Must NOT be the repo root.
+      expect(recordedCwd).not.toBe(process.cwd());
+      // Must be inside the OS temp dir hierarchy.
+      const osTmp = path.dirname(yield* fs.realPath(cwdRecord));
+      // The recorded cwd is inside a freshly-created temp dir — it must share
+      // a common ancestor with the OS temp directory.
+      expect(recordedCwd).toContain("t3code-board-proposal-");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "generateCommitMessage (git op) keeps the caller-supplied repo cwd, not a temp dir",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cwdRecord = yield* fs.makeTempFileScoped({
+          prefix: "t3code-codex-cwd-record-",
+        });
+        const repoCwd = process.cwd();
+
+        yield* withFakeCodexEnv(
+          {
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            output: JSON.stringify({ subject: "Add important change", body: "" }),
+            cwdRecordPath: cwdRecord,
+          },
+          (textGeneration) =>
+            textGeneration.generateCommitMessage({
+              cwd: repoCwd,
+              branch: "feature/cwd-check",
+              stagedSummary: "M README.md",
+              stagedPatch: "diff --git a/README.md b/README.md",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            }),
+        );
+
+        const recordedCwd = yield* fs.readFileString(cwdRecord);
+        // Git ops must use the repo cwd passed by the caller.
+        expect(recordedCwd).toBe(repoCwd);
+      }).pipe(Effect.scoped),
   );
 });

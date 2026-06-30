@@ -2,12 +2,21 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
+import {
+  WorkSourceConnectionView,
+  WorkSourceProviderName,
+  ListImportableWorkItemsResult,
+  ImportWorkItemsResult,
+} from "./workSource.ts";
+import { OutboundConnectionView, CreateOutboundConnectionInput } from "./outbound.ts";
+
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
   EnvironmentAuthorizationError,
 } from "./auth.ts";
+import { MessageId, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
@@ -81,6 +90,8 @@ import {
 import {
   TerminalAttachInput,
   TerminalAttachStreamEvent,
+  TerminalHistoryAttachInput,
+  TerminalHistoryAttachStreamEvent,
   TerminalClearInput,
   TerminalCloseInput,
   TerminalError,
@@ -143,6 +154,55 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  AgentSelection,
+  BoardId,
+  BoardListEntry,
+  BoardSnapshot,
+  BoardStreamItem,
+  LaneKey,
+  StepRunId,
+  TicketDiff,
+  TicketId,
+  WorkflowBoardVersionSummary,
+  WorkflowGetBoardDefinitionResult,
+  WorkflowGetBoardVersionResult,
+  WorkflowImportBoardInput,
+  WorkflowImportBoardResult,
+  WorkflowCreateWorkflowBoardInput,
+  WorkflowCreateWorkflowBoardResult,
+  WorkflowGenerateWorkflowDraftInput,
+  WorkflowGenerateWorkflowDraftResult,
+  WorkflowListBoardTemplatesResult,
+  WorkflowNeedsAttentionTicketView,
+  WorkflowBoardName,
+  WorkflowRenameBoardInput,
+  WorkflowSaveBoardDefinitionInput,
+  WorkflowSaveBoardDefinitionResult,
+  WorkflowRpcError,
+  TicketAttachment,
+  WorkflowIntakeBraindump,
+  WorkflowIntakeResult,
+  WorkflowTicketArtifactsResult,
+  WorkflowWebhookConfig,
+  WorkflowBoardDigest,
+  WorkflowBoardMetrics,
+  WorkflowDefinitionEncoded,
+  WorkflowDryRunResult,
+  WorkflowDryRunScenario,
+  WorkflowTicketDetailView,
+  WorkflowProposeBoardImprovementInput,
+  WorkflowProposeBoardImprovementResult,
+  WorkflowListBoardProposalsInput,
+  WorkflowListBoardProposalsResult,
+  WorkflowGetBoardProposalInput,
+  WorkflowGetBoardProposalResult,
+  WorkflowResolveBoardProposalInput,
+  WorkflowResolveBoardProposalResult,
+  WorkflowRevertBoardProposalInput,
+  WorkflowRevertBoardProposalResult,
+  WORKFLOW_WS_METHODS,
+} from "./workflow.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -182,6 +242,7 @@ export const WS_METHODS = {
   // Terminal methods
   terminalOpen: "terminal.open",
   terminalAttach: "terminal.attach",
+  terminalAttachHistory: "terminal.attachHistory",
   terminalWrite: "terminal.write",
   terminalResize: "terminal.resize",
   terminalClear: "terminal.clear",
@@ -491,6 +552,13 @@ export const WsTerminalAttachRpc = Rpc.make(WS_METHODS.terminalAttach, {
   stream: true,
 });
 
+export const WsTerminalAttachHistoryRpc = Rpc.make(WS_METHODS.terminalAttachHistory, {
+  payload: TerminalHistoryAttachInput,
+  success: TerminalHistoryAttachStreamEvent,
+  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
 export const WsTerminalWriteRpc = Rpc.make(WS_METHODS.terminalWrite, {
   payload: TerminalWriteInput,
   error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
@@ -646,6 +714,383 @@ export const WsOrchestrationSubscribeThreadRpc = Rpc.make(
   },
 );
 
+export const WsWorkflowListBoardsRpc = Rpc.make(WORKFLOW_WS_METHODS.listBoards, {
+  payload: Schema.Struct({ projectId: ProjectId }),
+  success: Schema.Array(BoardListEntry),
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowCreateBoardRpc = Rpc.make(WORKFLOW_WS_METHODS.createBoard, {
+  payload: Schema.Struct({
+    projectId: ProjectId,
+    // Align with WorkflowCreateBoardInput/renameBoard: enforce the branded name
+    // bounds at the wire boundary instead of accepting any string.
+    name: WorkflowBoardName,
+    agent: AgentSelection,
+  }),
+  success: Schema.Struct({ boardId: BoardId, snapshot: BoardSnapshot }),
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowDeleteBoardRpc = Rpc.make(WORKFLOW_WS_METHODS.deleteBoard, {
+  payload: Schema.Struct({ boardId: BoardId }),
+  success: Schema.Void,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowRenameBoardRpc = Rpc.make(WORKFLOW_WS_METHODS.renameBoard, {
+  payload: WorkflowRenameBoardInput,
+  success: Schema.Void,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowGetBoardRpc = Rpc.make(WORKFLOW_WS_METHODS.getBoard, {
+  payload: Schema.Struct({ boardId: BoardId }),
+  success: BoardSnapshot,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowGetBoardDefinitionRpc = Rpc.make(WORKFLOW_WS_METHODS.getBoardDefinition, {
+  payload: Schema.Struct({ boardId: BoardId }),
+  success: WorkflowGetBoardDefinitionResult,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowSaveBoardDefinitionRpc = Rpc.make(WORKFLOW_WS_METHODS.saveBoardDefinition, {
+  payload: WorkflowSaveBoardDefinitionInput,
+  success: WorkflowSaveBoardDefinitionResult,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowImportBoardRpc = Rpc.make(WORKFLOW_WS_METHODS.importBoard, {
+  payload: WorkflowImportBoardInput,
+  success: WorkflowImportBoardResult,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowCreateWorkflowBoardRpc = Rpc.make(WORKFLOW_WS_METHODS.createWorkflowBoard, {
+  payload: WorkflowCreateWorkflowBoardInput,
+  success: WorkflowCreateWorkflowBoardResult,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowGenerateWorkflowDraftRpc = Rpc.make(
+  WORKFLOW_WS_METHODS.generateWorkflowDraft,
+  {
+    payload: WorkflowGenerateWorkflowDraftInput,
+    success: WorkflowGenerateWorkflowDraftResult,
+    error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsWorkflowListBoardTemplatesRpc = Rpc.make(WORKFLOW_WS_METHODS.listBoardTemplates, {
+  payload: Schema.Struct({}),
+  success: WorkflowListBoardTemplatesResult,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowListBoardVersionsRpc = Rpc.make(WORKFLOW_WS_METHODS.listBoardVersions, {
+  payload: Schema.Struct({ boardId: BoardId }),
+  success: Schema.Array(WorkflowBoardVersionSummary),
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowGetBoardVersionRpc = Rpc.make(WORKFLOW_WS_METHODS.getBoardVersion, {
+  payload: Schema.Struct({ boardId: BoardId, versionId: Schema.Int }),
+  success: WorkflowGetBoardVersionResult,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowSubscribeBoardRpc = Rpc.make(WORKFLOW_WS_METHODS.subscribeBoard, {
+  payload: Schema.Struct({ boardId: BoardId }),
+  success: BoardStreamItem,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+// Bound ticket title/description at decode so an unbounded value can never
+// bloat SQLite or the agent instruction templates the engine persists them
+// into. Caps mirror WorkflowTicketDetail (title ≤200) and the other 4000-char
+// description caps in workflow.ts; title is non-empty to match the engine's
+// TicketCreated event schema.
+const WorkflowTicketTitleInput = TrimmedNonEmptyString.check(Schema.isMaxLength(200));
+const WorkflowTicketDescriptionInput = Schema.String.check(Schema.isMaxLength(4000));
+
+export const WsWorkflowCreateTicketRpc = Rpc.make(WORKFLOW_WS_METHODS.createTicket, {
+  payload: Schema.Struct({
+    boardId: BoardId,
+    title: WorkflowTicketTitleInput,
+    description: Schema.optional(WorkflowTicketDescriptionInput),
+    initialLane: LaneKey,
+    dependsOn: Schema.optional(Schema.Array(TicketId)),
+    tokenBudget: Schema.optional(Schema.Int),
+  }),
+  success: Schema.Struct({ ticketId: TicketId }),
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowEditTicketRpc = Rpc.make(WORKFLOW_WS_METHODS.editTicket, {
+  payload: Schema.Struct({
+    ticketId: TicketId,
+    // Same caps as create (title ≤200 non-empty, description ≤4000) so an edit
+    // can't reintroduce an unbounded value the create path now rejects.
+    title: Schema.optional(WorkflowTicketTitleInput),
+    description: Schema.optional(WorkflowTicketDescriptionInput),
+    dependsOn: Schema.optional(Schema.Array(TicketId)),
+    tokenBudget: Schema.optional(Schema.NullOr(Schema.Int)),
+  }),
+  success: Schema.Void,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowMoveTicketRpc = Rpc.make(WORKFLOW_WS_METHODS.moveTicket, {
+  payload: Schema.Struct({ ticketId: TicketId, toLane: LaneKey }),
+  success: Schema.Void,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowRunLaneRpc = Rpc.make(WORKFLOW_WS_METHODS.runLane, {
+  payload: Schema.Struct({ ticketId: TicketId }),
+  success: Schema.Void,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowResolveApprovalRpc = Rpc.make(WORKFLOW_WS_METHODS.resolveApproval, {
+  payload: Schema.Struct({ stepRunId: StepRunId, approved: Schema.Boolean }),
+  success: Schema.Void,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowAnswerTicketStepRpc = Rpc.make(WORKFLOW_WS_METHODS.answerTicketStep, {
+  payload: Schema.Struct({
+    stepRunId: StepRunId,
+    text: Schema.optional(Schema.String),
+    attachments: Schema.optional(Schema.Array(TicketAttachment)),
+  }),
+  success: Schema.Void,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowPostTicketMessageRpc = Rpc.make(WORKFLOW_WS_METHODS.postTicketMessage, {
+  payload: Schema.Struct({
+    ticketId: TicketId,
+    text: Schema.optional(Schema.String),
+    attachments: Schema.optional(Schema.Array(TicketAttachment)),
+  }),
+  success: Schema.Void,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowEditTicketMessageRpc = Rpc.make(WORKFLOW_WS_METHODS.editTicketMessage, {
+  payload: Schema.Struct({
+    ticketId: TicketId,
+    messageId: MessageId,
+    body: Schema.String,
+  }),
+  success: Schema.Void,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowSetProjectScriptTrustRpc = Rpc.make(
+  WORKFLOW_WS_METHODS.setProjectScriptTrust,
+  {
+    payload: Schema.Struct({ projectId: ProjectId, trusted: Schema.Boolean }),
+    success: Schema.Void,
+    error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsWorkflowCancelStepRpc = Rpc.make(WORKFLOW_WS_METHODS.cancelStep, {
+  payload: Schema.Struct({ stepRunId: StepRunId }),
+  success: Schema.Void,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowGetTicketDetailRpc = Rpc.make(WORKFLOW_WS_METHODS.getTicketDetail, {
+  payload: Schema.Struct({ ticketId: TicketId }),
+  success: WorkflowTicketDetailView,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowIntakeTicketsRpc = Rpc.make(WORKFLOW_WS_METHODS.intakeTickets, {
+  payload: Schema.Struct({
+    boardId: BoardId,
+    braindump: WorkflowIntakeBraindump,
+    agent: AgentSelection,
+  }),
+  success: WorkflowIntakeResult,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowListTicketArtifactsRpc = Rpc.make(WORKFLOW_WS_METHODS.listTicketArtifacts, {
+  payload: Schema.Struct({ ticketId: TicketId }),
+  success: WorkflowTicketArtifactsResult,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowGetWebhookConfigRpc = Rpc.make(WORKFLOW_WS_METHODS.getWebhookConfig, {
+  payload: Schema.Struct({ boardId: BoardId, rotate: Schema.optional(Schema.Boolean) }),
+  success: WorkflowWebhookConfig,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowGetBoardDigestRpc = Rpc.make(WORKFLOW_WS_METHODS.getBoardDigest, {
+  payload: Schema.Struct({ boardId: BoardId, windowHours: Schema.optional(Schema.Int) }),
+  success: WorkflowBoardDigest,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowGetBoardMetricsRpc = Rpc.make(WORKFLOW_WS_METHODS.getBoardMetrics, {
+  payload: Schema.Struct({ boardId: BoardId, windowDays: Schema.optional(Schema.Int) }),
+  success: WorkflowBoardMetrics,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowDryRunBoardRpc = Rpc.make(WORKFLOW_WS_METHODS.dryRunBoard, {
+  payload: Schema.Struct({
+    definition: WorkflowDefinitionEncoded,
+    startLane: LaneKey,
+    scenario: WorkflowDryRunScenario,
+  }),
+  success: WorkflowDryRunResult,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowGetTicketDiffRpc = Rpc.make(WORKFLOW_WS_METHODS.getTicketDiff, {
+  payload: Schema.Struct({ ticketId: TicketId }),
+  success: TicketDiff,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowListNeedsAttentionTicketsRpc = Rpc.make(
+  WORKFLOW_WS_METHODS.listNeedsAttentionTickets,
+  {
+    payload: Schema.Struct({}),
+    success: Schema.Array(WorkflowNeedsAttentionTicketView),
+    error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsWorkflowListWorkSourceConnectionsRpc = Rpc.make(
+  WORKFLOW_WS_METHODS.listWorkSourceConnections,
+  {
+    payload: Schema.Struct({}),
+    success: Schema.Array(WorkSourceConnectionView),
+    error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsWorkflowCreateWorkSourceConnectionRpc = Rpc.make(
+  WORKFLOW_WS_METHODS.createWorkSourceConnection,
+  {
+    payload: Schema.Struct({
+      provider: WorkSourceProviderName,
+      displayName: TrimmedNonEmptyString,
+      token: TrimmedNonEmptyString,
+      authMode: Schema.optional(Schema.Literals(["pat", "basic", "bearer"])),
+      baseUrl: Schema.optional(Schema.String),
+      email: Schema.optional(Schema.String),
+    }),
+    success: WorkSourceConnectionView,
+    error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsWorkflowDeleteWorkSourceConnectionRpc = Rpc.make(
+  WORKFLOW_WS_METHODS.deleteWorkSourceConnection,
+  {
+    payload: Schema.Struct({ connectionRef: TrimmedNonEmptyString }),
+    success: Schema.Void,
+    error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsWorkflowListOutboundConnectionsRpc = Rpc.make(
+  WORKFLOW_WS_METHODS.listOutboundConnections,
+  {
+    payload: Schema.Struct({}),
+    success: Schema.Struct({ connections: Schema.Array(OutboundConnectionView) }),
+    error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsWorkflowCreateOutboundConnectionRpc = Rpc.make(
+  WORKFLOW_WS_METHODS.createOutboundConnection,
+  {
+    payload: CreateOutboundConnectionInput,
+    success: Schema.Struct({ connection: OutboundConnectionView }),
+    error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsWorkflowDeleteOutboundConnectionRpc = Rpc.make(
+  WORKFLOW_WS_METHODS.deleteOutboundConnection,
+  {
+    payload: Schema.Struct({ connectionRef: TrimmedNonEmptyString }),
+    success: Schema.Void,
+    error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsWorkflowProposeBoardImprovementRpc = Rpc.make(
+  WORKFLOW_WS_METHODS.proposeBoardImprovement,
+  {
+    payload: WorkflowProposeBoardImprovementInput,
+    success: WorkflowProposeBoardImprovementResult,
+    error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsWorkflowListBoardProposalsRpc = Rpc.make(WORKFLOW_WS_METHODS.listBoardProposals, {
+  payload: WorkflowListBoardProposalsInput,
+  success: WorkflowListBoardProposalsResult,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowGetBoardProposalRpc = Rpc.make(WORKFLOW_WS_METHODS.getBoardProposal, {
+  payload: WorkflowGetBoardProposalInput,
+  success: WorkflowGetBoardProposalResult,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowResolveBoardProposalRpc = Rpc.make(
+  WORKFLOW_WS_METHODS.resolveBoardProposal,
+  {
+    payload: WorkflowResolveBoardProposalInput,
+    success: WorkflowResolveBoardProposalResult,
+    error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsWorkflowRevertBoardProposalRpc = Rpc.make(WORKFLOW_WS_METHODS.revertBoardProposal, {
+  payload: WorkflowRevertBoardProposalInput,
+  success: WorkflowRevertBoardProposalResult,
+  error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkflowListImportableWorkItemsRpc = Rpc.make(
+  WORKFLOW_WS_METHODS.listImportableWorkItems,
+  {
+    payload: Schema.Struct({ boardId: BoardId }),
+    success: ListImportableWorkItemsResult,
+    error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsWorkflowImportWorkItemsRpc = Rpc.make(
+  WORKFLOW_WS_METHODS.importWorkItems,
+  {
+    payload: Schema.Struct({
+      boardId: BoardId,
+      sourceId: Schema.String,
+      externalIds: Schema.Array(Schema.String),
+      destinationLane: Schema.optional(LaneKey),
+    }),
+    success: ImportWorkItemsResult,
+    error: Schema.Union([WorkflowRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -721,6 +1166,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsReviewGetDiffPreviewRpc,
   WsTerminalOpenRpc,
   WsTerminalAttachRpc,
+  WsTerminalAttachHistoryRpc,
   WsTerminalWriteRpc,
   WsTerminalResizeRpc,
   WsTerminalClearRpc,
@@ -750,4 +1196,50 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsWorkflowListBoardsRpc,
+  WsWorkflowCreateBoardRpc,
+  WsWorkflowDeleteBoardRpc,
+  WsWorkflowRenameBoardRpc,
+  WsWorkflowGetBoardRpc,
+  WsWorkflowGetBoardDefinitionRpc,
+  WsWorkflowSaveBoardDefinitionRpc,
+  WsWorkflowImportBoardRpc,
+  WsWorkflowCreateWorkflowBoardRpc,
+  WsWorkflowGenerateWorkflowDraftRpc,
+  WsWorkflowListBoardTemplatesRpc,
+  WsWorkflowListBoardVersionsRpc,
+  WsWorkflowGetBoardVersionRpc,
+  WsWorkflowSubscribeBoardRpc,
+  WsWorkflowCreateTicketRpc,
+  WsWorkflowEditTicketRpc,
+  WsWorkflowMoveTicketRpc,
+  WsWorkflowRunLaneRpc,
+  WsWorkflowResolveApprovalRpc,
+  WsWorkflowAnswerTicketStepRpc,
+  WsWorkflowPostTicketMessageRpc,
+  WsWorkflowEditTicketMessageRpc,
+  WsWorkflowSetProjectScriptTrustRpc,
+  WsWorkflowCancelStepRpc,
+  WsWorkflowGetTicketDetailRpc,
+  WsWorkflowGetTicketDiffRpc,
+  WsWorkflowIntakeTicketsRpc,
+  WsWorkflowListTicketArtifactsRpc,
+  WsWorkflowGetWebhookConfigRpc,
+  WsWorkflowGetBoardDigestRpc,
+  WsWorkflowGetBoardMetricsRpc,
+  WsWorkflowDryRunBoardRpc,
+  WsWorkflowListNeedsAttentionTicketsRpc,
+  WsWorkflowListWorkSourceConnectionsRpc,
+  WsWorkflowCreateWorkSourceConnectionRpc,
+  WsWorkflowDeleteWorkSourceConnectionRpc,
+  WsWorkflowListOutboundConnectionsRpc,
+  WsWorkflowCreateOutboundConnectionRpc,
+  WsWorkflowDeleteOutboundConnectionRpc,
+  WsWorkflowProposeBoardImprovementRpc,
+  WsWorkflowListBoardProposalsRpc,
+  WsWorkflowGetBoardProposalRpc,
+  WsWorkflowResolveBoardProposalRpc,
+  WsWorkflowRevertBoardProposalRpc,
+  WsWorkflowListImportableWorkItemsRpc,
+  WsWorkflowImportWorkItemsRpc,
 );

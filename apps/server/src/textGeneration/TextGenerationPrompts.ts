@@ -216,3 +216,44 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// Board proposal (self-improving boards meta-agent)
+// ---------------------------------------------------------------------------
+
+export interface BoardProposalPromptInput {
+  /**
+   * Fully assembled prompt (metrics + current board definition + instructions)
+   * built by the caller. This builder only wraps it with the structured-output
+   * contract and supplies the output schema.
+   */
+  prompt: string;
+}
+
+export function buildBoardProposalPrompt(input: BoardProposalPromptInput) {
+  const prompt = [
+    "You analyze workflow board metrics and propose an improved board definition.",
+    "Return a JSON object with keys: proposedDefinition, rationale.",
+    "Rules:",
+    // proposedDefinition is a STRING (the definition serialized with JSON.stringify),
+    // NOT a nested object. Provider structured-output schemas (OpenAI/Codex
+    // `text.format.schema`) reject a property with no concrete `type`, so the full
+    // recursive WorkflowDefinition cannot be expressed inline — the model returns it
+    // as a JSON string and the server parses it back.
+    "- proposedDefinition must be a STRING containing the complete workflow/board definition serialized as JSON (i.e. JSON.stringify of the definition object)",
+    "- rationale must concisely explain why the proposal improves the board",
+    "- do not attempt to apply, save, or write the definition anywhere; only return it",
+    "",
+    input.prompt,
+  ].join("\n");
+
+  const outputSchema = Schema.Struct({
+    // `fromJsonString(Unknown)`: wire/JSON-schema type is `string` (valid for every
+    // provider's structured-output validator), and decode JSON.parses it back into
+    // the definition object so callers receive an object exactly as before.
+    proposedDefinition: Schema.fromJsonString(Schema.Unknown),
+    rationale: Schema.String,
+  });
+
+  return { prompt, outputSchema };
+}

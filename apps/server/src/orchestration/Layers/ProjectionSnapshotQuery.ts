@@ -369,6 +369,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_threads
         WHERE deleted_at IS NULL
           AND archived_at IS NULL
+          AND hidden = 0
         ORDER BY project_id ASC, created_at ASC, thread_id ASC
       `,
   });
@@ -399,6 +400,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_threads
         WHERE deleted_at IS NULL
           AND archived_at IS NOT NULL
+          AND hidden = 0
         ORDER BY project_id ASC, archived_at DESC, thread_id DESC
       `,
   });
@@ -508,6 +510,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           ON threads.thread_id = sessions.thread_id
         WHERE threads.deleted_at IS NULL
           AND threads.archived_at IS NULL
+          AND threads.hidden = 0
         ORDER BY sessions.thread_id ASC
       `,
   });
@@ -533,6 +536,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           ON threads.thread_id = sessions.thread_id
         WHERE threads.deleted_at IS NULL
           AND threads.archived_at IS NOT NULL
+          AND threads.hidden = 0
         ORDER BY sessions.thread_id ASC
       `,
   });
@@ -602,6 +606,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           AND turns.turn_id = threads.latest_turn_id
         WHERE threads.deleted_at IS NULL
           AND threads.archived_at IS NULL
+          AND threads.hidden = 0
           AND threads.latest_turn_id IS NOT NULL
         ORDER BY turns.thread_id ASC
       `,
@@ -628,6 +633,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           AND turns.turn_id = threads.latest_turn_id
         WHERE threads.deleted_at IS NULL
           AND threads.archived_at IS NOT NULL
+          AND threads.hidden = 0
           AND threads.latest_turn_id IS NOT NULL
         ORDER BY turns.thread_id ASC
       `,
@@ -711,6 +717,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         WHERE project_id = ${projectId}
           AND deleted_at IS NULL
           AND archived_at IS NULL
+          AND hidden = 0
         ORDER BY created_at ASC, thread_id ASC
         LIMIT 1
       `,
@@ -1012,16 +1019,36 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         Effect.flatMap(
           ([
             projectRows,
-            threadRows,
-            messageRows,
-            proposedPlanRows,
-            activityRows,
-            sessionRows,
-            checkpointRows,
-            latestTurnRows,
+            allThreadRows,
+            allMessageRows,
+            allProposedPlanRows,
+            allActivityRows,
+            allSessionRows,
+            allCheckpointRows,
+            allLatestTurnRows,
             stateRows,
           ]) =>
             Effect.gen(function* () {
+              // The public snapshot must never expose hidden (workflow
+              // internal) threads or any of their child rows; the decider's
+              // command read model keeps them via getCommandReadModel.
+              const hiddenThreadIds = new Set(
+                (yield* listHiddenThreadIds.pipe(
+                  Effect.mapError(
+                    toPersistenceSqlError("ProjectionSnapshotQuery.getSnapshot:listHidden:query"),
+                  ),
+                )).map((row) => row.threadId),
+              );
+              const visible = <Row extends { readonly threadId: string }>(
+                rows: ReadonlyArray<Row>,
+              ) => rows.filter((row) => !hiddenThreadIds.has(row.threadId));
+              const threadRows = visible(allThreadRows);
+              const messageRows = visible(allMessageRows);
+              const proposedPlanRows = visible(allProposedPlanRows);
+              const activityRows = visible(allActivityRows);
+              const sessionRows = visible(allSessionRows);
+              const checkpointRows = visible(allCheckpointRows);
+              const latestTurnRows = visible(allLatestTurnRows);
               const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
               const activitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
@@ -1894,6 +1921,22 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       } satisfies OrchestrationThreadShell);
     });
 
+  const listHiddenThreadIds = sql<{ readonly threadId: string }>`
+    SELECT thread_id AS "threadId"
+    FROM projection_threads
+    WHERE hidden = 1
+  `;
+
+  const isThreadHidden: ProjectionSnapshotQueryShape["isThreadHidden"] = (threadId) =>
+    sql<{ readonly hidden: number }>`
+      SELECT hidden
+      FROM projection_threads
+      WHERE thread_id = ${threadId}
+    `.pipe(
+      Effect.map((rows) => (rows[0]?.hidden ?? 0) !== 0),
+      Effect.mapError(toPersistenceSqlError("ProjectionSnapshotQuery.isThreadHidden:query")),
+    );
+
   const getThreadDetailById: ProjectionSnapshotQueryShape["getThreadDetailById"] = (threadId) =>
     Effect.gen(function* () {
       const [
@@ -2047,6 +2090,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getFullThreadDiffContext,
     getThreadShellById,
     getThreadDetailById,
+    isThreadHidden,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

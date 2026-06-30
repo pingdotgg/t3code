@@ -43,6 +43,14 @@
       "types": "./src/state/auth.ts",
       "default": "./src/state/auth.ts"
     },
+    "./state/board-state": {
+      "types": "./src/state/boardState.ts",
+      "default": "./src/state/boardState.ts"
+    },
+    "./state/workflow": {
+      "types": "./src/state/workflow.ts",
+      "default": "./src/state/workflow.ts"
+    },
     "./state/assets": {
       "types": "./src/state/assets.ts",
       "default": "./src/state/assets.ts"

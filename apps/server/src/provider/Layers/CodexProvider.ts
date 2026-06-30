@@ -146,16 +146,24 @@ export function mapCodexModelCapabilities(
     });
   }
   if (serviceTiers.length > 0) {
+    // Only synthesize the Standard option when the catalog doesn't already
+    // carry a 'default' tier — otherwise the catalog entry (mapped below with
+    // its own name/description) would be duplicated.
+    const hasCatalogDefaultTier = serviceTiers.some((tier) => tier.id === DEFAULT_SERVICE_TIER_ID);
     optionDescriptors.push({
       id: "serviceTier",
       label: "Service Tier",
       type: "select",
       options: [
-        {
-          id: DEFAULT_SERVICE_TIER_ID,
-          label: "Standard",
-          ...(defaultServiceTier === DEFAULT_SERVICE_TIER_ID ? { isDefault: true } : {}),
-        },
+        ...(hasCatalogDefaultTier
+          ? []
+          : [
+              {
+                id: DEFAULT_SERVICE_TIER_ID,
+                label: "Standard",
+                ...(defaultServiceTier === DEFAULT_SERVICE_TIER_ID ? { isDefault: true } : {}),
+              },
+            ]),
         ...serviceTiers.map((tier) => ({
           id: tier.id,
           label: tier.name,

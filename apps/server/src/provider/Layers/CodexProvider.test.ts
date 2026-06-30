@@ -64,6 +64,59 @@ it("maps current Codex model capability fields", () => {
   ]);
 });
 
+it("does not duplicate the default option when the catalog carries a 'default' tier", () => {
+  const capabilities = mapCodexModelCapabilities({
+    additionalSpeedTiers: [],
+    defaultReasoningEffort: "medium",
+    defaultServiceTier: "default",
+    description: "Test model",
+    displayName: "GPT Test",
+    hidden: false,
+    id: "gpt-test",
+    isDefault: true,
+    model: "gpt-test",
+    serviceTiers: [
+      {
+        id: "default",
+        name: "Standard",
+        description: "Balanced speed and cost.",
+      },
+      {
+        id: "priority",
+        name: "Fast",
+        description: "Lower latency responses.",
+      },
+    ],
+    supportedReasoningEfforts: [],
+  });
+
+  const serviceTier = capabilities.optionDescriptors?.find(
+    (descriptor) => descriptor.id === "serviceTier",
+  );
+  assert.deepStrictEqual(serviceTier, {
+    id: "serviceTier",
+    label: "Service Tier",
+    type: "select",
+    options: [
+      {
+        id: "default",
+        label: "Standard",
+        description: "Balanced speed and cost.",
+        isDefault: true,
+      },
+      {
+        id: "priority",
+        label: "Fast",
+        description: "Lower latency responses.",
+      },
+    ],
+    currentValue: "default",
+  });
+  const options = serviceTier?.type === "select" ? serviceTier.options : [];
+  assert.strictEqual(options.filter((option) => option.id === "default").length, 1);
+  assert.strictEqual(options.filter((option) => option.isDefault === true).length, 1);
+});
+
 it("uses standard routing when the catalog has no default service tier", () => {
   const capabilities = mapCodexModelCapabilities({
     additionalSpeedTiers: ["fast"],

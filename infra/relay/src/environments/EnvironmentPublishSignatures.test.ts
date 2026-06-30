@@ -4,7 +4,11 @@ import type {
   RelayAgentActivityPublishProofPayload,
   RelayAgentActivityPublishRequest,
   RelayAgentActivityState,
+  RelayBoardTicketPublishProofPayload,
+  RelayBoardTicketPublishRequest,
+  RelayBoardTicketState,
 } from "@t3tools/contracts/relay";
+import { RELAY_BOARD_TICKET_PUBLISH_TYP } from "@t3tools/contracts/relay";
 import { RELAY_ACTIVITY_PUBLISH_TYP } from "@t3tools/shared/relayJwt";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import { describe, expect, it } from "@effect/vitest";
@@ -82,6 +86,46 @@ const freshRequest = Effect.gen(function* () {
     state,
     proof: signTestJwt(payload, keyPair.privateKey),
   } satisfies RelayAgentActivityPublishRequest;
+});
+
+const boardTicketState: RelayBoardTicketState = {
+  environmentId: "env" as RelayBoardTicketState["environmentId"],
+  boardId: "board" as RelayBoardTicketState["boardId"],
+  ticketId: "ticket" as RelayBoardTicketState["ticketId"],
+  attentionKind: "waiting_for_approval",
+  title: "Needs approval",
+  body: "Approve the deploy step",
+  deepLink: "/boards/env/board/ticket",
+  transitionId: "transition" as RelayBoardTicketState["transitionId"],
+};
+
+function signBoardTicketJwt(payload: object, privateKey: string): string {
+  const header = Buffer.from(
+    JSON.stringify({ alg: "EdDSA", typ: RELAY_BOARD_TICKET_PUBLISH_TYP }),
+  ).toString("base64url");
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signingInput = `${header}.${encodedPayload}`;
+  return `${signingInput}.${NodeCrypto.sign(null, Buffer.from(signingInput), privateKey).toString("base64url")}`;
+}
+
+const freshBoardTicketRequest = Effect.gen(function* () {
+  const now = yield* DateTime.now;
+  const payload = {
+    iss: "t3-env:env",
+    aud: "https://relay.example.test",
+    sub: "env",
+    jti: "board-publish-jti",
+    iat: Math.floor(now.epochMilliseconds / 1_000),
+    exp: Math.floor(DateTime.add(now, { minutes: 5 }).epochMilliseconds / 1_000),
+    environmentId: boardTicketState.environmentId,
+    boardId: boardTicketState.boardId,
+    ticketId: boardTicketState.ticketId,
+    state: boardTicketState,
+  } satisfies RelayBoardTicketPublishProofPayload;
+  return {
+    state: boardTicketState,
+    proof: signBoardTicketJwt(payload, keyPair.privateKey),
+  } satisfies RelayBoardTicketPublishRequest;
 });
 
 function layer(replay?: Partial<DpopProofs.DpopProofReplay["Service"]>) {
@@ -220,5 +264,50 @@ describe("EnvironmentPublishSignatures", () => {
         }
       }
     }).pipe(Effect.provide(layer({ consume: () => Effect.succeed(false) }))),
+  );
+
+  it.effect("verifies a validly-signed board-ticket proof", () =>
+    Effect.gen(function* () {
+      const request = yield* freshBoardTicketRequest;
+      const signatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
+      yield* signatures.verifyBoardTicket({
+        environmentId: boardTicketState.environmentId,
+        environmentPublicKey: keyPair.publicKey,
+        ticketId: boardTicketState.ticketId,
+        request,
+      });
+    }).pipe(Effect.provide(layer())),
+  );
+
+  it.effect("rejects a board-ticket proof whose ticketId differs from the path ticketId", () =>
+    Effect.gen(function* () {
+      const request = yield* freshBoardTicketRequest;
+      const signatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
+      const result = yield* Effect.result(
+        signatures.verifyBoardTicket({
+          environmentId: boardTicketState.environmentId,
+          environmentPublicKey: keyPair.publicKey,
+          ticketId: "other-ticket",
+          request,
+        }),
+      );
+      expect(Result.isFailure(result)).toBe(true);
+    }).pipe(Effect.provide(layer())),
+  );
+
+  it.effect("rejects board-ticket state tampering", () =>
+    Effect.gen(function* () {
+      const request = yield* freshBoardTicketRequest;
+      const signatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
+      const result = yield* Effect.result(
+        signatures.verifyBoardTicket({
+          environmentId: boardTicketState.environmentId,
+          environmentPublicKey: keyPair.publicKey,
+          ticketId: boardTicketState.ticketId,
+          request: { ...request, state: { ...boardTicketState, title: "Tampered" } },
+        }),
+      );
+      expect(Result.isFailure(result)).toBe(true);
+    }).pipe(Effect.provide(layer())),
   );
 });

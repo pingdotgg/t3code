@@ -25,6 +25,14 @@ export const RelayAgentAwarenessPhase = Schema.Literals([
 ]);
 export type RelayAgentAwarenessPhase = typeof RelayAgentAwarenessPhase.Type;
 
+// Intentional copy — keep in sync with WorkflowTicketAttentionKind in workflow.ts.
+export const WorkflowTicketAttentionKind = Schema.Literals([
+  "waiting_for_approval",
+  "waiting_for_input",
+  "blocked",
+]);
+export type WorkflowTicketAttentionKind = typeof WorkflowTicketAttentionKind.Type;
+
 export const RelayAgentAwarenessPreferences = Schema.Struct({
   liveActivitiesEnabled: Schema.Boolean,
   notificationsEnabled: Schema.Boolean,
@@ -32,6 +40,7 @@ export const RelayAgentAwarenessPreferences = Schema.Struct({
   notifyOnInput: Schema.Boolean,
   notifyOnCompletion: Schema.Boolean,
   notifyOnFailure: Schema.Boolean,
+  notifyOnBlocked: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentAwarenessPreferences = typeof RelayAgentAwarenessPreferences.Type;
 
@@ -59,6 +68,7 @@ export const RelayClientDeviceRecord = Schema.Struct({
     notifyOnInput: Schema.Boolean,
     notifyOnCompletion: Schema.Boolean,
     notifyOnFailure: Schema.Boolean,
+    notifyOnBlocked: Schema.Boolean,
   }),
   liveActivities: Schema.Struct({
     enabled: Schema.Boolean,
@@ -196,6 +206,35 @@ export const RelayAgentActivityPublishRequest = Schema.Struct({
   }),
 }).annotate({ description: "Publishes a signed agent-awareness update from an environment." });
 export type RelayAgentActivityPublishRequest = typeof RelayAgentActivityPublishRequest.Type;
+
+export const RELAY_BOARD_TICKET_PUBLISH_TYP = "t3-relay-board-ticket-publish+jwt" as const;
+
+export const RelayBoardTicketState = Schema.Struct({
+  environmentId: EnvironmentId,
+  boardId: TrimmedNonEmptyString,
+  ticketId: TrimmedNonEmptyString,
+  attentionKind: WorkflowTicketAttentionKind,
+  title: TrimmedNonEmptyString,
+  body: TrimmedNonEmptyString,
+  deepLink: TrimmedNonEmptyString,
+  transitionId: TrimmedNonEmptyString,
+});
+export type RelayBoardTicketState = typeof RelayBoardTicketState.Type;
+
+export const RelayBoardTicketPublishProofPayload = Schema.Struct({
+  ...RelaySignedJwtRegisteredClaims,
+  environmentId: EnvironmentId,
+  boardId: TrimmedNonEmptyString,
+  ticketId: TrimmedNonEmptyString,
+  state: Schema.NullOr(RelayBoardTicketState),
+});
+export type RelayBoardTicketPublishProofPayload = typeof RelayBoardTicketPublishProofPayload.Type;
+
+export const RelayBoardTicketPublishRequest = Schema.Struct({
+  state: Schema.NullOr(RelayBoardTicketState),
+  proof: TrimmedNonEmptyString,
+});
+export type RelayBoardTicketPublishRequest = typeof RelayBoardTicketPublishRequest.Type;
 
 export const RelayEnvironmentLinkScope = Schema.Literals([
   "agent_activity_notifications",
@@ -989,6 +1028,19 @@ export const RelayServerGroup = HttpApiGroup.make("server")
         error: RelayAgentActivityPublishErrors,
       },
     ).annotate(OpenApi.Summary, "Publish agent activity"),
+    HttpApiEndpoint.post(
+      "publishBoardTicket",
+      "/v1/environments/:environmentId/tickets/:ticketId/board-activity",
+      {
+        params: Schema.Struct({
+          environmentId: EnvironmentId,
+          ticketId: TrimmedNonEmptyString,
+        }),
+        payload: RelayBoardTicketPublishRequest,
+        success: RelayPublishResponse,
+        error: RelayAgentActivityPublishErrors,
+      },
+    ).annotate(OpenApi.Summary, "Publish board ticket attention"),
   )
   .annotate(OpenApi.Description, "Environment-authenticated activity publication.")
   .middleware(RelayEnvironmentAuth);

@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { AuthStandardClientScopes } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -140,13 +141,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
 
       expect(verified.method).toBe("bearer-access-token");
       expect(verified.subject).toBe("test-clock");
-      expect(verified.scopes).toEqual([
-        "orchestration:read",
-        "orchestration:operate",
-        "terminal:operate",
-        "review:write",
-        "relay:read",
-      ]);
+      expect(verified.scopes).toEqual([...AuthStandardClientScopes]);
     }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
   );
 

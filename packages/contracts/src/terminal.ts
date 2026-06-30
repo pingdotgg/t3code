@@ -57,6 +57,9 @@ export const TerminalAttachInput = Schema.Struct({
 });
 export type TerminalAttachInput = Schema.Codec.Encoded<typeof TerminalAttachInput>;
 
+export const TerminalHistoryAttachInput = TerminalSessionInput;
+export type TerminalHistoryAttachInput = Schema.Codec.Encoded<typeof TerminalHistoryAttachInput>;
+
 export const TerminalWriteInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   data: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
@@ -231,6 +234,33 @@ export const TerminalAttachStreamEvent = Schema.Union([
   TerminalActivityEvent,
 ]);
 export type TerminalAttachStreamEvent = typeof TerminalAttachStreamEvent.Type;
+
+const TerminalHistoryAttachSnapshot = Schema.Struct({
+  threadId: Schema.String.check(Schema.isNonEmpty()),
+  terminalId: Schema.String.check(Schema.isNonEmpty()),
+  history: Schema.String,
+  status: Schema.NullOr(TerminalSessionStatus),
+  exitCode: Schema.NullOr(Schema.Int),
+  exitSignal: Schema.NullOr(Schema.Int),
+  sequence: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+});
+export type TerminalHistoryAttachSnapshot = typeof TerminalHistoryAttachSnapshot.Type;
+
+const TerminalHistoryAttachSnapshotEvent = Schema.Struct({
+  type: Schema.Literal("snapshot"),
+  snapshot: TerminalHistoryAttachSnapshot,
+});
+
+export const TerminalHistoryAttachStreamEvent = Schema.Union([
+  TerminalHistoryAttachSnapshotEvent,
+  TerminalOutputEvent,
+  TerminalExitedEvent,
+  TerminalClosedEvent,
+  TerminalErrorEvent,
+  TerminalClearedEvent,
+  TerminalActivityEvent,
+]);
+export type TerminalHistoryAttachStreamEvent = typeof TerminalHistoryAttachStreamEvent.Type;
 
 export class TerminalCwdNotFoundError extends Schema.TaggedErrorClass<TerminalCwdNotFoundError>()(
   "TerminalCwdNotFoundError",

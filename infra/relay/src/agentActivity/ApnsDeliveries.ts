@@ -611,7 +611,7 @@ export const make = Effect.gen(function* () {
     const notification = sanitizeApnsNotificationPayload(input.notification);
     yield* Effect.annotateCurrentSpan({
       "relay.environment_id": notification.environmentId,
-      "relay.thread_id": notification.threadId,
+      ...(notification.threadId !== undefined ? { "relay.thread_id": notification.threadId } : {}),
     });
     const request = apns.makePushNotificationRequest({
       token: input.token,
@@ -630,7 +630,7 @@ export const make = Effect.gen(function* () {
       const claim = yield* attempts.claimSourceJob({
         userId: input.target.user_id,
         environmentId: notification.environmentId,
-        threadId: notification.threadId,
+        threadId: notification.threadId ?? null,
         deviceId: input.target.device_id,
         kind: "push_notification",
         sourceJobId: input.sourceJobId,
@@ -691,7 +691,7 @@ export const make = Effect.gen(function* () {
       yield* attempts.record({
         userId: input.target.user_id,
         environmentId: notification.environmentId,
-        threadId: notification.threadId,
+        threadId: notification.threadId ?? null,
         deviceId: input.target.device_id,
         kind: "push_notification",
         token: input.token,

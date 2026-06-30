@@ -147,6 +147,75 @@ describe("ApnsClient", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
+  it.effect(
+    "REGRESSION: thread-shaped payload serializes exactly as before (threadId+deepLink, no board/ticket keys)",
+    () =>
+      Effect.gen(function* () {
+        const apns = yield* ApnsClient.ApnsClient;
+        const request = apns.makePushNotificationRequest({
+          token: "push-token",
+          notification: {
+            title: "Thread",
+            body: "Input: Project",
+            environmentId: "env",
+            threadId: "thread",
+            deepLink: "/threads/env/thread",
+          },
+        });
+
+        // payload must carry threadId and deepLink, and must NOT carry boardId or ticketId
+        expect(request.payload).toEqual({
+          aps: {
+            alert: {
+              title: "Thread",
+              body: "Input: Project",
+            },
+            sound: "default",
+          },
+          environmentId: "env",
+          threadId: "thread",
+          deepLink: "/threads/env/thread",
+        });
+        expect(request.payload).not.toHaveProperty("boardId");
+        expect(request.payload).not.toHaveProperty("ticketId");
+      }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("builds a ticket-shaped APNs payload with boardId+ticketId, no threadId", () =>
+    Effect.gen(function* () {
+      const apns = yield* ApnsClient.ApnsClient;
+      const request = apns.makePushNotificationRequest({
+        token: "push-token",
+        notification: {
+          title: "Ticket ready",
+          body: "Review: My Board",
+          environmentId: "env",
+          boardId: "board-1",
+          ticketId: "ticket-1",
+          deepLink: "/tickets/env/board-1/ticket-1",
+        },
+      });
+
+      expect(request.priority).toBe("10");
+      // must carry boardId, ticketId, and deepLink — and NO threadId key
+      expect(request.payload).toEqual({
+        aps: {
+          alert: {
+            title: "Ticket ready",
+            body: "Review: My Board",
+          },
+          sound: "default",
+        },
+        environmentId: "env",
+        boardId: "board-1",
+        ticketId: "ticket-1",
+        deepLink: "/tickets/env/board-1/ticket-1",
+      });
+      // must NOT carry threadId at all (toEqual above makes this redundant, kept for clarity)
+      expect(request.payload).not.toHaveProperty("threadId");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("preserves JWT signing context and the crypto cause", () =>
     Effect.gen(function* () {
       const apns = yield* ApnsClient.ApnsClient;

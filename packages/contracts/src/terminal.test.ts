@@ -13,6 +13,8 @@ import {
   TerminalThreadInput,
   TerminalWriteInput,
 } from "./terminal.ts";
+import * as TerminalContracts from "./terminal.ts";
+import { WS_METHODS } from "./rpc.ts";
 
 function decodeSync<S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.Type<S> {
   return Schema.decodeUnknownSync(schema as never)(input) as Schema.Schema.Type<S>;
@@ -120,6 +122,31 @@ describe("TerminalAttachInput", () => {
     });
 
     expect(parsed.restartIfNotRunning).toBe(true);
+  });
+});
+
+describe("TerminalHistoryAttachInput", () => {
+  it("accepts terminal identity without a cwd", () => {
+    const schema = (TerminalContracts as unknown as Record<string, Schema.Top | undefined>)
+      .TerminalHistoryAttachInput;
+    expect(schema).toBeDefined();
+    if (!schema) return;
+
+    const parsed = decodeSync(schema, {
+      threadId: "script-thread-1",
+      terminalId: "script-terminal-1",
+    }) as { readonly threadId: string; readonly terminalId: string };
+
+    expect(parsed).toEqual({
+      threadId: "script-thread-1",
+      terminalId: "script-terminal-1",
+    });
+  });
+
+  it("defines a history-only terminal RPC method", () => {
+    expect((WS_METHODS as Record<string, string>).terminalAttachHistory).toBe(
+      "terminal.attachHistory",
+    );
   });
 });
 

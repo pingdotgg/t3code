@@ -123,6 +123,13 @@ it("requires a settlement to match the live Grok turn", () => {
 });
 
 it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
+  it.effect("declares session resume support in its capabilities", () =>
+    Effect.gen(function* () {
+      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      assert.equal(adapter.capabilities.supportsSessionResume, true);
+    }),
+  );
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-mock-thread");

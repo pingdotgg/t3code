@@ -242,6 +242,7 @@ export const make = Effect.gen(function* () {
           notifyOnInput: row.preferences.notifyOnInput,
           notifyOnCompletion: row.preferences.notifyOnCompletion,
           notifyOnFailure: row.preferences.notifyOnFailure,
+          notifyOnBlocked: row.preferences.notifyOnBlocked ?? true,
         },
         liveActivities: {
           enabled: row.preferences.liveActivitiesEnabled,

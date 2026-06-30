@@ -369,7 +369,11 @@ export const make = Effect.gen(function* () {
         });
       });
 
-    const thread = yield* snapshotQuery.getThreadShellById(threadId);
+    // Hidden (workflow-internal) threads are never published externally.
+    const threadHidden = yield* snapshotQuery.isThreadHidden(threadId);
+    const thread = threadHidden
+      ? Option.none<OrchestrationThreadShell>()
+      : yield* snapshotQuery.getThreadShellById(threadId);
     const project = Option.isSome(thread)
       ? yield* snapshotQuery.getProjectShellById(thread.value.projectId)
       : Option.none<OrchestrationProjectShell>();

@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentOrchestrationHttpApi } from "@t3tools/contracts";
+import { AuthAdministrativeScopes, EnvironmentOrchestrationHttpApi } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -77,6 +77,7 @@ const makeCliTestServerConfig = (baseDir: string) =>
       ...derivedPaths,
       staticDir: undefined,
       devUrl: undefined,
+      webBaseUrl: undefined,
       noBrowser: true,
       startupPresentation: "browser",
       desktopBootstrapToken: undefined,
@@ -362,28 +363,10 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
 
       assert.equal(typeof issued.sessionId, "string");
       assert.equal(typeof issued.token, "string");
-      assert.deepEqual(issued.scopes, [
-        "orchestration:read",
-        "orchestration:operate",
-        "terminal:operate",
-        "review:write",
-        "relay:read",
-        "access:read",
-        "access:write",
-        "relay:write",
-      ]);
+      assert.deepEqual(issued.scopes, [...AuthAdministrativeScopes]);
       assert.equal(listed.length, 1);
       assert.equal(listed[0]?.sessionId, issued.sessionId);
-      assert.deepEqual(listed[0]?.scopes, [
-        "orchestration:read",
-        "orchestration:operate",
-        "terminal:operate",
-        "review:write",
-        "relay:read",
-        "access:read",
-        "access:write",
-        "relay:write",
-      ]);
+      assert.deepEqual(listed[0]?.scopes, [...AuthAdministrativeScopes]);
       assert.equal("token" in (listed[0] ?? {}), false);
     }),
   );

@@ -6,7 +6,9 @@ import {
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
+  SendIcon,
   Settings2Icon,
+  WorkflowIcon,
 } from "lucide-react";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 
@@ -28,6 +30,8 @@ export type SettingsSectionPath =
   | "/settings/providers"
   | "/settings/source-control"
   | "/settings/connections"
+  | "/settings/work-sources"
+  | "/settings/outbound"
   | "/settings/archived";
 
 export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
@@ -40,6 +44,8 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { label: "Providers", to: "/settings/providers", icon: BotIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
+  { label: "Work Sources", to: "/settings/work-sources", icon: WorkflowIcon },
+  { label: "Outbound", to: "/settings/outbound", icon: SendIcon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
 ];
 

@@ -168,6 +168,12 @@ const cursorAdapterTestLayer = it.layer(
 );
 
 cursorAdapterTestLayer("CursorAdapterLive", (it) => {
+  it.effect("declares session resume support in its capabilities", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      assert.equal(adapter.capabilities.supportsSessionResume, true);
+    }),
+  );
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;

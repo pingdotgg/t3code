@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Context from "effect/Context";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -13,6 +14,8 @@ import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthWorkflowOperateScope,
+  AuthWorkflowReadScope,
   AuthReviewWriteScope,
   AuthRelayWriteScope,
   AuthTerminalOperateScope,
@@ -50,10 +53,14 @@ import {
   AssetWorkspaceContextResolutionError,
   EnvironmentAuthorizationError,
   ThreadId,
+  type TicketId,
   type TerminalAttachStreamEvent,
   type TerminalError,
   type TerminalEvent,
+  type TerminalHistoryAttachStreamEvent,
   type TerminalMetadataStreamEvent,
+  WORKFLOW_WS_METHODS,
+  WorkflowRpcError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -74,6 +81,7 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import { ProviderService } from "./provider/Services/ProviderService.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -111,6 +119,31 @@ import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
+import { BoardDiscovery } from "./workflow/Services/BoardDiscovery.ts";
+import { BoardRegistry } from "./workflow/Services/BoardRegistry.ts";
+import { ProjectScriptTrust } from "./workflow/Services/ProjectScriptTrust.ts";
+import { ProjectWorkspaceResolver } from "./workflow/Services/ProjectWorkspaceResolver.ts";
+import { TicketDiffQuery } from "./workflow/Services/TicketDiffQuery.ts";
+import { WorkflowBoardEvents } from "./workflow/Services/WorkflowBoardEvents.ts";
+import { WorkflowBoardSaveLocks } from "./workflow/Services/WorkflowBoardSaveLocks.ts";
+import { WorkflowBoardVersionStore } from "./workflow/Services/WorkflowBoardVersionStore.ts";
+import { WorkflowEngine } from "./workflow/Services/WorkflowEngine.ts";
+import { WorkflowAgentSessionStore } from "./workflow/Services/WorkflowAgentSessionStore.ts";
+import { WorkflowEventStore } from "./workflow/Services/WorkflowEventStore.ts";
+import { WorkflowIntakeService } from "./workflow/Services/WorkflowIntake.ts";
+import { WorkflowThreadJanitor } from "./workflow/Services/WorkflowThreadJanitor.ts";
+import { PredicateEvaluator } from "./workflow/Services/PredicateEvaluator.ts";
+import { WorkflowWebhook } from "./workflow/Services/WorkflowWebhook.ts";
+import { WorkflowWorktreeJanitor } from "./workflow/Services/WorkflowWorktreeJanitor.ts";
+import { WorkflowFileLoader } from "./workflow/Services/WorkflowFileLoader.ts";
+import { WorkflowReadModel } from "./workflow/Services/WorkflowReadModel.ts";
+import { TextGeneration } from "./textGeneration/TextGeneration.ts";
+import { WorkSourceConnectionStore } from "./workflow/Services/WorkSourceConnectionStore.ts";
+import { WorkSourceProviderRegistry } from "./workflow/Services/WorkSourceProvider.ts";
+import { WorkflowSourceCommitter } from "./workflow/Services/WorkflowSourceCommitter.ts";
+import { WorkflowOutboundConnectionStore } from "./workflow/Services/WorkflowOutboundConnectionStore.ts";
+import { workflowRpcHandlers } from "./workflow/Layers/WorkflowRpcHandlers.ts";
+import { ticketBaseRef } from "./workflow/ticketRefs.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
@@ -215,13 +248,26 @@ function projectFileFailureContext(
   switch (error._tag) {
     case "WorkspacePathOutsideRootError":
       return { failure: "workspace_path_outside_root" };
-    case "WorkspaceFileSystemOperationError":
+    case "WorkspaceFileSystemOperationError": {
+      const knownOperations = new Set<string>([
+        "realpath-workspace-root",
+        "realpath-target",
+        "open",
+        "stat",
+        "read",
+        "close",
+        "make-directory",
+        "write-file",
+      ]);
       return {
         failure: "operation_failed",
         resolvedPath: error.resolvedPath,
-        operation: error.operation,
+        ...(knownOperations.has(error.operation)
+          ? { operation: error.operation as ProjectFileOperation }
+          : {}),
         operationPath: error.operationPath,
       };
+    }
     case "WorkspaceFilePathEscapeError":
       return {
         failure: "resolved_path_outside_root",
@@ -274,7 +320,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
-const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
+export const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.dispatchCommand, AuthOrchestrationOperateScope],
   [ORCHESTRATION_WS_METHODS.getTurnDiff, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getFullThreadDiff, AuthOrchestrationReadScope],
@@ -282,6 +328,52 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeThread, AuthOrchestrationReadScope],
+  [WORKFLOW_WS_METHODS.listBoards, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.listNeedsAttentionTickets, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.createBoard, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.deleteBoard, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.renameBoard, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.subscribeBoard, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.getBoard, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.getBoardDefinition, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.saveBoardDefinition, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.listBoardVersions, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.getBoardVersion, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.getTicketDetail, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.getTicketDiff, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.createTicket, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.editTicket, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.moveTicket, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.runLane, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.resolveApproval, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.answerTicketStep, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.postTicketMessage, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.editTicketMessage, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.setProjectScriptTrust, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.cancelStep, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.intakeTickets, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.listTicketArtifacts, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.getWebhookConfig, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.getBoardDigest, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.getBoardMetrics, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.dryRunBoard, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.proposeBoardImprovement, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.listBoardProposals, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.getBoardProposal, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.resolveBoardProposal, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.revertBoardProposal, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.listWorkSourceConnections, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.createWorkSourceConnection, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.deleteWorkSourceConnection, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.listImportableWorkItems, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.importWorkItems, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.listOutboundConnections, AuthWorkflowReadScope],
+  [WORKFLOW_WS_METHODS.createOutboundConnection, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.deleteOutboundConnection, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.importBoard, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.createWorkflowBoard, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.generateWorkflowDraft, AuthWorkflowOperateScope],
+  [WORKFLOW_WS_METHODS.listBoardTemplates, AuthWorkflowReadScope],
   [WS_METHODS.serverGetConfig, AuthOrchestrationReadScope],
   [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUpdateProvider, AuthOrchestrationOperateScope],
@@ -321,6 +413,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.reviewGetDiffPreview, AuthReviewWriteScope],
   [WS_METHODS.terminalOpen, AuthTerminalOperateScope],
   [WS_METHODS.terminalAttach, AuthTerminalOperateScope],
+  [WS_METHODS.terminalAttachHistory, AuthTerminalOperateScope],
   [WS_METHODS.terminalWrite, AuthTerminalOperateScope],
   [WS_METHODS.terminalResize, AuthTerminalOperateScope],
   [WS_METHODS.terminalClear, AuthTerminalOperateScope],
@@ -434,6 +527,62 @@ const makeWsRpcLayer = (
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const relayClient = yield* RelayClient.RelayClient;
+      const workflowEngine = yield* WorkflowEngine;
+      const workflowEventStore = yield* WorkflowEventStore;
+      const workflowWorktreeJanitor = Context.getOption(
+        (yield* Effect.context<never>()) as Context.Context<WorkflowWorktreeJanitor>,
+        WorkflowWorktreeJanitor,
+      );
+      const workflowIntake = Context.getOption(
+        (yield* Effect.context<never>()) as Context.Context<WorkflowIntakeService>,
+        WorkflowIntakeService,
+      );
+      const workflowThreadJanitor = Context.getOption(
+        (yield* Effect.context<never>()) as Context.Context<WorkflowThreadJanitor>,
+        WorkflowThreadJanitor,
+      );
+      const workflowWebhook = Context.getOption(
+        (yield* Effect.context<never>()) as Context.Context<WorkflowWebhook>,
+        WorkflowWebhook,
+      );
+      const workflowAgentSessions = Context.getOption(
+        (yield* Effect.context<never>()) as Context.Context<WorkflowAgentSessionStore>,
+        WorkflowAgentSessionStore,
+      );
+      const workflowProviderService = Context.getOption(
+        (yield* Effect.context<never>()) as Context.Context<ProviderService>,
+        ProviderService,
+      );
+      const workflowPredicates = Context.getOption(
+        (yield* Effect.context<never>()) as Context.Context<PredicateEvaluator>,
+        PredicateEvaluator,
+      );
+      const workflowTextGeneration = Context.getOption(
+        (yield* Effect.context<never>()) as Context.Context<TextGeneration>,
+        TextGeneration,
+      );
+      const workflowReadModel = yield* WorkflowReadModel;
+      const workflowBoardRegistry = yield* BoardRegistry;
+      const workflowTicketDiff = yield* TicketDiffQuery;
+      const workflowBoardEvents = yield* WorkflowBoardEvents;
+      const workflowBoardSaveLocks = yield* WorkflowBoardSaveLocks;
+      const workflowBoardVersions = yield* WorkflowBoardVersionStore;
+      const workflowFileLoader = yield* WorkflowFileLoader;
+      const workflowBoardDiscovery = yield* BoardDiscovery;
+      const workflowProjectWorkspaceResolver = yield* ProjectWorkspaceResolver;
+      const projectScriptTrust = yield* ProjectScriptTrust;
+      // WorkSourceConnectionStoreLive is provided by WorkflowServerRuntimeLive
+      // (via WorkSourceLive), so resolve it as a required service — the
+      // connection RPCs need a real store, not a standby no-op.
+      const workflowConnectionStore = yield* WorkSourceConnectionStore;
+      const workflowSourceProviders = yield* WorkSourceProviderRegistry;
+      const workflowSourceCommitter = yield* WorkflowSourceCommitter;
+      // WorkflowOutboundConnectionStore is optional — only available when the
+      // outbound feature is wired up by WorkflowServerRuntimeLive.
+      const workflowOutboundConnectionStore = Context.getOption(
+        (yield* Effect.context<never>()) as Context.Context<WorkflowOutboundConnectionStore>,
+        WorkflowOutboundConnectionStore,
+      );
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -941,7 +1090,108 @@ const makeWsRpcLayer = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
+      const ticketWorktrees = {
+        resolveForTicket: (ticketId: TicketId) =>
+          Effect.gen(function* () {
+            const refName = `workflow/${ticketId as string}`;
+            const refs = yield* gitWorkflow
+              .listRefs({
+                cwd: config.cwd,
+                query: refName,
+                limit: 100,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new WorkflowRpcError({
+                      message: "Failed to resolve workflow ticket worktree refs",
+                      cause,
+                    }),
+                ),
+              );
+            const ref = refs.refs.find(
+              (candidate) =>
+                candidate.name === refName &&
+                candidate.isRemote !== true &&
+                candidate.worktreePath !== null,
+            );
+            if (!ref?.worktreePath) {
+              return yield* new WorkflowRpcError({
+                message: `Workflow ticket ${ticketId} does not have an attached worktree`,
+              });
+            }
+            return {
+              cwd: ref.worktreePath,
+              baseRef: ticketBaseRef(ticketId),
+            };
+          }),
+      };
+
+      const workflowHandlers = workflowRpcHandlers({
+        engine: workflowEngine,
+        eventStore: workflowEventStore,
+        readModel: workflowReadModel,
+        boardRegistry: workflowBoardRegistry,
+        boardDiscovery: workflowBoardDiscovery,
+        projectWorkspaceResolver: workflowProjectWorkspaceResolver,
+        workspaceFileSystem,
+        ticketDiff: workflowTicketDiff,
+        ticketWorktrees,
+        boardEvents: workflowBoardEvents,
+        saveLocks: workflowBoardSaveLocks,
+        versionStore: workflowBoardVersions,
+        ...(Option.isSome(workflowWorktreeJanitor)
+          ? { worktreeJanitor: workflowWorktreeJanitor.value }
+          : {}),
+        ...(Option.isSome(workflowIntake) ? { intake: workflowIntake.value } : {}),
+        ...(Option.isSome(workflowThreadJanitor)
+          ? { threadJanitor: workflowThreadJanitor.value }
+          : {}),
+        ...(Option.isSome(workflowWebhook) ? { webhook: workflowWebhook.value } : {}),
+        ...(Option.isSome(workflowAgentSessions)
+          ? { agentSessions: workflowAgentSessions.value }
+          : {}),
+        ...(Option.isSome(workflowProviderService)
+          ? { provider: workflowProviderService.value }
+          : {}),
+        ...(Option.isSome(workflowPredicates) ? { predicates: workflowPredicates.value } : {}),
+        ...(Option.isSome(workflowTextGeneration)
+          ? { textGeneration: workflowTextGeneration.value }
+          : {}),
+        fileLoader: workflowFileLoader,
+        projectScriptTrust,
+        connectionStore: workflowConnectionStore,
+        workSourceProviders: workflowSourceProviders,
+        sourceCommitter: workflowSourceCommitter,
+        ...(Option.isSome(workflowOutboundConnectionStore)
+          ? { outboundConnectionStore: workflowOutboundConnectionStore.value }
+          : {}),
+        observeRpcEffect,
+        observeRpcStreamEffect,
+        // Gate mutating workflow RPCs behind startup + workflow-recovery
+        // readiness (mirrors how orchestration commands go through
+        // startup.enqueueCommand): defer the effect until recovery is done, and
+        // fail it as a retryable WorkflowRpcError if startup/recovery failed.
+        // awaitWorkflowReady specifically rejects when recovery failed, so a
+        // half-recovered projection is never mutated.
+        gate: <A, E, R>(
+          effect: Effect.Effect<A, E, R>,
+        ): Effect.Effect<A, E | WorkflowRpcError, R> =>
+          Effect.all([startup.awaitCommandReady, startup.awaitWorkflowReady]).pipe(
+            Effect.mapError(
+              (cause) =>
+                new WorkflowRpcError({
+                  message:
+                    "Workflow runtime is not ready (server is starting up or recovery failed)",
+                  cause,
+                }),
+            ),
+            Effect.andThen(effect),
+          ),
+      });
+
       return WsRpcGroup.of({
+        ...workflowHandlers,
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -1569,6 +1819,17 @@ const makeWsRpcLayer = (
             Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
               Effect.acquireRelease(
                 terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
+                (unsubscribe) => Effect.sync(unsubscribe),
+              ),
+            ),
+            { "rpc.aggregate": "terminal" },
+          ),
+        [WS_METHODS.terminalAttachHistory]: (input) =>
+          observeRpcStream(
+            WS_METHODS.terminalAttachHistory,
+            Stream.callback<TerminalHistoryAttachStreamEvent, TerminalError>((queue) =>
+              Effect.acquireRelease(
+                terminalManager.attachHistoryStream(input, (event) => Queue.offer(queue, event)),
                 (unsubscribe) => Effect.sync(unsubscribe),
               ),
             ),

@@ -43,31 +43,35 @@ export class ApnsDeliveryQueueSendError extends Schema.TaggedErrorClass<ApnsDeli
 
 export type ApnsDeliveryQueueError = ApnsDeliveryQueueSendError;
 
+export interface ApnsDeliveryQueueSenderShape {
+  readonly send: (body: SignedApnsDeliveryJob) => Effect.Effect<void, Cloudflare.QueueSendError>;
+}
+
 export class ApnsDeliveryQueueSender extends Context.Service<
   ApnsDeliveryQueueSender,
-  {
-    readonly send: (body: SignedApnsDeliveryJob) => Effect.Effect<void, Cloudflare.QueueSendError>;
-  }
+  ApnsDeliveryQueueSenderShape
 >()("t3code-relay/agentActivity/ApnsDeliveryQueue/ApnsDeliveryQueueSender") {}
 
-export class ApnsDeliveryQueue extends Context.Service<
-  ApnsDeliveryQueue,
-  {
-    readonly enqueueLiveActivity: (input: {
-      readonly kind: ApnsDeliveryJobPayload["kind"];
-      readonly userId: string;
-      readonly deviceId: string;
-      readonly token: string;
-      readonly aggregate: ApnsDeliveryJobPayload["aggregate"];
-    }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryQueueError>;
-    readonly enqueuePushNotification: (input: {
-      readonly userId: string;
-      readonly deviceId: string;
-      readonly token: string;
-      readonly notification: NonNullable<ApnsDeliveryJobPayload["notification"]>;
-    }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryQueueError>;
-  }
->()("t3code-relay/agentActivity/ApnsDeliveryQueue") {}
+export interface ApnsDeliveryQueueShape {
+  readonly enqueueLiveActivity: (input: {
+    readonly kind: ApnsDeliveryJobPayload["kind"];
+    readonly userId: string;
+    readonly deviceId: string;
+    readonly token: string;
+    readonly aggregate: ApnsDeliveryJobPayload["aggregate"];
+  }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryQueueError>;
+  readonly enqueuePushNotification: (input: {
+    readonly userId: string;
+    readonly deviceId: string;
+    readonly token: string;
+    readonly notification: NonNullable<ApnsDeliveryJobPayload["notification"]>;
+    readonly jobId?: string;
+  }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryQueueError>;
+}
+
+export class ApnsDeliveryQueue extends Context.Service<ApnsDeliveryQueue, ApnsDeliveryQueueShape>()(
+  "t3code-relay/agentActivity/ApnsDeliveryQueue",
+) {}
 
 export const make = Effect.gen(function* () {
   const sender = yield* ApnsDeliveryQueueSender;
@@ -138,22 +142,28 @@ export const make = Effect.gen(function* () {
           "relay.mobile.device_id": input.deviceId,
           "relay.delivery.kind": "push_notification",
           "relay.environment_id": input.notification.environmentId,
-          "relay.thread_id": input.notification.threadId,
+          // threadId is optional (ticket pushes carry boardId+ticketId, no
+          // threadId) — only annotate when present, matching ApnsDeliveries.ts.
+          ...(input.notification.threadId !== undefined
+            ? { "relay.thread_id": input.notification.threadId }
+            : {}),
         });
         const now = yield* DateTime.now;
-        const jobId = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError(
-            (cause) =>
-              new ApnsDeliveryQueueSendError({
-                operation: "generate-job-id",
-                jobId: null,
-                kind: "push_notification",
-                userId: input.userId,
-                deviceId: input.deviceId,
-                cause,
-              }),
-          ),
-        );
+        const jobId =
+          input.jobId ??
+          (yield* crypto.randomUUIDv4.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ApnsDeliveryQueueSendError({
+                  operation: "generate-job-id",
+                  jobId: null,
+                  kind: "push_notification",
+                  userId: input.userId,
+                  deviceId: input.deviceId,
+                  cause,
+                }),
+            ),
+          ));
         yield* Effect.annotateCurrentSpan({ "relay.delivery.job_id": jobId });
         const payload = makeApnsDeliveryJobPayload({
           kind: "push_notification",

@@ -362,6 +362,13 @@ function createTextGeneration(
             }),
         ),
       ),
+    generateBoardProposal: () =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateBoardProposal",
+          detail: "fake text generation does not support board proposals",
+        }),
+      ),
   };
 }
 
@@ -594,6 +601,46 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           cwd: input.cwd,
           args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
         }).pipe(Effect.asVoid),
+      mergePullRequest: (input) =>
+        Effect.fail(
+          new GitHubCli.GitHubCliCommandError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: new Error(`Unexpected merge: #${input.number}`),
+          }),
+        ),
+      getPullRequestDetail: (input) =>
+        Effect.fail(
+          new GitHubCli.GitHubCliCommandError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: new Error(`Unexpected detail: #${input.number}`),
+          }),
+        ),
+      listPullRequestChecks: (input) =>
+        Effect.fail(
+          new GitHubCli.GitHubCliCommandError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: new Error(`Unexpected checks: #${input.number}`),
+          }),
+        ),
+      listPullRequestReviews: (input) =>
+        Effect.fail(
+          new GitHubCli.GitHubCliCommandError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: new Error(`Unexpected reviews: #${input.number}`),
+          }),
+        ),
+      listPullRequestReviewComments: (input) =>
+        Effect.fail(
+          new GitHubCli.GitHubCliCommandError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: new Error(`Unexpected review comments: #${input.number}`),
+          }),
+        ),
     },
     ghCalls,
   };

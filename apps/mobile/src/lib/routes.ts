@@ -1,6 +1,6 @@
 import type { Href, useRouter } from "expo-router";
 import { type EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { BoardId, EnvironmentId, ThreadId, TicketId } from "@t3tools/contracts";
 
 import type { SelectedThreadRef } from "../state/remote-runtime-types";
 
@@ -122,6 +122,16 @@ export function buildThreadFilesNavigation(
     pathname: "/threads/[environmentId]/[threadId]/files/[...path]",
     params,
   };
+}
+
+export function buildTicketRoutePath(input: {
+  readonly environmentId: EnvironmentId;
+  readonly boardId: BoardId;
+  readonly ticketId: TicketId;
+}): string {
+  return `/tickets/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(
+    input.boardId,
+  )}/${encodeURIComponent(input.ticketId)}`;
 }
 
 export function dismissRoute(router: Router) {

@@ -748,6 +748,7 @@ function applyClaudeTaskToolResult(
     if (!Array.isArray(resultTasks)) {
       return false;
     }
+    const hadTasks = tasks.size > 0;
     tasks.clear();
     for (const entry of resultTasks) {
       if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
@@ -766,7 +767,7 @@ function applyClaudeTaskToolResult(
         blockedBy: new Set(readStringArray(task.blockedBy)),
       });
     }
-    return tasks.size > 0;
+    return tasks.size > 0 || hadTasks;
   }
 
   if (tool.toolName === "TaskCreate") {
@@ -1903,13 +1904,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         : undefined;
     const hasResultUsageIteration =
       resultUsageRecord !== undefined && lastClaudeUsageIteration(resultUsageRecord) !== undefined;
-    const resultHasActiveUsage =
-      resultUsageRecord !== undefined &&
-      (hasResultUsageIteration ||
-        claudeUsageInputTokens(resultUsageRecord) + claudeUsageOutputTokens(resultUsageRecord) > 0);
+    // Without an `iterations` array, result.usage carries turn-cumulative
+    // totals (flat fields included), not the active context size — only an
+    // iteration snapshot is trusted for `usedTokens`.
     const resultTotalOnly =
       resultUsageRecord !== undefined &&
-      !resultHasActiveUsage &&
+      !hasResultUsageIteration &&
       claudeTotalProcessedTokens(resultUsageRecord) !== undefined;
     const resultIterationSnapshot = resultUsageRecord
       ? normalizeClaudeActiveTokenUsage(
@@ -3850,6 +3850,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      supportsSessionResume: true,
     },
     startSession,
     sendTurn,

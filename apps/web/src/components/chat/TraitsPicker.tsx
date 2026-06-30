@@ -206,6 +206,7 @@ export interface TraitsMenuContentProps {
   allowPromptInjectedEffort?: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
+  disabled?: boolean;
 }
 
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
@@ -356,6 +357,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   allowPromptInjectedEffort = true,
   triggerVariant,
   triggerClassName,
+  disabled = false,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -405,6 +407,9 @@ export const TraitsPicker = memo(function TraitsPicker({
     <Menu
       open={isMenuOpen}
       onOpenChange={(open) => {
+        if (disabled) {
+          return;
+        }
         setIsMenuOpen(open);
       }}
     >
@@ -413,6 +418,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           <Button
             size="sm"
             variant={triggerVariant ?? "ghost"}
+            disabled={disabled}
             className={cn(
               isCodexStyle
                 ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:max-w-48 sm:px-3 [&_svg]:mx-0"

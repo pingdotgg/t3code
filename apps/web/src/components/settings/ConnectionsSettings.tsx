@@ -20,6 +20,8 @@ import {
   AuthReviewWriteScope,
   AuthStandardClientScopes,
   AuthTerminalOperateScope,
+  AuthWorkflowOperateScope,
+  AuthWorkflowReadScope,
   type AuthClientSession,
   type AuthEnvironmentScope,
   type AuthPairingLink,
@@ -169,7 +171,11 @@ function formatAccessTimestamp(value: string): string {
   return accessTimestampFormatter.format(parsed);
 }
 
-const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
+// Exported for the drift-guard test: this picker MUST cover every scope an
+// administrator can delegate (AuthAdministrativeScopes). A scope added to the
+// scope set but forgotten here becomes invisible/unmanageable in the pairing UI
+// (the bug that hid workflow:read/operate). The guard test asserts exact parity.
+export const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
   readonly scope: AuthEnvironmentScope;
   readonly title: string;
   readonly description: string;
@@ -183,6 +189,16 @@ const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
     scope: AuthOrchestrationOperateScope,
     title: "Operate tasks",
     description: "Start tasks and perform changes in the environment.",
+  },
+  {
+    scope: AuthWorkflowReadScope,
+    title: "View workflow boards",
+    description: "Read workflow boards, lanes, tickets, and templates.",
+  },
+  {
+    scope: AuthWorkflowOperateScope,
+    title: "Operate workflow boards",
+    description: "Create boards and tickets, move tickets, and answer steps.",
   },
   {
     scope: AuthTerminalOperateScope,
