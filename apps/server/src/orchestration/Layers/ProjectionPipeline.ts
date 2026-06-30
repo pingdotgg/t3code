@@ -728,6 +728,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             updatedAt: event.occurredAt,
           });
+          if (
+            event.type === "thread.message-sent" &&
+            event.payload.role === "assistant" &&
+            event.payload.streaming
+          ) {
+            return;
+          }
           yield* refreshThreadShellSummary(event.payload.threadId);
           return;
         }
@@ -812,6 +819,27 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     )(function* (event, attachmentSideEffects) {
       switch (event.type) {
         case "thread.message-sent": {
+          if (event.payload.role === "assistant" && event.payload.streaming) {
+            const nextAttachments =
+              event.payload.attachments !== undefined
+                ? yield* materializeAttachmentsForProjection({
+                    attachments: event.payload.attachments,
+                  })
+                : undefined;
+            yield* projectionThreadMessageRepository.appendText({
+              messageId: event.payload.messageId,
+              threadId: event.payload.threadId,
+              turnId: event.payload.turnId,
+              role: event.payload.role,
+              textDelta: event.payload.text,
+              ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
+              isStreaming: event.payload.streaming,
+              createdAt: event.payload.createdAt,
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
           const existingMessage = yield* projectionThreadMessageRepository.getByMessageId({
             messageId: event.payload.messageId,
           });
