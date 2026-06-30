@@ -2,8 +2,10 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
@@ -72,6 +74,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       const runtimeLayer = telemetryLayer.pipe(
         Layer.provide(configLayer),
         Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provideMerge(TestClock.layer()),
       );
 
       yield* Effect.gen(function* () {
@@ -115,6 +118,66 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         ),
         true,
       );
+    }),
+  );
+
+  it.effect("periodic flush runs on the TestClock-controlled interval", () =>
+    Effect.gen(function* () {
+      const capturedRequests: Array<RecordedBatchRequest> = [];
+      const receivedRequest = yield* Deferred.make<void>();
+      const serverConfigLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-telemetry-interval-",
+      });
+
+      const telemetryLayer = AnalyticsService.layer.pipe(Layer.provideMerge(serverConfigLayer));
+      const configLayer = ConfigProvider.layer(
+        ConfigProvider.fromUnknown({
+          T3CODE_TELEMETRY_ENABLED: true,
+          T3CODE_POSTHOG_KEY: "phc_test_key",
+          T3CODE_POSTHOG_HOST: "",
+          T3CODE_TELEMETRY_FLUSH_BATCH_SIZE: 20,
+        }),
+      );
+      const batchServerLayer = HttpServer.serve(
+        Effect.gen(function* () {
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          if (request.method !== "POST") {
+            return HttpServerResponse.empty({ status: 404 });
+          }
+
+          const payload = yield* request.json.pipe(
+            Effect.map((body) => body as RecordedBatchRequest["body"]),
+            Effect.orElseSucceed(() => null),
+          );
+
+          capturedRequests.push({ path: request.url, body: payload });
+          yield* Deferred.succeed(receivedRequest, undefined);
+
+          return HttpServerResponse.jsonUnsafe({});
+        }),
+      );
+      const runtimeLayer = telemetryLayer.pipe(
+        Layer.provide(configLayer),
+        Layer.provideMerge(NodeHttpServer.layerTest),
+      );
+
+      yield* Effect.gen(function* () {
+        yield* Layer.launch(batchServerLayer).pipe(Effect.forkScoped);
+        const analytics = yield* AnalyticsService.AnalyticsService;
+
+        yield* analytics.record("test.flush.interval", { index: 1 });
+        assert.equal(capturedRequests.length, 0);
+
+        yield* TestClock.adjust(AnalyticsService.ANALYTICS_FLUSH_INTERVAL);
+        yield* Deferred.await(receivedRequest).pipe(Effect.timeout("1 second"), TestClock.withLive);
+      }).pipe(Effect.provide(runtimeLayer));
+
+      const batchRequests = capturedRequests.filter(
+        (request): request is RecordedBatchRequest & { readonly body: RecordedBatchBody } =>
+          Array.isArray(request.body?.batch),
+      );
+      assert.equal(batchRequests.length, 1);
+      assert.equal(batchRequests[0]?.body.batch[0]?.event, "test.flush.interval");
     }),
   );
 });

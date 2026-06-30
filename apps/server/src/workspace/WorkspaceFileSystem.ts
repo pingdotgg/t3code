@@ -140,30 +140,32 @@ export const make = Effect.gen(function* () {
       relativePath: input.relativePath,
     });
 
-    const realWorkspaceRoot = yield* Effect.tryPromise({
-      try: () => NodeFSP.realpath(input.cwd),
-      catch: (cause) =>
-        new WorkspaceFileSystemOperationError({
-          workspaceRoot: input.cwd,
-          relativePath: input.relativePath,
-          resolvedPath: target.absolutePath,
-          operationPath: input.cwd,
-          operation: "realpath-workspace-root",
-          cause,
-        }),
-    });
-    const realTargetPath = yield* Effect.tryPromise({
-      try: () => NodeFSP.realpath(target.absolutePath),
-      catch: (cause) =>
-        new WorkspaceFileSystemOperationError({
-          workspaceRoot: input.cwd,
-          relativePath: input.relativePath,
-          resolvedPath: target.absolutePath,
-          operationPath: target.absolutePath,
-          operation: "realpath-target",
-          cause,
-        }),
-    });
+    const realWorkspaceRoot = yield* fileSystem.realPath(input.cwd).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: target.absolutePath,
+            operationPath: input.cwd,
+            operation: "realpath-workspace-root",
+            cause,
+          }),
+      ),
+    );
+    const realTargetPath = yield* fileSystem.realPath(target.absolutePath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: target.absolutePath,
+            operationPath: target.absolutePath,
+            operation: "realpath-target",
+            cause,
+          }),
+      ),
+    );
     const relativeRealPath = path.relative(realWorkspaceRoot, realTargetPath);
     if (
       relativeRealPath.startsWith(`..${path.sep}`) ||
