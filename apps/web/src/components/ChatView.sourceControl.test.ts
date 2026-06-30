@@ -79,25 +79,35 @@ describe("source control right panel surface visibility", () => {
     ).toBe(surfaces);
   });
 
-  it("clears an unavailable active Source Control surface", () => {
+  it("falls back from an unavailable active Source Control surface to another visible surface", () => {
     expect(
       resolveVisibleSourceControlSurface({
         sourceControlAvailable: false,
         surface: sourceControlSurface,
+        visibleSurfaces: [planSurface],
       }),
-    ).toBe(null);
+    ).toBe(planSurface);
     expect(
       resolveVisibleSourceControlSurface({
         sourceControlAvailable: false,
         surface: planSurface,
+        visibleSurfaces: [planSurface],
       }),
     ).toBe(planSurface);
     expect(
       resolveVisibleSourceControlSurface({
         sourceControlAvailable: true,
         surface: sourceControlSurface,
+        visibleSurfaces: [sourceControlSurface, planSurface],
       }),
     ).toBe(sourceControlSurface);
+    expect(
+      resolveVisibleSourceControlSurface({
+        sourceControlAvailable: false,
+        surface: sourceControlSurface,
+        visibleSurfaces: [],
+      }),
+    ).toBe(null);
   });
 });
 

@@ -140,9 +140,10 @@ export function filterVisibleSourceControlSurfaces(input: {
 export function resolveVisibleSourceControlSurface(input: {
   readonly surface: RightPanelSurface | null;
   readonly sourceControlAvailable: boolean;
+  readonly visibleSurfaces: readonly RightPanelSurface[];
 }): RightPanelSurface | null {
   return input.surface?.kind === "source-control" && !input.sourceControlAvailable
-    ? null
+    ? (input.visibleSurfaces[0] ?? null)
     : input.surface;
 }
 
@@ -212,6 +213,7 @@ export function useSourceControlRightPanelSurfaceState(
   const visibleActiveRightPanelSurface = resolveVisibleSourceControlSurface({
     sourceControlAvailable,
     surface: activeRightPanelSurface,
+    visibleSurfaces: visibleRightPanelSurfaces,
   });
   const addSourceControlSurface = useCallback(() => {
     if (!activeThreadRef || !sourceControlAvailable) return;
