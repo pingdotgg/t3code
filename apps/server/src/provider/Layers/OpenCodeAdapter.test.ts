@@ -943,10 +943,16 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(isOpenCodeNotFound({ statusCode: 404 }), true);
       // OpenCode NotFoundError body name with no status.
       NodeAssert.equal(isOpenCodeNotFound({ body: { name: "NotFoundError" } }), true);
-      // Only the detail string carries the signal.
-      NodeAssert.equal(isOpenCodeNotFound({ detail: "no such session" }), true);
 
-      // NOT a miss: transient/server/auth errors must propagate.
+      // NOT a miss: only structured signals count, never free text. A non-404
+      // error whose message/detail merely contains "not found" must propagate,
+      // not be misread as a missing session and silently start fresh.
+      NodeAssert.equal(
+        isOpenCodeNotFound(new Error("upstream provider not found", { cause: { status: 500 } })),
+        false,
+      );
+      NodeAssert.equal(isOpenCodeNotFound({ detail: "status=500 body={...not found...}" }), false);
+      // Other transient/auth/network failures must propagate too.
       NodeAssert.equal(isOpenCodeNotFound(new Error("boom", { cause: { status: 500 } })), false);
       NodeAssert.equal(isOpenCodeNotFound({ cause: { response: { status: 401 } } }), false);
       NodeAssert.equal(isOpenCodeNotFound(new Error("network error (no response)")), false);

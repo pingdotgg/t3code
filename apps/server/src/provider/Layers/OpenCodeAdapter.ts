@@ -82,24 +82,24 @@ function parseOpenCodeResume(raw: unknown): { readonly sessionId: string } | und
   return { sessionId: record.sessionId.trim() };
 }
 
-const OPENCODE_NOT_FOUND_MESSAGE = /\bnot found\b|no such session|unknown session|does not exist/i;
-
 /**
  * Whether an error definitively reports a "session not found" — an HTTP 404 or
  * an OpenCode `NotFoundError`. The SDK client is configured `throwOnError: true`
  * (see `createOpenCodeSdkClient`), so `session.get` on a missing/closed session
  * REJECTS rather than resolving; `runOpenCodeSdk` then surfaces it as a failed
- * Effect whose `cause` wraps the original thrown `Error` (which carries the
- * parsed body and HTTP status under its own `cause`), alongside the
- * `OpenCodeRuntimeError.detail` string. Only a confirmed miss justifies silently
- * starting a fresh session — any other failure (transport, auth, server error)
- * must propagate, so a momentary blip can't quietly reset a live thread to an
- * empty session (the #3604 class of silent context loss).
+ * Effect whose `cause` wraps the original thrown `Error`, which carries the
+ * parsed body and HTTP status under its own `cause`. Only a confirmed miss
+ * justifies silently starting a fresh session — any other failure (transport,
+ * auth, server error) must propagate, so a momentary blip can't quietly reset a
+ * live thread to an empty session (the #3604 class of silent context loss).
  *
- * Implemented as a bounded breadth-first walk so it is robust to the several
- * shapes the SDK/runtime can produce: a 404 may surface as a numeric
- * `status`/`statusCode`, a nested `response.status`, an OpenCode `NotFoundError`
- * `name`/`body`, or text in `message`/`detail`. Exported for unit testing.
+ * Decided only on STRUCTURED signals — a numeric 404 (`status`/`statusCode`/
+ * nested `response.status`) or an explicit `NotFoundError` `name` — found via a
+ * bounded breadth-first walk over the error's `cause`/`body`/`error`/`data`. We
+ * deliberately do NOT match free text (`message`/`detail`): those can carry a
+ * serialized non-404 body or an unrelated "not found" phrase (e.g. a 500 whose
+ * message says "upstream X not found"), which would misclassify a real failure
+ * as a missing session and silently drop context. Exported for unit testing.
  */
 export function isOpenCodeNotFound(cause: unknown): boolean {
   const seen = new Set<unknown>();
@@ -127,12 +127,6 @@ export function isOpenCodeNotFound(cause: unknown): boolean {
     const name = record.name;
     if (typeof name === "string" && name.toLowerCase().includes("notfound")) {
       return true;
-    }
-    for (const key of ["message", "detail"] as const) {
-      const value = record[key];
-      if (typeof value === "string" && OPENCODE_NOT_FOUND_MESSAGE.test(value)) {
-        return true;
-      }
     }
 
     for (const key of ["cause", "body", "error", "data"] as const) {
