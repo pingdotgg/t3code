@@ -27,8 +27,6 @@ import { CursorSdkCatalog } from "./CursorSdkCatalog.ts";
 const PROVIDER = ProviderDriverKind.make("cursor");
 const CURSOR_PRESENTATION = {
   displayName: "Cursor",
-  supportsConversationRollback: false,
-  badgeLabel: "Early Access",
   showInteractionModeToggle: true,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
