@@ -254,16 +254,25 @@ jobs:
 
   # node-pty publishes no Linux prebuilt and the WSL backend runs under the
   # distro's own (Linux) Node, which can't load the Windows/Electron binary. We
-  # build the Linux pty.node here, on Linux, and hand it to the Windows packaging
-  # job — the Windows artifact then ships a ready WSL backend binary with no
-  # cross-compiling and no first-launch compiler/node-gyp/network on the user's
-  # machine. node-pty is N-API, so one binary works across all WSL Node versions.
+  # build the Linux pty.node here, on native Linux runners, and hand it to the
+  # Windows packaging job — each Windows artifact then ships a same-architecture
+  # WSL backend binary with no cross-compiling and no first-launch
+  # compiler/node-gyp/network on the user's machine. node-pty is N-API, so one
+  # binary per CPU architecture works across all WSL Node versions.
   build_wsl_node_pty:
-    name: Build WSL node-pty (linux-x64)
+    name: Build WSL node-pty (linux-${{ matrix.arch }})
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: blacksmith-8vcpu-ubuntu-2404
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -278,10 +287,15 @@ jobs:
           cache: true
           run-install: true
 
-      - name: Build node-pty linux-x64 prebuild
+      - name: Build node-pty linux-${{ matrix.arch }} prebuild
         shell: bash
         run: |
           set -euo pipefail
+          actual_arch="$(node -p "process.arch")"
+          if [[ "$actual_arch" != "${{ matrix.arch }}" ]]; then
+            echo "Runner Node architecture $actual_arch does not match expected ${{ matrix.arch }}." >&2
+            exit 1
+          fi
           # Resolve node-pty from apps/server (where it's a dependency) and build
           # its native binary from source for Linux. node-addon-api resolves from
           # node-pty's own dependency tree, so node-gyp has everything it needs.
@@ -292,10 +306,10 @@ jobs:
           cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
           file wsl-prebuild/pty.node
 
-      - name: Upload node-pty linux-x64 prebuild
+      - name: Upload node-pty linux-${{ matrix.arch }} prebuild
         uses: actions/upload-artifact@v7
         with:
-          name: wsl-node-pty-x64
+          name: wsl-node-pty-${{ matrix.arch }}
           path: wsl-prebuild/pty.node
           if-no-files-found: error
 
@@ -341,11 +355,14 @@ jobs:
             platform: win
             target: nsis
             arch: x64
-          # - label: Windows arm64
-          #   runner: windows-11-arm
-          #   platform: win
-          #   target: nsis
-          #   arch: arm64
+          # The artifact script treats arch as the target architecture, so the
+          # Windows arm64 artifact can build on the existing Blacksmith Windows
+          # runner while targeting arm64 for electron-builder.
+          - label: Windows arm64
+            runner: blacksmith-32vcpu-windows-2025
+            platform: win
+            target: nsis
+            arch: arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -381,7 +398,7 @@ jobs:
         if: matrix.platform == 'win'
         uses: actions/download-artifact@v7
         with:
-          name: wsl-node-pty-x64
+          name: wsl-node-pty-${{ matrix.arch }}
           path: wsl-prebuild
 
       - name: Install Spectre-mitigated MSVC libs
@@ -586,17 +603,16 @@ jobs:
             done
           fi
 
-          # Enable if Windows arm64 builds are enabled.
           # Windows updater metadata is channel-specific (for example
           # "latest.yml" or "nightly.yml"). Suffix each per-arch copy so the
           # release job can merge matching arm64/x64 manifests back into one
           # canonical manifest per channel.
-          # if [[ "${{ matrix.platform }}" == "win" ]]; then
-          #   shopt -s nullglob
-          #   for manifest in release-publish/*.yml; do
-          #     mv "$manifest" "${manifest%.yml}-win-${{ matrix.arch }}.yml"
-          #   done
-          # fi
+          if [[ "${{ matrix.platform }}" == "win" ]]; then
+            shopt -s nullglob
+            for manifest in release-publish/*.yml; do
+              mv "$manifest" "${manifest%.yml}-win-${{ matrix.arch }}.yml"
+            done
+          fi
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
@@ -709,34 +725,37 @@ jobs:
             fi
           done
 
-      # - name: Merge Windows updater manifests
-      #   run: |
-      #     shopt -s nullglob
-      #     found_windows_manifest=false
-      #     for x64_manifest in release-assets/*-win-x64.yml; do
-      #       if [[ "$(basename "$x64_manifest")" == builder-debug-* ]]; then
-      #         continue
-      #       fi
+      # Merge the per-arch Windows manifests produced above into the canonical
+      # channel manifests consumed by the updater.
+      - name: Merge Windows updater manifests
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          found_windows_manifest=false
+          for x64_manifest in release-assets/*-win-x64.yml; do
+            if [[ "$(basename "$x64_manifest")" == builder-debug-* ]]; then
+              continue
+            fi
 
-      #       arm64_manifest="${x64_manifest/-x64.yml/-arm64.yml}"
-      #       output_manifest="${x64_manifest/-win-x64.yml/.yml}"
-      #       if [[ ! -f "$arm64_manifest" ]]; then
-      #         echo "Missing matching arm64 Windows manifest for $x64_manifest" >&2
-      #         exit 1
-      #       fi
+            arm64_manifest="${x64_manifest/-x64.yml/-arm64.yml}"
+            output_manifest="${x64_manifest/-win-x64.yml/.yml}"
+            if [[ ! -f "$arm64_manifest" ]]; then
+              echo "Missing matching arm64 Windows manifest for $x64_manifest" >&2
+              exit 1
+            fi
 
-      #       found_windows_manifest=true
-      #       node scripts/merge-update-manifests.ts --platform win \
-      #         "$arm64_manifest" \
-      #         "$x64_manifest" \
-      #         "$output_manifest"
-      #       rm -f "$arm64_manifest" "$x64_manifest"
-      #     done
+            found_windows_manifest=true
+            node scripts/merge-update-manifests.ts --platform win \
+              "$arm64_manifest" \
+              "$x64_manifest" \
+              "$output_manifest"
+            rm -f "$arm64_manifest" "$x64_manifest"
+          done
 
-      #     if [[ "$found_windows_manifest" != true ]]; then
-      #       echo "No Windows updater manifests found to merge." >&2
-      #       exit 1
-      #     fi
+          if [[ "$found_windows_manifest" != true ]]; then
+            echo "No Windows updater manifests found to merge." >&2
+            exit 1
+          fi
 
       - name: Publish release
         if: needs.preflight.outputs.previous_tag != ''
