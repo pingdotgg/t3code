@@ -152,6 +152,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     {},
     {
       onExpectedFailure: (cause) => setStreamError(Cause.squash(cause)),
+      retryExpectedFailureAfter: "250 millis",
     },
   ).pipe(Stream.runForEach(applyItem), Effect.forkScoped);
   yield* SubscriptionRef.changes(supervisor.state).pipe(
