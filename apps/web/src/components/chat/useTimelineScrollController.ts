@@ -114,6 +114,22 @@ export function scheduleTimelineManualNavigationListeners({
   };
 }
 
+export function clearPendingTimelineAnchorScrollRestore({
+  anchorScrollRestoreFrameRef,
+  cancelFrame = cancelAnimationFrame,
+  pendingAnchorScrollRestoreRef,
+}: {
+  readonly anchorScrollRestoreFrameRef: { current: number | null };
+  readonly cancelFrame?: (handle: number) => void;
+  readonly pendingAnchorScrollRestoreRef: { current: unknown | null };
+}): void {
+  pendingAnchorScrollRestoreRef.current = null;
+  if (anchorScrollRestoreFrameRef.current !== null) {
+    cancelFrame(anchorScrollRestoreFrameRef.current);
+    anchorScrollRestoreFrameRef.current = null;
+  }
+}
+
 export interface TimelineScrollController {
   readonly showScrollToBottom: boolean;
   readonly scrollToEnd: (animated?: boolean) => void;
@@ -165,6 +181,12 @@ export function useTimelineScrollController({
     anchorPositionCleanupRef.current?.();
     anchorPositionCleanupRef.current = null;
   }, []);
+  const clearPendingAnchorScrollRestore = useCallback(() => {
+    clearPendingTimelineAnchorScrollRestore({
+      anchorScrollRestoreFrameRef,
+      pendingAnchorScrollRestoreRef,
+    });
+  }, []);
 
   const scheduleAnchorPositionFrame = useCallback((callback: () => void) => {
     const frame = requestAnimationFrame(() => {
@@ -182,13 +204,9 @@ export function useTimelineScrollController({
     positionedTimelineAnchorRef.current = null;
     settledTimelineAnchorRef.current = null;
     activeTimelineAnchorIndexRef.current = null;
-    pendingAnchorScrollRestoreRef.current = null;
+    clearPendingAnchorScrollRestore();
     cleanupAnchorPositioning();
-    if (anchorScrollRestoreFrameRef.current !== null) {
-      cancelAnimationFrame(anchorScrollRestoreFrameRef.current);
-      anchorScrollRestoreFrameRef.current = null;
-    }
-  }, [cleanupAnchorPositioning]);
+  }, [cleanupAnchorPositioning, clearPendingAnchorScrollRestore]);
   const cancelForManualNavigationRef = useRef(cancelForManualNavigation);
   useEffect(() => {
     cancelForManualNavigationRef.current = cancelForManualNavigation;
@@ -251,25 +269,22 @@ export function useTimelineScrollController({
       positionedTimelineAnchorRef.current = null;
       settledTimelineAnchorRef.current = null;
       activeTimelineAnchorIndexRef.current = null;
-      pendingAnchorScrollRestoreRef.current = null;
+      clearPendingAnchorScrollRestore();
       cleanupAnchorPositioning();
-      if (anchorScrollRestoreFrameRef.current !== null) {
-        cancelAnimationFrame(anchorScrollRestoreFrameRef.current);
-        anchorScrollRestoreFrameRef.current = null;
-      }
       showScrollDebouncer.current.cancel();
       setShowScrollToBottom(false);
       void listRef.current?.scrollToEnd?.({ animated });
     },
-    [cleanupAnchorPositioning, listRef],
+    [cleanupAnchorPositioning, clearPendingAnchorScrollRestore, listRef],
   );
 
+  const hasTimelineEntries = timelineEntries.length > 0;
   useEffect(() => {
     return scheduleTimelineManualNavigationListeners({
       getScrollNode: () => listRef.current?.getScrollableNode() ?? null,
       onManualNavigation: () => cancelForManualNavigationRef.current(),
     });
-  }, [activeThreadId, listRef, timelineEntries.length]);
+  }, [activeThreadId, hasTimelineEntries, listRef]);
 
   const onAnchorReady = useCallback(
     (messageId: MessageId, anchorIndex: number) => {
@@ -296,6 +311,12 @@ export function useTimelineScrollController({
             return;
           }
           const scrollNode = list.getScrollableNode();
+          if (!scrollNode) {
+            if (remainingAttempts > 0) {
+              positionAnchor(remainingAttempts - 1);
+            }
+            return;
+          }
           let finished = false;
           let cleanup: (() => void) | null = null;
           const finishAnimatedPositioning = () => {
@@ -485,10 +506,11 @@ export function useTimelineScrollController({
     positionedTimelineAnchorRef.current = null;
     settledTimelineAnchorRef.current = null;
     activeTimelineAnchorIndexRef.current = null;
+    clearPendingAnchorScrollRestore();
     cleanupAnchorPositioning();
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
-  }, [cleanupAnchorPositioning]);
+  }, [cleanupAnchorPositioning, clearPendingAnchorScrollRestore]);
 
   const prepareAnchorForMessage = useCallback(
     (messageId: MessageId) => {
@@ -497,23 +519,21 @@ export function useTimelineScrollController({
       liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
       pendingTimelineAnchorRef.current = messageId;
       activeTimelineAnchorIndexRef.current = null;
+      clearPendingAnchorScrollRestore();
       cleanupAnchorPositioning();
       showScrollDebouncer.current.cancel();
       setShowScrollToBottom(false);
     },
-    [cleanupAnchorPositioning],
+    [cleanupAnchorPositioning, clearPendingAnchorScrollRestore],
   );
 
   useEffect(
     () => () => {
       cleanupAnchorPositioning();
       showScrollDebouncer.current.cancel();
-      if (anchorScrollRestoreFrameRef.current !== null) {
-        cancelAnimationFrame(anchorScrollRestoreFrameRef.current);
-        anchorScrollRestoreFrameRef.current = null;
-      }
+      clearPendingAnchorScrollRestore();
     },
-    [cleanupAnchorPositioning],
+    [cleanupAnchorPositioning, clearPendingAnchorScrollRestore],
   );
 
   return {

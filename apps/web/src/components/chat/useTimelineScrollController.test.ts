@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
+  clearPendingTimelineAnchorScrollRestore,
   isTimelineScrollKeyboardNavigationKey,
   scheduleTimelineManualNavigationListeners,
 } from "./useTimelineScrollController";
@@ -69,5 +70,27 @@ describe("timeline scroll controller", () => {
     expect(listeners.get("touchmove")?.size).toBe(0);
     expect(listeners.get("pointerdown")?.size).toBe(0);
     expect(listeners.get("keydown")?.size).toBe(0);
+  });
+
+  it("clears pending anchor scroll restore state and cancels the queued frame", () => {
+    const pendingAnchorScrollRestoreRef = {
+      current: {
+        messageId: "message-1",
+        offset: 42,
+        userScrollGeneration: 1,
+      },
+    };
+    const anchorScrollRestoreFrameRef = { current: 7 };
+    const cancelFrame = vi.fn();
+
+    clearPendingTimelineAnchorScrollRestore({
+      anchorScrollRestoreFrameRef,
+      cancelFrame,
+      pendingAnchorScrollRestoreRef,
+    });
+
+    expect(pendingAnchorScrollRestoreRef.current).toBeNull();
+    expect(anchorScrollRestoreFrameRef.current).toBeNull();
+    expect(cancelFrame).toHaveBeenCalledWith(7);
   });
 });
