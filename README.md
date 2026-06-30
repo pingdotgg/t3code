@@ -43,6 +43,33 @@ brew install --cask t3-code
 yay -S t3code-bin
 ```
 
+#### NixOS (Flakes)
+
+```nix
+# /path/to/your/flake.nix
+{
+  inputs = {
+    # This flake is pinned to nixpkgs stable
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.05";
+
+    t3code-flake.url = "github:pingdotgg/t3code";
+      # Or pin a version: "github:pingdotgg/t3code?ref=v0.0.23"
+    t3code-flake.inputs.nixpkgs.follows = "nixpkgs";
+  };
+}
+```
+
+```nix
+# /path/to/your/configuration.nix
+{
+  nix.settings.experimental-features = [ "nix-command" "flakes" ];
+  environment.systemPackages = [
+    pkgs.appimage-run
+    inputs.t3code-flake.packages.${system}.default
+  ];
+}
+```
+
 ## Some notes
 
 We are very very early in this project. Expect bugs.
