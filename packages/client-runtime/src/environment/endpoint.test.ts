@@ -22,6 +22,25 @@ describe("advertised endpoint helpers", () => {
     expect(deriveWsBaseUrl("http://127.0.0.1:3773")).toBe("ws://127.0.0.1:3773/");
   });
 
+  it("rejects endpoint URLs with credentials", () => {
+    expect(() => normalizeHttpBaseUrl("https://user:password@example.com/path?x=1#hash")).toThrow(
+      "Endpoint URL must not include credentials.",
+    );
+    expect(() => normalizeHttpBaseUrl("wss://user@example.com/socket")).toThrow(
+      "Endpoint URL must not include credentials.",
+    );
+    expect(() =>
+      createAdvertisedEndpoint({
+        id: "lan:https://user@example.com",
+        label: "LAN",
+        provider: coreProvider,
+        httpBaseUrl: "https://user@example.com",
+        reachability: "lan",
+        source: "desktop-core",
+      }),
+    ).toThrow("Endpoint URL must not include credentials.");
+  });
+
   it("marks HTTP endpoints as blocked from hosted HTTPS apps", () => {
     expect(classifyHostedHttpsCompatibility("http://192.168.1.44:3773")).toBe(
       "mixed-content-blocked",

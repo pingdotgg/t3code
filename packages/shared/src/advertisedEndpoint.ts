@@ -33,6 +33,10 @@ export function normalizeHttpBaseUrl(rawValue: string): string {
     throw new Error(`Endpoint must use HTTP or HTTPS. Received ${url.protocol}`);
   }
 
+  if (url.username.length > 0 || url.password.length > 0) {
+    throw new Error("Endpoint URL must not include credentials.");
+  }
+
   url.pathname = "/";
   url.search = "";
   url.hash = "";
