@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -64,6 +64,98 @@ describe("ProcessDiagnostics", () => {
           command: "codex app-server --config /tmp/one two",
         },
       ]);
+    }),
+  );
+
+  it.effect("parses Windows CIM JSON process rows", () =>
+    Effect.sync(() => {
+      const rows = ProcessDiagnostics.parseWindowsProcessRows(`[
+        {
+          "ProcessId": 10,
+          "ParentProcessId": 1,
+          "Name": "node.exe",
+          "CommandLine": "node server.js",
+          "Status": "Running",
+          "WorkingSetSize": 4096,
+          "PercentProcessorTime": 12.5
+        },
+        {
+          "ProcessId": "invalid",
+          "ParentProcessId": 10,
+          "Name": "ignored.exe"
+        },
+        {
+          "ProcessId": 11,
+          "ParentProcessId": 10,
+          "Name": "agent.exe",
+          "CommandLine": null,
+          "Status": null,
+          "WorkingSetSize": -128,
+          "PercentProcessorTime": -1
+        }
+      ]`);
+
+      assert.deepStrictEqual(rows, [
+        {
+          pid: 10,
+          ppid: 1,
+          pgid: null,
+          status: "Running",
+          cpuPercent: 12.5,
+          rssBytes: 4096,
+          elapsed: "",
+          command: "node server.js",
+        },
+        {
+          pid: 11,
+          ppid: 10,
+          pgid: null,
+          status: "Live",
+          cpuPercent: 0,
+          rssBytes: 0,
+          elapsed: "",
+          command: "agent.exe",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("parses single Windows CIM JSON process objects", () =>
+    Effect.sync(() => {
+      const rows = ProcessDiagnostics.parseWindowsProcessRows(`{
+        "ProcessId": 42,
+        "ParentProcessId": 10,
+        "Name": "agent.exe",
+        "CommandLine": "",
+        "WorkingSetSize": 2048,
+        "PercentProcessorTime": 5
+      }`);
+
+      assert.deepStrictEqual(rows, [
+        {
+          pid: 42,
+          ppid: 10,
+          pgid: null,
+          status: "Live",
+          cpuPercent: 5,
+          rssBytes: 2048,
+          elapsed: "",
+          command: "agent.exe",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("ignores malformed Windows CIM JSON output", () =>
+    Effect.sync(() => {
+      assert.deepStrictEqual(ProcessDiagnostics.parseWindowsProcessRows("{not json"), []);
+      assert.deepStrictEqual(
+        ProcessDiagnostics.parseWindowsProcessRows(`{
+          "ProcessId": 42,
+          "Name": "missing-parent.exe"
+        }`),
+        [],
+      );
     }),
   );
 
