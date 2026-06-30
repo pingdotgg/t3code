@@ -8,9 +8,9 @@ import {
   type ModelInfo,
 } from "@github/copilot-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { accessSync, constants as fsConstants, statSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import type {
   CopilotSettings,
   ModelCapabilities,
@@ -135,11 +135,11 @@ export const createCopilotClient = Effect.fn("createCopilotClient")(function* (i
 
 function isExecutableFile(path: string): boolean {
   try {
-    if (!statSync(path).isFile()) {
+    if (!NodeFS.statSync(path).isFile()) {
       return false;
     }
 
-    accessSync(path, fsConstants.X_OK);
+    NodeFS.accessSync(path, NodeFS.constants.X_OK);
     return true;
   } catch {
     return false;
@@ -147,7 +147,7 @@ function isExecutableFile(path: string): boolean {
 }
 
 function isValidPosixShellPath(path: string | undefined): path is string {
-  return !!path && !/\s/.test(path) && isAbsolute(path) && isExecutableFile(path);
+  return !!path && !/\s/.test(path) && NodePath.isAbsolute(path) && isExecutableFile(path);
 }
 
 function resolvePosixShellPath(currentShell: string | undefined): string | undefined {
@@ -237,7 +237,7 @@ function candidateDirectoryAncestors(directory: string): ReadonlyArray<string> {
 
   for (let depth = 0; depth < 8; depth += 1) {
     directories.push(current);
-    const parent = dirname(current);
+    const parent = NodePath.dirname(current);
     if (parent === current) {
       break;
     }
@@ -253,7 +253,7 @@ export const resolveBundledCopilotCliPath = Effect.fn("resolveBundledCopilotCliP
     readonly env?: Record<string, string | undefined>;
     readonly platform: NodeJS.Platform;
   }): Effect.fn.Return<string | undefined> {
-    const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+    const moduleDirectory = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
     const candidateRoots = new Set<string>();
 
     if (input.cwd) {
@@ -266,7 +266,7 @@ export const resolveBundledCopilotCliPath = Effect.fn("resolveBundledCopilotCliP
     }
 
     for (const root of candidateRoots) {
-      const candidate = join(root, "node_modules", ".bin", COPILOT_CLI_COMMAND);
+      const candidate = NodePath.join(root, "node_modules", ".bin", COPILOT_CLI_COMMAND);
       const resolved = yield* resolveCopilotCommandPath(candidate, {
         env: input.env ?? process.env,
         platform: input.platform,

@@ -1,5 +1,5 @@
-import assert from "node:assert/strict";
-import { setTimeout as sleep } from "node:timers/promises";
+import * as NodeAssert from "node:assert/strict";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
@@ -37,7 +37,8 @@ const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const COPILOT_DRIVER = ProviderDriverKind.make("copilot");
 const COPILOT_INSTANCE_ID = ProviderInstanceId.make("copilot");
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-const waitForSdkEventQueue = () => Effect.promise(() => sleep(10).then(() => undefined));
+const waitForSdkEventQueue = () =>
+  Effect.promise(() => NodeTimersPromises.setTimeout(10).then(() => undefined));
 
 const runtimeMock = vi.hoisted(() => {
   const makeSession = () => ({
@@ -159,11 +160,11 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     () =>
       Effect.gen(function* () {
         runtimeMock.state.createSessionImpl = async (config: SessionConfig) => {
-          assert.ok(config.onPermissionRequest);
+          NodeAssert.ok(config.onPermissionRequest);
           const result = await config.onPermissionRequest({ kind: "shell" } as PermissionRequest, {
             sessionId: runtimeMock.state.lastSession.sessionId,
           });
-          assert.deepStrictEqual(result, { kind: "reject" });
+          NodeAssert.deepStrictEqual(result, { kind: "reject" });
           return runtimeMock.state.lastSession as unknown as CopilotSession;
         };
 
@@ -177,7 +178,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           runtimeMode: "approval-required",
         });
 
-        assert.equal(session.provider, "copilot");
+        NodeAssert.equal(session.provider, "copilot");
         yield* adapter.stopSession(threadId);
       }),
   );
@@ -187,11 +188,11 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     () =>
       Effect.gen(function* () {
         runtimeMock.state.createSessionImpl = async (config: SessionConfig) => {
-          assert.ok(config.onPermissionRequest);
+          NodeAssert.ok(config.onPermissionRequest);
           const result = await config.onPermissionRequest({ kind: "shell" } as PermissionRequest, {
             sessionId: runtimeMock.state.lastSession.sessionId,
           });
-          assert.deepStrictEqual(result, { kind: "approve-once" });
+          NodeAssert.deepStrictEqual(result, { kind: "approve-once" });
           return runtimeMock.state.lastSession as unknown as CopilotSession;
         };
 
@@ -205,7 +206,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           runtimeMode: "full-access",
         });
 
-        assert.equal(session.provider, "copilot");
+        NodeAssert.equal(session.provider, "copilot");
         yield* adapter.stopSession(threadId);
       }),
   );
@@ -213,7 +214,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
   it.effect("only approves bootstrap edit permission requests in auto-accept-edits mode", () =>
     Effect.gen(function* () {
       runtimeMock.state.createSessionImpl = async (config: SessionConfig) => {
-        assert.ok(config.onPermissionRequest);
+        NodeAssert.ok(config.onPermissionRequest);
         const shellResult = await config.onPermissionRequest(
           { kind: "shell" } as PermissionRequest,
           {
@@ -226,8 +227,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
             sessionId: runtimeMock.state.lastSession.sessionId,
           },
         );
-        assert.deepStrictEqual(shellResult, { kind: "reject" });
-        assert.deepStrictEqual(writeResult, { kind: "approve-once" });
+        NodeAssert.deepStrictEqual(shellResult, { kind: "reject" });
+        NodeAssert.deepStrictEqual(writeResult, { kind: "approve-once" });
         return runtimeMock.state.lastSession as unknown as CopilotSession;
       };
 
@@ -241,8 +242,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         runtimeMode: "auto-accept-edits",
       });
 
-      assert.equal(session.provider, "copilot");
-      assert.deepStrictEqual(runtimeMock.state.lastSession.rpc.mode.set.mock.calls.at(-1), [
+      NodeAssert.equal(session.provider, "copilot");
+      NodeAssert.deepStrictEqual(runtimeMock.state.lastSession.rpc.mode.set.mock.calls.at(-1), [
         { mode: "interactive" },
       ]);
       yield* adapter.stopSession(threadId);
@@ -254,7 +255,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     () =>
       Effect.gen(function* () {
         runtimeMock.state.createSessionImpl = async (config: SessionConfig) => {
-          assert.ok(config.onUserInputRequest);
+          NodeAssert.ok(config.onUserInputRequest);
           const response = await config.onUserInputRequest(
             {
               question: "How should Copilot continue?",
@@ -263,7 +264,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
             },
             { sessionId: runtimeMock.state.lastSession.sessionId },
           );
-          assert.deepStrictEqual(response, {
+          NodeAssert.deepStrictEqual(response, {
             answer: "",
             wasFreeform: true,
           });
@@ -280,7 +281,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           runtimeMode: "approval-required",
         });
 
-        assert.equal(session.provider, "copilot");
+        NodeAssert.equal(session.provider, "copilot");
         yield* adapter.stopSession(threadId);
       }),
   );
@@ -305,8 +306,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
-      assert.ok(config.onUserInputRequest);
+      NodeAssert.ok(config?.onEvent);
+      NodeAssert.ok(config.onUserInputRequest);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
       const requestId = "user-input-canonical-answer";
@@ -339,16 +340,16 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           (event) => event.type === "user-input.requested" && String(event.requestId) === requestId,
         );
       }
-      assert.equal(requested?.type, "user-input.requested");
+      NodeAssert.equal(requested?.type, "user-input.requested");
       if (requested?.type === "user-input.requested") {
-        assert.equal(requested.providerRefs?.providerRequestId, requestId);
+        NodeAssert.equal(requested.providerRefs?.providerRequestId, requestId);
       }
 
       yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make(requestId), {
         answer: "Use a custom answer",
       });
       const response = yield* Effect.promise(() => responsePromise);
-      assert.deepStrictEqual(response, {
+      NodeAssert.deepStrictEqual(response, {
         answer: "Use a custom answer",
         wasFreeform: true,
       });
@@ -362,13 +363,13 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       }
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.equal(resolved?.type, "user-input.resolved");
+      NodeAssert.equal(resolved?.type, "user-input.resolved");
       if (resolved?.type === "user-input.resolved") {
-        assert.equal(resolved.providerRefs?.providerRequestId, requestId);
-        assert.deepStrictEqual(resolved.payload.answers, {
+        NodeAssert.equal(resolved.providerRefs?.providerRequestId, requestId);
+        NodeAssert.deepStrictEqual(resolved.payload.answers, {
           answer: "Use a custom answer",
         });
-        assert.equal("wasFreeform" in resolved.payload.answers, false);
+        NodeAssert.equal("wasFreeform" in resolved.payload.answers, false);
       }
 
       yield* adapter.stopSession(threadId);
@@ -396,9 +397,9 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       });
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.equal(config?.model, "claude-sonnet-4.6");
-      assert.equal(config?.reasoningEffort, "high");
-      assert.equal(config?.contextTier, "long_context");
+      NodeAssert.equal(config?.model, "claude-sonnet-4.6");
+      NodeAssert.equal(config?.reasoningEffort, "high");
+      NodeAssert.equal(config?.contextTier, "long_context");
 
       yield* adapter.stopSession(threadId);
     }),
@@ -425,11 +426,14 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         },
       });
 
-      assert.equal(runtimeMock.state.resumeSessionCalls.length, 1);
-      assert.equal(runtimeMock.state.resumeSessionCalls[0]?.sessionId, "missing-copilot-session");
-      assert.equal(runtimeMock.state.createSessionConfigs.length, 1);
-      assert.equal(runtimeMock.state.createSessionConfigs[0]?.sessionId, threadId);
-      assert.deepEqual(session.resumeCursor, {
+      NodeAssert.equal(runtimeMock.state.resumeSessionCalls.length, 1);
+      NodeAssert.equal(
+        runtimeMock.state.resumeSessionCalls[0]?.sessionId,
+        "missing-copilot-session",
+      );
+      NodeAssert.equal(runtimeMock.state.createSessionConfigs.length, 1);
+      NodeAssert.equal(runtimeMock.state.createSessionConfigs[0]?.sessionId, threadId);
+      NodeAssert.deepEqual(session.resumeCursor, {
         schemaVersion: 1,
         sessionId: runtimeMock.state.lastSession.sessionId,
       });
@@ -462,7 +466,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         },
       });
 
-      assert.deepStrictEqual(runtimeMock.state.lastSession.setModel.mock.calls.at(-1), [
+      NodeAssert.deepStrictEqual(runtimeMock.state.lastSession.setModel.mock.calls.at(-1), [
         "claude-sonnet-4.6",
         { contextTier: "long_context" },
       ]);
@@ -491,8 +495,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
-      assert.ok(config.onPermissionRequest);
+      NodeAssert.ok(config?.onEvent);
+      NodeAssert.ok(config.onPermissionRequest);
 
       const permissionRequest: PermissionRequest = {
         kind: "shell",
@@ -540,7 +544,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       );
 
       const result = yield* Effect.promise(() => resultPromise);
-      assert.deepStrictEqual(result, {
+      NodeAssert.deepStrictEqual(result, {
         kind: "approve-for-session",
         approval: {
           kind: "commands",
@@ -555,11 +559,11 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           (event) => event.type === "request.resolved" && String(event.requestId) === requestId,
         );
       }
-      assert.equal(requestResolved?.type, "request.resolved");
+      NodeAssert.equal(requestResolved?.type, "request.resolved");
       if (requestResolved?.type === "request.resolved") {
-        assert.equal(requestResolved.payload.requestType, "command_execution_approval");
-        assert.equal(requestResolved.payload.decision, "acceptForSession");
-        assert.deepStrictEqual(requestResolved.payload.resolution, result);
+        NodeAssert.equal(requestResolved.payload.requestType, "command_execution_approval");
+        NodeAssert.equal(requestResolved.payload.decision, "acceptForSession");
+        NodeAssert.deepStrictEqual(requestResolved.payload.resolution, result);
       }
 
       config.onEvent({
@@ -576,12 +580,12 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       const resolvedEvents = runtimeEvents.filter(
         (event) => event.type === "request.resolved" && String(event.requestId) === requestId,
       );
-      assert.equal(resolvedEvents.length, 1);
+      NodeAssert.equal(resolvedEvents.length, 1);
 
       const duplicateReply = yield* Effect.flip(
         adapter.respondToRequest(threadId, ApprovalRequestId.make(requestId), "acceptForSession"),
       );
-      assert.match(duplicateReply.message, /Unknown pending permission request/);
+      NodeAssert.match(duplicateReply.message, /Unknown pending permission request/);
 
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
       yield* adapter.stopSession(threadId);
@@ -601,8 +605,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       });
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
-      assert.ok(config.onPermissionRequest);
+      NodeAssert.ok(config?.onEvent);
+      NodeAssert.ok(config.onPermissionRequest);
 
       const permissionRequest: PermissionRequest = {
         kind: "url",
@@ -637,7 +641,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       );
 
       const result = yield* Effect.promise(() => resultPromise);
-      assert.deepStrictEqual(result, {
+      NodeAssert.deepStrictEqual(result, {
         kind: "approve-for-session",
         domain: "docs.github.com",
       });
@@ -672,7 +676,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const resultText =
         "Task completed: **Architecture diagram prepared**\n\n```mermaid\nflowchart TD\n  Client --> Server\n```";
@@ -787,7 +791,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       }
 
       const turnSnapshot = thread.turns.find((entry) => entry.id === turn.turnId);
-      assert.ok(turnSnapshot);
+      NodeAssert.ok(turnSnapshot);
       const assistantItem = turnSnapshot.items.find(
         (item) =>
           typeof item === "object" &&
@@ -795,12 +799,12 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           "type" in item &&
           item.type === "assistant_message",
       );
-      assert.deepStrictEqual(assistantItem, {
+      NodeAssert.deepStrictEqual(assistantItem, {
         type: "assistant_message",
         messageId: `copilot-task-completion-${String(turn.turnId)}`,
         content: resultText,
       });
-      assert.equal(
+      NodeAssert.equal(
         turnSnapshot.items.some(
           (item) =>
             typeof item === "object" &&
@@ -817,13 +821,13 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       const fallbackDelta = runtimeEvents.find(
         (event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text",
       );
-      assert.equal(fallbackDelta?.type, "content.delta");
+      NodeAssert.equal(fallbackDelta?.type, "content.delta");
       if (fallbackDelta?.type === "content.delta") {
-        assert.equal(
+        NodeAssert.equal(
           String(fallbackDelta.itemId),
           `copilot-task-completion-${String(turn.turnId)}`,
         );
-        assert.deepStrictEqual(fallbackDelta.payload, {
+        NodeAssert.deepStrictEqual(fallbackDelta.payload, {
           streamKind: "assistant_text",
           delta: resultText,
         });
@@ -833,7 +837,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         "copilot-tool-tool-task-complete-empty-success",
         "copilot-tool-tool-task-complete-failure",
       ]);
-      assert.equal(
+      NodeAssert.equal(
         runtimeEvents.some(
           (event) =>
             (event.type === "item.started" || event.type === "item.completed") &&
@@ -841,7 +845,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         ),
         false,
       );
-      assert.equal(
+      NodeAssert.equal(
         runtimeEvents.some((event) => event.type === "turn.diff.updated"),
         false,
       );
@@ -876,12 +880,12 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       yield* adapter.interruptTurn(threadId, turn.turnId);
-      assert.equal(runtimeMock.state.lastSession.abort.mock.calls.length, 1);
+      NodeAssert.equal(runtimeMock.state.lastSession.abort.mock.calls.length, 1);
       yield* waitForSdkEventQueue();
-      assert.equal(runtimeEvents.filter((event) => event.type === "turn.aborted").length, 0);
+      NodeAssert.equal(runtimeEvents.filter((event) => event.type === "turn.aborted").length, 0);
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const timestamp = yield* nowIso;
       config.onEvent({
         id: "evt-copilot-abort",
@@ -896,18 +900,18 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
       const abortedEvents = runtimeEvents.filter((event) => event.type === "turn.aborted");
-      assert.equal(abortedEvents.length, 1);
+      NodeAssert.equal(abortedEvents.length, 1);
       const aborted = abortedEvents[0];
-      assert.equal(aborted?.type, "turn.aborted");
+      NodeAssert.equal(aborted?.type, "turn.aborted");
       if (aborted?.type === "turn.aborted") {
-        assert.equal(String(aborted.turnId), String(turn.turnId));
-        assert.equal(aborted.payload.reason, "user_initiated");
+        NodeAssert.equal(String(aborted.turnId), String(turn.turnId));
+        NodeAssert.equal(aborted.payload.reason, "user_initiated");
       }
 
       const completed = runtimeEvents.find((event) => event.type === "turn.completed");
-      assert.equal(completed?.type, "turn.completed");
+      NodeAssert.equal(completed?.type, "turn.completed");
       if (completed?.type === "turn.completed") {
-        assert.equal(completed.payload.state, "cancelled");
+        NodeAssert.equal(completed.payload.state, "cancelled");
       }
 
       yield* adapter.stopSession(threadId);
@@ -940,7 +944,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
 
@@ -1002,7 +1006,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
 
       const thread = yield* adapter.readThread(threadId);
       const turnSnapshot = thread.turns.find((entry) => entry.id === turn.turnId);
-      assert.ok(turnSnapshot);
+      NodeAssert.ok(turnSnapshot);
       const assistantItems = turnSnapshot.items.filter(
         (item) =>
           typeof item === "object" &&
@@ -1010,8 +1014,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           "type" in item &&
           item.type === "assistant_message",
       );
-      assert.deepStrictEqual(assistantItems, []);
-      assert.equal(
+      NodeAssert.deepStrictEqual(assistantItems, []);
+      NodeAssert.equal(
         runtimeEvents.some(
           (event) =>
             event.type === "content.delta" && event.payload.streamKind === "assistant_text",
@@ -1049,7 +1053,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
 
@@ -1114,7 +1118,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
 
       const thread = yield* adapter.readThread(threadId);
       const turnSnapshot = thread.turns.find((entry) => entry.id === turn.turnId);
-      assert.ok(turnSnapshot);
+      NodeAssert.ok(turnSnapshot);
       const assistantItems = turnSnapshot.items.filter(
         (item) =>
           typeof item === "object" &&
@@ -1122,8 +1126,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           "type" in item &&
           item.type === "assistant_message",
       );
-      assert.deepStrictEqual(assistantItems, []);
-      assert.equal(
+      NodeAssert.deepStrictEqual(assistantItems, []);
+      NodeAssert.equal(
         runtimeEvents.some(
           (event) =>
             event.type === "content.delta" && event.payload.streamKind === "assistant_text",
@@ -1135,15 +1139,15 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         (event) =>
           event.type === "item.started" && String(event.itemId) === "copilot-tool-tool-read-file",
       );
-      assert.equal(startedTool?.type, "item.started");
+      NodeAssert.equal(startedTool?.type, "item.started");
       if (startedTool?.type === "item.started") {
-        assert.ok(
+        NodeAssert.ok(
           startedTool.payload.data !== null &&
             typeof startedTool.payload.data === "object" &&
             !Array.isArray(startedTool.payload.data),
         );
         const data = startedTool.payload.data as Record<string, unknown>;
-        assert.equal(data.kind, "read");
+        NodeAssert.equal(data.kind, "read");
       }
 
       yield* adapter.stopSession(threadId);
@@ -1176,7 +1180,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
 
@@ -1240,7 +1244,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
 
       const thread = yield* adapter.readThread(threadId);
       const turnSnapshot = thread.turns.find((entry) => entry.id === turn.turnId);
-      assert.ok(turnSnapshot);
+      NodeAssert.ok(turnSnapshot);
       const assistantItems = turnSnapshot.items.filter(
         (item) =>
           typeof item === "object" &&
@@ -1248,7 +1252,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           "type" in item &&
           item.type === "assistant_message",
       );
-      assert.deepStrictEqual(assistantItems, []);
+      NodeAssert.deepStrictEqual(assistantItems, []);
 
       yield* adapter.stopSession(threadId);
     }),
@@ -1280,7 +1284,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
 
@@ -1342,7 +1346,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       }
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.ok(
+      NodeAssert.ok(
         runtimeEvents.some(
           (event) =>
             event.type === "item.completed" &&
@@ -1353,7 +1357,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
 
       const thread = yield* adapter.readThread(threadId);
       const turnSnapshot = thread.turns.find((entry) => entry.id === turn.turnId);
-      assert.ok(turnSnapshot);
+      NodeAssert.ok(turnSnapshot);
       const assistantItems = turnSnapshot.items.filter(
         (item) =>
           typeof item === "object" &&
@@ -1361,7 +1365,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           "type" in item &&
           item.type === "assistant_message",
       );
-      assert.deepStrictEqual(assistantItems, []);
+      NodeAssert.deepStrictEqual(assistantItems, []);
 
       yield* adapter.stopSession(threadId);
     }),
@@ -1393,7 +1397,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
 
@@ -1443,7 +1447,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.equal(
+      NodeAssert.equal(
         runtimeEvents.some((event) => event.type === "turn.diff.updated"),
         false,
       );
@@ -1478,7 +1482,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
       const patch = "*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch";
@@ -1535,10 +1539,10 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       }
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.equal(diffEvent?.type, "turn.diff.updated");
+      NodeAssert.equal(diffEvent?.type, "turn.diff.updated");
       if (diffEvent?.type === "turn.diff.updated") {
-        assert.equal(diffEvent.turnId, turn.turnId);
-        assert.deepStrictEqual(diffEvent.payload, {
+        NodeAssert.equal(diffEvent.turnId, turn.turnId);
+        NodeAssert.deepStrictEqual(diffEvent.payload, {
           unifiedDiff: patch,
         });
       }
@@ -1549,7 +1553,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           event.payload.itemType === "file_change" &&
           String(event.itemId) === "copilot-tool-tool-apply-patch",
       );
-      assert.equal(completedTool?.type, "item.completed");
+      NodeAssert.equal(completedTool?.type, "item.completed");
 
       yield* adapter.stopSession(threadId);
     }),
@@ -1581,7 +1585,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
       const patch = "*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch";
@@ -1641,36 +1645,36 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           String(event.itemId) === "copilot-tool-tool-terminal-patch",
       );
 
-      assert.equal(startedTool?.type, "item.started");
+      NodeAssert.equal(startedTool?.type, "item.started");
       if (startedTool?.type === "item.started") {
-        assert.equal(startedTool.payload.itemType, "file_change");
-        assert.equal(startedTool.payload.title, "Applied patch");
-        assert.ok(
+        NodeAssert.equal(startedTool.payload.itemType, "file_change");
+        NodeAssert.equal(startedTool.payload.title, "Applied patch");
+        NodeAssert.ok(
           startedTool.payload.data !== null &&
             typeof startedTool.payload.data === "object" &&
             !Array.isArray(startedTool.payload.data),
         );
-        assert.equal("command" in startedTool.payload.data, false);
+        NodeAssert.equal("command" in startedTool.payload.data, false);
         const data = startedTool.payload.data as Record<string, unknown>;
-        assert.equal(data.kind, "edit");
+        NodeAssert.equal(data.kind, "edit");
       }
-      assert.equal(completedTool?.type, "item.completed");
+      NodeAssert.equal(completedTool?.type, "item.completed");
       if (completedTool?.type === "item.completed") {
-        assert.equal(completedTool.payload.itemType, "file_change");
-        assert.equal(completedTool.payload.title, "Applied patch");
-        assert.ok(
+        NodeAssert.equal(completedTool.payload.itemType, "file_change");
+        NodeAssert.equal(completedTool.payload.title, "Applied patch");
+        NodeAssert.ok(
           completedTool.payload.data !== null &&
             typeof completedTool.payload.data === "object" &&
             !Array.isArray(completedTool.payload.data),
         );
-        assert.equal("command" in completedTool.payload.data, false);
+        NodeAssert.equal("command" in completedTool.payload.data, false);
         const data = completedTool.payload.data as Record<string, unknown>;
-        assert.equal(data.kind, "edit");
+        NodeAssert.equal(data.kind, "edit");
       }
-      assert.equal(diffEvent?.type, "turn.diff.updated");
+      NodeAssert.equal(diffEvent?.type, "turn.diff.updated");
       if (diffEvent?.type === "turn.diff.updated") {
-        assert.equal(diffEvent.turnId, turn.turnId);
-        assert.equal(diffEvent.payload.unifiedDiff, patch);
+        NodeAssert.equal(diffEvent.turnId, turn.turnId);
+        NodeAssert.equal(diffEvent.payload.unifiedDiff, patch);
       }
 
       yield* adapter.stopSession(threadId);
@@ -1708,7 +1712,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           yield* waitForSdkEventQueue();
 
           const config = runtimeMock.state.createSessionConfigs.at(-1);
-          assert.ok(config?.onEvent);
+          NodeAssert.ok(config?.onEvent);
           const emit = (event: SessionEvent) => config.onEvent?.(event);
           const timestamp = yield* nowIso;
 
@@ -1760,7 +1764,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           yield* waitForSdkEventQueue();
           yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-          assert.equal(
+          NodeAssert.equal(
             runtimeEvents.some((event) => event.type === "turn.diff.updated"),
             false,
           );
@@ -1769,7 +1773,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
             ...consoleErrorSpy.mock.calls,
             ...consoleLogSpy.mock.calls,
           ].filter((args) => args.some((arg: unknown) => String(arg).includes("parseLineType")));
-          assert.deepStrictEqual(parserErrorCalls, []);
+          NodeAssert.deepStrictEqual(parserErrorCalls, []);
 
           const completedTool = runtimeEvents.find(
             (event) =>
@@ -1777,7 +1781,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
               event.payload.itemType === "command_execution" &&
               String(event.itemId) === "copilot-tool-tool-command",
           );
-          assert.equal(completedTool?.type, "item.completed");
+          NodeAssert.equal(completedTool?.type, "item.completed");
 
           yield* adapter.stopSession(threadId);
         } finally {
@@ -1815,7 +1819,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         yield* waitForSdkEventQueue();
 
         const config = runtimeMock.state.createSessionConfigs.at(-1);
-        assert.ok(config?.onEvent);
+        NodeAssert.ok(config?.onEvent);
         const emit = (event: SessionEvent) => config.onEvent?.(event);
         const timestamp = yield* nowIso;
         const diff = [
@@ -1881,10 +1885,10 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         }
         yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-        assert.equal(diffEvent?.type, "turn.diff.updated");
+        NodeAssert.equal(diffEvent?.type, "turn.diff.updated");
         if (diffEvent?.type === "turn.diff.updated") {
-          assert.equal(diffEvent.turnId, turn.turnId);
-          assert.deepStrictEqual(diffEvent.payload, {
+          NodeAssert.equal(diffEvent.turnId, turn.turnId);
+          NodeAssert.deepStrictEqual(diffEvent.payload, {
             unifiedDiff: diff.trim(),
           });
         }
@@ -1919,8 +1923,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
-      assert.ok(config.onPermissionRequest);
+      NodeAssert.ok(config?.onEvent);
+      NodeAssert.ok(config.onPermissionRequest);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
       const requestId = "permission-write-readme";
@@ -1967,15 +1971,15 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           (event) => event.type === "request.opened" && String(event.requestId) === requestId,
         );
       }
-      assert.equal(opened?.type, "request.opened");
+      NodeAssert.equal(opened?.type, "request.opened");
       if (opened?.type === "request.opened") {
-        assert.equal(opened.payload.requestType, "file_change_approval");
-        assert.equal(String(opened.turnId), String(turn.turnId));
+        NodeAssert.equal(opened.payload.requestType, "file_change_approval");
+        NodeAssert.equal(String(opened.turnId), String(turn.turnId));
       }
 
       yield* adapter.respondToRequest(threadId, ApprovalRequestId.make(requestId), "accept");
       const approvalResult = yield* Effect.promise(() => resultPromise);
-      assert.deepStrictEqual(approvalResult, { kind: "approve-once" });
+      NodeAssert.deepStrictEqual(approvalResult, { kind: "approve-once" });
 
       emit({
         id: "evt-copilot-write-permission-completed",
@@ -2001,10 +2005,10 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
       const diffUpdated = runtimeEvents.find((event) => event.type === "turn.diff.updated");
-      assert.equal(diffUpdated?.type, "turn.diff.updated");
+      NodeAssert.equal(diffUpdated?.type, "turn.diff.updated");
       if (diffUpdated?.type === "turn.diff.updated") {
-        assert.equal(String(diffUpdated.turnId), String(turn.turnId));
-        assert.deepStrictEqual(diffUpdated.payload, {
+        NodeAssert.equal(String(diffUpdated.turnId), String(turn.turnId));
+        NodeAssert.deepStrictEqual(diffUpdated.payload, {
           unifiedDiff: permissionRequest.diff.trim(),
         });
       }
@@ -2033,8 +2037,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
-      assert.ok(config.onPermissionRequest);
+      NodeAssert.ok(config?.onEvent);
+      NodeAssert.ok(config.onPermissionRequest);
 
       const permissionRequest: PermissionRequest = {
         kind: "shell",
@@ -2081,11 +2085,11 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           (event) => event.type === "request.opened" && String(event.requestId) === requestId,
         );
       }
-      assert.equal(opened?.type, "request.opened");
+      NodeAssert.equal(opened?.type, "request.opened");
 
       yield* adapter.respondToRequest(threadId, ApprovalRequestId.make(requestId), "accept");
       const result = yield* Effect.promise(() => resultPromise);
-      assert.deepStrictEqual(result, { kind: "approve-once" });
+      NodeAssert.deepStrictEqual(result, { kind: "approve-once" });
 
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
       yield* adapter.stopSession(threadId);
@@ -2112,7 +2116,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const timestamp = yield* nowIso;
       config.onEvent({
         id: "evt-copilot-title-change",
@@ -2131,10 +2135,10 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       }
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.equal(titleEvent?.type, "thread.metadata.updated");
+      NodeAssert.equal(titleEvent?.type, "thread.metadata.updated");
       if (titleEvent?.type === "thread.metadata.updated") {
-        assert.equal(titleEvent.threadId, threadId);
-        assert.deepStrictEqual(titleEvent.payload, {
+        NodeAssert.equal(titleEvent.threadId, threadId);
+        NodeAssert.deepStrictEqual(titleEvent.payload, {
           name: "Implement Copilot thread titles",
         });
       }
@@ -2203,7 +2207,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       });
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const timestamp = yield* nowIso;
       config.onEvent({
         id: "evt-copilot-background-tasks",
@@ -2221,11 +2225,11 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       }
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.equal(planEvent?.type, "turn.plan.updated");
+      NodeAssert.equal(planEvent?.type, "turn.plan.updated");
       if (planEvent?.type === "turn.plan.updated") {
-        assert.equal(planEvent.threadId, threadId);
-        assert.equal(String(planEvent.turnId), String(turn.turnId));
-        assert.deepStrictEqual(planEvent.payload, {
+        NodeAssert.equal(planEvent.threadId, threadId);
+        NodeAssert.equal(String(planEvent.turnId), String(turn.turnId));
+        NodeAssert.deepStrictEqual(planEvent.payload, {
           explanation: "Copilot Tasks",
           plan: [
             { step: "Exploring provider events", status: "inProgress" },
@@ -2235,7 +2239,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         });
       }
       const startedTasks = runtimeEvents.filter((event) => event.type === "task.started");
-      assert.deepStrictEqual(startedTasks.map((event) => String(event.payload.taskId)).sort(), [
+      NodeAssert.deepStrictEqual(startedTasks.map((event) => String(event.payload.taskId)).sort(), [
         "task-explore-1",
         "task-review-1",
         "task-shell-1",
@@ -2244,13 +2248,13 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         (event) =>
           event.type === "task.progress" && String(event.payload.taskId) === "task-explore-1",
       );
-      assert.equal(runningProgress?.type, "task.progress");
+      NodeAssert.equal(runningProgress?.type, "task.progress");
       if (runningProgress?.type === "task.progress") {
-        assert.equal(runningProgress.payload.description, "Exploring provider events");
-        assert.equal(runningProgress.payload.summary, "Task running");
+        NodeAssert.equal(runningProgress.payload.description, "Exploring provider events");
+        NodeAssert.equal(runningProgress.payload.summary, "Task running");
       }
       const completedTasks = runtimeEvents.filter((event) => event.type === "task.completed");
-      assert.deepStrictEqual(
+      NodeAssert.deepStrictEqual(
         completedTasks.map((event) => [String(event.payload.taskId), event.payload.status]).sort(),
         [
           ["task-review-1", "failed"],
@@ -2288,7 +2292,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const timestamp = yield* nowIso;
 
       runtimeMock.state.lastSession.rpc.backgroundTasks.list.mockResolvedValueOnce({
@@ -2372,12 +2376,12 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         (event) =>
           event.type === "task.completed" && String(event.payload.taskId) === "task-status-1",
       );
-      assert.equal(startedEvents.length, 1);
-      assert.equal(completedEvent?.type, "task.completed");
+      NodeAssert.equal(startedEvents.length, 1);
+      NodeAssert.equal(completedEvent?.type, "task.completed");
       if (completedEvent?.type === "task.completed") {
-        assert.equal(completedEvent.turnId, turn.turnId);
-        assert.equal(completedEvent.payload.status, "completed");
-        assert.equal(completedEvent.payload.summary, "Inspection completed");
+        NodeAssert.equal(completedEvent.turnId, turn.turnId);
+        NodeAssert.equal(completedEvent.payload.status, "completed");
+        NodeAssert.equal(completedEvent.payload.summary, "Inspection completed");
       }
 
       yield* adapter.stopSession(threadId);
@@ -2410,7 +2414,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const timestamp = yield* nowIso;
       config.onEvent({
         id: "evt-copilot-todo-turn-start",
@@ -2447,10 +2451,10 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       }
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.equal(planEvent?.type, "turn.plan.updated");
+      NodeAssert.equal(planEvent?.type, "turn.plan.updated");
       if (planEvent?.type === "turn.plan.updated") {
-        assert.equal(String(planEvent.turnId), String(turn.turnId));
-        assert.deepStrictEqual(planEvent.payload, {
+        NodeAssert.equal(String(planEvent.turnId), String(turn.turnId));
+        NodeAssert.deepStrictEqual(planEvent.payload, {
           explanation: "Copilot Todos",
           plan: [
             { step: "Inspect adapter", status: "completed" },
@@ -2494,7 +2498,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       });
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const timestamp = yield* nowIso;
       config.onEvent({
         id: "evt-copilot-empty-background-tasks",
@@ -2525,8 +2529,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       }
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.equal(markerEvent?.type, "session.state.changed");
-      assert.equal(
+      NodeAssert.equal(markerEvent?.type, "session.state.changed");
+      NodeAssert.equal(
         runtimeEvents.find((event) => event.type === "turn.plan.updated"),
         undefined,
       );
@@ -2566,7 +2570,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       delete session.rpc.backgroundTasks;
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const timestamp = yield* nowIso;
       config.onEvent({
         id: "evt-copilot-background-tasks-without-list",
@@ -2597,12 +2601,12 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       }
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.equal(markerEvent?.type, "session.state.changed");
-      assert.equal(
+      NodeAssert.equal(markerEvent?.type, "session.state.changed");
+      NodeAssert.equal(
         runtimeEvents.find((event) => event.type === "turn.plan.updated"),
         undefined,
       );
-      assert.equal(
+      NodeAssert.equal(
         runtimeEvents.find((event) => event.type === "runtime.error"),
         undefined,
       );
@@ -2637,7 +2641,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
 
@@ -2703,22 +2707,22 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       }
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.equal(started?.type, "item.started");
+      NodeAssert.equal(started?.type, "item.started");
       if (started?.type === "item.started") {
-        assert.equal(started.payload.itemType, "command_execution");
-        assert.equal(started.payload.title, "Ran command: git status --short");
-        assert.equal(started.payload.detail, "git status --short");
+        NodeAssert.equal(started.payload.itemType, "command_execution");
+        NodeAssert.equal(started.payload.title, "Ran command: git status --short");
+        NodeAssert.equal(started.payload.detail, "git status --short");
       }
 
-      assert.equal(completed?.type, "item.completed");
+      NodeAssert.equal(completed?.type, "item.completed");
       if (completed?.type === "item.completed") {
-        assert.equal(completed.payload.itemType, "command_execution");
-        assert.equal(completed.payload.title, "Ran command: git status --short");
-        assert.equal(
+        NodeAssert.equal(completed.payload.itemType, "command_execution");
+        NodeAssert.equal(completed.payload.title, "Ran command: git status --short");
+        NodeAssert.equal(
           completed.payload.detail,
           "M apps/server/src/provider/Layers/CopilotAdapter.ts",
         );
-        assert.deepStrictEqual(completed.payload.data, {
+        NodeAssert.deepStrictEqual(completed.payload.data, {
           toolCallId: "tool-command",
           toolName: "bash",
           command: "git status --short",
@@ -2758,7 +2762,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
 
@@ -2809,12 +2813,12 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
 
       const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
       const toolProgress = runtimeEvents.find((event) => event.type === "tool.progress");
-      assert.equal(runtimeError, undefined);
-      assert.equal(toolProgress, undefined);
-      assert.equal(completed?.type, "turn.completed");
+      NodeAssert.equal(runtimeError, undefined);
+      NodeAssert.equal(toolProgress, undefined);
+      NodeAssert.equal(completed?.type, "turn.completed");
       if (completed?.type === "turn.completed") {
-        assert.equal(String(completed.turnId), String(turn.turnId));
-        assert.equal(completed.payload.state, "completed");
+        NodeAssert.equal(String(completed.turnId), String(turn.turnId));
+        NodeAssert.equal(completed.payload.state, "completed");
       }
 
       yield* adapter.stopSession(threadId);
@@ -2847,7 +2851,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const timestamp = yield* nowIso;
       config.onEvent({
         id: "evt-copilot-session-error-turn-start",
@@ -2879,11 +2883,11 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
       const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
-      assert.equal(runtimeError?.type, "runtime.error");
-      assert.equal(completed?.type, "turn.completed");
+      NodeAssert.equal(runtimeError?.type, "runtime.error");
+      NodeAssert.equal(completed?.type, "turn.completed");
       if (completed?.type === "turn.completed") {
-        assert.equal(completed.payload.state, "failed");
-        assert.equal(completed.payload.errorMessage, "Copilot runtime crashed");
+        NodeAssert.equal(completed.payload.state, "failed");
+        NodeAssert.equal(completed.payload.errorMessage, "Copilot runtime crashed");
       }
 
       yield* adapter.stopSession(threadId);
@@ -2916,7 +2920,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
 
@@ -2971,10 +2975,10 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       const completions = runtimeEvents.filter(
         (event) => event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
       );
-      assert.equal(completions.length, 1);
-      assert.equal(completions[0]?.type, "turn.completed");
+      NodeAssert.equal(completions.length, 1);
+      NodeAssert.equal(completions[0]?.type, "turn.completed");
       if (completions[0]?.type === "turn.completed") {
-        assert.equal(completions[0].payload.state, "completed");
+        NodeAssert.equal(completions[0].payload.state, "completed");
       }
 
       yield* adapter.stopSession(threadId);
@@ -3007,7 +3011,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
 
@@ -3060,7 +3064,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       } as SessionEvent);
 
       yield* waitForSdkEventQueue();
-      assert.equal(
+      NodeAssert.equal(
         runtimeEvents.some((event) => event.type === "turn.completed"),
         false,
       );
@@ -3096,9 +3100,9 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       const completions = runtimeEvents.filter(
         (event) => event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
       );
-      assert.equal(messageCompleted?.type, "item.completed");
-      assert.equal(String(messageCompleted?.turnId), String(turn.turnId));
-      assert.equal(completions.length, 1);
+      NodeAssert.equal(messageCompleted?.type, "item.completed");
+      NodeAssert.equal(String(messageCompleted?.turnId), String(turn.turnId));
+      NodeAssert.equal(completions.length, 1);
 
       yield* adapter.stopSession(threadId);
     }),
@@ -3124,7 +3128,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const timestamp = yield* nowIso;
 
       config.onEvent({
@@ -3145,8 +3149,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       const runningState = runtimeEvents.find(
         (event) => event.type === "session.state.changed" && event.payload.state === "running",
       );
-      assert.equal(runtimeWarning, undefined);
-      assert.equal(runningState, undefined);
+      NodeAssert.equal(runtimeWarning, undefined);
+      NodeAssert.equal(runningState, undefined);
 
       yield* adapter.stopSession(threadId);
     }),
@@ -3172,7 +3176,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
 
@@ -3252,8 +3256,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           event.payload.message.includes("sdk-turn-unmapped-after-complete-second"),
       );
 
-      assert.equal(runtimeWarning, undefined);
-      assert.equal(staleRunningState, undefined);
+      NodeAssert.equal(runtimeWarning, undefined);
+      NodeAssert.equal(staleRunningState, undefined);
 
       yield* adapter.stopSession(threadId);
     }),
@@ -3279,7 +3283,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
 
@@ -3311,7 +3315,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       ) {
         yield* waitForSdkEventQueue();
       }
-      assert.equal(
+      NodeAssert.equal(
         runtimeEvents.some(
           (event) =>
             event.type === "session.state.changed" &&
@@ -3361,21 +3365,21 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       const completionsAfterFirstIdle = runtimeEvents.filter(
         (event) => event.type === "turn.completed",
       );
-      assert.equal(
+      NodeAssert.equal(
         completionsAfterFirstIdle.filter(
           (event) => String(event.turnId) === String(firstTurn.turnId),
         ).length,
         1,
       );
-      assert.equal(
+      NodeAssert.equal(
         completionsAfterFirstIdle.filter(
           (event) => String(event.turnId) === String(secondTurn.turnId),
         ).length,
         0,
       );
       const latestEventAfterFirstIdle = runtimeEvents.at(-1);
-      assert.equal(latestEventAfterFirstIdle?.type, "session.state.changed");
-      assert.equal(latestEventAfterFirstIdle.payload.state, "running");
+      NodeAssert.equal(latestEventAfterFirstIdle?.type, "session.state.changed");
+      NodeAssert.equal(latestEventAfterFirstIdle.payload.state, "running");
 
       emit({
         id: "evt-copilot-queued-second-turn-start",
@@ -3422,7 +3426,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         (event) =>
           event.type === "turn.completed" && String(event.turnId) === String(secondTurn.turnId),
       );
-      assert.equal(secondCompletions.length, 1);
+      NodeAssert.equal(secondCompletions.length, 1);
 
       yield* adapter.stopSession(threadId);
     }),
@@ -3448,7 +3452,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
 
@@ -3548,7 +3552,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         (event) =>
           event.type === "runtime.warning" && event.payload.message.includes("sdk-turn-stale"),
       );
-      assert.equal(staleWarning, undefined);
+      NodeAssert.equal(staleWarning, undefined);
 
       const firstCompletion = runtimeEvents.find(
         (event) =>
@@ -3558,8 +3562,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         (event) =>
           event.type === "turn.completed" && String(event.turnId) === String(secondTurn.turnId),
       );
-      assert.equal(firstCompletion?.type, "turn.completed");
-      assert.equal(secondCompletion?.type, "turn.completed");
+      NodeAssert.equal(firstCompletion?.type, "turn.completed");
+      NodeAssert.equal(secondCompletion?.type, "turn.completed");
 
       yield* adapter.stopSession(threadId);
     }),
@@ -3585,7 +3589,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const replayTimestamp = "1900-01-01T00:00:00.000Z";
 
@@ -3656,8 +3660,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       const completions = runtimeEvents.filter(
         (event) => event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
       );
-      assert.equal(replayWarnings.length, 0);
-      assert.equal(completions.length, 1);
+      NodeAssert.equal(replayWarnings.length, 0);
+      NodeAssert.equal(completions.length, 1);
 
       yield* adapter.stopSession(threadId);
     }),
@@ -3685,7 +3689,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         yield* waitForSdkEventQueue();
 
         const config = runtimeMock.state.createSessionConfigs.at(-1);
-        assert.ok(config?.onEvent);
+        NodeAssert.ok(config?.onEvent);
         const emit = (event: SessionEvent) => config.onEvent?.(event);
         const timestamp = yield* nowIso;
 
@@ -3780,8 +3784,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           (event) =>
             event.type === "turn.completed" && String(event.turnId) === String(secondTurn.turnId),
         );
-        assert.equal(firstTurnCompletions.length, 1);
-        assert.equal(secondTurnCompletions.length, 1);
+        NodeAssert.equal(firstTurnCompletions.length, 1);
+        NodeAssert.equal(secondTurnCompletions.length, 1);
 
         yield* adapter.stopSession(threadId);
       }),
@@ -3818,7 +3822,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       });
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
-      assert.ok(config?.onEvent);
+      NodeAssert.ok(config?.onEvent);
       const emit = (event: SessionEvent) => config.onEvent?.(event);
       const timestamp = yield* nowIso;
 
@@ -3863,16 +3867,16 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       }
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.equal(runtimeMock.state.nativeWriteCalls > 0, true);
-      assert.equal(disconnectsBeforeDrain, 0);
-      assert.equal(runtimeMock.state.lastSession.disconnect.mock.calls.length, 1);
-      assert.equal(runtimeMock.state.stopCalls, 1);
+      NodeAssert.equal(runtimeMock.state.nativeWriteCalls > 0, true);
+      NodeAssert.equal(disconnectsBeforeDrain, 0);
+      NodeAssert.equal(runtimeMock.state.lastSession.disconnect.mock.calls.length, 1);
+      NodeAssert.equal(runtimeMock.state.stopCalls, 1);
 
       const completed = runtimeEvents.find((event) => event.type === "turn.completed");
-      assert.equal(completed?.type, "turn.completed");
+      NodeAssert.equal(completed?.type, "turn.completed");
       if (completed?.type === "turn.completed") {
-        assert.equal(String(completed.turnId), String(turn.turnId));
-        assert.equal(completed.payload.state, "completed");
+        NodeAssert.equal(String(completed.turnId), String(turn.turnId));
+        NodeAssert.equal(completed.payload.state, "completed");
       }
     }),
   );
@@ -3908,16 +3912,16 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.equal(result._tag, "Failure");
+      NodeAssert.equal(result._tag, "Failure");
       const aborted = runtimeEvents.find((event) => event.type === "turn.aborted");
       const completed = runtimeEvents.find((event) => event.type === "turn.completed");
 
-      assert.equal(aborted?.type, "turn.aborted");
-      assert.equal(completed?.type, "turn.completed");
+      NodeAssert.equal(aborted?.type, "turn.aborted");
+      NodeAssert.equal(completed?.type, "turn.completed");
       if (aborted?.type === "turn.aborted" && completed?.type === "turn.completed") {
-        assert.equal(String(completed.turnId), String(aborted.turnId));
-        assert.equal(completed.payload.state, "failed");
-        assert.equal(completed.payload.errorMessage, "Copilot send rejected");
+        NodeAssert.equal(String(completed.turnId), String(aborted.turnId));
+        NodeAssert.equal(completed.payload.state, "failed");
+        NodeAssert.equal(completed.payload.errorMessage, "Copilot send rejected");
       }
 
       yield* adapter.stopSession(threadId);

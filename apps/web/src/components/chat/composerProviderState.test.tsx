@@ -179,7 +179,6 @@ describe("getComposerProviderState", () => {
           { id: "long_context", label: "Long Context" },
         ]),
       ]),
-      prompt: "",
       modelOptions: selections(["variant", "test"], ["contextTier", "long_context"]),
     });
 
