@@ -464,29 +464,6 @@ export const ensureNodePtyImpl = (
       } as const;
     }
 
-    // Some node resolved -- but resolving isn't enough, it also has to
-    // satisfy engines.node. A too-old Node (e.g. nvm's default alias still
-    // pointing at 18) loads and runs the server bundle without error, but
-    // `import.meta.main` is undefined pre-20.11/22.x, so the server's
-    // `if (import.meta.main)` launch gate never fires: the process exits
-    // 0 with no stdout/stderr and nothing ever binds the port -- identical
-    // symptoms to the stdin-EOF race below, but a structurally different
-    // cause that the probe previously never checked for once *any* node
-    // resolved.
-    const nodeVersion = parseNodeVersion(probe.stdout);
-    const requiredRange = options.nodeEngineRange?.trim() || null;
-    if (
-      requiredRange !== null &&
-      nodeVersion !== null &&
-      !satisfiesSemverRange(nodeVersion, requiredRange)
-    ) {
-      return {
-        ok: false,
-        reason: `Found Node.js v${nodeVersion} at ${nodePath}, which does not satisfy the required range ${requiredRange}. Activate a supported version (e.g. nvm alias default 22 && nvm use 22) and restart T3 Code.`,
-        fatal: true,
-      } as const;
-    }
-
     // Server dependencies (e.g. "effect") couldn't be resolved on the WSL
     // filesystem — a packaging regression, since the server bundle needs its
     // node_modules unpacked from the asar. Fatal so wsl-only mode falls back to
@@ -501,7 +478,34 @@ export const ensureNodePtyImpl = (
       } as const;
     }
 
-    if (probe.exitCode === 0) return { ok: true, nodePath, resolvedPath } as const;
+    if (probe.exitCode === 0) {
+      // The rest of the probe succeeded -- but that isn't enough on its own,
+      // it also has to satisfy engines.node. A too-old Node (e.g. nvm's
+      // default alias still pointing at 18) loads and runs the server bundle
+      // without error, but `import.meta.main` is undefined pre-20.11/22.x, so
+      // the server's `if (import.meta.main)` launch gate never fires: the
+      // process exits 0 with no stdout/stderr and nothing ever binds the port
+      // -- identical symptoms to the stdin-EOF race below, but a structurally
+      // different cause that the probe previously never checked for once
+      // *any* node resolved. Gated on exitCode === 0 (rather than checked
+      // unconditionally as soon as nodePath resolves) so this doesn't mask a
+      // more specific, unrelated probe failure (e.g. the exitCode === 3 case
+      // above) behind a Node-version error in the rare case both are true.
+      const nodeVersion = parseNodeVersion(probe.stdout);
+      const requiredRange = options.nodeEngineRange?.trim() || null;
+      if (
+        requiredRange !== null &&
+        nodeVersion !== null &&
+        !satisfiesSemverRange(nodeVersion, requiredRange)
+      ) {
+        return {
+          ok: false,
+          reason: `Found Node.js v${nodeVersion} at ${nodePath}, which does not satisfy the required range ${requiredRange}. Activate a supported version (e.g. nvm alias default 22 && nvm use 22) and restart T3 Code.`,
+          fatal: true,
+        } as const;
+      }
+      return { ok: true, nodePath, resolvedPath } as const;
+    }
 
     if (options.allowBuild !== true) {
       const packagedProbeFailure = formatNodePtyProbeFailureReason(probe.exitCode);
