@@ -66,6 +66,14 @@ jobs:
         name: Update version metadata
         run: node scripts/update-release-package-versions.ts "${{ steps.release_meta.outputs.version }}" --github-output
 
+      - id: previous_tag
+        name: Resolve previous stable release tag
+        run: |
+          node scripts/resolve-previous-release-tag.ts \
+            --channel stable \
+            --current-tag "${{ steps.release_meta.outputs.tag }}" \
+            --github-output
+
       - name: Format package manifests
         if: steps.update_versions.outputs.changed == 'true'
         run: vp fmt apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
@@ -76,7 +84,6 @@ jobs:
 
       - id: app_bot
         name: Resolve GitHub App bot identity
-        if: steps.update_versions.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           APP_SLUG: ${{ steps.app_token.outputs.app-slug }}
@@ -86,51 +93,70 @@ jobs:
           echo "email=${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
 
       - name: Push release branch
-        if: steps.update_versions.outputs.changed == 'true'
         shell: bash
         env:
           BRANCH_NAME: release/stable
           RELEASE_VERSION: ${{ steps.release_meta.outputs.version }}
+          RELEASE_TAG: ${{ steps.release_meta.outputs.tag }}
+          PREVIOUS_TAG: ${{ steps.previous_tag.outputs.previous_tag }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
           git config user.name "${{ steps.app_bot.outputs.name }}"
           git config user.email "${{ steps.app_bot.outputs.email }}"
           git fetch origin "$BRANCH_NAME" || true
           git switch -c "$BRANCH_NAME"
-          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml
-          git commit -m "prepare stable release $RELEASE_VERSION"
+
+          mkdir -p .github/release-pr
+          jq -n \
+            --arg version "$RELEASE_VERSION" \
+            --arg tag "$RELEASE_TAG" \
+            --arg previousTag "$PREVIOUS_TAG" \
+            --arg sourceSha "$SOURCE_SHA" \
+            '{
+              version: $version,
+              tag: $tag,
+              previousTag: (if $previousTag == "" then null else $previousTag end),
+              sourceSha: $sourceSha
+            }' > .github/release-pr/stable.json
+
+          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml .github/release-pr/stable.json
+          if git diff --cached --quiet; then
+            git commit --allow-empty -m "prepare stable release $RELEASE_VERSION"
+          else
+            git commit -m "prepare stable release $RELEASE_VERSION"
+          fi
           git push --force-with-lease="refs/heads/$BRANCH_NAME" origin "HEAD:$BRANCH_NAME"
 
       - name: Create or update release PR
-        if: steps.update_versions.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           BRANCH_NAME: release/stable
           RELEASE_VERSION: ${{ steps.release_meta.outputs.version }}
           RELEASE_TAG: ${{ steps.release_meta.outputs.tag }}
+          PREVIOUS_TAG: ${{ steps.previous_tag.outputs.previous_tag }}
         run: |
           title="prepare stable release $RELEASE_VERSION"
           body="$(mktemp)"
+          commits="$(mktemp)"
+          if [[ -n "$PREVIOUS_TAG" ]]; then
+            git log --first-parent --pretty=format:'- %s (`%h`)' "$PREVIOUS_TAG..origin/main" > "$commits"
+          else
+            echo "- No previous stable tag found." > "$commits"
+          fi
+          if [[ ! -s "$commits" ]]; then
+            echo "- No commits found since the latest stable release." > "$commits"
+          fi
+
           cat > "$body" <<EOF
-          ## What Changed
+          ## Stable Release
 
-          - Update release package metadata for $RELEASE_TAG.
-          - Refresh the lockfile for the release version.
+          Merging this PR publishes $RELEASE_TAG.
 
-          ## Why
+          Previous stable: ${PREVIOUS_TAG:-none}
 
-          Merging this PR triggers the stable fork release from the prepared version metadata.
-
-          ## UI Changes
-
-          None.
-
-          ## Checklist
-
-          - [x] This PR is small and focused
-          - [x] I explained what changed and why
-          - [x] No UI changes
-          - [x] No animation/interaction changes
+          ## Commits Since Previous Stable
           EOF
+          cat "$commits" >> "$body"
 
           existing="$(gh pr list --head "$BRANCH_NAME" --base main --state open --json number --jq '.[0].number // empty')"
           if [[ -n "$existing" ]]; then
@@ -138,7 +164,3 @@ jobs:
           else
             gh pr create --base main --head "$BRANCH_NAME" --title "$title" --body-file "$body"
           fi
-
-      - name: Report unchanged release PR
-        if: steps.update_versions.outputs.changed != 'true'
-        run: echo "Release package metadata already matches ${{ steps.release_meta.outputs.version }}."

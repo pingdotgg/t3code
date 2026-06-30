@@ -116,10 +116,7 @@ jobs:
               changed_files="$(git diff-tree --root --no-commit-id --name-only -r "$GITHUB_SHA")"
             fi
             if [[ "$HEAD_COMMIT_MESSAGE" == *"prepare stable release"* ]] &&
-              grep -qx "apps/server/package.json" <<< "$changed_files" &&
-              grep -qx "apps/desktop/package.json" <<< "$changed_files" &&
-              grep -qx "apps/web/package.json" <<< "$changed_files" &&
-              grep -qx "packages/contracts/package.json" <<< "$changed_files" &&
+              grep -qx ".github/release-pr/stable.json" <<< "$changed_files" &&
               [[ "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+${fork_marker}(\.[0-9]+)?$ ]]; then
               stable_from_main=true
             fi
