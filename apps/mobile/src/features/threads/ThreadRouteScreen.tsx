@@ -653,14 +653,14 @@ function ThreadRouteContent(
                 headerShadowVisible: false,
               }),
           headerTintColor: iconColor,
-          headerTitle: selectedThread.title,
+          headerTitle: layout.usesSplitView ? "" : selectedThread.title,
           headerTitleStyle: usesNativeHeaderGlass
             ? {
                 fontSize: 17,
                 fontWeight: "800",
               }
             : undefined,
-          title: selectedThread.title,
+          title: layout.usesSplitView ? "" : selectedThread.title,
           headerBackVisible: !layout.usesSplitView,
           headerBackTitle: "",
           scrollEdgeEffects: {
