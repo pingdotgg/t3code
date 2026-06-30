@@ -10,6 +10,7 @@ import { SymbolView } from "expo-symbols";
 import { useCallback, useRef } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -57,79 +58,153 @@ function ArchivedThreadsHeader(props: {
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly sortOrder: ArchivedThreadSortOrder;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
+  readonly onRefresh: () => void;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
 }) {
+  const { width } = useWindowDimensions();
   const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
+  const usesNativeMailToolbar = Platform.OS === "ios" && width < 700;
+  const archiveFilterMenu = {
+    title: "Archived thread options",
+    items: [
+      {
+        type: "submenu" as const,
+        title: "Environment",
+        items: [
+          {
+            type: "action" as const,
+            title: "All environments",
+            state: props.selectedEnvironmentId === null ? ("on" as const) : ("off" as const),
+            onPress: () => props.onEnvironmentChange(null),
+          },
+          ...props.environments.map((environment) => ({
+            type: "action" as const,
+            title: environment.label,
+            state:
+              props.selectedEnvironmentId === environment.environmentId
+                ? ("on" as const)
+                : ("off" as const),
+            onPress: () => props.onEnvironmentChange(environment.environmentId),
+          })),
+        ],
+      },
+      {
+        type: "submenu" as const,
+        title: "Sort by archived date",
+        items: [
+          {
+            type: "action" as const,
+            title: "Newest first",
+            state: props.sortOrder === "newest" ? ("on" as const) : ("off" as const),
+            onPress: () => props.onSortOrderChange("newest"),
+          },
+          {
+            type: "action" as const,
+            title: "Oldest first",
+            state: props.sortOrder === "oldest" ? ("on" as const) : ("off" as const),
+            onPress: () => props.onSortOrderChange("oldest"),
+          },
+        ],
+      },
+    ],
+  };
 
   return (
     <>
       <Stack.Screen
         options={{
           title: "Archived Threads",
-          headerSearchBarOptions: {
-            autoCapitalize: "none",
-            hideNavigationBar: false,
-            obscureBackground: false,
-            placeholder: "Search archived threads",
-            placement: "stacked",
-            onChangeText: (event) => {
-              props.onSearchQueryChange(event.nativeEvent.text);
-            },
-            onCancelButtonPress: () => {
-              props.onSearchQueryChange("");
-            },
-          },
+          headerTransparent: usesNativeMailToolbar,
+          headerStyle: usesNativeMailToolbar ? { backgroundColor: "transparent" } : undefined,
+          headerShadowVisible: usesNativeMailToolbar ? false : undefined,
+          unstable_navigationItemStyle: usesNativeMailToolbar ? "editor" : undefined,
+          unstable_headerToolbarItems: usesNativeMailToolbar
+            ? () => [
+                {
+                  composeButtonId: "archived-refresh",
+                  composeSystemImageName: "arrow.clockwise",
+                  filterMenu: archiveFilterMenu,
+                  filterButtonId: "archived-filter",
+                  filterSystemImageName: hasCustomFilter
+                    ? "line.3.horizontal.decrease.circle.fill"
+                    : "line.3.horizontal.decrease",
+                  onComposePress: props.onRefresh,
+                  onSearchTextChange: props.onSearchQueryChange,
+                  placeholder: "Search",
+                  searchTextChangeId: "archived-search-text",
+                  type: "mailSearchToolbar",
+                  useFallbackSearchField: true,
+                },
+              ]
+            : undefined,
+          headerSearchBarOptions: usesNativeMailToolbar
+            ? undefined
+            : {
+                autoCapitalize: "none",
+                hideNavigationBar: false,
+                obscureBackground: false,
+                placeholder: "Search archived threads",
+                placement: "stacked",
+                onChangeText: (event) => {
+                  props.onSearchQueryChange(event.nativeEvent.text);
+                },
+                onCancelButtonPress: () => {
+                  props.onSearchQueryChange("");
+                },
+              },
         }}
       />
 
-      <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Menu
-          accessibilityLabel="Filter and sort archived threads"
-          icon={
-            hasCustomFilter
-              ? "line.3.horizontal.decrease.circle.fill"
-              : "line.3.horizontal.decrease.circle"
-          }
-          separateBackground
-          title="Archived thread options"
-        >
-          <Stack.Toolbar.Menu title="Environment">
-            <Stack.Toolbar.Label>Environment</Stack.Toolbar.Label>
-            <Stack.Toolbar.MenuAction
-              isOn={props.selectedEnvironmentId === null}
-              onPress={() => props.onEnvironmentChange(null)}
-            >
-              <Stack.Toolbar.Label>All environments</Stack.Toolbar.Label>
-            </Stack.Toolbar.MenuAction>
-            {props.environments.map((environment) => (
+      {usesNativeMailToolbar ? null : (
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Menu
+            accessibilityLabel="Filter and sort archived threads"
+            icon={
+              hasCustomFilter
+                ? "line.3.horizontal.decrease.circle.fill"
+                : "line.3.horizontal.decrease.circle"
+            }
+            separateBackground
+            title="Archived thread options"
+          >
+            <Stack.Toolbar.Menu title="Environment">
+              <Stack.Toolbar.Label>Environment</Stack.Toolbar.Label>
               <Stack.Toolbar.MenuAction
-                key={environment.environmentId}
-                isOn={props.selectedEnvironmentId === environment.environmentId}
-                onPress={() => props.onEnvironmentChange(environment.environmentId)}
+                isOn={props.selectedEnvironmentId === null}
+                onPress={() => props.onEnvironmentChange(null)}
               >
-                <Stack.Toolbar.Label>{environment.label}</Stack.Toolbar.Label>
+                <Stack.Toolbar.Label>All environments</Stack.Toolbar.Label>
               </Stack.Toolbar.MenuAction>
-            ))}
-          </Stack.Toolbar.Menu>
+              {props.environments.map((environment) => (
+                <Stack.Toolbar.MenuAction
+                  key={environment.environmentId}
+                  isOn={props.selectedEnvironmentId === environment.environmentId}
+                  onPress={() => props.onEnvironmentChange(environment.environmentId)}
+                >
+                  <Stack.Toolbar.Label>{environment.label}</Stack.Toolbar.Label>
+                </Stack.Toolbar.MenuAction>
+              ))}
+            </Stack.Toolbar.Menu>
 
-          <Stack.Toolbar.Menu title="Sort by archived date">
-            <Stack.Toolbar.Label>Sort by archived date</Stack.Toolbar.Label>
-            <Stack.Toolbar.MenuAction
-              isOn={props.sortOrder === "newest"}
-              onPress={() => props.onSortOrderChange("newest")}
-            >
-              <Stack.Toolbar.Label>Newest first</Stack.Toolbar.Label>
-            </Stack.Toolbar.MenuAction>
-            <Stack.Toolbar.MenuAction
-              isOn={props.sortOrder === "oldest"}
-              onPress={() => props.onSortOrderChange("oldest")}
-            >
-              <Stack.Toolbar.Label>Oldest first</Stack.Toolbar.Label>
-            </Stack.Toolbar.MenuAction>
+            <Stack.Toolbar.Menu title="Sort by archived date">
+              <Stack.Toolbar.Label>Sort by archived date</Stack.Toolbar.Label>
+              <Stack.Toolbar.MenuAction
+                isOn={props.sortOrder === "newest"}
+                onPress={() => props.onSortOrderChange("newest")}
+              >
+                <Stack.Toolbar.Label>Newest first</Stack.Toolbar.Label>
+              </Stack.Toolbar.MenuAction>
+              <Stack.Toolbar.MenuAction
+                isOn={props.sortOrder === "oldest"}
+                onPress={() => props.onSortOrderChange("oldest")}
+              >
+                <Stack.Toolbar.Label>Oldest first</Stack.Toolbar.Label>
+              </Stack.Toolbar.MenuAction>
+            </Stack.Toolbar.Menu>
           </Stack.Toolbar.Menu>
-        </Stack.Toolbar.Menu>
-      </Stack.Toolbar>
+        </Stack.Toolbar>
+      )}
     </>
   );
 }
@@ -361,6 +436,7 @@ export function ArchivedThreadsScreen(props: {
       <ArchivedThreadsHeader
         environments={props.environments}
         onEnvironmentChange={props.onEnvironmentChange}
+        onRefresh={props.onRefresh}
         onSearchQueryChange={props.onSearchQueryChange}
         onSortOrderChange={props.onSortOrderChange}
         selectedEnvironmentId={props.selectedEnvironmentId}
