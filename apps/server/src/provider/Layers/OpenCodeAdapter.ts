@@ -82,6 +82,40 @@ function parseOpenCodeResume(raw: unknown): { readonly sessionId: string } | und
   return { sessionId: record.sessionId.trim() };
 }
 
+/**
+ * Walk an error's `cause` chain for a definitive "session not found" signal —
+ * an HTTP 404 or an OpenCode `NotFoundError`. The SDK client is configured
+ * `throwOnError: true` (see `createOpenCodeSdkClient`), so `session.get` on a
+ * missing/closed session rejects rather than resolving; `runOpenCodeSdk` then
+ * surfaces it as a failed Effect whose cause wraps the original error (message
+ * plus `{ body, status }`). Only a confirmed miss justifies silently starting a
+ * fresh session — any other failure (transport, auth, server error) must
+ * propagate, so a momentary blip can't quietly reset a live thread to an empty
+ * session (the #3604 class of silent context loss).
+ */
+function isOpenCodeNotFound(cause: unknown): boolean {
+  let current: unknown = cause;
+  for (let depth = 0; depth < 6 && current !== null && typeof current === "object"; depth += 1) {
+    const record = current as Record<string, unknown>;
+    if (record.status === 404 || record.statusCode === 404) {
+      return true;
+    }
+    const name = record.name;
+    if (typeof name === "string" && name.toLowerCase().includes("notfound")) {
+      return true;
+    }
+    const message = record.message;
+    if (
+      typeof message === "string" &&
+      /\bnot found\b|no such session|unknown session|does not exist/i.test(message)
+    ) {
+      return true;
+    }
+    current = record.cause;
+  }
+  return false;
+}
+
 interface OpenCodeTurnSnapshot {
   readonly id: TurnId;
   readonly items: Array<unknown>;
@@ -1102,48 +1136,86 @@ export function makeOpenCodeAdapter(
               }
               // Resume path: when a durable cursor names a prior OpenCode
               // session, re-adopt that `ses_…` instead of minting a new one.
-              // OpenCode scopes history by session id, so prompting the same
-              // id automatically restores the full prior conversation. We
-              // validate with `session.get` first; a missing/closed session
-              // (or any get failure) falls back to creating a fresh one so a
-              // stale cursor can never wedge the thread.
-              const resumedSession = resumeSessionId
-                ? yield* runOpenCodeSdk("session.get", () =>
-                    client.session.get({ sessionID: resumeSessionId }),
-                  ).pipe(
-                    Effect.map((response) => response.data),
-                    Effect.orElseSucceed(() => undefined),
-                  )
-                : undefined;
-              const created = resumedSession === undefined;
-              const openCodeSession = yield* resumedSession
-                ? Effect.succeed(resumedSession)
-                : Effect.gen(function* () {
-                    if (resumeSessionId) {
-                      yield* Effect.logWarning(
-                        `OpenCode session '${resumeSessionId}' could not be resumed; starting a fresh session.`,
-                      );
-                    }
-                    const createdSession = yield* runOpenCodeSdk("session.create", () =>
-                      client.session.create({
-                        title: `T3 Code ${input.threadId}`,
-                        permission: buildOpenCodePermissionRules(input.runtimeMode),
-                      }),
-                    );
-                    if (!createdSession.data) {
-                      return yield* new OpenCodeRuntimeError({
-                        operation: "session.create",
-                        detail: "OpenCode session.create returned no session payload.",
-                      });
-                    }
-                    return createdSession.data;
+              // OpenCode scopes history by session id, so prompting the same id
+              // restores the full prior conversation.
+              //
+              // The probe distinguishes three outcomes. A request that throws
+              // (transport/network) fails the Effect in `runOpenCodeSdk` and
+              // propagates — we never silently reset a live thread on a blip.
+              // A confirmed "not found" falls back to a fresh session. Any
+              // other error response (auth, bad request, server error) is
+              // surfaced rather than masked as a brand-new empty session.
+              const resolved = yield* Effect.gen(function* () {
+                // Probe the persisted session. With `throwOnError: true`,
+                // `session.get` rejects on any non-2xx; we recover ONLY a
+                // confirmed "not found" (the session is genuinely gone -> start
+                // fresh). A transport/auth/server error propagates instead of
+                // masquerading as a brand-new empty session (issue #3604).
+                const adopted = resumeSessionId
+                  ? yield* runOpenCodeSdk("session.get", () =>
+                      client.session.get({ sessionID: resumeSessionId }),
+                    ).pipe(
+                      Effect.map((response) => response.data),
+                      Effect.catchIf(
+                        (cause) => isOpenCodeNotFound(cause),
+                        () => Effect.succeed(undefined),
+                      ),
+                    )
+                  : undefined;
+
+                // Reuse the upstream session only when it still matches the
+                // requested working directory. OpenCode routes a prompt to the
+                // session's OWN stored directory, so resuming a session created
+                // under a different cwd would silently run there — in that case
+                // start fresh in the requested directory instead.
+                const reusable =
+                  adopted && (!adopted.directory || adopted.directory === directory)
+                    ? adopted
+                    : undefined;
+
+                if (reusable) {
+                  // `session.create` is skipped on resume, so re-assert the
+                  // permission ruleset for the CURRENT runtimeMode — otherwise a
+                  // runtime-mode change (the reactor restarts with the persisted
+                  // cursor) would leave the re-adopted session on the
+                  // permissions it was originally created with.
+                  yield* runOpenCodeSdk("session.update", () =>
+                    client.session.update({
+                      sessionID: reusable.id,
+                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                    }),
+                  );
+                  return { openCodeSession: reusable, created: false };
+                }
+
+                if (resumeSessionId) {
+                  yield* Effect.logWarning(
+                    adopted !== undefined
+                      ? `OpenCode session '${resumeSessionId}' is bound to a different working directory; starting a fresh session.`
+                      : `OpenCode session '${resumeSessionId}' no longer exists; starting a fresh session.`,
+                  );
+                }
+                const createdSession = yield* runOpenCodeSdk("session.create", () =>
+                  client.session.create({
+                    title: `T3 Code ${input.threadId}`,
+                    permission: buildOpenCodePermissionRules(input.runtimeMode),
+                  }),
+                );
+                if (!createdSession.data) {
+                  return yield* new OpenCodeRuntimeError({
+                    operation: "session.create",
+                    detail: "OpenCode session.create returned no session payload.",
                   });
+                }
+                return { openCodeSession: createdSession.data, created: true };
+              });
+
               return {
                 sessionScope,
                 server,
                 client,
-                openCodeSession,
-                created,
+                openCodeSession: resolved.openCodeSession,
+                created: resolved.created,
               };
             }).pipe(Effect.provideService(Scope.Scope, sessionScope)),
           );
