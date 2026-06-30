@@ -23,8 +23,8 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelCapabilities, normalizeModelSlug } from "@t3tools/shared/model";
 import { resolveCommandPath } from "@t3tools/shared/shell";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { providerModelsFromSettings } from "./providerSnapshot.ts";
 
@@ -64,13 +64,40 @@ export class CopilotProbePromiseError extends Error {
   }
 }
 
-class CopilotCliPathResolutionError extends Data.TaggedError("CopilotCliPathResolutionError")<{
-  readonly message: string;
-}> {}
+class CopilotCliPathResolutionError extends Schema.TaggedErrorClass<CopilotCliPathResolutionError>()(
+  "CopilotCliPathResolutionError",
+  {
+    detail: Schema.String,
+    binaryPath: Schema.optional(Schema.String),
+    serverUrl: Schema.optional(Schema.String),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    const context = [
+      this.binaryPath ? `binaryPath=${this.binaryPath}` : undefined,
+      this.serverUrl ? `serverUrl=${this.serverUrl}` : undefined,
+    ]
+      .filter((part): part is string => part !== undefined)
+      .join(", ");
+    return `Copilot CLI path resolution failed${context ? ` (${context})` : ""}: ${this.detail}`;
+  }
+}
 
-function copilotClientConfigurationError(cause: unknown): CopilotCliPathResolutionError {
+function copilotClientConfigurationError(input: {
+  readonly settings: CopilotSettings;
+  readonly detail: string;
+  readonly cause: unknown;
+}): CopilotCliPathResolutionError {
   return new CopilotCliPathResolutionError({
-    message: cause instanceof Error ? cause.message : String(cause),
+    detail: input.detail,
+    ...(trimOrUndefined(input.settings.binaryPath)
+      ? { binaryPath: trimOrUndefined(input.settings.binaryPath) }
+      : {}),
+    ...(trimOrUndefined(input.settings.serverUrl)
+      ? { serverUrl: trimOrUndefined(input.settings.serverUrl) }
+      : {}),
+    cause: input.cause,
   });
 }
 
@@ -139,7 +166,12 @@ export const createCopilotClient = Effect.fn("createCopilotClient")(function* (i
   const options = yield* buildCopilotClientOptions(input);
   return yield* Effect.try({
     try: () => new CopilotClient(options),
-    catch: copilotClientConfigurationError,
+    catch: (cause) =>
+      copilotClientConfigurationError({
+        settings: input.settings,
+        detail: "Failed to construct Copilot client.",
+        cause,
+      }),
   });
 });
 
@@ -233,7 +265,8 @@ const validateConfiguredCopilotCliPath = Effect.fn("validateConfiguredCopilotCli
       Effect.catchTag("CommandResolutionError", () =>
         Effect.fail(
           new CopilotCliPathResolutionError({
-            message: `The configured Copilot binary could not be found: ${cliPath}.`,
+            detail: "The configured Copilot binary could not be found.",
+            binaryPath: cliPath,
           }),
         ),
       ),
@@ -326,7 +359,12 @@ export const buildCopilotClientOptions = Effect.fn("buildCopilotClientOptions")(
   const connection = cliUrl
     ? yield* Effect.try({
         try: () => RuntimeConnection.forUri(cliUrl),
-        catch: copilotClientConfigurationError,
+        catch: (cause) =>
+          copilotClientConfigurationError({
+            settings: input.settings,
+            detail: "Invalid Copilot server URL.",
+            cause,
+          }),
       })
     : cliPath
       ? RuntimeConnection.forStdio({ path: cliPath })
