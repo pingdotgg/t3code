@@ -6,6 +6,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -218,6 +219,101 @@ describe("DesktopBackendManager", () => {
         assert.deepEqual(yield* decodeBootstrap(bootstrapJson), configWithObservability);
       }),
     ),
+  );
+
+  it.effect(
+    "holds stdin open forever for bootstrapDelivery:'stdin' (#3611 fix 1) while fd3 still terminates normally",
+    () =>
+      Effect.gen(function* () {
+        // --- stdin-delivered (WSL) path: the bootstrap stream must never
+        // complete in normal operation, eliminating the readline 'line' vs
+        // 'close' race in apps/server/src/bootstrap.ts. ---
+        let stdinStream: ChildProcess.CommandInput | undefined;
+        const stdinSpawned = yield* Deferred.make<void>();
+        const stdinSpawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              if (command._tag === "StandardCommand") {
+                stdinStream = command.options.stdin;
+              }
+              yield* Deferred.succeed(stdinSpawned, void 0);
+              return makeProcess({ exitCode: Effect.never });
+            }),
+          ),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const instance = yield* makeTestInstance({
+              spawnerLayer: stdinSpawnerLayer,
+              config: {
+                ...baseConfig,
+                bootstrapDelivery: "stdin",
+                args: ["/server/bin.mjs", "--bootstrap-fd", "0"],
+              },
+              httpClientLayer: httpClientLayer(() => Effect.never),
+            });
+
+            yield* instance.start;
+            yield* Deferred.await(stdinSpawned);
+            assert.isDefined(stdinStream);
+            if (typeof stdinStream === "string") {
+              throw new Error("Expected stdin to be a Stream, not a CommandInput string.");
+            }
+
+            const drained = yield* Stream.runDrain(stdinStream).pipe(
+              Effect.timeoutOption(Duration.seconds(30)),
+              Effect.forkScoped,
+            );
+            yield* TestClock.adjust(Duration.seconds(30));
+            const result = yield* Fiber.join(drained);
+            assert.isTrue(Option.isNone(result), "stdin stream completed but must never end");
+          }),
+        );
+
+        // --- fd3-delivered (Windows-native) path: unaffected regression
+        // check -- the bootstrap stream must still terminate normally. ---
+        let fd3Stream: Stream.Stream<Uint8Array> | undefined;
+        const fd3Spawned = yield* Deferred.make<void>();
+        const fd3SpawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              if (command._tag === "StandardCommand") {
+                const fd3 = command.options.additionalFds?.fd3;
+                if (fd3?.type === "input") fd3Stream = fd3.stream;
+              }
+              yield* Deferred.succeed(fd3Spawned, void 0);
+              return makeProcess({ exitCode: Effect.never });
+            }),
+          ),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const instance = yield* makeTestInstance({
+              spawnerLayer: fd3SpawnerLayer,
+              httpClientLayer: httpClientLayer(() => Effect.never),
+            });
+
+            yield* instance.start;
+            yield* Deferred.await(fd3Spawned);
+            assert.isDefined(fd3Stream);
+
+            const drained = yield* Stream.runDrain(fd3Stream!).pipe(
+              Effect.timeoutOption(Duration.seconds(30)),
+              Effect.forkScoped,
+            );
+            yield* TestClock.adjust(Duration.seconds(30));
+            const result = yield* Fiber.join(drained);
+            assert.isTrue(
+              Option.isSome(result),
+              "fd3 stream should still terminate normally (no regression)",
+            );
+          }),
+        );
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("retries HTTP readiness before reporting the backend ready", () =>
@@ -614,6 +710,244 @@ describe("DesktopBackendManager", () => {
         assert.deepEqual(failures, ["WSL toolchain probe timed out"]);
       }).pipe(Effect.provide(TestClock.layer())),
     ),
+  );
+
+  it.effect(
+    "surfaces and falls back after 5 consecutive never-ready exits for bootstrapDelivery:'stdin' (#3611 fix 3)",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const starts = yield* Queue.unbounded<number>();
+          let startCount = 0;
+          const failures: Array<{ reason: string; fatal: boolean }> = [];
+
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.sync(() => {
+                startCount += 1;
+                return makeProcess({
+                  // Clean exit, code=0, before readiness -- matches the
+                  // reporter's server-child.log (no stdout/stderr, nothing
+                  // ever binds the port).
+                  exitCode: Queue.offer(starts, startCount).pipe(
+                    Effect.as(ChildProcessSpawner.ExitCode(0)),
+                  ),
+                });
+              }),
+            ),
+          );
+
+          const instance = yield* makeTestInstance({
+            spawnerLayer,
+            config: { ...baseConfig, bootstrapDelivery: "stdin" },
+            httpClientLayer: httpClientLayer(() => Effect.never),
+            onPreflightFailed: (failure) =>
+              Effect.sync(() => {
+                failures.push(failure);
+              }).pipe(Effect.as(false)),
+          });
+
+          yield* instance.start;
+          assert.equal(yield* Queue.take(starts), 1);
+
+          // Drive well past 5 consecutive never-ready exits.
+          for (let i = 0; i < 10; i++) {
+            yield* TestClock.adjust(Duration.seconds(10));
+          }
+
+          assert.equal(failures.length, 1);
+          assert.equal(failures[0]?.fatal, true);
+          assert.isTrue(startCount >= 5 && startCount <= 7);
+
+          const snapshot = yield* instance.snapshot;
+          assert.equal(snapshot.desiredRunning, false);
+        }).pipe(Effect.provide(TestClock.layer())),
+      ),
+  );
+
+  it.effect(
+    "does not surface a never-ready exit loop for bootstrapDelivery:'fd3' (Windows-native primary stays gated out, #3611 fix 3)",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const starts = yield* Queue.unbounded<number>();
+          let startCount = 0;
+          const failures: Array<{ reason: string; fatal: boolean }> = [];
+
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.sync(() => {
+                startCount += 1;
+                return makeProcess({
+                  exitCode: Queue.offer(starts, startCount).pipe(
+                    Effect.as(ChildProcessSpawner.ExitCode(0)),
+                  ),
+                });
+              }),
+            ),
+          );
+
+          const instance = yield* makeTestInstance({
+            spawnerLayer,
+            config: { ...baseConfig, bootstrapDelivery: "fd3" },
+            httpClientLayer: httpClientLayer(() => Effect.never),
+            onPreflightFailed: (failure) =>
+              Effect.sync(() => {
+                failures.push(failure);
+              }).pipe(Effect.as(false)),
+          });
+
+          yield* instance.start;
+          assert.equal(yield* Queue.take(starts), 1);
+
+          for (let i = 0; i < 10; i++) {
+            yield* TestClock.adjust(Duration.seconds(10));
+          }
+
+          // The Windows-native primary must never trip the WSL-specific
+          // "falling back to Windows" dialog for its own crash loop.
+          assert.deepEqual(failures, []);
+          assert.isTrue(startCount > 7, "fd3 path should keep restarting uncapped, unlike stdin");
+
+          const snapshot = yield* instance.snapshot;
+          assert.equal(snapshot.desiredRunning, true);
+        }).pipe(Effect.provide(TestClock.layer())),
+      ),
+  );
+
+  it.effect(
+    "pre-spawn transient preflight retries do not count toward the never-ready cap (bot-flagged fix)",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const starts = yield* Queue.unbounded<number>();
+          let startCount = 0;
+          const failures: Array<{ reason: string; fatal: boolean }> = [];
+          const stillColdStarting = yield* Ref.make(true);
+
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.sync(() => {
+                startCount += 1;
+                return makeProcess({
+                  exitCode: Queue.offer(starts, startCount).pipe(
+                    Effect.as(ChildProcessSpawner.ExitCode(0)),
+                  ),
+                });
+              }),
+            ),
+          );
+
+          const instance = yield* makeTestInstance({
+            spawnerLayer,
+            configResolve: Ref.get(stillColdStarting).pipe(
+              Effect.map((coldStarting) =>
+                coldStarting
+                  ? {
+                      ...baseConfig,
+                      bootstrapDelivery: "stdin",
+                      preflightFailure: Option.some({
+                        reason: "WSL is still cold-starting",
+                        fatal: false,
+                      }),
+                    }
+                  : { ...baseConfig, bootstrapDelivery: "stdin" },
+              ),
+            ),
+            httpClientLayer: httpClientLayer(() => Effect.never),
+            onPreflightFailed: (failure) =>
+              Effect.sync(() => {
+                failures.push(failure);
+              }).pipe(Effect.as(false)),
+          });
+
+          yield* instance.start;
+
+          // Several transient (unbounded, pre-spawn) preflight retries -- the
+          // process never spawns during this window, so the general restart
+          // counter climbs well past MAX_PREFLIGHT_FAILURE_ATTEMPTS, but the
+          // never-ready cap must not be affected by any of this.
+          for (let i = 0; i < 8; i++) {
+            yield* TestClock.adjust(Duration.seconds(10));
+          }
+          assert.equal(yield* Queue.size(starts), 0);
+          assert.deepEqual(failures, []);
+
+          // Cold start finishes: preflight goes clean and the process
+          // actually spawns, but exits before ever becoming ready, repeatedly.
+          yield* Ref.set(stillColdStarting, false);
+          for (let i = 0; i < 10; i++) {
+            yield* TestClock.adjust(Duration.seconds(10));
+          }
+
+          // Must take its own fresh 5 consecutive post-spawn never-ready
+          // exits -- not fire on the first one because the pre-spawn retries
+          // had already elevated an unrelated counter.
+          assert.equal(failures.length, 1);
+          assert.equal(failures[0]?.fatal, true);
+          assert.isTrue(startCount >= 5 && startCount <= 7);
+        }).pipe(Effect.provide(TestClock.layer())),
+      ),
+  );
+
+  it.effect(
+    "a fresh start after the never-ready cap fires gets a new retry budget (bot-flagged fix)",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const starts = yield* Queue.unbounded<number>();
+          let startCount = 0;
+          const failures: Array<{ reason: string; fatal: boolean }> = [];
+
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.sync(() => {
+                startCount += 1;
+                return makeProcess({
+                  exitCode: Queue.offer(starts, startCount).pipe(
+                    Effect.as(ChildProcessSpawner.ExitCode(0)),
+                  ),
+                });
+              }),
+            ),
+          );
+
+          const instance = yield* makeTestInstance({
+            spawnerLayer,
+            config: { ...baseConfig, bootstrapDelivery: "stdin" },
+            httpClientLayer: httpClientLayer(() => Effect.never),
+            onPreflightFailed: (failure) =>
+              Effect.sync(() => {
+                failures.push(failure);
+              }).pipe(Effect.as(false)),
+          });
+
+          yield* instance.start;
+          for (let i = 0; i < 10; i++) {
+            yield* TestClock.adjust(Duration.seconds(10));
+          }
+          assert.equal(failures.length, 1);
+          assert.equal((yield* instance.snapshot).desiredRunning, false);
+
+          const startCountAtTrip = startCount;
+
+          // Restarting after the cap fired (without ever calling stop())
+          // must not immediately re-trip on the very next failure because a
+          // stale counter survived from before.
+          yield* instance.start;
+          for (let i = 0; i < 10; i++) {
+            yield* TestClock.adjust(Duration.seconds(10));
+          }
+
+          assert.equal(failures.length, 2);
+          const spawnsSinceRestart = startCount - startCountAtTrip;
+          assert.isTrue(spawnsSinceRestart >= 5 && spawnsSinceRestart <= 7);
+        }).pipe(Effect.provide(TestClock.layer())),
+      ),
   );
 
   it.effect("cancels a scheduled restart when start is requested manually", () =>

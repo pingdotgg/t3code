@@ -236,6 +236,13 @@ interface BackendManagerState {
   // Consecutive bounded/fatal preflight failures, reset on a clean or
   // unbounded-transient preflight. restartAttempt counts all restarts.
   readonly preflightFailureAttempt: number;
+  // Consecutive post-spawn exits that never reached readiness for this
+  // instance, reset on a successful onReady or a fresh start from a
+  // stopped state. Deliberately separate from restartAttempt, which also
+  // counts pre-spawn preflight retries (e.g. WSL cold-start) -- using
+  // restartAttempt for the never-ready cap would let ordinary transient
+  // preflight retries trip it well before 5 actual post-spawn failures.
+  readonly neverReadyAttempt: number;
   readonly restartFiber: Option.Option<Fiber.Fiber<void, never>>;
   readonly nextRunId: number;
 }
@@ -247,6 +254,7 @@ const initialState: BackendManagerState = {
   active: Option.none(),
   restartAttempt: 0,
   preflightFailureAttempt: 0,
+  neverReadyAttempt: 0,
   restartFiber: Option.none(),
   nextRunId: 1,
 };
@@ -335,7 +343,24 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     ),
   );
   const onOutput = options.onOutput ?? (() => Effect.void);
-  const bootstrapStream = Stream.encodeText(Stream.make(`${bootstrapJson}\n`));
+  // The WSL path delivers the bootstrap envelope over stdin (see the
+  // additionalFds comment below). A plain `Stream.make(...)` completes the
+  // instant the single chunk is queued, and the platform spawner's stdin
+  // sink defaults to closing the write end as soon as the stream completes
+  // (`endOnDone: true`) -- i.e. stdin EOF can land immediately after the
+  // JSON line is flushed, racing the extra wsl.exe relay hop against the
+  // child's readline `'line'` vs `'close'` listeners
+  // (apps/server/src/bootstrap.ts:readBootstrapEnvelope) and sometimes
+  // losing the bootstrap envelope entirely. Appending `Stream.never` keeps
+  // stdin open forever for the WSL path so the write end is never closed in
+  // normal operation; this is intentional, not a leak -- the stream is
+  // forked into this run's own Scope, which is interrupted (closing stdin)
+  // on every teardown path (process exit, restart, stop, SIGTERM). Do not
+  // "fix" this by removing the `Stream.never` tail.
+  const bootstrapStream = Stream.make(`${bootstrapJson}\n`).pipe(
+    options.bootstrapDelivery === "stdin" ? Stream.concat(Stream.never) : (s) => s,
+    Stream.encodeText,
+  );
   const command = ChildProcess.make(options.executablePath, options.args, {
     cwd: options.cwd,
     env: options.env,
@@ -470,6 +495,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
         const resetFatalPreflightCounter =
           !current.desiredRunning && current.preflightFailureAttempt > 0;
+        const resetNeverReadyCounter = !current.desiredRunning && current.neverReadyAttempt > 0;
         yield* cancelRestart;
         yield* Ref.update(state, (latest) => ({
           ...latest,
@@ -477,6 +503,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           ready: false,
           config: Option.some(config.value),
           preflightFailureAttempt: resetFatalPreflightCounter ? 0 : latest.preflightFailureAttempt,
+          neverReadyAttempt: resetNeverReadyCounter ? 0 : latest.neverReadyAttempt,
         }));
 
         const preflightFailure = config.value.preflightFailure;
@@ -599,6 +626,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                     ...latest,
                     active: Option.none<ActiveBackendRun>(),
                     ready: false,
+                    neverReadyAttempt: latest.neverReadyAttempt + 1,
                   };
                   return [
                     {
@@ -622,7 +650,44 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               }
 
               if (isCurrentRun && nextState.desiredRunning) {
-                yield* scheduleRestart(reason);
+                // A process that exits cleanly (or otherwise) before ever
+                // reaching readiness, repeatedly, would otherwise loop here
+                // forever with no escalation -- this is exactly how a WSL
+                // backend that starts and exits with code 0 every time
+                // (e.g. the stdin-EOF race or a Node engine mismatch) gets
+                // permanently stuck "connecting" with no actionable error.
+                // Cap it the same way the pre-spawn fatal-preflight path
+                // already is, but only for the stdin-delivered (WSL) path:
+                // the Windows-native fd3 primary's onPreflightFailed is
+                // wired unconditionally to a WSL-specific "falling back to
+                // Windows" dialog, which would be nonsensical for a Windows
+                // backend crash-looping for an unrelated reason.
+                if (
+                  config.value.bootstrapDelivery === "stdin" &&
+                  nextState.neverReadyAttempt >= MAX_PREFLIGHT_FAILURE_ATTEMPTS
+                ) {
+                  yield* logInstanceError(
+                    "backend exited repeatedly before becoming ready; surfacing and falling back",
+                    { reason, attempt: nextState.neverReadyAttempt },
+                  );
+                  const shouldRestart = yield* (
+                    spec.onPreflightFailed?.({
+                      reason: `backend process exited ${nextState.neverReadyAttempt} times in a row without becoming ready (last: ${reason})`,
+                      fatal: true,
+                    }) ?? Effect.succeed(false)
+                  );
+                  if (shouldRestart) {
+                    yield* scheduleRestart(reason);
+                  } else {
+                    yield* Ref.update(state, (latest) => ({
+                      ...latest,
+                      desiredRunning: false,
+                      ready: false,
+                    }));
+                  }
+                } else {
+                  yield* scheduleRestart(reason);
+                }
               }
             }),
           );
@@ -652,6 +717,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                 {
                   ...latest,
                   restartAttempt: 0,
+                  neverReadyAttempt: 0,
                   ready: true,
                 },
               ] as const;
