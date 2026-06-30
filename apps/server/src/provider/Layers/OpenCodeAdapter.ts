@@ -82,36 +82,64 @@ function parseOpenCodeResume(raw: unknown): { readonly sessionId: string } | und
   return { sessionId: record.sessionId.trim() };
 }
 
+const OPENCODE_NOT_FOUND_MESSAGE = /\bnot found\b|no such session|unknown session|does not exist/i;
+
 /**
- * Walk an error's `cause` chain for a definitive "session not found" signal —
- * an HTTP 404 or an OpenCode `NotFoundError`. The SDK client is configured
- * `throwOnError: true` (see `createOpenCodeSdkClient`), so `session.get` on a
- * missing/closed session rejects rather than resolving; `runOpenCodeSdk` then
- * surfaces it as a failed Effect whose cause wraps the original error (message
- * plus `{ body, status }`). Only a confirmed miss justifies silently starting a
- * fresh session — any other failure (transport, auth, server error) must
- * propagate, so a momentary blip can't quietly reset a live thread to an empty
- * session (the #3604 class of silent context loss).
+ * Whether an error definitively reports a "session not found" — an HTTP 404 or
+ * an OpenCode `NotFoundError`. The SDK client is configured `throwOnError: true`
+ * (see `createOpenCodeSdkClient`), so `session.get` on a missing/closed session
+ * REJECTS rather than resolving; `runOpenCodeSdk` then surfaces it as a failed
+ * Effect whose `cause` wraps the original thrown `Error` (which carries the
+ * parsed body and HTTP status under its own `cause`), alongside the
+ * `OpenCodeRuntimeError.detail` string. Only a confirmed miss justifies silently
+ * starting a fresh session — any other failure (transport, auth, server error)
+ * must propagate, so a momentary blip can't quietly reset a live thread to an
+ * empty session (the #3604 class of silent context loss).
+ *
+ * Implemented as a bounded breadth-first walk so it is robust to the several
+ * shapes the SDK/runtime can produce: a 404 may surface as a numeric
+ * `status`/`statusCode`, a nested `response.status`, an OpenCode `NotFoundError`
+ * `name`/`body`, or text in `message`/`detail`. Exported for unit testing.
  */
-function isOpenCodeNotFound(cause: unknown): boolean {
-  let current: unknown = cause;
-  for (let depth = 0; depth < 6 && current !== null && typeof current === "object"; depth += 1) {
-    const record = current as Record<string, unknown>;
+export function isOpenCodeNotFound(cause: unknown): boolean {
+  const seen = new Set<unknown>();
+  const queue: Array<unknown> = [cause];
+  for (let steps = 0; queue.length > 0 && steps < 32; steps += 1) {
+    const node = queue.shift();
+    if (node === null || typeof node !== "object" || seen.has(node)) {
+      continue;
+    }
+    seen.add(node);
+    const record = node as Record<string, unknown>;
+
     if (record.status === 404 || record.statusCode === 404) {
       return true;
     }
+    const response = record.response;
+    if (
+      response !== null &&
+      typeof response === "object" &&
+      (response as { readonly status?: unknown }).status === 404
+    ) {
+      return true;
+    }
+
     const name = record.name;
     if (typeof name === "string" && name.toLowerCase().includes("notfound")) {
       return true;
     }
-    const message = record.message;
-    if (
-      typeof message === "string" &&
-      /\bnot found\b|no such session|unknown session|does not exist/i.test(message)
-    ) {
-      return true;
+    for (const key of ["message", "detail"] as const) {
+      const value = record[key];
+      if (typeof value === "string" && OPENCODE_NOT_FOUND_MESSAGE.test(value)) {
+        return true;
+      }
     }
-    current = record.cause;
+
+    for (const key of ["cause", "body", "error", "data"] as const) {
+      if (record[key] !== undefined) {
+        queue.push(record[key]);
+      }
+    }
   }
   return false;
 }

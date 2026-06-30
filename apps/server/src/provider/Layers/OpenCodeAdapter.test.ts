@@ -31,6 +31,7 @@ import {
 } from "../opencodeRuntime.ts";
 import {
   appendOpenCodeAssistantTextDelta,
+  isOpenCodeNotFound,
   makeOpenCodeAdapter,
   mergeOpenCodeAssistantText,
 } from "./OpenCodeAdapter.ts";
@@ -880,6 +881,41 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         { sessionID: "http://127.0.0.1:9999/session" },
       ]);
       NodeAssert.deepEqual(snapshot.turns, []);
+    }),
+  );
+
+  it.effect("classifies a confirmed not-found across the shapes the SDK/runtime can produce", () =>
+    Effect.sync(() => {
+      // The real production shape: runOpenCodeSdk wraps the thrown Error
+      // (cause = { body, status }) under OpenCodeRuntimeError.
+      const wrappedError = new Error("Session not found: ses_x", {
+        cause: { body: { name: "NotFoundError" }, status: 404 },
+      });
+      NodeAssert.equal(
+        isOpenCodeNotFound({
+          _tag: "OpenCodeRuntimeError",
+          operation: "session.get",
+          detail: "Session not found: ses_x",
+          cause: wrappedError,
+        }),
+        true,
+      );
+
+      // 404 expressed only via response.status (the bot's flagged shape).
+      NodeAssert.equal(isOpenCodeNotFound({ cause: { response: { status: 404 } } }), true);
+      // 404 via a bare numeric status / statusCode.
+      NodeAssert.equal(isOpenCodeNotFound(new Error("x", { cause: { status: 404 } })), true);
+      NodeAssert.equal(isOpenCodeNotFound({ statusCode: 404 }), true);
+      // OpenCode NotFoundError body name with no status.
+      NodeAssert.equal(isOpenCodeNotFound({ body: { name: "NotFoundError" } }), true);
+      // Only the detail string carries the signal.
+      NodeAssert.equal(isOpenCodeNotFound({ detail: "no such session" }), true);
+
+      // NOT a miss: transient/server/auth errors must propagate.
+      NodeAssert.equal(isOpenCodeNotFound(new Error("boom", { cause: { status: 500 } })), false);
+      NodeAssert.equal(isOpenCodeNotFound({ cause: { response: { status: 401 } } }), false);
+      NodeAssert.equal(isOpenCodeNotFound(new Error("network error (no response)")), false);
+      NodeAssert.equal(isOpenCodeNotFound(undefined), false);
     }),
   );
 
