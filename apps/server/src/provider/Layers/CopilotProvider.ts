@@ -1,6 +1,7 @@
 import { ProviderDriverKind, type CopilotSettings } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { DateTime, Effect } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 
 import { buildServerProvider, type ServerProviderDraft } from "../providerSnapshot.ts";
 import {
