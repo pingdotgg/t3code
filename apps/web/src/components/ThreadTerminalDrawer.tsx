@@ -794,6 +794,37 @@ export function TerminalViewport({
       window.cancelAnimationFrame(frame);
     };
   }, [drawerHeight, environmentId, resizeEpoch, terminalId, threadId]);
+
+  // CSS/flex-driven container resizes (split-pane drag, sidebar collapse) change the xterm
+  // size without firing window.resize, so resizeEpoch never advances. Observe the container
+  // directly and refit. rAF-coalesced to one fit per frame, matching the effect above.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let frame: number | null = null;
+    const observer = new ResizeObserver(() => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        const terminal = terminalRef.current;
+        const fitAddon = fitAddonRef.current;
+        if (!terminal || !fitAddon) return;
+        const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
+        fitTerminalSafely(fitAddon);
+        if (wasAtBottom) {
+          terminal.scrollToBottom();
+        }
+        void resizeTerminal(terminal.cols, terminal.rows);
+      });
+    });
+    observer.observe(container);
+    return () => {
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+      }
+      observer.disconnect();
+    };
+  }, [environmentId, terminalId, threadId]);
   return (
     <div
       ref={containerRef}

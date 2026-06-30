@@ -200,6 +200,11 @@ interface TerminalSubprocessInspector {
   ): Effect.Effect<TerminalSubprocessInspectResult, TerminalSubprocessCheckError>;
 }
 
+// Resize can fail permanently (e.g. a Bun build without `terminal.resize`). The frontend
+// command swallows the error, so warn once per process to keep the cause visible in logs
+// without spamming on every resize.
+const resizeFailureWarned = new WeakSet<PtyAdapter.PtyProcess>();
+
 const resizePtyProcess = (
   session: TerminalSessionState,
   process: PtyAdapter.PtyProcess,
@@ -217,7 +222,20 @@ const resizePtyProcess = (
         rows,
         cause,
       }),
-  });
+  }).pipe(
+    Effect.tapError((error) =>
+      Effect.gen(function* () {
+        if (resizeFailureWarned.has(process)) return;
+        resizeFailureWarned.add(process);
+        yield* Effect.logWarning("terminal resize failed; size changes will not propagate", {
+          threadId: session.threadId,
+          terminalId: session.terminalId,
+          terminalPid: process.pid,
+          cause: error.cause,
+        });
+      }),
+    ),
+  );
 
 export interface ShellCandidate {
   shell: string;
