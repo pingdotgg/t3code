@@ -316,10 +316,11 @@ describe("buildCopilotClientOptions", () => {
       }),
     );
 
-    it.effect("resolves configured relative binary paths from the workspace cwd", () =>
+    it.effect("resolves configured relative binary paths from the binary path base directory", () =>
       Effect.gen(function* () {
-        const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "copilot-cli-cwd-"));
-        const binDir = NodePath.join(tempDir, "node_modules", ".bin");
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "copilot-cli-base-"));
+        const workspaceDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "copilot-cli-cwd-"));
+        const binDir = NodePath.join(baseDir, "node_modules", ".bin");
         NodeFS.mkdirSync(binDir, { recursive: true });
         const binaryPath = NodePath.join(binDir, "copilot");
         NodeFS.writeFileSync(binaryPath, "#!/bin/sh\nexit 0\n");
@@ -332,14 +333,17 @@ describe("buildCopilotClientOptions", () => {
             serverUrl: "",
             customModels: [],
           },
-          cwd: tempDir,
+          cwd: workspaceDir,
+          binaryPathBaseDirectory: baseDir,
           env: { PATH: "/usr/bin" },
           platform: "darwin",
         });
 
         const connection = assertStdioConnection(options.connection);
         NodeAssert.equal(connection.path, binaryPath);
-        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+        NodeAssert.equal(options.workingDirectory, workspaceDir);
+        NodeFS.rmSync(baseDir, { recursive: true, force: true });
+        NodeFS.rmSync(workspaceDir, { recursive: true, force: true });
       }),
     );
   });

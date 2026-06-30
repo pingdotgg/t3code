@@ -175,6 +175,7 @@ function normalizeAuthLabelPart(value: string | null | undefined): string | unde
 export const createCopilotClient = Effect.fn("createCopilotClient")(function* (input: {
   readonly settings: CopilotSettings;
   readonly cwd?: string;
+  readonly binaryPathBaseDirectory?: string;
   readonly baseDirectory?: string;
   readonly env?: Record<string, string | undefined>;
   readonly platform: NodeJS.Platform;
@@ -277,7 +278,7 @@ function resolveCommandRelativeToCwd(
 const validateConfiguredCopilotCliPath = Effect.fn("validateConfiguredCopilotCliPath")(
   function* (input: {
     readonly settings: CopilotSettings;
-    readonly cwd?: string | undefined;
+    readonly binaryPathBaseDirectory?: string | undefined;
     readonly env?: Record<string, string | undefined>;
     readonly platform: NodeJS.Platform;
   }): Effect.fn.Return<string | undefined, CopilotCliPathResolutionError> {
@@ -295,7 +296,7 @@ const validateConfiguredCopilotCliPath = Effect.fn("validateConfiguredCopilotCli
     return yield* resolveCopilotCommandPath(cliPath, {
       env,
       platform: input.platform,
-      ...(input.cwd ? { cwd: input.cwd } : {}),
+      ...(input.binaryPathBaseDirectory ? { cwd: input.binaryPathBaseDirectory } : {}),
     }).pipe(
       Effect.catchTag("CommandResolutionError", () =>
         Effect.fail(
@@ -361,6 +362,7 @@ export const resolveBundledCopilotCliPath = Effect.fn("resolveBundledCopilotCliP
 export const buildCopilotClientOptions = Effect.fn("buildCopilotClientOptions")(function* (input: {
   readonly settings: CopilotSettings;
   readonly cwd?: string;
+  readonly binaryPathBaseDirectory?: string;
   readonly baseDirectory?: string;
   readonly env?: Record<string, string | undefined>;
   readonly platform: NodeJS.Platform;
@@ -379,7 +381,9 @@ export const buildCopilotClientOptions = Effect.fn("buildCopilotClientOptions")(
 
   const configuredCliPath = yield* validateConfiguredCopilotCliPath({
     settings: input.settings,
-    ...(input.cwd ? { cwd: input.cwd } : {}),
+    ...((input.binaryPathBaseDirectory ?? input.cwd)
+      ? { binaryPathBaseDirectory: input.binaryPathBaseDirectory ?? input.cwd }
+      : {}),
     env,
     platform: input.platform,
   });
