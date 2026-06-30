@@ -16,7 +16,7 @@ import {
 } from "@t3tools/shared/model";
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { ChevronDownIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon } from "lucide-react";
 import { Button, buttonVariants } from "../ui/button";
 import {
   Menu,
@@ -298,25 +298,39 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                 option.
               </div>
             ) : null}
-            <MenuRadioGroup
-              value={
+            {(() => {
+              const selectedValue =
                 ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
                   ? "ultrathink"
-                  : (getDescriptorStringValue(descriptor) ?? "")
-              }
-              onValueChange={(value) => handleSelectChange(descriptor, value)}
-            >
-              {descriptor.options.map((option) => (
-                <MenuRadioItem
-                  key={option.id}
-                  value={option.id}
-                  disabled={ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id}
+                  : (getDescriptorStringValue(descriptor) ?? "");
+              return (
+                <MenuRadioGroup
+                  value={selectedValue}
+                  onValueChange={(value) => handleSelectChange(descriptor, value)}
                 >
-                  {option.label}
-                  {option.isDefault ? " (default)" : ""}
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
+                  {descriptor.options.map((option) => (
+                    <MenuRadioItem
+                      key={option.id}
+                      value={option.id}
+                      hideIndicator
+                      disabled={
+                        ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id
+                      }
+                    >
+                      <span className="flex w-full min-w-0 items-center justify-between gap-3">
+                        <span className="min-w-0 truncate">
+                          {option.label}
+                          {option.isDefault ? " (default)" : ""}
+                        </span>
+                        {option.id === selectedValue ? (
+                          <CheckIcon className="size-3.5 shrink-0" />
+                        ) : null}
+                      </span>
+                    </MenuRadioItem>
+                  ))}
+                </MenuRadioGroup>
+              );
+            })()}
           </MenuGroup>
         </div>
       ))}
@@ -327,17 +341,30 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
             <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
               {descriptor.label}
             </div>
-            <MenuRadioGroup
-              value={descriptor.currentValue === true ? "on" : "off"}
-              onValueChange={(value) => {
-                updateDescriptors(
-                  replaceDescriptorCurrentValue(descriptors, descriptor.id, value === "on"),
-                );
-              }}
-            >
-              <MenuRadioItem value="on">On</MenuRadioItem>
-              <MenuRadioItem value="off">Off</MenuRadioItem>
-            </MenuRadioGroup>
+            {(() => {
+              const selectedValue = descriptor.currentValue === true ? "on" : "off";
+              return (
+                <MenuRadioGroup
+                  value={selectedValue}
+                  onValueChange={(value) => {
+                    updateDescriptors(
+                      replaceDescriptorCurrentValue(descriptors, descriptor.id, value === "on"),
+                    );
+                  }}
+                >
+                  {(["on", "off"] as const).map((value) => (
+                    <MenuRadioItem key={value} value={value} hideIndicator>
+                      <span className="flex w-full min-w-0 items-center justify-between gap-3">
+                        <span>{value === "on" ? "On" : "Off"}</span>
+                        {value === selectedValue ? (
+                          <CheckIcon className="size-3.5 shrink-0" />
+                        ) : null}
+                      </span>
+                    </MenuRadioItem>
+                  ))}
+                </MenuRadioGroup>
+              );
+            })()}
           </MenuGroup>
         </div>
       ))}
