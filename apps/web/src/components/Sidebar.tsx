@@ -332,7 +332,7 @@ interface SidebarThreadRowProps {
   renamingCommittedRef: React.RefObject<boolean>;
   confirmingArchiveThreadKey: string | null;
   setConfirmingArchiveThreadKey: React.Dispatch<React.SetStateAction<string | null>>;
-  confirmArchiveButtonRefs: React.RefObject<Map<string, HTMLButtonElement>>;
+  confirmArchiveButtonRefs: Map<string, HTMLButtonElement>;
   handleThreadClick: (
     event: React.MouseEvent,
     threadRef: ScopedThreadRef,
@@ -626,9 +626,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const handleConfirmArchiveRef = useCallback(
     (element: HTMLButtonElement | null) => {
       if (element) {
-        confirmArchiveButtonRefs.current.set(threadKey, element);
+        confirmArchiveButtonRefs.set(threadKey, element);
       } else {
-        confirmArchiveButtonRefs.current.delete(threadKey);
+        confirmArchiveButtonRefs.delete(threadKey);
       }
     },
     [confirmArchiveButtonRefs, threadKey],
@@ -654,7 +654,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       event.stopPropagation();
       setConfirmingArchiveThreadKey(threadKey);
       requestAnimationFrame(() => {
-        confirmArchiveButtonRefs.current.get(threadKey)?.focus();
+        confirmArchiveButtonRefs.get(threadKey)?.focus();
       });
     },
     [confirmArchiveButtonRefs, setConfirmingArchiveThreadKey, threadKey],
@@ -907,7 +907,7 @@ interface SidebarProjectThreadListProps {
   renamingCommittedRef: React.RefObject<boolean>;
   confirmingArchiveThreadKey: string | null;
   setConfirmingArchiveThreadKey: React.Dispatch<React.SetStateAction<string | null>>;
-  confirmArchiveButtonRefs: React.RefObject<Map<string, HTMLButtonElement>>;
+  confirmArchiveButtonRefs: Map<string, HTMLButtonElement>;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   handleThreadClick: (
     event: React.MouseEvent,
@@ -1218,7 +1218,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   >("inherit");
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
-  const confirmArchiveButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const confirmArchiveButtonRefs = useMemo(() => new Map<string, HTMLButtonElement>(), []);
   const memberProjectByScopedKey = useMemo(
     () =>
       new Map(
@@ -3347,22 +3347,26 @@ export default function Sidebar() {
     dragInProgressRef.current = false;
   }, []);
 
-  const animatedProjectListsRef = useRef(new WeakSet<HTMLElement>());
+  const animatedProjectListsRef = useRef<WeakSet<HTMLElement> | null>(null);
   const attachProjectListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
-    if (!node || animatedProjectListsRef.current.has(node)) {
+    const animatedProjectLists =
+      animatedProjectListsRef.current ?? (animatedProjectListsRef.current = new WeakSet());
+    if (!node || animatedProjectLists.has(node)) {
       return;
     }
     autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
-    animatedProjectListsRef.current.add(node);
+    animatedProjectLists.add(node);
   }, []);
 
-  const animatedThreadListsRef = useRef(new WeakSet<HTMLElement>());
+  const animatedThreadListsRef = useRef<WeakSet<HTMLElement> | null>(null);
   const attachThreadListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
-    if (!node || animatedThreadListsRef.current.has(node)) {
+    const animatedThreadLists =
+      animatedThreadListsRef.current ?? (animatedThreadListsRef.current = new WeakSet());
+    if (!node || animatedThreadLists.has(node)) {
       return;
     }
     autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
-    animatedThreadListsRef.current.add(node);
+    animatedThreadLists.add(node);
   }, []);
 
   const visibleThreads = useMemo(
