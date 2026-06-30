@@ -1,3 +1,4 @@
+import { type AuthClientPresentationMetadata } from "@t3tools/contracts";
 import {
   RelayAccessTokenType,
   RelayApi,
@@ -273,6 +274,7 @@ export class ManagedRelayClient extends Context.Service<
       readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
       readonly environmentId: RelayClientEnvironmentRecord["environmentId"];
       readonly deviceId?: string;
+      readonly client?: AuthClientPresentationMetadata;
     }) => Effect.Effect<RelayEnvironmentConnectResponse, ManagedRelayClientError>;
     readonly registerDevice: (input: {
       readonly clerkToken: string;
@@ -783,7 +785,8 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
           (authorization) => {
             const payload: RelayEnvironmentConnectRequest = {
               ...(input.deviceId ? { deviceId: input.deviceId } : {}),
-              clientKeyThumbprint: authorization.thumbprint,
+              clientProofKeyThumbprint: authorization.thumbprint,
+              ...(input.client ? { client: input.client } : {}),
             };
             return client.dpopClient
               .connectEnvironment({

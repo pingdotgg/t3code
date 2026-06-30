@@ -1,4 +1,5 @@
 import {
+  type AuthClientPresentationMetadata,
   EnvironmentHttpBadRequestError,
   EnvironmentHttpConflictError,
   EnvironmentHttpForbiddenError,
@@ -12,6 +13,7 @@ import {
   RelayEnvironmentHealthResponseProofPayload,
   RelayEnvironmentMintResponse,
   RelayEnvironmentMintResponseProofPayload,
+  type RelayEnvironmentMintPendingApprovalResponse,
   RelayCloudMintCredentialProofPayload,
   type RelayEnvironmentConnectResponse,
   type RelayEnvironmentStatusResponse,
@@ -149,6 +151,7 @@ export class EnvironmentConnector extends Context.Service<
       readonly environmentId: string;
       readonly clientProofKeyThumbprint: string;
       readonly deviceId?: string;
+      readonly client?: AuthClientPresentationMetadata;
     }) => Effect.Effect<RelayEnvironmentConnectResponse, EnvironmentConnectorError>;
     readonly status: (input: {
       readonly userId: string;
@@ -241,18 +244,38 @@ function verifyEnvironmentResponse(input: {
     environmentPublicKeys: input.environmentPublicKeys,
     decodePayload: decodeMintResponseProof,
   }).pipe(
-    Effect.map(
-      (proof) =>
-        proof !== null &&
-        proof.environmentId === input.environmentId &&
-        proof.requestNonce === input.requestNonce &&
-        proof.clientProofKeyThumbprint === input.clientProofKeyThumbprint &&
-        proof.credential === input.response.credential &&
-        Option.match(DateTime.make(input.response.expiresAt), {
+    Effect.map((proof) => {
+      const response = input.response;
+      if (
+        proof === null ||
+        proof.environmentId !== input.environmentId ||
+        proof.requestNonce !== input.requestNonce ||
+        proof.clientProofKeyThumbprint !== input.clientProofKeyThumbprint
+      ) {
+        return false;
+      }
+
+      if (!("credential" in response)) {
+        return (
+          "status" in proof &&
+          proof.status === "pending_approval" &&
+          proof.approvalStatus === response.approvalStatus &&
+          proof.clientProofKeyThumbprint === response.clientProofKeyThumbprint &&
+          proof.requestedAt === response.requestedAt
+        );
+      }
+
+      if ("status" in proof) {
+        return false;
+      }
+      return (
+        proof.credential === response.credential &&
+        Option.match(DateTime.make(response.expiresAt), {
           onNone: () => false,
           onSome: (expiresAt) => Math.floor(expiresAt.epochMilliseconds / 1_000) === proof.exp,
-        }),
-    ),
+        })
+      );
+    }),
   );
 }
 
@@ -615,6 +638,7 @@ const make = Effect.gen(function* () {
         clientProofKeyThumbprint: input.clientProofKeyThumbprint,
         cnf: { jkt: input.clientProofKeyThumbprint },
         ...(input.deviceId ? { deviceId: input.deviceId } : {}),
+        ...(input.client ? { client: input.client } : {}),
         nonce,
         scope: ["environment:connect"],
       } satisfies RelayCloudMintCredentialProofPayload;
@@ -673,6 +697,17 @@ const make = Effect.gen(function* () {
           environmentId: input.environmentId,
           operation: "connect",
         });
+      }
+      if (!("credential" in decoded)) {
+        const pending: RelayEnvironmentMintPendingApprovalResponse = decoded;
+        return {
+          status: "pending_approval",
+          environmentId: link.environmentId,
+          endpoint,
+          clientProofKeyThumbprint: pending.clientProofKeyThumbprint,
+          approvalStatus: pending.approvalStatus,
+          requestedAt: pending.requestedAt,
+        };
       }
       return {
         environmentId: link.environmentId,

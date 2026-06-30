@@ -10,6 +10,7 @@ import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { AuthClientPresentationMetadata, AuthConnectClientStatus } from "./auth.ts";
 
 export const RelayAgentAwarenessPlatform = Schema.Literal("ios");
 export type RelayAgentAwarenessPlatform = typeof RelayAgentAwarenessPlatform.Type;
@@ -604,6 +605,11 @@ export const RelayEnvironmentConnectRequest = Schema.Struct({
       description: "JWK thumbprint that the minted environment credential must be bound to.",
     }),
   ),
+  client: Schema.optional(
+    AuthClientPresentationMetadata.annotate({
+      description: "Optional user-facing client metadata for environment approval prompts.",
+    }),
+  ),
 }).annotate({ description: "Requests a short-lived credential for connecting to an environment." });
 export type RelayEnvironmentConnectRequest = typeof RelayEnvironmentConnectRequest.Type;
 
@@ -689,12 +695,30 @@ export const RelayEnvironmentUnlinkParams = Schema.Struct({
 });
 export type RelayEnvironmentUnlinkParams = typeof RelayEnvironmentUnlinkParams.Type;
 
-export const RelayEnvironmentConnectResponse = Schema.Struct({
+export const RelayEnvironmentConnectAuthorizedResponse = Schema.Struct({
   environmentId: EnvironmentId,
   endpoint: RelayManagedEndpoint,
   credential: TrimmedNonEmptyString,
   expiresAt: TrimmedNonEmptyString,
 });
+export type RelayEnvironmentConnectAuthorizedResponse =
+  typeof RelayEnvironmentConnectAuthorizedResponse.Type;
+
+export const RelayEnvironmentConnectPendingApprovalResponse = Schema.Struct({
+  status: Schema.Literal("pending_approval"),
+  environmentId: EnvironmentId,
+  endpoint: RelayManagedEndpoint,
+  clientProofKeyThumbprint: TrimmedNonEmptyString,
+  approvalStatus: AuthConnectClientStatus,
+  requestedAt: TrimmedNonEmptyString,
+});
+export type RelayEnvironmentConnectPendingApprovalResponse =
+  typeof RelayEnvironmentConnectPendingApprovalResponse.Type;
+
+export const RelayEnvironmentConnectResponse = Schema.Union([
+  RelayEnvironmentConnectAuthorizedResponse,
+  RelayEnvironmentConnectPendingApprovalResponse,
+]);
 export type RelayEnvironmentConnectResponse = typeof RelayEnvironmentConnectResponse.Type;
 
 export const RelayEnvironmentStatusValue = Schema.Literals(["online", "offline"]);
@@ -719,6 +743,7 @@ export const RelayCloudMintCredentialProofPayload = Schema.Struct({
     jkt: TrimmedNonEmptyString,
   }),
   deviceId: Schema.optional(TrimmedNonEmptyString),
+  client: Schema.optional(AuthClientPresentationMetadata),
   nonce: TrimmedNonEmptyString,
   scope: Schema.Array(Schema.Literal("environment:connect")),
 });
@@ -769,21 +794,57 @@ export const RelayEnvironmentHealthResponse = Schema.Struct({
 });
 export type RelayEnvironmentHealthResponse = typeof RelayEnvironmentHealthResponse.Type;
 
-export const RelayEnvironmentMintResponseProofPayload = Schema.Struct({
+export const RelayEnvironmentMintAuthorizedResponseProofPayload = Schema.Struct({
   ...RelaySignedJwtRegisteredClaims,
   environmentId: EnvironmentId,
   clientProofKeyThumbprint: TrimmedNonEmptyString,
   requestNonce: TrimmedNonEmptyString,
   credential: TrimmedNonEmptyString,
 });
+export type RelayEnvironmentMintAuthorizedResponseProofPayload =
+  typeof RelayEnvironmentMintAuthorizedResponseProofPayload.Type;
+
+export const RelayEnvironmentMintPendingApprovalResponseProofPayload = Schema.Struct({
+  ...RelaySignedJwtRegisteredClaims,
+  environmentId: EnvironmentId,
+  clientProofKeyThumbprint: TrimmedNonEmptyString,
+  requestNonce: TrimmedNonEmptyString,
+  status: Schema.Literal("pending_approval"),
+  approvalStatus: AuthConnectClientStatus,
+  requestedAt: TrimmedNonEmptyString,
+});
+export type RelayEnvironmentMintPendingApprovalResponseProofPayload =
+  typeof RelayEnvironmentMintPendingApprovalResponseProofPayload.Type;
+
+export const RelayEnvironmentMintResponseProofPayload = Schema.Union([
+  RelayEnvironmentMintAuthorizedResponseProofPayload,
+  RelayEnvironmentMintPendingApprovalResponseProofPayload,
+]);
 export type RelayEnvironmentMintResponseProofPayload =
   typeof RelayEnvironmentMintResponseProofPayload.Type;
 
-export const RelayEnvironmentMintResponse = Schema.Struct({
+export const RelayEnvironmentMintAuthorizedResponse = Schema.Struct({
   credential: TrimmedNonEmptyString,
   expiresAt: TrimmedNonEmptyString,
   proof: TrimmedNonEmptyString,
 });
+export type RelayEnvironmentMintAuthorizedResponse =
+  typeof RelayEnvironmentMintAuthorizedResponse.Type;
+
+export const RelayEnvironmentMintPendingApprovalResponse = Schema.Struct({
+  status: Schema.Literal("pending_approval"),
+  clientProofKeyThumbprint: TrimmedNonEmptyString,
+  approvalStatus: AuthConnectClientStatus,
+  requestedAt: TrimmedNonEmptyString,
+  proof: TrimmedNonEmptyString,
+});
+export type RelayEnvironmentMintPendingApprovalResponse =
+  typeof RelayEnvironmentMintPendingApprovalResponse.Type;
+
+export const RelayEnvironmentMintResponse = Schema.Union([
+  RelayEnvironmentMintAuthorizedResponse,
+  RelayEnvironmentMintPendingApprovalResponse,
+]);
 export type RelayEnvironmentMintResponse = typeof RelayEnvironmentMintResponse.Type;
 
 export const RelayDeliveryKind = Schema.Literals([

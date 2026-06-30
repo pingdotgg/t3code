@@ -45,6 +45,8 @@ describe("applyAuthAccessStreamEvent", () => {
     });
 
     expect(withClient).toEqual({
+      connectSecurityMode: "account",
+      connectClients: [],
       pairingLinks: [pairingLink],
       clientSessions: [clientSession],
     });
@@ -53,6 +55,8 @@ describe("applyAuthAccessStreamEvent", () => {
   it("applies removals without disturbing unrelated access state", () => {
     const snapshot = applyAuthAccessStreamEvent(
       {
+        connectSecurityMode: "client-approval",
+        connectClients: [],
         pairingLinks: [
           {
             id: "pairing-link",
@@ -74,6 +78,52 @@ describe("applyAuthAccessStreamEvent", () => {
       },
     );
 
-    expect(snapshot).toEqual(EMPTY_AUTH_ACCESS_SNAPSHOT);
+    expect(snapshot).toEqual({
+      ...EMPTY_AUTH_ACCESS_SNAPSHOT,
+      connectSecurityMode: "client-approval",
+    });
+  });
+
+  it("applies Connect security mode and client updates", () => {
+    const connectClient = {
+      clientProofKeyThumbprint: "thumbprint",
+      cloudUserId: "user_123",
+      status: "pending",
+      client: {
+        label: "Phone",
+        deviceType: "mobile",
+      },
+      requestedAt: DateTime.makeUnsafe("2036-04-07T00:00:00.000Z"),
+      updatedAt: DateTime.makeUnsafe("2036-04-07T00:00:00.000Z"),
+      approvedAt: null,
+      rejectedAt: null,
+      lastSeenAt: null,
+    } as const;
+
+    const withMode = applyAuthAccessStreamEvent(EMPTY_AUTH_ACCESS_SNAPSHOT, {
+      version: 1,
+      revision: 1,
+      type: "connectSecurityModeUpdated",
+      payload: { mode: "client-approval" },
+    });
+    const withClient = applyAuthAccessStreamEvent(withMode, {
+      version: 1,
+      revision: 2,
+      type: "connectClientUpserted",
+      payload: connectClient,
+    });
+    const withoutClient = applyAuthAccessStreamEvent(withClient, {
+      version: 1,
+      revision: 3,
+      type: "connectClientRemoved",
+      payload: { clientProofKeyThumbprint: "thumbprint" },
+    });
+
+    expect(withClient.connectSecurityMode).toBe("client-approval");
+    expect(withClient.connectClients).toEqual([connectClient]);
+    expect(withoutClient).toEqual({
+      ...EMPTY_AUTH_ACCESS_SNAPSHOT,
+      connectSecurityMode: "client-approval",
+    });
   });
 });

@@ -484,6 +484,7 @@ const connectRelayManagedEnvironment = Effect.fn("mobile.cloud.connectRelayManag
         scopes: [RelayEnvironmentConnectScope],
         environmentId: input.environmentId,
         deviceId,
+        client: authClientMetadata(),
       })
       .pipe(
         Effect.mapError(
@@ -497,21 +498,30 @@ const connectRelayManagedEnvironment = Effect.fn("mobile.cloud.connectRelayManag
         message: "Relay returned credentials for a different environment.",
       });
     }
+    if (!("credential" in connect)) {
+      return yield* new CloudEnvironmentLinkError({
+        message:
+          connect.approvalStatus === "rejected"
+            ? "This device was rejected by the environment. Approve it in the environment settings to connect."
+            : "Waiting for this device to be approved in the environment settings.",
+      });
+    }
+    const authorizedConnect = connect;
     if (input.expectedEnvironment) {
       yield* ensureConnectEndpointMatchesEnvironment({
         environment: input.expectedEnvironment,
-        connect,
+        connect: authorizedConnect,
       });
     }
 
     const descriptor = yield* fetchRemoteEnvironmentDescriptor({
-      httpBaseUrl: connect.endpoint.httpBaseUrl,
+      httpBaseUrl: authorizedConnect.endpoint.httpBaseUrl,
     }).pipe(
       Effect.mapError(
         cloudEnvironmentLinkError("Could not fetch the connected environment descriptor."),
       ),
     );
-    if (descriptor.environmentId !== connect.environmentId) {
+    if (descriptor.environmentId !== authorizedConnect.environmentId) {
       return yield* new CloudEnvironmentLinkError({
         message: "Connected endpoint descriptor does not match the selected environment.",
       });
@@ -520,12 +530,12 @@ const connectRelayManagedEnvironment = Effect.fn("mobile.cloud.connectRelayManag
     const bootstrapDpop = yield* signer
       .createProof({
         method: "POST",
-        url: new URL("/oauth/token", connect.endpoint.httpBaseUrl).toString(),
+        url: new URL("/oauth/token", authorizedConnect.endpoint.httpBaseUrl).toString(),
       })
       .pipe(Effect.mapError(cloudEnvironmentLinkError("Could not create bootstrap DPoP proof.")));
     const bootstrap = yield* exchangeRemoteDpopAccessToken({
-      httpBaseUrl: connect.endpoint.httpBaseUrl,
-      credential: connect.credential,
+      httpBaseUrl: authorizedConnect.endpoint.httpBaseUrl,
+      credential: authorizedConnect.credential,
       dpopProof: bootstrapDpop,
       clientMetadata: authClientMetadata(),
     }).pipe(
@@ -533,16 +543,16 @@ const connectRelayManagedEnvironment = Effect.fn("mobile.cloud.connectRelayManag
         cloudEnvironmentLinkError("Could not exchange a managed endpoint DPoP access token."),
       ),
     );
-    const pairingUrl = new URL(connect.endpoint.httpBaseUrl);
-    pairingUrl.hash = new URLSearchParams([["token", connect.credential]]).toString();
+    const pairingUrl = new URL(authorizedConnect.endpoint.httpBaseUrl);
+    pairingUrl.hash = new URLSearchParams([["token", authorizedConnect.credential]]).toString();
 
     return {
       environmentId: descriptor.environmentId,
       environmentLabel: descriptor.label,
       pairingUrl: stripPairingTokenFromUrl(pairingUrl).toString(),
-      displayUrl: connect.endpoint.httpBaseUrl,
-      httpBaseUrl: connect.endpoint.httpBaseUrl,
-      wsBaseUrl: connect.endpoint.wsBaseUrl,
+      displayUrl: authorizedConnect.endpoint.httpBaseUrl,
+      httpBaseUrl: authorizedConnect.endpoint.httpBaseUrl,
+      wsBaseUrl: authorizedConnect.endpoint.wsBaseUrl,
       bearerToken: null,
       authenticationMethod: "dpop",
       dpopAccessToken: bootstrap.access_token,

@@ -835,7 +835,7 @@ describe("mobile cloud link environment client", () => {
         // @effect-diagnostics-next-line preferSchemaOverJson:off
         expect(JSON.parse(connectRequestBody)).toMatchObject({
           deviceId: "device-1",
-          clientKeyThumbprint: "client-proof-key-thumbprint",
+          clientProofKeyThumbprint: "client-proof-key-thumbprint",
         });
         expect(createProofMock).toHaveBeenCalledWith({
           method: "POST",

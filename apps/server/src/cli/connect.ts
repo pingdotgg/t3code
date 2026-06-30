@@ -1,14 +1,19 @@
 import {
+  AuthConnectClient,
+  AuthConnectSecurityMode,
   AuthRelayWriteScope,
   EnvironmentHttpApi,
+  type AuthConnectClient as AuthConnectClientType,
   type RelayClientInstallProgressEvent,
   type RelayClientInstallProgressStage,
 } from "@t3tools/contracts";
 import { RelayOkResponse } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
+import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -16,7 +21,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
-import { Command, Flag, GlobalFlag, Prompt } from "effect/unstable/cli";
+import * as Schema from "effect/Schema";
+import { Argument, Command, Flag, GlobalFlag, Prompt } from "effect/unstable/cli";
 import {
   FetchHttpClient,
   HttpClient,
@@ -52,7 +58,67 @@ interface CloudCliStatus {
   readonly linked: boolean;
   readonly cloudUserId: string | null;
   readonly relayUrl: string | null;
+  readonly connectSecurityMode: AuthConnectSecurityMode;
   readonly relayClient: RelayClient.RelayClientStatus;
+}
+
+const ConnectSecurityModeOutput = Schema.Struct({
+  mode: AuthConnectSecurityMode,
+});
+const encodeConnectSecurityModeOutputJson = Schema.encodeUnknownEffect(
+  fromJsonStringPretty(ConnectSecurityModeOutput),
+);
+const ConnectSecurityClientsOutput = Schema.Struct({
+  clients: Schema.Array(AuthConnectClient),
+});
+const ConnectSecurityClientDecisionOutput = Schema.Struct({
+  client: Schema.NullOr(AuthConnectClient),
+});
+const ConnectSecurityClientRevokeOutput = Schema.Struct({
+  revoked: Schema.Boolean,
+});
+const encodeConnectSecurityClientsOutputJson = Schema.encodeUnknownEffect(
+  fromJsonStringPretty(ConnectSecurityClientsOutput),
+);
+const encodeConnectSecurityClientDecisionOutputJson = Schema.encodeUnknownEffect(
+  fromJsonStringPretty(ConnectSecurityClientDecisionOutput),
+);
+const encodeConnectSecurityClientRevokeOutputJson = Schema.encodeUnknownEffect(
+  fromJsonStringPretty(ConnectSecurityClientRevokeOutput),
+);
+
+function formatConnectClientLabel(client: AuthConnectClientType): string {
+  return (
+    client.client.label ??
+    client.client.os ??
+    `client ${client.clientProofKeyThumbprint.slice(0, 12)}`
+  );
+}
+
+function formatConnectClientDetails(client: AuthConnectClientType): string {
+  const details = [
+    client.client.deviceType !== "unknown" ? client.client.deviceType : null,
+    client.client.os ?? null,
+    client.deviceId ? `device ${client.deviceId}` : null,
+    client.lastSeenAt ? `last seen ${DateTime.formatIso(client.lastSeenAt)}` : null,
+    `requested ${DateTime.formatIso(client.requestedAt)}`,
+  ].filter((value): value is string => value !== null);
+  return details.join(", ");
+}
+
+function formatConnectClientList(clients: ReadonlyArray<AuthConnectClientType>): string {
+  if (clients.length === 0) {
+    return "No T3 Connect clients are registered.";
+  }
+  return [
+    "T3 Connect clients",
+    ...clients.map(
+      (client) =>
+        `  ${client.clientProofKeyThumbprint}  ${client.status}  ${formatConnectClientLabel(
+          client,
+        )} (${formatConnectClientDetails(client)})`,
+    ),
+  ].join("\n");
 }
 
 function formatRelayClientStatus(executable: RelayClient.RelayClientStatus): ReadonlyArray<string> {
@@ -103,6 +169,9 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
     `  Exposure: ${status.desired ? "enabled" : "disabled"}`,
     `  Authorization: ${status.authenticated ? "stored credential" : "missing"}`,
     `  Environment link: ${provisioned}`,
+    `  Client approval: ${
+      status.connectSecurityMode === "client-approval" ? "required" : "account-wide"
+    }`,
     `  Relay: ${status.relayUrl ?? "not provisioned"}`,
     ...formatRelayClientStatus(status.relayClient),
     ...(nextStep ? ["", `Next: ${nextStep}`] : []),
@@ -411,22 +480,26 @@ const connectStatusCommand = Command.make("status", {
         const secrets = yield* ServerSecretStore.ServerSecretStore;
         const relayClient = yield* RelayClient.RelayClient;
         const tokens = yield* CliTokenManager.CloudCliTokenManager;
-        const [desired, authenticated, cloudUserId, relayUrl, executable] = yield* Effect.all(
-          [
-            CliState.readCliDesiredCloudLink,
-            tokens.hasCredential,
-            secrets.get(CLOUD_LINKED_USER_ID),
-            secrets.get(RELAY_URL_SECRET),
-            relayClient.resolve,
-          ],
-          { concurrency: "unbounded" },
-        );
+        const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const [desired, authenticated, cloudUserId, relayUrl, connectSecurityMode, executable] =
+          yield* Effect.all(
+            [
+              CliState.readCliDesiredCloudLink,
+              tokens.hasCredential,
+              secrets.get(CLOUD_LINKED_USER_ID),
+              secrets.get(RELAY_URL_SECRET),
+              environmentAuth.getConnectSecurityMode(),
+              relayClient.resolve,
+            ],
+            { concurrency: "unbounded" },
+          );
         const status: CloudCliStatus = {
           desired,
           authenticated,
           linked: Option.isSome(cloudUserId),
           cloudUserId: Option.isSome(cloudUserId) ? bytesToString(cloudUserId.value) : null,
           relayUrl: Option.isSome(relayUrl) ? bytesToString(relayUrl.value) : null,
+          connectSecurityMode,
           relayClient: executable,
         };
         yield* Console.log(formatCloudStatus(status, { json: flags.json }));
@@ -436,6 +509,174 @@ const connectStatusCommand = Command.make("status", {
       },
     ),
   ),
+);
+
+const connectSecurityModeFlag = Flag.choice("mode", ["account", "client-approval"] as const).pipe(
+  Flag.withDescription("Connect security mode."),
+  Flag.optional,
+);
+
+const connectClientThumbprintArgument = Argument.string("client-proof-key-thumbprint").pipe(
+  Argument.withDescription("T3 Connect client proof key thumbprint."),
+);
+
+const connectSecurityClientsCommand = Command.make("clients", {
+  ...projectLocationFlags,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("List T3 Connect clients registered for approval."),
+  Command.withHandler((flags) =>
+    runCloudCommand(
+      flags,
+      Effect.gen(function* () {
+        const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const clients = yield* environmentAuth.listConnectClients();
+        if (flags.json) {
+          const output = yield* encodeConnectSecurityClientsOutputJson({ clients });
+          yield* Console.log(output);
+          return;
+        }
+        yield* Console.log(formatConnectClientList(clients));
+      }),
+      {
+        quietLogs: flags.json,
+      },
+    ),
+  ),
+);
+
+const connectSecurityApproveCommand = Command.make("approve", {
+  ...projectLocationFlags,
+  clientProofKeyThumbprint: connectClientThumbprintArgument,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Approve a T3 Connect client."),
+  Command.withHandler((flags) =>
+    runCloudCommand(
+      flags,
+      Effect.gen(function* () {
+        const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const client = yield* environmentAuth.approveConnectClient(flags.clientProofKeyThumbprint);
+        const clientOrNull = Option.getOrNull(client);
+        if (flags.json) {
+          const output = yield* encodeConnectSecurityClientDecisionOutputJson({
+            client: clientOrNull,
+          });
+          yield* Console.log(output);
+          return;
+        }
+        yield* Console.log(
+          clientOrNull
+            ? `Approved T3 Connect client ${flags.clientProofKeyThumbprint}.`
+            : `No active T3 Connect client found for ${flags.clientProofKeyThumbprint}.`,
+        );
+      }),
+      {
+        quietLogs: flags.json,
+      },
+    ),
+  ),
+);
+
+const connectSecurityRejectCommand = Command.make("reject", {
+  ...projectLocationFlags,
+  clientProofKeyThumbprint: connectClientThumbprintArgument,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Reject a T3 Connect client."),
+  Command.withHandler((flags) =>
+    runCloudCommand(
+      flags,
+      Effect.gen(function* () {
+        const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const client = yield* environmentAuth.rejectConnectClient(flags.clientProofKeyThumbprint);
+        const clientOrNull = Option.getOrNull(client);
+        if (flags.json) {
+          const output = yield* encodeConnectSecurityClientDecisionOutputJson({
+            client: clientOrNull,
+          });
+          yield* Console.log(output);
+          return;
+        }
+        yield* Console.log(
+          clientOrNull
+            ? `Rejected T3 Connect client ${flags.clientProofKeyThumbprint}.`
+            : `No active T3 Connect client found for ${flags.clientProofKeyThumbprint}.`,
+        );
+      }),
+      {
+        quietLogs: flags.json,
+      },
+    ),
+  ),
+);
+
+const connectSecurityRevokeCommand = Command.make("revoke", {
+  ...projectLocationFlags,
+  clientProofKeyThumbprint: connectClientThumbprintArgument,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Revoke a T3 Connect client approval record."),
+  Command.withHandler((flags) =>
+    runCloudCommand(
+      flags,
+      Effect.gen(function* () {
+        const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const revoked = yield* environmentAuth.revokeConnectClient(flags.clientProofKeyThumbprint);
+        if (flags.json) {
+          const output = yield* encodeConnectSecurityClientRevokeOutputJson({ revoked });
+          yield* Console.log(output);
+          return;
+        }
+        yield* Console.log(
+          revoked
+            ? `Revoked T3 Connect client ${flags.clientProofKeyThumbprint}.`
+            : `No active T3 Connect client found for ${flags.clientProofKeyThumbprint}.`,
+        );
+      }),
+      {
+        quietLogs: flags.json,
+      },
+    ),
+  ),
+);
+
+const connectSecurityCommand = Command.make("security", {
+  ...projectLocationFlags,
+  mode: connectSecurityModeFlag,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Read or update T3 Connect client-approval mode."),
+  Command.withHandler((flags) =>
+    runCloudCommand(
+      flags,
+      Effect.gen(function* () {
+        const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const mode = Option.isSome(flags.mode)
+          ? yield* environmentAuth.setConnectSecurityMode(flags.mode.value)
+          : yield* environmentAuth.getConnectSecurityMode();
+        if (flags.json) {
+          const output = yield* encodeConnectSecurityModeOutputJson({ mode });
+          yield* Console.log(output);
+          return;
+        }
+        yield* Console.log(
+          mode === "client-approval"
+            ? "T3 Connect client approval is required."
+            : "T3 Connect uses account-wide access.",
+        );
+      }),
+      {
+        quietLogs: flags.json,
+      },
+    ),
+  ),
+  Command.withSubcommands([
+    connectSecurityClientsCommand,
+    connectSecurityApproveCommand,
+    connectSecurityRejectCommand,
+    connectSecurityRevokeCommand,
+  ]),
 );
 
 const connectUnlinkCommand = Command.make("unlink", {
@@ -462,6 +703,7 @@ export const connectCommand = Command.make("connect").pipe(
     connectLoginCommand,
     connectLinkCommand,
     connectStatusCommand,
+    connectSecurityCommand,
     connectUnlinkCommand,
     connectLogoutCommand,
   ]),

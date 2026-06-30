@@ -205,6 +205,7 @@ describe("web cloud link environment client", () => {
           relayUrl: "https://relay.example.test",
           relayIssuer: "https://relay.example.test",
           publishAgentActivity: false,
+          connectSecurityMode: "account",
         }),
       );
       vi.stubGlobal("fetch", fetchMock);
@@ -218,6 +219,7 @@ describe("web cloud link environment client", () => {
           relayUrl: "https://relay.example.test",
           relayIssuer: "https://relay.example.test",
           publishAgentActivity: false,
+          connectSecurityMode: "account",
         }),
       );
       expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
@@ -235,6 +237,7 @@ describe("web cloud link environment client", () => {
           relayUrl: "https://relay.example.test",
           relayIssuer: "https://relay.example.test",
           publishAgentActivity: false,
+          connectSecurityMode: "account",
         }),
       );
       vi.stubGlobal("fetch", fetchMock);
@@ -262,6 +265,7 @@ describe("web cloud link environment client", () => {
           relayUrl: "https://relay.example.test",
           relayIssuer: "https://relay.example.test",
           publishAgentActivity: true,
+          connectSecurityMode: "account",
         }),
       );
       vi.stubGlobal("fetch", fetchMock);

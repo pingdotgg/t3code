@@ -110,6 +110,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
+import * as ConnectClientStore from "./auth/ConnectClientStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -346,7 +347,10 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
 ]);
 
 function toAuthAccessStreamEvent(
-  change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
+  change:
+    | PairingGrantStore.BootstrapCredentialChange
+    | SessionStore.SessionCredentialChange
+    | ConnectClientStore.ConnectClientChange,
   revision: number,
   currentSessionId: AuthSessionId,
 ): AuthAccessStreamEvent {
@@ -381,6 +385,27 @@ function toAuthAccessStreamEvent(
         revision,
         type: "clientRemoved",
         payload: { sessionId: change.sessionId },
+      };
+    case "connectSecurityModeUpdated":
+      return {
+        version: 1,
+        revision,
+        type: "connectSecurityModeUpdated",
+        payload: { mode: change.mode },
+      };
+    case "connectClientUpserted":
+      return {
+        version: 1,
+        revision,
+        type: "connectClientUpserted",
+        payload: change.client,
+      };
+    case "connectClientRemoved":
+      return {
+        version: 1,
+        revision,
+        type: "connectClientRemoved",
+        payload: { clientProofKeyThumbprint: change.clientProofKeyThumbprint },
       };
   }
 }
@@ -512,6 +537,8 @@ const makeWsRpcLayer = (
 
       const loadAuthAccessSnapshot = () =>
         Effect.all({
+          connectSecurityMode: serverAuth.getConnectSecurityMode(),
+          connectClients: serverAuth.listConnectClients(),
           pairingLinks: serverAuth.listPairingLinks(),
           clientSessions: serverAuth.listClientSessions(currentSessionId),
         }).pipe(
@@ -1761,8 +1788,13 @@ const makeWsRpcLayer = (
               const initialSnapshot = yield* loadAuthAccessSnapshot();
               const revisionRef = yield* Ref.make(1);
               const accessChanges: Stream.Stream<
-                PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange
-              > = Stream.merge(bootstrapCredentials.streamChanges, sessions.streamChanges);
+                | PairingGrantStore.BootstrapCredentialChange
+                | SessionStore.SessionCredentialChange
+                | ConnectClientStore.ConnectClientChange
+              > = Stream.merge(
+                Stream.merge(bootstrapCredentials.streamChanges, sessions.streamChanges),
+                serverAuth.streamConnectClientChanges,
+              );
 
               const liveEvents: Stream.Stream<AuthAccessStreamEvent> = accessChanges.pipe(
                 Stream.mapEffect((change) =>

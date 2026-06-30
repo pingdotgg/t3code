@@ -608,15 +608,17 @@ export const reconcileDesiredCloudLink = Effect.fn("environment.cloud.reconcileD
 const readCloudLinkState = Effect.fn("environment.cloud.readLinkState")(function* (
   dependencies: CloudHttpDependencies,
 ) {
-  const [cloudUserId, relayUrl, relayIssuer, publishAgentActivity] = yield* Effect.all(
-    [
-      dependencies.secrets.get(CLOUD_LINKED_USER_ID),
-      dependencies.secrets.get(RELAY_URL_SECRET),
-      dependencies.secrets.get(RELAY_ISSUER_SECRET),
-      dependencies.secrets.get(PUBLISH_AGENT_ACTIVITY_SECRET),
-    ],
-    { concurrency: 4 },
-  );
+  const [cloudUserId, relayUrl, relayIssuer, publishAgentActivity, connectSecurityMode] =
+    yield* Effect.all(
+      [
+        dependencies.secrets.get(CLOUD_LINKED_USER_ID),
+        dependencies.secrets.get(RELAY_URL_SECRET),
+        dependencies.secrets.get(RELAY_ISSUER_SECRET),
+        dependencies.secrets.get(PUBLISH_AGENT_ACTIVITY_SECRET),
+        dependencies.environmentAuth.getConnectSecurityMode(),
+      ],
+      { concurrency: 5 },
+    );
   return {
     linked: Option.isSome(cloudUserId),
     cloudUserId: Option.isSome(cloudUserId) ? bytesToString(cloudUserId.value) : null,
@@ -625,6 +627,7 @@ const readCloudLinkState = Effect.fn("environment.cloud.readLinkState")(function
     publishAgentActivity: Option.isSome(publishAgentActivity)
       ? bytesToString(publishAgentActivity.value) === "true"
       : false,
+    connectSecurityMode,
   } satisfies EnvironmentCloudLinkStateResult;
 });
 
@@ -636,6 +639,9 @@ const cloudLinkStateHandler = Effect.fn("environment.cloud.linkState")(
   Effect.catchIf(
     ServerSecretStore.isSecretStoreError,
     failEnvironmentCloudInternalError("Could not read environment relay configuration."),
+  ),
+  Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+    failEnvironmentCloudInternalError(error.message)(error),
   ),
 );
 
@@ -679,6 +685,9 @@ const cloudPreferencesHandler = Effect.fn("environment.cloud.preferences")(
   Effect.catchIf(
     ServerSecretStore.isSecretStoreError,
     failEnvironmentCloudInternalError("Could not persist environment cloud preferences."),
+  ),
+  Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+    failEnvironmentCloudInternalError(error.message)(error),
   ),
 );
 
@@ -854,6 +863,8 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
     }
     const proof = proofOption.value;
 
+    yield* dependencies.environmentAuth.getConnectSecurityMode();
+
     const jtiSecretName = `${CLOUD_MINT_JTI_PREFIX}${proof.jti}`;
     const nonceSecretName = `${CLOUD_MINT_NONCE_PREFIX}${proof.nonce}`;
     const consumedReplayGuards = yield* consumeCloudReplayGuards({
@@ -868,6 +879,55 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
     }
 
     const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(dependencies.secrets);
+    const connectAuthorization = yield* dependencies.environmentAuth.authorizeConnectClientRequest({
+      cloudUserId: linkedCloudUserId,
+      clientProofKeyThumbprint: proof.clientProofKeyThumbprint,
+      ...(proof.deviceId ? { deviceId: proof.deviceId } : {}),
+      ...(proof.client ? { client: proof.client } : {}),
+    });
+    if (
+      connectAuthorization.mode === "client-approval" &&
+      connectAuthorization.status !== "approved"
+    ) {
+      const responseExpiresAt = DateTime.add(now, { minutes: 5 });
+      const responsePayload = {
+        iss: `t3-env:${environmentId}`,
+        aud: normalizeRelayIssuer(relayIssuer),
+        sub: environmentId,
+        jti: yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
+        iat: nowSeconds,
+        exp: Math.floor(responseExpiresAt.epochMilliseconds / 1_000),
+        environmentId,
+        clientProofKeyThumbprint: proof.clientProofKeyThumbprint,
+        requestNonce: proof.nonce,
+        status: "pending_approval",
+        approvalStatus: connectAuthorization.status,
+        requestedAt: DateTime.formatIso(connectAuthorization.client.requestedAt),
+      } satisfies RelayEnvironmentMintResponseProofPayload;
+      const responseProof = yield* signRelayJwt({
+        privateKey: keyPair.privateKey,
+        typ: RELAY_MINT_RESPONSE_TYP,
+        payload: responsePayload,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentAuth.ServerAuthCloudMintJwtSigningError({
+              cause,
+            }),
+        ),
+      );
+      const response = {
+        status: "pending_approval",
+        clientProofKeyThumbprint: proof.clientProofKeyThumbprint,
+        approvalStatus: connectAuthorization.status,
+        requestedAt: responsePayload.requestedAt,
+        proof: responseProof,
+      } satisfies RelayEnvironmentMintResponseShape;
+
+      yield* appendCloudCredentialResponseHeaders;
+      return response;
+    }
+
     const issued = yield* dependencies.environmentAuth.createPairingLink({
       scopes: AuthStandardClientScopes,
       subject: "cloud-connect",

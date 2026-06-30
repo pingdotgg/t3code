@@ -8,8 +8,9 @@ import {
   RelayCloudMintCredentialProofPayload,
   RelayEnvironmentHealthResponse,
   RelayEnvironmentHealthResponseProofPayload,
+  RelayEnvironmentMintAuthorizedResponseProofPayload,
+  RelayEnvironmentMintPendingApprovalResponseProofPayload,
   RelayEnvironmentMintResponse,
-  RelayEnvironmentMintResponseProofPayload,
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -95,7 +96,7 @@ function decodeRequestProof<T>(proof: string): T {
 
 function signMintResponse(
   request: RelayCloudMintCredentialRequest,
-  overrides: Partial<RelayEnvironmentMintResponseProofPayload> = {},
+  overrides: Partial<RelayEnvironmentMintAuthorizedResponseProofPayload> = {},
   privateKey = environmentKeyPair.privateKey,
 ): RelayEnvironmentMintResponse {
   const requestProof = decodeRequestProof<RelayCloudMintCredentialProofPayload>(request.proof);
@@ -111,11 +112,43 @@ function signMintResponse(
     requestNonce: requestProof.nonce,
     credential: "pairing_credential",
     ...overrides,
-  } satisfies RelayEnvironmentMintResponseProofPayload;
+  } satisfies RelayEnvironmentMintAuthorizedResponseProofPayload;
   return {
     credential: payload.credential,
     expiresAt: DateTime.formatIso(DateTime.makeUnsafe(payload.exp * 1_000)),
     proof: signTestJwt(payload, RELAY_MINT_RESPONSE_TYP, privateKey),
+  };
+}
+
+function signPendingMintResponse(
+  request: RelayCloudMintCredentialRequest,
+  overrides: Partial<RelayEnvironmentMintPendingApprovalResponseProofPayload> = {},
+  privateKey = environmentKeyPair.privateKey,
+  responseOverrides: Partial<RelayEnvironmentMintResponse> = {},
+): RelayEnvironmentMintResponse {
+  const requestProof = decodeRequestProof<RelayCloudMintCredentialProofPayload>(request.proof);
+  const payload = {
+    iss: `t3-env:${requestProof.environmentId}`,
+    aud: "https://relay.example.test",
+    sub: requestProof.environmentId,
+    jti: "mint-pending-response-jti",
+    iat: requestProof.iat,
+    exp: requestProof.exp,
+    environmentId: requestProof.environmentId,
+    clientProofKeyThumbprint: requestProof.clientProofKeyThumbprint,
+    requestNonce: requestProof.nonce,
+    status: "pending_approval",
+    approvalStatus: "pending",
+    requestedAt: "2026-06-06T00:00:00.000Z",
+    ...overrides,
+  } satisfies RelayEnvironmentMintPendingApprovalResponseProofPayload;
+  return {
+    status: "pending_approval",
+    clientProofKeyThumbprint: payload.clientProofKeyThumbprint,
+    approvalStatus: payload.approvalStatus,
+    requestedAt: payload.requestedAt,
+    proof: signTestJwt(payload, RELAY_MINT_RESPONSE_TYP, privateKey),
+    ...responseOverrides,
   };
 }
 
@@ -662,6 +695,7 @@ describe("EnvironmentConnector", () => {
         environmentId: "env-connector-test",
         clientProofKeyThumbprint: "client-proof-key-thumbprint",
         deviceId: "device-123",
+        client: { label: "Mobile", deviceType: "mobile", os: "iOS" },
       });
 
       expect(seenUrls).toEqual(["https://env.example.test/api/t3-connect/mint-credential"]);
@@ -673,6 +707,7 @@ describe("EnvironmentConnector", () => {
         clientProofKeyThumbprint: "client-proof-key-thumbprint",
         cnf: { jkt: "client-proof-key-thumbprint" },
         deviceId: "device-123",
+        client: { label: "Mobile", deviceType: "mobile", os: "iOS" },
         scope: ["environment:connect"],
       });
       expect(result).toMatchObject({
@@ -683,6 +718,66 @@ describe("EnvironmentConnector", () => {
           wsBaseUrl: "wss://env.example.test/ws",
         },
       });
+    }).pipe(Effect.provide(connectorTestLayer(execute)));
+  });
+
+  it.effect("returns signed pending approval responses from the linked endpoint", () => {
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        const mintRequest = decodeMintRequestBody(requestBodyText(request));
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(signPendingMintResponse(mintRequest), { status: 200 }),
+        );
+      });
+
+    return Effect.gen(function* () {
+      const connector = yield* EnvironmentConnector.EnvironmentConnector;
+      const result = yield* connector.connect({
+        userId: "user_123",
+        environmentId: "env-connector-test",
+        clientProofKeyThumbprint: "client-proof-key-thumbprint",
+      });
+
+      expect(result).toMatchObject({
+        status: "pending_approval",
+        environmentId: "env-connector-test",
+        clientProofKeyThumbprint: "client-proof-key-thumbprint",
+        approvalStatus: "pending",
+        requestedAt: "2026-06-06T00:00:00.000Z",
+      });
+    }).pipe(Effect.provide(connectorTestLayer(execute)));
+  });
+
+  it.effect("rejects pending approval responses with a tampered requestedAt", () => {
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        const mintRequest = decodeMintRequestBody(requestBodyText(request));
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(
+            signPendingMintResponse(mintRequest, {}, environmentKeyPair.privateKey, {
+              requestedAt: "2026-06-06T00:01:00.000Z",
+            }),
+            { status: 200 },
+          ),
+        );
+      });
+
+    return Effect.gen(function* () {
+      const connector = yield* EnvironmentConnector.EnvironmentConnector;
+      const result = yield* Effect.exit(
+        connector.connect({
+          userId: "user_123",
+          environmentId: "env-connector-test",
+          clientProofKeyThumbprint: "client-proof-key-thumbprint",
+        }),
+      );
+
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.cause.toString()).toContain("EnvironmentMintResponseInvalid");
+      }
     }).pipe(Effect.provide(connectorTestLayer(execute)));
   });
 

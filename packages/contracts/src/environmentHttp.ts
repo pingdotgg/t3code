@@ -12,6 +12,9 @@ import {
   AuthAccessTokenResult,
   AuthBrowserSessionRequest,
   AuthBrowserSessionResult,
+  AuthConnectClient,
+  AuthConnectClientDecisionInput,
+  AuthConnectSecurityMode,
   AuthClientSession,
   AuthCreatePairingCredentialInput,
   AuthPairingCredentialResult,
@@ -21,6 +24,7 @@ import {
   AuthEnvironmentScope,
   AuthTokenExchangeRequest,
   AuthSessionState,
+  AuthUpdateConnectSecurityModeInput,
   AuthWebSocketTicketResult,
   ServerAuthSessionMethod,
 } from "./auth.ts";
@@ -79,6 +83,12 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "pairing_link_revoke_failed",
   "client_sessions_load_failed",
   "client_session_revoke_failed",
+  "connect_security_mode_load_failed",
+  "connect_security_mode_update_failed",
+  "connect_clients_load_failed",
+  "connect_client_approval_failed",
+  "connect_client_rejection_failed",
+  "connect_client_revoke_failed",
   "orchestration_snapshot_failed",
   "orchestration_dispatch_failed",
   "internal_error",
@@ -317,6 +327,7 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
   relayUrl: Schema.NullOr(Schema.String),
   relayIssuer: Schema.NullOr(Schema.String),
   publishAgentActivity: Schema.Boolean,
+  connectSecurityMode: AuthConnectSecurityMode,
 });
 export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;
 
@@ -339,6 +350,21 @@ export const AuthOtherClientSessionsRevokeResult = Schema.Struct({
   revokedCount: Schema.Number,
 });
 export type AuthOtherClientSessionsRevokeResult = typeof AuthOtherClientSessionsRevokeResult.Type;
+
+export const AuthConnectSecurityModeUpdateResult = Schema.Struct({
+  mode: AuthUpdateConnectSecurityModeInput.fields.mode,
+});
+export type AuthConnectSecurityModeUpdateResult = typeof AuthConnectSecurityModeUpdateResult.Type;
+
+export const AuthConnectClientDecisionResult = Schema.Struct({
+  client: Schema.NullOr(AuthConnectClient),
+});
+export type AuthConnectClientDecisionResult = typeof AuthConnectClientDecisionResult.Type;
+
+export const AuthConnectClientRevokeResult = Schema.Struct({
+  revoked: Schema.Boolean,
+});
+export type AuthConnectClientRevokeResult = typeof AuthConnectClientRevokeResult.Type;
 
 export class EnvironmentMetadataHttpApi extends HttpApiGroup.make("metadata").add(
   HttpApiEndpoint.get("descriptor", "/.well-known/t3/environment", {
@@ -418,6 +444,45 @@ export class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     HttpApiEndpoint.post("revokeOtherClients", "/api/auth/clients/revoke-others", {
       headers: OptionalBearerHeaders,
       success: AuthOtherClientSessionsRevokeResult,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("connectSecurityMode", "/api/auth/connect-security-mode", {
+      headers: OptionalBearerHeaders,
+      payload: AuthUpdateConnectSecurityModeInput,
+      success: AuthConnectSecurityModeUpdateResult,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("connectClients", "/api/auth/connect-clients", {
+      headers: OptionalBearerHeaders,
+      success: Schema.Array(AuthConnectClient),
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("approveConnectClient", "/api/auth/connect-clients/approve", {
+      headers: OptionalBearerHeaders,
+      payload: AuthConnectClientDecisionInput,
+      success: AuthConnectClientDecisionResult,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("rejectConnectClient", "/api/auth/connect-clients/reject", {
+      headers: OptionalBearerHeaders,
+      payload: AuthConnectClientDecisionInput,
+      success: AuthConnectClientDecisionResult,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("revokeConnectClient", "/api/auth/connect-clients/revoke", {
+      headers: OptionalBearerHeaders,
+      payload: AuthConnectClientDecisionInput,
+      success: AuthConnectClientRevokeResult,
       error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}

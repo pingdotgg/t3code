@@ -27,6 +27,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Cookies from "effect/unstable/http/Cookies";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -417,6 +418,81 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("client_session_revoke_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "connectSecurityMode",
+        Effect.fn("environment.auth.connectSecurityMode")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            const mode = yield* serverAuth.setConnectSecurityMode(args.payload.mode);
+            return { mode };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("connect_security_mode_update_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "connectClients",
+        Effect.fn("environment.auth.connectClients")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessReadScope);
+            return yield* serverAuth.listConnectClients();
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("connect_clients_load_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "approveConnectClient",
+        Effect.fn("environment.auth.approveConnectClient")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            const client = yield* serverAuth.approveConnectClient(
+              args.payload.clientProofKeyThumbprint,
+            );
+            return { client: Option.getOrNull(client) };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("connect_client_approval_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "rejectConnectClient",
+        Effect.fn("environment.auth.rejectConnectClient")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            const client = yield* serverAuth.rejectConnectClient(
+              args.payload.clientProofKeyThumbprint,
+            );
+            return { client: Option.getOrNull(client) };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("connect_client_rejection_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "revokeConnectClient",
+        Effect.fn("environment.auth.revokeConnectClient")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            const revoked = yield* serverAuth.revokeConnectClient(
+              args.payload.clientProofKeyThumbprint,
+            );
+            return { revoked };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("connect_client_revoke_failed", error),
           ),
         ),
       );

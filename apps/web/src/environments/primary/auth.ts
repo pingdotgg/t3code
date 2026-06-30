@@ -1,5 +1,7 @@
 import type {
   AuthBrowserSessionResult,
+  AuthConnectClient,
+  AuthConnectSecurityMode,
   AuthClientMetadata,
   AuthEnvironmentScope,
   AuthPairingCredentialResult,
@@ -32,6 +34,10 @@ const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "list-client-sessions",
   "revoke-client-session",
   "revoke-other-client-sessions",
+  "update-connect-security-mode",
+  "approve-connect-client",
+  "reject-connect-client",
+  "revoke-connect-client",
 ]);
 type PrimaryEnvironmentRequestOperation = typeof PrimaryEnvironmentRequestOperation.Type;
 
@@ -138,6 +144,34 @@ export interface ServerClientSessionRecord {
   readonly lastConnectedAt: string | null;
   readonly connected: boolean;
   readonly current: boolean;
+}
+
+export interface ServerConnectClientRecord {
+  readonly clientProofKeyThumbprint: string;
+  readonly cloudUserId: string;
+  readonly deviceId?: string;
+  readonly status: AuthConnectClient["status"];
+  readonly client: AuthConnectClient["client"];
+  readonly requestedAt: string;
+  readonly updatedAt: string;
+  readonly approvedAt: string | null;
+  readonly rejectedAt: string | null;
+  readonly lastSeenAt: string | null;
+}
+
+export function toServerConnectClientRecord(client: AuthConnectClient): ServerConnectClientRecord {
+  return {
+    clientProofKeyThumbprint: client.clientProofKeyThumbprint,
+    cloudUserId: client.cloudUserId,
+    ...(client.deviceId ? { deviceId: client.deviceId } : {}),
+    status: client.status,
+    client: client.client,
+    requestedAt: DateTime.formatIso(client.requestedAt),
+    updatedAt: DateTime.formatIso(client.updatedAt),
+    approvedAt: client.approvedAt === null ? null : DateTime.formatIso(client.approvedAt),
+    rejectedAt: client.rejectedAt === null ? null : DateTime.formatIso(client.rejectedAt),
+    lastSeenAt: client.lastSeenAt === null ? null : DateTime.formatIso(client.lastSeenAt),
+  };
 }
 
 type ServerAuthGateState =
@@ -500,6 +534,92 @@ export async function revokeOtherServerClientSessions(): Promise<number> {
   } catch (error) {
     throw PrimaryEnvironmentRequestError.fromCause({
       operation: "revoke-other-client-sessions",
+      cause: error,
+    });
+  }
+}
+
+export async function updateServerConnectSecurityMode(
+  mode: AuthConnectSecurityMode,
+): Promise<AuthConnectSecurityMode> {
+  try {
+    const result = await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) =>
+          client.auth.connectSecurityMode({ headers: {}, payload: { mode } }),
+        ),
+      ),
+    );
+    return result.mode;
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "update-connect-security-mode",
+      cause: error,
+    });
+  }
+}
+
+export async function approveServerConnectClient(
+  clientProofKeyThumbprint: string,
+): Promise<ServerConnectClientRecord | null> {
+  try {
+    const result = await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) =>
+          client.auth.approveConnectClient({
+            headers: {},
+            payload: { clientProofKeyThumbprint },
+          }),
+        ),
+      ),
+    );
+    return result.client === null ? null : toServerConnectClientRecord(result.client);
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "approve-connect-client",
+      cause: error,
+    });
+  }
+}
+
+export async function rejectServerConnectClient(
+  clientProofKeyThumbprint: string,
+): Promise<ServerConnectClientRecord | null> {
+  try {
+    const result = await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) =>
+          client.auth.rejectConnectClient({
+            headers: {},
+            payload: { clientProofKeyThumbprint },
+          }),
+        ),
+      ),
+    );
+    return result.client === null ? null : toServerConnectClientRecord(result.client);
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "reject-connect-client",
+      cause: error,
+    });
+  }
+}
+
+export async function revokeServerConnectClient(clientProofKeyThumbprint: string): Promise<void> {
+  try {
+    await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) =>
+          client.auth.revokeConnectClient({
+            headers: {},
+            payload: { clientProofKeyThumbprint },
+          }),
+        ),
+      ),
+    );
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "revoke-connect-client",
       cause: error,
     });
   }

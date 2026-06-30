@@ -142,6 +142,7 @@ const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(f
   const relay = yield* ManagedRelay.ManagedRelayClient;
   const session = yield* ClientCapabilities.CloudSession;
   const identity = yield* ClientCapabilities.RelayDeviceIdentity;
+  const presentation = yield* ClientCapabilities.ClientPresentation;
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
 
   return Effect.fnUntraced(
@@ -161,12 +162,22 @@ const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(f
               scopes: [RelayEnvironmentConnectScope],
               environmentId: target.environmentId,
               ...(Option.isSome(deviceId) ? { deviceId: deviceId.value } : {}),
+              client: presentation.metadata,
             })
             .pipe(Effect.mapError(mapManagedRelayError));
           if (connected.environmentId !== target.environmentId) {
             return yield* environmentMismatchError({
               expected: target.environmentId,
               actual: connected.environmentId,
+            });
+          }
+          if ("status" in connected) {
+            return yield* new ConnectionBlockedError({
+              reason: "permission",
+              detail:
+                connected.approvalStatus === "rejected"
+                  ? "This client was rejected by the environment. Approve it in the environment settings to connect."
+                  : "Waiting for this client to be approved in the environment settings.",
             });
           }
           return connected;

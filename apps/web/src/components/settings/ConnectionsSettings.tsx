@@ -8,7 +8,7 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { useAuth } from "@clerk/react";
-import { type ReactNode, memo, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -20,6 +20,8 @@ import {
   AuthReviewWriteScope,
   AuthStandardClientScopes,
   AuthTerminalOperateScope,
+  type AuthConnectClient,
+  type AuthConnectSecurityMode,
   type AuthClientSession,
   type AuthEnvironmentScope,
   type AuthPairingLink,
@@ -105,13 +107,19 @@ import { Textarea } from "../ui/textarea";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "../../pairingUrl";
 import { readHostedPairingRequest } from "../../hostedPairing";
 import {
+  approveServerConnectClient,
   createServerPairingCredential,
+  rejectServerConnectClient,
+  revokeServerConnectClient,
   revokeOtherServerClientSessions,
   revokeServerClientSession,
   revokeServerPairingLink,
   isLoopbackHostname,
+  toServerConnectClientRecord,
+  updateServerConnectSecurityMode,
   usePrimarySessionState,
   type ServerClientSessionRecord,
+  type ServerConnectClientRecord,
   type ServerPairingLinkRecord,
 } from "~/environments/primary";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
@@ -485,6 +493,21 @@ function toDesktopPairingLinkRecord(pairingLink: AuthPairingLink): ServerPairing
     createdAt: DateTime.formatIso(pairingLink.createdAt),
     expiresAt: DateTime.formatIso(pairingLink.expiresAt),
   };
+}
+
+function sortDesktopConnectClients(
+  clients: ReadonlyArray<ServerConnectClientRecord>,
+): ReadonlyArray<ServerConnectClientRecord> {
+  const statusRank: Record<ServerConnectClientRecord["status"], number> = {
+    pending: 0,
+    approved: 1,
+    rejected: 2,
+  };
+  return [...clients].sort((left, right) => {
+    const rankDelta = statusRank[left.status] - statusRank[right.status];
+    if (rankDelta !== 0) return rankDelta;
+    return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+  });
 }
 
 function toDesktopClientSessionRecord(clientSession: AuthClientSession): ServerClientSessionRecord {
@@ -1040,6 +1063,126 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
   );
 });
 
+type ConnectClientListRowProps = {
+  connectClient: ServerConnectClientRecord;
+  presentation?: AccessSectionPresentation;
+  pendingActionKey: string | null;
+  onApprove: (clientProofKeyThumbprint: string) => void;
+  onReject: (clientProofKeyThumbprint: string) => void;
+  onRevoke: (clientProofKeyThumbprint: string) => void;
+};
+
+const ConnectClientListRow = memo(function ConnectClientListRow({
+  connectClient,
+  presentation = "current",
+  pendingActionKey,
+  onApprove,
+  onReject,
+  onRevoke,
+}: ConnectClientListRowProps) {
+  const nowMs = useRelativeTimeTick(1_000);
+  const ago = (isoDate: string) => {
+    const elapsed = formatElapsedDurationLabel(isoDate, nowMs);
+    return elapsed === "just now" ? elapsed : `${elapsed} ago`;
+  };
+  const pendingApproveKey = `approve:${connectClient.clientProofKeyThumbprint}`;
+  const pendingRejectKey = `reject:${connectClient.clientProofKeyThumbprint}`;
+  const pendingRevokeKey = `revoke:${connectClient.clientProofKeyThumbprint}`;
+  const hasPendingAction = pendingActionKey !== null;
+  const statusConfig =
+    connectClient.status === "approved"
+      ? {
+          label: connectClient.lastSeenAt
+            ? `Last connected ${ago(connectClient.lastSeenAt)}`
+            : connectClient.approvedAt
+              ? `Approved ${ago(connectClient.approvedAt)}`
+              : "Approved",
+          dotClassName: "bg-success",
+        }
+      : connectClient.status === "pending"
+        ? {
+            label: `Requested ${ago(connectClient.requestedAt)}`,
+            dotClassName: "bg-warning",
+          }
+        : {
+            label: connectClient.rejectedAt
+              ? `Rejected ${ago(connectClient.rejectedAt)}`
+              : "Rejected",
+            dotClassName: "bg-destructive",
+          };
+  const deviceInfoBits = [
+    connectClient.client.deviceType !== "unknown"
+      ? connectClient.client.deviceType[0]?.toUpperCase() + connectClient.client.deviceType.slice(1)
+      : null,
+    connectClient.client.os ?? null,
+    connectClient.deviceId ? `Device ${connectClient.deviceId}` : null,
+  ].filter((value): value is string => value !== null);
+  const primaryLabel =
+    connectClient.client.label ??
+    connectClient.client.os ??
+    `Client ${connectClient.clientProofKeyThumbprint.slice(0, 8)}`;
+
+  return (
+    <div className={accessRowClassName(presentation)}>
+      <div className={ITEM_ROW_INNER_CLASSNAME}>
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex min-h-5 items-center gap-1.5">
+            <ConnectionStatusDot
+              tooltipText={formatAccessTimestamp(connectClient.updatedAt)}
+              dotClassName={statusConfig.dotClassName}
+            />
+            <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
+            <span className="rounded-md border border-border/50 bg-muted/50 px-1 py-0.5 text-[10px] text-muted-foreground">
+              T3 Connect
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {deviceInfoBits.length > 0 ? (
+              <>
+                {deviceInfoBits.join(" · ")}
+                <span aria-hidden> · </span>
+              </>
+            ) : null}
+            {statusConfig.label}
+          </p>
+        </div>
+        <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          {connectClient.status !== "approved" ? (
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={hasPendingAction}
+              onClick={() => void onApprove(connectClient.clientProofKeyThumbprint)}
+            >
+              {pendingActionKey === pendingApproveKey ? "Approving…" : "Approve"}
+            </Button>
+          ) : null}
+          {connectClient.status === "pending" ? (
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={hasPendingAction}
+              onClick={() => void onReject(connectClient.clientProofKeyThumbprint)}
+            >
+              {pendingActionKey === pendingRejectKey ? "Rejecting…" : "Reject"}
+            </Button>
+          ) : null}
+          {connectClient.status !== "pending" ? (
+            <Button
+              size="xs"
+              variant="destructive-outline"
+              disabled={hasPendingAction}
+              onClick={() => void onRevoke(connectClient.clientProofKeyThumbprint)}
+            >
+              {pendingActionKey === pendingRevokeKey ? "Revoking…" : "Revoke"}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+});
+
 type AuthorizedClientsHeaderActionProps = {
   clientSessions: ReadonlyArray<ServerClientSessionRecord>;
   isRevokingOtherClients: boolean;
@@ -1220,10 +1363,15 @@ type PairingClientsListProps = {
   defaultEndpointKey: string | null;
   presentation?: AccessSectionPresentation;
   isLoading: boolean;
+  connectClients: ReadonlyArray<ServerConnectClientRecord>;
   pairingLinks: ReadonlyArray<ServerPairingLinkRecord>;
   clientSessions: ReadonlyArray<ServerClientSessionRecord>;
+  pendingConnectClientActionKey: string | null;
   revokingPairingLinkId: string | null;
   revokingClientSessionId: string | null;
+  onApproveConnectClient: (clientProofKeyThumbprint: string) => void;
+  onRejectConnectClient: (clientProofKeyThumbprint: string) => void;
+  onRevokeConnectClient: (clientProofKeyThumbprint: string) => void;
   onRevokePairingLink: (id: string) => void;
   onRevokeClientSession: (sessionId: ServerClientSessionRecord["sessionId"]) => void;
 };
@@ -1234,15 +1382,32 @@ const PairingClientsList = memo(function PairingClientsList({
   defaultEndpointKey,
   presentation = "current",
   isLoading,
+  connectClients,
   pairingLinks,
   clientSessions,
+  pendingConnectClientActionKey,
   revokingPairingLinkId,
   revokingClientSessionId,
+  onApproveConnectClient,
+  onRejectConnectClient,
+  onRevokeConnectClient,
   onRevokePairingLink,
   onRevokeClientSession,
 }: PairingClientsListProps) {
   return (
     <>
+      {connectClients.map((connectClient) => (
+        <ConnectClientListRow
+          key={connectClient.clientProofKeyThumbprint}
+          connectClient={connectClient}
+          presentation={presentation}
+          pendingActionKey={pendingConnectClientActionKey}
+          onApprove={onApproveConnectClient}
+          onReject={onRejectConnectClient}
+          onRevoke={onRevokeConnectClient}
+        />
+      ))}
+
       {pairingLinks.map((pairingLink) => (
         <PairingLinkListRow
           key={pairingLink.id}
@@ -1266,7 +1431,10 @@ const PairingClientsList = memo(function PairingClientsList({
         />
       ))}
 
-      {pairingLinks.length === 0 && clientSessions.length === 0 && !isLoading ? (
+      {connectClients.length === 0 &&
+      pairingLinks.length === 0 &&
+      clientSessions.length === 0 &&
+      !isLoading ? (
         <div className={accessRowClassName(presentation)}>
           <p className="text-xs text-muted-foreground/60">No pairing links or client sessions.</p>
         </div>
@@ -2086,6 +2254,11 @@ export function ConnectionsSettings() {
     string | null
   >(null);
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
+  const [isUpdatingConnectSecurityMode, setIsUpdatingConnectSecurityMode] = useState(false);
+  const [pendingConnectClientActionKey, setPendingConnectClientActionKey] = useState<string | null>(
+    null,
+  );
+  const isConnectClientActionPendingRef = useRef(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
@@ -2206,6 +2379,19 @@ export function ConnectionsSettings() {
     return sortDesktopClientSessions(
       event.payload.clientSessions.map((clientSession: AuthClientSession) =>
         toDesktopClientSessionRecord(clientSession),
+      ),
+    );
+  }, [authAccessChanges.data]);
+  const desktopConnectSecurityMode: AuthConnectSecurityMode | null = useMemo(() => {
+    const event = authAccessChanges.data;
+    return event?.type === "snapshot" ? event.payload.connectSecurityMode : null;
+  }, [authAccessChanges.data]);
+  const desktopConnectClients = useMemo(() => {
+    const event = authAccessChanges.data;
+    if (event?.type !== "snapshot") return [];
+    return sortDesktopConnectClients(
+      event.payload.connectClients.map((client: AuthConnectClient) =>
+        toServerConnectClientRecord(client),
       ),
     );
   }, [authAccessChanges.data]);
@@ -2404,6 +2590,65 @@ export function ConnectionsSettings() {
       setIsRevokingOtherDesktopClients(false);
     }
   }, []);
+
+  const handleUpdateConnectSecurityMode = useCallback(
+    async (requiresApproval: boolean) => {
+      setIsUpdatingConnectSecurityMode(true);
+      setDesktopAccessManagementMutationError(null);
+      try {
+        await updateServerConnectSecurityMode(requiresApproval ? "client-approval" : "account");
+        authAccessChanges.refresh();
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to update T3 Connect security.";
+        setDesktopAccessManagementMutationError(message);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not update T3 Connect security",
+            description: message,
+          }),
+        );
+      } finally {
+        setIsUpdatingConnectSecurityMode(false);
+      }
+    },
+    [authAccessChanges],
+  );
+
+  const handleConnectClientAction = useCallback(
+    async (action: "approve" | "reject" | "revoke", clientProofKeyThumbprint: string) => {
+      if (isConnectClientActionPendingRef.current) return;
+      const actionKey = `${action}:${clientProofKeyThumbprint}`;
+      isConnectClientActionPendingRef.current = true;
+      setPendingConnectClientActionKey(actionKey);
+      setDesktopAccessManagementMutationError(null);
+      try {
+        if (action === "approve") {
+          await approveServerConnectClient(clientProofKeyThumbprint);
+        } else if (action === "reject") {
+          await rejectServerConnectClient(clientProofKeyThumbprint);
+        } else {
+          await revokeServerConnectClient(clientProofKeyThumbprint);
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : `Failed to ${action} T3 Connect client.`;
+        setDesktopAccessManagementMutationError(message);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Could not ${action} T3 Connect client`,
+            description: message,
+          }),
+        );
+      } finally {
+        isConnectClientActionPendingRef.current = false;
+        setPendingConnectClientActionKey(null);
+      }
+    },
+    [],
+  );
 
   const handleAddSavedBackend = useCallback(async () => {
     if (savedBackendMode === "ssh") {
@@ -2612,6 +2857,13 @@ export function ConnectionsSettings() {
   );
   const isLocalBackendRemotelyReachable =
     isLocalBackendNetworkAccessible || tailscaleHttpsEndpoint?.status === "available";
+  const shouldShowT3ConnectClients =
+    hasCloudPublicConfig() &&
+    (desktopConnectSecurityMode !== "account" ||
+      desktopConnectClients.length > 0 ||
+      isLoadingDesktopAccessManagement ||
+      desktopAccessManagementError !== null);
+  const shouldShowAuthorizedClients = isLocalBackendRemotelyReachable || shouldShowT3ConnectClients;
   const defaultDesktopNetworkAdvertisedEndpoint = useMemo(
     () =>
       selectPairingEndpoint(visibleDesktopNetworkAdvertisedEndpoints, defaultAdvertisedEndpointKey),
@@ -3205,15 +3457,74 @@ export function ConnectionsSettings() {
         defaultEndpointKey={defaultDesktopAdvertisedEndpointKey}
         presentation={presentation}
         isLoading={isLoadingDesktopAccessManagement}
+        connectClients={desktopConnectClients}
         pairingLinks={visibleDesktopPairingLinks}
         clientSessions={desktopClientSessions}
+        pendingConnectClientActionKey={pendingConnectClientActionKey}
         revokingPairingLinkId={revokingDesktopPairingLinkId}
         revokingClientSessionId={revokingDesktopClientSessionId}
+        onApproveConnectClient={(clientProofKeyThumbprint) =>
+          void handleConnectClientAction("approve", clientProofKeyThumbprint)
+        }
+        onRejectConnectClient={(clientProofKeyThumbprint) =>
+          void handleConnectClientAction("reject", clientProofKeyThumbprint)
+        }
+        onRevokeConnectClient={(clientProofKeyThumbprint) =>
+          void handleConnectClientAction("revoke", clientProofKeyThumbprint)
+        }
         onRevokePairingLink={handleRevokeDesktopPairingLink}
         onRevokeClientSession={handleRevokeDesktopClientSession}
       />
     </>
   );
+  const renderConnectSecurityModeRow = () =>
+    hasCloudPublicConfig() ? (
+      <SettingsRow
+        title="T3 Connect approval"
+        description={
+          desktopConnectSecurityMode === null
+            ? desktopAccessManagementError
+              ? "T3 Connect approval state could not be loaded."
+              : "Loading T3 Connect approval state."
+            : desktopConnectSecurityMode === "client-approval"
+              ? "New T3 Connect clients must be approved here before they can connect."
+              : "Any signed-in client on this T3 account can connect through T3 Connect."
+        }
+        control={
+          desktopConnectSecurityMode === null && desktopAccessManagementError ? (
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={isUpdatingConnectSecurityMode}
+                onClick={() => void handleUpdateConnectSecurityMode(false)}
+              >
+                Use account
+              </Button>
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={isUpdatingConnectSecurityMode}
+                onClick={() => void handleUpdateConnectSecurityMode(true)}
+              >
+                Require approval
+              </Button>
+            </div>
+          ) : (
+            <Switch
+              checked={desktopConnectSecurityMode === "client-approval"}
+              disabled={
+                desktopConnectSecurityMode === null ||
+                isUpdatingConnectSecurityMode ||
+                isLoadingDesktopAccessManagement
+              }
+              onCheckedChange={(checked) => void handleUpdateConnectSecurityMode(checked)}
+              aria-label="Require T3 Connect client approval"
+            />
+          )
+        }
+      />
+    ) : null;
   const renderNetworkAccessRow = () => (
     <SettingsRow
       title="Network access"
@@ -3301,16 +3612,18 @@ export function ConnectionsSettings() {
                 {renderTailscaleRow()}
                 {renderWslRow()}
                 <CloudLinkRow canManageRelay={canManageRelay} />
+                {renderConnectSecurityModeRow()}
               </>
             ) : (
               <>
                 {renderDisabledNetworkAccessRow()}
                 <CloudLinkRow canManageRelay={canManageRelay} />
+                {renderConnectSecurityModeRow()}
               </>
             )}
           </SettingsSection>
 
-          {isLocalBackendRemotelyReachable ? (
+          {shouldShowAuthorizedClients ? (
             <SettingsSection
               title="Authorized clients"
               headerAction={

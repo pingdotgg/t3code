@@ -3,6 +3,9 @@ import {
   AuthAccessWriteScope,
   AuthAdministrativeScopes,
   AuthStandardClientScopes,
+  type AuthClientPresentationMetadata,
+  type AuthConnectClient,
+  type AuthConnectSecurityMode,
   type AuthAccessTokenResult,
   type AuthBrowserSessionResult,
   type AuthClientMetadata,
@@ -26,9 +29,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
+import * as ConnectClientStore from "./ConnectClientStore.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -307,6 +312,83 @@ export class ServerAuthCloudMintJwtSigningError extends Schema.TaggedErrorClass<
   }
 }
 
+export class ServerAuthConnectSecurityModeReadError extends Schema.TaggedErrorClass<ServerAuthConnectSecurityModeReadError>()(
+  "ServerAuthConnectSecurityModeReadError",
+  {
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to read Connect security mode.";
+  }
+}
+
+export class ServerAuthConnectSecurityModeUpdateError extends Schema.TaggedErrorClass<ServerAuthConnectSecurityModeUpdateError>()(
+  "ServerAuthConnectSecurityModeUpdateError",
+  {
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to update Connect security mode.";
+  }
+}
+
+export class ServerAuthConnectClientsListError extends Schema.TaggedErrorClass<ServerAuthConnectClientsListError>()(
+  "ServerAuthConnectClientsListError",
+  {
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to list Connect clients.";
+  }
+}
+
+export class ServerAuthConnectClientRequestError extends Schema.TaggedErrorClass<ServerAuthConnectClientRequestError>()(
+  "ServerAuthConnectClientRequestError",
+  {
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to authorize Connect client request.";
+  }
+}
+
+export class ServerAuthConnectClientApprovalError extends Schema.TaggedErrorClass<ServerAuthConnectClientApprovalError>()(
+  "ServerAuthConnectClientApprovalError",
+  {
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to approve Connect client.";
+  }
+}
+
+export class ServerAuthConnectClientRejectionError extends Schema.TaggedErrorClass<ServerAuthConnectClientRejectionError>()(
+  "ServerAuthConnectClientRejectionError",
+  {
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to reject Connect client.";
+  }
+}
+
+export class ServerAuthConnectClientRevocationError extends Schema.TaggedErrorClass<ServerAuthConnectClientRevocationError>()(
+  "ServerAuthConnectClientRevocationError",
+  {
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke Connect client.";
+  }
+}
+
 export const ServerAuthInternalError = Schema.Union([
   ServerAuthBootstrapCredentialValidationError,
   ServerAuthSessionCredentialValidationError,
@@ -330,6 +412,13 @@ export const ServerAuthInternalError = Schema.Union([
   ServerAuthCloudRelayIssuerMissingError,
   ServerAuthCloudHealthJwtSigningError,
   ServerAuthCloudMintJwtSigningError,
+  ServerAuthConnectSecurityModeReadError,
+  ServerAuthConnectSecurityModeUpdateError,
+  ServerAuthConnectClientsListError,
+  ServerAuthConnectClientRequestError,
+  ServerAuthConnectClientApprovalError,
+  ServerAuthConnectClientRejectionError,
+  ServerAuthConnectClientRevocationError,
 ]);
 export type ServerAuthInternalError = typeof ServerAuthInternalError.Type;
 export const isServerAuthInternalError = Schema.is(ServerAuthInternalError);
@@ -476,6 +565,33 @@ export class EnvironmentAuth extends Context.Service<
     readonly revokeOtherClientSessions: (
       currentSessionId: AuthSessionId,
     ) => Effect.Effect<number, ServerAuthInternalError>;
+    readonly getConnectSecurityMode: () => Effect.Effect<
+      AuthConnectSecurityMode,
+      ServerAuthInternalError
+    >;
+    readonly setConnectSecurityMode: (
+      mode: AuthConnectSecurityMode,
+    ) => Effect.Effect<AuthConnectSecurityMode, ServerAuthInternalError>;
+    readonly listConnectClients: () => Effect.Effect<
+      ReadonlyArray<AuthConnectClient>,
+      ServerAuthInternalError
+    >;
+    readonly authorizeConnectClientRequest: (input: {
+      readonly cloudUserId: string;
+      readonly clientProofKeyThumbprint: string;
+      readonly deviceId?: string;
+      readonly client?: AuthClientPresentationMetadata;
+    }) => Effect.Effect<ConnectClientStore.ConnectClientAuthorization, ServerAuthInternalError>;
+    readonly approveConnectClient: (
+      clientProofKeyThumbprint: string,
+    ) => Effect.Effect<Option.Option<AuthConnectClient>, ServerAuthInternalError>;
+    readonly rejectConnectClient: (
+      clientProofKeyThumbprint: string,
+    ) => Effect.Effect<Option.Option<AuthConnectClient>, ServerAuthInternalError>;
+    readonly revokeConnectClient: (
+      clientProofKeyThumbprint: string,
+    ) => Effect.Effect<boolean, ServerAuthInternalError>;
+    readonly streamConnectClientChanges: Stream.Stream<ConnectClientStore.ConnectClientChange>;
     readonly authenticateHttpRequest: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
@@ -557,6 +673,7 @@ export const make = Effect.gen(function* () {
   const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
   const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
   const sessions = yield* SessionStore.SessionStore;
+  const connectClients = yield* ConnectClientStore.ConnectClientStore;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const crypto = yield* Crypto.Crypto;
   const descriptor = yield* policy.getDescriptor();
@@ -903,6 +1020,59 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.revokeOtherClientSessions"),
     );
 
+  const getConnectSecurityMode: EnvironmentAuth["Service"]["getConnectSecurityMode"] = () =>
+    connectClients.getSecurityMode().pipe(
+      Effect.mapError((cause) => new ServerAuthConnectSecurityModeReadError({ cause })),
+      Effect.withSpan("EnvironmentAuth.getConnectSecurityMode"),
+    );
+
+  const setConnectSecurityMode: EnvironmentAuth["Service"]["setConnectSecurityMode"] = (mode) =>
+    connectClients.setSecurityMode(mode).pipe(
+      Effect.mapError((cause) => new ServerAuthConnectSecurityModeUpdateError({ cause })),
+      Effect.withSpan("EnvironmentAuth.setConnectSecurityMode"),
+    );
+
+  const listConnectClients: EnvironmentAuth["Service"]["listConnectClients"] = () =>
+    connectClients.listClients().pipe(
+      Effect.mapError((cause) => new ServerAuthConnectClientsListError({ cause })),
+      Effect.withSpan("EnvironmentAuth.listConnectClients"),
+    );
+
+  const authorizeConnectClientRequest: EnvironmentAuth["Service"]["authorizeConnectClientRequest"] =
+    (input) =>
+      connectClients.requestClient(input).pipe(
+        Effect.mapError((cause) =>
+          cause._tag === "ConnectSecurityModeLoadError"
+            ? new ServerAuthConnectSecurityModeReadError({ cause })
+            : new ServerAuthConnectClientRequestError({ cause }),
+        ),
+        Effect.withSpan("EnvironmentAuth.authorizeConnectClientRequest"),
+      );
+
+  const approveConnectClient: EnvironmentAuth["Service"]["approveConnectClient"] = (
+    clientProofKeyThumbprint,
+  ) =>
+    connectClients.approve(clientProofKeyThumbprint).pipe(
+      Effect.mapError((cause) => new ServerAuthConnectClientApprovalError({ cause })),
+      Effect.withSpan("EnvironmentAuth.approveConnectClient"),
+    );
+
+  const rejectConnectClient: EnvironmentAuth["Service"]["rejectConnectClient"] = (
+    clientProofKeyThumbprint,
+  ) =>
+    connectClients.reject(clientProofKeyThumbprint).pipe(
+      Effect.mapError((cause) => new ServerAuthConnectClientRejectionError({ cause })),
+      Effect.withSpan("EnvironmentAuth.rejectConnectClient"),
+    );
+
+  const revokeConnectClient: EnvironmentAuth["Service"]["revokeConnectClient"] = (
+    clientProofKeyThumbprint,
+  ) =>
+    connectClients.revoke(clientProofKeyThumbprint).pipe(
+      Effect.mapError((cause) => new ServerAuthConnectClientRevocationError({ cause })),
+      Effect.withSpan("EnvironmentAuth.revokeConnectClient"),
+    );
+
   const issueStartupPairingUrl: EnvironmentAuth["Service"]["issueStartupPairingUrl"] = (baseUrl) =>
     issueStartupPairingCredential().pipe(
       Effect.map((issued) => {
@@ -973,6 +1143,14 @@ export const make = Effect.gen(function* () {
     listClientSessions,
     revokeClientSession,
     revokeOtherClientSessions,
+    getConnectSecurityMode,
+    setConnectSecurityMode,
+    listConnectClients,
+    authorizeConnectClientRequest,
+    approveConnectClient,
+    rejectConnectClient,
+    revokeConnectClient,
+    streamConnectClientChanges: connectClients.streamChanges,
     authenticateHttpRequest,
     authenticateWebSocketUpgrade,
     issueWebSocketTicket,
@@ -983,6 +1161,7 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(EnvironmentAuth, make).pipe(
   Layer.provideMerge(PairingGrantStore.layer),
   Layer.provideMerge(SessionStore.layer),
+  Layer.provideMerge(ConnectClientStore.layer),
   Layer.provideMerge(EnvironmentAuthPolicy.layer),
 );
 

@@ -12,6 +12,8 @@ import { subscribe } from "../rpc/client.ts";
 import { createEnvironmentSubscriptionAtomFamily } from "./runtime.ts";
 
 export const EMPTY_AUTH_ACCESS_SNAPSHOT: AuthAccessSnapshot = {
+  connectSecurityMode: "account",
+  connectClients: [],
   pairingLinks: [],
   clientSessions: [],
 };
@@ -56,6 +58,27 @@ export function applyAuthAccessStreamEvent(
         ...current,
         clientSessions: current.clientSessions.filter(
           (value) => value.sessionId !== event.payload.sessionId,
+        ),
+      };
+    case "connectSecurityModeUpdated":
+      return {
+        ...current,
+        connectSecurityMode: event.payload.mode,
+      };
+    case "connectClientUpserted":
+      return {
+        ...current,
+        connectClients: upsertByKey(
+          current.connectClients,
+          event.payload,
+          (value) => value.clientProofKeyThumbprint,
+        ),
+      };
+    case "connectClientRemoved":
+      return {
+        ...current,
+        connectClients: current.connectClients.filter(
+          (value) => value.clientProofKeyThumbprint !== event.payload.clientProofKeyThumbprint,
         ),
       };
   }

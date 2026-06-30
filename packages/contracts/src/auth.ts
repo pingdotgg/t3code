@@ -228,6 +228,26 @@ export const AuthClientMetadata = Schema.Struct({
 });
 export type AuthClientMetadata = typeof AuthClientMetadata.Type;
 
+export const AuthConnectSecurityMode = Schema.Literals(["account", "client-approval"]);
+export type AuthConnectSecurityMode = typeof AuthConnectSecurityMode.Type;
+
+export const AuthConnectClientStatus = Schema.Literals(["pending", "approved", "rejected"]);
+export type AuthConnectClientStatus = typeof AuthConnectClientStatus.Type;
+
+export const AuthConnectClient = Schema.Struct({
+  clientProofKeyThumbprint: TrimmedNonEmptyString,
+  cloudUserId: TrimmedNonEmptyString,
+  deviceId: Schema.optionalKey(TrimmedNonEmptyString),
+  status: AuthConnectClientStatus,
+  client: AuthClientMetadata,
+  requestedAt: Schema.DateTimeUtc,
+  updatedAt: Schema.DateTimeUtc,
+  approvedAt: Schema.NullOr(Schema.DateTimeUtc),
+  rejectedAt: Schema.NullOr(Schema.DateTimeUtc),
+  lastSeenAt: Schema.NullOr(Schema.DateTimeUtc),
+});
+export type AuthConnectClient = typeof AuthConnectClient.Type;
+
 export const AuthClientSession = Schema.Struct({
   sessionId: AuthSessionId,
   subject: TrimmedNonEmptyString,
@@ -243,6 +263,8 @@ export const AuthClientSession = Schema.Struct({
 export type AuthClientSession = typeof AuthClientSession.Type;
 
 export const AuthAccessSnapshot = Schema.Struct({
+  connectSecurityMode: AuthConnectSecurityMode,
+  connectClients: Schema.Array(AuthConnectClient),
   pairingLinks: Schema.Array(AuthPairingLink),
   clientSessions: Schema.Array(AuthClientSession),
 });
@@ -309,12 +331,46 @@ export const AuthAccessStreamClientRemovedEvent = Schema.Struct({
 });
 export type AuthAccessStreamClientRemovedEvent = typeof AuthAccessStreamClientRemovedEvent.Type;
 
+export const AuthAccessStreamConnectSecurityModeUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  revision: Schema.Number,
+  type: Schema.Literal("connectSecurityModeUpdated"),
+  payload: Schema.Struct({
+    mode: AuthConnectSecurityMode,
+  }),
+});
+export type AuthAccessStreamConnectSecurityModeUpdatedEvent =
+  typeof AuthAccessStreamConnectSecurityModeUpdatedEvent.Type;
+
+export const AuthAccessStreamConnectClientUpsertedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  revision: Schema.Number,
+  type: Schema.Literal("connectClientUpserted"),
+  payload: AuthConnectClient,
+});
+export type AuthAccessStreamConnectClientUpsertedEvent =
+  typeof AuthAccessStreamConnectClientUpsertedEvent.Type;
+
+export const AuthAccessStreamConnectClientRemovedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  revision: Schema.Number,
+  type: Schema.Literal("connectClientRemoved"),
+  payload: Schema.Struct({
+    clientProofKeyThumbprint: TrimmedNonEmptyString,
+  }),
+});
+export type AuthAccessStreamConnectClientRemovedEvent =
+  typeof AuthAccessStreamConnectClientRemovedEvent.Type;
+
 export const AuthAccessStreamEvent = Schema.Union([
   AuthAccessStreamSnapshotEvent,
   AuthAccessStreamPairingLinkUpsertedEvent,
   AuthAccessStreamPairingLinkRemovedEvent,
   AuthAccessStreamClientUpsertedEvent,
   AuthAccessStreamClientRemovedEvent,
+  AuthAccessStreamConnectSecurityModeUpdatedEvent,
+  AuthAccessStreamConnectClientUpsertedEvent,
+  AuthAccessStreamConnectClientRemovedEvent,
 ]);
 export type AuthAccessStreamEvent = typeof AuthAccessStreamEvent.Type;
 
@@ -322,6 +378,16 @@ export const AuthRevokePairingLinkInput = Schema.Struct({
   id: TrimmedNonEmptyString,
 });
 export type AuthRevokePairingLinkInput = typeof AuthRevokePairingLinkInput.Type;
+
+export const AuthUpdateConnectSecurityModeInput = Schema.Struct({
+  mode: AuthConnectSecurityMode,
+});
+export type AuthUpdateConnectSecurityModeInput = typeof AuthUpdateConnectSecurityModeInput.Type;
+
+export const AuthConnectClientDecisionInput = Schema.Struct({
+  clientProofKeyThumbprint: TrimmedNonEmptyString,
+});
+export type AuthConnectClientDecisionInput = typeof AuthConnectClientDecisionInput.Type;
 
 export const AuthRevokeClientSessionInput = Schema.Struct({
   sessionId: AuthSessionId,

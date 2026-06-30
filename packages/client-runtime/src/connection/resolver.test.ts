@@ -179,6 +179,17 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
         deviceId: Effect.succeed(Option.some("device-1")),
       }),
     ),
+    Layer.succeed(
+      ClientCapabilities.ClientPresentation,
+      ClientCapabilities.ClientPresentation.of({
+        metadata: {
+          label: "Test Client",
+          deviceType: "desktop",
+          os: "Test OS",
+        },
+        scopes: [],
+      }),
+    ),
     Layer.succeed(RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization, remote),
     Layer.succeed(ClientCapabilities.SshEnvironmentGateway, ssh),
     Layer.succeed(
@@ -305,6 +316,11 @@ describe("ConnectionResolver", () => {
           readonly clerkToken: string;
           readonly scopes: ReadonlyArray<string>;
           readonly deviceId?: string;
+          readonly client?: {
+            readonly label?: string;
+            readonly deviceType?: string;
+            readonly os?: string;
+          };
         }>
       >([]);
       const bootstrapCredentials = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -320,6 +336,7 @@ describe("ConnectionResolver", () => {
               clerkToken: input.clerkToken,
               scopes: input.scopes,
               ...(input.deviceId ? { deviceId: input.deviceId } : {}),
+              ...(input.client ? { client: input.client } : {}),
             },
           ]).pipe(
             Effect.as({
@@ -354,9 +371,45 @@ describe("ConnectionResolver", () => {
           clerkToken: "clerk-session",
           scopes: [RelayEnvironmentConnectScope],
           deviceId: "device-1",
+          client: {
+            label: "Test Client",
+            deviceType: "desktop",
+            os: "Test OS",
+          },
         },
       ]);
       expect(yield* Ref.get(bootstrapCredentials)).toEqual(["relay-bootstrap"]);
+    }),
+  );
+
+  it.effect("blocks relay connection attempts that are waiting for environment approval", () =>
+    Effect.gen(function* () {
+      const target = new RelayConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Cloud",
+      });
+      const brokerLayer = yield* makeDependencies({
+        connectEnvironment: (input) =>
+          Effect.succeed({
+            status: "pending_approval" as const,
+            environmentId: input.environmentId,
+            endpoint: ENDPOINT,
+            clientProofKeyThumbprint: "client-proof-key-thumbprint",
+            approvalStatus: "pending" as const,
+            requestedAt: "2026-06-06T00:00:00.000Z",
+          }),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+
+      const result = yield* Effect.result(broker.prepare(catalogEntry(target)));
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure).toMatchObject({
+          _tag: "ConnectionBlockedError",
+          reason: "permission",
+          detail: "Waiting for this client to be approved in the environment settings.",
+        });
+      }
     }),
   );
 
