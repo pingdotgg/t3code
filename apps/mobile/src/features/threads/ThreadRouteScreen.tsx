@@ -44,7 +44,7 @@ import {
 } from "../terminal/terminalLaunchContext";
 import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import { ThreadDetailScreen } from "./ThreadDetailScreen";
-import { ThreadGitControls, useThreadGitRightHeaderItems } from "./ThreadGitControls";
+import { ThreadGitControls, useThreadGitCenterHeaderItems } from "./ThreadGitControls";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
 import { ThreadNavigationDrawer } from "./ThreadNavigationDrawer";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -629,7 +629,7 @@ function ThreadRouteContent(
     onPull: gitActions.onPullSelectedThreadBranch,
     onRunAction: gitActions.onRunSelectedThreadGitAction,
   };
-  const threadRightHeaderItems = useThreadGitRightHeaderItems(threadGitControlProps);
+  const threadCenterHeaderItems = useThreadGitCenterHeaderItems(threadGitControlProps);
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       ...(props.onReturnToThread
@@ -639,7 +639,7 @@ function ThreadRouteContent(
               icon: { name: "chevron.left", type: "sfSymbol" as const },
               identifier: "thread-left-return",
               onPress: props.onReturnToThread,
-              sharesBackground: true,
+              sharesBackground: false,
               type: "button" as const,
               width: 58,
             },
@@ -655,7 +655,7 @@ function ThreadRouteContent(
         },
         identifier: "thread-left-sidebar",
         onPress: togglePrimarySidebar,
-        sharesBackground: true,
+        sharesBackground: false,
         type: "button" as const,
         width: 58,
       },
@@ -664,12 +664,24 @@ function ThreadRouteContent(
         icon: { name: "square.and.pencil", type: "sfSymbol" as const },
         identifier: "thread-left-new-task",
         onPress: () => router.push("/new"),
-        sharesBackground: true,
+        sharesBackground: false,
         type: "button" as const,
         width: 58,
       },
+      {
+        flexible: true,
+        spacing: 0,
+        type: "spacing" as const,
+      },
+      ...threadCenterHeaderItems,
     ],
-    [panes.primarySidebarVisible, props.onReturnToThread, router, togglePrimarySidebar],
+    [
+      panes.primarySidebarVisible,
+      props.onReturnToThread,
+      router,
+      threadCenterHeaderItems,
+      togglePrimarySidebar,
+    ],
   );
 
   if (!environmentId || !threadId) {
@@ -731,10 +743,6 @@ function ThreadRouteContent(
             : undefined,
           unstable_headerLeftItems:
             layout.usesSplitView && Platform.OS === "ios" ? () => splitLeftHeaderItems : undefined,
-          unstable_headerRightItems:
-            layout.usesSplitView && Platform.OS === "ios"
-              ? () => threadRightHeaderItems
-              : undefined,
           unstable_navigationItemStyle: usesNativeHeaderGlass ? "editor" : undefined,
         }}
       />

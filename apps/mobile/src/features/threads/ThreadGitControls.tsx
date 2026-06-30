@@ -400,7 +400,11 @@ export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): Hea
 }
 
 export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): HeaderItems {
-  return useThreadGitHeaderActionItems(props);
+  const actionItems = useThreadGitHeaderActionItems(props);
+  return useMemo(
+    () => [actionItems[1], actionItems[2], actionItems[0]].filter(Boolean) as HeaderItems,
+    [actionItems],
+  );
 }
 
 export function ThreadGitControls(props: ThreadGitControlsProps) {
