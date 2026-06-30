@@ -1377,6 +1377,7 @@ export function ProviderSettingsPanel() {
                   updateProviderInstance(row, next);
                 }
               }}
+              providerFallbackEnabled={settings.providerFallback.enabled}
               onDelete={row.isDefault ? undefined : () => deleteProviderInstance(row.instanceId)}
               headerAction={headerAction}
               hiddenModels={modelPreferences.hiddenModels}
@@ -1411,6 +1412,24 @@ export function ProviderSettingsPanel() {
             />
           );
         })}
+      </SettingsSection>
+
+      <SettingsSection title="Automatic fallback">
+        <SettingsRow
+          title="Switch provider instances automatically"
+          description="When an operational provider failure occurs, try compatible instances of the same provider in order without exposing intermediate failures."
+          control={
+            <Switch
+              checked={settings.providerFallback.enabled}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  providerFallback: { enabled: Boolean(checked) },
+                })
+              }
+              aria-label="Enable automatic provider fallback"
+            />
+          }
+        />
       </SettingsSection>
 
       {isAddInstanceDialogOpen ? (

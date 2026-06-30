@@ -326,6 +326,7 @@ interface ProviderInstanceCardProps {
   readonly isExpanded: boolean;
   readonly onExpandedChange: (open: boolean) => void;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
+  readonly providerFallbackEnabled: boolean;
   /**
    * Pass `undefined` to hide the delete button entirely. Built-in default
    * instance slots use `undefined` — they can't be deleted without losing
@@ -383,6 +384,7 @@ export function ProviderInstanceCard({
   isExpanded,
   onExpandedChange,
   onUpdate,
+  providerFallbackEnabled,
   onDelete,
   headerAction,
   hiddenModels,
@@ -464,6 +466,10 @@ export function ProviderInstanceCard({
 
   const updateEnabled = (value: boolean) => {
     onUpdate({ ...instance, enabled: value });
+  };
+
+  const updateAllowFallback = (value: boolean) => {
+    onUpdate({ ...instance, allowFallback: value });
   };
 
   const updateAccentColor = (value: string) => {
@@ -745,6 +751,39 @@ export function ProviderInstanceCard({
                   Optional label shown in the provider list.
                 </span>
               </label>
+            </div>
+
+            <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-foreground">Use for automatic fallback</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Allows this instance to receive compatible turns when another instance fails.
+                  </p>
+                </div>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        className="inline-flex shrink-0"
+                        tabIndex={providerFallbackEnabled ? -1 : 0}
+                      />
+                    }
+                  >
+                    <Switch
+                      checked={instance.allowFallback ?? true}
+                      disabled={!providerFallbackEnabled}
+                      onCheckedChange={(checked) => updateAllowFallback(Boolean(checked))}
+                      aria-label={`Allow ${displayName} for automatic fallback`}
+                    />
+                  </TooltipTrigger>
+                  {!providerFallbackEnabled ? (
+                    <TooltipPopup side="top">
+                      Enable automatic provider fallback to change this setting.
+                    </TooltipPopup>
+                  ) : null}
+                </Tooltip>
+              </div>
             </div>
 
             <div className="border-t border-border/60 px-4 py-3 sm:px-5">
