@@ -141,6 +141,13 @@ const ThreadNavigationRow = memo(function ThreadNavigationRow(props: {
     Boolean(part),
   );
   const statusTone = threadStatusTone(thread);
+  const effectiveStatusTone = selected
+    ? {
+        ...statusTone,
+        pillClassName: "bg-white/20",
+        textClassName: "text-white",
+      }
+    : statusTone;
 
   return (
     <ThreadSwipeable
@@ -202,7 +209,7 @@ const ThreadNavigationRow = memo(function ThreadNavigationRow(props: {
                 </Text>
               </View>
             </View>
-            <StatusPill {...statusTone} size="compact" />
+            <StatusPill {...effectiveStatusTone} size="compact" />
           </Pressable>
           <ControlPillMenu actions={threadActions} onPressAction={handleMenuAction}>
             <Pressable
