@@ -1402,6 +1402,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
             provisioningProfile: macPasskeySigning.provisioningProfilePath,
           }
         : {}),
+      ...(process.env.T3CODE_DESKTOP_MAC_CODE_SIGN_TIMESTAMP === "false"
+        ? { timestamp: null }
+        : {}),
     };
   }
 

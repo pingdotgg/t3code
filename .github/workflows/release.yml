@@ -537,6 +537,11 @@ jobs:
           AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
           AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
         run: |
+          if [[ "${{ matrix.platform }}" == "mac" ]]; then
+            ulimit -n 8192
+            echo "macOS open file limit: $(ulimit -n)"
+          fi
+
           args=(
             --platform "${{ matrix.platform }}"
             --target "${{ matrix.target }}"
@@ -576,6 +581,7 @@ jobs:
                 echo "macOS notarization enabled."
               else
                 unset APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER T3CODE_CLERK_PASSKEY_RP_DOMAINS
+                export T3CODE_DESKTOP_MAC_CODE_SIGN_TIMESTAMP=false
                 echo "macOS notarization disabled (missing one or more Apple notarization secrets)."
               fi
               echo "macOS signing enabled."
