@@ -538,8 +538,11 @@ jobs:
           AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
         run: |
           if [[ "${{ matrix.platform }}" == "mac" ]]; then
-            ulimit -n 8192
-            echo "macOS open file limit: $(ulimit -n)"
+            sudo launchctl limit maxfiles 65536 200000
+            ulimit -n 65536
+            echo "macOS open file soft limit: $(ulimit -Sn)"
+            echo "macOS open file hard limit: $(ulimit -Hn)"
+            launchctl limit maxfiles
           fi
 
           args=(
