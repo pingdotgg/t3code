@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
+  CursorSettings,
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
   ServerSettingsPatch,
@@ -126,6 +127,24 @@ describe("ServerSettingsPatch.providerInstances", () => {
     });
     const ollamaId = ProviderInstanceId.make("ollama_local");
     expect(patch.providerInstances?.[ollamaId]?.driver).toBe("ollama");
+  });
+});
+
+describe("CursorSettings binary path", () => {
+  const decodeCursorSettings = Schema.decodeUnknownSync(CursorSettings);
+
+  it("defaults to cursor-agent", () => {
+    expect(decodeCursorSettings({}).binaryPath).toBe("cursor-agent");
+  });
+
+  it("maps the legacy agent binary name to cursor-agent", () => {
+    expect(decodeCursorSettings({ binaryPath: "agent" }).binaryPath).toBe("cursor-agent");
+  });
+
+  it("preserves explicit binary paths", () => {
+    expect(decodeCursorSettings({ binaryPath: "/usr/local/bin/agent" }).binaryPath).toBe(
+      "/usr/local/bin/agent",
+    );
   });
 });
 
