@@ -17,7 +17,12 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { MENU_ACTION_CHANNEL } from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import * as DesktopWindowState from "./DesktopWindowState.ts";
 
+const DEFAULT_WINDOW_WIDTH = 1100;
+const DEFAULT_WINDOW_HEIGHT = 780;
+const MIN_WINDOW_WIDTH = 840;
+const MIN_WINDOW_HEIGHT = 620;
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
@@ -45,7 +50,8 @@ type DesktopWindowRuntimeServices =
   | ElectronShell.ElectronShell
   | ElectronTheme.ElectronTheme
   | ElectronWindow.ElectronWindow
-  | PreviewManager.PreviewManager;
+  | PreviewManager.PreviewManager
+  | DesktopWindowState.DesktopWindowState;
 
 export type DesktopWindowError =
   | ElectronWindow.ElectronWindowCreateError
@@ -202,6 +208,7 @@ export const make = Effect.gen(function* () {
   const electronTheme = yield* ElectronTheme.ElectronTheme;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const previewManager = yield* PreviewManager.PreviewManager;
+  const windowState = yield* DesktopWindowState.DesktopWindowState;
   // Window-side latch for the primary backend's readiness. Set by
   // handleBackendReady (driven by the pool's onReady callback), cleared
   // by handleBackendNotReady (driven by onShutdown). Only consumed by
@@ -250,11 +257,18 @@ export const make = Effect.gen(function* () {
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    const initialWindowState = yield* windowState.load({
+      defaultBounds: { x: 0, y: 0, width: DEFAULT_WINDOW_WIDTH, height: DEFAULT_WINDOW_HEIGHT },
+      minWidth: MIN_WINDOW_WIDTH,
+      minHeight: MIN_WINDOW_HEIGHT,
+    });
     const window = yield* electronWindow.create({
-      width: 1100,
-      height: 780,
-      minWidth: 840,
-      minHeight: 620,
+      x: initialWindowState.bounds.x,
+      y: initialWindowState.bounds.y,
+      width: initialWindowState.bounds.width,
+      height: initialWindowState.bounds.height,
+      minWidth: MIN_WINDOW_WIDTH,
+      minHeight: MIN_WINDOW_HEIGHT,
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
@@ -275,6 +289,7 @@ export const make = Effect.gen(function* () {
       window.setAutoHideCursor(false);
     }
 
+    yield* windowState.attach(window);
     yield* previewManager.setMainWindow(window);
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
       if (
@@ -461,6 +476,10 @@ export const make = Effect.gen(function* () {
       revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
     }
     bindFirstRevealTrigger(revealSubscribers, () => {
+      // Re-maximize before showing so the window doesn't flash at normal bounds first.
+      if (initialWindowState.restoreMode === "maximized" && !window.isDestroyed()) {
+        window.maximize();
+      }
       // Reveal the real window, then close the connecting splash (if any) so the
       // two don't overlap and there's no blank gap between them.
       void runPromise(Effect.andThen(electronWindow.reveal(window), dismissConnectingSplash));

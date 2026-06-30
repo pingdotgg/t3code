@@ -31,6 +31,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { MENU_ACTION_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
+import * as DesktopWindowState from "./DesktopWindowState.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 
 const environmentInput = {
@@ -90,6 +91,16 @@ function makeFakeBrowserWindow() {
     webContentsListeners,
   };
 }
+
+// Stubbed so these tests stay filesystem-free. DesktopWindowState has its own suite.
+const desktopWindowStateLayer = Layer.succeed(DesktopWindowState.DesktopWindowState, {
+  load: () =>
+    Effect.succeed({
+      bounds: { x: 0, y: 0, width: 1100, height: 780 },
+      restoreMode: "normal" as const,
+    }),
+  attach: () => Effect.void,
+} satisfies DesktopWindowState.DesktopWindowState["Service"]);
 
 const desktopAssetsLayer = Layer.succeed(DesktopAssets.DesktopAssets, {
   iconPaths: Effect.succeed({
@@ -171,6 +182,7 @@ function makeTestLayer(input: {
         desktopAssetsLayer,
         desktopEnvironmentLayer,
         desktopServerExposureLayer,
+        desktopWindowStateLayer,
         DesktopState.layer,
         electronMenuLayer,
         Layer.succeed(ElectronShell.ElectronShell, {
@@ -268,6 +280,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           desktopAssetsLayer,
           desktopEnvironmentLayer,
           desktopServerExposureLayer,
+          desktopWindowStateLayer,
           electronMenuLayer,
           Layer.succeed(ElectronShell.ElectronShell, {
             openExternal: () => Effect.succeed(true),
