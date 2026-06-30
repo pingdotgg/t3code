@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import {
   DEFAULT_TERMINAL_ID,
   type TerminalAttachStreamEvent,
@@ -28,6 +28,7 @@ import { expect } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "./Manager.ts";
+import { sanitizeTerminalHistoryChunk, stripTerminalResponsesFromInput } from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
 class WaitForConditionError extends Data.TaggedError("WaitForConditionError")<{
@@ -991,6 +992,23 @@ it.layer(
     }),
   );
 
+  it.effect("sanitizes a pre-existing raw history log on load (older builds wrote it dirty)", () =>
+    Effect.gen(function* () {
+      const { manager, logsDir } = yield* createManager();
+      const logPath = yield* historyLogPath(logsDir);
+      // A log an older build persisted without sanitizing: the exact repeating
+      // DECRPM residue from #1238, ESC introducers intact. On load it must be
+      // stripped so it cannot replay (and re-trigger) at the prompt.
+      const garble =
+        "[?69;0$y[?2026;2$y[?2027;0$y[?2031;0$y[?2048;0$y";
+      yield* writeFileString(logPath, `prompt$ ${garble.repeat(15)}done\n`);
+
+      const opened = yield* manager.open(openInput());
+      assert.equal(opened.history, "prompt$ done\n");
+      // The cleaned history is persisted back, so it stays clean on re-read.
+      assert.equal(yield* readFileString(logPath), "prompt$ done\n");
+    }),
+  );
   it.effect(
     "preserves clear and style control sequences while dropping chunk-split query traffic",
     () =>
@@ -1644,4 +1662,266 @@ it.layer(
       expect(process.killSignals).toContain("SIGKILL");
     }).pipe(Effect.provide(TestClock.layer())),
   );
+});
+
+describe("sanitizeTerminalHistoryChunk", () => {
+  const sanitize = (data: string, pending = "") => sanitizeTerminalHistoryChunk(pending, data);
+
+  it("strips DECRPM mode reports (CSI ? Pm ; Ps $ y) from history", () => {
+    const reports = "\x1b[?69;0$y\x1b[?2026;2$y\x1b[?2048;0$y";
+    const { visibleText } = sanitize(`before${reports}after`);
+    assert.equal(visibleText, "beforeafter");
+    // The residue users were seeing must not survive.
+    assert.ok(!visibleText.includes("$y"));
+    assert.ok(!visibleText.includes("2026"));
+  });
+
+  it("strips DECRQM mode queries (CSI ? Pm $ p) so replay can't re-trigger them", () => {
+    const { visibleText } = sanitize("x\x1b[?2026$p\x1b[?2048$py");
+    assert.equal(visibleText, "xy");
+  });
+
+  it("keeps ordinary text and non-report CSI sequences", () => {
+    // SGR colour (m) and cursor moves stay; a plain 'p'/'y' without the `$`
+    // intermediate is not a mode sequence and must be preserved.
+    const { visibleText } = sanitize("\x1b[31mred\x1b[0m \x1b[2Aup happy");
+    assert.equal(visibleText, "\x1b[31mred\x1b[0m \x1b[2Aup happy");
+  });
+
+  it("drops the flattened mode-reply residue a shell echoes at the prompt", () => {
+    // The ESC introducer is already gone (the shell flattened the reply), so the
+    // escape-aware strip can't see it. A run of flattened DECRPM / DA / OSC-colour
+    // replies is dropped (DSR "n"/BEL/CR may separate them).
+    assert.equal(
+      sanitize("prompt$ 69;0$y2026;2$y2027;0$y2031;0$y2048;0$y").visibleText,
+      "prompt$ ",
+    );
+    assert.equal(sanitize("a 1;2c11;rgb:1616/1616/1616n1;2c b").visibleText, "a  b");
+    // Lone DECRPM / OSC-colour / DECRPSS tokens are distinctive enough on their own.
+    assert.equal(sanitize("x 2026;2$y y").visibleText, "x  y");
+    assert.equal(sanitize("c 4;0;rgb:1818/1e1e/2626 d").visibleText, "c  d");
+    assert.equal(sanitize("tail 1$r0m end").visibleText, "tail  end"); // flattened DECRPSS (#1238)
+    // Ambiguous lone tokens and ordinary words are preserved.
+    assert.equal(sanitize("see commit 1;2c now").visibleText, "see commit 1;2c now");
+    assert.equal(sanitize("running a connection").visibleText, "running a connection");
+  });
+
+  it("drops a flattened cursor-position-report (CPR) run, keeps a lone one", () => {
+    // The `;1RR`/`<row>;<col>R` flood from a prompt's CSI 6n re-query echoing at
+    // an idle prompt. Stripped as a run; a lone `<n>;<n>R` is ambiguous and kept.
+    assert.equal(sanitize(`prompt$ ${";1RR".repeat(40)}`).visibleText, "prompt$ ");
+    assert.equal(sanitize(`x ${"1;1R".repeat(20)} y`).visibleText, "x  y");
+    assert.equal(sanitize("at 12;5R done").visibleText, "at 12;5R done"); // lone, kept
+  });
+
+  it("does not over-match ordinary text that merely looks reply-shaped", () => {
+    // The colour alternative is pinned to OSC 10/11/12 and OSC 4 (`4;<idx>;`), so
+    // an arbitrary "<n>;rgb:…" in program output survives.
+    assert.equal(sanitize("set 1;rgb:ff/00/00 now").visibleText, "set 1;rgb:ff/00/00 now");
+    assert.equal(sanitize("hsl 7;rgb:aabbcc done").visibleText, "hsl 7;rgb:aabbcc done");
+    // A DECRPM/DA token immediately followed by a word must not swallow its first
+    // letter (regression: a trailing "n?" used to eat the "n" of "next").
+    assert.equal(sanitize("v 1;2$ynext").visibleText, "v next");
+    // The DECRPSS payload is length-bounded so it can't eat a following number run.
+    assert.equal(
+      sanitize("tail 1$r0;120;340;Hello there").visibleText,
+      "tail 1$r0;120;340;Hello there",
+    );
+  });
+
+  it("preserves a framed OSC 4 palette report instead of mangling its inner rgb", () => {
+    // The escape walk keeps a framed OSC 4 report (only OSC 10/11/12 are stripped),
+    // so the flattened pass must not delete the inner `4;<idx>;rgb:…` and leave a
+    // broken `ESC ] … ST` shell — in either view. The flattened (unframed) form is
+    // still dropped.
+    const framed = "\x1b]4;1;rgb:ff/00/00\x07";
+    assert.equal(sanitize(`a ${framed} b`).visibleText, `a ${framed} b`);
+    assert.equal(
+      sanitizeTerminalHistoryChunk("", `a ${framed} b`, { responsesOnly: true }).visibleText,
+      `a ${framed} b`,
+    );
+    assert.equal(sanitize("echo 4;1;rgb:ff/00/00 here").visibleText, "echo  here");
+  });
+
+  it("strips a huge adversarial ';'-run in linear time (no ReDoS)", () => {
+    // A program-controlled buffer of many "<digits>;" groups that never reaches
+    // "rgb:" used to drive catastrophic backtracking (tens of seconds). The
+    // pinned colour alternative makes this fail fast.
+    const evil = "1".repeat(20) + ";";
+    const start = process.hrtime.bigint();
+    sanitize(`${evil.repeat(16000)}rgb`);
+    const ms = Number(process.hrtime.bigint() - start) / 1e6;
+    assert.ok(ms < 1000, `flattened strip took ${ms}ms — possible ReDoS`);
+  });
+
+  it("handles a report split across chunks via the pending buffer", () => {
+    const first = sanitize("tail\x1b[?69;0");
+    assert.equal(first.visibleText, "tail");
+    assert.notEqual(first.pendingControlSequence, "");
+    const second = sanitize("$ydone", first.pendingControlSequence);
+    assert.equal(second.visibleText, "done");
+  });
+
+  it("self-heals a flattened token split across PTY chunks on the next reload", () => {
+    // A *flattened* reply (ESC introducer already gone) has no escape framing for
+    // the pending buffer to hold, so if a PTY read splits it mid-token both halves
+    // are written to history live (transient garble). But they land contiguously,
+    // so readHistory()'s whole-buffer sanitize rejoins and strips them on restore —
+    // the residue does not return after a restart (the persistence concern in the
+    // cross-chunk #1238 follow-up).
+    const live = sanitize("prompt$ 2026;2").visibleText + sanitize("$y done").visibleText;
+    assert.equal(live, "prompt$ 2026;2$y done"); // contiguous in the persisted log
+    assert.equal(sanitize(live).visibleText, "prompt$  done"); // stripped on reload
+  });
+
+  it("strips the real-world restore residue reported in issue #1238", () => {
+    // The exact escape-reply fragments a user saw flood the prompt on terminal
+    // restore: "2026;2$y2027;0$y2031;0$y2048;0$y1$r0m" — DECRPM mode reports
+    // (CSI ? Pm ; Ps $ y) plus a DECRPSS status reply (DCS Ps $ r D…D ST),
+    // reconstructed as the raw sequences the replayed history carried.
+    const residue =
+      "\x1b[?2026;2$y\x1b[?2027;0$y\x1b[?2031;0$y\x1b[?2048;0$y\x1bP1$r0m\x1b\\";
+    assert.equal(sanitize(`prompt$ ${residue}`).visibleText, "prompt$ ");
+  });
+
+  describe("responsesOnly (live stream)", () => {
+    const live = (data: string, pending = "") =>
+      sanitizeTerminalHistoryChunk(pending, data, { responsesOnly: true });
+
+    it("strips terminal responses (DA, DECRPM, cursor, DSR, OSC colour) that leak as garbage", () => {
+      const responses = "\x1b[?1;2c\x1b[?2026;2$y\x1b[2;5R\x1b[0n\x1b]11;rgb:1616/1616/1616\x07";
+      assert.equal(live(`a${responses}b`).visibleText, "ab");
+    });
+
+    it("keeps queries the client must still answer (DECRQM, DA, DSR, OSC colour)", () => {
+      const queries = "\x1b[?2026$p\x1b[c\x1b[6n\x1b]11;?\x07";
+      assert.equal(live(`x${queries}y`).visibleText, `x${queries}y`);
+    });
+
+    it("keeps ordinary display sequences", () => {
+      assert.equal(live("\x1b[31mred\x1b[0m up").visibleText, "\x1b[31mred\x1b[0m up");
+    });
+
+    it("relays a query split across chunks while history strips it", () => {
+      // The query (DECRQM `$p`) arrives in two pieces. The live view must relay
+      // it across the pending boundary; the scrollback view strips it.
+      const liveFirst = live("x\x1b[?2026");
+      assert.equal(liveFirst.visibleText, "x");
+      assert.notEqual(liveFirst.pendingControlSequence, "");
+      assert.equal(live("$py", liveFirst.pendingControlSequence).visibleText, "\x1b[?2026$py");
+
+      const histFirst = sanitize("x\x1b[?2026");
+      assert.equal(histFirst.visibleText, "x");
+      assert.equal(sanitize("$py", histFirst.pendingControlSequence).visibleText, "y");
+    });
+
+    it("diverges within one chunk: strips the response, relays the query", () => {
+      // `\x1b[0n` is a DSR *response* (stripped by both views); `\x1b[6n` is the
+      // cursor-position *query* the client must answer (relayed live, stripped
+      // from scrollback). Same input, two outputs from one parse.
+      const data = "A\x1b[0n B\x1b[6n C";
+      assert.equal(live(data).visibleText, "A B\x1b[6n C");
+      assert.equal(sanitize(data).visibleText, "A B C");
+    });
+  });
+
+  describe("8-bit C1 introducers", () => {
+    it("strips an 8-bit CSI DECRPM report (0x9b … $ y) like its ESC[ form", () => {
+      assert.equal(sanitize("a\x9b?2026;2$yb").visibleText, "ab");
+      // Live view strips the report too (it is a response, not a query).
+      assert.equal(
+        sanitizeTerminalHistoryChunk("", "a\x9b?2026;2$yb", { responsesOnly: true }).visibleText,
+        "ab",
+      );
+    });
+
+    it("strips an 8-bit OSC colour report (0x9d … BEL); relays the colour query live", () => {
+      assert.equal(sanitize("a\x9d11;rgb:1616/1616/1616\x07b").visibleText, "ab");
+      // The `?` colour query is relayed live (the client must answer it) but
+      // stripped from scrollback so a replay cannot re-trigger it.
+      assert.equal(
+        sanitizeTerminalHistoryChunk("", "a\x9d11;?\x07b", { responsesOnly: true }).visibleText,
+        "a\x9d11;?\x07b",
+      );
+      assert.equal(sanitize("a\x9d11;?\x07b").visibleText, "ab");
+    });
+
+    it("buffers an incomplete 8-bit CSI across chunks", () => {
+      const first = sanitize("tail\x9b?69;0");
+      assert.equal(first.visibleText, "tail");
+      assert.notEqual(first.pendingControlSequence, "");
+      assert.equal(sanitize("$ydone", first.pendingControlSequence).visibleText, "done");
+    });
+  });
+
+  describe("DCS status strings (DECRQSS / DECRPSS)", () => {
+    const live = (data: string) =>
+      sanitizeTerminalHistoryChunk("", data, { responsesOnly: true });
+
+    it("strips a DECRPSS status reply (DCS Ps $ r D…D ST) from both views", () => {
+      assert.equal(sanitize("a\x1bP1$r0m\x1b\\b").visibleText, "ab");
+      assert.equal(live("a\x1bP1$r0m\x1b\\b").visibleText, "ab");
+    });
+
+    it("relays a DECRQSS query (DCS $ q D…D ST) live but strips it from scrollback", () => {
+      assert.equal(live("a\x1bP$qm\x1b\\b").visibleText, "a\x1bP$qm\x1b\\b");
+      assert.equal(sanitize("a\x1bP$qm\x1b\\b").visibleText, "ab");
+    });
+
+    it("leaves other DCS strings (sixel, DECUDK) untouched", () => {
+      const sixel = "\x1bPq#0;2;0;0;0#0~~\x1b\\";
+      assert.equal(sanitize(`a${sixel}b`).visibleText, `a${sixel}b`);
+      assert.equal(live(`a${sixel}b`).visibleText, `a${sixel}b`);
+    });
+  });
+});
+
+describe("stripTerminalResponsesFromInput", () => {
+  it("drops the browser's auto-replies that drive the echo loop", () => {
+    const flood =
+      "\x1b[?69;0$y\x1b[?2026;2$y\x1b[?1;2c\x1b]11;rgb:1616/1616/1616\x1b\\\x1b[0n\x1bP1$r0m\x1b\\\x1b[>0;276;0c";
+    assert.equal(stripTerminalResponsesFromInput(flood), "");
+  });
+
+  it("accepts the 8-bit ST (0x9c) terminator for OSC/DCS replies", () => {
+    assert.equal(stripTerminalResponsesFromInput("\x1b]11;rgb:1616/1616/1616\x9c"), "");
+    assert.equal(stripTerminalResponsesFromInput("\x1bP1$r0m\x9c"), "");
+  });
+
+  it("strips OSC 4 palette colour replies so they can't re-arm the echo loop", () => {
+    assert.equal(stripTerminalResponsesFromInput("\x1b]4;1;rgb:1616/1616/1616\x07"), "");
+    assert.equal(stripTerminalResponsesFromInput("\x1b]4;255;rgb:ffff/0000/0000\x1b\\"), "");
+  });
+
+  it("strips replies that use 8-bit C1 introducers (0x9b CSI, 0x9d OSC, 0x90 DCS)", () => {
+    assert.equal(stripTerminalResponsesFromInput("\x9b?69;0$y"), ""); // C1 CSI DECRPM
+    assert.equal(stripTerminalResponsesFromInput("\x9b>0;276;0c"), ""); // C1 CSI secondary DA
+    assert.equal(stripTerminalResponsesFromInput("\x9d4;1;rgb:1616/1616/1616\x9c"), ""); // C1 OSC 4 + C1 ST
+    assert.equal(stripTerminalResponsesFromInput("\x901$r0m\x9c"), ""); // C1 DCS DECRPSS
+  });
+
+  it("keeps focus events so DECSET ?1004 programs (vim/tmux) still receive them", () => {
+    assert.equal(stripTerminalResponsesFromInput("\x1b[I"), "\x1b[I"); // focus in
+    assert.equal(stripTerminalResponsesFromInput("\x1b[O"), "\x1b[O"); // focus out
+  });
+
+  it("strips cursor-position report (CPR) replies that drive the prompt redraw flood", () => {
+    assert.equal(stripTerminalResponsesFromInput("\x1b[1;1R"), ""); // CPR reply
+    assert.equal(stripTerminalResponsesFromInput("\x1b[;1R"), ""); // empty-row CPR
+    assert.equal(stripTerminalResponsesFromInput("\x1b[1;1R\x1b[1;1R\x1b[1;1R"), ""); // flood
+    assert.equal(stripTerminalResponsesFromInput("\x9b5;10R"), ""); // 8-bit C1 CPR
+  });
+
+  it("keeps real user input, cursor moves, and bare query forms", () => {
+    assert.equal(stripTerminalResponsesFromInput("ls -la\r"), "ls -la\r"); // keystrokes
+    assert.equal(
+      stripTerminalResponsesFromInput("\x1b[A\x1b[B\x1b[C\x1b[D"),
+      "\x1b[A\x1b[B\x1b[C\x1b[D",
+    ); // arrows
+    assert.equal(stripTerminalResponsesFromInput("\x03"), "\x03"); // Ctrl-C
+    assert.equal(stripTerminalResponsesFromInput("\x1b[1;5H"), "\x1b[1;5H"); // cursor-move (H, not CPR)
+    assert.equal(stripTerminalResponsesFromInput("\x1b[c"), "\x1b[c"); // bare DA query kept
+    assert.equal(stripTerminalResponsesFromInput("\x1b[>c"), "\x1b[>c"); // bare secondary DA query kept
+    assert.equal(stripTerminalResponsesFromInput("\x1b[6n"), "\x1b[6n"); // DSR query kept
+  });
 });
