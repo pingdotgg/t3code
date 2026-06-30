@@ -183,38 +183,44 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
             return existing.client;
           }
 
-          const client = yield* createCopilotClient({
-            settings: input.settings,
-            cwd: input.cwd,
-            ...(options?.baseDirectory ? { baseDirectory: options.baseDirectory } : {}),
-            env: environment,
-            platform,
-            logLevel: "error",
-          }).pipe(
-            Effect.mapError((cause) =>
-              copilotTextGenerationError(
-                input.operation,
-                detailFromCause(cause, "Failed to configure Copilot client."),
-                cause,
-              ),
-            ),
-          );
-          yield* Effect.tryPromise({
-            try: () => client.start(),
-            catch: (cause) =>
-              copilotTextGenerationError(
-                input.operation,
-                detailFromCause(cause, "Failed to start Copilot client."),
-                cause,
-              ),
-          });
+          return yield* Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              const client = yield* restore(
+                createCopilotClient({
+                  settings: input.settings,
+                  cwd: input.cwd,
+                  ...(options?.baseDirectory ? { baseDirectory: options.baseDirectory } : {}),
+                  env: environment,
+                  platform,
+                  logLevel: "error",
+                }).pipe(
+                  Effect.mapError((cause) =>
+                    copilotTextGenerationError(
+                      input.operation,
+                      detailFromCause(cause, "Failed to configure Copilot client."),
+                      cause,
+                    ),
+                  ),
+                ),
+              );
+              yield* Effect.tryPromise({
+                try: () => client.start(),
+                catch: (cause) =>
+                  copilotTextGenerationError(
+                    input.operation,
+                    detailFromCause(cause, "Failed to start Copilot client."),
+                    cause,
+                  ),
+              });
 
-          sharedClients.set(clientKey, {
-            client,
-            activeRequests: 1,
-            idleCloseFiber: null,
-          });
-          return client;
+              sharedClients.set(clientKey, {
+                client,
+                activeRequests: 1,
+                idleCloseFiber: null,
+              });
+              return client;
+            }),
+          );
         }),
       );
 

@@ -376,6 +376,60 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("coerces fixed-choice Copilot user input to an allowed answer", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-user-input-fixed-choice");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      NodeAssert.ok(config.onUserInputRequest);
+      const requestId = "user-input-fixed-choice";
+      const request = {
+        question: "How should Copilot continue?",
+        choices: ["Use default", "Stop"],
+        allowFreeform: false,
+      };
+      const responsePromise = Promise.resolve(
+        config.onUserInputRequest(request, {
+          sessionId: runtimeMock.state.lastSession.sessionId,
+        }),
+      );
+      const timestamp = yield* nowIso;
+
+      config.onEvent({
+        id: "evt-copilot-user-input-fixed-choice",
+        timestamp,
+        parentId: null,
+        type: "user_input.requested",
+        data: {
+          requestId,
+          ...request,
+        },
+      } as SessionEvent);
+      yield* waitForSdkEventQueue();
+
+      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make(requestId), {
+        answer: "Unlisted answer",
+      });
+
+      const response = yield* Effect.promise(() => responsePromise);
+      NodeAssert.deepStrictEqual(response, {
+        answer: "Use default",
+        wasFreeform: false,
+      });
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("passes selected Copilot context tier when creating a session", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
@@ -588,6 +642,60 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       NodeAssert.match(duplicateReply.message, /Unknown pending permission request/);
 
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("returns SDK session approval without path prompt approval for reads", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-read-permission-accept-for-session");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      NodeAssert.ok(config.onPermissionRequest);
+
+      const permissionRequest: PermissionRequest = {
+        kind: "read",
+        path: "README.md",
+        intention: "Read project docs",
+      };
+      const requestId = "permission-read-session-approval";
+      const resultPromise = Promise.resolve(
+        config.onPermissionRequest(permissionRequest, {
+          sessionId: runtimeMock.state.lastSession.sessionId,
+        }),
+      );
+      const timestamp = yield* nowIso;
+
+      config.onEvent({
+        id: "evt-copilot-read-permission-session-approval",
+        timestamp,
+        parentId: null,
+        type: "permission.requested",
+        data: {
+          requestId,
+          permissionRequest,
+        },
+      } as SessionEvent);
+      yield* waitForSdkEventQueue();
+
+      yield* adapter.respondToRequest(
+        threadId,
+        ApprovalRequestId.make(requestId),
+        "acceptForSession",
+      );
+
+      const result = yield* Effect.promise(() => resultPromise);
+      NodeAssert.deepStrictEqual(result, { kind: "approve-for-session" });
+
       yield* adapter.stopSession(threadId);
     }),
   );
@@ -1681,6 +1789,85 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("emits turn diffs when apply-patch output is only in the command", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-terminal-patch-command-only");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "apply a patch",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+      const patch = "*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch";
+
+      emit({
+        id: "evt-copilot-terminal-patch-command-only-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: { turnId: "sdk-turn-terminal-patch-command-only" },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-terminal-patch-command-only-start",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          toolCallId: "tool-terminal-patch-command-only",
+          toolName: "run_in_terminal",
+          arguments: {
+            command: `apply_patch <<'PATCH'\n${patch}\nPATCH`,
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-terminal-patch-command-only-complete",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_complete",
+        data: {
+          toolCallId: "tool-terminal-patch-command-only",
+          success: true,
+          result: { content: "" },
+        },
+      } as SessionEvent);
+
+      let diffEvent: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && diffEvent === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        diffEvent = runtimeEvents.find((event) => event.type === "turn.diff.updated");
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      NodeAssert.equal(diffEvent?.type, "turn.diff.updated");
+      if (diffEvent?.type === "turn.diff.updated") {
+        NodeAssert.equal(diffEvent.turnId, turn.turnId);
+        NodeAssert.equal(diffEvent.payload.unifiedDiff, patch);
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect(
     "does not emit an active turn diff when a Copilot command tool returns shell control output",
     () =>
@@ -2005,6 +2192,99 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
       const diffUpdated = runtimeEvents.find((event) => event.type === "turn.diff.updated");
+      NodeAssert.equal(diffUpdated?.type, "turn.diff.updated");
+      if (diffUpdated?.type === "turn.diff.updated") {
+        NodeAssert.equal(String(diffUpdated.turnId), String(turn.turnId));
+        NodeAssert.deepStrictEqual(diffUpdated.payload, {
+          unifiedDiff: permissionRequest.diff.trim(),
+        });
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("emits turn diff when Copilot completes write permission with location approval", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-write-permission-location-diff");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "update the README",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      NodeAssert.ok(config.onPermissionRequest);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+      const requestId = "permission-write-readme-location";
+      const permissionRequest = {
+        kind: "write",
+        toolCallId: "tool-write-readme-location",
+        fileName: "README.md",
+        diff: "--- a/README.md\n+++ b/README.md\n@@\n-old\n+new\n",
+        intention: "Update README",
+        canOfferSessionApproval: true,
+      } as Extract<PermissionRequest, { kind: "write" }>;
+
+      emit({
+        id: "evt-copilot-write-location-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: { turnId: "sdk-turn-write-location" },
+      } as SessionEvent);
+      void config.onPermissionRequest(permissionRequest, {
+        sessionId: runtimeMock.state.lastSession.sessionId,
+      });
+      emit({
+        id: "evt-copilot-write-location-requested",
+        timestamp,
+        parentId: null,
+        type: "permission.requested",
+        data: {
+          requestId,
+          permissionRequest,
+          promptRequest: undefined,
+        },
+      } as unknown as SessionEvent);
+      yield* waitForSdkEventQueue();
+
+      emit({
+        id: "evt-copilot-write-location-completed",
+        timestamp,
+        parentId: null,
+        type: "permission.completed",
+        data: {
+          requestId,
+          result: { kind: "approve-for-location" },
+        },
+      } as unknown as SessionEvent);
+
+      let diffUpdated: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && diffUpdated === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        diffUpdated = runtimeEvents.find((event) => event.type === "turn.diff.updated");
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
       NodeAssert.equal(diffUpdated?.type, "turn.diff.updated");
       if (diffUpdated?.type === "turn.diff.updated") {
         NodeAssert.equal(String(diffUpdated.turnId), String(turn.turnId));
@@ -3877,6 +4157,82 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       if (completed?.type === "turn.completed") {
         NodeAssert.equal(String(completed.turnId), String(turn.turnId));
         NodeAssert.equal(completed.payload.state, "completed");
+      }
+    }),
+  );
+
+  it.effect("resolves open permission requests when stopping a session", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-stop-resolves-permission-request");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      NodeAssert.ok(config.onPermissionRequest);
+      const permissionRequest: PermissionRequest = {
+        kind: "shell",
+        toolCallId: "tool-stop-open-permission",
+        fullCommandText: "git status",
+        intention: "Check repository status",
+        commands: [{ identifier: "git", readOnly: true }],
+        possiblePaths: [],
+        possibleUrls: [],
+        hasWriteFileRedirection: false,
+        canOfferSessionApproval: true,
+      };
+      const requestId = "permission-stop-open";
+      void config.onPermissionRequest(permissionRequest, {
+        sessionId: runtimeMock.state.lastSession.sessionId,
+      });
+      const timestamp = yield* nowIso;
+      config.onEvent({
+        id: "evt-copilot-stop-open-permission",
+        timestamp,
+        parentId: null,
+        type: "permission.requested",
+        data: {
+          requestId,
+          permissionRequest,
+        },
+      } as SessionEvent);
+
+      let opened: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && opened === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        opened = runtimeEvents.find(
+          (event) => event.type === "request.opened" && String(event.requestId) === requestId,
+        );
+      }
+      NodeAssert.equal(opened?.type, "request.opened");
+
+      yield* adapter.stopSession(threadId);
+      let resolved: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && resolved === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        resolved = runtimeEvents.find(
+          (event) => event.type === "request.resolved" && String(event.requestId) === requestId,
+        );
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      NodeAssert.equal(resolved?.type, "request.resolved");
+      if (resolved?.type === "request.resolved") {
+        NodeAssert.equal(resolved.payload.decision, "reject");
+        NodeAssert.deepStrictEqual(resolved.payload.resolution, { kind: "reject" });
       }
     }),
   );

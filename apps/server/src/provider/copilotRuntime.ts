@@ -21,7 +21,7 @@ import type {
 } from "@t3tools/contracts";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { createModelCapabilities } from "@t3tools/shared/model";
+import { createModelCapabilities, normalizeModelSlug } from "@t3tools/shared/model";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -67,6 +67,12 @@ export class CopilotProbePromiseError extends Error {
 class CopilotCliPathResolutionError extends Data.TaggedError("CopilotCliPathResolutionError")<{
   readonly message: string;
 }> {}
+
+function copilotClientConfigurationError(cause: unknown): CopilotCliPathResolutionError {
+  return new CopilotCliPathResolutionError({
+    message: cause instanceof Error ? cause.message : String(cause),
+  });
+}
 
 export function trimOrUndefined(value: string | null | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -130,7 +136,11 @@ export const createCopilotClient = Effect.fn("createCopilotClient")(function* (i
   readonly logLevel?: CopilotClientOptions["logLevel"];
   readonly onListModels?: CopilotClientOptions["onListModels"];
 }): Effect.fn.Return<CopilotClient, CopilotCliPathResolutionError> {
-  return new CopilotClient(yield* buildCopilotClientOptions(input));
+  const options = yield* buildCopilotClientOptions(input);
+  return yield* Effect.try({
+    try: () => new CopilotClient(options),
+    catch: copilotClientConfigurationError,
+  });
 });
 
 function isExecutableFile(path: string): boolean {
@@ -313,13 +323,17 @@ export const buildCopilotClientOptions = Effect.fn("buildCopilotClientOptions")(
         })
       : undefined;
   const cliPath = configuredCliPath ?? bundledCliPath;
+  const connection = cliUrl
+    ? yield* Effect.try({
+        try: () => RuntimeConnection.forUri(cliUrl),
+        catch: copilotClientConfigurationError,
+      })
+    : cliPath
+      ? RuntimeConnection.forStdio({ path: cliPath })
+      : undefined;
 
   return {
-    ...(cliUrl
-      ? { connection: RuntimeConnection.forUri(cliUrl) }
-      : cliPath
-        ? { connection: RuntimeConnection.forStdio({ path: cliPath }) }
-        : {}),
+    ...(connection ? { connection } : {}),
     mode: "copilot-cli",
     ...(input.cwd ? { workingDirectory: input.cwd } : {}),
     ...(input.baseDirectory ? { baseDirectory: input.baseDirectory } : {}),
@@ -440,12 +454,16 @@ export function modelsFromCopilotSdk(input: {
   readonly models: ReadonlyArray<ModelInfo>;
   readonly customModels: ReadonlyArray<string>;
 }): ReadonlyArray<ServerProviderModel> {
-  const builtInModels = input.models.map((model) => ({
-    slug: model.id.trim(),
-    name: trimOrUndefined(model.name) ?? model.id.trim(),
-    isCustom: false,
-    capabilities: capabilitiesFromCopilotModel(model),
-  })) satisfies ReadonlyArray<ServerProviderModel>;
+  const builtInModels = input.models.map((model) => {
+    const rawSlug = model.id.trim();
+    const slug = normalizeModelSlug(rawSlug, PROVIDER) ?? rawSlug;
+    return {
+      slug,
+      name: trimOrUndefined(model.name) ?? slug,
+      isCustom: false,
+      capabilities: capabilitiesFromCopilotModel(model),
+    };
+  }) satisfies ReadonlyArray<ServerProviderModel>;
 
   return providerModelsFromSettings(
     builtInModels,

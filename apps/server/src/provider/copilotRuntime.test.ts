@@ -3,12 +3,16 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it } from "@effect/vitest";
 import type { CopilotClientOptions } from "@github/copilot-sdk";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 
 import {
   authSnapshotFromCopilotSdk,
   buildCopilotClientOptions,
   capabilitiesFromCopilotModel,
+  createCopilotClient,
+  modelsFromCopilotSdk,
   normalizeCopilotRuntimeEnvironment,
   resolveBundledCopilotCliPath,
 } from "./copilotRuntime.ts";
@@ -25,6 +29,53 @@ describe("buildCopilotClientOptions", () => {
     const env = normalizeCopilotRuntimeEnvironment({ PATH: "/custom/bin:/bin" }, "darwin");
 
     NodeAssert.equal(env.PATH, "/custom/bin:/bin");
+  });
+
+  it.effect("returns typed failures for invalid Copilot client configuration", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        createCopilotClient({
+          settings: {
+            enabled: true,
+            binaryPath: "",
+            serverUrl: "http://[::1",
+            customModels: [],
+          },
+          platform: "darwin",
+        }),
+      );
+
+      NodeAssert.equal(Exit.isFailure(exit), true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.squash(exit.cause);
+        NodeAssert.equal(
+          (failure as { readonly _tag?: string })._tag,
+          "CopilotCliPathResolutionError",
+        );
+      }
+    }),
+  );
+
+  it("normalizes built-in Copilot SDK model slugs", () => {
+    const [model] = modelsFromCopilotSdk({
+      models: [
+        {
+          id: "4.1",
+          name: "",
+          capabilities: {
+            supports: { vision: false, reasoningEffort: false },
+            limits: { max_prompt_tokens: 272_000, max_context_window_tokens: 400_000 },
+          },
+          billing: {
+            tokenPrices: { contextMax: 272_000 },
+          },
+        } as unknown as Parameters<typeof modelsFromCopilotSdk>[0]["models"][number],
+      ],
+      customModels: ["gpt-4.1"],
+    });
+
+    NodeAssert.equal(model?.slug, "gpt-4.1");
+    NodeAssert.equal(model?.isCustom, false);
   });
 
   describe("capabilitiesFromCopilotModel", () => {
