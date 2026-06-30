@@ -56,8 +56,8 @@ describe("buildCopilotClientOptions", () => {
     }),
   );
 
-  it("normalizes built-in Copilot SDK model slugs", () => {
-    const [model] = modelsFromCopilotSdk({
+  it("normalizes and deduplicates built-in Copilot SDK model slugs", () => {
+    const models = modelsFromCopilotSdk({
       models: [
         {
           id: "4.1",
@@ -70,10 +70,23 @@ describe("buildCopilotClientOptions", () => {
             tokenPrices: { contextMax: 272_000 },
           },
         } as unknown as Parameters<typeof modelsFromCopilotSdk>[0]["models"][number],
+        {
+          id: "gpt-4.1",
+          name: "GPT 4.1 duplicate",
+          capabilities: {
+            supports: { vision: false, reasoningEffort: false },
+            limits: { max_prompt_tokens: 272_000, max_context_window_tokens: 400_000 },
+          },
+          billing: {
+            tokenPrices: { contextMax: 272_000 },
+          },
+        } as unknown as Parameters<typeof modelsFromCopilotSdk>[0]["models"][number],
       ],
       customModels: ["gpt-4.1"],
     });
 
+    NodeAssert.equal(models.length, 1);
+    const [model] = models;
     NodeAssert.equal(model?.slug, "gpt-4.1");
     NodeAssert.equal(model?.isCustom, false);
   });
