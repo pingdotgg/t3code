@@ -6,6 +6,7 @@ import * as NodeFS from "node:fs";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { HostProcessEnvironment, HostProcessPlatform } from "./hostProcess.ts";
@@ -17,6 +18,11 @@ const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
+const POSIX_USER_EXECUTE_MODE = 0o100;
+const POSIX_GROUP_EXECUTE_MODE = 0o010;
+const POSIX_OTHER_EXECUTE_MODE = 0o001;
+const POSIX_ANY_EXECUTE_MODE =
+  POSIX_USER_EXECUTE_MODE | POSIX_GROUP_EXECUTE_MODE | POSIX_OTHER_EXECUTE_MODE;
 
 type ExecFileSyncLike = (
   file: string,
@@ -31,6 +37,38 @@ function canExecuteFile(filePath: string): boolean {
   } catch {
     return false;
   }
+}
+
+function getCurrentUid(): number | undefined {
+  return typeof process.getuid === "function" ? process.getuid() : undefined;
+}
+
+function getCurrentGids(): ReadonlyArray<number> {
+  if (typeof process.getgid !== "function") return [];
+  const primaryGid = process.getgid();
+  const supplementaryGids = typeof process.getgroups === "function" ? process.getgroups() : [];
+  return Array.from(new Set([primaryGid, ...supplementaryGids]));
+}
+
+function canExecuteFileInfo(info: FileSystem.File.Info): boolean {
+  if ((info.mode & POSIX_ANY_EXECUTE_MODE) === 0) return false;
+
+  const uid = getCurrentUid();
+  if (uid === 0) return true;
+  if (uid !== undefined && Option.isSome(info.uid)) {
+    return info.uid.value === uid
+      ? (info.mode & POSIX_USER_EXECUTE_MODE) !== 0
+      : canExecuteFileInfoForGroups(info);
+  }
+
+  return canExecuteFileInfoForGroups(info) || (info.mode & POSIX_ANY_EXECUTE_MODE) !== 0;
+}
+
+function canExecuteFileInfoForGroups(info: FileSystem.File.Info): boolean {
+  if (Option.isSome(info.gid) && getCurrentGids().includes(info.gid.value)) {
+    return (info.mode & POSIX_GROUP_EXECUTE_MODE) !== 0;
+  }
+  return (info.mode & POSIX_OTHER_EXECUTE_MODE) !== 0;
 }
 
 export interface CommandAvailabilityOptions {
@@ -498,8 +536,8 @@ const isExecutableFile = Effect.fn("shell.isExecutableFile")(function* (
 ): Effect.fn.Return<boolean, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const stat = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
-  if (stat === null || stat.type !== "File") return false;
+  const stat = yield* fileSystem.stat(filePath).pipe(Effect.option);
+  if (Option.isNone(stat) || stat.value.type !== "File") return false;
 
   if (platform === "win32") {
     const extension = path.extname(filePath);
@@ -507,7 +545,7 @@ const isExecutableFile = Effect.fn("shell.isExecutableFile")(function* (
     return windowsPathExtensions.includes(extension.toUpperCase());
   }
 
-  return canExecuteFile(filePath);
+  return canExecuteFileInfo(stat.value);
 });
 
 const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlatform")(function* (

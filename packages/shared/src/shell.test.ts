@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it as effectIt } from "@effect/vitest";
+import { assert, it as effectIt } from "@effect/vitest";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -363,6 +365,33 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
 
       expect(result._tag).toBe("Failure");
     }),
+  );
+
+  it.effect("resolves POSIX commands only when the candidate is executable", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-shell-executable-",
+      });
+      const executablePath = path.join(directory, "tool");
+      const nonExecutablePath = path.join(directory, "not-a-tool");
+
+      yield* fileSystem.writeFileString(executablePath, "#!/bin/sh\n");
+      yield* fileSystem.writeFileString(nonExecutablePath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(executablePath, 0o700);
+      yield* fileSystem.chmod(nonExecutablePath, 0o600);
+
+      const resolved = yield* resolveCommandPath("tool", {
+        env: { PATH: directory },
+      }).pipe(Effect.provideService(HostProcessPlatform, "linux"));
+      const nonExecutableResult = yield* resolveCommandPath("not-a-tool", {
+        env: { PATH: directory },
+      }).pipe(Effect.provideService(HostProcessPlatform, "linux"), Effect.result);
+
+      assert.strictEqual(resolved, executablePath);
+      assert.strictEqual(nonExecutableResult._tag, "Failure");
+    }).pipe(Effect.scoped),
   );
 });
 
