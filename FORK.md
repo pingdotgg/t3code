@@ -4,6 +4,11 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 
 ## Changes
 
+### Maintenance
+
+- Squash commits when merging fork PRs.
+- Exception: upstream actualization PRs may preserve upstream commit structure when that makes future syncs easier to audit.
+
 ### Release And CI
 
 - Fork workflows create/update a daily stable release PR while main-branch pushes produce nightly releases.
@@ -14,7 +19,7 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 - Self-signed macOS signing certificates are trusted during release builds.
 - macOS passkey entitlements are only enabled when Apple notarization/profile configuration is present.
 - Windows releases can sign with the static certificate when Azure Trusted Signing is not configured.
-- The WSL node-pty prebuild release job uses GitHub-hosted Ubuntu runners instead of upstream private runners.
+- Fork release jobs use GitHub-hosted runners where upstream private runners are unavailable.
 
 ### Desktop Updater Channels
 
