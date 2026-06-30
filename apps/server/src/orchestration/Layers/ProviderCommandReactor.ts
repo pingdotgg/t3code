@@ -116,7 +116,8 @@ function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolea
   }
 
   return (
-    trimmedCurrentTitle === trimmedTitleSeed || truncate(trimmedCurrentTitle) === trimmedTitleSeed
+    trimmedCurrentTitle === trimmedTitleSeed ||
+    truncate(trimmedCurrentTitle, Math.max(0, trimmedTitleSeed.length - 3)) === trimmedTitleSeed
   );
 }
 
