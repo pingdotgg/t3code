@@ -64,8 +64,6 @@ jobs:
           NIGHTLY_DATE: ${{ github.run_started_at }}
           NIGHTLY_SHA: ${{ github.sha }}
           NIGHTLY_RUN_NUMBER: ${{ github.run_number }}
-          BEFORE_SHA: ${{ github.event.before }}
-          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           fork_marker="tarik02"
 
@@ -110,14 +108,8 @@ jobs:
 
           stable_from_main=false
           if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            if [[ -n "${BEFORE_SHA:-}" && ! "$BEFORE_SHA" =~ ^0+$ ]]; then
-              changed_files="$(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")"
-            else
-              changed_files="$(git diff-tree --root --no-commit-id --name-only -r "$GITHUB_SHA")"
-            fi
-            if [[ "$HEAD_COMMIT_MESSAGE" == *"prepare stable release"* ]] &&
-              grep -qx ".github/release-pr/stable.json" <<< "$changed_files" &&
-              [[ "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+${fork_marker}(\.[0-9]+)?$ ]]; then
+            if [[ "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+${fork_marker}(\.[0-9]+)?$ ]] &&
+              ! git rev-parse -q --verify "refs/tags/v$package_version" >/dev/null; then
               stable_from_main=true
             fi
           fi
