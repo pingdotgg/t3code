@@ -130,25 +130,35 @@ describe("timeline scroll controller", () => {
   it("clears exhausted anchor positioning only for the active positioned anchor", () => {
     const message1 = "message-1" as MessageId;
     const message2 = "message-2" as MessageId;
+    const activeTimelineAnchorIndexRef = { current: 3 };
     const positionedTimelineAnchorRef = { current: message1 };
     const settledTimelineAnchorRef = { current: message1 };
+    const timelineScrollModeRef = { current: "anchoring-new-turn" as const };
 
     clearTimelineAnchorIfPositioningExhausted({
+      activeTimelineAnchorIndexRef,
       messageId: message2,
       positionedTimelineAnchorRef,
       settledTimelineAnchorRef,
+      timelineScrollModeRef,
     });
 
+    expect(activeTimelineAnchorIndexRef.current).toBe(3);
     expect(positionedTimelineAnchorRef.current).toBe(message1);
     expect(settledTimelineAnchorRef.current).toBe(message1);
+    expect(timelineScrollModeRef.current).toBe("anchoring-new-turn");
 
     clearTimelineAnchorIfPositioningExhausted({
+      activeTimelineAnchorIndexRef,
       messageId: message1,
       positionedTimelineAnchorRef,
       settledTimelineAnchorRef,
+      timelineScrollModeRef,
     });
 
+    expect(activeTimelineAnchorIndexRef.current).toBeNull();
     expect(positionedTimelineAnchorRef.current).toBeNull();
     expect(settledTimelineAnchorRef.current).toBeNull();
+    expect(timelineScrollModeRef.current).toBe("following-end");
   });
 });

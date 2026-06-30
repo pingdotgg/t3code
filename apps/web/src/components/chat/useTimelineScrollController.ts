@@ -138,19 +138,25 @@ export function clearPendingTimelineAnchorScrollRestore({
 }
 
 export function clearTimelineAnchorIfPositioningExhausted({
+  activeTimelineAnchorIndexRef,
   messageId,
   positionedTimelineAnchorRef,
   settledTimelineAnchorRef,
+  timelineScrollModeRef,
 }: {
+  readonly activeTimelineAnchorIndexRef: { current: number | null };
   readonly messageId: MessageId;
   readonly positionedTimelineAnchorRef: { current: MessageId | null };
   readonly settledTimelineAnchorRef: { current: MessageId | null };
+  readonly timelineScrollModeRef: { current: TimelineScrollMode };
 }): void {
   if (positionedTimelineAnchorRef.current !== messageId) {
     return;
   }
   positionedTimelineAnchorRef.current = null;
   settledTimelineAnchorRef.current = null;
+  activeTimelineAnchorIndexRef.current = null;
+  timelineScrollModeRef.current = "following-end";
 }
 
 export interface TimelineScrollController {
@@ -357,9 +363,11 @@ export function useTimelineScrollController({
               positionAnchor(remainingAttempts - 1);
             } else {
               clearTimelineAnchorIfPositioningExhausted({
+                activeTimelineAnchorIndexRef,
                 messageId,
                 positionedTimelineAnchorRef,
                 settledTimelineAnchorRef,
+                timelineScrollModeRef,
               });
             }
             return;
@@ -370,9 +378,11 @@ export function useTimelineScrollController({
               positionAnchor(remainingAttempts - 1);
             } else {
               clearTimelineAnchorIfPositioningExhausted({
+                activeTimelineAnchorIndexRef,
                 messageId,
                 positionedTimelineAnchorRef,
                 settledTimelineAnchorRef,
+                timelineScrollModeRef,
               });
             }
             return;
