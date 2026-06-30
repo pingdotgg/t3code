@@ -48,9 +48,20 @@ describe("buildCopilotClientOptions", () => {
       NodeAssert.equal(Exit.isFailure(exit), true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.squash(exit.cause);
+        const error = failure as {
+          readonly _tag?: string;
+          readonly detail?: string;
+          readonly serverUrl?: string;
+          readonly cause?: unknown;
+          readonly message?: string;
+        };
+        NodeAssert.equal(error._tag, "CopilotCliPathResolutionError");
+        NodeAssert.equal(error.detail, "Failed to construct Copilot client.");
+        NodeAssert.equal(error.serverUrl, "http://[::1");
+        NodeAssert.ok(error.cause instanceof Error);
         NodeAssert.equal(
-          (failure as { readonly _tag?: string })._tag,
-          "CopilotCliPathResolutionError",
+          error.message,
+          "Copilot CLI path resolution failed (serverUrl=http://[::1): Failed to construct Copilot client.",
         );
       }
     }),
