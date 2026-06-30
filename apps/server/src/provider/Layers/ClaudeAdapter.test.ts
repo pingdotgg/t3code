@@ -3703,7 +3703,6 @@ describe("ClaudeAdapterLive", () => {
           nativeThreadIds.push(threadId ?? null);
           return Effect.void;
         },
-        close: () => Effect.void,
       },
     });
     return Effect.gen(function* () {

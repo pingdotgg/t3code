@@ -693,7 +693,6 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
             JSON.stringify(record).includes("late after cancel")
               ? Deferred.succeed(lateNativeUpdate, undefined).pipe(Effect.asVoid)
               : Effect.void,
-          close: () => Effect.void,
         },
       });
 
@@ -1176,7 +1175,6 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
             record.event.kind === "notification"
               ? Effect.die(new Error("native log write failed"))
               : Effect.void,
-          close: () => Effect.void,
         },
       });
       const contentDelta = yield* Deferred.make<void>();

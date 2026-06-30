@@ -124,7 +124,7 @@ function waitForJsonLogMatch(
       if (requests.some(predicate)) {
         return requests;
       }
-      yield* Effect.yieldNow;
+      yield* Effect.sleep("10 millis").pipe(TestClock.withLive);
     }
     return yield* Effect.promise(() => readJsonLines(filePath));
   });

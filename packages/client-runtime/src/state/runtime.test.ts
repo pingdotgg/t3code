@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
+import { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   environmentRpcKey,
   createAtomCommandScheduler,
@@ -22,6 +23,19 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "./runtime.ts";
+import { createVcsEnvironmentAtoms } from "./vcs.ts";
+
+describe("VCS status subscription lifecycle", () => {
+  it("removes the status subscription immediately after its last consumer unmounts", () => {
+    const runtime = Atom.runtime(Layer.effect(EnvironmentRegistry, Effect.never));
+    const statusAtom = createVcsEnvironmentAtoms(runtime).status({
+      environmentId: EnvironmentId.make("env-1"),
+      input: { cwd: "/repo" },
+    });
+
+    expect(statusAtom.idleTTL).toBe(0);
+  });
+});
 
 describe("settleAsyncResult", () => {
   it("preserves successful values and typed failures", async () => {

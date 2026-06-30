@@ -321,15 +321,13 @@ export function makeCursorAdapter(
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const serverConfig = yield* Effect.service(ServerConfig);
     const crypto = yield* Crypto.Crypto;
-    const nativeEventLogger =
-      options?.nativeEventLogger ??
-      (options?.nativeEventLogPath !== undefined
+    const managedNativeEventLogger =
+      options?.nativeEventLogger === undefined && options?.nativeEventLogPath !== undefined
         ? yield* makeEventNdjsonLogger(options.nativeEventLogPath, {
             stream: "native",
           })
-        : undefined);
-    const managedNativeEventLogger =
-      options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
+        : undefined;
+    const nativeEventLogger = options?.nativeEventLogger ?? managedNativeEventLogger;
     const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
 
     const sessions = new Map<ThreadId, CursorSessionContext>();

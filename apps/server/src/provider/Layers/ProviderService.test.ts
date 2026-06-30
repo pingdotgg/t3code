@@ -605,7 +605,6 @@ it.effect("ProviderServiceLive writes canonical events to the emitting thread se
           canonicalThreadIds.push(threadId ?? null);
           return Effect.void;
         },
-        close: () => Effect.void,
       },
     }).pipe(
       Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),

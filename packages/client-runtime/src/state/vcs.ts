@@ -23,6 +23,7 @@ export function createVcsEnvironmentAtoms<R, E>(
     }),
     status: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:vcs:status",
+      idleTtlMs: 0,
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
         subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
           Stream.mapAccum(

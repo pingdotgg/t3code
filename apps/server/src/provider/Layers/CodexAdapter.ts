@@ -1354,15 +1354,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;
   const serverConfig = yield* Effect.service(ServerConfig);
-  const nativeEventLogger =
-    options?.nativeEventLogger ??
-    (options?.nativeEventLogPath !== undefined
+  const managedNativeEventLogger =
+    options?.nativeEventLogger === undefined && options?.nativeEventLogPath !== undefined
       ? yield* makeEventNdjsonLogger(options.nativeEventLogPath, {
           stream: "native",
         })
-      : undefined);
-  const managedNativeEventLogger =
-    options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
+      : undefined;
+  const nativeEventLogger = options?.nativeEventLogger ?? managedNativeEventLogger;
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
 
@@ -1637,7 +1635,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       ),
     );
 
-  const writeNativeEvent = Effect.fn("writeNativeEvent")(function* (event: ProviderEvent) {
+  const writeNativeEvent = Effect.fnUntraced(function* (event: ProviderEvent) {
     if (!nativeEventLogger) {
       return;
     }
