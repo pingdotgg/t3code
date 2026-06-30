@@ -31,7 +31,7 @@ import * as DesktopClerk from "./app/DesktopClerk.ts";
 import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
 import * as DesktopAssets from "./app/DesktopAssets.ts";
 import * as DesktopBackendConfiguration from "./backend/DesktopBackendConfiguration.ts";
-import * as DesktopBackendManager from "./backend/DesktopBackendManager.ts";
+import * as DesktopBackendPool from "./backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "./backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopNetworkInterfaces from "./backend/DesktopNetworkInterfaces.ts";
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
@@ -50,6 +50,8 @@ import * as DesktopUpdates from "./updates/DesktopUpdates.ts";
 import * as BrowserSession from "./preview/BrowserSession.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
+import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
+import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -143,10 +145,23 @@ const desktopWindowLayer = DesktopWindow.layer.pipe(
   Layer.provideMerge(desktopPreviewLayer),
 );
 
-const desktopBackendLayer = DesktopBackendManager.layer.pipe(
+// Pool layer instantiates the backend factory once for the Windows
+// primary instance and exposes it via pool.primary. Consumers go through
+// the pool now; the legacy DesktopBackendManager service is gone. The
+// WSL second instance gets registered later in the migration. See
+// DesktopBackendPool.ts header for the full rollout plan.
+const desktopBackendLayer = DesktopBackendPool.layer.pipe(
   Layer.provideMerge(DesktopAppIdentity.layer),
   Layer.provideMerge(DesktopBackendConfiguration.layer),
+  Layer.provideMerge(DesktopWslEnvironment.layer),
   Layer.provideMerge(desktopWindowLayer),
+);
+
+// WSL orchestrator hangs off the backend layer because it needs the
+// pool + configuration + serverExposure; it pulls NetService and the
+// foundation services through the same provideMerge chain.
+const desktopWslBackendLayer = DesktopWslBackend.layer.pipe(
+  Layer.provideMerge(desktopBackendLayer),
 );
 
 const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
@@ -160,6 +175,7 @@ const desktopApplicationLayer = Layer.mergeAll(
   desktopSshLayer,
 ).pipe(
   Layer.provideMerge(DesktopUpdates.layer),
+  Layer.provideMerge(desktopWslBackendLayer),
   Layer.provideMerge(desktopLocalEnvironmentAuthLayer),
 );
 

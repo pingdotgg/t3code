@@ -16,10 +16,12 @@ import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   type ConnectionCatalogEntry,
   type ConnectionRegistration,
+  type PlatformConnectionRegistration,
   type PrimaryConnectionRegistration,
   SshConnectionProfile,
   connectionRegistrationCatalogEntry,
 } from "./catalog.ts";
+import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import * as Connectivity from "./connectivity.ts";
 import type {
@@ -69,6 +71,9 @@ export class EnvironmentRegistry extends Context.Service<
       registration: ConnectionRegistration,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
+    readonly reconcilePlatform: (
+      registrations: ReadonlyArray<PlatformConnectionRegistration>,
+    ) => Effect.Effect<void>;
     readonly remove: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<
@@ -126,6 +131,7 @@ export const make = Effect.gen(function* () {
   const cache = yield* Persistence.EnvironmentCacheStore;
   const ownedDataCleanup = yield* Persistence.EnvironmentOwnedDataCleanup;
   const profiles = yield* ConnectionProfileStore.ConnectionProfileStore;
+  const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
@@ -402,47 +408,137 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const installPlatformRegistration = Effect.fn("EnvironmentRegistry.installPlatformRegistration")(
+    function* (registration: PlatformConnectionRegistration) {
+      const entry = connectionRegistrationCatalogEntry(registration);
+      const target = entry.target;
+      yield* withLeaseLock(
+        target.environmentId,
+        Effect.gen(function* () {
+          yield* Ref.update(platformEnvironmentIds, (current) => {
+            const next = new Set(current);
+            next.add(target.environmentId);
+            return next;
+          });
+
+          // Secondary desktop-local backends (e.g. a parallel WSL backend) live
+          // on their own loopback origin, so they authenticate with a bearer
+          // token instead of the primary's same-origin cookie. Stash it where
+          // the resolver's bearer broker looks it up.
+          if (registration._tag === "BearerConnectionRegistration") {
+            yield* credentials.put(registration.target.connectionId, registration.credential).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Could not store the platform bearer credential.", {
+                  environmentId: target.environmentId,
+                  error,
+                }),
+              ),
+            );
+          }
+
+          const persistedTarget = (yield* Ref.get(persistedTargetsByEnvironment)).get(
+            target.environmentId,
+          );
+          if (persistedTarget !== undefined) {
+            yield* registrations.remove(persistedTarget).pipe(
+              Effect.tap(() =>
+                Ref.update(persistedTargetsByEnvironment, (current) => {
+                  const next = new Map(current);
+                  next.delete(target.environmentId);
+                  return next;
+                }),
+              ),
+              Effect.catch((error) =>
+                Effect.logWarning(
+                  "Could not remove a persisted registration shadowed by a platform environment.",
+                  {
+                    environmentId: target.environmentId,
+                    error,
+                  },
+                ),
+              ),
+            );
+          }
+
+          yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
+        }),
+      );
+    },
+  );
+
+  // Tear down a platform-managed environment that the host no longer reports
+  // (e.g. the user turned the parallel WSL backend off). Platform environments
+  // bypass the user-facing `remove` guard since they are reconciled from the
+  // bootstrap rather than removed by hand.
+  const removePlatformEnvironment = Effect.fn("EnvironmentRegistry.removePlatformEnvironment")(
+    function* (environmentId: EnvironmentId) {
+      yield* withLeaseLock(
+        environmentId,
+        Effect.gen(function* () {
+          const entry = (yield* SubscriptionRef.get(entries)).get(environmentId);
+          yield* Ref.update(platformEnvironmentIds, (current) => {
+            const next = new Set(current);
+            next.delete(environmentId);
+            return next;
+          });
+          yield* closeServiceScope(environmentId);
+          yield* SubscriptionRef.update(entries, (current) => {
+            const next = new Map(current);
+            next.delete(environmentId);
+            return next;
+          });
+          if (entry !== undefined && entry.target._tag === "BearerConnectionTarget") {
+            yield* credentials.remove(entry.target.connectionId).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Could not clear the platform bearer credential.", {
+                  environmentId,
+                  error,
+                }),
+              ),
+            );
+          }
+          yield* Effect.all(
+            [
+              cache.clear(environmentId).pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("Could not clear cached environment data after removal.", {
+                    environmentId,
+                    error,
+                  }),
+                ),
+              ),
+              ownedDataCleanup.clear(environmentId),
+            ],
+            { concurrency: "unbounded", discard: true },
+          );
+        }),
+      );
+    },
+  );
+
   const registerPlatform = Effect.fn("EnvironmentRegistry.registerPlatform")(function* (
     registration: PrimaryConnectionRegistration,
   ) {
-    const entry = connectionRegistrationCatalogEntry(registration);
-    const target = entry.target;
-    yield* withLeaseLock(
-      target.environmentId,
-      Effect.gen(function* () {
-        yield* Ref.update(platformEnvironmentIds, (current) => {
-          const next = new Set(current);
-          next.add(target.environmentId);
-          return next;
-        });
+    yield* installPlatformRegistration(registration);
+  });
 
-        const persistedTarget = (yield* Ref.get(persistedTargetsByEnvironment)).get(
-          target.environmentId,
-        );
-        if (persistedTarget !== undefined) {
-          yield* registrations.remove(persistedTarget).pipe(
-            Effect.tap(() =>
-              Ref.update(persistedTargetsByEnvironment, (current) => {
-                const next = new Map(current);
-                next.delete(target.environmentId);
-                return next;
-              }),
-            ),
-            Effect.catch((error) =>
-              Effect.logWarning(
-                "Could not remove a persisted registration shadowed by the primary environment.",
-                {
-                  environmentId: target.environmentId,
-                  error,
-                },
-              ),
-            ),
-          );
-        }
-
-        yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
-      }),
+  // Reconcile the full set of platform-managed environments against what the
+  // host currently reports: add/refresh the desired ones and tear down any
+  // platform environment that disappeared (WSL toggled off, distro switched).
+  const reconcilePlatform = Effect.fn("EnvironmentRegistry.reconcilePlatform")(function* (
+    platformRegistrations: ReadonlyArray<PlatformConnectionRegistration>,
+  ) {
+    const desiredIds = new Set(
+      platformRegistrations.map((registration) => registration.target.environmentId),
     );
+    const currentPlatformIds = yield* Ref.get(platformEnvironmentIds);
+    yield* Effect.forEach(
+      currentPlatformIds,
+      (environmentId) =>
+        desiredIds.has(environmentId) ? Effect.void : removePlatformEnvironment(environmentId),
+      { discard: true },
+    );
+    yield* Effect.forEach(platformRegistrations, installPlatformRegistration, { discard: true });
   });
 
   const remove = Effect.fn("EnvironmentRegistry.remove")(function* (environmentId: EnvironmentId) {
@@ -567,6 +663,7 @@ export const make = Effect.gen(function* () {
     start,
     register,
     registerPlatform,
+    reconcilePlatform,
     remove,
     removeRelayEnvironments,
     retryNow,
