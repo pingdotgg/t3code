@@ -14,6 +14,7 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 - Self-signed macOS signing certificates are trusted during release builds.
 - macOS passkey entitlements are only enabled when Apple notarization/profile configuration is present.
 - Windows releases can sign with the static certificate when Azure Trusted Signing is not configured.
+- The WSL node-pty prebuild release job uses GitHub-hosted Ubuntu runners instead of upstream private runners.
 
 ### Desktop Updater Channels
 
