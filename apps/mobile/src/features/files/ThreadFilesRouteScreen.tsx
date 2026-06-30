@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   Text as RNText,
@@ -24,6 +25,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { cn } from "../../lib/cn";
 import { resolveFileSelectionNavigationAction } from "../../lib/adaptive-navigation";
+import { nativeTopScrollEdgeEffect } from "../../lib/native-scroll-edge-effect";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { buildThreadFilesNavigation, buildThreadRoutePath } from "../../lib/routes";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
@@ -58,6 +60,7 @@ import {
 import { useWorkspaceFileAssetUrl } from "./workspaceFileAssetUrl";
 
 type FileViewMode = "preview" | "source";
+const TOP_SCROLL_EDGE_EFFECT = nativeTopScrollEdgeEffect(Platform.OS, Platform.Version);
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
@@ -579,6 +582,13 @@ export function ThreadFilesTreeScreen() {
           headerStyle: { backgroundColor: "transparent" },
           headerShadowVisible: false,
           headerTitle: renderHeaderTitle,
+          scrollEdgeEffects: {
+            top: TOP_SCROLL_EDGE_EFFECT,
+            bottom: "hidden",
+            left: "hidden",
+            right: "hidden",
+          },
+          unstable_navigationItemStyle: Platform.OS === "ios" ? "editor" : undefined,
           headerSearchBarOptions: {
             allowToolbarIntegration: true,
             autoCapitalize: "none",
