@@ -113,21 +113,39 @@ export function toCopilotProbeError(cause: unknown): CopilotProbePromiseError {
 function describeCopilotProbeCause(cause: unknown): string {
   const seen = new Set<unknown>();
   let current: unknown = cause;
+  const fallbackMessages: string[] = [];
 
-  while (current instanceof Error && !seen.has(current)) {
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
     seen.add(current);
-    const message = current.message.trim();
+    const tag = "_tag" in current && typeof current._tag === "string" ? current._tag : undefined;
+    const message = current instanceof Error ? current.message.trim() : "";
+    const detail =
+      "detail" in current && typeof current.detail === "string" ? current.detail.trim() : "";
+    const nestedCause = "cause" in current ? current.cause : undefined;
+    if (tag === "CopilotCliPathResolutionError" && nestedCause !== undefined) {
+      if (detail.length > 0) {
+        fallbackMessages.push(detail);
+      }
+      current = nestedCause;
+      continue;
+    }
     if (message.length > 0 && !GENERIC_EFFECT_TRY_PROMISE_MESSAGES.has(message)) {
       return message;
     }
-    current = current.cause;
+    if (detail.length > 0 && !GENERIC_EFFECT_TRY_PROMISE_MESSAGES.has(detail)) {
+      return detail;
+    }
+    if (nestedCause === undefined) {
+      break;
+    }
+    current = nestedCause;
   }
 
   if (typeof current === "string") {
     return current.trim();
   }
 
-  return "";
+  return fallbackMessages[0] ?? "";
 }
 
 function authTypeLabel(authType: GetAuthStatusResponse["authType"]): string | undefined {
@@ -237,16 +255,29 @@ const resolveCopilotCommandPath = (
   input: {
     readonly env: Record<string, string | undefined>;
     readonly platform: NodeJS.Platform;
+    readonly cwd?: string | undefined;
   },
 ) =>
-  resolveCommandPath(command, { env: input.env }).pipe(
+  resolveCommandPath(resolveCommandRelativeToCwd(command, input), { env: input.env }).pipe(
     Effect.provideService(HostProcessPlatform, input.platform),
     Effect.provide(NodeServices.layer),
   );
 
+function resolveCommandRelativeToCwd(
+  command: string,
+  input: { readonly cwd?: string | undefined; readonly platform: NodeJS.Platform },
+): string {
+  if (!input.cwd || (!command.includes("/") && !command.includes("\\"))) {
+    return command;
+  }
+  const path = input.platform === "win32" ? NodePath.win32 : NodePath.posix;
+  return path.isAbsolute(command) ? command : path.resolve(input.cwd, command);
+}
+
 const validateConfiguredCopilotCliPath = Effect.fn("validateConfiguredCopilotCliPath")(
   function* (input: {
     readonly settings: CopilotSettings;
+    readonly cwd?: string | undefined;
     readonly env?: Record<string, string | undefined>;
     readonly platform: NodeJS.Platform;
   }): Effect.fn.Return<string | undefined, CopilotCliPathResolutionError> {
@@ -261,7 +292,11 @@ const validateConfiguredCopilotCliPath = Effect.fn("validateConfiguredCopilotCli
     }
 
     const env = input.env ?? process.env;
-    return yield* resolveCopilotCommandPath(cliPath, { env, platform: input.platform }).pipe(
+    return yield* resolveCopilotCommandPath(cliPath, {
+      env,
+      platform: input.platform,
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+    }).pipe(
       Effect.catchTag("CommandResolutionError", () =>
         Effect.fail(
           new CopilotCliPathResolutionError({
@@ -344,6 +379,7 @@ export const buildCopilotClientOptions = Effect.fn("buildCopilotClientOptions")(
 
   const configuredCliPath = yield* validateConfiguredCopilotCliPath({
     settings: input.settings,
+    ...(input.cwd ? { cwd: input.cwd } : {}),
     env,
     platform: input.platform,
   });

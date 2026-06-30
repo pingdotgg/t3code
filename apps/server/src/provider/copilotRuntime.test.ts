@@ -1,4 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off - Test creates a temporary executable fixture.
 import * as NodeAssert from "node:assert/strict";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it } from "@effect/vitest";
@@ -12,6 +16,7 @@ import {
   buildCopilotClientOptions,
   capabilitiesFromCopilotModel,
   createCopilotClient,
+  formatCopilotProbeError,
   modelsFromCopilotSdk,
   normalizeCopilotRuntimeEnvironment,
   resolveBundledCopilotCliPath,
@@ -64,6 +69,33 @@ describe("buildCopilotClientOptions", () => {
           "Copilot CLI path resolution failed (serverUrl=http://[::1): Failed to construct Copilot client.",
         );
       }
+    }),
+  );
+
+  it.effect("formats Copilot probe failures from nested causes", () =>
+    Effect.gen(function* () {
+      const error = yield* createCopilotClient({
+        settings: {
+          enabled: true,
+          binaryPath: "",
+          serverUrl: "http://[::1",
+          customModels: [],
+        },
+        platform: "darwin",
+      }).pipe(Effect.flip);
+
+      const formatted = formatCopilotProbeError({
+        cause: error,
+        settings: {
+          enabled: true,
+          binaryPath: "",
+          serverUrl: "http://[::1",
+          customModels: [],
+        },
+      });
+
+      NodeAssert.equal(formatted.installed, true);
+      NodeAssert.notEqual(formatted.message, "Failed to construct Copilot client.");
     }),
   );
 
@@ -281,6 +313,33 @@ describe("buildCopilotClientOptions", () => {
         const connection = assertStdioConnection(options.connection);
         NodeAssert.equal(connection.path, configuredBinaryPath);
         NodeAssert.equal(options.env?.COPILOT_CLI_PATH, undefined);
+      }),
+    );
+
+    it.effect("resolves configured relative binary paths from the workspace cwd", () =>
+      Effect.gen(function* () {
+        const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "copilot-cli-cwd-"));
+        const binDir = NodePath.join(tempDir, "node_modules", ".bin");
+        NodeFS.mkdirSync(binDir, { recursive: true });
+        const binaryPath = NodePath.join(binDir, "copilot");
+        NodeFS.writeFileSync(binaryPath, "#!/bin/sh\nexit 0\n");
+        NodeFS.chmodSync(binaryPath, 0o755);
+
+        const options = yield* buildCopilotClientOptions({
+          settings: {
+            enabled: true,
+            binaryPath: "./node_modules/.bin/copilot",
+            serverUrl: "",
+            customModels: [],
+          },
+          cwd: tempDir,
+          env: { PATH: "/usr/bin" },
+          platform: "darwin",
+        });
+
+        const connection = assertStdioConnection(options.connection);
+        NodeAssert.equal(connection.path, binaryPath);
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }),
     );
   });
