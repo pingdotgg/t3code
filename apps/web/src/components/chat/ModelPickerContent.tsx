@@ -5,7 +5,18 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import {
+  type ChangeEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  memo,
+  useMemo,
+  useState,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type RefObject,
+} from "react";
 import { SearchIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
@@ -43,6 +54,8 @@ type ModelPickerItem = {
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
 
+const normalizeModelSearchQuery = (value: string): string => value.trim();
+
 // Split a `${instanceId}:${slug}` combobox key back into its pieces. Slugs
 // can contain colons (e.g. some vendor model ids), so we only split on the
 // first colon — anything after that is the slug.
@@ -56,6 +69,70 @@ function splitInstanceModelKey(key: string): { instanceId: ProviderInstanceId; s
     slug: key.slice(colonIndex + 1),
   };
 }
+
+const ModelPickerSearchInput = memo(function ModelPickerSearchInput(props: {
+  inputRef: RefObject<HTMLInputElement | null>;
+  onSearchQueryChange: (query: string) => void;
+  onRequestClose?: () => void;
+  onSubmitHighlightedModel: () => boolean;
+}) {
+  const { inputRef, onRequestClose, onSearchQueryChange, onSubmitHighlightedModel } = props;
+  const [inputValue, setInputValue] = useState("");
+  const lastNormalizedQueryRef = useRef("");
+
+  const handleChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const nextValue = event.target.value;
+      const nextNormalizedQuery = normalizeModelSearchQuery(nextValue);
+      setInputValue(nextValue);
+      if (lastNormalizedQueryRef.current === nextNormalizedQuery) {
+        return;
+      }
+      lastNormalizedQueryRef.current = nextNormalizedQuery;
+      onSearchQueryChange(nextNormalizedQuery);
+    },
+    [onSearchQueryChange],
+  );
+
+  const handleKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onRequestClose?.();
+        return;
+      }
+      if (event.key === "Enter" && onSubmitHighlightedModel()) {
+        (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      event.stopPropagation();
+    },
+    [onRequestClose, onSubmitHighlightedModel],
+  );
+
+  return (
+    <ComboboxInput
+      ref={inputRef}
+      className="[&_input]:h-6.5 [&_input]:font-sans [&_input]:leading-6.5"
+      inputClassName="rounded-none bg-transparent text-sm"
+      placeholder="Search models..."
+      showTrigger={false}
+      startAddon={
+        <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground/55" />
+      }
+      value={inputValue}
+      onChange={handleChange}
+      onKeyDown={handleKeyDown}
+      onMouseDown={(event) => event.stopPropagation()}
+      onTouchStart={(event) => event.stopPropagation()}
+      size="sm"
+      unstyled
+    />
+  );
+});
 
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
   /** The instance currently selected in the composer (combobox "value"). */
@@ -518,6 +595,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     };
   }, [filteredModelKeys, updateModelListScrollFades]);
 
+  const submitHighlightedModel = useCallback(() => {
+    if (!highlightedModelKeyRef.current) {
+      return false;
+    }
+    const { instanceId, slug } = splitInstanceModelKey(highlightedModelKeyRef.current);
+    handleModelSelect(slug, instanceId);
+    return true;
+  }, [handleModelSelect]);
+
   return (
     <TooltipProvider delay={0}>
       <div
@@ -577,42 +663,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             {/* Search bar */}
             <div className="px-4 pt-2.5">
               <div className="-translate-y-px border-b border-border/70 pb-2.5 transition-colors focus-within:border-ring">
-                <ComboboxInput
-                  ref={searchInputRef}
-                  className="[&_input]:h-6.5 [&_input]:font-sans [&_input]:leading-6.5"
-                  inputClassName="rounded-none bg-transparent text-sm"
-                  placeholder="Search models..."
-                  showTrigger={false}
-                  startAddon={
-                    <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground/55" />
-                  }
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      props.onRequestClose?.();
-                      return;
-                    }
-                    if (e.key === "Enter" && highlightedModelKeyRef.current) {
-                      (
-                        e as typeof e & { preventBaseUIHandler?: () => void }
-                      ).preventBaseUIHandler?.();
-                      e.preventDefault();
-                      e.stopPropagation();
-                      const { instanceId, slug } = splitInstanceModelKey(
-                        highlightedModelKeyRef.current,
-                      );
-                      handleModelSelect(slug, instanceId);
-                      return;
-                    }
-                    e.stopPropagation();
-                  }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onTouchStart={(e) => e.stopPropagation()}
-                  size="sm"
-                  unstyled
+                <ModelPickerSearchInput
+                  inputRef={searchInputRef}
+                  onSearchQueryChange={setSearchQuery}
+                  onSubmitHighlightedModel={submitHighlightedModel}
+                  {...(props.onRequestClose ? { onRequestClose: props.onRequestClose } : {})}
                 />
               </div>
             </div>
