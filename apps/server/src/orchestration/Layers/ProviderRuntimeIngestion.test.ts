@@ -133,6 +133,9 @@ function createProviderServiceHarness() {
     }
     runtimeSessions.push(session);
   };
+  const clearSessions = (): void => {
+    runtimeSessions.length = 0;
+  };
 
   const normalizeLegacyEvent = (event: LegacyProviderRuntimeEvent): ProviderRuntimeEvent => {
     if (isLegacyTurnCompletedEvent(event)) {
@@ -157,6 +160,7 @@ function createProviderServiceHarness() {
     service,
     emit,
     setSession,
+    clearSessions,
   };
 }
 
@@ -314,6 +318,7 @@ describe("ProviderRuntimeIngestion", () => {
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       emit: provider.emit,
       setProviderSession: provider.setSession,
+      clearProviderSessions: provider.clearSessions,
       drain,
     };
   }
@@ -358,6 +363,144 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it("settles unscoped turn completion while provider reports the active turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-missing-completion-id"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-missing-completion-id"),
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-missing-completion-id",
+    );
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.make("thread-1"),
+      activeTurnId: asTurnId("turn-missing-completion-id"),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-missing-completion-id"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.100Z",
+      status: "completed",
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.session?.activeTurnId === null &&
+        entry.latestTurn?.state === "completed",
+    );
+    expect(thread.latestTurn?.turnId).toBe("turn-missing-completion-id");
+  });
+
+  it("settles unscoped turn completion after provider clears the active turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-provider-cleared"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-provider-cleared"),
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-provider-cleared",
+    );
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "ready",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.make("thread-1"),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-provider-cleared"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.100Z",
+      status: "completed",
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.session?.activeTurnId === null &&
+        entry.latestTurn?.state === "completed",
+    );
+    expect(thread.latestTurn?.turnId).toBe("turn-provider-cleared");
+  });
+
+  it("rejects unscoped turn completion when no provider session exists", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-sessionless-completion"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-sessionless-completion"),
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-sessionless-completion",
+    );
+
+    harness.clearProviderSessions();
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-sessionless"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.100Z",
+      status: "completed",
+    });
+
+    await harness.drain();
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.activeTurnId === "turn-sessionless-completion",
+    );
+    expect(thread.session?.status).toBe("running");
+    expect(thread.latestTurn?.state).toBe("running");
   });
 
   it("applies provider session.state.changed transitions directly", async () => {
@@ -2663,6 +2806,133 @@ describe("ProviderRuntimeIngestion", () => {
     expect(checkpoint?.status).toBe("missing");
     expect(checkpoint?.assistantMessageId).toBe("assistant:item-p1-assistant");
     expect(checkpoint?.checkpointRef).toBe("provider-diff:evt-turn-diff-updated");
+  });
+
+  it("projects reasoning text deltas into normalized thread activities", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning"),
+      itemId: asItemId("item-reasoning"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "Thinking through the implementation",
+        contentIndex: 0,
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-summary-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning"),
+      itemId: asItemId("item-reasoning-summary"),
+      payload: {
+        streamKind: "reasoning_summary_text",
+        delta: "Implementation summary",
+        summaryIndex: 1,
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "reasoning.update",
+        ) &&
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "reasoning.summary",
+        ),
+    );
+
+    const reasoning = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-reasoning-delta",
+    );
+    expect(reasoning?.kind).toBe("reasoning.update");
+    expect(reasoning?.payload).toMatchObject({
+      detail: "Thinking through the implementation",
+      streamKind: "reasoning_text",
+      contentIndex: 0,
+    });
+
+    const summary = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-reasoning-summary-delta",
+    );
+    expect(summary?.kind).toBe("reasoning.summary");
+    expect(summary?.payload).toMatchObject({
+      detail: "Implementation summary",
+      streamKind: "reasoning_summary_text",
+      summaryIndex: 1,
+    });
+  });
+
+  it("projects provider tool output deltas into normalized thread activities", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-command-output-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-output"),
+      itemId: asItemId("item-command"),
+      payload: {
+        streamKind: "command_output",
+        delta: "stdout: tests passed",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-file-output-delta"),
+      provider: ProviderDriverKind.make("copilot"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-output"),
+      itemId: asItemId("item-file"),
+      payload: {
+        streamKind: "file_change_output",
+        delta: "updated README.md",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.activities.filter(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.output",
+        ).length >= 2,
+    );
+
+    const commandOutput = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-command-output-delta",
+    );
+    expect(commandOutput?.kind).toBe("tool.output");
+    expect(commandOutput?.summary).toBe("Command output");
+    expect(commandOutput?.payload).toMatchObject({
+      detail: "stdout: tests passed",
+      streamKind: "command_output",
+      itemId: "item-command",
+    });
+
+    const fileOutput = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-file-output-delta",
+    );
+    expect(fileOutput?.kind).toBe("tool.output");
+    expect(fileOutput?.summary).toBe("File change output");
+    expect(fileOutput?.payload).toMatchObject({
+      detail: "updated README.md",
+      streamKind: "file_change_output",
+      itemId: "item-file",
+    });
   });
 
   it("projects context window updates into normalized thread activities", async () => {

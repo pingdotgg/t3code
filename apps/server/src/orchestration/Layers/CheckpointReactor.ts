@@ -675,6 +675,31 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    const targetCheckpointAvailable =
+      event.payload.turnCount === 0
+        ? true
+        : yield* checkpointStore.hasCheckpointRef({
+            cwd: sessionRuntime.value.cwd,
+            checkpointRef: targetCheckpointRef,
+          });
+    if (!targetCheckpointAvailable) {
+      yield* appendRevertFailureActivity({
+        threadId: event.payload.threadId,
+        turnCount: event.payload.turnCount,
+        detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}.`,
+        createdAt: now,
+      }).pipe(Effect.catch(() => Effect.void));
+      return;
+    }
+
+    const currentCheckpointRef =
+      currentTurnCount === 0
+        ? checkpointRefForThreadTurn(event.payload.threadId, 0)
+        : thread.checkpoints.find(
+            (checkpoint) => checkpoint.checkpointTurnCount === currentTurnCount,
+          )?.checkpointRef;
+
+    const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
     const restored = yield* checkpointStore.restoreCheckpoint({
       cwd: sessionRuntime.value.cwd,
       checkpointRef: targetCheckpointRef,
@@ -690,17 +715,56 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    const rollbackFailureDetail: string | null =
+      rolledBackTurns > 0
+        ? yield* providerService
+            .rollbackConversation({
+              threadId: sessionRuntime.value.threadId,
+              numTurns: rolledBackTurns,
+            })
+            .pipe(
+              Effect.as(null),
+              Effect.catch((error) =>
+                Effect.gen(function* () {
+                  const detail = currentCheckpointRef
+                    ? yield* checkpointStore
+                        .restoreCheckpoint({
+                          cwd: sessionRuntime.value.cwd,
+                          checkpointRef: currentCheckpointRef,
+                          fallbackToHead: currentTurnCount === 0,
+                        })
+                        .pipe(
+                          Effect.map((restoredCurrent) =>
+                            restoredCurrent
+                              ? `Provider rollback failed after filesystem restore: ${error.message}. Filesystem was restored to the current checkpoint.`
+                              : `Provider rollback failed after filesystem restore: ${error.message}. Failed to restore filesystem to the current checkpoint.`,
+                          ),
+                          Effect.catch((restoreError) =>
+                            Effect.succeed(
+                              `Provider rollback failed after filesystem restore: ${error.message}. Failed to restore filesystem to the current checkpoint: ${restoreError.message}`,
+                            ),
+                          ),
+                        )
+                    : `Provider rollback failed after filesystem restore: ${error.message}. Current checkpoint ref is unavailable.`;
+                  yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
+                  return detail;
+                }),
+              ),
+            )
+        : null;
+    if (rollbackFailureDetail !== null) {
+      yield* appendRevertFailureActivity({
+        threadId: event.payload.threadId,
+        turnCount: event.payload.turnCount,
+        detail: rollbackFailureDetail,
+        createdAt: now,
+      }).pipe(Effect.catch(() => Effect.void));
+      return;
+    }
+
     // Refresh the workspace entry index so the @-mention file picker
     // reflects the reverted filesystem state.
     yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
-
-    const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
-    if (rolledBackTurns > 0) {
-      yield* providerService.rollbackConversation({
-        threadId: sessionRuntime.value.threadId,
-        numTurns: rolledBackTurns,
-      });
-    }
 
     const staleCheckpointRefs: Array<CheckpointRef> = [];
     for (const checkpoint of thread.checkpoints) {

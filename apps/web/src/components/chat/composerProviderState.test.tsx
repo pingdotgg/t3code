@@ -165,6 +165,30 @@ describe("getComposerProviderState", () => {
     );
   });
 
+  it("does not treat non-effort select descriptors as promptEffort", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("variant", [
+          { id: "prod", label: "Prod", isDefault: true },
+          { id: "test", label: "Test" },
+        ]),
+        selectDescriptor("contextTier", [
+          { id: "default", label: "Default", isDefault: true },
+          { id: "long_context", label: "Long Context" },
+        ]),
+      ]),
+      modelOptions: selections(["variant", "test"], ["contextTier", "long_context"]),
+    });
+
+    expect(state).toEqual({
+      provider: PROVIDER,
+      promptEffort: null,
+      modelOptionsForDispatch: selections(["variant", "test"], ["contextTier", "long_context"]),
+    });
+  });
+
   it("returns undefined dispatch options when the model declares no descriptors", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,

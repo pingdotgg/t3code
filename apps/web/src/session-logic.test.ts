@@ -1119,6 +1119,38 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("uses Copilot command metadata instead of command output detail", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "copilot-command-complete",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          status: "completed",
+          detail: " M apps/server/src/provider/Layers/CopilotAdapter.ts",
+          data: {
+            toolCallId: "tool-command",
+            toolName: "bash",
+            command: "git status --short",
+            result: {
+              content: " M apps/server/src/provider/Layers/CopilotAdapter.ts",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      command: "git status --short",
+      detail: "M apps/server/src/provider/Layers/CopilotAdapter.ts",
+      itemType: "command_execution",
+      toolTitle: "Ran command",
+    });
+  });
+
   it("extracts changed file paths for file-change tool activities", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

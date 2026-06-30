@@ -153,6 +153,61 @@ function ProviderAuthEmail(props: {
   );
 }
 
+function ProviderAuthLabel(props: {
+  readonly label: string | undefined;
+  readonly type: string | undefined;
+  readonly separator?: boolean;
+}) {
+  const label = props.label?.trim();
+  if (label) {
+    const parts = label
+      .split(" - ")
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+    const keyedParts: Array<{
+      readonly key: string;
+      readonly part: string;
+      readonly separator: boolean;
+    }> = [];
+    for (const part of parts) {
+      const previous = keyedParts.at(-1);
+      keyedParts.push({
+        key: previous ? `${previous.key} - ${part}` : part,
+        part,
+        separator: keyedParts.length > 0,
+      });
+    }
+
+    return (
+      <span className="inline-flex min-w-0 items-center gap-1.5">
+        {props.separator ? <span aria-hidden>·</span> : null}
+        {keyedParts.map((part) => (
+          <span key={part.key} className="inline-flex min-w-0 items-center gap-1.5">
+            {part.separator ? <span aria-hidden>-</span> : null}
+            {part.part.startsWith("@") ? (
+              <RedactedSensitiveText
+                value={part.part}
+                ariaLabel="Toggle account username visibility"
+                revealTooltip="Click to reveal account username"
+                hideTooltip="Click to hide account username"
+              />
+            ) : (
+              <span>{part.part}</span>
+            )}
+          </span>
+        ))}
+      </span>
+    );
+  }
+
+  return props.type ? (
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      {props.separator ? <span aria-hidden>·</span> : null}
+      <span>{props.type}</span>
+    </span>
+  ) : null;
+}
+
 function ProviderEnvironmentSection(props: {
   readonly environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
   readonly onChange: (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => void;
@@ -401,14 +456,13 @@ export function ProviderInstanceCard({
   const statusKey: ProviderStatusKey =
     (liveProvider?.status as ProviderStatusKey | undefined) ?? (enabled ? "warning" : "disabled");
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
-  const rawSummary = getProviderSummary(liveProvider);
+  const summary = getProviderSummary(liveProvider);
   const authEmail = liveProvider?.auth.email;
-  const hasAuthenticatedEmail =
-    liveProvider?.auth.status === "authenticated" && Boolean(authEmail?.trim());
-  const authenticatedDetail = hasAuthenticatedEmail
-    ? (liveProvider?.auth.label ?? liveProvider?.auth.type ?? null)
-    : null;
-  const summary = rawSummary;
+  const authLabel = liveProvider?.auth.label;
+  const authType = liveProvider?.auth.type;
+  const isAuthenticated = liveProvider?.auth.status === "authenticated";
+  const hasAuthenticatedLabel = Boolean(authLabel?.trim() || authType?.trim());
+  const hasAuthenticatedEmail = isAuthenticated && Boolean(authEmail?.trim());
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
   const updateCommand = versionAdvisory?.updateCommand ?? null;
@@ -579,11 +633,13 @@ export function ProviderInstanceCard({
 
   const authRowNode = (
     <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground/80">
-      {hasAuthenticatedEmail ? (
+      {isAuthenticated ? (
         <>
-          <span>Authenticated as</span>
+          <span>
+            {hasAuthenticatedEmail || hasAuthenticatedLabel ? "Authenticated as" : "Authenticated"}
+          </span>
           <ProviderAuthEmail email={authEmail} />
-          {authenticatedDetail ? <span>· {authenticatedDetail}</span> : null}
+          <ProviderAuthLabel label={authLabel} type={authType} separator={hasAuthenticatedEmail} />
         </>
       ) : (
         <>

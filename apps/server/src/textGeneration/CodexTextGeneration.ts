@@ -16,6 +16,7 @@ import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 import * as TextGeneration from "./TextGeneration.ts";
+import { type BranchNameGenerationInput } from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -23,10 +24,11 @@ import {
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
+  makeBranchNameGenerationResult,
+  makeCommitMessageGenerationResult,
+  makePrContentGenerationResult,
+  makeThreadTitleGenerationResult,
   normalizeCliError,
-  sanitizeCommitSubject,
-  sanitizePrTitle,
-  sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "./TextGenerationUtils.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -117,7 +119,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generatePrContent"
       | "generateBranchName"
       | "generateThreadTitle",
-    attachments: TextGeneration.BranchNameGenerationInput["attachments"],
+    attachments: BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
       return { imagePaths: [] };
@@ -312,13 +314,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         modelSelection: input.modelSelection,
       });
 
-      return {
-        subject: sanitizeCommitSubject(generated.subject),
-        body: generated.body.trim(),
-        ...("branch" in generated && typeof generated.branch === "string"
-          ? { branch: sanitizeFeatureBranchName(generated.branch) }
-          : {}),
-      };
+      return makeCommitMessageGenerationResult({
+        generated,
+        includeBranch: input.includeBranch === true,
+        sanitizeBranch: sanitizeFeatureBranchName,
+      });
     });
 
   const generatePrContent: TextGeneration.TextGeneration["Service"]["generatePrContent"] =
@@ -339,10 +339,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         modelSelection: input.modelSelection,
       });
 
-      return {
-        title: sanitizePrTitle(generated.title),
-        body: generated.body.trim(),
-      };
+      return makePrContentGenerationResult(generated);
     });
 
   const generateBranchName: TextGeneration.TextGeneration["Service"]["generateBranchName"] =
@@ -365,9 +362,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         modelSelection: input.modelSelection,
       });
 
-      return {
-        branch: sanitizeBranchFragment(generated.branch),
-      };
+      return makeBranchNameGenerationResult(generated, sanitizeBranchFragment);
     });
 
   const generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"] =
@@ -390,11 +385,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         modelSelection: input.modelSelection,
       });
 
-      return {
-        title: sanitizeThreadTitle(generated.title),
-      } satisfies TextGeneration.ThreadTitleGenerationResult;
+      return makeThreadTitleGenerationResult(generated);
     });
-
   return {
     generateCommitMessage,
     generatePrContent,

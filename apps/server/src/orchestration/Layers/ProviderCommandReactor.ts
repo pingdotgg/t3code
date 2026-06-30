@@ -13,6 +13,7 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import { truncate } from "@t3tools/shared/String";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -110,9 +111,17 @@ function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolea
   }
 
   const trimmedTitleSeed = titleSeed?.trim();
-  return trimmedTitleSeed !== undefined && trimmedTitleSeed.length > 0
-    ? trimmedCurrentTitle === trimmedTitleSeed
-    : false;
+  if (trimmedTitleSeed === undefined || trimmedTitleSeed.length === 0) {
+    return false;
+  }
+
+  const currentLooksUserEditedFromTruncatedSeed =
+    trimmedTitleSeed.endsWith("...") && trimmedCurrentTitle.includes("...");
+  return (
+    trimmedCurrentTitle === trimmedTitleSeed ||
+    (!currentLooksUserEditedFromTruncatedSeed &&
+      truncate(trimmedCurrentTitle, Math.max(0, trimmedTitleSeed.length - 3)) === trimmedTitleSeed)
+  );
 }
 
 function findProviderAdapterRequestError(
@@ -666,7 +675,6 @@ const make = Effect.gen(function* () {
     yield* Effect.gen(function* () {
       const { textGenerationModelSelection: modelSelection } =
         yield* serverSettingsService.getSettings;
-
       const generated = yield* textGeneration.generateBranchName({
         cwd,
         message: input.messageText,
@@ -711,13 +719,14 @@ const make = Effect.gen(function* () {
       yield* Effect.gen(function* () {
         const { textGenerationModelSelection: modelSelection } =
           yield* serverSettingsService.getSettings;
-
-        const generated = yield* textGeneration.generateThreadTitle({
-          cwd: input.cwd,
-          message: input.messageText,
-          ...(attachments.length > 0 ? { attachments } : {}),
-          modelSelection,
-        });
+        const generated = yield* Effect.suspend(() =>
+          textGeneration.generateThreadTitle({
+            cwd: input.cwd,
+            message: input.messageText,
+            ...(attachments.length > 0 ? { attachments } : {}),
+            modelSelection,
+          }),
+        ).pipe(Effect.retry({ times: 2 }));
         if (!generated) return;
 
         const thread = yield* resolveThread(input.threadId);
@@ -785,20 +794,24 @@ const make = Effect.gen(function* () {
         ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
       };
 
-      yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
-        threadId: event.payload.threadId,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
-        ...generationInput,
-      }).pipe(Effect.forkScoped);
-
       if (canReplaceThreadTitle(thread.title, event.payload.titleSeed)) {
-        yield* maybeGenerateThreadTitleForFirstTurn({
-          threadId: event.payload.threadId,
-          cwd: generationCwd,
-          ...generationInput,
-        }).pipe(Effect.forkScoped);
+        yield* firstTurnAuxiliaryWorker.enqueue(
+          maybeGenerateThreadTitleForFirstTurn({
+            threadId: event.payload.threadId,
+            cwd: generationCwd,
+            ...generationInput,
+          }),
+        );
       }
+
+      yield* firstTurnAuxiliaryWorker.enqueue(
+        maybeGenerateAndRenameWorktreeBranchForFirstTurn({
+          threadId: event.payload.threadId,
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
+          ...generationInput,
+        }),
+      );
     }
 
     const handleTurnStartFailure = (cause: Cause.Cause<unknown>) => {
@@ -1058,6 +1071,7 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const firstTurnAuxiliaryWorker = yield* makeDrainableWorker((job: Effect.Effect<void>) => job);
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
@@ -1081,7 +1095,7 @@ const make = Effect.gen(function* () {
 
   return {
     start,
-    drain: worker.drain,
+    drain: worker.drain.pipe(Effect.andThen(firstTurnAuxiliaryWorker.drain), Effect.asVoid),
   } satisfies ProviderCommandReactorShape;
 });
 

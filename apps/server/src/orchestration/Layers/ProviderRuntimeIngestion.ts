@@ -554,6 +554,73 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "content.delta": {
+      if (event.payload.delta.trim().length === 0) {
+        return [];
+      }
+      if (
+        event.payload.streamKind === "command_output" ||
+        event.payload.streamKind === "file_change_output" ||
+        event.payload.streamKind === "unknown"
+      ) {
+        const summary =
+          event.payload.streamKind === "command_output"
+            ? "Command output"
+            : event.payload.streamKind === "file_change_output"
+              ? "File change output"
+              : "Tool output";
+        return [
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: "tool",
+            kind: "tool.output",
+            summary,
+            payload: {
+              detail: truncateDetail(event.payload.delta),
+              streamKind: event.payload.streamKind,
+              ...(event.itemId ? { itemId: event.itemId } : {}),
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
+          },
+        ];
+      }
+      if (
+        event.payload.streamKind !== "reasoning_text" &&
+        event.payload.streamKind !== "reasoning_summary_text"
+      ) {
+        return [];
+      }
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind:
+            event.payload.streamKind === "reasoning_summary_text"
+              ? "reasoning.summary"
+              : "reasoning.update",
+          summary:
+            event.payload.streamKind === "reasoning_summary_text"
+              ? "Reasoning summary"
+              : "Reasoning update",
+          payload: {
+            detail: truncateDetail(event.payload.delta),
+            streamKind: event.payload.streamKind,
+            ...(event.payload.contentIndex !== undefined
+              ? { contentIndex: event.payload.contentIndex }
+              : {}),
+            ...(event.payload.summaryIndex !== undefined
+              ? { summaryIndex: event.payload.summaryIndex }
+              : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "item.updated": {
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
@@ -1149,10 +1216,16 @@ const make = Effect.gen(function* () {
     } as const;
   });
 
+  const getProviderSessionForThread = Effect.fn("getProviderSessionForThread")(function* (
+    threadId: ThreadId,
+  ) {
+    const sessions = yield* providerService.listSessions();
+    return sessions.find((entry) => entry.threadId === threadId);
+  });
+
   const getExpectedProviderTurnIdForThread = Effect.fn("getExpectedProviderTurnIdForThread")(
     function* (threadId: ThreadId) {
-      const sessions = yield* providerService.listSessions();
-      const session = sessions.find((entry) => entry.threadId === threadId);
+      const session = yield* getProviderSessionForThread(threadId);
       return session?.activeTurnId;
     },
   );
@@ -1221,10 +1294,21 @@ const make = Effect.gen(function* () {
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
+      const lifecycleEventTurnId = eventTurnId;
+      const providerSessionForUnscopedCompletion =
+        event.type === "turn.completed" && eventTurnId === undefined
+          ? yield* getProviderSessionForThread(thread.id)
+          : undefined;
+      const providerActiveTurnId = providerSessionForUnscopedCompletion?.activeTurnId;
+      const unscopedCompletionHasNoProviderSession =
+        event.type === "turn.completed" &&
+        eventTurnId === undefined &&
+        providerSessionForUnscopedCompletion === undefined;
 
       const conflictsWithActiveTurn =
-        activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
-      const missingTurnForActiveTurn = activeTurnId !== null && eventTurnId === undefined;
+        activeTurnId !== null &&
+        lifecycleEventTurnId !== undefined &&
+        !sameId(activeTurnId, lifecycleEventTurnId);
 
       // A turn.started that conflicts with the active turn is legitimate when
       // the server itself has a turn start pending for this thread AND the
@@ -1255,12 +1339,18 @@ const make = Effect.gen(function* () {
           case "turn.started":
             return !conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart;
           case "turn.completed":
-            if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
+            if (conflictsWithActiveTurn) {
               return false;
             }
+            if (activeTurnId !== null && lifecycleEventTurnId === undefined) {
+              return (
+                !unscopedCompletionHasNoProviderSession &&
+                (providerActiveTurnId === undefined || sameId(activeTurnId, providerActiveTurnId))
+              );
+            }
             // Only the active turn may close the lifecycle state.
-            if (activeTurnId !== null && eventTurnId !== undefined) {
-              return sameId(activeTurnId, eventTurnId);
+            if (activeTurnId !== null && lifecycleEventTurnId !== undefined) {
+              return sameId(activeTurnId, lifecycleEventTurnId);
             }
             // If no active turn is tracked, accept completion scoped to this thread.
             return true;
@@ -1543,7 +1633,7 @@ const make = Effect.gen(function* () {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
         const proposedPlans = detailedThread?.proposedPlans ?? [];
-        const turnId = toTurnId(event.turnId);
+        const turnId = toTurnId(event.turnId) ?? (shouldApplyThreadLifecycle ? activeTurnId : null);
         if (turnId) {
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(
