@@ -245,6 +245,12 @@ function orchestrationSessionStatusFromRuntimeState(
   }
 }
 
+function sessionStatusAllowsActiveTurn(
+  status: ReturnType<typeof orchestrationSessionStatusFromRuntimeState>,
+): boolean {
+  return status === "starting" || status === "running";
+}
+
 function requestKindFromCanonicalRequestType(
   requestType: string | undefined,
 ): "command" | "file-read" | "file-change" | undefined {
@@ -1281,12 +1287,6 @@ const make = Effect.gen(function* () {
         event.type === "turn.started" ||
         event.type === "turn.completed"
       ) {
-        const nextActiveTurnId =
-          event.type === "turn.started"
-            ? (eventTurnId ?? null)
-            : event.type === "turn.completed" || event.type === "session.exited"
-              ? null
-              : activeTurnId;
         const status = (() => {
           switch (event.type) {
             case "session.state.changed":
@@ -1306,6 +1306,14 @@ const make = Effect.gen(function* () {
               return activeTurnId !== null ? "running" : "ready";
           }
         })();
+        const nextActiveTurnId =
+          event.type === "turn.started"
+            ? (eventTurnId ?? null)
+            : event.type === "turn.completed" || event.type === "session.exited"
+              ? null
+              : event.type === "session.state.changed" && !sessionStatusAllowsActiveTurn(status)
+                ? null
+                : activeTurnId;
         const lastError =
           event.type === "session.state.changed" && event.payload.state === "error"
             ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
