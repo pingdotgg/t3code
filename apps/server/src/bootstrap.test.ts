@@ -69,16 +69,71 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
         `${yield* encodeTestEnvelopeSchema({ mode: "desktop" })}\n`,
       );
 
-      const fd = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.openSync(filePath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
-      );
+      // Open without acquireRelease: readBootstrapEnvelope now detaches its
+      // reader (closing the readline interface and destroying its backing
+      // stream, which is opened with autoClose: true) as soon as it resolves,
+      // on every path -- not just the duplication-fallback path below. The
+      // stream therefore owns fd's lifecycle here; also closing it
+      // synchronously in a finalizer would race the stream's async close and
+      // produce an uncaught EBADF.
+      const fd = NodeFS.openSync(filePath, "r");
 
       const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 });
       assertSome(payload, {
         mode: "desktop",
       });
     }),
+  );
+
+  it.effect(
+    "stops reading from the fd once the envelope is parsed instead of leaving the reader attached",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const filePath = yield* fs.makeTempFileScoped({
+          prefix: "t3-bootstrap-",
+          suffix: ".ndjson",
+        });
+
+        yield* fs.writeFileString(
+          filePath,
+          `${yield* encodeTestEnvelopeSchema({ mode: "desktop" })}\n`,
+        );
+
+        // Force the win32 branch (resolveFdPath returns undefined there) so
+        // this test is deterministic on every OS it runs on: it always
+        // exercises makeDirectBootstrapStream's autoClose: true stream over
+        // the original fd, regardless of the host platform actually running
+        // the suite.
+        const fd = NodeFS.openSync(filePath, "r");
+
+        const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
+          timeoutMs: 100,
+        }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+        assertSome(payload, { mode: "desktop" });
+
+        // Regression guard for the bug fixed alongside the WSL stdin-held-open
+        // change: previously, the cleanup() that closes the readline
+        // interface and destroys its backing stream was wired only as the
+        // async-interrupt finalizer, so it never ran on a successful parse --
+        // the reader (and the fd's stream) stayed attached and "live" for the
+        // rest of the process. If that regresses, this fd will still be open
+        // here and fstatSync will succeed instead of throwing EBADF.
+        const isFdOpen = Effect.sync(() => {
+          try {
+            NodeFS.fstatSync(fd);
+            return true;
+          } catch {
+            return false;
+          }
+        });
+        let fdStillOpen = yield* isFdOpen;
+        for (let attempt = 0; fdStillOpen && attempt < 20; attempt++) {
+          yield* Effect.sleep(Duration.millis(25));
+          fdStillOpen = yield* isFdOpen;
+        }
+        assert.isFalse(fdStillOpen, "expected the bootstrap reader to have closed its fd");
+      }),
   );
 
   it.effect("falls back to reading the inherited fd when path duplication fails", () =>
@@ -183,10 +238,10 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
       const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
       yield* fs.writeFileString(filePath, '{"mode":42}\n');
 
-      const fd = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.openSync(filePath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
-      );
+      // No acquireRelease here either -- a decode failure is still a
+      // terminal, detaching outcome (see the comment on the first test in
+      // this suite), so the stream's autoClose owns fd the same way.
+      const fd = NodeFS.openSync(filePath, "r");
       const error = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
         timeoutMs: 100,
       }).pipe(Effect.flip);

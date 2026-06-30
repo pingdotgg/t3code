@@ -102,7 +102,26 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
       stream.destroy();
     };
 
+    // Every branch below is terminal -- it resolves the envelope read one way
+    // or another -- so each one stops reading from `fd` before resuming.
+    // Without this, the readline interface and its backing stream stay
+    // attached and keep reading from `fd` for the rest of the process
+    // lifetime. That was harmless while the desktop side closed stdin right
+    // after writing the bootstrap line (the stream would hit EOF almost
+    // immediately either way), but it stopped being harmless once the WSL
+    // bootstrap path started holding stdin open indefinitely (see
+    // DesktopBackendManager.ts's runBackendProcess): a readline interface
+    // left idling on a never-closing, wsl.exe-relayed stdin pipe can surface
+    // a spurious EAGAIN 'error' event on that stream well after the envelope
+    // was already read. Node's readline.Interface registers its own internal
+    // 'error' listener on the input stream and re-emits onto itself
+    // (node:internal/readline/interface.js); since nothing here ever
+    // listened for 'error' on the *interface*, an unhandled 'error' event on
+    // an EventEmitter is fatal and crashes the process. Calling cleanup()
+    // synchronously closes the readline interface and destroys the stream
+    // before that can happen.
     const handleError = (error: Error) => {
+      cleanup();
       if (isUnavailableBootstrapFdError(error)) {
         resume(Effect.succeedNone);
         return;
@@ -118,6 +137,7 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     };
 
     const handleLine = (line: string) => {
+      cleanup();
       const parsed = decodeJsonResult(schema)(line);
       if (Result.isSuccess(parsed)) {
         resume(Effect.succeedSome(parsed.success));
@@ -134,6 +154,7 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     };
 
     const handleClose = () => {
+      cleanup();
       resume(Effect.succeedNone);
     };
 
