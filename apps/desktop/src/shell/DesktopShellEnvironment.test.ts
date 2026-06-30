@@ -45,6 +45,11 @@ function makeProcess(output: string): ChildProcessSpawner.ChildProcessHandle {
   });
 }
 
+function standardCommand(command: ChildProcess.Command): ChildProcess.StandardCommand {
+  assert.equal(command._tag, "StandardCommand");
+  return command as ChildProcess.StandardCommand;
+}
+
 function withProcessEnv<A, E, R>(
   env: NodeJS.ProcessEnv,
   effect: Effect.Effect<A, E, R>,
@@ -173,6 +178,60 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("marks POSIX login shell probes and supplies TERM=dumb when TERM is absent", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+      const commands: ChildProcess.Command[] = [];
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: "/usr/local/bin:/usr/bin" });
+        },
+      });
+
+      const command = standardCommand(commands[0] as ChildProcess.Command);
+      assert.deepInclude(command.args, "-ilc");
+      assert.equal(command.options.extendEnv, true);
+      assert.deepEqual(command.options.env, {
+        T3CODE_RESOLVING_ENVIRONMENT: "1",
+        TERM: "dumb",
+      });
+    }),
+  );
+
+  it.effect("preserves inherited TERM for POSIX login shell probes", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        TERM: "xterm-256color",
+      };
+      const commands: ChildProcess.Command[] = [];
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: "/opt/homebrew/bin:/usr/bin" });
+        },
+      });
+
+      const command = standardCommand(commands[0] as ChildProcess.Command);
+      assert.equal(command.options.extendEnv, true);
+      assert.deepEqual(command.options.env, {
+        T3CODE_RESOLVING_ENVIRONMENT: "1",
+        TERM: "xterm-256color",
+      });
+    }),
+  );
+
   it.effect("falls back to launchctl PATH on macOS when shell probing does not return one", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
@@ -240,6 +299,31 @@ describe("DesktopShellEnvironment", () => {
         env.FNM_MULTISHELL_PATH,
         "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
       );
+    }),
+  );
+
+  it.effect("does not add POSIX probe env to Windows PowerShell probes", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        PATH: "C:\\Windows\\System32",
+      };
+      const commands: ChildProcess.Command[] = [];
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: "C:\\Windows\\System32" });
+        },
+      });
+
+      assert.isAtLeast(commands.length, 1);
+      for (const command of commands) {
+        const standard = standardCommand(command);
+        assert.isUndefined(standard.options.env);
+        assert.isUndefined(standard.options.extendEnv);
+      }
     }),
   );
 

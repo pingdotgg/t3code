@@ -80,6 +80,7 @@ const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
 const LAUNCHCTL_TIMEOUT = Duration.seconds(2);
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
+const ENVIRONMENT_RESOLUTION_MARKER = "T3CODE_RESOLVING_ENVIRONMENT";
 
 const trimNonEmpty = (value: string | null | undefined): Option.Option<string> =>
   Option.fromNullishOr(value).pipe(
@@ -91,6 +92,13 @@ const pathDelimiter = (platform: NodeJS.Platform) => (platform === "win32" ? ";"
 
 const readEnvPath = (env: NodeJS.ProcessEnv): Option.Option<string> =>
   trimNonEmpty(env.PATH ?? env.Path ?? env.path);
+
+const loginShellProbeEnv = (
+  env: NodeJS.ProcessEnv,
+): Readonly<Record<string, string | undefined>> => ({
+  [ENVIRONMENT_RESOLUTION_MARKER]: "1",
+  TERM: env.TERM ?? "dumb",
+});
 
 const pathComparisonKey = (entry: string, platform: NodeJS.Platform) => {
   const normalized = entry.trim().replace(/^"+|"+$/g, "");
@@ -231,11 +239,19 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
   readonly args: ReadonlyArray<string>;
   readonly timeout: Duration.Duration;
   readonly shell?: boolean;
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly extendEnv?: boolean;
 }): Effect.fn.Return<string, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const output = yield* spawner
     .string(
       ChildProcess.make(input.command, input.args, {
+        ...(input.env === undefined
+          ? {}
+          : {
+              env: input.env,
+              extendEnv: input.extendEnv ?? false,
+            }),
         shell: input.shell ?? false,
         stdin: "ignore",
         stdout: "pipe",
@@ -277,6 +293,7 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
 const readLoginShellEnvironment = (
   shell: string,
   names: ReadonlyArray<string>,
+  env: NodeJS.ProcessEnv,
 ): Effect.Effect<EnvironmentPatch, never, ChildProcessSpawner.ChildProcessSpawner> =>
   names.length === 0
     ? Effect.succeed({})
@@ -284,6 +301,8 @@ const readLoginShellEnvironment = (
         probe: "login-shell",
         command: shell,
         args: ["-ilc", capturePosixEnvironmentCommand(names)],
+        env: loginShellProbeEnv(env),
+        extendEnv: true,
         timeout: LOGIN_SHELL_TIMEOUT,
       }).pipe(Effect.map((output) => extractEnvironment(output, names)));
 
@@ -362,7 +381,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     for (const shell of listLoginShellCandidates(config)) {
       Object.assign(
         shellEnvironment,
-        yield* readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES),
+        yield* readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES, config.env),
       );
       if (shellEnvironment.PATH) break;
     }
