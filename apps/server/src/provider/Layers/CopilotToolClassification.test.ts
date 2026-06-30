@@ -50,6 +50,7 @@ describe("CopilotToolClassification", () => {
       classifyCopilotToolItemType({ toolName: "call_tool", mcpServerName: "github" }),
       "mcp_tool_call",
     );
+    NodeAssert.equal(classifyCopilotToolItemType({ toolName: "TodoWrite" }), "dynamic_tool_call");
   });
 
   it("detects read-only Copilot tools", () => {

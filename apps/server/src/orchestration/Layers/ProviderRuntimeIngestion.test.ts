@@ -133,6 +133,9 @@ function createProviderServiceHarness() {
     }
     runtimeSessions.push(session);
   };
+  const clearSessions = (): void => {
+    runtimeSessions.length = 0;
+  };
 
   const normalizeLegacyEvent = (event: LegacyProviderRuntimeEvent): ProviderRuntimeEvent => {
     if (isLegacyTurnCompletedEvent(event)) {
@@ -157,6 +160,7 @@ function createProviderServiceHarness() {
     service,
     emit,
     setSession,
+    clearSessions,
   };
 }
 
@@ -314,6 +318,7 @@ describe("ProviderRuntimeIngestion", () => {
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       emit: provider.emit,
       setProviderSession: provider.setSession,
+      clearProviderSessions: provider.clearSessions,
       drain,
     };
   }
@@ -455,6 +460,47 @@ describe("ProviderRuntimeIngestion", () => {
         entry.latestTurn?.state === "completed",
     );
     expect(thread.latestTurn?.turnId).toBe("turn-provider-cleared");
+  });
+
+  it("rejects unscoped turn completion when no provider session exists", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-sessionless-completion"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-sessionless-completion"),
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-sessionless-completion",
+    );
+
+    harness.clearProviderSessions();
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-sessionless"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.100Z",
+      status: "completed",
+    });
+
+    await harness.drain();
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.activeTurnId === "turn-sessionless-completion",
+    );
+    expect(thread.session?.status).toBe("running");
+    expect(thread.latestTurn?.state).toBe("running");
   });
 
   it("applies provider session.state.changed transitions directly", async () => {

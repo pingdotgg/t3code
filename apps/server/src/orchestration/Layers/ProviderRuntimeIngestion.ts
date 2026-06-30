@@ -1295,10 +1295,15 @@ const make = Effect.gen(function* () {
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
       const lifecycleEventTurnId = eventTurnId;
-      const providerActiveTurnId =
+      const providerSessionForUnscopedCompletion =
         event.type === "turn.completed" && eventTurnId === undefined
-          ? yield* getExpectedProviderTurnIdForThread(thread.id)
+          ? yield* getProviderSessionForThread(thread.id)
           : undefined;
+      const providerActiveTurnId = providerSessionForUnscopedCompletion?.activeTurnId;
+      const unscopedCompletionHasNoProviderSession =
+        event.type === "turn.completed" &&
+        eventTurnId === undefined &&
+        providerSessionForUnscopedCompletion === undefined;
 
       const conflictsWithActiveTurn =
         activeTurnId !== null &&
@@ -1339,7 +1344,8 @@ const make = Effect.gen(function* () {
             }
             if (activeTurnId !== null && lifecycleEventTurnId === undefined) {
               return (
-                providerActiveTurnId === undefined || sameId(activeTurnId, providerActiveTurnId)
+                !unscopedCompletionHasNoProviderSession &&
+                (providerActiveTurnId === undefined || sameId(activeTurnId, providerActiveTurnId))
               );
             }
             // Only the active turn may close the lifecycle state.

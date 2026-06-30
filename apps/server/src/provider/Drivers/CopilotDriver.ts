@@ -12,6 +12,8 @@
  * @module provider/Drivers/CopilotDriver
  */
 import { CopilotSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import type * as Context from "effect/Context";
 import { Duration, Effect, Path, Schema, Stream } from "effect";
 import * as FileSystem from "effect/FileSystem";
 
@@ -41,6 +43,7 @@ const decodeCopilotSettings = Schema.decodeSync(CopilotSettings);
 export type CopilotDriverEnv =
   | FileSystem.FileSystem
   | Path.Path
+  | Context.Service.Identifier<typeof HostProcessPlatform>
   | ProviderEventLoggers
   | ServerConfig;
 

@@ -115,9 +115,12 @@ function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolea
     return false;
   }
 
+  const currentLooksUserEditedFromTruncatedSeed =
+    trimmedTitleSeed.endsWith("...") && trimmedCurrentTitle.includes("...");
   return (
     trimmedCurrentTitle === trimmedTitleSeed ||
-    truncate(trimmedCurrentTitle, Math.max(0, trimmedTitleSeed.length - 3)) === trimmedTitleSeed
+    (!currentLooksUserEditedFromTruncatedSeed &&
+      truncate(trimmedCurrentTitle, Math.max(0, trimmedTitleSeed.length - 3)) === trimmedTitleSeed)
   );
 }
 
