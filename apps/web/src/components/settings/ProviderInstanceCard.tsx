@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
   type ProviderInstanceConfig,
@@ -75,6 +75,251 @@ function makeEnvironmentDraftRow(
     sensitive: variable.sensitive,
     ...(variable.valueRedacted !== undefined ? { valueRedacted: variable.valueRedacted } : {}),
   };
+}
+
+function isEnvironmentDraftRowChangedFromPersisted(
+  row: EnvironmentDraftRow,
+  variable: ProviderInstanceEnvironmentVariable,
+): boolean {
+  return (
+    row.name !== variable.name ||
+    row.value !== variable.value ||
+    row.sensitive !== variable.sensitive ||
+    row.valueRedacted !== variable.valueRedacted
+  );
+}
+
+function isEnvironmentDraftRowEqualToPersisted(
+  row: EnvironmentDraftRow,
+  variable: ProviderInstanceEnvironmentVariable,
+): boolean {
+  return (
+    row.name === variable.name &&
+    row.value === variable.value &&
+    row.sensitive === variable.sensitive &&
+    row.valueRedacted === variable.valueRedacted
+  );
+}
+
+function isProviderEnvironmentVariableEqual(
+  left: ProviderInstanceEnvironmentVariable,
+  right: ProviderInstanceEnvironmentVariable,
+): boolean {
+  return (
+    left.name === right.name &&
+    left.value === right.value &&
+    left.sensitive === right.sensitive &&
+    left.valueRedacted === right.valueRedacted
+  );
+}
+
+function isProviderEnvironmentVariableAcknowledgedByPersisted(
+  publishedVariable: ProviderInstanceEnvironmentVariable,
+  persistedVariable: ProviderInstanceEnvironmentVariable,
+): boolean {
+  if (isProviderEnvironmentVariableEqual(publishedVariable, persistedVariable)) return true;
+  return (
+    publishedVariable.name === persistedVariable.name &&
+    publishedVariable.sensitive === true &&
+    publishedVariable.valueRedacted !== true &&
+    persistedVariable.sensitive === true &&
+    persistedVariable.value === "" &&
+    persistedVariable.valueRedacted === true
+  );
+}
+
+export function isPublishedProviderEnvironmentAcknowledgedByPersisted(input: {
+  readonly publishedEnvironment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
+  readonly persistedEnvironment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
+}): boolean {
+  if (input.publishedEnvironment.length !== input.persistedEnvironment.length) return false;
+  return input.publishedEnvironment.every((publishedVariable, index) => {
+    const persistedVariable = input.persistedEnvironment[index];
+    return (
+      persistedVariable !== undefined &&
+      isProviderEnvironmentVariableAcknowledgedByPersisted(publishedVariable, persistedVariable)
+    );
+  });
+}
+
+function isEnvironmentDraftRowAcknowledgedByPersisted(
+  row: EnvironmentDraftRow,
+  variable: ProviderInstanceEnvironmentVariable,
+  previousVariable: ProviderInstanceEnvironmentVariable | undefined,
+  publishedVariable: ProviderInstanceEnvironmentVariable | undefined,
+): boolean {
+  if (isEnvironmentDraftRowEqualToPersisted(row, variable)) return true;
+  if (
+    publishedVariable !== undefined &&
+    isEnvironmentDraftRowEqualToPersisted(row, publishedVariable) &&
+    isProviderEnvironmentVariableAcknowledgedByPersisted(publishedVariable, variable)
+  ) {
+    return true;
+  }
+  if (
+    row.name !== variable.name ||
+    row.sensitive !== true ||
+    variable.sensitive !== true ||
+    variable.value !== "" ||
+    variable.valueRedacted !== true ||
+    row.valueRedacted === true
+  ) {
+    return false;
+  }
+
+  if (previousVariable === undefined) return true;
+
+  return (
+    isSameEnvironmentVariable(previousVariable, variable) &&
+    previousVariable.sensitive === true &&
+    !isProviderEnvironmentVariableEqual(previousVariable, variable)
+  );
+}
+
+function isSameEnvironmentVariable(
+  previousVariable: Pick<ProviderInstanceEnvironmentVariable, "name">,
+  nextVariable: Pick<ProviderInstanceEnvironmentVariable, "name">,
+): boolean {
+  return previousVariable.name === nextVariable.name;
+}
+
+export function mergeEnvironmentDraftRowsForPersistedUpdate(input: {
+  readonly rows: ReadonlyArray<EnvironmentDraftRow>;
+  readonly previousEnvironment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
+  readonly nextEnvironment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
+  readonly publishedEnvironment?: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
+  readonly locallyDeletedEnvironmentVariables?: ReadonlyMap<
+    string,
+    ProviderInstanceEnvironmentVariable
+  >;
+}): ReadonlyArray<EnvironmentDraftRow> {
+  const previousById = new Map(
+    input.previousEnvironment.map((variable, index) => [
+      makeEnvironmentDraftRow(variable, index).id,
+      variable,
+    ]),
+  );
+  const previousRowsByIndex = input.previousEnvironment.map(makeEnvironmentDraftRow);
+  const rowsById = new Map(input.rows.map((row) => [row.id, row]));
+  const publishedByName = new Map(
+    input.publishedEnvironment?.map((variable) => [variable.name, variable]) ?? [],
+  );
+  const nextIds = new Set<string>();
+  const consumedRowIds = new Set<string>();
+  const consumeRow = (row: EnvironmentDraftRow) => {
+    consumedRowIds.add(row.id);
+  };
+  const findAcknowledgedCurrentRow = (variable: ProviderInstanceEnvironmentVariable) =>
+    input.rows.find((row) => {
+      if (consumedRowIds.has(row.id)) return false;
+      return isEnvironmentDraftRowAcknowledgedByPersisted(
+        row,
+        variable,
+        previousById.get(row.id),
+        publishedByName.get(variable.name),
+      );
+    });
+  const findChangedCurrentRowForSameVariable = (variable: ProviderInstanceEnvironmentVariable) =>
+    input.rows.find((row) => {
+      if (consumedRowIds.has(row.id) || !isSameEnvironmentVariable(row, variable)) {
+        return false;
+      }
+      const previousVariable = previousById.get(row.id);
+      return (
+        previousVariable !== undefined &&
+        isEnvironmentDraftRowChangedFromPersisted(row, previousVariable)
+      );
+    });
+
+  const nextRows = input.nextEnvironment.flatMap((variable, index) => {
+    const nextRow = makeEnvironmentDraftRow(variable, index);
+    nextIds.add(nextRow.id);
+
+    const currentRow = rowsById.get(nextRow.id);
+    const previousVariable = previousById.get(nextRow.id);
+    const previousRowAtIndex = previousRowsByIndex[index];
+    const currentRowAtPreviousIndex =
+      previousRowAtIndex !== undefined ? rowsById.get(previousRowAtIndex.id) : undefined;
+    if (
+      currentRow !== undefined &&
+      previousVariable !== undefined &&
+      isEnvironmentDraftRowChangedFromPersisted(currentRow, previousVariable)
+    ) {
+      consumeRow(currentRow);
+      return isEnvironmentDraftRowAcknowledgedByPersisted(
+        currentRow,
+        variable,
+        previousVariable,
+        publishedByName.get(variable.name),
+      )
+        ? [nextRow]
+        : [currentRow];
+    }
+
+    if (currentRow !== undefined) {
+      consumeRow(currentRow);
+      return [nextRow];
+    }
+
+    const acknowledgedCurrentRow = findAcknowledgedCurrentRow(variable);
+    if (acknowledgedCurrentRow !== undefined) {
+      consumeRow(acknowledgedCurrentRow);
+      return [nextRow];
+    }
+
+    const changedCurrentRow = findChangedCurrentRowForSameVariable(variable);
+    if (changedCurrentRow !== undefined) {
+      consumeRow(changedCurrentRow);
+      return [changedCurrentRow];
+    }
+
+    const locallyDeletedEnvironmentVariable = input.locallyDeletedEnvironmentVariables?.get(
+      variable.name,
+    );
+    if (
+      locallyDeletedEnvironmentVariable !== undefined &&
+      isProviderEnvironmentVariableEqual(locallyDeletedEnvironmentVariable, variable)
+    ) {
+      return [];
+    }
+
+    if (
+      previousVariable !== undefined ||
+      (previousRowAtIndex !== undefined &&
+        currentRowAtPreviousIndex === undefined &&
+        isSameEnvironmentVariable(previousRowAtIndex, variable))
+    ) {
+      return [];
+    }
+
+    return [nextRow];
+  });
+
+  const localRows = input.rows.filter((row) => {
+    if (consumedRowIds.has(row.id)) return false;
+    if (nextIds.has(row.id)) return false;
+
+    const previousVariable = previousById.get(row.id);
+    return (
+      previousVariable === undefined ||
+      isEnvironmentDraftRowChangedFromPersisted(row, previousVariable)
+    );
+  });
+
+  return [...nextRows, ...localRows];
+}
+
+export function getProviderEnvironmentContentKey(
+  environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
+): string {
+  return JSON.stringify(
+    environment.map((variable) => [
+      variable.name,
+      variable.value,
+      variable.sensitive,
+      variable.valueRedacted,
+    ]),
+  );
 }
 
 /**
@@ -157,9 +402,55 @@ function ProviderEnvironmentSection(props: {
   readonly environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
   readonly onChange: (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => void;
 }) {
+  const persistedEnvironmentContentKey = getProviderEnvironmentContentKey(props.environment);
+  const previousPersistedEnvironment = useRef(props.environment);
+  const previousPersistedEnvironmentContentKey = useRef(persistedEnvironmentContentKey);
+  const pendingPublishedEnvironment = useRef<
+    ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined
+  >(undefined);
+  const locallyDeletedEnvironmentVariables = useRef<
+    Map<string, ProviderInstanceEnvironmentVariable>
+  >(new Map());
   const [rows, setRows] = useState<ReadonlyArray<EnvironmentDraftRow>>(() =>
     props.environment.map(makeEnvironmentDraftRow),
   );
+
+  useEffect(() => {
+    const acknowledgedPublishedEnvironment =
+      pendingPublishedEnvironment.current !== undefined &&
+      isPublishedProviderEnvironmentAcknowledgedByPersisted({
+        publishedEnvironment: pendingPublishedEnvironment.current,
+        persistedEnvironment: props.environment,
+      })
+        ? pendingPublishedEnvironment.current
+        : undefined;
+    if (
+      previousPersistedEnvironmentContentKey.current === persistedEnvironmentContentKey &&
+      acknowledgedPublishedEnvironment === undefined
+    ) {
+      return;
+    }
+    previousPersistedEnvironmentContentKey.current = persistedEnvironmentContentKey;
+    setRows((currentRows) => {
+      const nextRows = mergeEnvironmentDraftRowsForPersistedUpdate({
+        rows: currentRows,
+        previousEnvironment: previousPersistedEnvironment.current,
+        nextEnvironment: props.environment,
+        ...(acknowledgedPublishedEnvironment !== undefined
+          ? { publishedEnvironment: acknowledgedPublishedEnvironment }
+          : {}),
+        locallyDeletedEnvironmentVariables: locallyDeletedEnvironmentVariables.current,
+      });
+      for (const row of nextRows) {
+        locallyDeletedEnvironmentVariables.current.delete(row.name);
+      }
+      return nextRows;
+    });
+    if (acknowledgedPublishedEnvironment !== undefined) {
+      pendingPublishedEnvironment.current = undefined;
+    }
+    previousPersistedEnvironment.current = props.environment;
+  }, [persistedEnvironmentContentKey, props.environment]);
 
   const publishRows = (nextRows: ReadonlyArray<EnvironmentDraftRow>) => {
     const published: ProviderInstanceEnvironmentVariable[] = [];
@@ -179,10 +470,14 @@ function ProviderEnvironmentSection(props: {
       const { id: _id, ...rest } = row;
       published.push({ ...rest, name });
     }
+    pendingPublishedEnvironment.current = published;
     props.onChange(published);
   };
 
   const updateVariable = (id: string, patch: Partial<Omit<EnvironmentDraftRow, "id">>) => {
+    if (patch.name !== undefined) {
+      locallyDeletedEnvironmentVariables.current.delete(patch.name.trim());
+    }
     const nextRows = rows.map((row) =>
       row.id === id
         ? {
@@ -197,6 +492,20 @@ function ProviderEnvironmentSection(props: {
   };
 
   const removeVariable = (id: string) => {
+    const removedRow = rows.find((row) => row.id === id);
+    const previousVariable = previousPersistedEnvironment.current.find(
+      (variable, index) => makeEnvironmentDraftRow(variable, index).id === id,
+    );
+    if (removedRow !== undefined && previousVariable !== undefined) {
+      locallyDeletedEnvironmentVariables.current.set(previousVariable.name, previousVariable);
+      const removedName = removedRow.name.trim();
+      if (removedName.length > 0) {
+        locallyDeletedEnvironmentVariables.current.set(removedName, {
+          ...previousVariable,
+          name: removedName,
+        });
+      }
+    }
     const nextRows = rows.filter((row) => row.id !== id);
     setRows(nextRows);
     publishRows(nextRows);
