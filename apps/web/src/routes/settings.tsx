@@ -16,6 +16,23 @@ import { isElectron } from "../env";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
+const ESCAPE_EDITABLE_TARGET_SELECTOR = [
+  "input",
+  "textarea",
+  "select",
+  '[data-slot="select-trigger"]',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="textbox"]',
+].join(",");
+
+function eventPathContainsSelector(event: Event, selector: string): boolean {
+  const path = event.composedPath();
+  if (path.length === 0 && event.target) {
+    path.push(event.target);
+  }
+  return path.some((target) => target instanceof Element && target.closest(selector));
+}
+
 function RestoreDefaultsButton({ onRestored }: { onRestored: () => void }) {
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
 
@@ -51,6 +68,7 @@ function SettingsContentLayout() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (event.key === "Escape") {
+        if (eventPathContainsSelector(event, ESCAPE_EDITABLE_TARGET_SELECTOR)) return;
         event.preventDefault();
         navigateBackWithinApp();
       }
