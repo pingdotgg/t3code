@@ -92,6 +92,7 @@ import { readLocalApi } from "~/localApi";
 import {
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_ROW_POPUP_CLASS,
   THREAD_DETAILS_PANEL_ROW_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS,
@@ -990,6 +991,7 @@ export default function GitActionsControl({
 }: GitActionsControlProps) {
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
+  const panelAnchorRef = useRef<HTMLDivElement | null>(null);
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
     "thread branch metadata update",
@@ -1708,6 +1710,7 @@ export default function GitActionsControl({
         <ActionGroup
           role="group"
           aria-label="Git actions"
+          {...(isPanel ? { ref: panelAnchorRef } : {})}
           className={cn("shrink-0", isPanel && THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS)}
         >
           {quickActionDisabledReason ? (
@@ -1795,7 +1798,11 @@ export default function GitActionsControl({
                 className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
               />
             </MenuTrigger>
-            <MenuPopup align="end" className="w-full">
+            <MenuPopup
+              align="end"
+              {...(isPanel ? { anchor: panelAnchorRef } : {})}
+              className={isPanel ? THREAD_DETAILS_PANEL_ROW_POPUP_CLASS : "w-full"}
+            >
               {gitActionMenuItems.map((item) => {
                 const disabledReason = getMenuActionDisabledReason({
                   item,

@@ -74,6 +74,7 @@ import { cn } from "~/lib/utils";
 import {
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_ROW_POPUP_CLASS,
   THREAD_DETAILS_PANEL_ROW_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS,
@@ -150,6 +151,7 @@ export default function ProjectScriptsControl({
 }: ProjectScriptsControlProps) {
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
+  const panelAnchorRef = React.useRef<HTMLDivElement | null>(null);
   const addScriptFormId = React.useId();
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
   const [actionsMenuOpen, setActionsMenuOpen] = useState({
@@ -351,7 +353,9 @@ export default function ProjectScriptsControl({
         <ActionGroup
           role="group"
           aria-label="Project scripts"
-          {...(isPanel ? { className: THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS } : {})}
+          {...(isPanel
+            ? { className: THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS, ref: panelAnchorRef }
+            : {})}
         >
           <Tooltip>
             <TooltipTrigger
@@ -400,7 +404,11 @@ export default function ProjectScriptsControl({
                 className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
               />
             </MenuTrigger>
-            <MenuPopup align="end">
+            <MenuPopup
+              align="end"
+              {...(isPanel ? { anchor: panelAnchorRef } : {})}
+              className={isPanel ? THREAD_DETAILS_PANEL_ROW_POPUP_CLASS : undefined}
+            >
               {scripts.map((script) => {
                 const shortcutLabel = shortcutLabelForCommand(
                   keybindings,
