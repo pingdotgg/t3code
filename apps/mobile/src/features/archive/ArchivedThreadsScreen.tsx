@@ -26,6 +26,7 @@ import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import { createNativeMailSearchToolbarItem } from "../layout/native-mail-search-toolbar";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
 
 export interface ArchivedThreadsHeaderEnvironment {
@@ -116,7 +117,7 @@ function ArchivedThreadsHeader(props: {
           unstable_navigationItemStyle: usesNativeChrome ? "editor" : undefined,
           unstable_headerToolbarItems: usesCompactMailToolbar
             ? () => [
-                {
+                createNativeMailSearchToolbarItem({
                   composeButtonId: "archived-refresh",
                   composeSystemImageName: "arrow.clockwise",
                   filterMenu: archiveFilterMenu,
@@ -128,9 +129,7 @@ function ArchivedThreadsHeader(props: {
                   onSearchTextChange: props.onSearchQueryChange,
                   placeholder: "Search",
                   searchTextChangeId: "archived-search-text",
-                  type: "mailSearchToolbar",
-                  useFallbackSearchField: true,
-                },
+                }),
               ]
             : undefined,
           headerSearchBarOptions: usesCompactMailToolbar

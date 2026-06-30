@@ -10,6 +10,7 @@ import type { SearchBarCommands } from "react-native-screens";
 
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
+import { createNativeMailSearchToolbarItem } from "../layout/native-mail-search-toolbar";
 import type { HomeProjectSortOrder } from "./homeThreadList";
 import {
   buildHomeListFilterMenu,
@@ -82,7 +83,7 @@ export function HomeHeader(props: {
           unstable_headerToolbarItems:
             Platform.OS === "ios"
               ? () => [
-                  {
+                  createNativeMailSearchToolbarItem({
                     composeButtonId: "home-new-task",
                     composeSystemImageName: "square.and.pencil",
                     filterMenu,
@@ -94,9 +95,7 @@ export function HomeHeader(props: {
                     onSearchTextChange: props.onSearchQueryChange,
                     placeholder: "Search",
                     searchTextChangeId: "home-search-text",
-                    type: "mailSearchToolbar",
-                    useFallbackSearchField: true,
-                  },
+                  }),
                 ]
               : undefined,
           headerSearchBarOptions:
