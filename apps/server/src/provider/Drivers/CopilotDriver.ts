@@ -14,7 +14,11 @@
 import { CopilotSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import type * as Context from "effect/Context";
-import { Duration, Effect, Path, Schema, Stream } from "effect";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as FileSystem from "effect/FileSystem";
 
 import { makeCopilotTextGeneration } from "../../textGeneration/CopilotTextGeneration.ts";

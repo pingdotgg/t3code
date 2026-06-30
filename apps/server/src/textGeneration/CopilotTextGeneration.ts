@@ -1,5 +1,9 @@
 import type { CopilotClient, CopilotSession, SessionConfig } from "@github/copilot-sdk";
-import { Effect, Exit, Fiber, Schema, Scope } from "effect";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 import {
@@ -22,7 +26,7 @@ import {
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
-import { type TextGenerationShape } from "./TextGeneration.ts";
+import * as TextGeneration from "./TextGeneration.ts";
 import {
   makeBranchNameGenerationResult,
   makeCommitMessageGenerationResult,
@@ -205,52 +209,58 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
           ),
         ),
       );
-      yield* Effect.tryPromise({
-        try: (signal) =>
-          new Promise<void>((resolve, reject) => {
-            const abort = () => {
-              void newClient.stop().catch(() => undefined);
-              reject(signal.reason ?? new Error("Copilot client startup interrupted."));
-            };
-            if (signal.aborted) {
-              abort();
-              return;
-            }
-            signal.addEventListener("abort", abort, { once: true });
-            newClient
-              .start()
-              .then(resolve, reject)
-              .finally(() => {
-                signal.removeEventListener("abort", abort);
-              });
-          }),
-        catch: (cause) =>
-          copilotTextGenerationError(
-            input.operation,
-            detailFromCause(cause, "Failed to start Copilot client."),
-            cause,
-          ),
-      });
-
-      const client = yield* sharedClientMutex.withPermit(
+      const client = yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
-          const existing = sharedClients.get(clientKey);
-          if (existing) {
-            yield* Effect.tryPromise({
-              try: () => newClient.stop(),
-              catch: () => undefined,
-            }).pipe(Effect.ignore);
-            yield* cancelIdleCloseFiber(existing);
-            existing.activeRequests += 1;
-            return existing.client;
-          }
+          yield* restore(
+            Effect.tryPromise({
+              try: (signal) =>
+                new Promise<void>((resolve, reject) => {
+                  const abort = () => {
+                    void newClient.stop().catch(() => undefined);
+                    reject(signal.reason ?? new Error("Copilot client startup interrupted."));
+                  };
+                  if (signal.aborted) {
+                    abort();
+                    return;
+                  }
+                  signal.addEventListener("abort", abort, { once: true });
+                  newClient
+                    .start()
+                    .then(resolve, reject)
+                    .finally(() => {
+                      signal.removeEventListener("abort", abort);
+                    });
+                }),
+              catch: (cause) =>
+                copilotTextGenerationError(
+                  input.operation,
+                  detailFromCause(cause, "Failed to start Copilot client."),
+                  cause,
+                ),
+            }),
+          );
 
-          sharedClients.set(clientKey, {
-            client: newClient,
-            activeRequests: 1,
-            idleCloseFiber: null,
-          });
-          return newClient;
+          return yield* sharedClientMutex.withPermit(
+            Effect.gen(function* () {
+              const existing = sharedClients.get(clientKey);
+              if (existing) {
+                yield* Effect.tryPromise({
+                  try: () => newClient.stop(),
+                  catch: () => undefined,
+                }).pipe(Effect.ignore);
+                yield* cancelIdleCloseFiber(existing);
+                existing.activeRequests += 1;
+                return existing.client;
+              }
+
+              sharedClients.set(clientKey, {
+                client: newClient,
+                activeRequests: 1,
+                idleCloseFiber: null,
+              });
+              return newClient;
+            }),
+          );
         }),
       );
       return { clientKey, client };
@@ -405,95 +415,91 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
       ),
     );
 
-  const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = Effect.fn(
-    "CopilotTextGeneration.generateCommitMessage",
-  )(function* (input) {
-    const { prompt, outputSchema } = buildCommitMessagePrompt({
-      branch: input.branch,
-      stagedSummary: input.stagedSummary,
-      stagedPatch: input.stagedPatch,
-      includeBranch: input.includeBranch === true,
-    });
-    const generated = yield* runCopilotJson({
-      operation: "generateCommitMessage",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: outputSchema,
-      modelSelection: input.modelSelection,
+  const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
+    Effect.fn("CopilotTextGeneration.generateCommitMessage")(function* (input) {
+      const { prompt, outputSchema } = buildCommitMessagePrompt({
+        branch: input.branch,
+        stagedSummary: input.stagedSummary,
+        stagedPatch: input.stagedPatch,
+        includeBranch: input.includeBranch === true,
+      });
+      const generated = yield* runCopilotJson({
+        operation: "generateCommitMessage",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return makeCommitMessageGenerationResult({
+        generated,
+        includeBranch: input.includeBranch === true,
+        sanitizeBranch: (branch) => sanitizeFeatureBranchName(sanitizeBranchFragment(branch)),
+      });
     });
 
-    return makeCommitMessageGenerationResult({
-      generated,
-      includeBranch: input.includeBranch === true,
-      sanitizeBranch: (branch) => sanitizeFeatureBranchName(sanitizeBranchFragment(branch)),
-    });
-  });
+  const generatePrContent: TextGeneration.TextGeneration["Service"]["generatePrContent"] =
+    Effect.fn("CopilotTextGeneration.generatePrContent")(function* (input) {
+      const { prompt, outputSchema } = buildPrContentPrompt({
+        baseBranch: input.baseBranch,
+        headBranch: input.headBranch,
+        commitSummary: input.commitSummary,
+        diffSummary: input.diffSummary,
+        diffPatch: input.diffPatch,
+      });
+      const generated = yield* runCopilotJson({
+        operation: "generatePrContent",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
 
-  const generatePrContent: TextGenerationShape["generatePrContent"] = Effect.fn(
-    "CopilotTextGeneration.generatePrContent",
-  )(function* (input) {
-    const { prompt, outputSchema } = buildPrContentPrompt({
-      baseBranch: input.baseBranch,
-      headBranch: input.headBranch,
-      commitSummary: input.commitSummary,
-      diffSummary: input.diffSummary,
-      diffPatch: input.diffPatch,
-    });
-    const generated = yield* runCopilotJson({
-      operation: "generatePrContent",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: outputSchema,
-      modelSelection: input.modelSelection,
+      return makePrContentGenerationResult(generated);
     });
 
-    return makePrContentGenerationResult(generated);
-  });
+  const generateBranchName: TextGeneration.TextGeneration["Service"]["generateBranchName"] =
+    Effect.fn("CopilotTextGeneration.generateBranchName")(function* (input) {
+      const { prompt, outputSchema } = buildBranchNamePrompt({
+        message: input.message,
+        attachments: input.attachments,
+      });
+      const generated = yield* runCopilotJson({
+        operation: "generateBranchName",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+        attachments: input.attachments,
+      });
 
-  const generateBranchName: TextGenerationShape["generateBranchName"] = Effect.fn(
-    "CopilotTextGeneration.generateBranchName",
-  )(function* (input) {
-    const { prompt, outputSchema } = buildBranchNamePrompt({
-      message: input.message,
-      attachments: input.attachments,
-    });
-    const generated = yield* runCopilotJson({
-      operation: "generateBranchName",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: outputSchema,
-      modelSelection: input.modelSelection,
-      attachments: input.attachments,
-    });
-
-    return makeBranchNameGenerationResult(generated, (branch) =>
-      sanitizeFeatureBranchName(sanitizeBranchFragment(branch)),
-    );
-  });
-
-  const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = Effect.fn(
-    "CopilotTextGeneration.generateThreadTitle",
-  )(function* (input) {
-    const { prompt, outputSchema } = buildThreadTitlePrompt({
-      message: input.message,
-      attachments: input.attachments,
-    });
-    const generated = yield* runCopilotJson({
-      operation: "generateThreadTitle",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: outputSchema,
-      modelSelection: input.modelSelection,
-      attachments: input.attachments,
+      return makeBranchNameGenerationResult(generated, (branch) =>
+        sanitizeFeatureBranchName(sanitizeBranchFragment(branch)),
+      );
     });
 
-    return makeThreadTitleGenerationResult(generated);
-  });
+  const generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"] =
+    Effect.fn("CopilotTextGeneration.generateThreadTitle")(function* (input) {
+      const { prompt, outputSchema } = buildThreadTitlePrompt({
+        message: input.message,
+        attachments: input.attachments,
+      });
+      const generated = yield* runCopilotJson({
+        operation: "generateThreadTitle",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+        attachments: input.attachments,
+      });
+
+      return makeThreadTitleGenerationResult(generated);
+    });
 
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
-  } satisfies TextGenerationShape;
+  } satisfies TextGeneration.TextGeneration["Service"];
 });
