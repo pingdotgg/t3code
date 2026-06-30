@@ -26,9 +26,10 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
+import { runDaemonWithOptions as runEffectWorkerDaemonWithOptions } from "./EffectWorker.ts";
 import { OrchestrationV2LayerLive } from "./runtimeLayer.ts";
 import { layer as mcpSessionRegistryTestLayer } from "../mcp/McpSessionRegistry.testkit.ts";
-import { CURSOR_MODEL_SELECTION } from "./testkit/fixtures/shared.ts";
+import { CURSOR_MODEL_SELECTION, SUBAGENT_PROMPT } from "./testkit/fixtures/shared.ts";
 
 const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-cursor-v2-live-",
@@ -96,6 +97,7 @@ describe.runIf(process.env.T3_CURSOR_LIVE_ORCHESTRATOR === "1")(
       "forks through portable context using real Cursor agents",
       () =>
         Effect.gen(function* () {
+          yield* runEffectWorkerDaemonWithOptions({ concurrency: 2 }).pipe(Effect.forkScoped);
           const orchestrator = yield* OrchestratorV2;
           const projectId = ProjectId.make("project:cursor-live-portable-fork");
           const sourceThreadId = ThreadId.make("thread:cursor-live-portable-fork:source");
@@ -114,7 +116,7 @@ describe.runIf(process.env.T3_CURSOR_LIVE_ORCHESTRATOR === "1")(
             runtimeMode: "full-access",
             interactionMode: "default",
             branch: null,
-            worktreePath: null,
+            worktreePath: process.cwd(),
           });
           yield* orchestrator.dispatch({
             type: "message.dispatch",
@@ -184,6 +186,81 @@ describe.runIf(process.env.T3_CURSOR_LIVE_ORCHESTRATOR === "1")(
           );
           assert.include(targetProjection.contextHandoffs[0]?.summaryText ?? "", marker);
           assert.include(assistantText(targetProjection), marker);
+        }).pipe(Effect.provide(liveLayer), Effect.scoped),
+      360_000,
+    );
+
+    it.live(
+      "spawns native subagents with child thread lineage",
+      () =>
+        Effect.gen(function* () {
+          yield* runEffectWorkerDaemonWithOptions({ concurrency: 2 }).pipe(Effect.forkScoped);
+          const orchestrator = yield* OrchestratorV2;
+          const projectId = ProjectId.make("project:cursor-live-subagent-lineage");
+          const sourceThreadId = ThreadId.make("thread:cursor-live-subagent-lineage");
+
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:cursor-live-subagent-lineage:create"),
+            threadId: sourceThreadId,
+            projectId,
+            title: "Cursor live subagent lineage",
+            modelSelection: CURSOR_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: process.cwd(),
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:cursor-live-subagent-lineage:message"),
+            threadId: sourceThreadId,
+            messageId: MessageId.make("message:cursor-live-subagent-lineage"),
+            text: `${SUBAGENT_PROMPT}. Do not edit files. After both subagents finish, summarize each result briefly.`,
+            attachments: [],
+            modelSelection: CURSOR_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+
+          const parentProjection = yield* waitForIdle(sourceThreadId);
+          yield* Console.log(
+            `Cursor live subagent lineage completed with ${parentProjection.subagents.length} subagents.`,
+          );
+
+          assert.deepEqual(
+            parentProjection.runs.map((run) => [run.providerInstanceId, run.status]),
+            [["cursor", "completed"]],
+          );
+          assert.isAtLeast(parentProjection.subagents.length, 1);
+
+          for (const subagent of parentProjection.subagents) {
+            assert.equal(subagent.origin, "provider_native");
+            assert.equal(subagent.driver, "cursor");
+            assert.equal(subagent.status, "completed");
+            assert.isNotNull(subagent.childThreadId);
+            assert.isNotNull(subagent.result);
+
+            if (subagent.childThreadId === null) {
+              throw new Error(`Cursor live subagent ${subagent.id} is missing a child thread.`);
+            }
+
+            const childProjection = yield* orchestrator.getThreadProjection(subagent.childThreadId);
+            assert.equal(childProjection.thread.lineage.parentThreadId, parentProjection.thread.id);
+            assert.equal(childProjection.thread.lineage.relationshipToParent, "subagent");
+            assert.equal(
+              childProjection.thread.lineage.rootThreadId,
+              parentProjection.thread.lineage.rootThreadId,
+            );
+            assert.lengthOf(childProjection.runs, 0);
+            assert.isTrue(
+              childProjection.messages.some((message) => message.role === "assistant"),
+              `child thread ${subagent.childThreadId} should contain the subagent response`,
+            );
+          }
         }).pipe(Effect.provide(liveLayer), Effect.scoped),
       360_000,
     );
