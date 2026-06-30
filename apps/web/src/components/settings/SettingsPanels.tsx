@@ -124,6 +124,7 @@ const TIMESTAMP_FORMAT_LABELS = {
 const UI_DENSITY_OPTIONS: ReadonlyArray<{ value: UiDensity; label: string; hint: string }> = [
   { value: "compact", label: "Compact", hint: "— tighter spacing" },
   { value: "default", label: "Default", hint: "— balanced" },
+  { value: "comfortable", label: "Comfortable", hint: "— relaxed spacing" },
   { value: "spacious", label: "Spacious", hint: "— more breathing room" },
 ];
 
@@ -1116,8 +1117,8 @@ export function GeneralSettingsPanel() {
             <Select
               value={settings.uiDensity}
               onValueChange={(value) => {
-                if (value === "compact" || value === "default" || value === "spacious") {
-                  updateSettings({ uiDensity: value });
+                if (UI_DENSITY_OPTIONS.some((option) => option.value === value)) {
+                  updateSettings({ uiDensity: value as UiDensity });
                 }
               }}
             >

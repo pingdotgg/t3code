@@ -196,7 +196,7 @@ function GitActionItemIcon({ icon }: { icon: GitActionIconName }) {
 }
 
 function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
-  const iconClassName = "size-3.5";
+  const iconClassName = "size-2.5";
   if (quickAction.kind === "open_pr") return <GitHubIcon className={iconClassName} />;
   if (quickAction.kind === "run_pull") return <InfoIcon className={iconClassName} />;
   if (quickAction.kind === "run_action") {
@@ -868,6 +868,8 @@ export default function GitActionsControl({
         <Button
           variant="outline"
           size="xs"
+          className="h-6 border-transparent px-2 shadow-none hover:border-input hover:shadow-xs/5"
+          style={{ fontSize: "var(--app-chat-font-size)" }}
           disabled={initMutation.isPending}
           onClick={() => initMutation.mutate()}
         >
@@ -882,7 +884,8 @@ export default function GitActionsControl({
                 render={
                   <Button
                     aria-disabled="true"
-                    className="cursor-not-allowed rounded-e-none border-e-0 opacity-64 before:rounded-e-none"
+                    className="h-6 cursor-not-allowed rounded-e-none border-e-0 px-2 opacity-64 before:rounded-e-none"
+                    style={{ fontSize: "var(--app-chat-font-size)" }}
                     size="xs"
                     variant="outline"
                   />
@@ -901,6 +904,8 @@ export default function GitActionsControl({
             <Button
               variant="outline"
               size="xs"
+              className="h-6 border-transparent px-2 shadow-none hover:border-input hover:shadow-xs/5"
+              style={{ fontSize: "var(--app-chat-font-size)" }}
               disabled={isGitActionRunning || quickAction.disabled}
               onClick={runQuickAction}
             >
@@ -922,10 +927,17 @@ export default function GitActionsControl({
             }}
           >
             <MenuTrigger
-              render={<Button aria-label="Git action options" size="icon-xs" variant="outline" />}
+              render={
+                <Button
+                  aria-label="Git action options"
+                  className="size-6 border-transparent px-0 shadow-none hover:border-input hover:shadow-xs/5"
+                  size="icon-xs"
+                  variant="outline"
+                />
+              }
               disabled={isGitActionRunning}
             >
-              <ChevronDownIcon aria-hidden="true" className="size-4" />
+              <ChevronDownIcon aria-hidden="true" className="size-3" />
             </MenuTrigger>
             <MenuPopup align="end" className="w-full">
               {gitActionMenuItems.map((item) => {

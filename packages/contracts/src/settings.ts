@@ -30,7 +30,7 @@ export const DEFAULT_TOOL_FONT_SIZE: FontSize = 12 as FontSize;
 export const DEFAULT_SIDEBAR_FONT_SIZE: FontSize = 12 as FontSize;
 export const DEFAULT_INPUT_FONT_SIZE: FontSize = 14 as FontSize;
 
-export const UiDensity = Schema.Literals(["compact", "default", "spacious"]);
+export const UiDensity = Schema.Literals(["compact", "default", "comfortable", "spacious"]);
 export type UiDensity = typeof UiDensity.Type;
 export const DEFAULT_UI_DENSITY: UiDensity = "default";
 

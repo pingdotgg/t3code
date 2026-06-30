@@ -340,7 +340,7 @@ export function resolveThreadRowClassName(input: {
 }): string {
   const baseClassName =
     "w-full translate-x-0 cursor-pointer justify-start text-left select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring" +
-    " h-[var(--density-sidebar-row-h)] px-[var(--density-sidebar-row-px)]";
+    " h-7 px-2";
 
   if (input.isSelected && input.isActive) {
     return cn(

@@ -59,18 +59,11 @@ export function SettingsRow({
 }) {
   return (
     <div
-      className="border-t border-border/60 first:border-t-0"
-      style={{
-        paddingLeft: "var(--density-settings-row-px)",
-        paddingRight: "var(--density-settings-row-px)",
-        paddingTop: "var(--density-settings-row-py)",
-        paddingBottom: children ? 0 : "var(--density-settings-row-py)",
-      }}
+      className={`border-t border-border/60 px-4 pt-4 first:border-t-0 sm:px-5${
+        children ? "" : " pb-4"
+      }`}
     >
-      <div
-        className="flex flex-col sm:flex-row sm:items-center sm:justify-between"
-        style={{ gap: "var(--density-settings-row-gap)" }}
-      >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
             <h3 className="text-[13px] font-semibold tracking-[-0.01em] text-foreground">

@@ -110,7 +110,8 @@ export function ThreadStatusLabel({
   return (
     <span
       title={status.label}
-      className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
+      className={`inline-flex items-center gap-1 ${status.colorClass}`}
+      style={{ fontSize: "calc(var(--app-sidebar-font-size) * 0.75)" }}
     >
       <span
         className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${

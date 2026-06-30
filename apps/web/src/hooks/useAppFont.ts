@@ -102,7 +102,10 @@ export function applyUiDensity(density: UiDensity): void {
 }
 
 function normalizeUiDensity(value: unknown): UiDensity {
-  return value === "compact" || value === "default" || value === "spacious"
+  return value === "compact" ||
+    value === "default" ||
+    value === "comfortable" ||
+    value === "spacious"
     ? value
     : DEFAULT_UI_DENSITY;
 }

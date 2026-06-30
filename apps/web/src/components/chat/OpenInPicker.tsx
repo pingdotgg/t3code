@@ -201,17 +201,27 @@ export const OpenInPicker = memo(function OpenInPicker({
       <Button
         size="xs"
         variant="outline"
+        className="size-6 border-transparent shadow-none hover:border-input hover:shadow-xs/5"
         disabled={!preferredEditor || !openInCwd}
         aria-label={primaryOption ? `Open in ${primaryOption.label}` : "Open in editor"}
         title={primaryOption ? `Open in ${primaryOption.label}` : "Open in editor"}
         onClick={() => openInEditor(preferredEditor)}
       >
-        {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
+        {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-2.5" />}
       </Button>
       <GroupSeparator className="hidden @3xl/header-actions:block" />
       <Menu>
-        <MenuTrigger render={<Button aria-label="Copy options" size="icon-xs" variant="outline" />}>
-          <ChevronDownIcon aria-hidden="true" className="size-4" />
+        <MenuTrigger
+          render={
+            <Button
+              aria-label="Copy options"
+              className="size-6 border-transparent shadow-none hover:border-input hover:shadow-xs/5"
+              size="icon-xs"
+              variant="outline"
+            />
+          }
+        >
+          <ChevronDownIcon aria-hidden="true" className="size-3" />
         </MenuTrigger>
         <MenuPopup align="end">
           {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}

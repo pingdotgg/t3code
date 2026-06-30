@@ -273,10 +273,12 @@ export default function ProjectScriptsControl({
           <Button
             size="xs"
             variant="outline"
+            className="h-6 border-transparent px-2 shadow-none hover:border-input hover:shadow-xs/5"
+            style={{ fontSize: "var(--app-chat-font-size)" }}
             onClick={() => onRunScript(primaryScript)}
             title={`Run ${primaryScript.name}`}
           >
-            <ScriptIcon icon={primaryScript.icon} />
+            <ScriptIcon icon={primaryScript.icon} className="size-2.5" />
             <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
               {primaryScript.name}
             </span>
@@ -284,9 +286,16 @@ export default function ProjectScriptsControl({
           <GroupSeparator className="hidden @3xl/header-actions:block" />
           <Menu highlightItemOnHover={false}>
             <MenuTrigger
-              render={<Button size="icon-xs" variant="outline" aria-label="Script actions" />}
+              render={
+                <Button
+                  size="icon-xs"
+                  className="size-6 border-transparent px-0 shadow-none hover:border-input hover:shadow-xs/5"
+                  variant="outline"
+                  aria-label="Script actions"
+                />
+              }
             >
-              <ChevronDownIcon className="size-4" />
+              <ChevronDownIcon className="size-3" />
             </MenuTrigger>
             <MenuPopup align="end">
               {scripts.map((script) => {
@@ -326,7 +335,7 @@ export default function ProjectScriptsControl({
                           openEditDialog(script);
                         }}
                       >
-                        <SettingsIcon className="size-3.5" />
+                        <SettingsIcon className="size-2.5" />
                       </Button>
                     </span>
                   </MenuItem>
@@ -340,11 +349,14 @@ export default function ProjectScriptsControl({
           </Menu>
         </Group>
       ) : (
-        <Button size="xs" variant="outline" onClick={openAddDialog} title="Add action">
-          <PlusIcon className="size-3.5" />
-          <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-            Add action
-          </span>
+        <Button
+          size="icon-xs"
+          variant="outline"
+          onClick={openAddDialog}
+          title="Add action"
+          aria-label="Add action"
+        >
+          <PlusIcon className="size-2.5" />
         </Button>
       )}
 

@@ -1991,7 +1991,7 @@ export const ChatComposer = memo(
       <form
         ref={composerFormRef}
         onSubmit={submitComposer}
-        className="mx-auto w-full min-w-0 max-w-208"
+        className="mx-auto w-full min-w-0 max-w-3xl"
         data-chat-composer-form="true"
       >
         <div
@@ -2111,15 +2111,11 @@ export const ChatComposer = memo(
             ) : null}
 
             <div
-              className={cn("relative", isComposerCollapsedMobile && "hidden")}
-              style={{
-                paddingLeft: "var(--density-composer-px)",
-                paddingRight: "var(--density-composer-px)",
-                paddingBottom: "var(--density-composer-pb)",
-                paddingTop: hasComposerHeader
-                  ? "var(--density-composer-pt-with-header)"
-                  : "var(--density-composer-pt)",
-              }}
+              className={cn(
+                "relative px-3 pb-2 sm:px-4",
+                hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
+                isComposerCollapsedMobile && "hidden",
+              )}
             >
               {composerMenuOpen && !isComposerApprovalState && (
                 <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
@@ -2244,14 +2240,7 @@ export const ChatComposer = memo(
 
             {/* Bottom toolbar */}
             {isComposerCollapsedMobile ? null : activePendingApproval ? (
-              <div
-                className="flex items-center justify-end gap-2"
-                style={{
-                  paddingLeft: "var(--density-composer-footer-px)",
-                  paddingRight: "var(--density-composer-footer-px)",
-                  paddingBottom: "var(--density-composer-footer-pb)",
-                }}
-              >
+              <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 sm:px-3 sm:pb-3">
                 <ComposerPendingApprovalActions
                   requestId={activePendingApproval.requestId}
                   isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
@@ -2263,15 +2252,10 @@ export const ChatComposer = memo(
                 data-chat-composer-footer="true"
                 data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
                 className={cn(
-                  "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible",
+                  "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 sm:px-3 sm:pb-3",
                   isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
                   showMobilePendingAnswerActions && "hidden sm:flex",
                 )}
-                style={{
-                  paddingLeft: "var(--density-composer-footer-px)",
-                  paddingRight: "var(--density-composer-footer-px)",
-                  paddingBottom: "var(--density-composer-footer-pb)",
-                }}
               >
                 <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   <ProviderModelPicker

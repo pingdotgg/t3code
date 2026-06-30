@@ -83,17 +83,12 @@ export const ChatHeader = memo(function ChatHeader({
     primaryEnvironmentId !== null && activeThreadEnvironmentId !== primaryEnvironmentId;
 
   return (
-    <div
-      className="@container/header-actions flex min-w-0 flex-1 items-center"
-      style={{ gap: "var(--density-header-gap)" }}
-    >
-      <div
-        className="flex min-w-0 flex-1 items-center overflow-hidden"
-        style={{ gap: "var(--density-header-inner-gap)" }}
-      >
+    <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
         <h2
-          className="min-w-0 shrink truncate text-sm font-medium text-foreground"
+          className="min-w-0 shrink truncate font-medium text-foreground"
+          style={{ fontSize: "var(--app-chat-font-size)" }}
           title={activeThreadTitle}
         >
           {activeThreadTitle}
@@ -109,7 +104,7 @@ export const ChatHeader = memo(function ChatHeader({
           </Badge>
         )}
       </div>
-      <div className="flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
+      <div className="flex shrink-0 items-center justify-end gap-1">
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
@@ -139,7 +134,7 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipTrigger
             render={
               <Button
-                className="shrink-0"
+                className="shrink-0 border-transparent shadow-none hover:border-input hover:shadow-xs/5"
                 variant="outline"
                 size="icon-xs"
                 onClick={onExportThread}
@@ -162,7 +157,7 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipTrigger
             render={
               <Toggle
-                className="shrink-0"
+                className="shrink-0 border-transparent shadow-none hover:border-input hover:shadow-xs/5"
                 pressed={terminalOpen}
                 onPressedChange={onToggleTerminal}
                 aria-label="Toggle terminal drawer"
@@ -186,7 +181,7 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipTrigger
             render={
               <Toggle
-                className="shrink-0"
+                className="shrink-0 border-transparent shadow-none hover:border-input hover:shadow-xs/5"
                 pressed={diffOpen}
                 onPressedChange={onToggleDiff}
                 aria-label="Toggle diff panel"

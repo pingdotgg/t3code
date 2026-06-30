@@ -362,6 +362,10 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('aria-expanded="false"');
     expect(markup).toContain("Read file");
     expect(markup).toContain("Ran command");
+    expect(markup).toContain("work-group-section");
+    expect(markup).toContain("text-[length:inherit]");
+    expect(markup).not.toContain("truncate text-xs leading-5");
+    expect(markup).not.toContain("truncate text-[11px] leading-5");
   });
 
   it("collapses active tool-call groups once following assistant text starts", async () => {
@@ -797,7 +801,9 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Changed files (Turn) (1)");
+    expect(markup).not.toContain("Changed files");
+    expect(markup).toContain("+5");
+    expect(markup).toContain("-1");
     expect(markup).toContain("plan.md");
     expect(markup).not.toContain("unrelated.ts");
   });
@@ -842,9 +848,13 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Changed files (Turn) (0)");
-    expect(markup).toContain("No turn-scoped file changes detected");
+    expect(markup).not.toContain("Changed files");
+    expect(markup).not.toContain("No turn-scoped file changes detected");
+    expect(markup).toContain("+0");
+    expect(markup).toContain("-0");
     expect(markup).not.toContain("snapshot.ts");
-    expect(markup).toMatch(/disabled=""[^<]*>View diff/);
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-label="View diff"/);
+    expect(markup).toContain("lucide-diff");
+    expect(markup).not.toContain(">View diff<");
   });
 });

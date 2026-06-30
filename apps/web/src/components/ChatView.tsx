@@ -3796,25 +3796,14 @@ function ChatViewBody(
       {/* Top bar */}
       <header
         className={cn(
-          "border-b border-border",
           isElectron
             ? cn(
                 "drag-region flex h-[52px] items-center px-3 sm:px-5 wco:h-[env(titlebar-area-height)]",
                 reserveTitleBarControlInset &&
                   "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
               )
-            : "",
+            : "py-2 ps-[calc(env(safe-area-inset-left)+--spacing(3))] pe-[calc(env(safe-area-inset-right)+--spacing(3))] sm:py-3 sm:ps-[calc(env(safe-area-inset-left)+--spacing(5))] sm:pe-[calc(env(safe-area-inset-right)+--spacing(5))]",
         )}
-        style={{
-          paddingLeft: isElectron
-            ? undefined
-            : "calc(env(safe-area-inset-left) + var(--density-chat-header-px))",
-          paddingRight: isElectron
-            ? undefined
-            : "calc(env(safe-area-inset-right) + var(--density-chat-header-px))",
-          paddingTop: isElectron ? undefined : "var(--density-chat-header-py)",
-          paddingBottom: isElectron ? undefined : "var(--density-chat-header-py)",
-        }}
       >
         <ChatHeader
           activeThreadEnvironmentId={activeThread.environmentId}
@@ -3922,14 +3911,12 @@ function ChatViewBody(
 
           {/* Input bar */}
           <div
-            style={{
-              paddingLeft: "calc(env(safe-area-inset-left) + var(--density-composer-outer-px))",
-              paddingRight: "calc(env(safe-area-inset-right) + var(--density-composer-outer-px))",
-              paddingTop: "var(--density-composer-outer-pt)",
-              paddingBottom: isGitRepo
-                ? "calc(env(safe-area-inset-bottom) + var(--density-composer-outer-pb-git))"
-                : "calc(env(safe-area-inset-bottom) + var(--density-composer-outer-pb))",
-            }}
+            className={cn(
+              "pt-1.5 ps-[calc(env(safe-area-inset-left)+--spacing(3))] pe-[calc(env(safe-area-inset-right)+--spacing(3))] sm:pt-2 sm:ps-[calc(env(safe-area-inset-left)+--spacing(5))] sm:pe-[calc(env(safe-area-inset-right)+--spacing(5))]",
+              isGitRepo
+                ? "pb-[calc(env(safe-area-inset-bottom)+--spacing(1))]"
+                : "pb-[calc(env(safe-area-inset-bottom)+--spacing(3))] sm:pb-[calc(env(safe-area-inset-bottom)+--spacing(4))]",
+            )}
           >
             <ChatComposer
               ref={composerRef}

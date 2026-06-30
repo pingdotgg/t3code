@@ -28,6 +28,7 @@ import {
   ChevronRightIcon,
   ChevronUpIcon,
   CircleAlertIcon,
+  DiffIcon,
   EyeIcon,
   GitForkIcon,
   GlobeIcon,
@@ -44,7 +45,7 @@ import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImage
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffScopeToggle } from "./DiffScopeToggle";
-import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
+import { DiffStatLabel } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
@@ -305,13 +306,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         maintainScrollAtEndThreshold={0.1}
         maintainVisibleContentPosition
         onScroll={handleScroll}
-        className="h-full overflow-x-hidden overscroll-y-contain"
-        style={{
-          paddingLeft: "var(--density-timeline-px)",
-          paddingRight: "var(--density-timeline-px)",
-        }}
-        ListHeaderComponent={<div style={{ height: "var(--density-timeline-py)" }} />}
-        ListFooterComponent={<div style={{ height: "var(--density-timeline-py)" }} />}
+        className="h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
+        ListHeaderComponent={<div className="h-3 sm:h-4" />}
+        ListFooterComponent={<div className="h-3 sm:h-4" />}
       />
     </TimelineRowCtx.Provider>
   );
@@ -337,9 +334,9 @@ function TimelineRowContent(props: { row: TimelineRow }) {
   return (
     <div
       className={cn(
+        "pb-4",
         row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
       )}
-      style={{ paddingBottom: "var(--density-message-gap)" }}
       data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}
       data-chat-find-active={ctx.activeChatFindRowId === row.id ? "true" : undefined}
@@ -537,7 +534,7 @@ function TimelineRowContent(props: { row: TimelineRow }) {
 
       {row.kind === "working" && (
         <div className="py-0.5 pl-1.5">
-          <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
+          <div className="flex items-center gap-2 pt-1 text-[10px] text-muted-foreground/50">
             <span className="inline-flex items-center gap-[3px]">
               <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
               <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
@@ -638,24 +635,16 @@ const WorkGroupSection = memo(function WorkGroupSection({
       : `Show ${hiddenCount} more`;
 
   return (
-    <div
-      className="work-group-section rounded-xl border border-border/45 bg-card/25"
-      style={{
-        paddingLeft: "var(--density-work-group-px)",
-        paddingRight: "var(--density-work-group-px)",
-        paddingTop: "var(--density-work-group-py)",
-        paddingBottom: "var(--density-work-group-py)",
-      }}
-    >
+    <div className="work-group-section rounded-xl border border-border/45 bg-card/25 px-2 py-1.5">
       {showHeader && (
         <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
-          <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
+          <p className="text-[0.75em] uppercase tracking-[0.16em] text-muted-foreground/55">
             {groupLabel} ({groupedEntries.length})
           </p>
           {showCollapseToggle && (
             <button
               type="button"
-              className="inline-flex items-center gap-1 text-[9px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
+              className="inline-flex items-center gap-1 text-[0.75em] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
               onClick={() => setExpansionOverride(isExpanded ? "collapsed" : "expanded")}
               aria-expanded={isExpanded}
             >
@@ -692,12 +681,12 @@ const ReasoningSection = memo(function ReasoningSection({
       <div className="flex items-center gap-2">
         <button
           type="button"
-          className="inline-flex shrink-0 items-center gap-1 text-sm text-muted-foreground/70 transition-colors hover:text-foreground/80"
+          className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground/50 transition-colors hover:text-foreground/70"
           onClick={() => setIsExpanded((value) => !value)}
           aria-expanded={isExpanded}
         >
           <span>{label}</span>
-          <CollapseIcon className="size-4" />
+          <CollapseIcon className="size-3" />
         </button>
         <span className="h-px flex-1 bg-border" />
       </div>
@@ -756,7 +745,6 @@ function AssistantChangedFilesSectionInner({
   const selectedScope = preferredScope;
   const visibleFiles = selectedScope === "turn" ? turnFiles : snapshotFiles;
   const summaryStat = summarizeTurnDiffStats(visibleFiles);
-  const changedFileCountLabel = String(visibleFiles.length);
 
   return (
     <div
@@ -765,33 +753,14 @@ function AssistantChangedFilesSectionInner({
         fontSize: "var(--app-tool-font-size)",
       }}
     >
-      <div
-        className="sticky top-0 z-10 flex items-center justify-between gap-2 rounded-t-2xl bg-card/72 backdrop-blur-md"
-        style={{
-          padding: "var(--density-work-group-px)",
-        }}
-      >
-        <div className="min-w-0">
-          <p className="flex items-center gap-1 font-medium text-foreground text-[0.8em] leading-4">
-            <span>
-              Changed files ({selectedScope === "turn" ? "Turn" : "Snapshot"}) (
-              {changedFileCountLabel})
-            </span>
-            {hasNonZeroStat(summaryStat) && (
-              <DiffStatLabel
-                additions={summaryStat.additions}
-                className="text-xs leading-4"
-                deletions={summaryStat.deletions}
-                layout="inline"
-              />
-            )}
-          </p>
-          {selectedScope === "turn" && turnFiles.length === 0 && (
-            <p className="mt-1 text-[0.9em] text-muted-foreground/70">
-              No turn-scoped file changes detected. Snapshot has {snapshotFiles.length} changed{" "}
-              {snapshotFiles.length === 1 ? "file" : "files"}.
-            </p>
-          )}
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-2 rounded-t-2xl bg-card/72 p-2 backdrop-blur-md">
+        <div className="min-w-0 leading-4">
+          <DiffStatLabel
+            additions={summaryStat.additions}
+            className="leading-4"
+            deletions={summaryStat.deletions}
+            layout="inline"
+          />
         </div>
         <div className="flex items-center gap-1">
           <DiffScopeToggle value={selectedScope} onChange={setPreferredScope} />
@@ -799,17 +768,18 @@ function AssistantChangedFilesSectionInner({
             type="button"
             size="xs"
             variant="outline"
-            className="h-[1.5em] px-[0.4em] text-[0.8em] sm:h-[1.5em] sm:text-[0.8em]"
+            className="size-[1.5em] p-0 text-[inherit] sm:h-[1.5em] sm:text-[inherit]"
             disabled={visibleFiles.length === 0}
             onClick={() => onOpenTurnDiff(turnSummary.turnId, visibleFiles[0]?.path, selectedScope)}
+            aria-label="View diff"
           >
-            View diff
+            <DiffIcon className="size-[0.85em]" />
           </Button>
           <Button
             type="button"
             size="xs"
             variant="ghost"
-            className="size-[1.5em] p-0 sm:h-[1.5em]"
+            className="size-[1.5em] p-0 text-[inherit] sm:h-[1.5em] sm:text-[inherit]"
             onClick={() => setCollapsed((c) => !c)}
             aria-label={collapsed ? "Expand changed files" : "Collapse changed files"}
           >
@@ -1189,13 +1159,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
 
   return (
-    <div
-      className="rounded-lg px-1"
-      style={{
-        paddingTop: "var(--density-work-entry-py)",
-        paddingBottom: "var(--density-work-entry-py)",
-      }}
-    >
+    <div className="rounded-lg px-1 py-1">
       <div className="flex items-center gap-2 transition-[opacity,translate] duration-200">
         <span
           className={cn("flex size-5 shrink-0 items-center justify-center", iconConfig.className)}
@@ -1207,7 +1171,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
             <div className="max-w-full">
               <p
                 className={cn(
-                  "truncate text-xs leading-5",
+                  "truncate text-[length:inherit] leading-[1.67]",
                   workToneClass(workEntry.tone),
                   preview ? "text-muted-foreground/70" : "",
                 )}
@@ -1233,7 +1197,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                       className="max-w-[min(56rem,calc(100vw-2rem))] px-0 py-0"
                       side="top"
                     >
-                      <div className="max-w-[min(56rem,calc(100vw-2rem))] overflow-x-auto px-1.5 py-1 font-mono text-[11px] leading-4 whitespace-nowrap">
+                      <div className="max-w-[min(56rem,calc(100vw-2rem))] overflow-x-auto px-1.5 py-1 font-mono text-[length:inherit] leading-[1.45] whitespace-nowrap">
                         {rawCommand}
                       </div>
                     </TooltipPopup>
@@ -1250,7 +1214,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
               >
                 <p
                   className={cn(
-                    "truncate text-[11px] leading-5",
+                    "truncate text-[length:inherit] leading-[1.67]",
                     workToneClass(workEntry.tone),
                     preview ? "text-muted-foreground/70" : "",
                   )}
@@ -1262,7 +1226,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                 </p>
               </TooltipTrigger>
               <TooltipPopup className="max-w-[min(720px,calc(100vw-2rem))]">
-                <p className="whitespace-pre-wrap wrap-break-word text-xs leading-5">
+                <p className="whitespace-pre-wrap wrap-break-word text-[length:inherit] leading-[1.67]">
                   {displayText}
                 </p>
               </TooltipPopup>
@@ -1277,7 +1241,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
             return (
               <span
                 key={`${workEntry.id}:${filePath}`}
-                className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
+                className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[0.85em] text-muted-foreground/75"
                 title={displayPath}
               >
                 {displayPath}
@@ -1285,7 +1249,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
             );
           })}
           {(workEntry.changedFiles?.length ?? 0) > 4 && (
-            <span className="px-1 text-[10px] text-muted-foreground/55">
+            <span className="px-1 text-[0.85em] text-muted-foreground/55">
               +{(workEntry.changedFiles?.length ?? 0) - 4}
             </span>
           )}

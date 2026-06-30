@@ -226,11 +226,10 @@ export const BranchToolbar = memo(function BranchToolbar({
 
   return (
     <div
-      className="mx-auto flex w-full max-w-208 items-center justify-between gap-2 pt-1"
+      className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2 pb-3 pt-1"
       style={{
-        paddingLeft: "calc(env(safe-area-inset-left) + var(--density-toolbar-px))",
-        paddingRight: "calc(env(safe-area-inset-right) + var(--density-toolbar-px))",
-        paddingBottom: "var(--density-toolbar-pb)",
+        paddingLeft: "calc(env(safe-area-inset-left) + var(--spacing) * 2.5)",
+        paddingRight: "calc(env(safe-area-inset-right) + var(--spacing) * 2.5)",
       }}
     >
       {isMobile ? (

@@ -743,11 +743,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   </span>
                 ) : (
                   <span
-                    className={`text-[10px] ${
+                    className={`${
                       isHighlighted
                         ? "text-foreground/72 dark:text-foreground/82"
                         : "text-muted-foreground/40"
                     }`}
+                    style={{ fontSize: "calc(var(--app-sidebar-font-size) * 0.85)" }}
                   >
                     {formatRelativeTimeLabel(
                       thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
@@ -787,7 +788,6 @@ interface SidebarProjectThreadListProps {
   confirmingArchiveThreadKey: string | null;
   setConfirmingArchiveThreadKey: React.Dispatch<React.SetStateAction<string | null>>;
   confirmArchiveButtonRefs: React.RefObject<Map<string, HTMLButtonElement>>;
-  attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   handleThreadClick: (
     event: React.MouseEvent,
     threadRef: ScopedThreadRef,
@@ -821,6 +821,16 @@ interface SidebarProjectThreadListProps {
 const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
   props: SidebarProjectThreadListProps,
 ) {
+  if (!props.shouldShowThreadPanel) {
+    return null;
+  }
+
+  return <VisibleSidebarProjectThreadList {...props} />;
+});
+
+const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThreadList(
+  props: SidebarProjectThreadListProps,
+) {
   const {
     projectKey,
     projectExpanded,
@@ -831,7 +841,6 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     renderedThreads,
     memberProjectByScopedKey,
     showEmptyThreadState,
-    shouldShowThreadPanel,
     isThreadListExpanded,
     projectCwd,
     activeRouteThreadKey,
@@ -845,7 +854,6 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     confirmingArchiveThreadKey,
     setConfirmingArchiveThreadKey,
     confirmArchiveButtonRefs,
-    attachThreadListAutoAnimateRef,
     handleThreadClick,
     navigateToThread,
     handleMultiSelectContextMenu,
@@ -869,27 +877,6 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
         .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
         .filter((threadKey) => pinnedThreadKeySet.has(threadKey)),
     [pinnedThreadKeySet, renderedThreads],
-  );
-  const pinnedThreadDnDSensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 6 },
-    }),
-  );
-  const pinnedThreadCollisionDetection = useCallback<CollisionDetection>((args) => {
-    const pointerCollisions = pointerWithin(args);
-    if (pointerCollisions.length > 0) {
-      return pointerCollisions;
-    }
-
-    return closestCorners(args);
-  }, []);
-  const handlePinnedThreadDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const { active, over } = event;
-      if (!over || active.id === over.id) return;
-      reorderPinnedThreads(projectKey, String(active.id), String(over.id));
-    },
-    [projectKey, reorderPinnedThreads],
   );
 
   const renderThreadRow = useCallback(
@@ -964,6 +951,111 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     ],
   );
 
+  const content = (
+    <SidebarMenuSub
+      className="mx-1 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1.5 py-0"
+      style={{ animation: "none", transition: "none" }}
+    >
+      {showEmptyThreadState ? (
+        <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+          <div
+            data-thread-selection-safe
+            className="flex h-6 w-full translate-x-0 items-center px-2 text-left text-[10px] text-muted-foreground/60"
+          >
+            <span>No threads yet</span>
+          </div>
+        </SidebarMenuSubItem>
+      ) : null}
+      {renderedThreads.map(renderThreadRow)}
+
+      {projectExpanded && hasOverflowingThreads && !isThreadListExpanded && (
+        <SidebarMenuSubItem className="w-full">
+          <SidebarMenuSubButton
+            render={showMoreButtonRender}
+            data-thread-selection-safe
+            size="sm"
+            className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 transition-none hover:bg-accent hover:text-muted-foreground/80"
+            onClick={() => {
+              expandThreadListForProject(projectKey);
+            }}
+          >
+            <span className="flex min-w-0 flex-1 items-center gap-2">
+              {hiddenThreadStatus && <ThreadStatusLabel status={hiddenThreadStatus} compact />}
+              <span>Show more</span>
+            </span>
+          </SidebarMenuSubButton>
+        </SidebarMenuSubItem>
+      )}
+      {projectExpanded && hasOverflowingThreads && isThreadListExpanded && (
+        <SidebarMenuSubItem className="w-full">
+          <SidebarMenuSubButton
+            render={showLessButtonRender}
+            data-thread-selection-safe
+            size="sm"
+            className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 transition-none hover:bg-accent hover:text-muted-foreground/80"
+            onClick={() => {
+              collapseThreadListForProject(projectKey);
+            }}
+          >
+            <span>Show less</span>
+          </SidebarMenuSubButton>
+        </SidebarMenuSubItem>
+      )}
+    </SidebarMenuSub>
+  );
+
+  if (sortablePinnedThreadKeys.length === 0) {
+    return content;
+  }
+
+  return (
+    <PinnedThreadDragContext
+      projectKey={projectKey}
+      sortablePinnedThreadKeys={sortablePinnedThreadKeys}
+      reorderPinnedThreads={reorderPinnedThreads}
+    >
+      {content}
+    </PinnedThreadDragContext>
+  );
+});
+
+const PinnedThreadDragContext = memo(function PinnedThreadDragContext({
+  children,
+  projectKey,
+  reorderPinnedThreads,
+  sortablePinnedThreadKeys,
+}: {
+  children: React.ReactNode;
+  projectKey: string;
+  reorderPinnedThreads: (
+    projectKey: string,
+    draggedThreadKey: string,
+    targetThreadKey: string,
+  ) => void;
+  sortablePinnedThreadKeys: readonly string[];
+}) {
+  const pinnedThreadDnDSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    }),
+  );
+  const pinnedThreadCollisionDetection = useCallback<CollisionDetection>((args) => {
+    const pointerCollisions = pointerWithin(args);
+    if (pointerCollisions.length > 0) {
+      return pointerCollisions;
+    }
+
+    return closestCorners(args);
+  }, []);
+  const handlePinnedThreadDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      reorderPinnedThreads(projectKey, String(active.id), String(over.id));
+    },
+    [projectKey, reorderPinnedThreads],
+  );
+
   return (
     <DndContext
       sensors={pinnedThreadDnDSensors}
@@ -971,57 +1063,8 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
       modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
       onDragEnd={handlePinnedThreadDragEnd}
     >
-      <SortableContext items={sortablePinnedThreadKeys} strategy={verticalListSortingStrategy}>
-        <SidebarMenuSub
-          ref={attachThreadListAutoAnimateRef}
-          className="mx-1 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1.5 py-0"
-        >
-          {shouldShowThreadPanel && showEmptyThreadState ? (
-            <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
-              <div
-                data-thread-selection-safe
-                className="flex h-6 w-full translate-x-0 items-center px-2 text-left text-[10px] text-muted-foreground/60"
-              >
-                <span>No threads yet</span>
-              </div>
-            </SidebarMenuSubItem>
-          ) : null}
-          {shouldShowThreadPanel && renderedThreads.map(renderThreadRow)}
-
-          {projectExpanded && hasOverflowingThreads && !isThreadListExpanded && (
-            <SidebarMenuSubItem className="w-full">
-              <SidebarMenuSubButton
-                render={showMoreButtonRender}
-                data-thread-selection-safe
-                size="sm"
-                className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-                onClick={() => {
-                  expandThreadListForProject(projectKey);
-                }}
-              >
-                <span className="flex min-w-0 flex-1 items-center gap-2">
-                  {hiddenThreadStatus && <ThreadStatusLabel status={hiddenThreadStatus} compact />}
-                  <span>Show more</span>
-                </span>
-              </SidebarMenuSubButton>
-            </SidebarMenuSubItem>
-          )}
-          {projectExpanded && hasOverflowingThreads && isThreadListExpanded && (
-            <SidebarMenuSubItem className="w-full">
-              <SidebarMenuSubButton
-                render={showLessButtonRender}
-                data-thread-selection-safe
-                size="sm"
-                className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-                onClick={() => {
-                  collapseThreadListForProject(projectKey);
-                }}
-              >
-                <span>Show less</span>
-              </SidebarMenuSubButton>
-            </SidebarMenuSubItem>
-          )}
-        </SidebarMenuSub>
+      <SortableContext items={[...sortablePinnedThreadKeys]} strategy={verticalListSortingStrategy}>
+        {children}
       </SortableContext>
     </DndContext>
   );
@@ -1036,7 +1079,6 @@ interface SidebarProjectItemProps {
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   threadJumpLabelByKey: ReadonlyMap<string, string>;
-  attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
   dragInProgressRef: React.RefObject<boolean>;
@@ -1056,7 +1098,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     archiveThread,
     deleteThread,
     threadJumpLabelByKey,
-    attachThreadListAutoAnimateRef,
     expandThreadListForProject,
     collapseThreadListForProject,
     dragInProgressRef,
@@ -1371,7 +1412,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (selectedThreadCount > 0) {
         clearSelection();
       }
-      toggleProject(project.projectKey);
+      React.startTransition(() => {
+        toggleProject(project.projectKey);
+      });
     },
     [
       clearSelection,
@@ -1391,7 +1434,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (dragInProgressRef.current) {
         return;
       }
-      toggleProject(project.projectKey);
+      React.startTransition(() => {
+        toggleProject(project.projectKey);
+      });
     },
     [dragInProgressRef, project.projectKey, toggleProject],
   );
@@ -2243,7 +2288,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         confirmingArchiveThreadKey={confirmingArchiveThreadKey}
         setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
         confirmArchiveButtonRefs={confirmArchiveButtonRefs}
-        attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
         handleThreadClick={handleThreadClick}
         navigateToThread={navigateToThread}
         handleMultiSelectContextMenu={handleMultiSelectContextMenu}
@@ -2463,27 +2507,11 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
   );
 
   return isElectron ? (
-    <SidebarHeader
-      className="drag-region h-[52px] flex-row items-center py-0 pl-[90px] wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)]"
-      style={{
-        gap: "var(--density-sidebar-chrome-gap)",
-        paddingRight: "var(--density-sidebar-chrome-px)",
-      }}
-    >
+    <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-3 py-0 pr-3 pl-[90px] sm:gap-2.5 sm:pr-4 wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)]">
       {wordmark}
     </SidebarHeader>
   ) : (
-    <SidebarHeader
-      style={{
-        gap: "var(--density-sidebar-chrome-gap)",
-        paddingLeft: "var(--density-sidebar-chrome-px)",
-        paddingRight: "var(--density-sidebar-chrome-px)",
-        paddingTop: "var(--density-sidebar-chrome-py)",
-        paddingBottom: "var(--density-sidebar-chrome-py)",
-      }}
-    >
-      {wordmark}
-    </SidebarHeader>
+    <SidebarHeader className="gap-2 px-2 py-0 sm:px-2 md:hidden">{wordmark}</SidebarHeader>
   );
 });
 
@@ -2498,20 +2526,13 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   }, [isMobile, navigate, setOpenMobile]);
 
   return (
-    <SidebarFooter style={{ padding: "var(--density-sidebar-footer-p)" }}>
+    <SidebarFooter className="p-2">
       <SidebarUpdatePill />
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
             size="sm"
-            className="text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-            style={{
-              gap: "var(--density-sidebar-action-gap)",
-              paddingLeft: "var(--density-sidebar-action-px)",
-              paddingRight: "var(--density-sidebar-action-px)",
-              paddingTop: "var(--density-sidebar-action-py)",
-              paddingBottom: "var(--density-sidebar-action-py)",
-            }}
+            className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
             onClick={handleSettingsClick}
           >
             <SettingsIcon className="size-3.5" />
@@ -2550,7 +2571,6 @@ interface SidebarProjectsContentProps {
   newThreadShortcutLabel: string | null;
   commandPaletteShortcutLabel: string | null;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
-  attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
   dragInProgressRef: React.RefObject<boolean>;
@@ -2590,7 +2610,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     newThreadShortcutLabel,
     commandPaletteShortcutLabel,
     threadJumpLabelByKey,
-    attachThreadListAutoAnimateRef,
     expandThreadListForProject,
     collapseThreadListForProject,
     dragInProgressRef,
@@ -2625,28 +2644,14 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 
   return (
     <SidebarContent className="gap-0">
-      <SidebarGroup
-        style={{
-          paddingLeft: "var(--density-sidebar-group-px)",
-          paddingRight: "var(--density-sidebar-group-px)",
-          paddingTop: "var(--density-sidebar-group-py)",
-          paddingBottom: "var(--density-sidebar-group-pb-tight)",
-        }}
-      >
+      <SidebarGroup className="px-2 pt-0 pb-1">
         <SidebarMenu>
           <SidebarMenuItem>
             <CommandDialogTrigger
               render={
                 <SidebarMenuButton
                   size="sm"
-                  className="text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
-                  style={{
-                    gap: "var(--density-sidebar-action-gap)",
-                    paddingLeft: "var(--density-sidebar-action-px)",
-                    paddingRight: "var(--density-sidebar-action-px)",
-                    paddingTop: "var(--density-sidebar-action-py)",
-                    paddingBottom: "var(--density-sidebar-action-py)",
-                  }}
+                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
                   data-testid="command-palette-trigger"
                 />
               }
@@ -2663,14 +2668,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           <SidebarMenuItem>
             <SidebarMenuButton
               size="sm"
-              className="text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
-              style={{
-                gap: "var(--density-sidebar-action-gap)",
-                paddingLeft: "var(--density-sidebar-action-px)",
-                paddingRight: "var(--density-sidebar-action-px)",
-                paddingTop: "var(--density-sidebar-action-py)",
-                paddingBottom: "var(--density-sidebar-action-py)",
-              }}
+              className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
               onClick={handleSkillsClick}
             >
               <SparklesIcon className="size-3.5" />
@@ -2680,14 +2678,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         </SidebarMenu>
       </SidebarGroup>
       {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
-        <SidebarGroup
-          style={{
-            paddingLeft: "var(--density-sidebar-group-px)",
-            paddingRight: "var(--density-sidebar-group-px)",
-            paddingTop: "var(--density-sidebar-group-py)",
-            paddingBottom: 0,
-          }}
-        >
+        <SidebarGroup className="px-2 pt-2 pb-0">
           <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
             <TriangleAlertIcon />
             <AlertTitle>Intel build on Apple Silicon</AlertTitle>
@@ -2709,18 +2700,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </Alert>
         </SidebarGroup>
       ) : null}
-      <SidebarGroup
-        style={{
-          paddingLeft: "var(--density-sidebar-group-px)",
-          paddingRight: "var(--density-sidebar-group-px)",
-          paddingTop: "var(--density-sidebar-group-py)",
-          paddingBottom: "var(--density-sidebar-group-py)",
-        }}
-      >
+      <SidebarGroup className="p-2">
         <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-            Projects
-          </span>
+          <span className="text-[11px] font-medium text-muted-foreground/60">Projects</span>
           <div className="flex items-center gap-1">
             <ProjectSortMenu
               projectSortOrder={projectSortOrder}
@@ -2777,7 +2759,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         archiveThread={archiveThread}
                         deleteThread={deleteThread}
                         threadJumpLabelByKey={threadJumpLabelByKey}
-                        attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
                         expandThreadListForProject={expandThreadListForProject}
                         collapseThreadListForProject={collapseThreadListForProject}
                         dragInProgressRef={dragInProgressRef}
@@ -2809,7 +2790,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 archiveThread={archiveThread}
                 deleteThread={deleteThread}
                 threadJumpLabelByKey={threadJumpLabelByKey}
-                attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
                 expandThreadListForProject={expandThreadListForProject}
                 collapseThreadListForProject={collapseThreadListForProject}
                 dragInProgressRef={dragInProgressRef}
@@ -3039,8 +3019,8 @@ export default function Sidebar() {
       dragInProgressRef.current = false;
       const { active, over } = event;
       if (!over || active.id === over.id) return;
-      const activeProject = sidebarProjects.find((project) => project.projectKey === active.id);
-      const overProject = sidebarProjects.find((project) => project.projectKey === over.id);
+      const activeProject = sidebarProjectByKey.get(String(active.id));
+      const overProject = sidebarProjectByKey.get(String(over.id));
       if (!activeProject || !overProject) return;
       const activeMemberKeys = activeProject.memberProjects.map(
         (member) => member.physicalProjectKey,
@@ -3048,7 +3028,7 @@ export default function Sidebar() {
       const overMemberKeys = overProject.memberProjects.map((member) => member.physicalProjectKey);
       reorderProjects(activeMemberKeys, overMemberKeys);
     },
-    [sidebarProjectSortOrder, reorderProjects, sidebarProjects],
+    [sidebarProjectSortOrder, reorderProjects, sidebarProjectByKey],
   );
 
   const handleProjectDragStart = useCallback(
@@ -3073,15 +3053,6 @@ export default function Sidebar() {
     }
     autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
     animatedProjectListsRef.current.add(node);
-  }, []);
-
-  const animatedThreadListsRef = useRef(new WeakSet<HTMLElement>());
-  const attachThreadListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
-    if (!node || animatedThreadListsRef.current.has(node)) {
-      return;
-    }
-    autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
-    animatedThreadListsRef.current.add(node);
   }, []);
 
   const visibleThreads = useMemo(
@@ -3230,18 +3201,37 @@ export default function Sidebar() {
       }),
     [prewarmedSidebarThreadKeys],
   );
+  const retainedSidebarThreadDetailsRef = useRef(new Map<string, () => void>());
 
   useEffect(() => {
-    const releases = prewarmedSidebarThreadRefs.map((ref) =>
-      retainThreadDetailSubscription(ref.environmentId, ref.threadId),
-    );
+    const retained = retainedSidebarThreadDetailsRef.current;
+    const nextThreadKeys = new Set<string>();
 
+    for (const ref of prewarmedSidebarThreadRefs) {
+      const threadKey = scopedThreadKey(ref);
+      nextThreadKeys.add(threadKey);
+      if (!retained.has(threadKey)) {
+        retained.set(threadKey, retainThreadDetailSubscription(ref.environmentId, ref.threadId));
+      }
+    }
+
+    for (const [threadKey, release] of retained) {
+      if (!nextThreadKeys.has(threadKey)) {
+        release();
+        retained.delete(threadKey);
+      }
+    }
+  }, [prewarmedSidebarThreadRefs]);
+
+  useEffect(() => {
+    const retained = retainedSidebarThreadDetailsRef.current;
     return () => {
-      for (const release of releases) {
+      for (const release of retained.values()) {
         release();
       }
+      retained.clear();
     };
-  }, [prewarmedSidebarThreadRefs]);
+  }, []);
 
   useEffect(() => {
     updateThreadJumpHintsVisibility(shouldShowThreadJumpHintsNow);
@@ -3500,7 +3490,6 @@ export default function Sidebar() {
             newThreadShortcutLabel={newThreadShortcutLabel}
             commandPaletteShortcutLabel={commandPaletteShortcutLabel}
             threadJumpLabelByKey={visibleThreadJumpLabelByKey}
-            attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
             expandThreadListForProject={expandThreadListForProject}
             collapseThreadListForProject={collapseThreadListForProject}
             dragInProgressRef={dragInProgressRef}
