@@ -1,10 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as RcMap from "effect/RcMap";
 import * as Schema from "effect/Schema";
@@ -133,6 +134,7 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
 });
 
 export const make = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
@@ -185,37 +187,34 @@ export const make = Effect.gen(function* () {
       const parentPath = endsWithSeparator ? resolvedInputPath : path.dirname(resolvedInputPath);
       const prefix = endsWithSeparator ? "" : path.basename(resolvedInputPath);
 
-      const dirents = yield* Effect.tryPromise({
-        try: () => NodeFSP.readdir(parentPath, { withFileTypes: true }),
-        catch: (cause) =>
-          new WorkspaceEntriesReadDirectoryError({
-            cwd: input.cwd,
-            partialPath: input.partialPath,
-            parentPath,
-            cause,
-          }),
-      }).pipe(
-        Effect.catchIf(
-          (error) => {
-            const code = (error.cause as NodeJS.ErrnoException | undefined)?.code;
-            return code === "EACCES" || code === "EPERM";
-          },
-          () => Effect.succeed([]),
+      const entryNames = yield* fileSystem.readDirectory(parentPath).pipe(
+        Effect.catchTag("PlatformError", (cause) =>
+          cause.reason._tag === "PermissionDenied"
+            ? Effect.succeed([])
+            : Effect.fail(
+                new WorkspaceEntriesReadDirectoryError({
+                  cwd: input.cwd,
+                  partialPath: input.partialPath,
+                  parentPath,
+                  cause,
+                }),
+              ),
         ),
       );
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
       const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
-      for (const dirent of dirents) {
-        if (
-          dirent.isDirectory() &&
-          dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-          (showHidden || !dirent.name.startsWith("."))
-        ) {
+      for (const name of entryNames) {
+        if (name.toLowerCase().startsWith(lowerPrefix) && (showHidden || !name.startsWith("."))) {
+          const fullPath = path.join(parentPath, name);
+          const info = yield* fileSystem.stat(fullPath).pipe(Effect.option);
+          if (Option.isNone(info) || info.value.type !== "Directory") {
+            continue;
+          }
           entries.push({
-            name: dirent.name,
-            fullPath: path.join(parentPath, dirent.name),
+            name,
+            fullPath,
           });
         }
       }
