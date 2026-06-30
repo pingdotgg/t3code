@@ -194,6 +194,36 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
     }),
   },
   {
+    slug: "claude-sonnet-5",
+    name: "Claude Sonnet 5",
+    isCustom: false,
+    capabilities: createModelCapabilities({
+      optionDescriptors: [
+        buildSelectOptionDescriptor({
+          id: "effort",
+          label: "Reasoning",
+          options: [
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High", isDefault: true },
+            { value: "xhigh", label: "Extra High" },
+            { value: "max", label: "Max" },
+            { value: "ultrathink", label: "Ultrathink" },
+          ],
+          promptInjectedValues: ["ultrathink"],
+        }),
+        buildSelectOptionDescriptor({
+          id: "contextWindow",
+          label: "Context Window",
+          options: [
+            { value: "200k", label: "200k", isDefault: true },
+            { value: "1m", label: "1M" },
+          ],
+        }),
+      ],
+    }),
+  },
+  {
     slug: "claude-sonnet-4-6",
     name: "Claude Sonnet 4.6",
     isCustom: false,
@@ -322,7 +352,12 @@ export function normalizeClaudeCliEffort(
   if (effort === "ultracode") {
     return "xhigh";
   }
-  if (effort === "xhigh" && model !== "claude-fable-5" && model !== "claude-opus-4-8") {
+  if (
+    effort === "xhigh" &&
+    model !== "claude-fable-5" &&
+    model !== "claude-opus-4-8" &&
+    model !== "claude-sonnet-5"
+  ) {
     return "max";
   }
   if (effort === "max" && model === "claude-sonnet-4-6") {
