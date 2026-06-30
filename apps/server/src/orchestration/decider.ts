@@ -166,20 +166,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         projectId: command.projectId,
       });
-      const activeThreads = listThreadsByProjectId(readModel, command.projectId).filter(
+      const undeletedThreads = listThreadsByProjectId(readModel, command.projectId).filter(
         (thread) => thread.deletedAt === null,
       );
-      if (activeThreads.length > 0 && command.force !== true) {
+      // Archived threads are hidden from the user and excluded from the client's
+      // project view, so the client treats such a project as empty and sends
+      // project.delete without force=true. Only non-archived threads should block
+      // a plain delete; archived ones are still cascade-deleted below so none are
+      // orphaned. See #2866.
+      const blockingThreads = undeletedThreads.filter((thread) => thread.archivedAt === null);
+      if (blockingThreads.length > 0 && command.force !== true) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Project '${command.projectId}' is not empty and cannot be deleted without force=true.`,
         });
       }
-      if (activeThreads.length > 0) {
+      if (undeletedThreads.length > 0) {
         return yield* decideCommandSequence({
           readModel,
           commands: [
-            ...activeThreads.map(
+            ...undeletedThreads.map(
               (thread): Extract<OrchestrationCommand, { type: "thread.delete" }> => ({
                 type: "thread.delete",
                 commandId: command.commandId,
