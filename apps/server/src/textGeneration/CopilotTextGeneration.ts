@@ -174,7 +174,7 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
         cwd: input.cwd,
       });
 
-      const client = yield* sharedClientMutex.withPermit(
+      const existingClient = yield* sharedClientMutex.withPermit(
         Effect.gen(function* () {
           const existing = sharedClients.get(clientKey);
           if (existing) {
@@ -182,48 +182,77 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
             existing.activeRequests += 1;
             return existing.client;
           }
-
-          return yield* Effect.uninterruptibleMask((restore) =>
-            Effect.gen(function* () {
-              const client = yield* restore(
-                createCopilotClient({
-                  settings: input.settings,
-                  cwd: input.cwd,
-                  ...(options?.baseDirectory ? { baseDirectory: options.baseDirectory } : {}),
-                  env: environment,
-                  platform,
-                  logLevel: "error",
-                }).pipe(
-                  Effect.mapError((cause) =>
-                    copilotTextGenerationError(
-                      input.operation,
-                      detailFromCause(cause, "Failed to configure Copilot client."),
-                      cause,
-                    ),
-                  ),
-                ),
-              );
-              yield* Effect.tryPromise({
-                try: () => client.start(),
-                catch: (cause) =>
-                  copilotTextGenerationError(
-                    input.operation,
-                    detailFromCause(cause, "Failed to start Copilot client."),
-                    cause,
-                  ),
-              });
-
-              sharedClients.set(clientKey, {
-                client,
-                activeRequests: 1,
-                idleCloseFiber: null,
-              });
-              return client;
-            }),
-          );
+          return undefined;
         }),
       );
+      if (existingClient) {
+        return { clientKey, client: existingClient };
+      }
 
+      const newClient = yield* createCopilotClient({
+        settings: input.settings,
+        cwd: input.cwd,
+        ...(options?.baseDirectory ? { baseDirectory: options.baseDirectory } : {}),
+        env: environment,
+        platform,
+        logLevel: "error",
+      }).pipe(
+        Effect.mapError((cause) =>
+          copilotTextGenerationError(
+            input.operation,
+            detailFromCause(cause, "Failed to configure Copilot client."),
+            cause,
+          ),
+        ),
+      );
+      yield* Effect.tryPromise({
+        try: (signal) =>
+          new Promise<void>((resolve, reject) => {
+            const abort = () => {
+              void newClient.stop().catch(() => undefined);
+              reject(signal.reason ?? new Error("Copilot client startup interrupted."));
+            };
+            if (signal.aborted) {
+              abort();
+              return;
+            }
+            signal.addEventListener("abort", abort, { once: true });
+            newClient
+              .start()
+              .then(resolve, reject)
+              .finally(() => {
+                signal.removeEventListener("abort", abort);
+              });
+          }),
+        catch: (cause) =>
+          copilotTextGenerationError(
+            input.operation,
+            detailFromCause(cause, "Failed to start Copilot client."),
+            cause,
+          ),
+      });
+
+      const client = yield* sharedClientMutex.withPermit(
+        Effect.gen(function* () {
+          const existing = sharedClients.get(clientKey);
+          if (existing) {
+            yield* Effect.tryPromise({
+              try: () => newClient.stop(),
+              catch: () => undefined,
+            }).pipe(Effect.ignore);
+            yield* cancelIdleCloseFiber(existing);
+            existing.activeRequests += 1;
+            return existing.client;
+          }
+
+          sharedClients.set(clientKey, {
+            client: newClient,
+            activeRequests: 1,
+            idleCloseFiber: null,
+          });
+          return newClient;
+        }),
+      );
       return { clientKey, client };
     });
 
