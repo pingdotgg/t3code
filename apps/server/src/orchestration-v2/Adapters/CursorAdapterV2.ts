@@ -3,7 +3,6 @@ import type {
   AgentOptions,
   InteractionUpdate,
   McpServerConfig,
-  ModelSelection as CursorSdkModelSelection,
   RunResult,
   SDKUserMessage,
   ToolCall,
@@ -42,7 +41,7 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import { cursorSdkParameterId } from "../../provider/cursorSdkModel.ts";
+import { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
@@ -88,6 +87,7 @@ import {
 } from "./CursorAgentSdk.ts";
 
 export { CURSOR_PROVIDER } from "./CursorAgentSdk.ts";
+export { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
 
 export const CURSOR_DRIVER_KIND = CURSOR_PROVIDER;
 export const CURSOR_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CURSOR_DRIVER_KIND);
@@ -208,20 +208,6 @@ export function cursorRuntimeAgentPolicy(
       runtimePolicy.sandboxPolicy === undefined
         ? runtimePolicy.runtimeMode !== "full-access"
         : sandboxPolicyType !== "dangerFullAccess",
-  };
-}
-
-export function cursorSdkModelSelection(modelSelection: ModelSelection): CursorSdkModelSelection {
-  return {
-    id: modelSelection.model === "auto" ? "default" : modelSelection.model,
-    ...(modelSelection.options === undefined || modelSelection.options.length === 0
-      ? {}
-      : {
-          params: modelSelection.options.map((option) => ({
-            id: cursorSdkParameterId(option.id),
-            value: String(option.value),
-          })),
-        }),
   };
 }
 
@@ -2488,14 +2474,6 @@ export const CursorAdapterV2Driver: ProviderAdapterDriver<
       const idAllocator = yield* IdAllocatorV2;
       const runner = yield* CursorAgentSdkRunner;
       const serverConfig = yield* ServerConfig;
-      if (input.config.apiEndpoint.length > 0) {
-        yield* Effect.logWarning(
-          "Cursor V2 uses the official SDK, which does not expose an API endpoint override.",
-          {
-            instanceId: input.instanceId,
-          },
-        );
-      }
       return makeCursorAdapterV2({
         instanceId: input.instanceId,
         settings: {
