@@ -24,9 +24,9 @@ const readRuntimeConfig = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const bytes = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
   if (Option.isNone(bytes)) {
-    return null;
+    return Option.none<RelayManagedEndpointRuntimeConfig>();
   }
-  return Option.getOrNull(decodeRuntimeConfig(bytesToString(bytes.value)));
+  return decodeRuntimeConfig(bytesToString(bytes.value));
 });
 
 export type CloudManagedEndpointRuntimeStatus =
@@ -56,7 +56,7 @@ export class CloudManagedEndpointRuntime extends Context.Service<
   CloudManagedEndpointRuntime,
   {
     readonly applyConfig: (
-      config: RelayManagedEndpointRuntimeConfig | null,
+      config: Option.Option<RelayManagedEndpointRuntimeConfig>,
     ) => Effect.Effect<CloudManagedEndpointRuntimeStatus>;
   }
 >()("t3/cloud/ManagedEndpointRuntime/CloudManagedEndpointRuntime") {}
@@ -84,28 +84,32 @@ function runtimeConfigKey(config: RelayManagedEndpointRuntimeConfig): string {
   });
 }
 
-const stopConnector = (connector: ActiveConnector | null) =>
-  connector
-    ? Scope.close(connector.scope, Exit.void).pipe(
+const stopConnector = (connector: Option.Option<ActiveConnector>) =>
+  Option.match(connector, {
+    onNone: () => Effect.void,
+    onSome: (active) =>
+      Scope.close(active.scope, Exit.void).pipe(
         Effect.tap(() =>
           Effect.logInfo("Relay client stopped", {
-            pid: Number(connector.child.pid),
+            pid: Number(active.child.pid),
           }),
         ),
         Effect.ignore,
-      )
-    : Effect.void;
+      ),
+  });
 
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relayClient = yield* RelayClient.RelayClient;
-  const activeRef = yield* Ref.make<ActiveConnector | null>(null);
-  const desiredConfigRef = yield* Ref.make<RelayManagedEndpointRuntimeConfig | null>(null);
+  const activeRef = yield* Ref.make<Option.Option<ActiveConnector>>(Option.none());
+  const desiredConfigRef = yield* Ref.make<Option.Option<RelayManagedEndpointRuntimeConfig>>(
+    Option.none(),
+  );
   const reconcileSemaphore = yield* Semaphore.make(1);
   let reconcileConfig: CloudManagedEndpointRuntime["Service"]["applyConfig"];
 
   const stopActive = Effect.gen(function* () {
-    const active = yield* Ref.getAndSet(activeRef, null);
+    const active = yield* Ref.getAndSet(activeRef, Option.none());
     yield* stopConnector(active);
   });
 
@@ -116,19 +120,20 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const active = yield* Ref.get(activeRef);
           if (
-            active?.child.pid !== connector.child.pid ||
-            active.configKey !== connector.configKey
+            Option.isNone(active) ||
+            active.value.child.pid !== connector.child.pid ||
+            active.value.configKey !== connector.configKey
           ) {
             return;
           }
-          yield* Ref.set(activeRef, null);
-          yield* stopConnector(connector);
+          yield* Ref.set(activeRef, Option.none());
+          yield* stopConnector(Option.some(connector));
 
           const desiredConfig = yield* Ref.get(desiredConfigRef);
           if (
-            !desiredConfig ||
-            desiredConfig.providerKind !== "cloudflare_tunnel" ||
-            runtimeConfigKey(desiredConfig) !== connector.configKey
+            Option.isNone(desiredConfig) ||
+            desiredConfig.value.providerKind !== "cloudflare_tunnel" ||
+            runtimeConfigKey(desiredConfig.value) !== connector.configKey
           ) {
             return;
           }
@@ -181,120 +186,130 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  reconcileConfig = Effect.fn("CloudManagedEndpointRuntime.reconcileConfig")(function* (config) {
-    if (!config || config.providerKind !== "cloudflare_tunnel") {
-      yield* stopActive;
-      return config
-        ? { status: "unsupported", providerKind: config.providerKind }
-        : { status: "disabled" };
-    }
+  reconcileConfig = Effect.fn("CloudManagedEndpointRuntime.reconcileConfig")(
+    function* (configOption) {
+      if (Option.isNone(configOption)) {
+        yield* stopActive;
+        return { status: "disabled" };
+      }
 
-    const nextConfigKey = runtimeConfigKey(config);
-    const active = yield* Ref.get(activeRef);
-    if (active?.configKey === nextConfigKey) {
-      const isRunning = yield* active.child.isRunning.pipe(Effect.orElseSucceed(() => false));
-      if (isRunning) {
+      const config = configOption.value;
+      if (config.providerKind !== "cloudflare_tunnel") {
+        yield* stopActive;
+        return { status: "unsupported", providerKind: config.providerKind };
+      }
+
+      const nextConfigKey = runtimeConfigKey(config);
+      const active = yield* Ref.get(activeRef);
+      if (Option.isSome(active) && active.value.configKey === nextConfigKey) {
+        const isRunning = yield* active.value.child.isRunning.pipe(
+          Effect.orElseSucceed(() => false),
+        );
+        if (isRunning) {
+          return {
+            status: "running",
+            providerKind: "cloudflare_tunnel",
+            pid: Number(active.value.child.pid),
+            ...(active.value.config.tunnelId ? { tunnelId: active.value.config.tunnelId } : {}),
+            ...(active.value.config.tunnelName
+              ? { tunnelName: active.value.config.tunnelName }
+              : {}),
+          } satisfies CloudManagedEndpointRuntimeStatus;
+        }
+      }
+
+      yield* stopActive;
+
+      const executable = yield* relayClient.resolve;
+      if (executable.status !== "available") {
+        return {
+          status: "failed",
+          providerKind: "cloudflare_tunnel",
+          reason:
+            executable.status === "unsupported"
+              ? `Relay client is unsupported on ${executable.platform}-${executable.arch}.`
+              : "The relay client is not installed.",
+          ...(config.tunnelId ? { tunnelId: config.tunnelId } : {}),
+          ...(config.tunnelName ? { tunnelName: config.tunnelName } : {}),
+        } satisfies CloudManagedEndpointRuntimeStatus;
+      }
+
+      const connectorScope = yield* Scope.make("sequential");
+      const child = yield* spawner
+        .spawn(
+          ChildProcess.make(executable.executablePath, ["tunnel", "run"], {
+            detached: false,
+            env: {
+              ...process.env,
+              TUNNEL_TOKEN: config.connectorToken,
+            },
+            shell: false,
+            stderr: "pipe",
+            stdout: "pipe",
+          }),
+        )
+        .pipe(
+          Effect.provideService(Scope.Scope, connectorScope),
+          Effect.tap((child) =>
+            Effect.logInfo("Relay client process started; waiting for tunnel connection", {
+              pid: Number(child.pid),
+              tunnelId: config.tunnelId,
+              tunnelName: config.tunnelName,
+            }),
+          ),
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to start relay client", {
+              cause,
+              tunnelId: config.tunnelId,
+              tunnelName: config.tunnelName,
+            }).pipe(
+              Effect.andThen(Scope.close(connectorScope, Exit.void).pipe(Effect.ignore)),
+              Effect.as({
+                status: "failed",
+                providerKind: "cloudflare_tunnel",
+                reason: String(cause),
+                ...(config.tunnelId ? { tunnelId: config.tunnelId } : {}),
+                ...(config.tunnelName ? { tunnelName: config.tunnelName } : {}),
+              } satisfies CloudManagedEndpointRuntimeStatus),
+            ),
+          ),
+        );
+
+      if ("status" in child && child.status === "failed") {
+        return child;
+      }
+
+      if (!("status" in child)) {
+        const connector = {
+          child,
+          scope: connectorScope,
+          configKey: nextConfigKey,
+          config,
+        } satisfies ActiveConnector;
+        yield* Ref.set(activeRef, Option.some(connector));
+        yield* Effect.forkIn(observeConnectorOutput(connector), connectorScope);
+        yield* Effect.forkIn(superviseConnector(connector), connectorScope);
         return {
           status: "running",
           providerKind: "cloudflare_tunnel",
-          pid: Number(active.child.pid),
-          ...(active.config.tunnelId ? { tunnelId: active.config.tunnelId } : {}),
-          ...(active.config.tunnelName ? { tunnelName: active.config.tunnelName } : {}),
+          pid: Number(child.pid),
+          ...(config.tunnelId ? { tunnelId: config.tunnelId } : {}),
+          ...(config.tunnelName ? { tunnelName: config.tunnelName } : {}),
         } satisfies CloudManagedEndpointRuntimeStatus;
       }
-    }
 
-    yield* stopActive;
-
-    const executable = yield* relayClient.resolve;
-    if (executable.status !== "available") {
       return {
         status: "failed",
         providerKind: "cloudflare_tunnel",
-        reason:
-          executable.status === "unsupported"
-            ? `Relay client is unsupported on ${executable.platform}-${executable.arch}.`
-            : "The relay client is not installed.",
+        reason: "Relay client did not start.",
         ...(config.tunnelId ? { tunnelId: config.tunnelId } : {}),
         ...(config.tunnelName ? { tunnelName: config.tunnelName } : {}),
       } satisfies CloudManagedEndpointRuntimeStatus;
-    }
-
-    const connectorScope = yield* Scope.make("sequential");
-    const child = yield* spawner
-      .spawn(
-        ChildProcess.make(executable.executablePath, ["tunnel", "run"], {
-          detached: false,
-          env: {
-            ...process.env,
-            TUNNEL_TOKEN: config.connectorToken,
-          },
-          shell: false,
-          stderr: "pipe",
-          stdout: "pipe",
-        }),
-      )
-      .pipe(
-        Effect.provideService(Scope.Scope, connectorScope),
-        Effect.tap((child) =>
-          Effect.logInfo("Relay client process started; waiting for tunnel connection", {
-            pid: Number(child.pid),
-            tunnelId: config.tunnelId,
-            tunnelName: config.tunnelName,
-          }),
-        ),
-        Effect.catch((cause) =>
-          Effect.logWarning("Failed to start relay client", {
-            cause,
-            tunnelId: config.tunnelId,
-            tunnelName: config.tunnelName,
-          }).pipe(
-            Effect.andThen(Scope.close(connectorScope, Exit.void).pipe(Effect.ignore)),
-            Effect.as({
-              status: "failed",
-              providerKind: "cloudflare_tunnel",
-              reason: String(cause),
-              ...(config.tunnelId ? { tunnelId: config.tunnelId } : {}),
-              ...(config.tunnelName ? { tunnelName: config.tunnelName } : {}),
-            } satisfies CloudManagedEndpointRuntimeStatus),
-          ),
-        ),
-      );
-
-    if ("status" in child && child.status === "failed") {
-      return child;
-    }
-
-    if (!("status" in child)) {
-      const connector = {
-        child,
-        scope: connectorScope,
-        configKey: nextConfigKey,
-        config,
-      } satisfies ActiveConnector;
-      yield* Ref.set(activeRef, connector);
-      yield* Effect.forkIn(observeConnectorOutput(connector), connectorScope);
-      yield* Effect.forkIn(superviseConnector(connector), connectorScope);
-      return {
-        status: "running",
-        providerKind: "cloudflare_tunnel",
-        pid: Number(child.pid),
-        ...(config.tunnelId ? { tunnelId: config.tunnelId } : {}),
-        ...(config.tunnelName ? { tunnelName: config.tunnelName } : {}),
-      } satisfies CloudManagedEndpointRuntimeStatus;
-    }
-
-    return {
-      status: "failed",
-      providerKind: "cloudflare_tunnel",
-      reason: "Relay client did not start.",
-      ...(config.tunnelId ? { tunnelId: config.tunnelId } : {}),
-      ...(config.tunnelName ? { tunnelName: config.tunnelName } : {}),
-    } satisfies CloudManagedEndpointRuntimeStatus;
-  });
+    },
+  );
 
   const applyConfig = Effect.fn("CloudManagedEndpointRuntime.applyConfig")(
-    (config: RelayManagedEndpointRuntimeConfig | null) =>
+    (config: Option.Option<RelayManagedEndpointRuntimeConfig>) =>
       reconcileSemaphore.withPermits(1)(
         Ref.set(desiredConfigRef, config).pipe(Effect.andThen(reconcileConfig(config))),
       ),
@@ -307,12 +322,12 @@ export const make = Effect.gen(function* () {
   const initialConfig = yield* readRuntimeConfig.pipe(
     Effect.catch((cause) =>
       Effect.logWarning("Failed to read managed endpoint runtime config", { cause }).pipe(
-        Effect.as(null),
+        Effect.as(Option.none<RelayManagedEndpointRuntimeConfig>()),
       ),
     ),
   );
   yield* runtime.applyConfig(initialConfig);
-  yield* Effect.addFinalizer(() => runtime.applyConfig(null));
+  yield* Effect.addFinalizer(() => runtime.applyConfig(Option.none()));
   return runtime;
 });
 

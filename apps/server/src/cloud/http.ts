@@ -433,7 +433,7 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
   });
   yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
   const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(
-    payload.endpointRuntime,
+    Option.fromNullOr(payload.endpointRuntime),
   );
   const ok =
     endpointRuntimeStatus.status === "disabled" || endpointRuntimeStatus.status === "running";
@@ -642,7 +642,7 @@ const cloudLinkStateHandler = Effect.fn("environment.cloud.linkState")(
 const cloudUnlinkHandler = Effect.fn("environment.cloud.unlink")(
   function* (dependencies: CloudHttpDependencies) {
     yield* requireEnvironmentScope(AuthRelayWriteScope);
-    const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(null);
+    const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(Option.none());
     yield* Effect.all(
       [
         dependencies.secrets.remove(CLOUD_LINKED_USER_ID),

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -81,21 +81,24 @@ function makeHandle(input: {
 
 describe("CloudManagedEndpointRuntime", () => {
   it("classifies Cloudflare connection and warning output", () => {
-    expect(
+    assert.equal(
       ManagedEndpointRuntime.classifyRelayClientOutput(
         "2026-06-17T02:00:00Z INF Registered tunnel connection connIndex=0",
       ),
-    ).toBe("connected");
-    expect(
+      "connected",
+    );
+    assert.equal(
       ManagedEndpointRuntime.classifyRelayClientOutput(
         "2026-06-17T02:00:00Z ERR Failed to serve tunnel connection",
       ),
-    ).toBe("warning");
-    expect(
+      "warning",
+    );
+    assert.equal(
       ManagedEndpointRuntime.classifyRelayClientOutput(
         "2026-06-17T02:00:00Z INF Starting metrics server",
       ),
-    ).toBe("debug");
+      "debug",
+    );
   });
 
   it.effect("starts, deduplicates, rotates, and stops the Cloudflare connector", () =>
@@ -123,41 +126,65 @@ describe("CloudManagedEndpointRuntime", () => {
       );
       const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
 
-      yield* runtime.applyConfig({
-        providerKind: "cloudflare_tunnel",
-        connectorToken: "token-1",
-        tunnelId: "tunnel-1",
-        tunnelName: "t3-code-env-1",
-      });
-      yield* runtime.applyConfig({
-        providerKind: "cloudflare_tunnel",
-        connectorToken: "token-1",
-        tunnelId: "tunnel-1",
-        tunnelName: "t3-code-env-1",
-      });
-      yield* runtime.applyConfig({
-        providerKind: "cloudflare_tunnel",
-        connectorToken: "token-2",
-        tunnelId: "tunnel-1",
-        tunnelName: "t3-code-env-1",
-      });
-      const stopped = yield* runtime.applyConfig(null);
+      yield* runtime.applyConfig(
+        Option.some({
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "token-1",
+          tunnelId: "tunnel-1",
+          tunnelName: "t3-code-env-1",
+        }),
+      );
+      yield* runtime.applyConfig(
+        Option.some({
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "token-1",
+          tunnelId: "tunnel-1",
+          tunnelName: "t3-code-env-1",
+        }),
+      );
+      yield* runtime.applyConfig(
+        Option.some({
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "token-2",
+          tunnelId: "tunnel-1",
+          tunnelName: "t3-code-env-1",
+        }),
+      );
+      const stopped = yield* runtime.applyConfig(Option.none());
 
-      expect(spawned.map((command) => command.command)).toEqual(["cloudflared", "cloudflared"]);
-      expect(spawned.map((command) => command.args)).toEqual([
-        ["tunnel", "run"],
-        ["tunnel", "run"],
-      ]);
-      expect(spawned.map((command) => command.options.env?.TUNNEL_TOKEN)).toEqual([
-        "token-1",
-        "token-2",
-      ]);
-      expect(spawned.map((command) => command.options.stdout)).toEqual(["pipe", "pipe"]);
-      expect(spawned.map((command) => command.options.stderr)).toEqual(["pipe", "pipe"]);
-      expect(spawned.map((command) => command.options.detached)).toEqual([false, false]);
-      expect(spawned.map((command) => command.options.shell)).toEqual([false, false]);
-      expect(killed).toEqual([100, 101]);
-      expect(stopped).toEqual({ status: "disabled" });
+      assert.deepEqual(
+        spawned.map((command) => command.command),
+        ["cloudflared", "cloudflared"],
+      );
+      assert.deepEqual(
+        spawned.map((command) => command.args),
+        [
+          ["tunnel", "run"],
+          ["tunnel", "run"],
+        ],
+      );
+      assert.deepEqual(
+        spawned.map((command) => command.options.env?.TUNNEL_TOKEN),
+        ["token-1", "token-2"],
+      );
+      assert.deepEqual(
+        spawned.map((command) => command.options.stdout),
+        ["pipe", "pipe"],
+      );
+      assert.deepEqual(
+        spawned.map((command) => command.options.stderr),
+        ["pipe", "pipe"],
+      );
+      assert.deepEqual(
+        spawned.map((command) => command.options.detached),
+        [false, false],
+      );
+      assert.deepEqual(
+        spawned.map((command) => command.options.shell),
+        [false, false],
+      );
+      assert.deepEqual(killed, [100, 101]);
+      assert.deepEqual(stopped, { status: "disabled" });
     }),
   );
 
@@ -178,18 +205,22 @@ describe("CloudManagedEndpointRuntime", () => {
       );
       const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
 
-      const started = yield* runtime.applyConfig({
-        providerKind: "cloudflare_tunnel",
-        connectorToken: "token",
-      });
-      const unsupported = yield* runtime.applyConfig({
-        providerKind: "manual",
-        connectorToken: "manual-token",
-      });
+      const started = yield* runtime.applyConfig(
+        Option.some({
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "token",
+        }),
+      );
+      const unsupported = yield* runtime.applyConfig(
+        Option.some({
+          providerKind: "manual",
+          connectorToken: "manual-token",
+        }),
+      );
 
-      expect(started.status).toBe("running");
-      expect(unsupported).toEqual({ status: "unsupported", providerKind: "manual" });
-      expect(killed).toEqual([200]);
+      assert.equal(started.status, "running");
+      assert.deepEqual(unsupported, { status: "unsupported", providerKind: "manual" });
+      assert.deepEqual(killed, [200]);
     }),
   );
 
@@ -220,14 +251,20 @@ describe("CloudManagedEndpointRuntime", () => {
         tunnelId: "tunnel-1",
       };
 
-      const first = yield* runtime.applyConfig(config);
+      const first = yield* runtime.applyConfig(Option.some(config));
       firstRunning = false;
-      const second = yield* runtime.applyConfig(config);
+      const second = yield* runtime.applyConfig(Option.some(config));
 
-      expect(first).toMatchObject({ status: "running", pid: 300 });
-      expect(second).toMatchObject({ status: "running", pid: 301 });
-      expect(spawned).toEqual([300, 301]);
-      expect(killed).toEqual([300]);
+      if (first.status !== "running") {
+        assert.fail(`Expected first connector to be running, got ${first.status}`);
+      }
+      assert.equal(first.pid, 300);
+      if (second.status !== "running") {
+        assert.fail(`Expected second connector to be running, got ${second.status}`);
+      }
+      assert.equal(second.pid, 301);
+      assert.deepEqual(spawned, [300, 301]);
+      assert.deepEqual(killed, [300]);
     }),
   );
 
@@ -260,17 +297,22 @@ describe("CloudManagedEndpointRuntime", () => {
       );
       const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
 
-      const started = yield* runtime.applyConfig({
-        providerKind: "cloudflare_tunnel",
-        connectorToken: "token",
-        tunnelId: "tunnel-1",
-      });
+      const started = yield* runtime.applyConfig(
+        Option.some({
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "token",
+          tunnelId: "tunnel-1",
+        }),
+      );
       yield* Deferred.succeed(firstExit, ChildProcessSpawner.ExitCode(1));
       yield* Deferred.await(secondSpawned);
 
-      expect(started).toMatchObject({ status: "running", pid: 400 });
-      expect(spawned).toEqual([400, 401]);
-      expect(killed).toEqual([400]);
+      if (started.status !== "running") {
+        assert.fail(`Expected connector to be running, got ${started.status}`);
+      }
+      assert.equal(started.pid, 400);
+      assert.deepEqual(spawned, [400, 401]);
+      assert.deepEqual(killed, [400]);
     }),
   );
 
@@ -301,26 +343,33 @@ describe("CloudManagedEndpointRuntime", () => {
       const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
 
       const first = yield* runtime
-        .applyConfig({
-          providerKind: "cloudflare_tunnel",
-          connectorToken: "token-1",
-        })
+        .applyConfig(
+          Option.some({
+            providerKind: "cloudflare_tunnel",
+            connectorToken: "token-1",
+          }),
+        )
         .pipe(Effect.forkChild);
       yield* Deferred.await(firstSpawnEntered);
       const second = yield* runtime
-        .applyConfig({
-          providerKind: "cloudflare_tunnel",
-          connectorToken: "token-2",
-        })
+        .applyConfig(
+          Option.some({
+            providerKind: "cloudflare_tunnel",
+            connectorToken: "token-2",
+          }),
+        )
         .pipe(Effect.forkChild);
       yield* Deferred.succeed(releaseFirstSpawn, undefined);
 
       yield* Fiber.join(first);
       const status = yield* Fiber.join(second);
 
-      expect(status).toMatchObject({ status: "running", pid: 501 });
-      expect(spawned).toEqual([500, 501]);
-      expect(killed).toEqual([500]);
+      if (status.status !== "running") {
+        assert.fail(`Expected connector to be running, got ${status.status}`);
+      }
+      assert.equal(status.pid, 501);
+      assert.deepEqual(spawned, [500, 501]);
+      assert.deepEqual(killed, [500]);
     }),
   );
 
@@ -338,17 +387,19 @@ describe("CloudManagedEndpointRuntime", () => {
       );
       const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
 
-      const status = yield* runtime.applyConfig({
-        providerKind: "cloudflare_tunnel",
-        connectorToken: "token",
-        tunnelId: "tunnel-1",
-      });
+      const status = yield* runtime.applyConfig(
+        Option.some({
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "token",
+          tunnelId: "tunnel-1",
+        }),
+      );
 
-      expect(status).toMatchObject({
-        status: "failed",
-        providerKind: "cloudflare_tunnel",
-        tunnelId: "tunnel-1",
-      });
+      if (status.status !== "failed") {
+        assert.fail(`Expected connector spawn to fail, got ${status.status}`);
+      }
+      assert.equal(status.providerKind, "cloudflare_tunnel");
+      assert.equal(status.tunnelId, "tunnel-1");
     }),
   );
 
@@ -371,17 +422,19 @@ describe("CloudManagedEndpointRuntime", () => {
         ),
       );
 
-      const status = yield* runtime.applyConfig({
-        providerKind: "cloudflare_tunnel",
-        connectorToken: "token",
-      });
+      const status = yield* runtime.applyConfig(
+        Option.some({
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "token",
+        }),
+      );
 
-      expect(status).toEqual({
+      assert.deepEqual(status, {
         status: "failed",
         providerKind: "cloudflare_tunnel",
         reason: "The relay client is not installed.",
       });
-      expect(spawn).not.toHaveBeenCalled();
+      assert.equal(spawn.mock.calls.length, 0);
     }),
   );
 });

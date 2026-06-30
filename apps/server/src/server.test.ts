@@ -2254,16 +2254,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         layers: {
           cloudManagedEndpointRuntime: {
             applyConfig: (config) => {
-              appliedRuntimeConfigs.push(config);
-              if (!config) {
+              appliedRuntimeConfigs.push(Option.getOrNull(config));
+              if (Option.isNone(config)) {
                 return Effect.succeed({ status: "disabled" });
               }
+              const runtimeConfig = config.value;
               return Effect.succeed({
                 status: "running",
                 providerKind: "cloudflare_tunnel",
                 pid: 123,
-                ...(config.tunnelId ? { tunnelId: config.tunnelId } : {}),
-                ...(config.tunnelName ? { tunnelName: config.tunnelName } : {}),
+                ...(runtimeConfig.tunnelId ? { tunnelId: runtimeConfig.tunnelId } : {}),
+                ...(runtimeConfig.tunnelName ? { tunnelName: runtimeConfig.tunnelName } : {}),
               });
             },
           },
