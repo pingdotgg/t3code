@@ -335,7 +335,24 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     ),
   );
   const onOutput = options.onOutput ?? (() => Effect.void);
-  const bootstrapStream = Stream.encodeText(Stream.make(`${bootstrapJson}\n`));
+  // The WSL path delivers the bootstrap envelope over stdin (see the
+  // additionalFds comment below). A plain `Stream.make(...)` completes the
+  // instant the single chunk is queued, and the platform spawner's stdin
+  // sink defaults to closing the write end as soon as the stream completes
+  // (`endOnDone: true`) -- i.e. stdin EOF can land immediately after the
+  // JSON line is flushed, racing the extra wsl.exe relay hop against the
+  // child's readline `'line'` vs `'close'` listeners
+  // (apps/server/src/bootstrap.ts:readBootstrapEnvelope) and sometimes
+  // losing the bootstrap envelope entirely. Appending `Stream.never` keeps
+  // stdin open forever for the WSL path so the write end is never closed in
+  // normal operation; this is intentional, not a leak -- the stream is
+  // forked into this run's own Scope, which is interrupted (closing stdin)
+  // on every teardown path (process exit, restart, stop, SIGTERM). Do not
+  // "fix" this by removing the `Stream.never` tail.
+  const bootstrapStream = Stream.make(`${bootstrapJson}\n`).pipe(
+    options.bootstrapDelivery === "stdin" ? Stream.concat(Stream.never) : (s) => s,
+    Stream.encodeText,
+  );
   const command = ChildProcess.make(options.executablePath, options.args, {
     cwd: options.cwd,
     env: options.env,
@@ -622,7 +639,44 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               }
 
               if (isCurrentRun && nextState.desiredRunning) {
-                yield* scheduleRestart(reason);
+                // A process that exits cleanly (or otherwise) before ever
+                // reaching readiness, repeatedly, would otherwise loop here
+                // forever with no escalation -- this is exactly how a WSL
+                // backend that starts and exits with code 0 every time
+                // (e.g. the stdin-EOF race or a Node engine mismatch) gets
+                // permanently stuck "connecting" with no actionable error.
+                // Cap it the same way the pre-spawn fatal-preflight path
+                // already is, but only for the stdin-delivered (WSL) path:
+                // the Windows-native fd3 primary's onPreflightFailed is
+                // wired unconditionally to a WSL-specific "falling back to
+                // Windows" dialog, which would be nonsensical for a Windows
+                // backend crash-looping for an unrelated reason.
+                if (
+                  config.value.bootstrapDelivery === "stdin" &&
+                  nextState.restartAttempt >= MAX_PREFLIGHT_FAILURE_ATTEMPTS
+                ) {
+                  yield* logInstanceError(
+                    "backend exited repeatedly before becoming ready; surfacing and falling back",
+                    { reason, attempt: nextState.restartAttempt },
+                  );
+                  const shouldRestart = yield* (
+                    spec.onPreflightFailed?.({
+                      reason: `backend process exited ${nextState.restartAttempt} times in a row without becoming ready (last: ${reason})`,
+                      fatal: true,
+                    }) ?? Effect.succeed(false)
+                  );
+                  if (shouldRestart) {
+                    yield* scheduleRestart(reason);
+                  } else {
+                    yield* Ref.update(state, (latest) => ({
+                      ...latest,
+                      desiredRunning: false,
+                      ready: false,
+                    }));
+                  }
+                } else {
+                  yield* scheduleRestart(reason);
+                }
               }
             }),
           );

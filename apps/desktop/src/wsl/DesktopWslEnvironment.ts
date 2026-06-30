@@ -223,6 +223,7 @@ const NODE_PTY_PROBE_SCRIPT = (
   linuxServerDir: string,
 ) => `printf 'nodePath:%s\\n' "$(command -v node 2>/dev/null)"
 printf 'resolvedPath:%s\\n' "$PATH"
+printf 'nodeVersion:%s\\n' "$(node -p 'process.versions.node' 2>/dev/null)"
 cd ${shellQuote(linuxServerDir)} && node <<'NODE' >/dev/null 2>&1
 // The server bundle externalizes its deps to node_modules, and the WSL Node
 // can't read inside app.asar, so confirm those deps are unpacked on the real
@@ -329,6 +330,23 @@ export const parseResolvedPath = (stdout: string): string | null => {
   return resolvedPath.length > 0 ? resolvedPath : null;
 };
 
+// Captures the resolved node's own reported version (`process.versions.node`)
+// from NODE_PTY_PROBE_SCRIPT, so a node that resolves but doesn't satisfy
+// `engines.node` can be caught at preflight instead of silently no-op'ing
+// (Node < the version where `import.meta.main` exists makes the server's
+// `if (import.meta.main)` launch gate never run, producing a clean exit
+// code=0 with no stdout/stderr and nothing ever listening on the port).
+export const parseNodeVersion = (stdout: string): string | null => {
+  const prefix = "nodeVersion:";
+  const line = stdout
+    .split("\n")
+    .map((candidate) => candidate.trim())
+    .find((candidate) => candidate.startsWith(prefix));
+  if (line === undefined) return null;
+  const version = line.slice(prefix.length).trim();
+  return version.length > 0 ? version : null;
+};
+
 export const formatMissingToolsReason = (
   report: ToolchainReport,
   requiredRange: string | null,
@@ -370,7 +388,10 @@ export const formatMissingToolsReason = (
   return `WSL distro is missing required tools: ${issues.join(", ")}. Install ${remediations.join(" and ")}, then retry.`;
 };
 
-const ensureNodePtyImpl = (
+// Exported for unit testing the preflight branches directly against a fake
+// ChildProcessSpawner without needing to also fake the separate `wslpath`
+// round trip that `windowsToWslPath` performs.
+export const ensureNodePtyImpl = (
   distro: string | null,
   windowsRepoRoot: string,
   windowsToWslPath: (
@@ -439,6 +460,29 @@ const ensureNodePtyImpl = (
       return {
         ok: false,
         reason: "WSL login-shell PATH could not be resolved during backend preflight.",
+        fatal: true,
+      } as const;
+    }
+
+    // Some node resolved -- but resolving isn't enough, it also has to
+    // satisfy engines.node. A too-old Node (e.g. nvm's default alias still
+    // pointing at 18) loads and runs the server bundle without error, but
+    // `import.meta.main` is undefined pre-20.11/22.x, so the server's
+    // `if (import.meta.main)` launch gate never fires: the process exits
+    // 0 with no stdout/stderr and nothing ever binds the port -- identical
+    // symptoms to the stdin-EOF race below, but a structurally different
+    // cause that the probe previously never checked for once *any* node
+    // resolved.
+    const nodeVersion = parseNodeVersion(probe.stdout);
+    const requiredRange = options.nodeEngineRange?.trim() || null;
+    if (
+      requiredRange !== null &&
+      nodeVersion !== null &&
+      !satisfiesSemverRange(nodeVersion, requiredRange)
+    ) {
+      return {
+        ok: false,
+        reason: `Found Node.js v${nodeVersion} at ${nodePath}, which does not satisfy the required range ${requiredRange}. Activate a supported version (e.g. nvm alias default 22 && nvm use 22) and restart T3 Code.`,
         fatal: true,
       } as const;
     }
