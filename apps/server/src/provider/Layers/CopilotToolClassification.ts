@@ -73,8 +73,9 @@ export function isReadOnlyCopilotToolName(toolName: string): boolean {
 
 function toolNameImpliesFileChange(toolName: string, arguments_: unknown): boolean {
   const normalized = toolName.toLowerCase();
+  const isPlanningWriteTool = normalized.includes("todo") || normalized.includes("plan");
   if (
-    normalized.includes("write") ||
+    (normalized.includes("write") && !isPlanningWriteTool) ||
     normalized.includes("edit") ||
     normalized.includes("patch") ||
     normalized.includes("replace")

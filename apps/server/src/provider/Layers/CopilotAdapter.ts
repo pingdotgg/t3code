@@ -11,6 +11,7 @@ import type {
   SessionEvent,
 } from "@github/copilot-sdk";
 import {
+  type CanonicalRequestType,
   EventId,
   type CopilotSettings,
   type ProviderApprovalDecision,
@@ -136,10 +137,7 @@ interface PendingUserInputHandler {
 
 interface PendingPermissionBinding {
   readonly requestId: string;
-  readonly requestType:
-    | "command_execution_approval"
-    | "file_read_approval"
-    | "file_change_approval";
+  readonly requestType: CanonicalRequestType;
   readonly turnId?: TurnId | undefined;
   readonly permissionRequest: SessionPermissionRequest;
   readonly promptRequest: SessionPermissionRequestedEvent["data"]["promptRequest"] | undefined;
@@ -435,16 +433,16 @@ function permissionAutoApprovedByRuntimeMode(
   }
 }
 
-function mapPermissionRequestType(
-  request: SessionPermissionRequest,
-): "command_execution_approval" | "file_read_approval" | "file_change_approval" {
+function mapPermissionRequestType(request: SessionPermissionRequest): CanonicalRequestType {
   switch (request.kind) {
+    case "shell":
+      return "command_execution_approval";
     case "read":
       return "file_read_approval";
     case "write":
       return "file_change_approval";
     default:
-      return "command_execution_approval";
+      return "dynamic_tool_call";
   }
 }
 
@@ -514,7 +512,7 @@ function sessionApprovalDecisionFromPermissionRequest(
     case "write":
       return request.canOfferSessionApproval ? approve({ kind: "write" }) : undefined;
     case "read":
-      return approve({ kind: "read" });
+      return { kind: "approve-for-session" };
     case "mcp":
       return approve({ kind: "mcp", serverName: request.serverName, toolName: request.toolName });
     case "url": {
@@ -552,7 +550,9 @@ function isPermissionCompletionApproved(result: PermissionRequestResult): boolea
     kind === "approved" ||
     kind.startsWith("approved-") ||
     kind === "approve-once" ||
-    kind === "approve-for-session"
+    kind === "approve-for-session" ||
+    kind === "approve-for-location" ||
+    kind === "approve-permanently"
   );
 }
 
@@ -687,9 +687,6 @@ function completedToolDiffText(
   detail: string | undefined,
 ): string | undefined {
   const normalized = trimOrUndefined(detail);
-  if (!normalized) {
-    return undefined;
-  }
   const applyPatchDiff =
     extractCopilotApplyPatchEdit(normalized) ?? extractCopilotApplyPatchEdit(toolMeta?.command);
   if (isApplyPatchTool(toolMeta?.toolName)) {
@@ -697,6 +694,9 @@ function completedToolDiffText(
   }
   if (toolMeta?.itemType === "file_change" && applyPatchDiff) {
     return applyPatchDiff;
+  }
+  if (!normalized) {
+    return undefined;
   }
   if (toolMeta?.itemType !== "command_execution" && toolMeta?.itemType !== "file_change") {
     return undefined;
@@ -1030,8 +1030,18 @@ function answerFromUserInput(
     (binding.choices.length > 0 ? binding.choices[0] : undefined) ??
     "";
   const normalizedChoices = new Set(binding.choices.map((choice) => choice.trim()));
+  const preferredAnswerTrimmed = preferredAnswer.trim();
+  if (!binding.allowFreeform) {
+    const matchingChoice = binding.choices.find(
+      (choice) => choice.trim() === preferredAnswerTrimmed,
+    );
+    return {
+      answer: matchingChoice ?? binding.choices[0] ?? preferredAnswer,
+      wasFreeform: false,
+    };
+  }
   const wasFreeform =
-    normalizedChoices.size === 0 ? true : !normalizedChoices.has(preferredAnswer.trim());
+    normalizedChoices.size === 0 ? true : !normalizedChoices.has(preferredAnswerTrimmed);
   return {
     answer: preferredAnswer,
     wasFreeform,
@@ -1048,6 +1058,7 @@ function answersFromCompletedUserInput(
 
 function settlePendingPermissionHandlers(
   context: CopilotSessionContext,
+  onBindingSettled?: (binding: PendingPermissionBinding) => Effect.Effect<void>,
 ): Effect.Effect<void, never> {
   return Effect.gen(function* () {
     for (const handlers of context.pendingPermissionHandlersBySignature.values()) {
@@ -1060,6 +1071,9 @@ function settlePendingPermissionHandlers(
 
     for (const binding of context.pendingPermissionBindings.values()) {
       yield* Deferred.succeed(binding.deferred, DENIED_PERMISSION_RESULT).pipe(Effect.ignore);
+      if (onBindingSettled) {
+        yield* onBindingSettled(binding).pipe(Effect.ignore);
+      }
     }
     context.pendingPermissionBindings.clear();
   });
@@ -3228,7 +3242,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
 
       context.stopped = true;
       yield* Effect.promise(() => context.eventChain);
-      yield* settlePendingPermissionHandlers(context);
+      yield* settlePendingPermissionHandlers(context, (binding) =>
+        emitPermissionRequestResolved(context, binding, "reject", DENIED_PERMISSION_RESULT),
+      );
       yield* settlePendingUserInputs(context);
       yield* copilotSdk.disconnect(context).pipe(Effect.ignore);
       yield* copilotSdk.stopClient(threadId, context.client).pipe(Effect.ignore);
