@@ -33,6 +33,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import {
   applyClaudePromptEffortPrefix,
+  createDefaultModelSelection,
   createModelSelection,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
@@ -40,7 +41,6 @@ import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
-import { Debouncer } from "@tanstack/react-pacer";
 import { useAtomValue } from "@effect/atom-react";
 import {
   lazy,
@@ -65,6 +65,7 @@ import {
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
+import { createDebouncer } from "../lib/debouncer";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
@@ -129,6 +130,7 @@ import {
 } from "../previewStateStore";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { closePreviewSession } from "./preview/closePreviewSession";
+import { openPreviewSession } from "./preview/openPreviewSession";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { RightPanelTabs } from "./RightPanelTabs";
@@ -141,7 +143,7 @@ import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
+import { syncProjectScriptKeybinding } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   commandForProjectScript,
@@ -183,11 +185,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
-import {
-  primaryServerAvailableEditorsAtom,
-  primaryServerKeybindingsAtom,
-  serverEnvironment,
-} from "../state/server";
+import { primaryServerAvailableEditorsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
@@ -254,6 +252,7 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
+const EMPTY_ACTION_ENVIRONMENT: Record<string, string> = {};
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const PreviewPanel = lazy(() =>
@@ -332,6 +331,17 @@ function formatOutgoingPrompt(params: {
 }
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
+
+function projectScriptPreviewFields(
+  input: Pick<NewProjectScriptInput, "previewUrl" | "autoOpenPreview">,
+): Pick<ProjectScript, "previewUrl" | "autoOpenPreview"> {
+  return input.previewUrl
+    ? {
+        previewUrl: input.previewUrl,
+        autoOpenPreview: input.autoOpenPreview,
+      }
+    : {};
+}
 
 type ChatViewProps =
   | {
@@ -994,9 +1004,6 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
-  const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
-    reportFailure: false,
-  });
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
@@ -1229,10 +1236,7 @@ function ChatViewContent(props: ChatViewProps) {
         ? buildLocalDraftThread(
             threadId,
             draftThread,
-            fallbackDraftProject?.defaultModelSelection ?? {
-              instanceId: ProviderInstanceId.make("codex"),
-              model: DEFAULT_MODEL,
-            },
+            fallbackDraftProject?.defaultModelSelection ?? createDefaultModelSelection(),
           )
         : undefined,
     [draftThread, fallbackDraftProject?.defaultModelSelection, threadId],
@@ -1633,6 +1637,10 @@ function ChatViewContent(props: ChatViewProps) {
   const serverConfig = activeThread
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
+  const activeEnvironmentSettings = useMemo(
+    () => (serverConfig ? { ...settings, ...serverConfig.settings } : settings),
+    [serverConfig, settings],
+  );
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
     versionMismatch && activeThread
@@ -2117,7 +2125,7 @@ function ChatViewContent(props: ChatViewProps) {
       ? null
       : vcsEnvironment.status({
           environmentId,
-          input: { cwd: gitCwd },
+          input: { cwd: gitCwd, ...(activeProject ? { projectId: activeProject.id } : {}) },
         }),
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -2147,6 +2155,11 @@ function ChatViewContent(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  const activeProjectActionEnvironment =
+    activeProject && serverConfig
+      ? (serverConfig.settings.projectSettings[activeProject.id]?.actionEnvironment ??
+        EMPTY_ACTION_ENVIRONMENT)
+      : EMPTY_ACTION_ENVIRONMENT;
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
@@ -2476,7 +2489,10 @@ function ChatViewContent(props: ChatViewProps) {
           cwd: activeProject.workspaceRoot,
         },
         worktreePath: targetWorktreePath,
-        ...(options?.env ? { extraEnv: options.env } : {}),
+        extraEnv: {
+          ...activeProjectActionEnvironment,
+          ...options?.env,
+        },
       });
       const targetTerminalId = shouldCreateNewTerminal
         ? nextTerminalId(activeKnownTerminalIds)
@@ -2531,6 +2547,24 @@ function ChatViewContent(props: ChatViewProps) {
           activeThreadId,
           error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
         );
+        return;
+      }
+
+      if (script.autoOpenPreview && script.previewUrl && isPreviewSupportedInRuntime()) {
+        const previewResult = await openPreviewSession({
+          openPreview,
+          threadRef: activeThreadRef,
+          url: script.previewUrl,
+        });
+        if (previewResult._tag === "Success") {
+          useRightPanelStore.getState().openBrowser(activeThreadRef, previewResult.value.tabId);
+        } else if (!isAtomCommandInterrupted(previewResult)) {
+          const error = squashAtomCommandFailure(previewResult);
+          setThreadError(
+            activeThreadId,
+            error instanceof Error ? error.message : `Failed to open preview for "${script.name}".`,
+          );
+        }
       }
     },
     [
@@ -2538,6 +2572,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeThread,
       activeThreadId,
       activeThreadRef,
+      activeProjectActionEnvironment,
       gitCwd,
       setTerminalOpen,
       setThreadError,
@@ -2546,6 +2581,7 @@ function ChatViewContent(props: ChatViewProps) {
       setLastInvokedScriptByProjectId,
       environmentId,
       openTerminal,
+      openPreview,
       activeKnownTerminalIds,
       runningTerminalIds,
       terminalUiState.activeTerminalId,
@@ -2576,23 +2612,27 @@ function ChatViewContent(props: ChatViewProps) {
         return updateResult;
       }
 
-      const keybindingRule = decodeProjectScriptKeybindingRule({
-        keybinding: input.keybinding,
-        command: input.keybindingCommand,
-      });
-
-      if (isElectron && keybindingRule) {
-        return mapAtomCommandResult(
-          await upsertKeybinding({
-            environmentId,
-            input: keybindingRule,
-          }),
-          () => undefined,
-        );
+      const keybindingServer =
+        isElectron && input.keybinding !== undefined ? readLocalApi()?.server : null;
+      if (isElectron && input.keybinding !== undefined && !keybindingServer) {
+        return AsyncResult.failure(Cause.fail(new Error("Local API unavailable.")));
       }
+
+      const keybindingResult = await settlePromise(() =>
+        syncProjectScriptKeybinding({
+          keybindings,
+          keybinding: input.keybinding,
+          command: input.keybindingCommand,
+          server: keybindingServer,
+        }),
+      );
+      if (keybindingResult._tag === "Failure") {
+        return keybindingResult;
+      }
+
       return updateResult;
     },
-    [environmentId, updateProject, upsertKeybinding],
+    [environmentId, keybindings, updateProject],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput): Promise<AtomCommandResult<void, unknown>> => {
@@ -2609,6 +2649,7 @@ function ChatViewContent(props: ChatViewProps) {
         command: input.command,
         icon: input.icon,
         runOnWorktreeCreate: input.runOnWorktreeCreate,
+        ...projectScriptPreviewFields(input),
       };
       const nextScripts = input.runOnWorktreeCreate
         ? [
@@ -2644,11 +2685,12 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       const updatedScript: ProjectScript = {
-        ...existingScript,
+        id: existingScript.id,
         name: input.name,
         command: input.command,
         icon: input.icon,
         runOnWorktreeCreate: input.runOnWorktreeCreate,
+        ...projectScriptPreviewFields(input),
       };
       const nextScripts = activeProject.scripts.map((script) =>
         script.id === scriptId
@@ -3152,9 +3194,7 @@ function ChatViewContent(props: ChatViewProps) {
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
   // thread switches. LegendList fires scroll events with isAtEnd=false while
   // initialScrollAtEnd is settling; hiding is always immediate.
-  const showScrollDebouncer = useRef(
-    new Debouncer(() => setShowScrollToBottom(true), { wait: 150 }),
-  );
+  const showScrollDebouncer = useRef(createDebouncer(() => setShowScrollToBottom(true), 150));
   const timelineScrollModeRef = useRef<TimelineScrollMode>("following-end");
   const pendingTimelineAnchorRef = useRef<MessageId | null>(null);
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
@@ -5181,7 +5221,7 @@ function ChatViewContent(props: ChatViewProps) {
                       activeThreadModelSelection={activeThread?.modelSelection}
                       activeThreadActivities={activeThread?.activities}
                       resolvedTheme={resolvedTheme}
-                      settings={settings}
+                      settings={activeEnvironmentSettings}
                       keybindings={keybindings}
                       terminalOpen={Boolean(terminalUiState.terminalOpen)}
                       gitCwd={gitCwd}

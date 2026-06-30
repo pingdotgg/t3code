@@ -122,6 +122,46 @@ vi.mock("@pierre/diffs/react", () => {
   return { FileDiff: MockFileDiff };
 });
 
+vi.mock("@pierre/diffs", () => {
+  function parsePatchFileName(patch: string): string {
+    const fileHeader = patch
+      .split("\n")
+      .find((line) => line.startsWith("+++ ") || line.startsWith("diff --git "));
+    if (!fileHeader) return "diff";
+
+    if (fileHeader.startsWith("+++ ")) {
+      return fileHeader.replace(/^\+\+\+ (?:b\/)?/, "");
+    }
+
+    return fileHeader.split(" ").at(-1)?.replace(/^b\//, "") ?? "diff";
+  }
+
+  return {
+    DiffsHighlighter: undefined,
+    SupportedLanguages: undefined,
+    getSharedHighlighter: () =>
+      Promise.resolve({
+        codeToHtml: (code: string) => `<pre><code>${code}</code></pre>`,
+      }),
+    parsePatchFiles: (patch: string, cacheKey?: string) => [
+      {
+        files: [
+          {
+            name: parsePatchFileName(patch),
+            prevName: parsePatchFileName(patch),
+            hunks: [],
+            additionLines: [],
+            deletionLines: [],
+            splitLineCount: 0,
+            unifiedLineCount: 0,
+            cacheKey,
+          },
+        ],
+      },
+    ],
+  };
+});
+
 function matchMedia() {
   return {
     matches: false,
@@ -130,21 +170,25 @@ function matchMedia() {
   };
 }
 
-beforeAll(() => {
+let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
+
+beforeAll(async () => {
   const classList = {
     add: () => {},
     remove: () => {},
     toggle: () => {},
     contains: () => false,
   };
-
-  vi.stubGlobal("localStorage", {
+  const localStorage = {
     getItem: () => null,
     setItem: () => {},
     removeItem: () => {},
     clear: () => {},
-  });
+  };
+
+  vi.stubGlobal("localStorage", localStorage);
   vi.stubGlobal("window", {
+    localStorage,
     matchMedia,
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -161,7 +205,8 @@ beforeAll(() => {
       offsetHeight: 0,
     },
   });
-});
+  ({ MessagesTimeline } = await import("./MessagesTimeline"));
+}, 60_000);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
@@ -257,7 +302,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("anchors a sent attachment message using its measured height", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const onAnchorReady = vi.fn();
     const onAnchorSizeChanged = vi.fn();
     const firstEntry = buildUserTimelineEntry("First prompt.");
@@ -306,7 +350,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("renders collapse controls for long user messages", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -326,7 +369,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("does not render collapse controls for short user messages", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -339,7 +381,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("renders inline terminal labels with the composer chip UI", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -367,7 +408,6 @@ describe("MessagesTimeline", () => {
   }, 20_000);
 
   it("renders chips for standalone element-pick context messages", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -394,7 +434,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("keeps the copy button for collapsed long user messages", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -408,7 +447,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("renders context compaction entries in the normal work log", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -433,7 +471,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("formats changed file paths from the workspace root", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -460,7 +497,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -501,7 +537,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("renders file review comments as source code instead of diffs", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -539,7 +574,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("renders a failure marker for failed tool lifecycle entries", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}

@@ -1,5 +1,4 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -9,6 +8,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { assert, it } from "vite-plus/test";
 
 class OxlintFixtureFailure extends Data.TaggedError("OxlintFixtureFailure")<{
   readonly exitCode: number;
@@ -77,6 +77,9 @@ const spawnAndCollectOutput = Effect.fnUntraced(function* (command: ChildProcess
   return { exitCode, stdout, stderr };
 }, Effect.scoped);
 
+const runNodeEffect = <A, E>(effect: Effect.Effect<A, E, NodeServices.NodeServices>) =>
+  Effect.runPromise(effect.pipe(Effect.provide(NodeServices.layer)));
+
 export const createOxlintRuleHarness = (
   ruleName: string,
   options: RuleHarnessOptions = {},
@@ -84,7 +87,6 @@ export const createOxlintRuleHarness = (
   const [pluginName, shortRuleName] = ruleName.split("/");
   const diagnosticRuleName =
     pluginName && shortRuleName ? `${pluginName}\\(${shortRuleName}\\)` : ruleName;
-  const test = it.layer(NodeServices.layer);
 
   const run: RuleHarness["run"] = Effect.fnUntraced(function* (source: string) {
     const fs = yield* FileSystem.FileSystem;
@@ -93,14 +95,7 @@ export const createOxlintRuleHarness = (
     const configPath = path.join(fixtureDir, ".oxlintrc.json");
     const sourcePath = path.join(fixtureDir, options.filename ?? "fixture.ts");
     const repoRoot = path.join(import.meta.dirname, "..", "..");
-    const oxlintBin = path.join(
-      repoRoot,
-      "node_modules",
-      ".pnpm",
-      "node_modules",
-      ".bin",
-      "oxlint",
-    );
+    const oxlintBin = path.join(repoRoot, "node_modules", "oxlint", "bin", "oxlint");
     const pluginPath = path.join(repoRoot, "oxlint-plugin-t3code", "index.ts");
 
     yield* fs.writeFileString(
@@ -144,22 +139,15 @@ export const createOxlintRuleHarness = (
     run,
     runAndExpectFailure,
     valid(name, source) {
-      test(name, (it) => {
-        it.effect("passes", () => run(source));
+      it(name, async () => {
+        await runNodeEffect(run(source));
       });
     },
     invalid(name, source, assertion) {
-      test(name, (it) => {
-        it.effect("reports the rule diagnostic", () =>
-          runAndExpectFailure(source).pipe(
-            Effect.tap((output) =>
-              Effect.sync(() => {
-                assert.match(output, new RegExp(diagnosticRuleName));
-                assertion?.(output);
-              }),
-            ),
-          ),
-        );
+      it(name, async () => {
+        const output = await runNodeEffect(runAndExpectFailure(source));
+        assert.match(output, new RegExp(diagnosticRuleName));
+        assertion?.(output);
       });
     },
   };

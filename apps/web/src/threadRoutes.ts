@@ -28,9 +28,15 @@ export function buildDraftThreadRouteParams(draftId: DraftId): {
   return { draftId };
 }
 
-export function resolveThreadRouteRef(
-  params: Partial<Record<"environmentId" | "threadId", string | undefined>>,
-): ScopedThreadRef | null {
+export type ThreadRouteRefParams = Partial<
+  Record<"environmentId" | "threadId", string | undefined>
+>;
+
+export type ThreadRouteTargetParams = Partial<
+  Record<"environmentId" | "threadId" | "draftId", string | undefined>
+>;
+
+export function resolveThreadRouteRef(params: ThreadRouteRefParams): ScopedThreadRef | null {
   if (!params.environmentId || !params.threadId) {
     return null;
   }
@@ -39,7 +45,7 @@ export function resolveThreadRouteRef(
 }
 
 export function resolveThreadRouteTarget(
-  params: Partial<Record<"environmentId" | "threadId" | "draftId", string | undefined>>,
+  params: ThreadRouteTargetParams,
 ): ThreadRouteTarget | null {
   if (params.environmentId && params.threadId) {
     return {

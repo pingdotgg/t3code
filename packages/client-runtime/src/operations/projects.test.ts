@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  DEFAULT_MODEL,
   EnvironmentId,
   ProjectId,
   CommandId,
@@ -139,7 +140,7 @@ describe("add project shared logic", () => {
       createWorkspaceRootIfMissing: true,
       defaultModelSelection: {
         instanceId: "codex",
-        model: "gpt-5.4",
+        model: DEFAULT_MODEL,
       },
     });
   });

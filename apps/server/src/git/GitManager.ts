@@ -95,6 +95,7 @@ const SHORT_SHA_LENGTH = 7;
 const TOAST_DESCRIPTION_MAX = 72;
 const STATUS_RESULT_CACHE_TTL = Duration.seconds(1);
 const STATUS_RESULT_CACHE_CAPACITY = 2_048;
+const STATUS_CACHE_KEY_SEPARATOR = "\u0000";
 type StripProgressContext<T> = T extends any ? Omit<T, "actionId" | "cwd" | "action"> : never;
 type GitActionProgressPayload = StripProgressContext<GitActionProgressEvent>;
 type GitActionProgressEmitter = (event: GitActionProgressPayload) => Effect.Effect<void, never>;
@@ -525,7 +526,8 @@ export const make = Effect.gen(function* () {
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const crypto = yield* Crypto.Crypto;
 
-  const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
+  const sourceControlProvider = (input: string | VcsStatusInput) =>
+    sourceControlProviders.resolve(typeof input === "string" ? { cwd: input } : input);
   const serverSettingsService = yield* ServerSettings.ServerSettingsService;
   const randomUUIDv4 = (cwd: string) =>
     crypto.randomUUIDv4.pipe(
@@ -726,7 +728,36 @@ export const make = Effect.gen(function* () {
   const tempDir = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP ?? "/tmp";
   const canonicalizeExistingPath = (value: string) =>
     fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
-  const normalizeStatusCacheKey = canonicalizeExistingPath;
+  const normalizeStatusCwd = canonicalizeExistingPath;
+  const statusCacheKeyFromParts = (cwd: string, projectId?: VcsStatusInput["projectId"]) =>
+    `${cwd}${STATUS_CACHE_KEY_SEPARATOR}${projectId ?? ""}`;
+  const statusInputFromCacheKey = (key: string): VcsStatusInput => {
+    const separatorIndex = key.lastIndexOf(STATUS_CACHE_KEY_SEPARATOR);
+    const cwd = separatorIndex === -1 ? key : key.slice(0, separatorIndex);
+    const projectId = separatorIndex === -1 ? "" : key.slice(separatorIndex + 1);
+    return projectId ? { cwd, projectId: projectId as VcsStatusInput["projectId"] } : { cwd };
+  };
+  const normalizeStatusCacheKey = (input: VcsStatusInput) =>
+    normalizeStatusCwd(input.cwd).pipe(
+      Effect.map((cwd) => statusCacheKeyFromParts(cwd, input.projectId)),
+    );
+  const invalidateStatusResultCache = <A, E>(cache: Cache.Cache<string, A, E>, cwd: string) =>
+    normalizeStatusCwd(cwd).pipe(
+      Effect.flatMap((normalizedCwd) =>
+        Cache.keys(cache).pipe(
+          Effect.flatMap((keys) =>
+            Effect.forEach(
+              keys,
+              (key) =>
+                key.startsWith(`${normalizedCwd}${STATUS_CACHE_KEY_SEPARATOR}`)
+                  ? Cache.invalidate(cache, key)
+                  : Effect.void,
+              { discard: true },
+            ),
+          ),
+        ),
+      ),
+    );
   const nonRepositoryStatusDetails = {
     isRepo: false,
     hasOriginRemote: false,
@@ -740,14 +771,16 @@ export const make = Effect.gen(function* () {
     behindCount: 0,
     aheadOfDefaultCount: 0,
   } satisfies GitVcsDriver.GitStatusDetails;
-  const readLocalStatus = Effect.fn("readLocalStatus")(function* (cwd: string) {
+  const readLocalStatus = Effect.fn("readLocalStatus")(function* (cacheKey: string) {
+    const input = statusInputFromCacheKey(cacheKey);
+    const cwd = input.cwd;
     const details = yield* gitCore
       .statusDetailsLocal(cwd)
       .pipe(
         Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
       );
     const hostingProvider = details.isRepo
-      ? yield* resolveHostingProvider(cwd, details.branch)
+      ? yield* resolveHostingProvider(input, details.branch)
       : null;
 
     return {
@@ -765,13 +798,13 @@ export const make = Effect.gen(function* () {
     timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
   });
   const invalidateLocalStatusResultCache = (cwd: string) =>
-    normalizeStatusCacheKey(cwd).pipe(
-      Effect.flatMap((cacheKey) => Cache.invalidate(localStatusResultCache, cacheKey)),
-    );
+    invalidateStatusResultCache(localStatusResultCache, cwd);
   const readRemoteStatus = Effect.fn("readRemoteStatus")(function* (
-    cwd: string,
+    cacheKey: string,
     options?: GitVcsDriver.GitRemoteStatusOptions,
   ) {
+    const input = statusInputFromCacheKey(cacheKey);
+    const cwd = input.cwd;
     const details = yield* gitCore
       .statusDetailsRemote(cwd, options)
       .pipe(Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(null)));
@@ -781,7 +814,7 @@ export const make = Effect.gen(function* () {
 
     const pr =
       details.branch !== null
-        ? yield* findLatestPr(cwd, {
+        ? yield* findLatestPr(input, {
             branch: details.branch,
             upstreamRef: details.upstreamRef,
           }).pipe(
@@ -809,17 +842,29 @@ export const make = Effect.gen(function* () {
     timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
   });
   const invalidateRemoteStatusResultCache = (cwd: string) =>
-    normalizeStatusCacheKey(cwd).pipe(
-      Effect.flatMap((cacheKey) => Cache.invalidate(remoteStatusResultCache, cacheKey)),
-    );
+    invalidateStatusResultCache(remoteStatusResultCache, cwd);
 
   const readConfigValueNullable = (cwd: string, key: string) =>
     gitCore.readConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null));
 
   const resolveHostingProvider = Effect.fn("resolveHostingProvider")(function* (
-    cwd: string,
+    input: VcsStatusInput,
     branch: string | null,
   ) {
+    const cwd = input.cwd;
+    const providerHandle = yield* sourceControlProviders.resolveHandle(input).pipe(
+      Effect.catch(() =>
+        Effect.succeed({
+          provider: null,
+          context: null,
+          contextSource: null,
+        }),
+      ),
+    );
+    if (providerHandle.contextSource === "override" && providerHandle.context) {
+      return providerHandle.context.provider;
+    }
+
     const preferredRemoteName =
       branch === null
         ? "origin"
@@ -828,7 +873,14 @@ export const make = Effect.gen(function* () {
       (yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ??
       (yield* readConfigValueNullable(cwd, "remote.origin.url"));
 
-    return remoteUrl ? detectSourceControlProviderFromGitRemoteUrl(remoteUrl) : null;
+    const providerFromBranchRemote = remoteUrl
+      ? detectSourceControlProviderFromGitRemoteUrl(remoteUrl)
+      : null;
+    if (providerFromBranchRemote) {
+      return providerFromBranchRemote;
+    }
+
+    return providerHandle.context?.provider ?? null;
   });
 
   const resolveRemoteRepositoryContext = Effect.fn("resolveRemoteRepositoryContext")(function* (
@@ -961,14 +1013,15 @@ export const make = Effect.gen(function* () {
   });
 
   const findLatestPr = Effect.fn("findLatestPr")(function* (
-    cwd: string,
+    input: VcsStatusInput,
     details: { branch: string; upstreamRef: string | null },
   ) {
+    const cwd = input.cwd;
     const headContext = yield* resolveBranchHeadContext(cwd, details);
     const parsedByNumber = new Map<number, PullRequestInfo>();
 
     for (const headSelector of headContext.headSelectors) {
-      const pullRequests = yield* (yield* sourceControlProvider(cwd)).listChangeRequests({
+      const pullRequests = yield* (yield* sourceControlProvider(input)).listChangeRequests({
         cwd,
         headSelector,
         state: "all",
@@ -1409,13 +1462,13 @@ export const make = Effect.gen(function* () {
 
   const localStatus: GitManager["Service"]["localStatus"] = Effect.fn("localStatus")(
     function* (input) {
-      const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
+      const cacheKey = yield* normalizeStatusCacheKey(input);
       return yield* Cache.get(localStatusResultCache, cacheKey);
     },
   );
   const remoteStatus: GitManager["Service"]["remoteStatus"] = Effect.fn("remoteStatus")(
     function* (input, options) {
-      const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
+      const cacheKey = yield* normalizeStatusCacheKey(input);
       if (options?.refreshUpstream === false) {
         return yield* readRemoteStatus(cacheKey, options);
       }

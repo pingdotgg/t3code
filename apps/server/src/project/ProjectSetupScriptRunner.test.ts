@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectSetupScriptRunner from "./ProjectSetupScriptRunner.ts";
 
@@ -62,9 +63,11 @@ const makeTerminalManagerLayer = (
 const testLayer = (
   project: OrchestrationProject,
   terminal: Pick<TerminalManager.TerminalManager["Service"], "open" | "write">,
+  settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
 ) =>
   ProjectSetupScriptRunner.layer.pipe(
     Layer.provideMerge(makeProjectionSnapshotQueryLayer(project)),
+    Layer.provideMerge(ServerSettings.layerTest(settings)),
     Layer.provideMerge(makeTerminalManagerLayer(terminal)),
   );
 
@@ -138,6 +141,7 @@ describe("ProjectSetupScriptRunner", () => {
           cwd: "/repo/worktrees/a",
           worktreePath: "/repo/worktrees/a",
           env: {
+            API_BASE_URL: "https://api.example.test",
             T3CODE_PROJECT_ROOT: "/repo/project",
             T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
           },
@@ -147,7 +151,26 @@ describe("ProjectSetupScriptRunner", () => {
           terminalId: "setup-setup",
           data: "bun install\r",
         });
-      }).pipe(Effect.provide(testLayer(project, { open, write })));
+      }).pipe(
+        Effect.provide(
+          testLayer(
+            project,
+            { open, write },
+            {
+              projectSettings: {
+                [project.id]: {
+                  remoteOverride: null,
+                  automaticGitFetchInterval: null,
+                  actionEnvironment: {
+                    API_BASE_URL: "https://api.example.test",
+                  },
+                  disabledProviderInstanceIds: [],
+                },
+              },
+            },
+          ),
+        ),
+      );
     },
   );
 

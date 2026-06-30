@@ -7,6 +7,7 @@ import {
   isProviderInstancePickerVisible,
   resolveSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
+  resolveProjectProviderInstancePolicy,
 } from "./providerInstances";
 
 function provider(input: {
@@ -166,6 +167,40 @@ describe("resolveSelectableProviderInstance", () => {
     expect(resolveSelectableProviderInstance(providers, disabled)).toBeUndefined();
     expect(resolveSelectableProviderInstance(providers, unavailable)).toBeUndefined();
     expect(resolveSelectableProviderInstance(providers, unknown)).toBeUndefined();
+  });
+});
+
+describe("resolveProjectProviderInstancePolicy", () => {
+  it("keeps app-enabled and project-enabled provider lists separate", () => {
+    const codex = ProviderInstanceId.make("codex");
+    const disabledForProject = ProviderInstanceId.make("claudeAgent");
+    const globallyDisabled = ProviderInstanceId.make("cursor");
+    const entries = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: codex }),
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: disabledForProject,
+      }),
+      provider({
+        provider: ProviderDriverKind.make("cursor"),
+        instanceId: globallyDisabled,
+        enabled: false,
+      }),
+    ]);
+
+    const policy = resolveProjectProviderInstancePolicy(entries, {
+      disabledProviderInstanceIds: [disabledForProject],
+    });
+
+    expect(policy.appEnabledEntries.map((entry) => entry.instanceId)).toEqual([
+      codex,
+      disabledForProject,
+    ]);
+    expect(policy.projectEnabledEntries.map((entry) => entry.instanceId)).toEqual([codex]);
+    expect(policy.isProviderAllowed(codex)).toBe(true);
+    expect(policy.isProviderAllowed(disabledForProject)).toBe(false);
+    expect(policy.isProviderAllowed(globallyDisabled)).toBe(false);
+    expect(policy.firstAllowedProvider?.instanceId).toBe(codex);
   });
 });
 

@@ -118,13 +118,14 @@ describe("DesktopClientSettings", () => {
         assert.instanceOf(error, DesktopClientSettings.DesktopClientSettingsWriteError);
         assert.equal(error.operation, "replace-settings-file");
         assert.equal(error.path, environment.clientSettingsPath);
-        assert.instanceOf(error.cause, PlatformError.PlatformError);
-        assert.isString(error.cause.stack);
+        const platformCause = error.cause as PlatformError.PlatformError;
+        assert.equal(platformCause._tag, "PlatformError");
+        assert.isString(platformCause.stack);
         assert.equal(
           error.message,
           `Desktop client settings write failed during replace-settings-file at ${environment.clientSettingsPath}.`,
         );
-        assert.notInclude(error.message, error.cause.message);
+        assert.notInclude(error.message, platformCause.message);
       }),
     ),
   );

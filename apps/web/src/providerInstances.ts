@@ -17,6 +17,7 @@ import {
   PROVIDER_DISPLAY_NAMES,
   type ProviderDriverKind,
   type ProviderInstanceId,
+  type ProjectSettings,
   type ServerProvider,
   type ServerProviderModel,
   type ServerSettings,
@@ -229,6 +230,31 @@ export function sortProviderInstanceEntries(
     sorted.push(...defaults, ...customs);
   }
   return sorted;
+}
+
+export interface ProjectProviderInstancePolicy {
+  readonly appEnabledEntries: ReadonlyArray<ProviderInstanceEntry>;
+  readonly projectEnabledEntries: ReadonlyArray<ProviderInstanceEntry>;
+  readonly isProviderAllowed: (instanceId: ProviderInstanceId) => boolean;
+  readonly firstAllowedProvider: ProviderInstanceEntry | undefined;
+}
+
+export function resolveProjectProviderInstancePolicy(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  projectSettings: Pick<ProjectSettings, "disabledProviderInstanceIds"> | null | undefined,
+): ProjectProviderInstancePolicy {
+  const disabledInstanceIds = new Set(projectSettings?.disabledProviderInstanceIds ?? []);
+  const appEnabledEntries = entries.filter((entry) => entry.enabled && entry.isAvailable);
+  const projectEnabledEntries = appEnabledEntries.filter(
+    (entry) => !disabledInstanceIds.has(entry.instanceId),
+  );
+  return {
+    appEnabledEntries,
+    projectEnabledEntries,
+    isProviderAllowed: (instanceId) =>
+      projectEnabledEntries.some((entry) => entry.instanceId === instanceId),
+    firstAllowedProvider: projectEnabledEntries[0],
+  };
 }
 
 /**

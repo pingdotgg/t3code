@@ -1,4 +1,5 @@
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import type { AuthGateBeforeLoadArgs } from "./-authGateRouteContext";
 
 import {
   HostedPairingRouteSurface,
@@ -7,7 +8,7 @@ import {
 } from "../components/auth/PairingRouteSurface";
 
 export const Route = createFileRoute("/pair")({
-  beforeLoad: async ({ context }) => {
+  beforeLoad: async ({ context }: AuthGateBeforeLoadArgs) => {
     const { authGateState } = context;
     if (authGateState.status === "hosted-pairing") {
       return {

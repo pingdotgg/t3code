@@ -1185,6 +1185,24 @@ describe("composerDraftStore modelSelection", () => {
     ).toEqual(modelSelection(CODEX_DRIVER, "gpt-5.4"));
   });
 
+  it("can seed an exact project default without preserving stale draft options", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setModelSelection(
+      threadRef,
+      modelSelection(CODEX_DRIVER, "gpt-5.3-codex", {
+        reasoningEffort: "high",
+      }),
+    );
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.5"), {
+      preserveExistingOptions: false,
+    });
+
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CODEX_INSTANCE],
+    ).toEqual(modelSelection(CODEX_DRIVER, "gpt-5.5"));
+  });
+
   it("replaces only the targeted provider options on the current model selection", () => {
     const store = useComposerDraftStore.getState();
 

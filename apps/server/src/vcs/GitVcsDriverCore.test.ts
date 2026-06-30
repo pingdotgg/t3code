@@ -9,6 +9,7 @@ import * as Scope from "effect/Scope";
 
 import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
+import { isPlatformErrorLike } from "../platformError.ts";
 import { splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
@@ -102,11 +103,11 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           cwd,
           detail: "Failed to spawn Git process.",
         });
-        if (!(error.cause instanceof PlatformError.PlatformError)) {
+        if (!isPlatformErrorLike(error.cause)) {
           return assert.fail("expected the original platform error cause");
         }
         assert.equal(error.cause.reason._tag, "NotFound");
-        assert.notInclude(error.detail, error.cause.message);
+        assert.notInclude(error.detail, error.cause.message ?? "");
       }),
     );
 

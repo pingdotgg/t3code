@@ -103,6 +103,22 @@ const isServableFile = (rootRealPath: string, filePath: string) =>
     return yield* isWithinRoot(rootRealPath, filePath);
   });
 
+const contentTypeForExtension = (extension: string) => {
+  switch (extension) {
+    case ".json":
+      return "application/json";
+    case ".yaml":
+    case ".yml":
+      return "text/yaml";
+    case ".zip":
+      return "application/zip";
+    case ".dmg":
+      return "application/x-apple-diskimage";
+    default:
+      return "application/octet-stream";
+  }
+};
+
 export const makeMockUpdateRouteLayer = (rootRealPath: string) => {
   return HttpRouter.add(
     "*",
@@ -124,7 +140,13 @@ export const makeMockUpdateRouteLayer = (rootRealPath: string) => {
       }
 
       yield* Effect.logInfo(`Serving file: ${filePath}`);
-      return yield* HttpServerResponse.file(filePath, { status: 200 });
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const data = yield* fileSystem.readFile(filePath);
+      return HttpServerResponse.uint8Array(data, {
+        status: 200,
+        contentType: contentTypeForExtension(path.extname(filePath).toLowerCase()),
+      });
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.gen(function* () {

@@ -5,6 +5,7 @@ import {
   Outlet,
   createRootRoute,
   type ErrorComponentProps,
+  type ParsedLocation,
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
@@ -53,7 +54,7 @@ import {
 } from "../components/KeybindingsUpdateToast.logic";
 
 export const Route = createRootRoute({
-  beforeLoad: async ({ location }) => {
+  beforeLoad: async ({ location }: { location: ParsedLocation }) => {
     if (location.pathname === "/pair" && hasHostedPairingRequest(new URL(window.location.href))) {
       return {
         authGateState: {
@@ -83,7 +84,7 @@ export const Route = createRootRoute({
 });
 
 function RootRouteView() {
-  const pathname = useLocation({ select: (location) => location.pathname });
+  const pathname = useLocation({ select: (location: ParsedLocation) => location.pathname });
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
 
@@ -265,7 +266,7 @@ function AuthenticatedTracingBootstrap() {
 
 function EventRouter() {
   const navigate = useNavigate();
-  const pathname = useLocation({ select: (loc) => loc.pathname });
+  const pathname = useLocation({ select: (loc: ParsedLocation) => loc.pathname });
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const primaryEnvironment = usePrimaryEnvironment();
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {

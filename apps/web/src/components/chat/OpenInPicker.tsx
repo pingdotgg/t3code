@@ -35,6 +35,8 @@ import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { shellEnvironment } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+const FileManagerIcon: Icon = (props) => <FolderClosedIcon {...props} />;
+
 const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
   const baseOptions: ReadonlyArray<{ label: string; Icon: Icon; value: EditorId }> = [
     {
@@ -143,7 +145,7 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
         : isWindowsPlatform(platform)
           ? "Explorer"
           : "Files",
-      Icon: FolderClosedIcon,
+      Icon: FileManagerIcon,
       value: "file-manager",
     },
   ];

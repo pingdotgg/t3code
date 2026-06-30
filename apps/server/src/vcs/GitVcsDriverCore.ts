@@ -29,6 +29,7 @@ import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
+import { isPlatformErrorLike } from "../platformError.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import {
   parseRemoteNames,
@@ -347,7 +348,7 @@ function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string):
 }
 
 function isMissingGitCwdError(error: GitCommandError): boolean {
-  if (!(error.cause instanceof PlatformError.PlatformError)) {
+  if (!isPlatformErrorLike(error.cause)) {
     return false;
   }
 
@@ -362,7 +363,7 @@ function isMissingGitCwdError(error: GitCommandError): boolean {
     typeof reason.cause === "object" &&
     reason.cause !== null &&
     "code" in reason.cause &&
-    reason.cause.code === "ENOTDIR"
+    (reason.cause as { readonly code?: unknown }).code === "ENOTDIR"
   );
 }
 

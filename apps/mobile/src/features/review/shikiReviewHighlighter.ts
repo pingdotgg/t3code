@@ -1,5 +1,6 @@
 import { createHighlighterCore, type HighlighterCore } from "@shikijs/core";
 import { createJavaScriptRegexEngine } from "@shikijs/engine-javascript";
+import { getFiletypeFromFileName } from "@pierre/diffs";
 import bashLanguage from "@shikijs/langs/bash";
 import javascriptLanguage from "@shikijs/langs/javascript";
 import jsonLanguage from "@shikijs/langs/json";
@@ -9,7 +10,6 @@ import typescriptLanguage from "@shikijs/langs/typescript";
 import yamlLanguage from "@shikijs/langs/yaml";
 import githubDarkDefault from "@shikijs/themes/github-dark-default";
 import githubLightDefault from "@shikijs/themes/github-light-default";
-import { getFiletypeFromFileName } from "@pierre/diffs/utils/getFiletypeFromFileName";
 import * as Schema from "effect/Schema";
 
 import {

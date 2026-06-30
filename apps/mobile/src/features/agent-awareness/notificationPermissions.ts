@@ -30,6 +30,37 @@ export class NotificationPermissionRequestError extends Schema.TaggedErrorClass<
   }
 }
 
+type NotificationPermissionShape = {
+  readonly granted?: unknown;
+  readonly status?: unknown;
+  readonly canAskAgain?: unknown;
+  readonly ios?: {
+    readonly status?: unknown;
+  };
+};
+
+function notificationPermissionShape(value: unknown) {
+  return value as NotificationPermissionShape;
+}
+
+export function isNotificationPermissionGranted(status: unknown) {
+  const permission = notificationPermissionShape(status);
+  return (
+    permission.granted === true ||
+    permission.status === Notifications.PermissionStatus.GRANTED ||
+    permission.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL ||
+    permission.ios?.status === Notifications.IosAuthorizationStatus.EPHEMERAL
+  );
+}
+
+function canAskForNotificationPermission(status: unknown) {
+  const permission = notificationPermissionShape(status);
+  if (typeof permission.canAskAgain === "boolean") {
+    return permission.canAskAgain;
+  }
+  return permission.status !== Notifications.PermissionStatus.DENIED;
+}
+
 export const requestAgentNotificationPermission: Effect.Effect<
   NotificationPermissionResult,
   NotificationPermissionReadError | NotificationPermissionRequestError
@@ -42,11 +73,11 @@ export const requestAgentNotificationPermission: Effect.Effect<
     try: () => Notifications.getPermissionsAsync(),
     catch: (cause) => new NotificationPermissionReadError({ cause }),
   });
-  if (existing.granted) {
+  if (isNotificationPermissionGranted(existing)) {
     return { type: "granted" };
   }
 
-  if (!existing.canAskAgain) {
+  if (!canAskForNotificationPermission(existing)) {
     return { type: "denied", canAskAgain: false };
   }
 
@@ -61,7 +92,10 @@ export const requestAgentNotificationPermission: Effect.Effect<
       }),
     catch: (cause) => new NotificationPermissionRequestError({ cause }),
   });
-  return requested.granted
+  return isNotificationPermissionGranted(requested)
     ? { type: "granted" }
-    : { type: "denied", canAskAgain: requested.canAskAgain };
+    : {
+        type: "denied",
+        canAskAgain: canAskForNotificationPermission(requested),
+      };
 });

@@ -4,12 +4,18 @@ const expoMocks = vi.hoisted(() => ({
   requireNativeView: vi.fn(),
 }));
 const nativeView = () => null;
-const originalExpo = globalThis.expo;
+type ExpoTestGlobal = Omit<typeof globalThis, "expo"> & {
+  expo?: {
+    getViewConfig?: (moduleName: string) => unknown;
+  };
+};
+const expoGlobal = globalThis as ExpoTestGlobal;
+const originalExpo = expoGlobal.expo;
 
 function setExpoViewConfigAvailable() {
-  globalThis.expo = {
+  expoGlobal.expo = {
     getViewConfig: vi.fn().mockReturnValue({ validAttributes: {}, directEventTypes: {} }),
-  } as unknown as typeof globalThis.expo;
+  };
 }
 
 vi.mock("expo", () => ({
@@ -20,11 +26,11 @@ describe("resolveNativeReviewDiffView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    globalThis.expo = undefined as unknown as typeof globalThis.expo;
+    expoGlobal.expo = undefined;
   });
 
   afterEach(() => {
-    globalThis.expo = originalExpo;
+    expoGlobal.expo = originalExpo;
   });
 
   it("returns null when the native review diff view config is unavailable", async () => {
@@ -42,14 +48,14 @@ describe("resolveNativeReviewDiffView", () => {
   });
 
   it("does not fall back to stale legacy native review diff view names", async () => {
-    globalThis.expo = {
+    expoGlobal.expo = {
       getViewConfig: vi.fn().mockImplementation((moduleName: string) => {
         if (moduleName === "T3ReviewDiffView") {
           return { validAttributes: {}, directEventTypes: {} };
         }
         return null;
       }),
-    } as unknown as typeof globalThis.expo;
+    };
     expoMocks.requireNativeView.mockReturnValue(nativeView);
     const { resolveNativeReviewDiffView } = await import("./nativeReviewDiffSurface");
     expect(resolveNativeReviewDiffView()).toBeNull();

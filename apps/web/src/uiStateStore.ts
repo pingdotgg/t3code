@@ -1,5 +1,5 @@
-import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
+import { createDebouncer } from "./lib/debouncer";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
@@ -224,7 +224,7 @@ export function persistState(state: UiState): void {
   }
 }
 
-const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
+const debouncedPersistState = createDebouncer(persistState, 500);
 
 export function markThreadVisited(state: UiState, threadId: string, visitedAt: string): UiState {
   const visitedAtMs = Date.parse(visitedAt);

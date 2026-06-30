@@ -1,4 +1,5 @@
 import "vite-plus/test/config";
+import * as NodeURL from "node:url";
 import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
@@ -60,7 +61,17 @@ export default mergeConfig(
         ),
       },
     },
+    resolve: {
+      alias: {
+        ws: NodeURL.fileURLToPath(new URL("./test/ws-vitest-interop.ts", import.meta.url)),
+      },
+    },
     test: {
+      server: {
+        deps: {
+          inline: ["@effect/platform-node", "@effect/platform-node-shared", "ws"],
+        },
+      },
       // The server suite exercises sqlite, git, temp worktrees, and orchestration
       // runtimes heavily. Running files in parallel introduces load-sensitive flakes.
       fileParallelism: false,

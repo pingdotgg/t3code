@@ -8,6 +8,7 @@ import type {
   GitActionProgressEvent,
   GitRunStackedActionResult,
   GitStackedAction,
+  ProjectId,
   SourceControlCloneProtocol,
   SourceControlProviderDiscoveryItem,
   SourceControlProviderKind,
@@ -139,18 +140,19 @@ const GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS = 250;
 
 type RefreshVcsStatus = (target: {
   readonly environmentId: ScopedThreadRef["environmentId"];
-  readonly input: { readonly cwd: string };
+  readonly input: { readonly cwd: string; readonly projectId?: ProjectId };
 }) => Promise<unknown>;
 
 function requestVcsStatusRefresh(
   refresh: RefreshVcsStatus,
   environmentId: ScopedThreadRef["environmentId"] | null,
   cwd: string | null,
+  projectId: ProjectId | null,
 ): void {
   if (environmentId === null || cwd === null) {
     return;
   }
-  void refresh({ environmentId, input: { cwd } });
+  void refresh({ environmentId, input: { cwd, ...(projectId ? { projectId } : {}) } });
 }
 const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
 
@@ -368,6 +370,7 @@ interface PublishRepositoryDialogProps {
   readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: ScopedThreadRef["environmentId"] | null;
   readonly gitCwd: string;
+  readonly projectId: ProjectId | null;
 }
 
 function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
@@ -397,8 +400,9 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     () => ({
       environmentId: props.environmentId,
       cwd: props.gitCwd,
+      projectId: props.projectId,
     }),
-    [props.environmentId, props.gitCwd],
+    [props.environmentId, props.gitCwd, props.projectId],
   );
   const publishRepositoryAction = useSourceControlPublishRepositoryAction(sourceControlScope);
   const publishAccountByProvider = useMemo(() => {
@@ -993,6 +997,7 @@ export default function GitActionsControl({
         ? store.getDraftThreadByRef(activeThreadRef)
         : null,
   );
+  const activeProjectId = activeServerThread?.projectId ?? activeDraftThread?.projectId ?? null;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
@@ -1003,8 +1008,8 @@ export default function GitActionsControl({
     useState<PendingDefaultBranchAction | null>(null);
   const activeGitActionProgressRef = useRef<ActiveGitActionProgress | null>(null);
   const sourceControlScope = useMemo(
-    () => ({ environmentId: activeEnvironmentId, cwd: gitCwd }),
-    [activeEnvironmentId, gitCwd],
+    () => ({ environmentId: activeEnvironmentId, cwd: gitCwd, projectId: activeProjectId }),
+    [activeEnvironmentId, gitCwd, activeProjectId],
   );
   let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<void>;
 
@@ -1081,7 +1086,7 @@ export default function GitActionsControl({
     activeEnvironmentId !== null && gitCwd !== null
       ? vcsEnvironment.status({
           environmentId: activeEnvironmentId,
-          input: { cwd: gitCwd },
+          input: { cwd: gitCwd, ...(activeProjectId ? { projectId: activeProjectId } : {}) },
         })
       : null,
   );
@@ -1190,7 +1195,7 @@ export default function GitActionsControl({
       }
       refreshTimeout = window.setTimeout(() => {
         refreshTimeout = null;
-        requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+        requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd, activeProjectId);
       }, GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS);
     };
     const handleVisibilityChange = () => {
@@ -1209,7 +1214,7 @@ export default function GitActionsControl({
       window.removeEventListener("focus", scheduleRefreshCurrentGitStatus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [activeEnvironmentId, gitCwd, refreshVcsStatus]);
+  }, [activeEnvironmentId, activeProjectId, gitCwd, refreshVcsStatus]);
 
   const openExistingPr = useCallback(async () => {
     const api = readLocalApi();
@@ -1727,7 +1732,12 @@ export default function GitActionsControl({
           <Menu
             onOpenChange={(open) => {
               if (open) {
-                requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+                requestVcsStatusRefresh(
+                  refreshVcsStatus,
+                  activeEnvironmentId,
+                  gitCwd,
+                  activeProjectId,
+                );
               }
             }}
           >
@@ -1989,6 +1999,7 @@ export default function GitActionsControl({
         onOpenChange={setIsPublishDialogOpen}
         environmentId={activeEnvironmentId}
         gitCwd={gitCwd}
+        projectId={activeProjectId}
       />
 
       <Dialog

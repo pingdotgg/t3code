@@ -27,6 +27,7 @@ import {
   ProviderInstanceId,
   ResolvedKeybindingRule,
   ThreadId,
+  type VcsStatusInput,
   WS_METHODS,
   WsRpcGroup,
   EditorId,
@@ -554,6 +555,13 @@ const buildAppUnderTest = (options?: {
           ready: Effect.void,
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
           updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
+          updateProjectSettings: () =>
+            Effect.succeed({
+              remoteOverride: null,
+              automaticGitFetchInterval: null,
+              actionEnvironment: {},
+              disabledProviderInstanceIds: [],
+            }),
           streamChanges: Stream.empty,
           ...options?.layers?.serverSettings,
         }),
@@ -823,12 +831,24 @@ const parseSessionCookieFromWsUrl = (
   };
 };
 
+type NodeWebSocketConstructor = new (
+  socketUrl: string | URL,
+  protocols?: string | ReadonlyArray<string>,
+  options?: { readonly headers?: Record<string, string> },
+) => globalThis.WebSocket;
+
+const nodeWebSocket = (
+  NodeSocket.NodeWS as unknown as {
+    readonly WebSocket: NodeWebSocketConstructor;
+  }
+).WebSocket;
+
 const wsRpcProtocolLayer = (wsUrl: string) => {
   const { cookie, url } = parseSessionCookieFromWsUrl(wsUrl);
   const webSocketConstructorLayer = Layer.succeed(
     Socket.WebSocketConstructor,
     (socketUrl, protocols) =>
-      new NodeSocket.NodeWS.WebSocket(
+      new nodeWebSocket(
         socketUrl,
         protocols,
         cookie ? { headers: { cookie } } : undefined,
@@ -1964,7 +1984,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         );
         const installEvents = yield* Effect.scoped(
           withWsRpcClient(wsUrl, (client) =>
-            client[WS_METHODS.cloudInstallRelayClient]({}).pipe(Stream.runCollect),
+            client[WS_METHODS.cloudInstallRelayClient]({}).pipe(Stream.take(3), Stream.runCollect),
           ),
         );
 
@@ -6095,7 +6115,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       Effect.gen(function* () {
         const dispatchedCommands: Array<OrchestrationCommand> = [];
         const bootstrapGitOperations: string[] = [];
-        const refreshStatus = vi.fn((_: string) =>
+        const refreshStatus = vi.fn((_: string | VcsStatusInput) =>
           Effect.succeed({
             isRepo: true,
             hasPrimaryRemote: true,

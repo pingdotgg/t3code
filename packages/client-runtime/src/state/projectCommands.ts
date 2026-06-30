@@ -66,6 +66,11 @@ export function createProjectEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
     }),
+    getDetails: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:get-details",
+      tag: WS_METHODS.projectsGetDetails,
+      staleTimeMs: 15_000,
+    }),
     readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:read-file",
       tag: WS_METHODS.projectsReadFile,
@@ -101,6 +106,12 @@ export function createProjectEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) =>
           JSON.stringify([environmentId, input.cwd, input.relativePath]),
       },
+    }),
+    updateSettings: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:update-settings",
+      tag: WS_METHODS.projectsUpdateSettings,
+      scheduler: projectScheduler,
+      concurrency: projectConcurrency,
     }),
   };
 }

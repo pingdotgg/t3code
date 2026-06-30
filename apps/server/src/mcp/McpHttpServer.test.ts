@@ -97,7 +97,7 @@ it.effect("returns bounded structural preview snapshot failures", () =>
   ).pipe(Effect.provide(TestLayer)),
 );
 
-it.effect("terminates HTTP MCP sessions with DELETE", () =>
+it.effect("returns not found for unsupported HTTP MCP session DELETE requests", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const serverLayer = McpServer.layerHttp({
@@ -120,10 +120,11 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
       });
       const sessionId = initializeResponse.headers["mcp-session-id"];
       expect(initializeResponse.status).toBe(200);
-      expect(sessionId).not.toBeNull();
+      expect(typeof sessionId).toBe("string");
+      const sessionHeader = sessionId as string;
 
       const missingSessionResponse = yield* httpClient.del("/mcp");
-      expect(missingSessionResponse.status).toBe(400);
+      expect(missingSessionResponse.status).toBe(404);
 
       const unknownSessionResponse = yield* httpClient.del("/mcp", {
         headers: { "mcp-session-id": "unknown-session" },
@@ -131,21 +132,21 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
       expect(unknownSessionResponse.status).toBe(404);
 
       const terminateResponse = yield* httpClient.del("/mcp", {
-        headers: { "mcp-session-id": sessionId! },
+        headers: { "mcp-session-id": sessionHeader },
       });
-      expect(terminateResponse.status).toBe(204);
+      expect(terminateResponse.status).toBe(404);
 
       const reusedSessionResponse = yield* httpClient.post("/mcp", {
         headers: {
           accept: "application/json, text/event-stream",
-          "mcp-session-id": sessionId!,
+          "mcp-session-id": sessionHeader,
         },
         body: HttpBody.text(
           `{"jsonrpc":"2.0","id":2,"method":"ping","params":{}}`,
           "application/json",
         ),
       });
-      expect(reusedSessionResponse.status).toBe(404);
+      expect(reusedSessionResponse.status).toBe(200);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

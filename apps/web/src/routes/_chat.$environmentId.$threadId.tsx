@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
-import { resolveThreadRouteRef } from "../threadRoutes";
+import { resolveThreadRouteRef, type ThreadRouteRefParams } from "../threadRoutes";
 import { SidebarInset } from "~/components/ui/sidebar";
 import { useEnvironmentThreadRefs, useThreadDetail, useThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
@@ -13,7 +13,7 @@ import { environmentShell } from "../state/shell";
 function ChatThreadRouteView() {
   const navigate = useNavigate();
   const threadRef = Route.useParams({
-    select: (params) => resolveThreadRouteRef(params),
+    select: (params: ThreadRouteRefParams) => resolveThreadRouteRef(params),
   });
   const shell = useEnvironmentQuery(
     threadRef === null ? null : environmentShell.stateAtom(threadRef.environmentId),

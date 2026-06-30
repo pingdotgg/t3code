@@ -5,7 +5,6 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 
 import {
   readDesktopBaseVersion,
@@ -14,6 +13,16 @@ import {
   resolveNightlyTargetVersion,
   writeNightlyReleaseOutput,
 } from "./resolve-nightly-release.ts";
+
+const assertPlatformError = (cause: unknown, reasonTag: string) => {
+  assert.isNotNull(cause);
+  assert.equal(typeof cause, "object");
+  assert.equal((cause as { readonly _tag?: unknown })._tag, "PlatformError");
+  assert.equal(
+    (cause as { readonly reason?: { readonly _tag?: unknown } }).reason?._tag,
+    reasonTag,
+  );
+};
 
 it("strips prerelease and build metadata when deriving the nightly base version", () => {
   assert.equal(resolveNightlyBaseVersion("0.0.17"), "0.0.17");
@@ -92,7 +101,7 @@ it.layer(NodeServices.layer)("readDesktopBaseVersion", (it) => {
       }
       assert.equal(error.operation, "read");
       assert.equal(error.packageJsonPath, packageJsonPath);
-      assert.instanceOf(error.cause, PlatformError.PlatformError);
+      assertPlatformError(error.cause, "NotFound");
       assert.notInclude(error.message, String((error.cause as Error).message));
     }),
   );

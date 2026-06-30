@@ -1,4 +1,4 @@
-import { Debouncer } from "@tanstack/react-pacer";
+import { createDebouncer } from "./debouncer";
 
 export interface StateStorage<R = unknown> {
   getItem: (name: string) => string | null | Promise<string | null>;
@@ -44,12 +44,9 @@ export function createDebouncedStorage(
   debounceMs: number = 300,
 ): DebouncedStorage {
   const resolvedStorage = resolveStorage(baseStorage);
-  const debouncedSetItem = new Debouncer(
-    (name: string, value: string) => {
-      resolvedStorage.setItem(name, value);
-    },
-    { wait: debounceMs },
-  );
+  const debouncedSetItem = createDebouncer((name: string, value: string) => {
+    resolvedStorage.setItem(name, value);
+  }, debounceMs);
 
   return {
     getItem: (name) => resolvedStorage.getItem(name),

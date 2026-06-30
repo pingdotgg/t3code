@@ -109,6 +109,7 @@ import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   resolveProviderDriverKindForInstanceSelection,
+  resolveProjectProviderInstancePolicy,
   sortProviderInstanceEntries,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
@@ -657,13 +658,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Instance-aware projection of the wire provider list. One entry per
   // configured instance (default built-in + any custom `providerInstances.*`),
   // sorted default-first per driver kind for a stable picker order.
-  const providerInstanceEntries = useMemo<ReadonlyArray<ProviderInstanceEntry>>(
+  const allProviderInstanceEntries = useMemo<ReadonlyArray<ProviderInstanceEntry>>(
     () =>
       sortProviderInstanceEntries(
         applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
       ),
     [providerStatuses, settings],
   );
+  const activeProjectSettings = activeThread?.projectId
+    ? (settings.projectSettings[activeThread.projectId] ?? null)
+    : null;
+  const projectProviderPolicy = useMemo(
+    () => resolveProjectProviderInstancePolicy(allProviderInstanceEntries, activeProjectSettings),
+    [activeProjectSettings, allProviderInstanceEntries],
+  );
+  const providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry> =
+    projectProviderPolicy.projectEnabledEntries;
+  const hasProjectProviderInstances = providerInstanceEntries.length > 0;
   const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
   const threadProvider =
     activeThread?.session?.providerInstanceId ??
@@ -714,9 +725,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ];
     for (const candidate of candidates) {
       if (!candidate) continue;
-      const match = providerInstanceEntries.find(
-        (entry) => entry.instanceId === candidate && entry.enabled,
-      );
+      const match = providerInstanceEntries.find((entry) => entry.instanceId === candidate);
       if (match) {
         // When locked to a specific driver kind, ignore persisted instance
         // ids from a different kind or continuation group.
@@ -730,22 +739,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return match.instanceId;
       }
     }
-    if (explicitSelectedInstanceId) {
-      return ProviderInstanceId.make(explicitSelectedInstanceId);
-    }
     const byKind = providerInstanceEntries.find(
       (entry) =>
-        entry.enabled &&
         entry.driverKind === selectedProvider &&
         (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey),
     );
     if (byKind) return byKind.instanceId;
-    const anyEnabled = providerInstanceEntries.find((entry) => entry.enabled);
     return (
-      anyEnabled?.instanceId ??
+      projectProviderPolicy.firstAllowedProvider?.instanceId ??
       providerInstanceEntries[0]?.instanceId ??
-      activeThreadModelSelection?.instanceId ??
-      activeProjectDefaultModelSelection?.instanceId ??
       ProviderInstanceId.make("codex")
     );
   }, [
@@ -753,10 +755,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThread?.session?.providerInstanceId,
     activeThreadModelSelection?.instanceId,
     composerDraft.activeProvider,
-    explicitSelectedInstanceId,
     lockedContinuationGroupKey,
     lockedProvider,
     providerInstanceEntries,
+    projectProviderPolicy.firstAllowedProvider?.instanceId,
     selectedProvider,
   ]);
 
@@ -923,6 +925,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       prompt,
     ],
   );
+  const hasSendableContent = composerSendState.hasSendableContent && hasProjectProviderInstances;
 
   // ------------------------------------------------------------------
   // Derived: composer trigger / menu
@@ -1056,11 +1059,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (showPlanFollowUpPrompt) {
       return prompt.trim().length > 0 ? "plan:refine" : "plan:implement";
     }
-    return `idle:${composerSendState.hasSendableContent}:${isSendBusy}:${isConnecting}:${isPreparingWorktree}`;
+    return `idle:${hasSendableContent}:${isSendBusy}:${isConnecting}:${isPreparingWorktree}`;
   }, [
     activePendingIsResponding,
     activePendingProgress,
-    composerSendState.hasSendableContent,
+    hasSendableContent,
     isConnecting,
     isPreparingWorktree,
     isSendBusy,
@@ -1135,7 +1138,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
   );
   const collapsedComposerPrimaryActionDisabled =
-    phase === "running" || isSendBusy || isConnecting || !composerSendState.hasSendableContent;
+    phase === "running" || isSendBusy || isConnecting || !hasSendableContent;
   const collapsedComposerPrimaryActionLabel = "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
@@ -1677,11 +1680,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (activePendingProgress) {
       return activePendingProgress.isLastQuestion && Boolean(activePendingResolvedAnswers);
     }
-    return showPlanFollowUpPrompt || composerSendState.hasSendableContent;
+    return (
+      (showPlanFollowUpPrompt || composerSendState.hasSendableContent) &&
+      hasProjectProviderInstances
+    );
   }, [
     activePendingProgress,
     activePendingResolvedAnswers,
     composerSendState.hasSendableContent,
+    hasProjectProviderInstances,
     isConnecting,
     isMobileViewport,
     isSendBusy,
@@ -1691,12 +1698,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
+      if (!hasProjectProviderInstances && !activePendingProgress) {
+        event?.preventDefault();
+        return;
+      }
       onSend(event);
       if (shouldBlurMobileComposerOnSubmit()) {
         blurMobileComposerAfterSend();
       }
     },
-    [blurMobileComposerAfterSend, onSend, shouldBlurMobileComposerOnSubmit],
+    [
+      activePendingProgress,
+      blurMobileComposerAfterSend,
+      hasProjectProviderInstances,
+      onSend,
+      shouldBlurMobileComposerOnSubmit,
+    ],
   );
   const expandMobileComposer = useCallback(() => {
     if (composerBlurFrameRef.current !== null) {
@@ -2481,6 +2498,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   modelOptionsByInstance={modelOptionsByInstance}
                   terminalOpen={terminalOpen}
                   open={isComposerModelPickerOpen}
+                  disabled={!hasProjectProviderInstances}
                   {...(composerProviderState.modelPickerIconClassName
                     ? {
                         activeProviderIconClassName: composerProviderState.modelPickerIconClassName,
@@ -2549,7 +2567,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   isConnecting={isConnecting}
                   isEnvironmentUnavailable={environmentUnavailable !== null}
                   isPreparingWorktree={isPreparingWorktree}
-                  hasSendableContent={composerSendState.hasSendableContent}
+                  hasSendableContent={hasSendableContent}
                   preserveComposerFocusOnPointerDown={isMobileViewport}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}

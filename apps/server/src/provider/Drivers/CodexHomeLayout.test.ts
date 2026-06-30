@@ -3,10 +3,10 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import { CodexSettings } from "@t3tools/contracts";
+import { isPlatformErrorLike } from "../../platformError.ts";
 import {
   CodexShadowHomeEntryConflictError,
   CodexShadowHomePathConflictError,
@@ -257,7 +257,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           effectiveHomePath: shadowHome,
         });
         expect(error.path.startsWith(sharedHome)).toBe(true);
-        expect(error.cause).toBeInstanceOf(PlatformError.PlatformError);
+        expect(isPlatformErrorLike(error.cause)).toBe(true);
         expect(error.message).toBe(
           `Codex shadow home filesystem operation 'makeDirectory' failed for '${error.path}'.`,
         );

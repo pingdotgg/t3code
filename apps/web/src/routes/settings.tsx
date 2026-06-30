@@ -3,11 +3,13 @@ import {
   Outlet,
   createFileRoute,
   redirect,
+  type ParsedLocation,
   useCanGoBack,
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
+import type { AuthGateBeforeLoadArgs } from "./-authGateRouteContext";
 
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
 import { Button } from "../components/ui/button";
@@ -114,7 +116,10 @@ function SettingsRouteLayout() {
 }
 
 export const Route = createFileRoute("/settings")({
-  beforeLoad: async ({ context, location }) => {
+  beforeLoad: async ({
+    context,
+    location,
+  }: AuthGateBeforeLoadArgs & { location: ParsedLocation }) => {
     if (
       context.authGateState.status !== "authenticated" &&
       context.authGateState.status !== "hosted-static"

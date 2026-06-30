@@ -28,6 +28,10 @@ import type {
   ProjectReadFileResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
+  ProjectDetails,
+  ProjectDetailsInput,
+  ProjectSettings,
+  ProjectUpdateSettingsInput,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project.ts";
@@ -1157,6 +1161,8 @@ export interface EnvironmentApi {
   projects: {
     listEntries: (input: ProjectListEntriesInput) => Promise<ProjectListEntriesResult>;
     readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
+    getDetails: (input: ProjectDetailsInput) => Promise<ProjectDetails>;
+    updateSettings: (input: ProjectUpdateSettingsInput) => Promise<ProjectSettings>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };

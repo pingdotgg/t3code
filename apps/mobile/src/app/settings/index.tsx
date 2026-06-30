@@ -17,7 +17,10 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { AppText as Text } from "../../components/AppText";
 import { setLiveActivityUpdatesEnabled } from "../../features/agent-awareness/liveActivityPreferences";
-import { requestAgentNotificationPermission } from "../../features/agent-awareness/notificationPermissions";
+import {
+  isNotificationPermissionGranted,
+  requestAgentNotificationPermission,
+} from "../../features/agent-awareness/notificationPermissions";
 import { refreshAgentAwarenessRegistration } from "../../features/agent-awareness/remoteRegistration";
 import { refreshManagedRelayEnvironments } from "../../features/cloud/managedRelayState";
 import { useClerkSettingsSheetDetent } from "../../features/cloud/ClerkSettingsSheetDetent";
@@ -32,6 +35,10 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
+
+function normalizeClerkToken(value: unknown) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
 
 export default function SettingsRouteScreen() {
   return hasCloudPublicConfig() ? <ConfiguredSettingsRouteScreen /> : <LocalSettingsRouteScreen />;
@@ -102,7 +109,7 @@ function ConfiguredSettingsRouteScreen() {
       setNotificationStatus("disabled");
       return;
     }
-    setNotificationStatus(result.value.granted ? "enabled" : "disabled");
+    setNotificationStatus(isNotificationPermissionGranted(result.value) ? "enabled" : "disabled");
   }, []);
 
   useEffect(() => {
@@ -208,7 +215,8 @@ function ConfiguredSettingsRouteScreen() {
       );
       return;
     }
-    if (!tokenResult.value) {
+    const clerkToken = normalizeClerkToken(tokenResult.value);
+    if (!clerkToken) {
       promptSignIn();
       setLiveActivityStatus("signed-out");
       return;
@@ -218,7 +226,7 @@ function ConfiguredSettingsRouteScreen() {
       runtime.runPromiseExit(
         setLiveActivityUpdatesEnabled({
           enabled: true,
-          clerkToken: tokenResult.value,
+          clerkToken,
           connections,
         }),
       ),
@@ -280,7 +288,7 @@ function ConfiguredSettingsRouteScreen() {
               });
               return;
             }
-            token = tokenResult.value;
+            token = normalizeClerkToken(tokenResult.value);
           }
 
           const updateResult = await settleAsyncResult(() =>

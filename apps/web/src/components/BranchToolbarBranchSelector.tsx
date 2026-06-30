@@ -695,15 +695,17 @@ export function BranchToolbarBranchSelector({
               <LegendList<string>
                 ref={branchListRef}
                 data={filteredBranchPickerItems}
-                keyExtractor={(item) => item}
-                getItemType={(item) =>
+                keyExtractor={(item: string) => item}
+                getItemType={(item: string) =>
                   item === checkoutPullRequestItemValue
                     ? "checkout-pull-request"
                     : item === createBranchItemValue
                       ? "create-branch"
                       : "branch"
                 }
-                renderItem={({ item, index }) => renderPickerItem(item, index)}
+                renderItem={({ item, index }: { item: string; index: number }) =>
+                  renderPickerItem(item, index)
+                }
                 estimatedItemSize={28}
                 drawDistance={336}
                 onEndReached={() => {

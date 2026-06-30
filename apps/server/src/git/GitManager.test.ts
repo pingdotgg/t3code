@@ -16,6 +16,7 @@ import type {
   GitActionProgressEvent,
   GitPreparePullRequestThreadInput,
   ModelSelection,
+  SourceControlProviderInfo,
   ThreadId,
 } from "@t3tools/contracts";
 
@@ -636,6 +637,8 @@ function preparePullRequestThread(
 
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
+  sourceControlProviderContext?: SourceControlProviderRegistry.SourceControlProviderHandle["context"];
+  sourceControlProviderContextSource?: SourceControlProviderRegistry.SourceControlProviderHandle["contextSource"];
   textGeneration?: Partial<FakeGitTextGeneration>;
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
 }) {
@@ -658,7 +661,12 @@ function makeManager(input?: {
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           get: () => Effect.succeed(provider),
-          resolveHandle: () => Effect.succeed({ provider, context: null }),
+          resolveHandle: () =>
+            Effect.succeed({
+              provider,
+              context: input?.sourceControlProviderContext ?? null,
+              contextSource: input?.sourceControlProviderContextSource ?? null,
+            }),
           resolve: () => Effect.succeed(provider),
           discover: Effect.succeed([]),
         }),
@@ -692,6 +700,18 @@ const GitManagerTestLayer = GitVcsDriver.layer.pipe(
   Layer.provideMerge(VcsProcess.layer),
   Layer.provideMerge(NodeServices.layer),
 );
+
+const githubProvider = {
+  kind: "github",
+  name: "GitHub",
+  baseUrl: "https://github.com",
+} satisfies SourceControlProviderInfo;
+
+const gitlabProvider = {
+  kind: "gitlab",
+  name: "GitLab",
+  baseUrl: "https://gitlab.com",
+} satisfies SourceControlProviderInfo;
 
 it.layer(GitManagerTestLayer)("GitManager", (it) => {
   it.effect("status includes PR metadata when branch already has an open PR", () =>
@@ -733,6 +753,30 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         headRef: "feature/status-open-pr",
         state: "open",
       });
+    }),
+  );
+
+  it.effect("status prefers branch remote over detected provider context", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["remote", "add", "origin", "git@gitlab.com:pingdotgg/t3code.git"]);
+      yield* runGit(repoDir, ["remote", "add", "upstream", "git@github.com:pingdotgg/t3code.git"]);
+      yield* runGit(repoDir, ["checkout", "-b", "branch-remote"]);
+      yield* runGit(repoDir, ["config", "branch.branch-remote.remote", "upstream"]);
+
+      const { manager } = yield* makeManager({
+        sourceControlProviderContext: {
+          provider: gitlabProvider,
+          remoteName: "origin",
+          remoteUrl: "git@gitlab.com:pingdotgg/t3code.git",
+        },
+        sourceControlProviderContextSource: "detected",
+      });
+
+      const status = yield* manager.localStatus({ cwd: repoDir });
+
+      expect(status.sourceControlProvider).toEqual(githubProvider);
     }),
   );
 

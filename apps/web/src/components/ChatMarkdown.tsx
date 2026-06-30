@@ -32,9 +32,10 @@ import React, {
   useState,
   type ReactNode,
 } from "react";
-import type { Components } from "react-markdown";
-import ReactMarkdown from "react-markdown";
-import { defaultUrlTransform } from "react-markdown";
+import ReactMarkdown, {
+  defaultUrlTransform,
+  type Components as ReactMarkdownComponents,
+} from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
@@ -208,6 +209,29 @@ type MarkdownAstNode = {
     hProperties?: Record<string, unknown>;
   };
   children?: MarkdownAstNode[];
+};
+
+type MarkdownNodeWithPosition = {
+  readonly position?: {
+    readonly start?: {
+      readonly offset?: number;
+    };
+  };
+};
+
+type MarkdownComponentProps<Tag extends keyof React.JSX.IntrinsicElements> =
+  React.ComponentPropsWithoutRef<Tag> & {
+    readonly node?: MarkdownNodeWithPosition;
+  };
+
+type MarkdownComponents = {
+  readonly p: (props: MarkdownComponentProps<"p">) => ReactNode;
+  readonly li: (props: MarkdownComponentProps<"li">) => ReactNode;
+  readonly input: (props: MarkdownComponentProps<"input">) => ReactNode;
+  readonly a: (props: MarkdownComponentProps<"a">) => ReactNode;
+  readonly table: (props: MarkdownComponentProps<"table">) => ReactNode;
+  readonly details: (props: MarkdownComponentProps<"details">) => ReactNode;
+  readonly pre: (props: MarkdownComponentProps<"pre">) => ReactNode;
 };
 
 function remarkPreserveCodeMeta() {
@@ -1326,13 +1350,13 @@ function ChatMarkdown({
     },
     [createAssetUrl, openPreview, preparedConnection, threadRef],
   );
-  const markdownComponents = useMemo<Components>(
+  const markdownComponents = useMemo<MarkdownComponents>(
     () => ({
       p({ node: _node, children, ...props }) {
         return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
       },
       li({ node, children, ...props }) {
-        const listItemStart = node?.position?.start.offset;
+        const listItemStart = node?.position?.start?.offset;
         const markerOffset =
           typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
         return (
@@ -1550,7 +1574,7 @@ function ChatMarkdown({
             : [remarkGfm, remarkPreserveCodeMeta]
         }
         rehypePlugins={[rehypeRaw, [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA]]}
-        components={markdownComponents}
+        components={markdownComponents as unknown as ReactMarkdownComponents}
         urlTransform={markdownUrlTransform}
       >
         {text}

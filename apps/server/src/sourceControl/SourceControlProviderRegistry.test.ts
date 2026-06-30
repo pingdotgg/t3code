@@ -5,9 +5,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { VcsRepositoryDetectionError } from "@t3tools/contracts";
+import { ProjectId, VcsRepositoryDetectionError } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -15,6 +17,7 @@ import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
+import { parseRemoteHost } from "./RemoteOverride.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
@@ -40,8 +43,20 @@ function makeRegistry(input: {
   }>;
   readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
   readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
+  readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
 }) {
   const driver = {
+    detectRepository: () =>
+      Effect.succeed({
+        kind: "git" as const,
+        rootPath: "/repo",
+        metadataPath: null,
+        freshness: {
+          source: "live-local" as const,
+          observedAt: TEST_EPOCH,
+          expiresAt: Option.none(),
+        },
+      }),
     listRemotes: () =>
       Effect.succeed({
         remotes: input.remotes.map((remote) => ({
@@ -92,9 +107,13 @@ function makeRegistry(input: {
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         Layer.mock(GitHubCli.GitHubCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
-        ServerConfig.layerTest(process.cwd(), {
-          prefix: "t3-source-control-registry-test-",
-        }).pipe(Layer.provide(NodeServices.layer)),
+        Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+        }),
+        ServerSettings.layerTest(input.settings),
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-registry-test-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
       ),
     ),
   );
@@ -111,6 +130,49 @@ it.effect("routes GitHub remotes to the GitHub provider", () =>
     assert.strictEqual(provider.kind, "github");
   }),
 );
+
+it.effect("marks automatically detected provider contexts", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@github.com:pingdotgg/t3code.git" }],
+    });
+
+    const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+
+    assert.strictEqual(handle.contextSource, "detected");
+    assert.strictEqual(handle.context?.provider.kind, "github");
+  }),
+);
+
+it.effect("uses project-specific remote overrides when a project id is supplied", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project-override");
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@github.com:pingdotgg/t3code.git" }],
+      settings: {
+        projectSettings: {
+          [projectId]: {
+            remoteOverride: {
+              provider: "gitlab",
+              remoteName: "upstream",
+              remoteUrl: "https://gitlab.example.test/group/project.git",
+            },
+          },
+        },
+      },
+    });
+
+    const handle = yield* registry.resolveHandle({ cwd: "/repo", projectId });
+
+    assert.strictEqual(handle.contextSource, "override");
+    assert.strictEqual(handle.provider.kind, "gitlab");
+    assert.strictEqual(handle.context?.remoteName, "upstream");
+  }),
+);
+
+it("returns null for URL hosts that parse as empty strings", () => {
+  assert.strictEqual(parseRemoteHost("file:///path/to/repo"), null);
+});
 
 it.effect("routes directly by provider kind for remote-first workflows", () =>
   Effect.gen(function* () {

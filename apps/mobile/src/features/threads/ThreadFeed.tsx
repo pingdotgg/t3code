@@ -1,5 +1,4 @@
 import * as Haptics from "expo-haptics";
-import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
 import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
@@ -54,6 +53,7 @@ import {
   type ReviewInlineComment,
 } from "../review/reviewCommentSelection";
 import { resolveNativeReviewDiffView } from "../diffs/nativeReviewDiffSurface";
+import { KeyboardAwareLegendList } from "./keyboardLegendList";
 import {
   buildNativeReviewDiffData,
   createNativeReviewDiffTheme,
@@ -1477,8 +1477,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           data={presentedFeed}
           extraData={listAppearanceData}
           renderItem={renderItem}
-          keyExtractor={(entry) => entry.id}
-          getItemType={(entry) =>
+          keyExtractor={(entry: ThreadFeedEntry) => entry.id}
+          getItemType={(entry: ThreadFeedEntry) =>
             entry.type === "message" ? `message:${entry.message.role}` : entry.type
           }
           keyboardShouldPersistTaps="always"

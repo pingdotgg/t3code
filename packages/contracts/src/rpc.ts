@@ -74,6 +74,11 @@ import {
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
+  ProjectDetails,
+  ProjectDetailsError,
+  ProjectDetailsInput,
+  ProjectSettings,
+  ProjectUpdateSettingsInput,
   ProjectWriteFileError,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
@@ -151,6 +156,8 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsListEntries: "projects.listEntries",
   projectsReadFile: "projects.readFile",
+  projectsGetDetails: "projects.getDetails",
+  projectsUpdateSettings: "projects.updateSettings",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
 
@@ -370,6 +377,18 @@ export const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
   payload: ProjectReadFileInput,
   success: ProjectReadFileResult,
   error: Schema.Union([ProjectReadFileError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectsGetDetailsRpc = Rpc.make(WS_METHODS.projectsGetDetails, {
+  payload: ProjectDetailsInput,
+  success: ProjectDetails,
+  error: Schema.Union([ProjectDetailsError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectsUpdateSettingsRpc = Rpc.make(WS_METHODS.projectsUpdateSettings, {
+  payload: ProjectUpdateSettingsInput,
+  success: ProjectSettings,
+  error: Schema.Union([ProjectDetailsError, EnvironmentAuthorizationError]),
 });
 
 export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
@@ -701,6 +720,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlPublishRepositoryRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
+  WsProjectsGetDetailsRpc,
+  WsProjectsUpdateSettingsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,

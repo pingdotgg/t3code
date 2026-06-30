@@ -101,8 +101,9 @@ export type ProjectScriptActionResult = AtomCommandResult<void, unknown>;
 interface ProjectScriptsControlProps {
   scripts: ReadonlyArray<ProjectScript>;
   keybindings: ResolvedKeybindingsConfig;
+  variant?: "toolbar" | "settings";
   preferredScriptId?: string | null;
-  onRunScript: (script: ProjectScript) => void;
+  onRunScript?: (script: ProjectScript) => void;
   onAddScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateScript: (
     scriptId: string,
@@ -114,6 +115,7 @@ interface ProjectScriptsControlProps {
 export default function ProjectScriptsControl({
   scripts,
   keybindings,
+  variant = "toolbar",
   preferredScriptId = null,
   onRunScript,
   onAddScript,
@@ -247,9 +249,76 @@ export default function ProjectScriptsControl({
     void onDeleteScript(editingScriptId);
   }, [editingScriptId, onDeleteScript]);
 
-  return (
-    <>
-      {primaryScript ? (
+  const trigger = (() => {
+    if (variant === "settings") {
+      return (
+        <div className="min-w-0">
+          {scripts.length > 0 ? (
+            <div className="divide-y divide-border/60">
+              {scripts.map((script) => {
+                const shortcutLabel = shortcutLabelForCommand(
+                  keybindings,
+                  commandForProjectScript(script.id),
+                );
+                return (
+                  <div
+                    key={script.id}
+                    className="flex min-w-0 items-center gap-3 px-4 py-3.5 sm:px-5"
+                  >
+                    <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background">
+                      <ScriptIcon icon={script.icon} className="size-3.5" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="truncate text-sm font-medium text-foreground">
+                          {script.name}
+                        </span>
+                        {script.runOnWorktreeCreate ? (
+                          <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                            Setup
+                          </span>
+                        ) : null}
+                        {shortcutLabel ? (
+                          <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                            {shortcutLabel}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                        {script.command}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      className="w-fit shrink-0"
+                      onClick={() => openEditDialog(script)}
+                    >
+                      <SettingsIcon className="size-3.5" />
+                      Edit
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="px-4 py-4 text-sm text-muted-foreground sm:px-5">
+              No project actions configured.
+            </div>
+          )}
+          <div className="border-t border-border/60 px-4 py-3.5 sm:px-5">
+            <Button type="button" size="sm" variant="outline" onClick={openAddDialog}>
+              <PlusIcon className="size-3.5" />
+              Add action
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    if (primaryScript) {
+      return (
         <Group aria-label="Project scripts">
           <Tooltip>
             <TooltipTrigger
@@ -258,7 +327,7 @@ export default function ProjectScriptsControl({
                   size="xs"
                   variant="outline"
                   aria-label={`Run ${primaryScript.name}`}
-                  onClick={() => onRunScript(primaryScript)}
+                  onClick={() => onRunScript?.(primaryScript)}
                 />
               }
             >
@@ -286,7 +355,7 @@ export default function ProjectScriptsControl({
                   <MenuItem
                     key={script.id}
                     className={`group ${dropdownItemClassName}`}
-                    onClick={() => onRunScript(script)}
+                    onClick={() => onRunScript?.(script)}
                   >
                     <ScriptIcon icon={script.icon} className="size-4" />
                     <span className="truncate">
@@ -327,21 +396,29 @@ export default function ProjectScriptsControl({
             </MenuPopup>
           </Menu>
         </Group>
-      ) : (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button size="xs" variant="outline" aria-label="Add action" onClick={openAddDialog} />
-            }
-          >
-            <PlusIcon className="size-3.5" />
-            <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-              Add action
-            </span>
-          </TooltipTrigger>
-          <TooltipPopup side="top">Add action</TooltipPopup>
-        </Tooltip>
-      )}
+      );
+    }
+
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button size="xs" variant="outline" aria-label="Add action" onClick={openAddDialog} />
+          }
+        >
+          <PlusIcon className="size-3.5" />
+          <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+            Add action
+          </span>
+        </TooltipTrigger>
+        <TooltipPopup side="top">Add action</TooltipPopup>
+      </Tooltip>
+    );
+  })();
+
+  return (
+    <>
+      {trigger}
 
       <Dialog
         onOpenChange={(open) => {

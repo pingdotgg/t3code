@@ -13,6 +13,7 @@ import type {
   GitActionProgressEvent,
   GitResolvePullRequestResult,
   GitStackedAction,
+  ProjectId,
   SourceControlCloneProtocol,
   SourceControlRepositoryVisibility,
   ThreadId,
@@ -39,6 +40,7 @@ export type SourceControlActionKind =
 export interface SourceControlActionScope {
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
+  readonly projectId?: ProjectId | null;
 }
 
 interface SourceControlActionState<
@@ -123,6 +125,14 @@ function resolveScope(scope: SourceControlActionScope) {
   return {
     environmentId: scope.environmentId,
     cwd: scope.cwd,
+    projectId: scope.projectId ?? null,
+  };
+}
+
+function statusInputForScope(scope: SourceControlActionScope) {
+  return {
+    cwd: scope.cwd!,
+    ...(scope.projectId ? { projectId: scope.projectId } : {}),
   };
 }
 
@@ -167,7 +177,7 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
     scope.environmentId !== null && scope.cwd !== null
       ? vcsEnvironment.status({
           environmentId: scope.environmentId,
-          input: { cwd: scope.cwd },
+          input: statusInputForScope(scope),
         })
       : null,
   );
@@ -206,7 +216,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
     scope.environmentId !== null && scope.cwd !== null
       ? vcsEnvironment.status({
           environmentId: scope.environmentId,
-          input: { cwd: scope.cwd },
+          input: statusInputForScope(scope),
         })
       : null,
   );
@@ -261,7 +271,7 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
     scope.environmentId !== null && scope.cwd !== null
       ? vcsEnvironment.status({
           environmentId: scope.environmentId,
-          input: { cwd: scope.cwd },
+          input: statusInputForScope(scope),
         })
       : null,
   );

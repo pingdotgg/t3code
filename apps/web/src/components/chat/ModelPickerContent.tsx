@@ -624,8 +624,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   ref={modelListRef}
                   data={filteredModelKeys}
                   extraData={favoritesSet}
-                  keyExtractor={(modelKey) => modelKey}
-                  renderItem={({ item: modelKey, index }) => {
+                  keyExtractor={(modelKey: string) => modelKey}
+                  renderItem={({ item: modelKey, index }: { item: string; index: number }) => {
                     const model = filteredModelByKey.get(modelKey);
                     if (!model) {
                       return null;

@@ -1,7 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import {
@@ -12,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { isPlatformNotFoundErrorLike } from "../platformError.ts";
 import {
   decodeAzureDevOpsPullRequestJson,
   decodeAzureDevOpsPullRequestListJson,
@@ -90,13 +90,13 @@ export class AzureDevOpsCommandFailedError extends Schema.TaggedErrorClass<Azure
     cause: VcsError,
   ): AzureDevOpsCliError {
     const fields = { ...context, cause };
+    const platformCause = cause.cause;
 
     if (
       cause._tag === "VcsProcessSpawnError" &&
-      cause.cause instanceof PlatformError.PlatformError &&
-      cause.cause.reason._tag === "NotFound" &&
-      cause.cause.reason.pathOrDescriptor !== context.cwd &&
-      cause.cause.reason.syscall !== "chdir"
+      isPlatformNotFoundErrorLike(platformCause) &&
+      platformCause.reason.pathOrDescriptor !== context.cwd &&
+      platformCause.reason.syscall !== "chdir"
     ) {
       return new AzureDevOpsCliUnavailableError(fields);
     }

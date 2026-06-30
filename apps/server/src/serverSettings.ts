@@ -17,6 +17,9 @@ import {
   DEFAULT_SERVER_SETTINGS,
   isProviderDriverKind,
   type ModelSelection,
+  type ProjectId,
+  type ProjectSettings,
+  type ProjectSettingsPatch,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   ProviderDriverKind,
@@ -56,6 +59,12 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+export const emptyProjectSettings: ProjectSettings = {
+  remoteOverride: null,
+  automaticGitFetchInterval: null,
+  actionEnvironment: {},
+  disabledProviderInstanceIds: [],
+};
 
 const normalizeServerSettings = (
   settings: ServerSettings,
@@ -108,26 +117,34 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
   return { ...settings, providerInstances };
 }
 
+export interface ServerSettingsShape {
+  /** Start the settings runtime and attach file watching. */
+  readonly start: Effect.Effect<void, ServerSettingsError>;
+
+  /** Await settings runtime readiness. */
+  readonly ready: Effect.Effect<void, ServerSettingsError>;
+
+  /** Read the current settings. */
+  readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
+
+  /** Patch settings and persist. Returns the new full settings object. */
+  readonly updateSettings: (
+    patch: ServerSettingsPatch,
+  ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
+  /** Update one project's settings from the latest persisted snapshot. */
+  readonly updateProjectSettings: (
+    projectId: ProjectId,
+    patch: ProjectSettingsPatch,
+  ) => Effect.Effect<ProjectSettings, ServerSettingsError>;
+
+  /** Stream of settings change events. */
+  readonly streamChanges: Stream.Stream<ServerSettings>;
+}
+
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
-  {
-    /** Start the settings runtime and attach file watching. */
-    readonly start: Effect.Effect<void, ServerSettingsError>;
-
-    /** Await settings runtime readiness. */
-    readonly ready: Effect.Effect<void, ServerSettingsError>;
-
-    /** Read the current settings. */
-    readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
-
-    /** Patch settings and persist. Returns the new full settings object. */
-    readonly updateSettings: (
-      patch: ServerSettingsPatch,
-    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
-
-    /** Stream of settings change events. */
-    readonly streamChanges: Stream.Stream<ServerSettings>;
-  }
+  ServerSettingsShape
 >()("t3/serverSettings/ServerSettingsService") {
   /** @deprecated Import and use `layerTest` from this module. */
   static readonly layerTest = (overrides: DeepPartial<ServerSettings> = {}) => layerTest(overrides);
@@ -144,16 +161,35 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
         : {}),
     });
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
+    const writeSemaphore = yield* Semaphore.make(1);
+
+    const commitSettings = (makePatch: (current: ServerSettings) => ServerSettingsPatch) =>
+      writeSemaphore.withPermits(1)(
+        Ref.get(currentSettingsRef).pipe(
+          Effect.map((currentSettings) =>
+            applyServerSettingsPatch(currentSettings, makePatch(currentSettings)),
+          ),
+          Effect.flatMap(normalizeServerSettings),
+          Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+        ),
+      );
 
     return {
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(currentSettingsRef),
-      updateSettings: (patch) =>
-        Ref.get(currentSettingsRef).pipe(
-          Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
-          Effect.flatMap(normalizeServerSettings),
-          Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+      updateSettings: (patch) => commitSettings(() => patch),
+      updateProjectSettings: (projectId, patch) =>
+        commitSettings((settings) => ({
+          projectSettings: {
+            ...settings.projectSettings,
+            [projectId]: {
+              ...(settings.projectSettings[projectId] ?? emptyProjectSettings),
+              ...patch,
+            },
+          },
+        })).pipe(
+          Effect.map((settings) => settings.projectSettings[projectId] ?? emptyProjectSettings),
         ),
       streamChanges: Stream.empty,
     } satisfies ServerSettingsService["Service"];
@@ -556,6 +592,23 @@ const make = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
+  const commitSettings = (makePatch: (current: ServerSettings) => ServerSettingsPatch) =>
+    writeSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* getSettingsFromCache;
+        const nextPersisted = yield* persistProviderEnvironmentSecrets(
+          current,
+          applyServerSettingsPatch(current, makePatch(current)),
+        );
+        const next = yield* normalizeServerSettings(nextPersisted);
+        yield* writeSettingsAtomically(next);
+        yield* Cache.set(settingsCache, cacheKey, next);
+        yield* emitChange(next);
+        const materialized = yield* materializeProviderEnvironmentSecrets(next);
+        return resolveTextGenerationProvider(materialized);
+      }),
+    );
+
   return {
     start,
     ready: Deferred.await(startedDeferred),
@@ -563,21 +616,18 @@ const make = Effect.gen(function* () {
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
-    updateSettings: (patch) =>
-      writeSemaphore.withPermits(1)(
-        Effect.gen(function* () {
-          const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
-            current,
-            applyServerSettingsPatch(current, patch),
-          );
-          const next = yield* normalizeServerSettings(nextPersisted);
-          yield* writeSettingsAtomically(next);
-          yield* Cache.set(settingsCache, cacheKey, next);
-          yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
-          return resolveTextGenerationProvider(materialized);
-        }),
+    updateSettings: (patch) => commitSettings(() => patch),
+    updateProjectSettings: (projectId, patch) =>
+      commitSettings((settings) => ({
+        projectSettings: {
+          ...settings.projectSettings,
+          [projectId]: {
+            ...(settings.projectSettings[projectId] ?? emptyProjectSettings),
+            ...patch,
+          },
+        },
+      })).pipe(
+        Effect.map((settings) => settings.projectSettings[projectId] ?? emptyProjectSettings),
       ),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub).pipe(

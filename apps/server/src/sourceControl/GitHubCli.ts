@@ -1,7 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -12,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { isPlatformNotFoundErrorLike } from "../platformError.ts";
 import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
@@ -156,12 +156,12 @@ export function fromVcsError(
   },
   error: VcsError,
 ): GitHubCliError {
+  const cause = error.cause;
   if (
     error._tag === "VcsProcessSpawnError" &&
-    error.cause instanceof PlatformError.PlatformError &&
-    error.cause.reason._tag === "NotFound" &&
-    error.cause.reason.module === "ChildProcess" &&
-    error.cause.reason.method === "spawn"
+    isPlatformNotFoundErrorLike(cause) &&
+    cause.reason.module === "ChildProcess" &&
+    cause.reason.method === "spawn"
   ) {
     return new GitHubCliUnavailableError({ ...context, cause: error });
   }

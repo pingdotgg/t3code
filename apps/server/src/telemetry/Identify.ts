@@ -9,6 +9,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import { isPlatformErrorLike } from "../platformError.ts";
 
 const CodexAuthJsonSchema = Schema.Struct({
   tokens: Schema.Struct({
@@ -103,7 +104,7 @@ function isNotFoundError(error: PlatformError.PlatformError): boolean {
 }
 
 const getTelemetryIdentityCauseAnnotations = (cause: unknown) => {
-  if (cause instanceof PlatformError.PlatformError) {
+  if (isPlatformErrorLike(cause)) {
     return {
       causeKind: "platform",
       platformReason: cause.reason._tag,

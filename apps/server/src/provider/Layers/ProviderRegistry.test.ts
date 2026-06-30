@@ -22,6 +22,7 @@ import {
   type ServerProvider,
   type ServerProviderSlashCommand,
   type ServerSettings as ContractServerSettings,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import * as PlatformError from "effect/PlatformError";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
@@ -278,19 +279,47 @@ function makeMutableServerSettingsService(
     const settingsRef = yield* Ref.make(initial);
     const changes = yield* PubSub.unbounded<ContractServerSettings>();
 
+    const commitSettings = (makePatch: (current: ContractServerSettings) => ServerSettingsPatch) =>
+      Effect.gen(function* () {
+        const current = yield* Ref.get(settingsRef);
+        const next = decodeServerSettings(
+          encodeServerSettings(applyServerSettingsPatch(current, makePatch(current))),
+        );
+        yield* Ref.set(settingsRef, next);
+        yield* PubSub.publish(changes, next);
+        return next;
+      });
+
     return {
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
-      updateSettings: (patch) =>
-        Effect.gen(function* () {
-          const current = yield* Ref.get(settingsRef);
-          const next = applyServerSettingsPatch(current, patch);
-          encodeServerSettings(next);
-          yield* Ref.set(settingsRef, next);
-          yield* PubSub.publish(changes, next);
-          return next;
-        }),
+      updateSettings: (patch) => commitSettings(() => patch),
+      updateProjectSettings: (projectId, patch) =>
+        commitSettings((settings) => ({
+          projectSettings: {
+            ...settings.projectSettings,
+            [projectId]: {
+              ...(settings.projectSettings[projectId] ?? {
+                remoteOverride: null,
+                automaticGitFetchInterval: null,
+                actionEnvironment: {},
+                disabledProviderInstanceIds: [],
+              }),
+              ...patch,
+            },
+          },
+        })).pipe(
+          Effect.map(
+            (settings) =>
+              settings.projectSettings[projectId] ?? {
+                remoteOverride: null,
+                automaticGitFetchInterval: null,
+                actionEnvironment: {},
+                disabledProviderInstanceIds: [],
+              },
+          ),
+        ),
       get streamChanges() {
         return Stream.fromPubSub(changes);
       },

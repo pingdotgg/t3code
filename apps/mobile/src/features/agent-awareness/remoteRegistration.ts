@@ -26,6 +26,7 @@ import {
 } from "../../lib/storage";
 import AgentActivity, { type AgentActivityProps } from "../../widgets/AgentActivity";
 import { resolveCloudPublicConfig } from "../cloud/publicConfig";
+import { isNotificationPermissionGranted } from "./notificationPermissions";
 import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
 
 const REMOTE_ACTIVITY_REGISTRATION_RETRY_MS = 15_000;
@@ -171,7 +172,7 @@ function nativePushTokenRegistration(observedPushToken?: string) {
           cause,
         }),
     });
-    if (!permissions.granted) {
+    if (!isNotificationPermissionGranted(permissions)) {
       return { notificationsEnabled: false, pushToken: null };
     }
     const token = yield* Effect.tryPromise({

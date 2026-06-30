@@ -4,12 +4,18 @@ const expoMocks = vi.hoisted(() => ({
   requireNativeView: vi.fn(),
 }));
 const nativeView = () => null;
-const originalExpo = globalThis.expo;
+type ExpoTestGlobal = Omit<typeof globalThis, "expo"> & {
+  expo?: {
+    getViewConfig?: (moduleName: string) => unknown;
+  };
+};
+const expoGlobal = globalThis as ExpoTestGlobal;
+const originalExpo = expoGlobal.expo;
 
 function setExpoViewConfigAvailable() {
-  globalThis.expo = {
+  expoGlobal.expo = {
     getViewConfig: vi.fn().mockReturnValue({ validAttributes: {}, directEventTypes: {} }),
-  } as unknown as typeof globalThis.expo;
+  };
 }
 
 vi.mock("expo", () => ({
@@ -20,11 +26,11 @@ describe("resolveNativeTerminalSurfaceView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    globalThis.expo = undefined as unknown as typeof globalThis.expo;
+    expoGlobal.expo = undefined;
   });
 
   afterEach(() => {
-    globalThis.expo = originalExpo;
+    expoGlobal.expo = originalExpo;
   });
 
   it("returns null when the native terminal view config is unavailable", async () => {

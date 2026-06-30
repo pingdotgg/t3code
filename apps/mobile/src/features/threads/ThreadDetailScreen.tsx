@@ -1,5 +1,4 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
-import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import type {
   ApprovalRequestId,
@@ -37,6 +36,7 @@ import type {
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { PendingUserInputCard } from "./PendingUserInputCard";
+import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "./keyboardLegendList";
 import {
   COMPOSER_COLLAPSED_CHROME,
   COMPOSER_EXPANDED_CHROME,

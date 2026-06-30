@@ -9,11 +9,11 @@ import type {
   ServerProviderState,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { normalizeModelSlug } from "@t3tools/shared/model";
+import { isPlatformNotFoundErrorLike } from "../platformError.ts";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { createProviderVersionAdvisory } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
@@ -69,7 +69,7 @@ export function nonEmptyTrimmed(value: string | undefined): string | undefined {
 
 export function isCommandMissingCause(error: unknown): boolean {
   if (isProviderCommandNotFoundError(error)) return true;
-  return error instanceof PlatformError.PlatformError && error.reason._tag === "NotFound";
+  return isPlatformNotFoundErrorLike(error);
 }
 
 export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Command) =>

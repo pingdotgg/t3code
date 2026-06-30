@@ -12,6 +12,16 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { collectSources, runCommand } from "./mobile-native-static-check.ts";
 
+const assertPlatformError = (cause: unknown, reasonTag: string) => {
+  assert.isNotNull(cause);
+  assert.equal(typeof cause, "object");
+  assert.equal((cause as { readonly _tag?: unknown })._tag, "PlatformError");
+  assert.equal(
+    (cause as { readonly reason?: { readonly _tag?: unknown } }).reason?._tag,
+    reasonTag,
+  );
+};
+
 const processHandle = (
   exitCode: Effect.Effect<ChildProcessSpawner.ExitCode, PlatformError.PlatformError>,
 ) =>
@@ -49,7 +59,7 @@ it.layer(NodeServices.layer)("mobile native source discovery", (it) => {
       assert.equal(error._tag, "NativeStaticCheckSourceDiscoveryError");
       assert.equal(error.operation, "read-directory");
       assert.equal(error.path, missingDirectory);
-      assert.instanceOf(error.cause, PlatformError.PlatformError);
+      assertPlatformError(error.cause, "NotFound");
       assert.equal(error.message, "Native source discovery operation 'read-directory' failed.");
     }),
   );

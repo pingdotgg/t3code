@@ -1,3 +1,5 @@
+// @effect-diagnostics anyUnknownInErrorContext:off - The Worker stack composes Alchemy resource effects with framework-owned broad channels.
+
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Drizzle from "alchemy/Drizzle";

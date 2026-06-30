@@ -34,7 +34,7 @@ import {
 } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useProject, useThread } from "../state/entities";
-import { resolveThreadRouteRef } from "../threadRoutes";
+import { resolveThreadRouteRef, type ThreadRouteRefParams } from "../threadRoutes";
 import { useClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
@@ -197,7 +197,7 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
 
   const routeThreadRef = useParams({
     strict: false,
-    select: (params) => resolveThreadRouteRef(params),
+    select: (params: ThreadRouteRefParams) => resolveThreadRouteRef(params),
   });
   const diffSelection = useDiffPanelStore((state) =>
     selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),

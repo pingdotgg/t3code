@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @effect-diagnostics anyUnknownInErrorContext:off - Alchemy CLI/state helpers expose framework-owned broad channels.
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { AdoptPolicy } from "alchemy/AdoptPolicy";
@@ -492,9 +493,8 @@ export const relayDeployCommand = Command.make(
 ).pipe(Command.withDescription("Deploy the T3 Code relay through Alchemy."));
 
 if (import.meta.main) {
-  Command.run(relayDeployCommand, { version: "0.0.0" }).pipe(
-    Effect.provide(deployServices),
-    Effect.scoped,
-    NodeRuntime.runMain,
-  );
+  const relayDeployMain = Effect.scoped(
+    Command.run(relayDeployCommand, { version: "0.0.0" }).pipe(Effect.provide(deployServices)),
+  ) as Effect.Effect<void, unknown, never>;
+  NodeRuntime.runMain(relayDeployMain);
 }

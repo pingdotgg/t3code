@@ -20,6 +20,7 @@ import {
   ProjectId,
   ThreadId,
   TurnId,
+  type VcsStatusInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -250,7 +251,7 @@ describe("ProviderCommandReactor", () => {
             : "renamed-branch",
       }),
     );
-    const refreshStatus = vi.fn((_: string) =>
+    const refreshStatus = vi.fn((_: string | VcsStatusInput) =>
       Effect.succeed({
         isRepo: true,
         hasPrimaryRemote: true,

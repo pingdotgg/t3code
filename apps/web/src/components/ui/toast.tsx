@@ -29,7 +29,7 @@ import { cn } from "~/lib/utils";
 import { buttonVariants } from "~/components/ui/button";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { resolveThreadRouteTarget } from "~/threadRoutes";
+import { resolveThreadRouteTarget, type ThreadRouteTargetParams } from "~/threadRoutes";
 import {
   buildVisibleToastLayout,
   shouldHideCollapsedToastContent,
@@ -430,7 +430,7 @@ interface ToastProviderProps extends Toast.Provider.Props {
 function useActiveThreadRefFromRoute(): ScopedThreadRef | null {
   const routeTarget = useParams({
     strict: false,
-    select: (params) => resolveThreadRouteTarget(params),
+    select: (params: ThreadRouteTargetParams) => resolveThreadRouteTarget(params),
   });
   const activeDraftSession = useComposerDraftStore((store) =>
     routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,

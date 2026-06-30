@@ -60,18 +60,36 @@ describe("projectScripts helpers", () => {
     });
   });
 
-  it("allows overriding runtime env values", () => {
+  it("keeps T3Code runtime env values app-owned", () => {
     const env = projectScriptRuntimeEnv({
       project: { cwd: "/repo" },
+      worktreePath: "/repo/worktree-a",
       extraEnv: {
         T3CODE_PROJECT_ROOT: "/custom-root",
+        T3CODE_WORKTREE_PATH: "/custom-worktree",
+        T3CODE_CUSTOM: "custom",
         CUSTOM_FLAG: "1",
       },
     });
 
-    expect(env.T3CODE_PROJECT_ROOT).toBe("/custom-root");
+    expect(env.T3CODE_PROJECT_ROOT).toBe("/repo");
+    expect(env.T3CODE_WORKTREE_PATH).toBe("/repo/worktree-a");
+    expect(env.T3CODE_CUSTOM).toBeUndefined();
     expect(env.CUSTOM_FLAG).toBe("1");
+  });
+
+  it("does not allow extra env to invent T3Code runtime variables", () => {
+    const env = projectScriptRuntimeEnv({
+      project: { cwd: "/repo" },
+      extraEnv: {
+        T3CODE_WORKTREE_PATH: "/custom-worktree",
+        CUSTOM_FLAG: "1",
+      },
+    });
+
+    expect(env.T3CODE_PROJECT_ROOT).toBe("/repo");
     expect(env.T3CODE_WORKTREE_PATH).toBeUndefined();
+    expect(env.CUSTOM_FLAG).toBe("1");
   });
 
   it("prefers the worktree path for script cwd resolution", () => {

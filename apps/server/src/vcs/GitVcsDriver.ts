@@ -327,7 +327,7 @@ function chunkPathsForGitCheckIgnore(relativePaths: ReadonlyArray<string>): stri
   return chunks;
 }
 
-function parseGitRemoteVerboseOutput(
+export function parseGitRemoteVerboseOutput(
   output: string,
 ): Map<string, { url?: string; pushUrl?: string }> {
   const remotes = new Map<string, { url?: string; pushUrl?: string }>();

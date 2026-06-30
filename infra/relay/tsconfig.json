@@ -3,6 +3,7 @@
   "compilerOptions": {
     "target": "ES2023",
     "lib": ["ES2023", "WebWorker"],
+    "preserveSymlinks": true,
     "types": ["@cloudflare/workers-types", "node"]
   },
   "include": ["alchemy.run.ts", "scripts/**/*.ts", "src/**/*.ts"]

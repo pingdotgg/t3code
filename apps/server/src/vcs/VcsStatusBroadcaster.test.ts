@@ -14,12 +14,13 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import type {
+  VcsStatusInput,
   VcsStatusLocalResult,
   VcsStatusRemoteResult,
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
-import { GitManagerError } from "@t3tools/contracts";
+import { GitManagerError, ProjectId } from "@t3tools/contracts";
 
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -70,18 +71,21 @@ function makeTestLayer(state: {
   localInvalidationCalls: number;
   remoteInvalidationCalls: number;
   remoteStatusRefreshUpstreamValues?: Array<boolean | undefined>;
+  seenInputs?: VcsStatusInput[];
 }) {
   return VcsStatusBroadcaster.layer.pipe(
     Layer.provideMerge(NodeServices.layer),
     Layer.provide(
       Layer.mock(GitWorkflowService.GitWorkflowService)({
-        localStatus: () =>
+        localStatus: (input) =>
           Effect.sync(() => {
+            state.seenInputs?.push(input);
             state.localStatusCalls += 1;
             return state.currentLocalStatus;
           }),
-        remoteStatus: (_input, options) =>
+        remoteStatus: (input, options) =>
           Effect.sync(() => {
+            state.seenInputs?.push(input);
             state.remoteStatusCalls += 1;
             state.remoteStatusRefreshUpstreamValues?.push(options?.refreshUpstream);
             return state.currentRemoteStatus;
@@ -122,6 +126,36 @@ describe("VcsStatusBroadcaster", () => {
       assert.equal(state.remoteStatusCalls, 1);
       assert.equal(state.localInvalidationCalls, 0);
       assert.equal(state.remoteInvalidationCalls, 0);
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it.effect("keeps project-aware status cache entries isolated", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      seenInputs: [] as VcsStatusInput[],
+    };
+    const projectId = ProjectId.make("project-one");
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+      yield* broadcaster.getStatus({ cwd: "/repo", projectId });
+      yield* broadcaster.getStatus({ cwd: "/repo", projectId });
+      yield* broadcaster.refreshStatus({ cwd: "/repo", projectId });
+
+      assert.equal(state.localStatusCalls, 2);
+      assert.equal(state.remoteStatusCalls, 2);
+      assert.deepStrictEqual(state.seenInputs, [
+        { cwd: "/repo", projectId },
+        { cwd: "/repo", projectId },
+        { cwd: "/repo", projectId },
+        { cwd: "/repo", projectId },
+      ]);
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 

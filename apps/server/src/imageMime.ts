@@ -1,5 +1,15 @@
 import Mime from "@effect/platform-node/Mime";
 
+type MimeModule = {
+  readonly getExtension?: (mimeType: string) => string | false | null;
+  readonly default?: {
+    readonly getExtension?: (mimeType: string) => string | false | null;
+  };
+};
+
+const getMimeExtension = (mimeType: string) =>
+  ((Mime as MimeModule).getExtension ?? (Mime as MimeModule).default?.getExtension)?.(mimeType);
+
 export const IMAGE_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
   "image/avif": ".avif",
   "image/bmp": ".bmp",
@@ -66,7 +76,7 @@ export function inferImageExtension(input: { mimeType: string; fileName?: string
     return fromMime;
   }
 
-  const fromMimeExtension = Mime.getExtension(input.mimeType);
+  const fromMimeExtension = getMimeExtension(input.mimeType);
   if (fromMimeExtension && SAFE_IMAGE_FILE_EXTENSIONS.has(fromMimeExtension)) {
     return fromMimeExtension;
   }

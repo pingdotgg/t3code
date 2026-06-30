@@ -55,6 +55,18 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
 
+function resolveRuntimeVersionPolicy(value: string | undefined) {
+  switch (value) {
+    case "nativeVersion":
+    case "sdkVersion":
+    case "fingerprint":
+    case "appVersion":
+      return value;
+    default:
+      return "appVersion";
+  }
+}
+
 const config: ExpoConfig = {
   name: variant.appName,
   slug: "t3-code",
@@ -62,7 +74,7 @@ const config: ExpoConfig = {
   scheme: variant.scheme,
   version: "0.1.0",
   runtimeVersion: {
-    policy: process.env.MOBILE_VERSION_POLICY ?? "appVersion",
+    policy: resolveRuntimeVersionPolicy(process.env.MOBILE_VERSION_POLICY),
   },
   orientation: "portrait",
   icon: "./assets/icon.png",
