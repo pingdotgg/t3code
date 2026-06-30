@@ -30,7 +30,6 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
-  THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_ICON_ACTION_CLASS,
   THREAD_DETAILS_PANEL_LINK_ROW_CLASS,
   THREAD_DETAILS_PANEL_LINK_SPLIT_GROUP_CLASS,
@@ -38,6 +37,8 @@ import {
   THREAD_DETAILS_PANEL_LINK_SPLIT_SECONDARY_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
+
+const THREAD_RELATIONSHIP_ICON_CLASS = "size-4 shrink-0 text-muted-foreground";
 
 function relationshipLabel(edge: ThreadRelationshipEdge, currentThreadId: ThreadId) {
   if (edge.kind === "transfer") return "Context transfer";
@@ -221,7 +222,7 @@ export function ThreadRelationshipsPanel(props: {
             const relationshipContent = (
               <>
                 <span className="relative -mx-0.5 grid size-4 shrink-0 place-items-center">
-                  <RelationshipIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+                  <RelationshipIcon className={THREAD_RELATIONSHIP_ICON_CLASS} />
                   <span
                     className={cn(
                       "absolute -bottom-1 -right-1 size-2 rounded-full border-2 border-card",

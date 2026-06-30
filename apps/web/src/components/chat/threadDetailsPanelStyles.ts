@@ -19,7 +19,7 @@ const THREAD_DETAILS_PANEL_SPLIT_BUTTON_SURFACE_CLASS = `${THREAD_DETAILS_PANEL_
 
 export const THREAD_DETAILS_PANEL_ROW_CLASS = `h-9 w-full justify-start gap-2.5 rounded-lg border-transparent bg-transparent px-2.5 text-[13px] font-medium text-foreground/80 sm:h-9 sm:text-[13px] ${THREAD_DETAILS_PANEL_ROW_SURFACE_CLASS}`;
 
-export const THREAD_DETAILS_PANEL_SELECT_ROW_CLASS = `${THREAD_DETAILS_PANEL_ROW_CLASS} before:pointer-events-none before:absolute before:inset-0`;
+export const THREAD_DETAILS_PANEL_SELECT_ROW_CLASS = `${THREAD_DETAILS_PANEL_ROW_CLASS} pe-0 before:pointer-events-none before:absolute before:inset-0 [&_[data-slot=select-icon]]:-me-px [&_[data-slot=select-icon]]:relative [&_[data-slot=select-icon]]:flex [&_[data-slot=select-icon]]:h-full [&_[data-slot=select-icon]]:w-8 [&_[data-slot=select-icon]]:shrink-0 [&_[data-slot=select-icon]]:items-center [&_[data-slot=select-icon]]:justify-center [&_[data-slot=select-icon]]:before:absolute [&_[data-slot=select-icon]]:before:-left-px [&_[data-slot=select-icon]]:before:top-1/2 [&_[data-slot=select-icon]]:before:h-4 [&_[data-slot=select-icon]]:before:w-px [&_[data-slot=select-icon]]:before:-translate-y-1/2 [&_[data-slot=select-icon]]:before:bg-border/65 [&_[data-slot=select-icon]>svg]:me-0 [&_[data-slot=select-icon]>svg]:size-4 [&_[data-slot=select-icon]>svg]:text-muted-foreground [&_[data-slot=select-icon]>svg]:opacity-100`;
 
 export const THREAD_DETAILS_PANEL_LINK_ROW_CLASS = `flex h-9 min-w-0 flex-1 cursor-pointer items-center justify-start gap-2.5 rounded-lg border border-transparent bg-transparent px-2.5 text-left text-[13px] font-medium text-foreground/80 disabled:cursor-not-allowed disabled:opacity-55 sm:h-9 sm:text-[13px] ${THREAD_DETAILS_PANEL_ROW_SURFACE_CLASS}`;
 
@@ -32,7 +32,7 @@ export const THREAD_DETAILS_PANEL_LINK_SPLIT_SECONDARY_CLASS = `h-9 w-8 shrink-0
 export const THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS =
   "h-9 w-full justify-start gap-2.5 rounded-lg border border-transparent px-2.5 text-[13px] font-medium text-foreground/80 sm:h-9 sm:text-[13px]";
 
-export const THREAD_DETAILS_PANEL_ICON_CLASS = "size-4 shrink-0 text-muted-foreground";
+export const THREAD_DETAILS_PANEL_ICON_CLASS = "-mx-0.5 size-4 shrink-0 text-muted-foreground";
 
 export const THREAD_DETAILS_PANEL_CHEVRON_CLASS = "size-4 shrink-0 text-muted-foreground";
 
