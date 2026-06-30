@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -216,6 +216,84 @@ describe("ProcessDiagnostics", () => {
           command: "ps",
           args: ["-axo", "pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command="],
         },
+      ]);
+    }),
+  );
+
+  it.effect("queries Windows processes through schema-decoded PowerShell JSON", () =>
+    Effect.gen(function* () {
+      const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
+        [];
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          const childProcess = command as unknown as {
+            readonly command: string;
+            readonly args: ReadonlyArray<string>;
+          };
+          commands.push({ command: childProcess.command, args: childProcess.args });
+          return Effect.succeed(
+            mockHandle({
+              stdout: JSON.stringify([
+                {
+                  ProcessId: process.pid,
+                  ParentProcessId: 1,
+                  Name: "node.exe",
+                  CommandLine: "t3 server",
+                  Status: "Running",
+                  WorkingSetSize: 1024,
+                  PercentProcessorTime: 0,
+                },
+                {
+                  ProcessId: 4242,
+                  ParentProcessId: process.pid,
+                  Name: "agent.exe",
+                  CommandLine: "agent.exe --work",
+                  Status: "Running",
+                  WorkingSetSize: 4096.4,
+                  PercentProcessorTime: 12.25,
+                },
+                {
+                  ProcessId: "invalid",
+                  ParentProcessId: process.pid,
+                  Name: "ignored.exe",
+                },
+              ]),
+            }),
+          );
+        }),
+      );
+      const layer = ProcessDiagnostics.layer.pipe(Layer.provide(spawnerLayer));
+
+      const diagnostics = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
+        Effect.flatMap((pd) => pd.read),
+        Effect.provide(layer),
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+
+      assert.deepStrictEqual(
+        diagnostics.processes.map((process) => ({
+          pid: process.pid,
+          ppid: process.ppid,
+          command: process.command,
+          rssBytes: process.rssBytes,
+          cpuPercent: process.cpuPercent,
+        })),
+        [
+          {
+            pid: 4242,
+            ppid: process.pid,
+            command: "agent.exe --work",
+            rssBytes: 4096,
+            cpuPercent: 12.25,
+          },
+        ],
+      );
+      assert.equal(commands[0]?.command, "powershell.exe");
+      assert.deepStrictEqual(commands[0]?.args.slice(0, 3), [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
       ]);
     }),
   );

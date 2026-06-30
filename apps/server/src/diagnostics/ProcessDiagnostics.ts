@@ -32,6 +32,19 @@ const PROCESS_QUERY_TIMEOUT_MS = 1_000;
 const POSIX_PROCESS_QUERY_COMMAND = "pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command=";
 const PROCESS_QUERY_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 
+const WindowsProcessRecord = Schema.Struct({
+  ProcessId: Schema.Number.check(Schema.isFinite()),
+  ParentProcessId: Schema.Number.check(Schema.isFinite()),
+  CommandLine: Schema.optional(Schema.Unknown),
+  Name: Schema.optional(Schema.Unknown),
+  Status: Schema.optional(Schema.Unknown),
+  WorkingSetSize: Schema.optional(Schema.Unknown),
+  PercentProcessorTime: Schema.optional(Schema.Unknown),
+});
+const WindowsProcessDocument = Schema.fromJsonString(Schema.Unknown);
+const decodeWindowsProcessDocument = Schema.decodeUnknownOption(WindowsProcessDocument);
+const decodeWindowsProcessRecord = Schema.decodeUnknownOption(WindowsProcessRecord);
+
 export class ProcessDiagnostics extends Context.Service<
   ProcessDiagnostics,
   {
@@ -136,6 +149,14 @@ function parseNumber(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function finiteNumber(value: unknown): Option.Option<number> {
+  return typeof value === "number" && Number.isFinite(value) ? Option.some(value) : Option.none();
+}
+
+function nonBlankString(value: unknown): Option.Option<string> {
+  return typeof value === "string" && value.trim().length > 0 ? Option.some(value) : Option.none();
+}
+
 export function parsePosixProcessRows(output: string): ReadonlyArray<ProcessRow> {
   const rows: ProcessRow[] = [];
   const rowPattern =
@@ -201,51 +222,58 @@ export function parsePosixProcessRows(output: string): ReadonlyArray<ProcessRow>
   return rows;
 }
 
-function normalizeWindowsProcessRow(value: unknown): ProcessRow | null {
-  if (typeof value !== "object" || value === null) return null;
-  const record = value as Record<string, unknown>;
-  const pid = typeof record.ProcessId === "number" ? record.ProcessId : null;
-  const ppid = typeof record.ParentProcessId === "number" ? record.ParentProcessId : null;
-  const commandLine =
-    typeof record.CommandLine === "string" && record.CommandLine.trim().length > 0
-      ? record.CommandLine
-      : typeof record.Name === "string"
-        ? record.Name
-        : null;
-  const workingSet =
-    typeof record.WorkingSetSize === "number" && Number.isFinite(record.WorkingSetSize)
-      ? Math.max(0, Math.round(record.WorkingSetSize))
-      : 0;
-  const cpuPercent =
-    typeof record.PercentProcessorTime === "number" && Number.isFinite(record.PercentProcessorTime)
-      ? Math.max(0, record.PercentProcessorTime)
-      : 0;
+function normalizeWindowsProcessRow(value: unknown): Option.Option<ProcessRow> {
+  const recordOption = decodeWindowsProcessRecord(value);
+  if (Option.isNone(recordOption)) return Option.none();
+  const record = recordOption.value;
+  const pid = record.ProcessId;
+  const ppid = record.ParentProcessId;
+  const commandLineOption = nonBlankString(record.CommandLine).pipe(
+    Option.orElse(() => nonBlankString(record.Name)),
+  );
 
-  if (!pid || pid <= 0 || ppid === null || ppid < 0 || !commandLine) return null;
-  return {
+  if (
+    !Number.isInteger(pid) ||
+    pid <= 0 ||
+    !Number.isInteger(ppid) ||
+    ppid < 0 ||
+    Option.isNone(commandLineOption)
+  ) {
+    return Option.none();
+  }
+
+  const workingSet = Option.getOrElse(
+    finiteNumber(record.WorkingSetSize).pipe(Option.map((bytes) => Math.max(0, Math.round(bytes)))),
+    () => 0,
+  );
+  const cpuPercent = Option.getOrElse(
+    finiteNumber(record.PercentProcessorTime).pipe(Option.map((percent) => Math.max(0, percent))),
+    () => 0,
+  );
+
+  return Option.some({
     pid,
     ppid,
     pgid: null,
-    status: typeof record.Status === "string" && record.Status.length > 0 ? record.Status : "Live",
+    status: Option.getOrElse(nonBlankString(record.Status), () => "Live"),
     cpuPercent,
     rssBytes: workingSet,
     elapsed: "",
-    command: commandLine,
-  };
+    command: commandLineOption.value,
+  });
 }
 
 function parseWindowsProcessRows(output: string): ReadonlyArray<ProcessRow> {
   if (output.trim().length === 0) return [];
-  try {
-    const parsed = JSON.parse(output) as unknown;
-    const records = Array.isArray(parsed) ? parsed : [parsed];
-    return records.flatMap((record) => {
-      const row = normalizeWindowsProcessRow(record);
-      return row ? [row] : [];
-    });
-  } catch {
-    return [];
-  }
+  const document = decodeWindowsProcessDocument(output);
+  if (Option.isNone(document)) return [];
+  const records = Array.isArray(document.value) ? document.value : [document.value];
+  return records.flatMap((record) =>
+    Option.match(normalizeWindowsProcessRow(record), {
+      onNone: () => [],
+      onSome: (row) => [row],
+    }),
+  );
 }
 
 export function buildDescendantEntries(
