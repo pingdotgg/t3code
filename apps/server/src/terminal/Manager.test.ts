@@ -204,6 +204,7 @@ const multiTerminalHistoryLogPath = (
 interface CreateManagerOptions {
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
+  sshAuthSockResolver?: (env: NodeJS.ProcessEnv) => string | undefined;
   subprocessInspector?: (terminalPid: number) => Effect.Effect<{
     readonly hasRunningSubprocess: boolean;
     readonly childCommand: string | null;
@@ -244,6 +245,9 @@ const createManager = (
         ptyAdapter,
         ...(options.shellResolver !== undefined ? { shellResolver: options.shellResolver } : {}),
         ...(options.env !== undefined ? { env: options.env } : {}),
+        ...(options.sshAuthSockResolver !== undefined
+          ? { sshAuthSockResolver: options.sshAuthSockResolver }
+          : {}),
         ...(options.subprocessInspector !== undefined
           ? { subprocessInspector: options.subprocessInspector }
           : {}),
@@ -1353,6 +1357,72 @@ it.layer(
       assert.equal(spawnInput.env.T3CODE_PROJECT_ROOT, "/repo");
       assert.equal(spawnInput.env.T3CODE_WORKTREE_PATH, "/repo/worktree-a");
       assert.equal(spawnInput.env.CUSTOM_FLAG, "1");
+    }),
+  );
+
+  it.effect("hydrates missing SSH_AUTH_SOCK when spawning terminal sessions", () =>
+    Effect.gen(function* () {
+      const resolverInputs: NodeJS.ProcessEnv[] = [];
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: {
+          PATH: "/usr/bin",
+        },
+        sshAuthSockResolver: (env) => {
+          resolverInputs.push(env);
+          return "/tmp/vscode-ssh-auth-forwarded.sock";
+        },
+      });
+
+      yield* manager.open(openInput());
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+
+      assert.equal(spawnInput.env.SSH_AUTH_SOCK, "/tmp/vscode-ssh-auth-forwarded.sock");
+      assert.deepEqual(resolverInputs, [{ PATH: "/usr/bin" }]);
+    }),
+  );
+
+  it.effect("drops a stale inherited SSH_AUTH_SOCK when no replacement resolves", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: {
+          PATH: "/usr/bin",
+          SSH_AUTH_SOCK: "/tmp/stale-agent.sock",
+        },
+        sshAuthSockResolver: () => undefined,
+      });
+
+      yield* manager.open(openInput());
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+
+      assert.equal(spawnInput.env.SSH_AUTH_SOCK, undefined);
+    }),
+  );
+
+  it.effect("lets runtime env override the resolved SSH_AUTH_SOCK", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: {
+          PATH: "/usr/bin",
+        },
+        sshAuthSockResolver: () => "/tmp/vscode-ssh-auth-forwarded.sock",
+      });
+
+      yield* manager.open(
+        openInput({
+          env: {
+            SSH_AUTH_SOCK: "/tmp/project-specific-agent.sock",
+          },
+        }),
+      );
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+
+      assert.equal(spawnInput.env.SSH_AUTH_SOCK, "/tmp/project-specific-agent.sock");
     }),
   );
 

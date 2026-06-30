@@ -34,6 +34,7 @@ import {
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveSshAuthSock } from "@t3tools/shared/sshAgent";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
@@ -84,6 +85,8 @@ const DEFAULT_OPEN_ROWS = 30;
 const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const MAX_TERMINAL_LABEL_LENGTH = 128;
+
+type SshAuthSockResolver = (env: NodeJS.ProcessEnv) => string | undefined;
 
 class TerminalSubprocessCheckError extends Schema.TaggedErrorClass<TerminalSubprocessCheckError>()(
   "TerminalSubprocessCheckError",
@@ -1068,12 +1071,18 @@ function shouldExcludeTerminalEnvKey(key: string): boolean {
 function createTerminalSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
   runtimeEnv?: Record<string, string> | null,
+  sshAuthSockResolver?: SshAuthSockResolver,
 ): NodeJS.ProcessEnv {
   const spawnEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
     if (value === undefined) continue;
     if (shouldExcludeTerminalEnvKey(key)) continue;
+    if (key === "SSH_AUTH_SOCK") continue;
     spawnEnv[key] = value;
+  }
+  const resolvedSshAuthSock = sshAuthSockResolver?.(baseEnv);
+  if (resolvedSshAuthSock) {
+    spawnEnv.SSH_AUTH_SOCK = resolvedSshAuthSock;
   }
   if (runtimeEnv) {
     for (const [key, value] of Object.entries(runtimeEnv)) {
@@ -1098,6 +1107,7 @@ interface TerminalManagerOptions {
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
+  sshAuthSockResolver?: SshAuthSockResolver;
   subprocessInspector?: TerminalSubprocessInspector;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
@@ -1142,6 +1152,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   // `options.env` is the test seam.
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
+  const sshAuthSockResolver =
+    options.sshAuthSockResolver ?? ((env) => resolveSshAuthSock({ env, platform }));
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const subprocessInspector =
     options.subprocessInspector ??
@@ -1837,7 +1849,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         Effect.andThen(
           Effect.gen(function* () {
             const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
-            const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
+            const terminalEnv = createTerminalSpawnEnv(
+              baseEnv,
+              session.runtimeEnv,
+              sshAuthSockResolver,
+            );
             const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
             ptyProcess = spawnResult.process;
             startedShell = spawnResult.shellLabel;
