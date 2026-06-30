@@ -77,10 +77,11 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import {
-  isBrowserPreviewFile,
+  isWorkspacePreviewFile,
   openFileInPreview,
   openUrlInPreview,
-  BrowserPreviewUnavailableError,
+  BrowserPreviewEnvironmentDisconnectedError,
+  BrowserPreviewThreadContextUnavailableError,
 } from "../browser/openFileInPreview";
 
 class CodeHighlightErrorBoundary extends React.Component<
@@ -724,7 +725,9 @@ interface MarkdownFileLinkProps {
   theme: "light" | "dark";
   threadRef?: ScopedThreadRef | undefined;
   onOpen: (targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>;
-  onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
+  onOpenInBrowser?:
+    | ((signal: AbortSignal) => Promise<AtomCommandResult<unknown, unknown>>)
+    | undefined;
   className?: string | undefined;
 }
 
@@ -1006,6 +1009,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   onOpenInBrowser,
   className,
 }: MarkdownFileLinkProps) {
+  const browserPreviewAbortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(
+    () => () => {
+      browserPreviewAbortControllerRef.current?.abort();
+    },
+    [],
+  );
+
   const handleOpenInEditor = useCallback(() => {
     void (async () => {
       try {
@@ -1053,10 +1065,20 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     if (!onOpenInBrowser) {
       return;
     }
+    browserPreviewAbortControllerRef.current?.abort();
+    const abortController = new AbortController();
+    browserPreviewAbortControllerRef.current = abortController;
     void (async () => {
       try {
-        const result = await onOpenInBrowser();
-        if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+        const result = await onOpenInBrowser(abortController.signal);
+        if (abortController.signal.aborted) {
+          return;
+        }
+        if (result._tag === "Success") {
+          return;
+        }
+        if (isAtomCommandInterrupted(result)) {
+          handleOpenInFilePreview();
           return;
         }
         reportMarkdownActionFailure(
@@ -1066,26 +1088,41 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         const error = squashAtomCommandFailure(result);
         toastManager.add(
           stackedThreadToast({
-            type: "error",
-            title: "Unable to open file in browser",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            type: "warning",
+            title: "Unable to open file preview",
+            description:
+              error instanceof Error
+                ? `${error.message} Opening the file instead.`
+                : "Opening the file instead.",
           }),
         );
+        handleOpenInFilePreview();
       } catch (cause) {
+        if (abortController.signal.aborted) {
+          return;
+        }
         reportMarkdownActionFailure(
           { operation: "open-file-in-browser", target: targetPath },
           cause,
         );
         toastManager.add(
           stackedThreadToast({
-            type: "error",
-            title: "Unable to open file in browser",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
+            type: "warning",
+            title: "Unable to open file preview",
+            description:
+              cause instanceof Error
+                ? `${cause.message} Opening the file instead.`
+                : "Opening the file instead.",
           }),
         );
+        handleOpenInFilePreview();
+      } finally {
+        if (browserPreviewAbortControllerRef.current === abortController) {
+          browserPreviewAbortControllerRef.current = null;
+        }
       }
     })();
-  }, [onOpenInBrowser, targetPath]);
+  }, [handleOpenInFilePreview, onOpenInBrowser, targetPath]);
 
   const handleCopy = useCallback(
     (value: string, title: string) => {
@@ -1290,12 +1327,8 @@ function ChatMarkdown({
     (url: string) => {
       if (!threadRef) {
         return Promise.resolve(
-          AsyncResult.failure<void, BrowserPreviewUnavailableError>(
-            Cause.fail(
-              new BrowserPreviewUnavailableError({
-                message: "Thread context is unavailable.",
-              }),
-            ),
+          AsyncResult.failure<void, BrowserPreviewThreadContextUnavailableError>(
+            Cause.fail(new BrowserPreviewThreadContextUnavailableError()),
           ),
         );
       }
@@ -1304,13 +1337,21 @@ function ChatMarkdown({
     [openPreview, threadRef],
   );
   const openMarkdownFileInPreview = useCallback(
-    (path: string) => {
-      if (!threadRef || preparedConnection._tag === "None") {
+    (path: string, signal: AbortSignal) => {
+      if (!threadRef) {
         return Promise.resolve(
-          AsyncResult.failure<void, BrowserPreviewUnavailableError>(
+          AsyncResult.failure<void, BrowserPreviewThreadContextUnavailableError>(
+            Cause.fail(new BrowserPreviewThreadContextUnavailableError()),
+          ),
+        );
+      }
+      if (preparedConnection._tag === "None") {
+        return Promise.resolve(
+          AsyncResult.failure<void, BrowserPreviewEnvironmentDisconnectedError>(
             Cause.fail(
-              new BrowserPreviewUnavailableError({
-                message: "Environment is not connected.",
+              new BrowserPreviewEnvironmentDisconnectedError({
+                environmentId: threadRef.environmentId,
+                threadId: threadRef.threadId,
               }),
             ),
           ),
@@ -1322,6 +1363,7 @@ function ChatMarkdown({
         httpBaseUrl: preparedConnection.value.httpBaseUrl,
         createAssetUrl,
         openPreview,
+        signal,
       });
     },
     [createAssetUrl, openPreview, preparedConnection, threadRef],
@@ -1474,10 +1516,11 @@ function ChatMarkdown({
             threadRef={threadRef}
             onOpen={openInPreferredEditor}
             onOpenInBrowser={
+              fileLinkMeta.workspaceRelativePath !== null &&
               threadRef &&
               isPreviewSupportedInRuntime() &&
-              isBrowserPreviewFile(fileLinkMeta.filePath)
-                ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
+              isWorkspacePreviewFile(fileLinkMeta.filePath)
+                ? (signal) => openMarkdownFileInPreview(fileLinkMeta.filePath, signal)
                 : undefined
             }
             className={props.className}

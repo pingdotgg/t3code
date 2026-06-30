@@ -21,6 +21,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { type DraftId } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
+import { isImagePreviewFile, openFileInPreview } from "../browser/openFileInPreview";
+import { resolvePathLinkTarget } from "../terminal-links";
+import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
@@ -61,10 +64,16 @@ import {
 } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useEnvironmentQuery } from "../state/query";
+import { assetEnvironment } from "../state/assets";
+import { previewEnvironment } from "../state/preview";
 import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
+import { useEnvironmentHttpBaseUrl } from "../state/environments";
+import { useAtomCommand } from "../state/use-atom-command";
+import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
@@ -214,6 +223,12 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
       : null,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
+  const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(activeThread?.environmentId ?? null);
+  const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
+    reportFailure: false,
+  });
+  const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
+  const filePreviewAbortControllerRef = useRef<AbortController | null>(null);
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
   );
@@ -444,32 +459,92 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
     codeViewRef.current?.scrollTo({ type: "item", id: file.fileKey, align: "start" });
   }, [codeViewFiles, selectedFilePath, selectedFileRevealRequestId]);
 
+  useEffect(
+    () => () => {
+      filePreviewAbortControllerRef.current?.abort();
+    },
+    [routeThreadRef?.environmentId, routeThreadRef?.threadId],
+  );
+
   const openDiffFile = useCallback(
     (filePath: string) => {
-      openDiffFilePrimaryAction({
-        threadRef: routeThreadRef,
-        filePath,
-        activeCwd,
-        openInEditor: (targetPath) => {
-          void (async () => {
-            const result = await openInPreferredEditor(targetPath);
-            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              console.warn("Failed to open diff file in editor.", {
-                operation: "open-diff-file",
-                ...(routeThreadRef
-                  ? {
-                      environmentId: routeThreadRef.environmentId,
-                      threadId: routeThreadRef.threadId,
-                    }
-                  : {}),
-                ...safeErrorLogAttributes(squashAtomCommandFailure(result)),
-              });
-            }
-          })();
-        },
-      });
+      filePreviewAbortControllerRef.current?.abort();
+      const openFallback = () => {
+        openDiffFilePrimaryAction({
+          threadRef: routeThreadRef,
+          filePath,
+          activeCwd,
+          openInEditor: (targetPath) => {
+            void (async () => {
+              const result = await openInPreferredEditor(targetPath);
+              if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+                console.warn("Failed to open diff file in editor.", {
+                  operation: "open-diff-file",
+                  ...(routeThreadRef
+                    ? {
+                        environmentId: routeThreadRef.environmentId,
+                        threadId: routeThreadRef.threadId,
+                      }
+                    : {}),
+                  ...safeErrorLogAttributes(squashAtomCommandFailure(result)),
+                });
+              }
+            })();
+          },
+        });
+      };
+
+      if (
+        !routeThreadRef ||
+        !activeCwd ||
+        !environmentHttpBaseUrl ||
+        !isPreviewSupportedInRuntime() ||
+        !isImagePreviewFile(filePath)
+      ) {
+        openFallback();
+        return;
+      }
+
+      const abortController = new AbortController();
+      filePreviewAbortControllerRef.current = abortController;
+      void (async () => {
+        const result = await openFileInPreview({
+          threadRef: routeThreadRef,
+          filePath: resolvePathLinkTarget(filePath, activeCwd),
+          httpBaseUrl: environmentHttpBaseUrl,
+          createAssetUrl,
+          openPreview,
+          signal: abortController.signal,
+        });
+        if (abortController.signal.aborted) {
+          return;
+        }
+        if (result._tag === "Success") {
+          return;
+        }
+        if (isAtomCommandInterrupted(result)) {
+          openFallback();
+          return;
+        }
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Unable to open image preview",
+            description: error instanceof Error ? error.message : "Opening the file instead.",
+          }),
+        );
+        openFallback();
+      })();
     },
-    [activeCwd, openInPreferredEditor, routeThreadRef],
+    [
+      activeCwd,
+      createAssetUrl,
+      environmentHttpBaseUrl,
+      openInPreferredEditor,
+      openPreview,
+      routeThreadRef,
+    ],
   );
   const toggleDiffFileCollapsed = useCallback(
     (fileKey: string) => {
