@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import * as NodeAssert from "node:assert/strict";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it } from "@effect/vitest";
@@ -14,7 +14,7 @@ import {
 } from "./copilotRuntime.ts";
 
 function assertStdioConnection(connection: CopilotClientOptions["connection"]) {
-  assert.equal(connection?.kind, "stdio");
+  NodeAssert.equal(connection?.kind, "stdio");
   return connection;
 }
 
@@ -24,7 +24,7 @@ describe("buildCopilotClientOptions", () => {
   it("leaves POSIX PATH hydration to the shared server environment setup", () => {
     const env = normalizeCopilotRuntimeEnvironment({ PATH: "/custom/bin:/bin" }, "darwin");
 
-    assert.equal(env.PATH, "/custom/bin:/bin");
+    NodeAssert.equal(env.PATH, "/custom/bin:/bin");
   });
 
   describe("capabilitiesFromCopilotModel", () => {
@@ -44,7 +44,7 @@ describe("buildCopilotClientOptions", () => {
         defaultReasoningEffort: "medium",
       });
 
-      assert.deepStrictEqual(capabilities.optionDescriptors, [
+      NodeAssert.deepStrictEqual(capabilities.optionDescriptors, [
         {
           id: "reasoningEffort",
           label: "Reasoning",
@@ -84,14 +84,14 @@ describe("buildCopilotClientOptions", () => {
         },
       });
 
-      assert.deepStrictEqual(capabilities.optionDescriptors, []);
+      NodeAssert.deepStrictEqual(capabilities.optionDescriptors, []);
     });
   });
 
   it("hydrates a missing POSIX SHELL for Copilot shell spawning", () => {
     const env = normalizeCopilotRuntimeEnvironment({}, "darwin");
 
-    assert.ok(POSIX_SHELL_FALLBACKS.some((shell) => shell === env.SHELL));
+    NodeAssert.ok(POSIX_SHELL_FALLBACKS.some((shell) => shell === env.SHELL));
   });
 
   it("replaces POSIX SHELL values that the Copilot CLI rejects", () => {
@@ -102,24 +102,24 @@ describe("buildCopilotClientOptions", () => {
       "darwin",
     );
 
-    assert.equal(relativeShellEnv.SHELL, fallbackShell);
-    assert.equal(shellWithWhitespaceEnv.SHELL, fallbackShell);
+    NodeAssert.equal(relativeShellEnv.SHELL, fallbackShell);
+    NodeAssert.equal(shellWithWhitespaceEnv.SHELL, fallbackShell);
   });
 
   it("preserves valid POSIX SHELL paths", () => {
     const validShell = normalizeCopilotRuntimeEnvironment({}, "darwin").SHELL;
-    assert.ok(validShell);
+    NodeAssert.ok(validShell);
 
     const env = normalizeCopilotRuntimeEnvironment({ SHELL: validShell }, "darwin");
 
-    assert.equal(env.SHELL, validShell);
+    NodeAssert.equal(env.SHELL, validShell);
   });
 
   it("forces the Copilot POSIX shell spawn backend to avoid node-pty failures", () => {
     const env = normalizeCopilotRuntimeEnvironment({}, "darwin");
 
-    assert.equal(env.COPILOT_FEATURE_FLAGS, "SHELL_SPAWN_BACKEND");
-    assert.equal(env.COPILOT_EXP_COPILOT_CLI_SHELL_SPAWN_BACKEND, "true");
+    NodeAssert.equal(env.COPILOT_FEATURE_FLAGS, "SHELL_SPAWN_BACKEND");
+    NodeAssert.equal(env.COPILOT_EXP_COPILOT_CLI_SHELL_SPAWN_BACKEND, "true");
   });
 
   it("preserves existing Copilot feature flags while enabling the shell spawn backend", () => {
@@ -128,15 +128,15 @@ describe("buildCopilotClientOptions", () => {
       "darwin",
     );
 
-    assert.equal(env.COPILOT_FEATURE_FLAGS, "FOCUSED_TOOLS,SHELL_SPAWN_BACKEND,MCP_APPS");
+    NodeAssert.equal(env.COPILOT_FEATURE_FLAGS, "FOCUSED_TOOLS,SHELL_SPAWN_BACKEND,MCP_APPS");
   });
 
   it("does not apply POSIX shell normalization on Windows", () => {
     const env = normalizeCopilotRuntimeEnvironment({ SHELL: "bash" }, "win32");
 
-    assert.equal(env.SHELL, "bash");
-    assert.equal(env.COPILOT_FEATURE_FLAGS, undefined);
-    assert.equal(env.COPILOT_EXP_COPILOT_CLI_SHELL_SPAWN_BACKEND, undefined);
+    NodeAssert.equal(env.SHELL, "bash");
+    NodeAssert.equal(env.COPILOT_FEATURE_FLAGS, undefined);
+    NodeAssert.equal(env.COPILOT_EXP_COPILOT_CLI_SHELL_SPAWN_BACKEND, undefined);
   });
 
   it.layer(NodeServices.layer)("Copilot CLI command resolution", (it) => {
@@ -163,14 +163,14 @@ describe("buildCopilotClientOptions", () => {
           });
 
           const connection = assertStdioConnection(options.connection);
-          assert.ok(connection.path?.includes("node_modules/.bin/copilot"));
-          assert.equal(options.workingDirectory, "/tmp/project");
-          assert.equal(options.baseDirectory, "/tmp/t3-copilot-home");
-          assert.equal(options.logLevel, "error");
-          assert.equal(options.mode, "copilot-cli");
-          assert.equal(options.env?.COPILOT_CLI_PATH, undefined);
-          assert.equal(options.env?.GITHUB_TOKEN, "github-token");
-          assert.equal(options.env?.PATH, "/usr/bin");
+          NodeAssert.ok(connection.path?.includes("node_modules/.bin/copilot"));
+          NodeAssert.equal(options.workingDirectory, "/tmp/project");
+          NodeAssert.equal(options.baseDirectory, "/tmp/t3-copilot-home");
+          NodeAssert.equal(options.logLevel, "error");
+          NodeAssert.equal(options.mode, "copilot-cli");
+          NodeAssert.equal(options.env?.COPILOT_CLI_PATH, undefined);
+          NodeAssert.equal(options.env?.GITHUB_TOKEN, "github-token");
+          NodeAssert.equal(options.env?.PATH, "/usr/bin");
         }),
     );
 
@@ -182,7 +182,7 @@ describe("buildCopilotClientOptions", () => {
           platform: "darwin",
         });
 
-        assert.ok(cliPath?.includes("node_modules/.bin/copilot"));
+        NodeAssert.ok(cliPath?.includes("node_modules/.bin/copilot"));
       }),
     );
 
@@ -204,8 +204,8 @@ describe("buildCopilotClientOptions", () => {
         });
 
         const connection = assertStdioConnection(options.connection);
-        assert.equal(connection.path, configuredBinaryPath);
-        assert.equal(options.env?.COPILOT_CLI_PATH, undefined);
+        NodeAssert.equal(connection.path, configuredBinaryPath);
+        NodeAssert.equal(options.env?.COPILOT_CLI_PATH, undefined);
       }),
     );
   });
@@ -219,9 +219,9 @@ describe("buildCopilotClientOptions", () => {
       login: "octocat",
     });
 
-    assert.equal(snapshot.auth.status, "authenticated");
-    assert.equal(snapshot.auth.type, "user");
-    assert.equal(snapshot.auth.label, "@octocat - github.com");
+    NodeAssert.equal(snapshot.auth.status, "authenticated");
+    NodeAssert.equal(snapshot.auth.type, "user");
+    NodeAssert.equal(snapshot.auth.label, "@octocat - github.com");
   });
 
   it("prefers the richer authenticated status message when it differs from the raw login", () => {
@@ -233,8 +233,8 @@ describe("buildCopilotClientOptions", () => {
       login: "zortos293",
     });
 
-    assert.equal(snapshot.auth.status, "authenticated");
-    assert.equal(snapshot.auth.type, "gh-cli");
-    assert.equal(snapshot.auth.label, "zortos293 (via gh)");
+    NodeAssert.equal(snapshot.auth.status, "authenticated");
+    NodeAssert.equal(snapshot.auth.type, "gh-cli");
+    NodeAssert.equal(snapshot.auth.label, "zortos293 (via gh)");
   });
 });

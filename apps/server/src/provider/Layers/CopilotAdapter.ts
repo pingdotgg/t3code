@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 
 import type {
   CopilotClient,
@@ -307,7 +307,7 @@ function createBaseEvent(input: {
 }) {
   const providerRefs = providerRefsFromSdkEvent(input.raw, input.requestId);
   return {
-    eventId: EventId.make(randomUUID()),
+    eventId: EventId.make(NodeCrypto.randomUUID()),
     provider: PROVIDER,
     threadId: input.threadId,
     createdAt: input.createdAt ?? nowIso(),
@@ -3003,7 +3003,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       );
     }
 
-    const turnId = TurnId.make(`copilot-turn-${randomUUID()}`);
+    const turnId = TurnId.make(`copilot-turn-${NodeCrypto.randomUUID()}`);
     const modelSelection =
       input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
     const rawReasoningEffort = getModelSelectionStringOptionValue(
