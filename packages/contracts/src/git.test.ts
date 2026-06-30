@@ -7,6 +7,9 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  VcsListManagedWorktreesResult,
+  VcsRemoveWorktreesInput,
+  VcsWorktreeSizeResult,
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
@@ -16,6 +19,9 @@ const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+const decodeListManagedWorktreesResult = Schema.decodeUnknownSync(VcsListManagedWorktreesResult);
+const decodeWorktreeSizeResult = Schema.decodeUnknownSync(VcsWorktreeSizeResult);
+const decodeRemoveWorktreesInput = Schema.decodeUnknownSync(VcsRemoveWorktreesInput);
 
 describe("VcsCreateWorktreeInput", () => {
   it("accepts omitted newRefName for existing-refName worktrees", () => {
@@ -124,5 +130,28 @@ describe("GitRunStackedActionResult", () => {
     if (parsed.toast.cta.kind === "run_action") {
       expect(parsed.toast.cta.action.kind).toBe("create_pr");
     }
+  });
+});
+
+describe("managed worktree schemas", () => {
+  it("decodes a managed worktrees result", () => {
+    const decoded = decodeListManagedWorktreesResult({
+      worktrees: [{ path: "/wt/a", refName: "feature-a", isDirty: false }],
+    });
+    expect(decoded.worktrees[0]?.isDirty).toBe(false);
+  });
+
+  it("decodes a worktree size result", () => {
+    const decoded = decodeWorktreeSizeResult({ sizeBytes: 4096 });
+    expect(decoded.sizeBytes).toBe(4096);
+  });
+
+  it("decodes a batch remove input with per-item force", () => {
+    const decoded = decodeRemoveWorktreesInput({
+      cwd: "/repo",
+      items: [{ path: "/wt/a", force: true }, { path: "/wt/b" }],
+    });
+    expect(decoded.items.length).toBe(2);
+    expect(decoded.items[0]?.force).toBe(true);
   });
 });

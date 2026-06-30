@@ -597,6 +597,102 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
     );
   });
 
+  describe("managed worktrees", () => {
+    it.effect("lists managed worktrees under the worktrees dir with dirty status", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* driver.createWorktree({
+          cwd,
+          refName: initialBranch,
+          newRefName: "feature-a",
+          path: null,
+        });
+
+        const result = yield* driver.listManagedWorktrees({ cwd });
+
+        assert.equal(result.worktrees.length, 1);
+        assert.equal(result.worktrees[0]?.refName, "feature-a");
+        // Fresh worktree branch has no remote => treated as dirty (unpushed).
+        assert.equal(result.worktrees[0]?.isDirty, true);
+      }),
+    );
+
+    it.effect("computes the on-disk byte size of a worktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const created = yield* driver.createWorktree({
+          cwd,
+          refName: initialBranch,
+          newRefName: "feature-size",
+          path: null,
+        });
+
+        const { sizeBytes } = yield* driver.worktreeSize({ path: created.worktree.path });
+
+        // A real checkout always has tracked files on disk.
+        assert.isAbove(sizeBytes, 0);
+      }),
+    );
+
+    it.effect("batch-removes worktrees and reports per-path outcomes", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const a = yield* driver.createWorktree({
+          cwd,
+          refName: initialBranch,
+          newRefName: "rm-a",
+          path: null,
+        });
+
+        const { results } = yield* driver.removeWorktrees({
+          cwd,
+          items: [
+            { path: a.worktree.path, force: true },
+            { path: "/does/not/exist", force: true },
+          ],
+        });
+
+        assert.equal(results.length, 2);
+        assert.equal(results.find((r) => r.path === a.worktree.path)?.ok, true);
+        const missing = results.find((r) => r.path === "/does/not/exist");
+        assert.equal(missing?.ok, false);
+        assert.isString(missing?.error);
+      }),
+    );
+
+    it.effect("refuses to remove a path outside the managed worktrees dir", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        // A real directory that exists but is not under the server worktrees dir.
+        const outside = yield* makeTmpDir("outside-");
+
+        const { results } = yield* driver.removeWorktrees({
+          cwd,
+          items: [{ path: outside, force: true }],
+        });
+
+        assert.equal(results.length, 1);
+        assert.equal(results[0]?.ok, false);
+        assert.match(results[0]?.error ?? "", /managed worktrees directory/i);
+        // The refusal must not delete the directory.
+        const fileSystem = yield* FileSystem.FileSystem;
+        assert.equal(yield* fileSystem.exists(outside), true);
+      }),
+    );
+  });
+
   describe("commit context", () => {
     it.effect("stages selected files and commits only those files", () =>
       Effect.gen(function* () {

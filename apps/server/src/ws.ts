@@ -315,6 +315,9 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.vcsListRefs, AuthOrchestrationReadScope],
   [WS_METHODS.vcsCreateWorktree, AuthOrchestrationOperateScope],
   [WS_METHODS.vcsRemoveWorktree, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsListManagedWorktrees, AuthOrchestrationReadScope],
+  [WS_METHODS.vcsWorktreeSize, AuthOrchestrationReadScope],
+  [WS_METHODS.vcsRemoveWorktrees, AuthOrchestrationOperateScope],
   [WS_METHODS.vcsCreateRef, AuthOrchestrationOperateScope],
   [WS_METHODS.vcsSwitchRef, AuthOrchestrationOperateScope],
   [WS_METHODS.vcsInit, AuthOrchestrationOperateScope],
@@ -1533,6 +1536,22 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.vcsRemoveWorktree,
             gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsListManagedWorktrees]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsListManagedWorktrees,
+            gitWorkflow.listManagedWorktrees(input),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsWorktreeSize]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsWorktreeSize, gitWorkflow.worktreeSize(input), {
+            "rpc.aggregate": "vcs",
+          }),
+        [WS_METHODS.vcsRemoveWorktrees]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsRemoveWorktrees,
+            gitWorkflow.removeWorktrees(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsCreateRef]: (input) =>

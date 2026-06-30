@@ -43,6 +43,8 @@ import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
   type ContextMenuItem,
+  type DesktopUpdateState,
+  type EnvironmentId,
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   type ScopedThreadRef,
@@ -221,6 +223,7 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { SidebarProviderUpdatePill } from "./sidebar/SidebarProviderUpdatePill";
+import { WorktreeCleanupDialog } from "./WorktreeCleanupDialog";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -1216,6 +1219,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const [projectGroupingSelection, setProjectGroupingSelection] = useState<
     SidebarProjectGroupingMode | "inherit"
   >("inherit");
+  const sidebarSettings = useSettings();
+  const [worktreeCleanupTarget, setWorktreeCleanupTarget] = useState<{
+    environmentId: EnvironmentId;
+    cwd: string;
+  } | null>(null);
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const confirmArchiveButtonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -1596,7 +1604,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const actionHandlers = new Map<string, () => Promise<void> | void>();
         const makeLeaf = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "rename" | "grouping" | "copy-path" | "cleanup-worktrees" | "delete",
           member: SidebarProjectGroupMember,
           options?: {
             destructive?: boolean;
@@ -1615,6 +1623,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               case "copy-path":
                 copyPathToClipboard(member.workspaceRoot, { path: member.workspaceRoot });
                 return;
+              case "cleanup-worktrees":
+                setWorktreeCleanupTarget({ environmentId: member.environmentId, cwd: member.cwd });
+                return;
               case "delete":
                 return handleRemoveProject(member);
             }
@@ -1629,7 +1640,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         };
 
         const buildTargetedItem = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "rename" | "grouping" | "copy-path" | "cleanup-worktrees" | "delete",
           label: string,
           options?: {
             destructive?: boolean;
@@ -1666,6 +1677,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             buildTargetedItem("rename", "Rename"),
             buildTargetedItem("grouping", "Group into..."),
             buildTargetedItem("copy-path", "Copy Path"),
+            buildTargetedItem("cleanup-worktrees", "Clean up worktrees…"),
             buildTargetedItem("delete", "Remove", {
               destructive: true,
             }),
@@ -1690,6 +1702,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       openProjectRenameDialog,
       project.groupedProjectCount,
       project.memberProjects,
+      setWorktreeCleanupTarget,
       suppressProjectClickForContextMenuRef,
     ],
   );
@@ -2459,6 +2472,18 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           </DialogFooter>
         </DialogPopup>
       </Dialog>
+
+      {worktreeCleanupTarget ? (
+        <WorktreeCleanupDialog
+          open
+          environmentId={worktreeCleanupTarget.environmentId}
+          cwd={worktreeCleanupTarget.cwd}
+          scope={sidebarSettings.worktreeCleanupScope}
+          onOpenChange={(next) => {
+            if (!next) setWorktreeCleanupTarget(null);
+          }}
+        />
+      ) : null}
     </>
   );
 });

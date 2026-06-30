@@ -33,6 +33,12 @@ import {
   GitPullRequestRefInput,
   VcsPullResult,
   VcsRemoveWorktreeInput,
+  VcsListManagedWorktreesInput,
+  VcsListManagedWorktreesResult,
+  VcsWorktreeSizeInput,
+  VcsWorktreeSizeResult,
+  VcsRemoveWorktreesInput,
+  VcsRemoveWorktreesResult,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
   VcsStatusInput,
@@ -167,6 +173,9 @@ export const WS_METHODS = {
   vcsListRefs: "vcs.listRefs",
   vcsCreateWorktree: "vcs.createWorktree",
   vcsRemoveWorktree: "vcs.removeWorktree",
+  vcsListManagedWorktrees: "vcs.listManagedWorktrees",
+  vcsWorktreeSize: "vcs.worktreeSize",
+  vcsRemoveWorktrees: "vcs.removeWorktrees",
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
   vcsInit: "vcs.init",
@@ -450,6 +459,24 @@ export const WsVcsRemoveWorktreeRpc = Rpc.make(WS_METHODS.vcsRemoveWorktree, {
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
+export const WsVcsListManagedWorktreesRpc = Rpc.make(WS_METHODS.vcsListManagedWorktrees, {
+  payload: VcsListManagedWorktreesInput,
+  success: VcsListManagedWorktreesResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsWorktreeSizeRpc = Rpc.make(WS_METHODS.vcsWorktreeSize, {
+  payload: VcsWorktreeSizeInput,
+  success: VcsWorktreeSizeResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsRemoveWorktreesRpc = Rpc.make(WS_METHODS.vcsRemoveWorktrees, {
+  payload: VcsRemoveWorktreesInput,
+  success: VcsRemoveWorktreesResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
 export const WsVcsCreateRefRpc = Rpc.make(WS_METHODS.vcsCreateRef, {
   payload: VcsCreateRefInput,
   success: VcsCreateRefResult,
@@ -715,6 +742,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsListRefsRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,
+  WsVcsListManagedWorktreesRpc,
+  WsVcsWorktreeSizeRpc,
+  WsVcsRemoveWorktreesRpc,
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,

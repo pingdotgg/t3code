@@ -3,6 +3,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "./worktreeCleanup";
+import type { VcsManagedWorktree } from "@t3tools/contracts";
+import {
+  classifyManagedWorktrees,
+  selectWorktreesForScope,
+  type WorktreeThreadRef,
+} from "./worktreeCleanup";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
@@ -106,5 +112,59 @@ describe("formatWorktreePathForDisplay", () => {
   it("ignores trailing slashes", () => {
     const result = formatWorktreePathForDisplay("/tmp/custom-worktrees/my-worktree/");
     expect(result).toBe("my-worktree");
+  });
+});
+
+function wt(path: string, isDirty = false): VcsManagedWorktree {
+  return { path, refName: path.split("/").pop() ?? path, isDirty };
+}
+
+describe("classifyManagedWorktrees", () => {
+  it("marks worktrees with a live thread as active", () => {
+    const refs: WorktreeThreadRef[] = [{ worktreePath: "/wt/a", isArchived: false }];
+    const [classified] = classifyManagedWorktrees([wt("/wt/a")], refs);
+    expect(classified?.classification).toBe("active");
+  });
+
+  it("marks worktrees referenced only by archived threads as archived-only", () => {
+    const refs: WorktreeThreadRef[] = [{ worktreePath: "/wt/a", isArchived: true }];
+    const [classified] = classifyManagedWorktrees([wt("/wt/a")], refs);
+    expect(classified?.classification).toBe("archived-only");
+  });
+
+  it("marks worktrees with no thread as orphaned", () => {
+    const [classified] = classifyManagedWorktrees([wt("/wt/a")], []);
+    expect(classified?.classification).toBe("orphaned");
+  });
+
+  it("matches a live thread despite trailing-slash and separator differences", () => {
+    const refs: WorktreeThreadRef[] = [{ worktreePath: "C:\\repo\\worktrees\\a\\", isArchived: false }];
+    const [classified] = classifyManagedWorktrees([wt("C:/repo/worktrees/a")], refs);
+    expect(classified?.classification).toBe("active");
+  });
+});
+
+describe("selectWorktreesForScope", () => {
+  const classified = classifyManagedWorktrees(
+    [wt("/wt/orphan"), wt("/wt/arch"), wt("/wt/active")],
+    [
+      { worktreePath: "/wt/arch", isArchived: true },
+      { worktreePath: "/wt/active", isArchived: false },
+    ],
+  );
+
+  it("orphaned scope selects only orphaned worktrees", () => {
+    const selected = selectWorktreesForScope(classified, "orphaned");
+    expect(selected.map((c) => c.worktree.path)).toEqual(["/wt/orphan"]);
+  });
+
+  it("orphaned-archived scope adds archived-only worktrees", () => {
+    const selected = selectWorktreesForScope(classified, "orphaned-archived");
+    expect(selected.map((c) => c.worktree.path).sort()).toEqual(["/wt/arch", "/wt/orphan"]);
+  });
+
+  it("never selects active worktrees", () => {
+    const selected = selectWorktreesForScope(classified, "orphaned-archived");
+    expect(selected.some((c) => c.worktree.path === "/wt/active")).toBe(false);
   });
 });
