@@ -43,6 +43,7 @@ import {
   type CodexSessionRuntimeOptions,
   type CodexSessionRuntimeSendTurnInput,
   type CodexSessionRuntimeShape,
+  type CodexSessionRuntimeSlashCommandInput,
   type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
 import { makeCodexAdapter } from "./CodexAdapter.ts";
@@ -77,6 +78,14 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   public readonly sendTurnImpl = vi.fn(
     (_input: CodexSessionRuntimeSendTurnInput): Promise<ProviderTurnStartResult> =>
+      Promise.resolve({
+        threadId: this.options.threadId,
+        turnId: asTurnId("turn-1"),
+      }),
+  );
+
+  public readonly runSlashCommandImpl = vi.fn(
+    (_input: CodexSessionRuntimeSlashCommandInput): Promise<ProviderTurnStartResult> =>
       Promise.resolve({
         threadId: this.options.threadId,
         turnId: asTurnId("turn-1"),
@@ -129,6 +138,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   sendTurn(input: CodexSessionRuntimeSendTurnInput) {
     return Effect.promise(() => this.sendTurnImpl(input));
+  }
+
+  runSlashCommand(input: CodexSessionRuntimeSlashCommandInput) {
+    return Effect.promise(() => this.runSlashCommandImpl(input));
   }
 
   interruptTurn(turnId?: TurnId) {

@@ -20,6 +20,7 @@ import type {
   ModelCapabilities,
   ProviderOptionDescriptor,
   ServerProviderModel,
+  ServerProviderSlashCommand,
   ServerProviderSkill,
 } from "@t3tools/contracts";
 import { ServerSettingsError } from "@t3tools/contracts";
@@ -41,6 +42,18 @@ const CODEX_PRESENTATION = {
   displayName: "Codex",
   showInteractionModeToggle: true,
 } as const;
+
+const CODEX_APP_SERVER_SLASH_COMMANDS = [
+  {
+    name: "review",
+    description: "Review current changes and find issues",
+    input: { hint: "optional review instructions" },
+  },
+  {
+    name: "compact",
+    description: "Summarize conversation history to preserve context",
+  },
+] satisfies ReadonlyArray<ServerProviderSlashCommand>;
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
@@ -402,6 +415,7 @@ const makePendingCodexProvider = (
         enabled: false,
         checkedAt,
         models,
+        slashCommands: [],
         skills: [],
         probe: {
           installed: false,
@@ -418,6 +432,7 @@ const makePendingCodexProvider = (
       enabled: true,
       checkedAt,
       models,
+      slashCommands: [],
       skills: [],
       probe: {
         installed: false,
@@ -487,6 +502,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       enabled: false,
       checkedAt,
       models: emptyModels,
+      slashCommands: [],
       skills: [],
       probe: {
         installed: false,
@@ -518,6 +534,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       enabled: codexSettings.enabled,
       checkedAt,
       models: emptyModels,
+      slashCommands: [],
       skills: [],
       probe: {
         installed,
@@ -537,6 +554,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       enabled: codexSettings.enabled,
       checkedAt,
       models: emptyModels,
+      slashCommands: [],
       skills: [],
       probe: {
         installed: true,
@@ -556,6 +574,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     enabled: codexSettings.enabled,
     checkedAt,
     models: snapshot.models,
+    slashCommands: CODEX_APP_SERVER_SLASH_COMMANDS,
     skills: snapshot.skills,
     probe: {
       installed: true,

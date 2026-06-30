@@ -58,6 +58,7 @@ import {
   makeCodexSessionRuntime,
   type CodexSessionRuntimeError,
   type CodexSessionRuntimeOptions,
+  type CodexSessionRuntimeSlashCommandInput,
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -90,6 +91,34 @@ interface CodexAdapterSessionContext {
   readonly runtime: CodexSessionRuntimeShape;
   readonly eventFiber: Fiber.Fiber<void, never>;
   stopped: boolean;
+}
+
+function parseStandaloneCodexSlashCommand(
+  input: ProviderSendTurnInput,
+): CodexSessionRuntimeSlashCommandInput | null {
+  if ((input.attachments?.length ?? 0) > 0) {
+    return null;
+  }
+
+  const text = input.input?.trim();
+  if (!text) {
+    return null;
+  }
+
+  const match = /^\/([a-z][a-z-]*)(?:\s+([\s\S]*))?$/i.exec(text);
+  if (!match) {
+    return null;
+  }
+
+  const command = match[1]?.toLowerCase();
+  const args = match[2]?.trim();
+  if (command === "compact" && !args) {
+    return { command: "compact" };
+  }
+  if (command === "review") {
+    return args ? { command: "review", instructions: args } : { command: "review" };
+  }
+  return null;
 }
 
 function mapCodexRuntimeError(
@@ -1531,16 +1560,29 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       input.modelSelection?.instanceId === boundInstanceId
         ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
         : undefined;
+    const selectedModel =
+      input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection.model : undefined;
     const serviceTier =
       input.modelSelection?.instanceId === boundInstanceId
         ? getCodexServiceTierOptionValue(input.modelSelection)
         : undefined;
+    const slashCommand = parseStandaloneCodexSlashCommand(input);
+    if (slashCommand) {
+      return yield* session.runtime
+        .runSlashCommand({
+          ...slashCommand,
+          ...(selectedModel ? { model: selectedModel } : {}),
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            mapCodexRuntimeError(input.threadId, `/${slashCommand.command}`, cause),
+          ),
+        );
+    }
     return yield* session.runtime
       .sendTurn({
         ...(input.input !== undefined ? { input: input.input } : {}),
-        ...(input.modelSelection?.instanceId === boundInstanceId
-          ? { model: input.modelSelection.model }
-          : {}),
+        ...(selectedModel ? { model: selectedModel } : {}),
         ...(reasoningEffort
           ? {
               effort: reasoningEffort as EffectCodexSchema.V2TurnStartParams__ReasoningEffort,
