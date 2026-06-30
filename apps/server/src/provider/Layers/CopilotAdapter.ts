@@ -2850,6 +2850,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       const client = yield* createCopilotClient({
         settings,
         cwd,
+        binaryPathBaseDirectory: serverConfig.cwd,
         ...(options?.baseDirectory ? { baseDirectory: options.baseDirectory } : {}),
         ...(options?.environment ? { env: options.environment } : {}),
         platform,
