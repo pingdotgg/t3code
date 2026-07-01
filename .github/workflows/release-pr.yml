@@ -1,7 +1,11 @@
 name: Release PR
 
 on:
-  push:
+  workflow_run:
+    workflows:
+      - Release
+    types:
+      - completed
     branches:
       - main
   schedule:
@@ -19,6 +23,7 @@ concurrency:
 jobs:
   prepare:
     name: Prepare stable release PR
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -50,6 +55,9 @@ jobs:
             args:
               - --filter=@t3tools/scripts...
               - --filter=@t3tools/oxlint-plugin-t3code...
+
+      - name: Fetch release tags
+        run: git fetch --force --tags origin
 
       - id: release_meta
         name: Resolve stable release metadata

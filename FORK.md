@@ -12,6 +12,7 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 ### Release And CI
 
 - Fork workflows create/update a daily stable release PR while main-branch pushes produce nightly releases.
+- Release PR preparation runs after release publication so tag-based version resolution sees the latest release.
 - Release build jobs skip relay client tracing config because the relay config job is disabled.
 - Release builds publish updater metadata against the fork repository.
 - Fork stable release versions are committed through release PRs before release artifacts are built and tagged.
