@@ -121,6 +121,21 @@ const ProcessDiagnosticsError = Schema.Union([
 type ProcessDiagnosticsError = typeof ProcessDiagnosticsError.Type;
 const isProcessDiagnosticsError = Schema.is(ProcessDiagnosticsError);
 
+const WindowsCimProcessRecord = Schema.Struct({
+  ProcessId: Schema.Number,
+  ParentProcessId: Schema.Number,
+  CommandLine: Schema.optional(Schema.NullOr(Schema.String)),
+  Name: Schema.optional(Schema.NullOr(Schema.String)),
+  WorkingSetSize: Schema.optional(Schema.NullOr(Schema.Number)),
+  PercentProcessorTime: Schema.optional(Schema.NullOr(Schema.Number)),
+  Status: Schema.optional(Schema.NullOr(Schema.String)),
+});
+type WindowsCimProcessRecord = typeof WindowsCimProcessRecord.Type;
+const decodeWindowsCimProcessRecord = Schema.decodeUnknownOption(WindowsCimProcessRecord);
+const decodeWindowsCimProcessJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Unknown),
+);
+
 function parsePositiveInt(value: string): number | null {
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
@@ -201,51 +216,57 @@ export function parsePosixProcessRows(output: string): ReadonlyArray<ProcessRow>
   return rows;
 }
 
-function normalizeWindowsProcessRow(value: unknown): ProcessRow | null {
-  if (typeof value !== "object" || value === null) return null;
-  const record = value as Record<string, unknown>;
-  const pid = typeof record.ProcessId === "number" ? record.ProcessId : null;
-  const ppid = typeof record.ParentProcessId === "number" ? record.ParentProcessId : null;
-  const commandLine =
-    typeof record.CommandLine === "string" && record.CommandLine.trim().length > 0
-      ? record.CommandLine
-      : typeof record.Name === "string"
-        ? record.Name
-        : null;
-  const workingSet =
-    typeof record.WorkingSetSize === "number" && Number.isFinite(record.WorkingSetSize)
-      ? Math.max(0, Math.round(record.WorkingSetSize))
-      : 0;
-  const cpuPercent =
-    typeof record.PercentProcessorTime === "number" && Number.isFinite(record.PercentProcessorTime)
-      ? Math.max(0, record.PercentProcessorTime)
-      : 0;
-
-  if (!pid || pid <= 0 || ppid === null || ppid < 0 || !commandLine) return null;
-  return {
-    pid,
-    ppid,
-    pgid: null,
-    status: typeof record.Status === "string" && record.Status.length > 0 ? record.Status : "Live",
-    cpuPercent,
-    rssBytes: workingSet,
-    elapsed: "",
-    command: commandLine,
-  };
+function nonEmptyStringOption(value: string | null | undefined): Option.Option<string> {
+  return typeof value === "string" && value.trim().length > 0 ? Option.some(value) : Option.none();
 }
 
-function parseWindowsProcessRows(output: string): ReadonlyArray<ProcessRow> {
+function optionalNonNegativeNumber(value: number | null | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function normalizeWindowsProcessRow(value: unknown): Option.Option<ProcessRow> {
+  return Option.flatMap(decodeWindowsCimProcessRecord(value), (record) => {
+    if (
+      !Number.isInteger(record.ProcessId) ||
+      record.ProcessId <= 0 ||
+      !Number.isInteger(record.ParentProcessId) ||
+      record.ParentProcessId < 0
+    ) {
+      return Option.none();
+    }
+
+    return Option.map(
+      nonEmptyStringOption(record.CommandLine).pipe(
+        Option.orElse(() => nonEmptyStringOption(record.Name)),
+      ),
+      (command) => ({
+        pid: record.ProcessId,
+        ppid: record.ParentProcessId,
+        pgid: null,
+        status: Option.getOrElse(nonEmptyStringOption(record.Status), () => "Live"),
+        cpuPercent: optionalNonNegativeNumber(record.PercentProcessorTime),
+        rssBytes: Math.round(optionalNonNegativeNumber(record.WorkingSetSize)),
+        elapsed: "",
+        command,
+      }),
+    );
+  });
+}
+
+export function parseWindowsProcessRows(output: string): ReadonlyArray<ProcessRow> {
   if (output.trim().length === 0) return [];
-  try {
-    const parsed = JSON.parse(output) as unknown;
-    const records = Array.isArray(parsed) ? parsed : [parsed];
-    return records.flatMap((record) => {
-      const row = normalizeWindowsProcessRow(record);
-      return row ? [row] : [];
-    });
-  } catch {
-    return [];
-  }
+  return Option.match(decodeWindowsCimProcessJson(output), {
+    onNone: () => [],
+    onSome: (parsed) => {
+      const rows: ProcessRow[] = [];
+      const records = Array.isArray(parsed) ? parsed : [parsed];
+      for (const record of records) {
+        const row = normalizeWindowsProcessRow(record);
+        if (Option.isSome(row)) rows.push(row.value);
+      }
+      return rows;
+    },
+  });
 }
 
 export function buildDescendantEntries(

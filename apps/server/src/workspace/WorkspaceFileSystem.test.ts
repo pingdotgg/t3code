@@ -185,8 +185,15 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           operationPath: resolvedPath,
           operation: "realpath-target",
         });
-        expect(error.cause).toBeInstanceOf(Error);
-        expect((error.cause as NodeJS.ErrnoException).code).toBe("ENOENT");
+        expect(error.cause).toMatchObject({
+          _tag: "PlatformError",
+          reason: {
+            _tag: "NotFound",
+            module: "FileSystem",
+            method: "realPath",
+            pathOrDescriptor: resolvedPath,
+          },
+        });
       }),
     );
   });

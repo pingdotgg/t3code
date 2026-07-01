@@ -1,8 +1,9 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -11,6 +12,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as ProcessDiagnostics from "./ProcessDiagnostics.ts";
 
 const encoder = new TextEncoder();
+const encodeJsonFixture = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function mockHandle(result: {
   readonly stdout?: string;
@@ -64,6 +66,108 @@ describe("ProcessDiagnostics", () => {
           command: "codex app-server --config /tmp/one two",
         },
       ]);
+    }),
+  );
+
+  it.effect("parses Windows CIM JSON arrays with command fallback defaults", () =>
+    Effect.sync(() => {
+      const rows = ProcessDiagnostics.parseWindowsProcessRows(
+        encodeJsonFixture([
+          {
+            ProcessId: 10,
+            ParentProcessId: 1,
+            CommandLine: "node server.js",
+            Name: "node.exe",
+            Status: "Running",
+            WorkingSetSize: 1234.4,
+            PercentProcessorTime: 2.5,
+          },
+          {
+            ProcessId: 11,
+            ParentProcessId: 10,
+            CommandLine: "",
+            Name: "agent.exe",
+          },
+        ]),
+      );
+
+      assert.deepEqual(rows, [
+        {
+          pid: 10,
+          ppid: 1,
+          pgid: null,
+          status: "Running",
+          cpuPercent: 2.5,
+          rssBytes: 1234,
+          elapsed: "",
+          command: "node server.js",
+        },
+        {
+          pid: 11,
+          ppid: 10,
+          pgid: null,
+          status: "Live",
+          cpuPercent: 0,
+          rssBytes: 0,
+          elapsed: "",
+          command: "agent.exe",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("parses single Windows CIM JSON objects", () =>
+    Effect.sync(() => {
+      const rows = ProcessDiagnostics.parseWindowsProcessRows(
+        encodeJsonFixture({
+          ProcessId: 20,
+          ParentProcessId: 10,
+          CommandLine: "codex app-server",
+          WorkingSetSize: 4096,
+          PercentProcessorTime: 1,
+        }),
+      );
+
+      assert.deepEqual(rows, [
+        {
+          pid: 20,
+          ppid: 10,
+          pgid: null,
+          status: "Live",
+          cpuPercent: 1,
+          rssBytes: 4096,
+          elapsed: "",
+          command: "codex app-server",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("ignores malformed Windows CIM output and invalid records", () =>
+    Effect.sync(() => {
+      assert.deepEqual(ProcessDiagnostics.parseWindowsProcessRows("{not-json"), []);
+      assert.deepEqual(
+        ProcessDiagnostics.parseWindowsProcessRows(
+          encodeJsonFixture([
+            { ProcessId: 0, ParentProcessId: 1, CommandLine: "missing-pid" },
+            { ProcessId: 30, ParentProcessId: -1, CommandLine: "missing-parent" },
+            { ProcessId: 31, ParentProcessId: 1, CommandLine: "" },
+            { ProcessId: 32, ParentProcessId: 1, CommandLine: "valid" },
+          ]),
+        ),
+        [
+          {
+            pid: 32,
+            ppid: 1,
+            pgid: null,
+            status: "Live",
+            cpuPercent: 0,
+            rssBytes: 0,
+            elapsed: "",
+            command: "valid",
+          },
+        ],
+      );
     }),
   );
 
