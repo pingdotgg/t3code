@@ -19,6 +19,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
+  sidebarEnvironmentHiddenById?: Record<string, true>;
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -30,6 +31,7 @@ export interface PersistedUiState {
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
   projectOrder: string[];
+  sidebarEnvironmentHiddenById: Record<string, true>;
 }
 
 export interface UiThreadState {
@@ -46,6 +48,7 @@ export interface UiState extends UiProjectState, UiThreadState, UiEndpointState 
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  sidebarEnvironmentHiddenById: {},
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -77,6 +80,17 @@ function sanitizeBooleanRecord(value: unknown): Record<string, boolean> {
   return Object.fromEntries(
     Object.entries(value).filter(
       (entry): entry is [string, boolean] => entry[0].length > 0 && typeof entry[1] === "boolean",
+    ),
+  );
+}
+
+function sanitizeTrueRecord(value: unknown): Record<string, true> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, true] => entry[0].length > 0 && entry[1] === true,
     ),
   );
 }
@@ -123,6 +137,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
+    sidebarEnvironmentHiddenById: sanitizeTrueRecord(parsed.sidebarEnvironmentHiddenById),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
       parsed.threadChangedFilesExpandedById,
@@ -208,6 +223,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        sidebarEnvironmentHiddenById: state.sidebarEnvironmentHiddenById,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpandedById,
@@ -411,12 +427,44 @@ export function reorderProjects(
   };
 }
 
+export function setSidebarEnvironmentVisible(
+  state: UiState,
+  environmentId: string,
+  visible: boolean,
+): UiState {
+  if (environmentId.length === 0) {
+    return state;
+  }
+  if (visible) {
+    if (state.sidebarEnvironmentHiddenById[environmentId] !== true) {
+      return state;
+    }
+    const sidebarEnvironmentHiddenById = { ...state.sidebarEnvironmentHiddenById };
+    delete sidebarEnvironmentHiddenById[environmentId];
+    return {
+      ...state,
+      sidebarEnvironmentHiddenById,
+    };
+  }
+  if (state.sidebarEnvironmentHiddenById[environmentId] === true) {
+    return state;
+  }
+  return {
+    ...state,
+    sidebarEnvironmentHiddenById: {
+      ...state.sidebarEnvironmentHiddenById,
+      [environmentId]: true,
+    },
+  };
+}
+
 interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
+  setSidebarEnvironmentVisible: (environmentId: string, visible: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
     draggedProjectIds: readonly string[],
@@ -436,6 +484,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
+  setSidebarEnvironmentVisible: (environmentId, visible) =>
+    set((state) => setSidebarEnvironmentVisible(state, environmentId, visible)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),
