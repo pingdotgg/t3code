@@ -20,6 +20,8 @@ import type {
   GitListBranchesResult,
   GitPullResult,
   GitRemoveWorktreeInput,
+  GitResolveReviewChangesContextInput,
+  GitResolveReviewChangesContextResult,
   GitStatusInput,
   GitStatusResult,
 } from "@t3tools/contracts";
@@ -305,6 +307,14 @@ export interface GitCoreShape {
    * List local branch names (short format).
    */
   readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
+
+  /**
+   * Resolve the Git context used to review either uncommitted changes or the full
+   * branch delta against a base branch.
+   */
+  readonly resolveReviewChangesContext: (
+    input: GitResolveReviewChangesContextInput,
+  ) => Effect.Effect<GitResolveReviewChangesContextResult, GitCommandError>;
 }
 
 /**

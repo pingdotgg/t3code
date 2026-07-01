@@ -1,9 +1,16 @@
 import { spawnSync } from "node:child_process";
+import type { SpawnSyncReturns } from "node:child_process";
 
 export interface KillableProcess {
   readonly pid?: number | undefined;
   kill(signal?: NodeJS.Signals): boolean;
 }
+
+type SpawnSyncTaskkill = (
+  command: string,
+  args: readonly string[],
+  options: { readonly stdio: "ignore" },
+) => SpawnSyncReturns<Buffer>;
 
 /**
  * Terminate a child process together with its entire descendant tree.
@@ -20,12 +27,13 @@ export function killProcessTree(
   child: KillableProcess,
   signal: NodeJS.Signals = "SIGTERM",
   platform: NodeJS.Platform = process.platform,
+  spawnSyncTaskkill: SpawnSyncTaskkill = spawnSync,
 ): void {
   if (platform === "win32" && child.pid !== undefined) {
-    const result = spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+    const result = spawnSyncTaskkill("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
       stdio: "ignore",
     });
-    if (!result.error) {
+    if (result.status === 0) {
       return;
     }
   }

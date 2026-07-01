@@ -810,7 +810,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("unrelated.ts");
   });
 
-  it("renders explicit empty-turn state without falling back to snapshot", async () => {
+  it("hides explicit empty-turn state without falling back to snapshot", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const { useUiStateStore } = await import("../../uiStateStore");
     useUiStateStore.setState({ changedFilesDiffScope: "turn" });
@@ -852,11 +852,10 @@ describe("MessagesTimeline", () => {
 
     expect(markup).not.toContain("Changed files");
     expect(markup).not.toContain("No turn-scoped file changes detected");
-    expect(markup).toContain("+0");
-    expect(markup).toContain("-0");
+    expect(markup).not.toContain("+0");
     expect(markup).not.toContain("snapshot.ts");
-    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-label="View diff"/);
-    expect(markup).toContain("lucide-diff");
+    expect(markup).not.toMatch(/aria-label="View diff"/);
+    expect(markup).not.toContain("lucide-diff");
     expect(markup).not.toContain(">View diff<");
   });
 });

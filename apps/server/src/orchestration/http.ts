@@ -8,6 +8,11 @@ import { Effect } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import { ServerAuth } from "../auth/Services/ServerAuth.ts";
+import { GitCore } from "../git/Services/GitCore.ts";
+import { GitStatusBroadcaster } from "../git/Services/GitStatusBroadcaster.ts";
+import { ProjectSetupScriptRunner } from "../project/Services/ProjectSetupScriptRunner.ts";
+import { ServerRuntimeStartup } from "../serverRuntimeStartup.ts";
+import { makeClientCommandDispatcher } from "./clientCommandDispatcher.ts";
 import { normalizeDispatchCommand } from "./Normalizer.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
@@ -69,6 +74,10 @@ export const orchestrationDispatchRouteLayer = HttpRouter.add(
   Effect.gen(function* () {
     yield* authenticateOwnerSession;
     const orchestrationEngine = yield* OrchestrationEngineService;
+    const startup = yield* ServerRuntimeStartup;
+    const git = yield* GitCore;
+    const gitStatusBroadcaster = yield* GitStatusBroadcaster;
+    const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
     const command = yield* HttpServerRequest.schemaBodyJson(ClientOrchestrationCommand).pipe(
       Effect.mapError(
         (cause) =>
@@ -79,15 +88,14 @@ export const orchestrationDispatchRouteLayer = HttpRouter.add(
       ),
     );
     const normalizedCommand = yield* normalizeDispatchCommand(command);
-    const result = yield* orchestrationEngine.dispatch(normalizedCommand).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestrationDispatchCommandError({
-            message: "Failed to dispatch orchestration command.",
-            cause,
-          }),
-      ),
-    );
+    const dispatchCommand = makeClientCommandDispatcher({
+      orchestrationEngine,
+      startup,
+      git,
+      gitStatusBroadcaster,
+      projectSetupScriptRunner,
+    });
+    const result = yield* dispatchCommand(normalizedCommand);
     return HttpServerResponse.jsonUnsafe(result, { status: 200 });
   }).pipe(Effect.catchTag("OrchestrationDispatchCommandError", respondToOrchestrationHttpError)),
 );

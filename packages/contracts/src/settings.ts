@@ -5,6 +5,7 @@ import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+import { AgentWorkflowSettings, ReviewChangesScope } from "./agentWorkflows.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -219,6 +220,7 @@ export const ServerSettings = Schema.Struct({
   chatExportDetail: ChatExportDetailSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_CHAT_EXPORT_DETAIL_SETTINGS)),
   ),
+  agentWorkflows: AgentWorkflowSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -329,6 +331,16 @@ const ChatExportDetailSettingsPatch = Schema.Struct({
   includeQueuedTurns: Schema.optionalKey(Schema.Boolean),
 });
 
+const AgentWorkflowSettingsPatch = Schema.Struct({
+  reviewChanges: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      defaultScope: Schema.optionalKey(ReviewChangesScope),
+      promptTemplate: Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+
 export const ProviderInstanceMutation = Schema.Struct({
   instanceId: ProviderInstanceId,
   // `null` removes the instance; a config upserts (replaces) it.
@@ -343,6 +355,7 @@ export const ServerSettingsPatch = Schema.Struct({
   addProjectBaseDirectory: Schema.optionalKey(Schema.String),
   chatExportDirectory: Schema.optionalKey(Schema.String),
   chatExportDetail: Schema.optionalKey(ChatExportDetailSettingsPatch),
+  agentWorkflows: Schema.optionalKey(AgentWorkflowSettingsPatch),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   observability: Schema.optionalKey(
     Schema.Struct({

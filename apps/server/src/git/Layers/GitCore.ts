@@ -1378,6 +1378,108 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       })),
     );
 
+  const readStatusShort = (cwd: string) =>
+    runGitStdout("GitCore.resolveReviewChangesContext.statusShort", cwd, ["status", "--short"]);
+
+  const readUntrackedFiles = (cwd: string) =>
+    runGitStdout("GitCore.resolveReviewChangesContext.untrackedFiles", cwd, [
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "-z",
+    ]).pipe(Effect.map((stdout) => splitNullSeparatedPaths(stdout, false)));
+
+  const hasDiffAgainst = (cwd: string, ref: string) =>
+    executeGit("GitCore.resolveReviewChangesContext.diffQuiet", cwd, ["diff", "--quiet", ref], {
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.flatMap((result) => {
+        if (result.code === 0) {
+          return Effect.succeed(false);
+        }
+        if (result.code === 1) {
+          return Effect.succeed(true);
+        }
+        return Effect.fail(
+          createGitCommandError(
+            "GitCore.resolveReviewChangesContext.diffQuiet",
+            cwd,
+            ["diff", "--quiet", ref],
+            result.stderr.trim() || "git diff failed",
+          ),
+        );
+      }),
+    );
+
+  const resolveReviewChangesContext: GitCoreShape["resolveReviewChangesContext"] = Effect.fn(
+    "resolveReviewChangesContext",
+  )(function* (input) {
+    const details = yield* statusDetailsLocal(input.cwd);
+    if (!details.isRepo) {
+      return yield* createGitCommandError(
+        "GitCore.resolveReviewChangesContext",
+        input.cwd,
+        ["status", "--short"],
+        "Not a git repository.",
+      );
+    }
+
+    const [statusShort, untrackedFiles] = yield* Effect.all(
+      [readStatusShort(input.cwd), readUntrackedFiles(input.cwd)],
+      { concurrency: "unbounded" },
+    );
+
+    if (input.scope === "uncommitted") {
+      return {
+        scope: "uncommitted" as const,
+        branch: details.branch,
+        statusShort,
+        untrackedFiles,
+        hasReviewableChanges: statusShort.trim().length > 0 || untrackedFiles.length > 0,
+      };
+    }
+
+    const upstream = yield* resolveCurrentUpstream(input.cwd).pipe(
+      Effect.catch(() => Effect.succeed(null)),
+    );
+    const baseBranch =
+      upstream?.upstreamRef ??
+      (details.branch ? yield* resolveBaseBranchForNoUpstream(input.cwd, details.branch) : null);
+    if (baseBranch === null) {
+      return yield* createGitCommandError(
+        "GitCore.resolveReviewChangesContext",
+        input.cwd,
+        ["merge-base", "HEAD", "<base>"],
+        "Could not resolve a base branch for review.",
+      );
+    }
+
+    const mergeBaseSha = yield* runGitStdout(
+      "GitCore.resolveReviewChangesContext.mergeBase",
+      input.cwd,
+      ["merge-base", "HEAD", baseBranch],
+    ).pipe(Effect.map((stdout) => stdout.trim()));
+    if (mergeBaseSha.length === 0) {
+      return yield* createGitCommandError(
+        "GitCore.resolveReviewChangesContext",
+        input.cwd,
+        ["merge-base", "HEAD", baseBranch],
+        `Could not resolve merge base for '${baseBranch}'.`,
+      );
+    }
+
+    const hasTrackedDiff = yield* hasDiffAgainst(input.cwd, mergeBaseSha);
+    return {
+      scope: "against-base" as const,
+      branch: details.branch,
+      statusShort,
+      untrackedFiles,
+      hasReviewableChanges: hasTrackedDiff || untrackedFiles.length > 0,
+      baseBranch,
+      mergeBaseSha,
+    };
+  });
+
   const prepareCommitContext: GitCoreShape["prepareCommitContext"] = Effect.fn(
     "prepareCommitContext",
   )(function* (cwd, filePaths) {
@@ -2215,6 +2317,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     checkoutBranch,
     initRepo,
     listLocalBranchNames,
+    resolveReviewChangesContext,
   } satisfies GitCoreShape;
 });
 

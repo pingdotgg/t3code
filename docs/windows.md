@@ -14,9 +14,17 @@ Electron fuses, V8 compile cache, per-user install, and git long-path support).
   (`perMachine: false`, see `resolveWindowsNsisConfig`), installing to
   `%LOCALAPPDATA%\Programs\<appId>`. This needs no admin elevation (no UAC
   prompt), keeps the install path short, and writes to a user-writable location.
-- **Differential updates.** `differentialPackage: true` emits `.blockmap`
-  sidecars so electron-updater downloads only changed blocks. This shrinks
-  update bandwidth and the number of freshly-written files Defender must rescan.
+- **Differential updates.** `differentialPackage` emits `.blockmap` sidecars so
+  electron-updater downloads only changed blocks, shrinking update bandwidth and
+  the number of freshly-written files Defender must rescan. It is enabled only
+  when a publish/updater target is configured (`resolveWindowsNsisConfig`
+  receives whether `buildConfig.publish` is set). electron-builder makes
+  differential-aware builds require updater metadata, so an unpublished fork/dev
+  build (no `T3CODE_DESKTOP_UPDATE_REPOSITORY` / `GITHUB_REPOSITORY`, no mock
+  updates) packages with `differentialPackage: false` and does **not** need any
+  repository configuration. To build a fork installer that still generates
+  update metadata, set `T3CODE_DESKTOP_UPDATE_REPOSITORY=<owner>/<repo>` (e.g.
+  `ronak-guliani/t3code`).
 - **Minimize bundled binaries.** Fewer shipped native binaries means less
   SmartScreen/AV surface. Keep the packaged dependency set lean; the app is
   bundled into `app.asar` (default) so loose executables are the exception, not

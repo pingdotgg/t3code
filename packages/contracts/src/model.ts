@@ -201,6 +201,8 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "gpt-5.4": "gpt-5.4",
     "5.4-mini": "gpt-5.4-mini",
     "gpt-5.4-mini": "gpt-5.4-mini",
+    "5.4-nano": "gpt-5.4-nano",
+    "gpt-5.4-nano": "gpt-5.4-nano",
   },
   [OPENCODE_DRIVER_KIND]: {},
 };

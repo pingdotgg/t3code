@@ -633,13 +633,19 @@ export function resolveElectronFuses(platform: typeof BuildPlatform.Type): Recor
  *   app already ships).
  * - `differentialPackage` emits `.blockmap` sidecars so electron-updater can
  *   download only changed blocks, shrinking update bandwidth and the volume of
- *   freshly-written files AV has to rescan on Windows.
+ *   freshly-written files AV has to rescan on Windows. It is only enabled when a
+ *   publish/updater target exists: electron-builder makes differential-aware
+ *   builds require updater metadata (a configured repository), so forcing it on
+ *   an unpublished fork/dev build fails packaging with
+ *   "Please specify 'repository'" and produces blockmaps nobody consumes. When
+ *   there is no publish config we set it to `false` so a local fork build
+ *   packages cleanly without any repository configuration.
  */
-export function resolveWindowsNsisConfig(): Record<string, boolean> {
+export function resolveWindowsNsisConfig(hasPublishConfig: boolean): Record<string, boolean> {
   return {
     oneClick: true,
     perMachine: false,
-    differentialPackage: true,
+    differentialPackage: hasPublishConfig,
   };
 }
 
@@ -708,7 +714,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       winConfig.signAndEditExecutable = false;
     }
     buildConfig.win = winConfig;
-    buildConfig.nsis = resolveWindowsNsisConfig();
+    buildConfig.nsis = resolveWindowsNsisConfig(buildConfig.publish !== undefined);
   }
 
   return buildConfig;

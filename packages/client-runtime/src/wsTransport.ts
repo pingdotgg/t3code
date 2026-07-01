@@ -115,8 +115,10 @@ export class WsTransport {
         Effect.sync(() => {
           try {
             listener(value);
-          } catch {
-            // Ignore listener errors so the stream can finish cleanly.
+          } catch (error) {
+            this.logWarning("WebSocket RPC stream listener threw", {
+              error: formatErrorMessage(error),
+            });
           }
         }),
       ),
@@ -149,8 +151,10 @@ export class WsTransport {
 
       try {
         options?.onResubscribe?.();
-      } catch {
-        // Ignore reconnect hook failures so the stream can recover.
+      } catch (error) {
+        this.logWarning("WebSocket RPC resubscribe hook threw", {
+          error: formatErrorMessage(error),
+        });
       }
     };
     this.streamRequestStartListeners.add(onStreamRequestStart);
@@ -223,8 +227,10 @@ export class WsTransport {
 
       try {
         this.options?.onBeforeReconnect?.();
-      } catch {
-        // Ignore hook failures so reconnect can proceed.
+      } catch (error) {
+        this.logWarning("WebSocket RPC reconnect hook threw", {
+          error: formatErrorMessage(error),
+        });
       }
 
       this.lastHeartbeatPongAt = null;
@@ -339,8 +345,10 @@ export class WsTransport {
               markValueReceived();
               try {
                 listener(value);
-              } catch {
-                // Ignore listener errors so the stream stays live.
+              } catch (error) {
+                this.logWarning("WebSocket RPC stream listener threw", {
+                  error: formatErrorMessage(error),
+                });
               }
             }),
           ),

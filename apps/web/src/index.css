@@ -627,13 +627,27 @@ label:has(> select#reasoning-effort) select {
   line-height: 1.625;
 }
 
-/* Composer font sizing: one setting drives the prompt input and all composer chrome */
+/* Composer font sizing: one setting drives the prompt input and its chrome */
 .composer-input-font {
   font-size: var(--app-input-font-size);
 }
 
 .composer-input-font-secondary {
   font-size: 0.85em;
+}
+
+/* Composer dropdown/menu typography — one standardized scale, expressed in
+   rem so it tracks the UI density root font-size (compact / default / spacious)
+   rather than the fixed input font size. Keeps every composer dropdown
+   (runtime mode, model picker, compact controls) visually consistent. */
+.composer-menu-title {
+  font-size: 0.8125rem;
+  line-height: 1.25;
+}
+
+.composer-menu-description {
+  font-size: 0.75rem;
+  line-height: 1.35;
 }
 
 /* Composer footer: scale buttons/icons to match input font size setting */

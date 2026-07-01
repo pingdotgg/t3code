@@ -78,7 +78,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
 
       <div className="min-w-0 flex-1 text-left">
         <div className="flex items-center justify-between gap-2 min-w-0">
-          <div className="text-xs font-medium leading-snug flex items-center gap-2 min-w-0">
+          <div className="composer-menu-title font-medium flex items-center gap-2 min-w-0">
             <span className="truncate">
               {props.useTriggerLabel
                 ? getTriggerDisplayModelLabel(props.model)
@@ -112,7 +112,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 aria-hidden
               />
             ) : null}
-            <span className="text-xs font-normal leading-snug text-muted-foreground/70 truncate">
+            <span className="composer-menu-description font-normal text-muted-foreground/70 truncate">
               {providerLabel}
             </span>
           </div>

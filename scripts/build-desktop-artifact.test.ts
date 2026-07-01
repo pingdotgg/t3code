@@ -50,11 +50,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
   });
 
-  it("configures a per-user NSIS install with differential update packages", () => {
-    assert.deepStrictEqual(resolveWindowsNsisConfig(), {
+  it("configures a per-user NSIS install, gating differential packages on a publish target", () => {
+    assert.deepStrictEqual(resolveWindowsNsisConfig(true), {
       oneClick: true,
       perMachine: false,
       differentialPackage: true,
+    });
+    assert.deepStrictEqual(resolveWindowsNsisConfig(false), {
+      oneClick: true,
+      perMachine: false,
+      differentialPackage: false,
     });
   });
 

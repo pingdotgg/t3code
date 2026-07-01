@@ -38,7 +38,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
       >
         <EllipsisIcon aria-hidden="true" className="size-4" />
       </MenuTrigger>
-      <MenuPopup align="start" className="composer-input-font">
+      <MenuPopup align="start">
         {props.traitsMenuContent ? (
           <>
             {props.traitsMenuContent}
@@ -47,7 +47,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
         ) : null}
         {props.showInteractionModeToggle ? (
           <>
-            <div className="composer-input-font-secondary px-2 py-1.5 font-medium text-muted-foreground">
+            <div className="composer-menu-description px-2 py-1.5 font-medium text-muted-foreground">
               Mode
             </div>
             <MenuRadioGroup
@@ -63,7 +63,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             <MenuDivider />
           </>
         ) : null}
-        <div className="composer-input-font-secondary px-2 py-1.5 font-medium text-muted-foreground">
+        <div className="composer-menu-description px-2 py-1.5 font-medium text-muted-foreground">
           Access
         </div>
         <MenuRadioGroup

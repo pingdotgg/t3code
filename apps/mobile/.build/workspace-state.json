@@ -1,8 +1,14 @@
 {
-  "object": {
-    "artifacts": [],
-    "dependencies": [],
-    "prebuilts": []
+  "object" : {
+    "artifacts" : [
+
+    ],
+    "dependencies" : [
+
+    ],
+    "prebuilts" : [
+
+    ]
   },
-  "version": 7
+  "version" : 7
 }

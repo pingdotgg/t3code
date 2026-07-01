@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ReviewChangesScope } from "./agentWorkflows.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
@@ -189,6 +190,12 @@ export const GitInitInput = Schema.Struct({
 });
 export type GitInitInput = typeof GitInitInput.Type;
 
+export const GitResolveReviewChangesContextInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  scope: ReviewChangesScope,
+});
+export type GitResolveReviewChangesContextInput = typeof GitResolveReviewChangesContextInput.Type;
+
 // RPC Results
 
 const GitStatusPr = Schema.Struct({
@@ -283,6 +290,27 @@ export const GitCheckoutResult = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyStringSchema),
 });
 export type GitCheckoutResult = typeof GitCheckoutResult.Type;
+
+const GitReviewChangesContextBase = {
+  branch: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  statusShort: Schema.String,
+  untrackedFiles: Schema.Array(TrimmedNonEmptyStringSchema),
+  hasReviewableChanges: Schema.Boolean,
+};
+
+export const GitResolveReviewChangesContextResult = Schema.Union([
+  Schema.Struct({
+    scope: Schema.Literal("uncommitted"),
+    ...GitReviewChangesContextBase,
+  }),
+  Schema.Struct({
+    scope: Schema.Literal("against-base"),
+    ...GitReviewChangesContextBase,
+    baseBranch: TrimmedNonEmptyStringSchema,
+    mergeBaseSha: TrimmedNonEmptyStringSchema,
+  }),
+]);
+export type GitResolveReviewChangesContextResult = typeof GitResolveReviewChangesContextResult.Type;
 
 export const GitRunStackedActionResult = Schema.Struct({
   action: GitStackedAction,

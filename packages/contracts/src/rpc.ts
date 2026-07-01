@@ -28,6 +28,8 @@ import {
   GitPullRequestRefInput,
   GitPullResult,
   GitRemoveWorktreeInput,
+  GitResolveReviewChangesContextInput,
+  GitResolveReviewChangesContextResult,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
   GitStatusInput,
@@ -159,6 +161,7 @@ export const WS_METHODS = {
   gitInit: "git.init",
   gitResolvePullRequest: "git.resolvePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
+  gitResolveReviewChangesContext: "git.resolveReviewChangesContext",
 
   // Vcs methods (upstream VCS driver foundation)
   vcsPull: "vcs.pull",
@@ -328,6 +331,15 @@ export const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePu
   success: GitPreparePullRequestThreadResult,
   error: GitManagerServiceError,
 });
+
+export const WsGitResolveReviewChangesContextRpc = Rpc.make(
+  WS_METHODS.gitResolveReviewChangesContext,
+  {
+    payload: GitResolveReviewChangesContextInput,
+    success: GitResolveReviewChangesContextResult,
+    error: GitCommandError,
+  },
+);
 
 export const WsGitListBranchesRpc = Rpc.make(WS_METHODS.gitListBranches, {
   payload: GitListBranchesInput,
@@ -649,6 +661,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
+  WsGitResolveReviewChangesContextRpc,
   WsGitListBranchesRpc,
   WsGitCreateWorktreeRpc,
   WsGitRemoveWorktreeRpc,

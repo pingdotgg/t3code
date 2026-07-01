@@ -72,6 +72,10 @@
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
     },
+    "./workflows/reviewChanges": {
+      "types": "./src/workflows/reviewChanges.ts",
+      "import": "./src/workflows/reviewChanges.ts"
+    },
     "./searchRanking": {
       "types": "./src/searchRanking.ts",
       "import": "./src/searchRanking.ts"

@@ -391,6 +391,24 @@ const buildAppUnderTest = (options?: {
           truncated: false,
         }),
       filterIgnoredPaths: (_cwd, relativePaths) => Effect.succeed(relativePaths),
+      resolveReviewChangesContext: (input) =>
+        input.scope === "against-base"
+          ? Effect.succeed({
+              scope: "against-base",
+              branch: null,
+              statusShort: "",
+              untrackedFiles: [],
+              hasReviewableChanges: false,
+              baseBranch: "main",
+              mergeBaseSha: "0".repeat(40),
+            })
+          : Effect.succeed({
+              scope: "uncommitted",
+              branch: null,
+              statusShort: "",
+              untrackedFiles: [],
+              hasReviewableChanges: false,
+            }),
       ...options?.layers?.gitCore,
     });
     const gitManagerLayer = Layer.mock(GitManager)({

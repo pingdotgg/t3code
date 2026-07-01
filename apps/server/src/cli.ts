@@ -1,10 +1,12 @@
 import { NetService } from "@t3tools/shared/Net";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
+import { buildReviewChangesPrompt } from "@t3tools/shared/workflows/reviewChanges";
 import {
   ApprovalRequestId,
   AuthSessionId,
   CommandId,
   EditorId,
+  DEFAULT_REVIEW_CHANGES_SCOPE,
   KeybindingRule,
   MessageId,
   ModelSelection,
@@ -19,6 +21,7 @@ import {
   TurnId,
   WS_METHODS,
   type GitStackedAction,
+  type ReviewChangesScope,
   type ProviderApprovalDecision,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
@@ -98,6 +101,7 @@ import {
   runReconnectingStream,
   withLiveOrchestrationClient,
   withLiveRpcClient,
+  withLiveSnapshotAndRpc,
   watchShell,
   CliPayloadError,
   type CliLiveTargetFlags,
@@ -3189,6 +3193,7 @@ const cwdFlag = Flag.string("cwd").pipe(Flag.withDefault(process.cwd()));
 const queryFlag = Flag.string("query").pipe(Flag.optional);
 const limitFlag = Flag.integer("limit").pipe(Flag.optional);
 const forceFlag = Flag.boolean("force").pipe(Flag.withDefault(false));
+const reviewScopeFlag = Flag.choice("scope", ["uncommitted", "against-base"]).pipe(Flag.optional);
 
 const gitStatusCommand = Command.make("status", {
   ...liveTargetFlags,
@@ -3458,6 +3463,116 @@ const gitCommand = Command.make("git").pipe(
     gitPrCommand,
     gitStackedActionCommand,
   ]),
+);
+
+const reviewThreadTitle = (input: {
+  readonly scope: ReviewChangesScope;
+  readonly baseBranch?: string;
+}) =>
+  input.scope === "against-base" && input.baseBranch
+    ? `Review changes against ${input.baseBranch}`
+    : "Review uncommitted changes";
+
+const reviewCommand = Command.make("review", {
+  ...liveTargetFlags,
+  ...modelSelectionFlags,
+  cwd: cwdFlag,
+  project: Flag.string("project").pipe(
+    Flag.withDescription("Project id, title, or workspace root. Defaults to --cwd."),
+    Flag.optional,
+  ),
+  scope: reviewScopeFlag,
+  title: Flag.string("title").pipe(Flag.optional),
+  runtimeMode: runtimeModeFlag,
+  interactionMode: interactionModeFlag,
+}).pipe(
+  Command.withDescription("Create a new review chat for local code changes."),
+  Command.withHandler((flags) =>
+    withLiveSnapshotAndRpc(flags, ({ getSnapshot, client }) =>
+      Effect.gen(function* () {
+        const [snapshot, settings] = yield* Effect.all(
+          [getSnapshot, client[WS_METHODS.serverGetSettings]({})],
+          { concurrency: "unbounded" },
+        );
+        const project = yield* findProjectForCli(
+          snapshot,
+          Option.getOrUndefined(flags.project) ?? flags.cwd,
+        );
+        const workflowSettings = settings.agentWorkflows.reviewChanges;
+        if (!workflowSettings.enabled) {
+          return yield* Effect.fail(new Error("Review Code workflow is disabled in settings."));
+        }
+
+        const scope =
+          Option.getOrUndefined(flags.scope) ??
+          workflowSettings.defaultScope ??
+          DEFAULT_REVIEW_CHANGES_SCOPE;
+        const reviewContext = yield* client[WS_METHODS.gitResolveReviewChangesContext]({
+          cwd: flags.cwd,
+          scope,
+        });
+        const prompt = buildReviewChangesPrompt({
+          context:
+            reviewContext.scope === "against-base"
+              ? {
+                  scope: "against-base",
+                  baseBranch: reviewContext.baseBranch,
+                  mergeBaseSha: reviewContext.mergeBaseSha,
+                }
+              : { scope: "uncommitted" },
+          settings: workflowSettings,
+        });
+        const title =
+          Option.getOrUndefined(flags.title) ??
+          reviewThreadTitle({
+            scope: reviewContext.scope,
+            ...(reviewContext.scope === "against-base"
+              ? { baseBranch: reviewContext.baseBranch }
+              : {}),
+          });
+        const modelSelection = yield* resolveModelSelectionWithDefault(
+          flags,
+          resolveDefaultModelSelectionForProject(project),
+        );
+        const threadId = ThreadId.make(crypto.randomUUID());
+        const createdAt = new Date().toISOString();
+        const dispatchResult = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+          type: "thread.turn.start",
+          commandId: CommandId.make(crypto.randomUUID()),
+          threadId,
+          message: {
+            messageId: MessageId.make(crypto.randomUUID()),
+            role: "user",
+            text: prompt,
+            attachments: [],
+          },
+          modelSelection,
+          titleSeed: title,
+          runtimeMode: flags.runtimeMode,
+          interactionMode: flags.interactionMode,
+          bootstrap: {
+            createThread: {
+              projectId: project.id,
+              title,
+              modelSelection,
+              runtimeMode: flags.runtimeMode,
+              interactionMode: flags.interactionMode,
+              branch: reviewContext.branch,
+              worktreePath: flags.cwd === project.workspaceRoot ? null : flags.cwd,
+              createdAt,
+            },
+          },
+          createdAt,
+        });
+
+        yield* printJson({
+          threadId,
+          result: dispatchResult,
+          review: reviewContext,
+        });
+      }),
+    ),
+  ),
 );
 
 const vcsStatusCommand = Command.make("status", {
@@ -4747,6 +4862,7 @@ export const cli = Command.make("t3", { ...sharedServerCommandFlags }).pipe(
     authCommand,
     projectCommand,
     chatCommand,
+    reviewCommand,
     approvalCommand,
     inputCommand,
     modelCommand,

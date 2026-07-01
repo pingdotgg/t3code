@@ -242,18 +242,18 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
           <RuntimeModeIcon className="size-4" />
           <SelectValue>{runtimeModeOption.label}</SelectValue>
         </SelectTrigger>
-        <SelectPopup alignItemWithTrigger={false} className="composer-input-font">
+        <SelectPopup alignItemWithTrigger={false}>
           {runtimeModeOptions.map((mode) => {
             const option = runtimeModeConfig[mode];
             const OptionIcon = option.icon;
             return (
               <SelectItem key={mode} value={mode} className="min-w-64 py-2">
                 <div className="grid min-w-0 gap-0.5">
-                  <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                  <span className="composer-menu-title inline-flex items-center gap-1.5 font-medium text-foreground">
                     <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
                     {option.label}
                   </span>
-                  <span className="composer-input-font-secondary text-muted-foreground leading-4">
+                  <span className="composer-menu-description text-muted-foreground">
                     {option.description}
                   </span>
                 </div>

@@ -40,6 +40,10 @@ import {
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import { GitCore } from "./git/Services/GitCore.ts";
+import { GitStatusBroadcaster } from "./git/Services/GitStatusBroadcaster.ts";
+import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner.ts";
+import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -125,6 +129,35 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
         ),
       ),
       Layer.provideMerge(makeProjectPersistenceLayer(config)),
+      Layer.provide(
+        Layer.mock(GitCore)({
+          createWorktree: () => Effect.die("unexpected createWorktree call in CLI live test"),
+          resolveReviewChangesContext: () =>
+            Effect.succeed({
+              scope: "uncommitted" as const,
+              branch: null,
+              statusShort: " M file.ts",
+              untrackedFiles: [],
+              hasReviewableChanges: true,
+            }),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(GitStatusBroadcaster)({
+          refreshStatus: () => Effect.die("unexpected refreshStatus call in CLI live test"),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ProjectSetupScriptRunner)({
+          runForThread: () => Effect.succeed({ status: "no-script" as const }),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ServerRuntimeStartup)({
+          awaitCommandReady: Effect.void,
+          enqueueCommand: (effect) => effect,
+        }),
+      ),
       Layer.provideMerge(
         NodeHttpServer.layer(NodeHttp.createServer, {
           host: "127.0.0.1",
@@ -161,6 +194,17 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
 
   it.effect("accepts canonical --no-<flag> boolean negation", () =>
     runCliWithRuntime(["--no-log-websocket-events", "--version"]),
+  );
+
+  it.effect("exposes review command scope flags", () =>
+    Effect.gen(function* () {
+      const output = yield* captureStdout(runCli(["review", "--help"]));
+
+      assert.include(output.output, "Create a new review chat for local code changes.");
+      assert.include(output.output, "--scope choice");
+      assert.include(output.output, "uncommitted");
+      assert.include(output.output, "against-base");
+    }),
   );
 
   it.effect("rejects invalid log-level casing before launching the server", () =>

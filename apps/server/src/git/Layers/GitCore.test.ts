@@ -680,6 +680,57 @@ it.layer(TestLayer)("git integration", (it) => {
     );
   });
 
+  describe("resolveReviewChangesContext", () => {
+    it.effect("resolves uncommitted scope with staged, unstaged, and untracked changes", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        yield* writeTextFile(path.join(tmp, "README.md"), "# changed\n");
+        yield* writeTextFile(path.join(tmp, "staged.txt"), "staged\n");
+        yield* git(tmp, ["add", "staged.txt"]);
+        yield* writeTextFile(path.join(tmp, "untracked.txt"), "untracked\n");
+
+        const result = yield* (yield* GitCore).resolveReviewChangesContext({
+          cwd: tmp,
+          scope: "uncommitted",
+        });
+
+        expect(result.scope).toBe("uncommitted");
+        expect(result.hasReviewableChanges).toBe(true);
+        expect(result.statusShort).toContain("README.md");
+        expect(result.statusShort).toContain("staged.txt");
+        expect(result.untrackedFiles).toContain("untracked.txt");
+      }),
+    );
+
+    it.effect("resolves against-base scope with merge-base and untracked files", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(tmp);
+        const mergeBaseSha = yield* git(tmp, ["rev-parse", initialBranch]);
+        yield* git(tmp, ["checkout", "-b", "feature/review"]);
+        yield* writeTextFile(path.join(tmp, "feature.txt"), "feature\n");
+        yield* git(tmp, ["add", "feature.txt"]);
+        yield* git(tmp, ["commit", "-m", "feature"]);
+        yield* writeTextFile(path.join(tmp, "untracked.txt"), "untracked\n");
+
+        const result = yield* (yield* GitCore).resolveReviewChangesContext({
+          cwd: tmp,
+          scope: "against-base",
+        });
+
+        expect(result.scope).toBe("against-base");
+        if (result.scope !== "against-base") {
+          throw new Error(`expected against-base review context, got ${result.scope}`);
+        }
+        expect(result.baseBranch).toBe(initialBranch);
+        expect(result.mergeBaseSha).toBe(mergeBaseSha);
+        expect(result.hasReviewableChanges).toBe(true);
+        expect(result.untrackedFiles).toContain("untracked.txt");
+      }),
+    );
+  });
+
   // ── checkoutGitBranch ──
 
   describe("checkoutGitBranch", () => {

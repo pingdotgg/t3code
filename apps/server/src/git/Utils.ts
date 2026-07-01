@@ -30,22 +30,17 @@ export function limitSection(value: string, maxChars: number): string {
   return `${truncated}\n\n[truncated]`;
 }
 
-export function extractJsonObject(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    return trimmed;
-  }
-
-  const start = trimmed.indexOf("{");
-  if (start < 0) {
-    return trimmed;
-  }
-
+/**
+ * Return the substring of a balanced `{...}` object starting at `start`, using
+ * string/escape-aware brace matching so braces inside string literals are
+ * ignored. Returns the remainder from `start` when the object is unterminated.
+ */
+function balancedObjectFrom(text: string, start: number): string {
   let depth = 0;
   let inString = false;
   let escaping = false;
-  for (let index = start; index < trimmed.length; index += 1) {
-    const char = trimmed[index];
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
     if (inString) {
       if (escaping) {
         escaping = false;
@@ -70,12 +65,65 @@ export function extractJsonObject(raw: string): string {
     if (char === "}") {
       depth -= 1;
       if (depth === 0) {
-        return trimmed.slice(start, index + 1);
+        return text.slice(start, index + 1);
       }
     }
   }
 
-  return trimmed.slice(start);
+  return text.slice(start);
+}
+
+function isNonNullObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Extract the JSON object payload from a model's free-form text response.
+ *
+ * Models routinely wrap structured output in prose or Markdown code fences, and
+ * that surrounding text can itself contain braces (e.g. mentioning `foo() {}`
+ * or `const x = {}` before the real answer). Naively taking the first `{`
+ * captures those decoy braces and yields an empty/incomplete object, which then
+ * fails schema validation. Instead we scan every balanced `{...}` candidate and
+ * return the first one that parses to a non-empty JSON object, falling back to
+ * the first parseable object, then to the first balanced span.
+ */
+export function extractJsonObject(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return trimmed;
+  }
+
+  let firstBalanced: string | undefined;
+  let firstParseable: string | undefined;
+
+  for (let index = trimmed.indexOf("{"); index >= 0; index = trimmed.indexOf("{", index + 1)) {
+    const candidate = balancedObjectFrom(trimmed, index);
+    if (firstBalanced === undefined) {
+      firstBalanced = candidate;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      continue;
+    }
+
+    if (!isNonNullObject(parsed)) {
+      continue;
+    }
+
+    if (Object.keys(parsed).length > 0) {
+      return candidate;
+    }
+
+    if (firstParseable === undefined) {
+      firstParseable = candidate;
+    }
+  }
+
+  return firstParseable ?? firstBalanced ?? trimmed;
 }
 
 /** Normalise a raw commit subject to imperative-mood, ≤72 chars, no trailing period. */

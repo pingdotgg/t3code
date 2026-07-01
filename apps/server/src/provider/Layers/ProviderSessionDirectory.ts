@@ -132,14 +132,20 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         runtimeMode: binding.runtimeMode ?? existingRuntime?.runtimeMode ?? "full-access",
         status: binding.status ?? existingRuntime?.status ?? "running",
         lastSeenAt: now,
+        // A resume cursor and runtime payload are scoped to the provider that
+        // produced them. When the provider changes they must not carry over,
+        // otherwise the new provider inherits the previous provider's session
+        // state. Only preserve/merge existing values when the provider is
+        // unchanged.
         resumeCursor:
           binding.resumeCursor !== undefined
             ? binding.resumeCursor
-            : (existingRuntime?.resumeCursor ?? null),
-        runtimePayload: mergeRuntimePayload(
-          existingRuntime?.runtimePayload ?? null,
-          binding.runtimePayload,
-        ),
+            : providerChanged
+              ? null
+              : (existingRuntime?.resumeCursor ?? null),
+        runtimePayload: providerChanged
+          ? (binding.runtimePayload ?? null)
+          : mergeRuntimePayload(existingRuntime?.runtimePayload ?? null, binding.runtimePayload),
       })
       .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:upsert")));
   });
