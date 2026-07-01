@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { buildPatchCacheKey, getRenderablePatch } from "./diffRendering";
+import {
+  buildPatchCacheKey,
+  changedFileMatchesDiffPath,
+  getRenderablePatch,
+} from "./diffRendering";
 
 describe("buildPatchCacheKey", () => {
   it("returns a stable cache key for identical content", () => {
@@ -27,6 +31,34 @@ describe("buildPatchCacheKey", () => {
     expect(buildPatchCacheKey(patch, "diff-panel:light")).not.toBe(
       buildPatchCacheKey(patch, "diff-panel:dark"),
     );
+  });
+});
+
+describe("changedFileMatchesDiffPath", () => {
+  it("matches absolute changed files to workspace-relative diff paths", () => {
+    expect(
+      changedFileMatchesDiffPath(
+        "/Users/example/t3code/apps/web/src/session-logic.ts",
+        "apps/web/src/session-logic.ts",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches relative changed files to nested diff suffixes", () => {
+    expect(changedFileMatchesDiffPath("src/index.ts", "apps/web/src/index.ts")).toBe(true);
+  });
+
+  it("does not match basename-only changed files to unrelated nested diff paths", () => {
+    expect(changedFileMatchesDiffPath("index.ts", "apps/web/src/index.ts")).toBe(false);
+  });
+
+  it("normalizes Windows separators before comparing paths", () => {
+    expect(
+      changedFileMatchesDiffPath(
+        String.raw`C:\Users\example\t3code\apps\web\src\session-logic.ts`,
+        "apps/web/src/session-logic.ts",
+      ),
+    ).toBe(true);
   });
 });
 

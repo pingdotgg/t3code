@@ -68,6 +68,12 @@ export interface WorkLogEntry {
   detail?: string;
   command?: string;
   rawCommand?: string;
+  output?: string;
+  stdout?: string;
+  stderr?: string;
+  exitCode?: number;
+  durationMs?: number;
+  patch?: string;
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
@@ -85,6 +91,11 @@ interface DerivedWorkLogEntry extends WorkLogEntry {
   collapseKey?: string;
   toolCallId?: string;
 }
+
+const MAX_PATCH_SEARCH_DEPTH = 4;
+const MAX_PATCH_STRINGS = 4;
+const MAX_INLINE_PATCH_CHARS = 200_000;
+const PATCH_TOO_LARGE_MESSAGE = `[patch omitted: exceeds ${MAX_INLINE_PATCH_CHARS} characters]`;
 
 export interface PendingApproval {
   requestId: ApprovalRequestId;
@@ -680,7 +691,11 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? (activity.payload as Record<string, unknown>)
       : null;
   const commandPreview = extractToolCommand(payload);
+  const commandResult = extractCommandResult(payload, {
+    preserveBlankRawOutputStreams: activity.kind === "tool.updated",
+  });
   const changedFiles = extractChangedFiles(payload);
+  const patch = extractToolPatch(payload);
   const title = extractToolTitle(payload);
   const isTaskActivity = activity.kind === "task.progress" || activity.kind === "task.completed";
   const taskSummary =
@@ -727,6 +742,34 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (commandPreview.rawCommand) {
     entry.rawCommand = commandPreview.rawCommand;
+  }
+  const isCommandEntry =
+    itemType === "command_execution" ||
+    requestKind === "command" ||
+    Boolean(commandPreview.command || commandPreview.rawCommand);
+  if (
+    commandResult.output &&
+    !commandResult.stdout &&
+    !commandResult.stderr &&
+    !entry.output &&
+    isCommandEntry
+  ) {
+    entry.output = commandResult.output;
+  }
+  if (commandResult.stdout) {
+    entry.stdout = commandResult.stdout;
+  }
+  if (commandResult.stderr) {
+    entry.stderr = commandResult.stderr;
+  }
+  if (commandResult.exitCode !== null) {
+    entry.exitCode = commandResult.exitCode;
+  }
+  if (commandResult.durationMs !== null) {
+    entry.durationMs = commandResult.durationMs;
+  }
+  if (patch) {
+    entry.patch = patch;
   }
   if (changedFiles.length > 0) {
     entry.changedFiles = changedFiles;
@@ -811,6 +854,12 @@ function mergeDerivedWorkLogEntries(
   const detail = next.detail ?? previous.detail;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
+  const output = mergeTextOutput(previous.output, next.output, next);
+  const stdout = mergeTextOutput(previous.stdout, next.stdout, next);
+  const stderr = mergeTextOutput(previous.stderr, next.stderr, next);
+  const exitCode = next.exitCode ?? previous.exitCode;
+  const durationMs = next.durationMs ?? previous.durationMs;
+  const patch = mergePatchText(previous.patch, next.patch);
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
@@ -824,6 +873,12 @@ function mergeDerivedWorkLogEntries(
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
+    ...(output ? { output } : {}),
+    ...(stdout ? { stdout } : {}),
+    ...(stderr ? { stderr } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(patch ? { patch } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(toolTitle ? { toolTitle } : {}),
     ...(itemType ? { itemType } : {}),
@@ -833,6 +888,75 @@ function mergeDerivedWorkLogEntries(
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
   };
+}
+
+function mergePatchText(
+  previous: string | undefined,
+  next: string | undefined,
+): string | undefined {
+  if (!previous) {
+    return next;
+  }
+  if (!next || next === previous) {
+    return previous;
+  }
+  return `${previous.trimEnd()}\n\n${next.trimStart()}`;
+}
+
+function mergeTextOutput(
+  previous: string | undefined,
+  next: string | undefined,
+  nextEntry: DerivedWorkLogEntry,
+): string | undefined {
+  if (!previous) {
+    return next;
+  }
+  if (!next) {
+    return previous;
+  }
+  if (previous === next) {
+    return next;
+  }
+  if (next.startsWith(previous)) {
+    return next;
+  }
+  if (previous.startsWith(next)) {
+    if (shouldKeepLongerOutputSnapshot(previous, next, nextEntry)) {
+      return previous;
+    }
+    if (
+      nextEntry.activityKind === "tool.updated" &&
+      (next.length === 1 || previous.includes("\n"))
+    ) {
+      return `${previous}${next}`;
+    }
+    return next;
+  }
+  return `${previous}${next}`;
+}
+
+function shouldKeepLongerOutputSnapshot(
+  previous: string,
+  next: string,
+  nextEntry: DerivedWorkLogEntry,
+): boolean {
+  return (
+    nextEntry.activityKind === "tool.completed" ||
+    next.endsWith("\n") ||
+    isLikelyShorterOutputSnapshot(previous, next)
+  );
+}
+
+function isLikelyShorterOutputSnapshot(previous: string, next: string): boolean {
+  if (next.length <= 1) {
+    return false;
+  }
+  // Shorter snapshots usually stop at a token or line boundary in the prior output.
+  const following = previous[next.length];
+  if (previous.includes("\n")) {
+    return following === "\n" || following === "\r";
+  }
+  return following === " " || following === "\t" || following === "\n" || following === "\r";
 }
 
 function mergeChangedFiles(
@@ -1077,6 +1201,108 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
   };
 }
 
+function firstNumberFromRecord(
+  record: Record<string, unknown> | null,
+  keys: ReadonlyArray<string>,
+): number | null {
+  if (!record) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = asNumber(record[key]);
+    if (value !== null) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function firstIntegerFromRecord(
+  record: Record<string, unknown> | null,
+  keys: ReadonlyArray<string>,
+): number | null {
+  const value = firstNumberFromRecord(record, keys);
+  return value !== null && Number.isInteger(value) ? value : null;
+}
+
+function extractCommandResult(
+  payload: Record<string, unknown> | null,
+  options: {
+    readonly preserveBlankRawOutputStreams?: boolean;
+  } = {},
+): {
+  output: string | null;
+  stdout: string | null;
+  stderr: string | null;
+  exitCode: number | null;
+  durationMs: number | null;
+} {
+  const data = asRecord(payload?.data);
+  const item = asRecord(data?.item);
+  const itemResult = asRecord(item?.result);
+  const rawOutput = asRecord(data?.rawOutput);
+  const rawOutputStdout = options.preserveBlankRawOutputStreams
+    ? firstRawStringFromRecord(rawOutput, ["stdout"])
+    : firstCommandOutputStringFromRecord(rawOutput, ["stdout"]);
+  const stdout =
+    rawOutputStdout ??
+    firstCommandOutputStringFromRecord(itemResult, ["stdout"]) ??
+    firstCommandOutputStringFromRecord(data, ["stdout"]) ??
+    firstCommandOutputStringFromRecord(payload, ["stdout"]);
+  const stderr =
+    (options.preserveBlankRawOutputStreams
+      ? firstRawStringFromRecord(rawOutput, ["stderr"])
+      : firstCommandOutputStringFromRecord(rawOutput, ["stderr"])) ??
+    firstCommandOutputStringFromRecord(itemResult, ["stderr"]) ??
+    firstCommandOutputStringFromRecord(data, ["stderr"]) ??
+    firstCommandOutputStringFromRecord(payload, ["stderr"]);
+  const rawOutputContent = options.preserveBlankRawOutputStreams
+    ? firstRawStringFromRecord(rawOutput, ["content", "output", "text", "result"])
+    : firstCommandOutputStringFromRecord(rawOutput, ["content", "output", "text", "result"]);
+  const content =
+    stdout ??
+    rawOutputContent ??
+    firstCommandOutputStringFromRecord(itemResult, ["content", "output", "text", "result"]) ??
+    firstCommandOutputStringFromRecord(item, ["aggregatedOutput", "output", "text", "result"]);
+  const strippedContent = content ? stripTrailingExitCode(content) : null;
+  const detailExit =
+    typeof payload?.detail === "string" ? stripTrailingExitCode(payload.detail) : null;
+  const exitCode =
+    firstIntegerFromRecord(rawOutput, ["exitCode", "code"]) ??
+    firstIntegerFromRecord(itemResult, ["exitCode", "code"]) ??
+    firstIntegerFromRecord(item, ["exitCode", "code"]) ??
+    firstIntegerFromRecord(data, ["exitCode", "code"]) ??
+    firstIntegerFromRecord(payload, ["exitCode", "code"]) ??
+    strippedContent?.exitCode ??
+    detailExit?.exitCode ??
+    null;
+  const elapsedSeconds =
+    firstNumberFromRecord(rawOutput, ["elapsedSeconds"]) ??
+    firstNumberFromRecord(itemResult, ["elapsedSeconds"]) ??
+    firstNumberFromRecord(item, ["elapsedSeconds"]) ??
+    firstNumberFromRecord(data, ["elapsedSeconds"]) ??
+    firstNumberFromRecord(payload, ["elapsedSeconds"]);
+  const durationMs =
+    firstNumberFromRecord(rawOutput, ["durationMs", "elapsedMs"]) ??
+    firstNumberFromRecord(itemResult, ["durationMs", "elapsedMs"]) ??
+    firstNumberFromRecord(item, ["durationMs", "elapsedMs"]) ??
+    firstNumberFromRecord(data, ["durationMs", "elapsedMs"]) ??
+    firstNumberFromRecord(payload, ["durationMs", "elapsedMs"]) ??
+    (elapsedSeconds !== null ? elapsedSeconds * 1000 : null);
+  const strippedStdout = stdout ? stripTrailingExitCode(stdout) : null;
+  const normalizedOutput =
+    strippedContent?.exitCode !== undefined ? strippedContent.output : (content ?? null);
+
+  return {
+    // `output` is the legacy fallback stream; callers should prefer stdout/stderr when present.
+    output: normalizedOutput,
+    stdout: strippedStdout?.exitCode !== undefined ? strippedStdout.output : stdout,
+    stderr,
+    exitCode,
+    durationMs,
+  };
+}
+
 function extractToolTitle(payload: Record<string, unknown> | null): string | null {
   return asTrimmedString(payload?.title);
 }
@@ -1210,6 +1436,173 @@ function stripTrailingExitCode(value: string): {
   };
 }
 
+function firstRawStringFromRecord(
+  record: Record<string, unknown> | null,
+  keys: ReadonlyArray<string>,
+): string | null {
+  if (!record) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function firstCommandOutputStringFromRecord(
+  record: Record<string, unknown> | null,
+  keys: ReadonlyArray<string>,
+): string | null {
+  const value = firstRawStringFromRecord(record, keys);
+  return value !== null && /\S/u.test(value) ? value : null;
+}
+
+function looksLikeUnifiedDiff(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    trimmed.startsWith("diff --git ") ||
+    trimmed.startsWith("--- ") ||
+    trimmed.startsWith("@@ ") ||
+    /^@@\s+-\d+(?:,\d+)?\s+\+\d+(?:,\d+)?\s+@@/u.test(trimmed)
+  );
+}
+
+function codexChangeKindType(record: Record<string, unknown>): string | null {
+  const kind = record.kind;
+  if (typeof kind === "string") {
+    return asTrimmedString(kind)?.toLowerCase() ?? null;
+  }
+  const kindRecord = asRecord(kind);
+  return asTrimmedString(kindRecord?.type)?.toLowerCase() ?? null;
+}
+
+function patchPathFromRecord(record: Record<string, unknown>): string | null {
+  return (
+    asTrimmedString(record.path) ??
+    asTrimmedString(record.filePath) ??
+    asTrimmedString(record.relativePath) ??
+    asTrimmedString(record.filename) ??
+    asTrimmedString(record.newPath) ??
+    asTrimmedString(record.oldPath)
+  );
+}
+
+function normalizeDiffHeaderPath(path: string): string {
+  return path.replace(/\\/gu, "/");
+}
+
+function toUnifiedPatchFromRecordDiff(
+  record: Record<string, unknown>,
+  diff: string,
+): string | null {
+  if (diff.startsWith("diff --git ") || diff.startsWith("--- ")) {
+    return diff;
+  }
+  const trimmed = diff.trimEnd();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const rawPath = patchPathFromRecord(record);
+  if (!rawPath) {
+    return looksLikeUnifiedDiff(trimmed) ? trimmed : null;
+  }
+  const path = normalizeDiffHeaderPath(rawPath);
+
+  if (codexChangeKindType(record) === "add") {
+    if (trimmed.startsWith("@@ ")) {
+      return `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n${trimmed}`;
+    }
+    const lines = trimmed.length > 0 ? trimmed.split(/\r?\n/u) : [];
+    const addedLines = lines.map((line) => `+${line}`).join("\n");
+    return `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${lines.length} @@\n${addedLines}`;
+  }
+
+  if (codexChangeKindType(record) === "delete") {
+    if (trimmed.startsWith("@@ ")) {
+      return `diff --git a/${path} b/${path}\ndeleted file mode 100644\n--- a/${path}\n+++ /dev/null\n${trimmed}`;
+    }
+    const lines = trimmed.length > 0 ? trimmed.split(/\r?\n/u) : [];
+    const removedLines = lines.map((line) => `-${line}`).join("\n");
+    return `diff --git a/${path} b/${path}\ndeleted file mode 100644\n--- a/${path}\n+++ /dev/null\n@@ -1,${lines.length} +0,0 @@\n${removedLines}`;
+  }
+
+  if (trimmed.startsWith("@@ ")) {
+    return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n${trimmed}`;
+  }
+
+  return null;
+}
+
+function collectPatchStrings(
+  value: unknown,
+  patches: string[],
+  seen: Set<string>,
+  depth: number,
+  includeNested = true,
+): void {
+  if (depth > MAX_PATCH_SEARCH_DEPTH || patches.length >= MAX_PATCH_STRINGS) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectPatchStrings(entry, patches, seen, depth + 1, includeNested);
+      if (patches.length >= MAX_PATCH_STRINGS) {
+        return;
+      }
+    }
+    return;
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return;
+  }
+  for (const key of ["patch", "diff", "unifiedDiff"]) {
+    const rawCandidate = typeof record[key] === "string" ? record[key] : null;
+    const candidate = rawCandidate ? toUnifiedPatchFromRecordDiff(record, rawCandidate) : null;
+    if (!candidate || seen.has(candidate)) {
+      continue;
+    }
+    if (candidate.length > MAX_INLINE_PATCH_CHARS) {
+      seen.add(candidate);
+      patches.push(PATCH_TOO_LARGE_MESSAGE);
+      continue;
+    }
+    if (!looksLikeUnifiedDiff(candidate)) {
+      continue;
+    }
+    seen.add(candidate);
+    patches.push(candidate);
+  }
+  if (!includeNested) {
+    return;
+  }
+  for (const nestedKey of ["item", "result", "input", "data", "changes", "files", "edits"]) {
+    if (!(nestedKey in record)) {
+      continue;
+    }
+    collectPatchStrings(record[nestedKey], patches, seen, depth + 1, includeNested);
+    if (patches.length >= MAX_PATCH_STRINGS) {
+      return;
+    }
+  }
+}
+
+function extractToolPatch(payload: Record<string, unknown> | null): string | null {
+  const patches: string[] = [];
+  const seen = new Set<string>();
+  if (payload) {
+    collectPatchStrings(payload, patches, seen, 0, false);
+  }
+  const data = asRecord(payload?.data);
+  // Keep traversal bounded; provider payloads can nest raw tool data deeply.
+  collectPatchStrings(data, patches, seen, 0);
+  return patches.length > 0 ? patches.join("\n\n") : null;
+}
+
 function extractWorkLogItemType(
   payload: Record<string, unknown> | null,
 ): WorkLogEntry["itemType"] | undefined {
@@ -1321,6 +1714,10 @@ function compareActivitiesByOrder(
     return lifecycleRankComparison;
   }
 
+  if (shouldPreserveSameTimestampToolUpdateOrder(left, right)) {
+    return 0;
+  }
+
   return left.id.localeCompare(right.id);
 }
 
@@ -1335,6 +1732,31 @@ function compareActivityLifecycleRank(kind: string): number {
     return 2;
   }
   return 1;
+}
+
+function shouldPreserveSameTimestampToolUpdateOrder(
+  left: OrchestrationThreadActivity,
+  right: OrchestrationThreadActivity,
+): boolean {
+  if (left.kind !== "tool.updated" || right.kind !== "tool.updated") {
+    return false;
+  }
+  const leftPayload = asRecord(left.payload);
+  const rightPayload = asRecord(right.payload);
+  const leftToolCallId = extractToolCallId(leftPayload);
+  const rightToolCallId = extractToolCallId(rightPayload);
+  if (leftToolCallId && rightToolCallId) {
+    return leftToolCallId === rightToolCallId;
+  }
+  const leftItemType = extractWorkLogItemType(leftPayload);
+  const rightItemType = extractWorkLogItemType(rightPayload);
+  const leftTitle = extractToolTitle(leftPayload);
+  const rightTitle = extractToolTitle(rightPayload);
+  return (
+    (leftItemType != null || leftTitle !== null) &&
+    leftItemType === rightItemType &&
+    leftTitle === rightTitle
+  );
 }
 
 export function deriveTimelineEntries(

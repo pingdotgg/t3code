@@ -159,6 +159,8 @@ beforeAll(() => {
     documentElement: {
       classList,
       offsetHeight: 0,
+      removeAttribute: () => {},
+      setAttribute: () => {},
     },
   });
 });
@@ -457,6 +459,132 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("t3code/apps/web/src/session-logic.ts");
     expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
+  });
+
+  it("renders command work entries as expandable rows", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const stdout = Array.from({ length: 45 }, (_, index) => `stdout ${index + 1}`).join("\n");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Ran command",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "vp test",
+              stdout,
+              stderr: "warning",
+              exitCode: 0,
+              durationMs: 1234,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Ran command");
+    expect(markup).toContain("vp test");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain('aria-label="Expand Ran command - vp test"');
+  });
+
+  it("renders dynamic tool command metadata as expandable command rows", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Dynamic tool",
+              tone: "tool",
+              itemType: "dynamic_tool_call",
+              command: "vp test",
+              stdout: "passed",
+              exitCode: 0,
+              durationMs: 1234,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Dynamic tool");
+    expect(markup).toContain("vp test");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain('aria-label="Expand Dynamic tool - vp test"');
+  });
+
+  it("does not render typed non-command stdout as command details", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Web search",
+              tone: "tool",
+              itemType: "web_search",
+              stdout: "search results",
+              durationMs: 1234,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Web search");
+    expect(markup).not.toContain('aria-expanded="false"');
+    expect(markup).not.toContain('aria-label="Expand Web search"');
+  });
+
+  it("renders file-change work entries as expandable rows", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Changed files",
+              tone: "tool",
+              itemType: "file_change",
+              changedFiles: ["apps/web/src/session-logic.ts"],
+              patch:
+                "diff --git a/apps/web/src/session-logic.ts b/apps/web/src/session-logic.ts\n--- a/apps/web/src/session-logic.ts\n+++ b/apps/web/src/session-logic.ts\n@@ -1 +1 @@\n-old\n+new\n",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Changed files");
+    expect(markup).toContain("apps/web/src/session-logic.ts");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain('aria-label="Expand Changed files - apps/web/src/session-logic.ts"');
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", async () => {

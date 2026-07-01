@@ -24,6 +24,7 @@ import {
 import { flushSync } from "react-dom";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
+import type { FileDiffMetadata, Hunk } from "@pierre/diffs/types";
 import {
   deriveTimelineEntries,
   workEntryIndicatesToolFailure,
@@ -34,6 +35,7 @@ import {
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import {
+  createChangedFileDiffPathMatcher,
   getRenderablePatch,
   resolveDiffThemeName,
   resolveFileDiffPath,
@@ -67,14 +69,22 @@ import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
+  deriveCommandOutputDisplay,
+  deriveExpandableWorkEntryDetails,
+  deriveFileChangeDisplayFiles,
   deriveMessagesTimelineRows,
-  normalizeCompactToolLabel,
+  deriveWorkEntryDisplay,
+  hasExpandableWorkEntryDetails,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapIndexFromPointer,
   resolveTimelineMinimapTopPercent,
+  shouldToggleWorkEntryRowFromKeyDown,
+  type DerivedCommandWorkEntryDetails,
+  type DerivedExpandableWorkEntryDetails,
+  type DerivedFileChangeWorkEntryDetails,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
@@ -671,7 +681,7 @@ function TimelineMinimap({
   return (
     <div
       className={cn(
-        "group/minimap pointer-events-auto absolute top-0 left-0 z-40 hidden w-18 [@media(pointer:fine)]:block",
+        "group/minimap pointer-events-none absolute top-0 left-0 z-40 hidden w-18 [@media(pointer:fine)]:block",
         hasPersistentGutter
           ? "opacity-100"
           : "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
@@ -686,7 +696,8 @@ function TimelineMinimap({
           className="pointer-events-auto absolute top-1/2 left-3 w-10 -translate-y-1/2 cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
           onBlur={() => setActiveIndex(null)}
           onClick={(event) => {
-            const nextIndex = resolveActiveIndexFromPointer(event);
+            const nextIndex =
+              event.detail === 0 ? resolvedActiveIndex : resolveActiveIndexFromPointer(event);
             const nextItem = nextIndex === null ? null : (items[nextIndex] ?? null);
             if (nextItem) {
               onSelect(nextItem);
@@ -1796,59 +1807,6 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   };
 }
 
-function workEntryPreview(
-  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
-  workspaceRoot: string | undefined,
-) {
-  if (workEntry.command) return workEntry.command;
-  if (workEntry.detail) return workEntry.detail;
-  if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
-  const [firstPath] = workEntry.changedFiles ?? [];
-  if (!firstPath) return null;
-  const displayPath = formatWorkspaceRelativePath(firstPath, workspaceRoot);
-  return workEntry.changedFiles!.length === 1
-    ? displayPath
-    : `${displayPath} +${workEntry.changedFiles!.length - 1} more`;
-}
-
-function workEntryRawCommand(
-  workEntry: Pick<TimelineWorkEntry, "command" | "rawCommand">,
-): string | null {
-  const rawCommand = workEntry.rawCommand?.trim();
-  if (!rawCommand || !workEntry.command) {
-    return null;
-  }
-  return rawCommand === workEntry.command.trim() ? null : rawCommand;
-}
-
-function buildToolCallExpandedBody(
-  workEntry: TimelineWorkEntry,
-  workspaceRoot: string | undefined,
-): string | null {
-  const blocks: string[] = [];
-  if (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) {
-    blocks.push(`MCP call\n${JSON.stringify(workEntry.toolData, null, 2)}`);
-  }
-  const raw = workEntryRawCommand(workEntry);
-  if (raw?.trim()) {
-    blocks.push(raw.trim());
-  } else if (workEntry.command?.trim()) {
-    blocks.push(workEntry.command.trim());
-  }
-  if (workEntry.detail?.trim()) {
-    blocks.push(workEntry.detail.trim());
-  }
-  const changedFiles = workEntry.changedFiles ?? [];
-  if (changedFiles.length > 0) {
-    blocks.push(
-      changedFiles
-        .map((filePath) => formatWorkspaceRelativePath(filePath, workspaceRoot))
-        .join("\n"),
-    );
-  }
-  return blocks.length > 0 ? blocks.join("\n\n") : null;
-}
-
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   if (
     workEntry.sourceActivityKind === "user-input.requested" ||
@@ -1880,19 +1838,244 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   return workToneIcon(workEntry.tone).iconName;
 }
 
-function capitalizePhrase(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return value;
-  }
-  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
+function ToolDetailBlock(props: {
+  title: string;
+  children: ReactNode;
+  mono?: boolean;
+  tone?: "default" | "error";
+}) {
+  return (
+    <div className="space-y-1">
+      <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-muted-foreground/55">
+        {props.title}
+      </p>
+      <div
+        className={cn(
+          "max-h-80 overflow-auto rounded-md border border-border/55 bg-background/80 px-2 py-1.5 text-[11px] leading-5 text-foreground/78",
+          props.mono && "font-mono whitespace-pre-wrap wrap-break-word",
+          props.tone === "error" &&
+            "border-rose-500/20 bg-rose-500/5 text-rose-800 dark:text-rose-200",
+        )}
+      >
+        {props.children}
+      </div>
+    </div>
+  );
 }
 
-function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
-  if (!workEntry.toolTitle) {
-    return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
+function ToolEntryDetails({ details }: { details: DerivedExpandableWorkEntryDetails }) {
+  if (details.command || details.fileChange) {
+    return (
+      <>
+        {details.command ? <CommandEntryDetails details={details.command} /> : null}
+        {details.fileChange ? <FileChangeEntryDetails details={details.fileChange} /> : null}
+        {details.supplementalDetail ? (
+          <GenericToolEntryDetails value={details.supplementalDetail} />
+        ) : null}
+      </>
+    );
   }
-  return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
+
+  return details.genericDetail ? <GenericToolEntryDetails value={details.genericDetail} /> : null;
+}
+
+function CommandEntryDetails({ details }: { details: DerivedCommandWorkEntryDetails }) {
+  return (
+    <div className="mt-2 ms-2 space-y-2 border-s border-border/45 ps-3 pt-0.5">
+      {details.command && (
+        <ToolDetailBlock title="Command" mono>
+          {details.command}
+        </ToolDetailBlock>
+      )}
+      {details.rawCommand && (
+        <ToolDetailBlock title="Raw command" mono>
+          {details.rawCommand}
+        </ToolDetailBlock>
+      )}
+      <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground/70">
+        <span className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5">
+          Exit code {details.exitCodeLabel}
+        </span>
+        <span className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5">
+          Duration {details.durationLabel}
+        </span>
+      </div>
+      {details.outputs.map((output) => (
+        <CommandOutputBlock
+          key={output.title}
+          title={output.title}
+          value={output.value}
+          {...(output.tone ? { tone: output.tone } : {})}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CommandOutputBlock(props: { title: string; value: string; tone?: "default" | "error" }) {
+  const [showFull, setShowFull] = useState(false);
+  const outputDisplay = useMemo(
+    () => deriveCommandOutputDisplay({ value: props.value, showFull }),
+    [props.value, showFull],
+  );
+  const isTruncated = outputDisplay.isTruncated;
+  const toggleLabel = `${showFull ? "Collapse" : "Expand"} ${props.title}`;
+
+  return (
+    <div className="space-y-1">
+      <button
+        type="button"
+        className={cn(
+          "flex items-center gap-1 text-[9px] font-medium uppercase tracking-[0.14em] text-muted-foreground/55 transition-colors focus-visible:outline-2 focus-visible:outline-ring",
+          isTruncated ? "cursor-pointer hover:text-foreground/75" : "cursor-default",
+        )}
+        disabled={!isTruncated}
+        aria-expanded={isTruncated ? showFull : undefined}
+        aria-label={isTruncated ? toggleLabel : `${props.title} output`}
+        onClick={() => {
+          if (isTruncated) {
+            setShowFull((value) => !value);
+          }
+        }}
+      >
+        <span>{props.title}</span>
+        <span className="normal-case tracking-normal">({outputDisplay.suffix})</span>
+      </button>
+      <button
+        type="button"
+        className={cn(
+          "block max-h-80 w-full overflow-auto rounded-md border border-border/55 bg-background/80 px-2 py-1.5 text-left font-mono text-[11px] leading-5 whitespace-pre-wrap wrap-break-word text-foreground/78",
+          props.tone === "error" &&
+            "border-rose-500/20 bg-rose-500/5 text-rose-800 dark:text-rose-200",
+          isTruncated ? "cursor-pointer" : "cursor-default",
+        )}
+        disabled={!isTruncated}
+        aria-expanded={isTruncated ? showFull : undefined}
+        aria-label={isTruncated ? toggleLabel : `${props.title} output`}
+        onClick={() => {
+          if (isTruncated) {
+            setShowFull((value) => !value);
+          }
+        }}
+      >
+        {outputDisplay.visibleValue}
+      </button>
+    </div>
+  );
+}
+
+function FileChangeEntryDetails({ details }: { details: DerivedFileChangeWorkEntryDetails }) {
+  const ctx = use(TimelineRowCtx);
+  const renderablePatch = getRenderablePatch(
+    details.patch,
+    `tool-file-change:${details.id}:${ctx.resolvedTheme}`,
+  );
+  const hasInlineDiff = renderablePatch?.kind === "files";
+  const displayFiles = deriveFileChangeDisplayFiles({
+    changedFiles: details.changedFiles,
+    inlineDiffPaths: hasInlineDiff ? renderablePatch.files.map(resolveFileDiffPath) : [],
+    workspaceRoot: ctx.workspaceRoot,
+  });
+
+  return (
+    <div className="mt-2 ms-2 space-y-2 border-s border-border/45 ps-3 pt-0.5">
+      {displayFiles.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {displayFiles.map((file) => (
+            <span
+              key={`${details.id}:expanded-file:${file.path}`}
+              className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
+              title={file.displayPath}
+            >
+              {file.displayPath}
+            </span>
+          ))}
+        </div>
+      )}
+      {hasInlineDiff &&
+        renderablePatch.files.map((fileDiff) => (
+          <FileDiff
+            key={resolveFileDiffPath(fileDiff)}
+            fileDiff={fileDiff}
+            renderCustomHeader={(renderedFileDiff) => (
+              <InlineFileDiffHeader
+                fileDiff={renderedFileDiff}
+                changedFiles={details.changedFiles}
+                workspaceRoot={ctx.workspaceRoot}
+              />
+            )}
+            options={{
+              collapsed: false,
+              diffStyle: "unified",
+              theme: resolveDiffThemeName(ctx.resolvedTheme),
+            }}
+          />
+        ))}
+      {renderablePatch?.kind === "raw" && (
+        <ToolDetailBlock title={renderablePatch.reason} mono>
+          {renderablePatch.text}
+        </ToolDetailBlock>
+      )}
+    </div>
+  );
+}
+
+function GenericToolEntryDetails({ value }: { value: string }) {
+  return (
+    <div className="mt-2 ms-2 border-s border-border/45 ps-3 pt-0.5">
+      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground">
+        {value}
+      </pre>
+    </div>
+  );
+}
+
+function InlineFileDiffHeader({
+  fileDiff,
+  changedFiles,
+  workspaceRoot,
+}: {
+  fileDiff: FileDiffMetadata;
+  changedFiles: ReadonlyArray<string> | undefined;
+  workspaceRoot: string | undefined;
+}) {
+  const displayPath = resolveInlineFileDiffDisplayPath(fileDiff, changedFiles, workspaceRoot);
+  const additions = countDiffHunkChangedLines(fileDiff.hunks, "additionLines");
+  const deletions = countDiffHunkChangedLines(fileDiff.hunks, "deletionLines");
+
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-3 border-b border-border/55 bg-background/80 px-2 py-1 text-[11px]">
+      <span className="min-w-0 truncate font-mono text-foreground/85" title={displayPath}>
+        {displayPath}
+      </span>
+      <span className="shrink-0">
+        <DiffStatLabel additions={additions} deletions={deletions} />
+      </span>
+    </div>
+  );
+}
+
+function resolveInlineFileDiffDisplayPath(
+  fileDiff: FileDiffMetadata,
+  changedFiles: ReadonlyArray<string> | undefined,
+  workspaceRoot: string | undefined,
+): string {
+  const rawPath = resolveFileDiffPath(fileDiff);
+  const matchesDiffPath = createChangedFileDiffPathMatcher(rawPath);
+  const matchedChangedFile = changedFiles?.find(matchesDiffPath);
+
+  return formatWorkspaceRelativePath(matchedChangedFile ?? rawPath, workspaceRoot);
+}
+
+function countDiffHunkChangedLines(
+  hunks: ReadonlyArray<Hunk>,
+  lineCountKey: "additionLines" | "deletionLines",
+): number {
+  let count = 0;
+  for (const hunk of hunks) {
+    count += hunk[lineCountKey];
+  }
+  return count;
 }
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
@@ -1907,17 +2090,12 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
-  const heading = toolWorkEntryHeading(workEntry);
-  const rawPreview = workEntryPreview(workEntry, workspaceRoot);
-  const preview =
-    rawPreview &&
-    normalizeCompactToolLabel(rawPreview).toLowerCase() ===
-      normalizeCompactToolLabel(heading).toLowerCase()
-      ? null
-      : rawPreview;
-  const displayText = preview ? `${heading} - ${preview}` : heading;
-  const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
-  const canExpand = expandedBody !== null;
+  const { heading, preview, displayText } = deriveWorkEntryDisplay(workEntry, workspaceRoot);
+  const canExpand = useMemo(() => hasExpandableWorkEntryDetails(workEntry), [workEntry]);
+  const details = useMemo(
+    () => (expanded ? deriveExpandableWorkEntryDetails(workEntry, workspaceRoot) : null),
+    [expanded, workEntry, workspaceRoot],
+  );
   const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle =
     showFailedIndicator &&
@@ -1946,10 +2124,16 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     ? {
         role: "button" as const,
         tabIndex: 0 as const,
-        "aria-label": displayText,
+        "aria-label": `${expanded ? "Collapse" : "Expand"} ${displayText}`,
+        "aria-expanded": expanded,
         onClick: () => setExpanded((v) => !v),
         onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
-          if (e.key === "Enter" || e.key === " ") {
+          if (
+            shouldToggleWorkEntryRowFromKeyDown({
+              key: e.key,
+              targetIsCurrentTarget: e.currentTarget === e.target,
+            })
+          ) {
             e.preventDefault();
             setExpanded((v) => !v);
           }
@@ -2041,15 +2225,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           </div>
         </div>
       </div>
-      {expanded && canExpand && expandedBody ? (
-        <div
-          className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
-          onClick={stopRowToggle}
-          onPointerDown={stopRowToggle}
-        >
-          <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground select-text">
-            {expandedBody}
-          </pre>
+      {details ? (
+        <div className="cursor-default" onClick={stopRowToggle} onPointerDown={stopRowToggle}>
+          <ToolEntryDetails details={details} />
         </div>
       ) : null}
     </div>

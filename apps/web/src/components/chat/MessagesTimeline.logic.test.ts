@@ -1,11 +1,39 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { WorkLogEntry } from "../../session-logic";
 import {
+  buildSupplementalToolDetailBody,
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
+  deriveCommandOutputDisplay,
+  deriveExpandableWorkEntryDetails,
+  deriveFileChangeDisplayFiles,
   deriveMessagesTimelineRows,
+  deriveToolWorkEntryHeading,
+  deriveWorkEntryDisplay,
+  deriveWorkEntryPreview,
+  filterChangedFilesWithoutInlineDiff,
+  getRenderableCommandOutputLines,
+  hasCommandWorkEntryDetails,
+  hasExpandableWorkEntryDetails,
+  hasFileChangeWorkEntryDetails,
+  hasRenderableCommandOutput,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  shouldToggleWorkEntryRowFromKeyDown,
 } from "./MessagesTimeline.logic";
+
+let workLogEntrySequence = 0;
+
+function buildWorkLogEntry(overrides: Partial<WorkLogEntry>): WorkLogEntry {
+  const sequence = workLogEntrySequence++;
+  return {
+    id: `work-${sequence + 1}`,
+    createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)).toISOString(),
+    label: "Tool",
+    tone: "tool",
+    ...overrides,
+  };
+}
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
@@ -257,6 +285,461 @@ describe("resolveAssistantMessageCopyState", () => {
       text: "Interim thought",
       visible: false,
     });
+  });
+});
+
+describe("hasRenderableCommandOutput", () => {
+  it("hides nullish and empty command output streams", () => {
+    expect(hasRenderableCommandOutput(undefined)).toBe(false);
+    expect(hasRenderableCommandOutput(null)).toBe(false);
+    expect(hasRenderableCommandOutput("")).toBe(false);
+  });
+
+  it("renders command output streams when the provider emitted content", () => {
+    expect(hasRenderableCommandOutput("stdout\n")).toBe(true);
+    expect(hasRenderableCommandOutput("   ")).toBe(false);
+    expect(hasRenderableCommandOutput("\n\t\n")).toBe(false);
+  });
+
+  it("preserves intentional blank command output lines", () => {
+    expect(getRenderableCommandOutputLines("\nstdout\n   \n\t\nstderr\n")).toEqual([
+      "stdout",
+      "   ",
+      "\t",
+      "stderr",
+    ]);
+  });
+});
+
+describe("activity detail expansion", () => {
+  it("expands command entries and dynamic tool calls with command metadata", () => {
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "command_execution",
+          command: "vp test",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "dynamic_tool_call",
+          stdout: "passed",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("expands command entries that only have runtime metadata", () => {
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "command_execution",
+          exitCode: 0,
+          durationMs: 0,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          exitCode: 0,
+          durationMs: 0,
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("falls back to command metadata when request kind alone is not enough", () => {
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          requestKind: "file-read",
+          command: "sed -n '1,20p' package.json",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          requestKind: "file-read",
+          stdout: '{ "name": "t3code" }',
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not treat file-change and collab-agent entries as command details", () => {
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "file_change",
+          command: "apply_patch",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "collab_agent_tool_call",
+          command: "vp test",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "collab_agent_tool_call",
+          requestKind: "command",
+          command: "vp test",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not treat MCP calls with runtime metadata as command details", () => {
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "mcp_tool_call",
+          durationMs: 1234,
+          exitCode: 0,
+          toolData: {
+            server: "filesystem",
+            name: "read_file",
+            arguments: { path: "package.json" },
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("expands file-change entries and patch-carrying tool calls", () => {
+    expect(
+      hasFileChangeWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "file_change",
+          changedFiles: ["apps/web/src/session-logic.ts"],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasFileChangeWorkEntryDetails(
+        buildWorkLogEntry({
+          requestKind: "file-change",
+          patch: "diff --git a/a b/a\n",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasFileChangeWorkEntryDetails(
+        buildWorkLogEntry({
+          patch: "diff --git a/a b/a\n",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasFileChangeWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "dynamic_tool_call",
+          patch: "diff --git a/a b/a\n",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasFileChangeWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "collab_agent_tool_call",
+          requestKind: "file-change",
+          patch: "diff --git a/a b/a\n",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps supplemental detail only when it adds distinct information", () => {
+    expect(
+      buildSupplementalToolDetailBody(
+        buildWorkLogEntry({
+          command: "vp test",
+          detail: "vp test",
+        }),
+        { dedupeRenderedCommandOutput: true },
+      ),
+    ).toBeNull();
+    expect(
+      buildSupplementalToolDetailBody(
+        buildWorkLogEntry({
+          stdout: "passed\n",
+          detail: "passed",
+        }),
+        { dedupeRenderedCommandOutput: true },
+      ),
+    ).toBeNull();
+    expect(
+      buildSupplementalToolDetailBody(
+        buildWorkLogEntry({
+          stdout: "line 1\r\n  line 2  \r\n\r\n",
+          detail: "line 1\nline 2",
+        }),
+        { dedupeRenderedCommandOutput: true },
+      ),
+    ).toBeNull();
+    expect(
+      buildSupplementalToolDetailBody(
+        buildWorkLogEntry({
+          stdout: "passed\n",
+          detail: "passed",
+        }),
+        { dedupeRenderedCommandOutput: false },
+      ),
+    ).toBe("passed");
+    expect(
+      buildSupplementalToolDetailBody(
+        buildWorkLogEntry({
+          stdout: "passed\n",
+          detail: "exit code 0",
+        }),
+        { dedupeRenderedCommandOutput: true },
+      ),
+    ).toBe("exit code 0");
+  });
+
+  it("checks command row expandability before deriving output details", () => {
+    const entry = buildWorkLogEntry({
+      itemType: "command_execution",
+      command: "vp test",
+      stdout: `${"passed\n".repeat(1000)}`,
+      detail: "passed",
+    });
+
+    expect(hasExpandableWorkEntryDetails(entry)).toBe(true);
+    expect(deriveExpandableWorkEntryDetails(entry, undefined)?.supplementalDetail).toBe("passed");
+  });
+
+  it("derives command details without React-local command stream decisions", () => {
+    const details = deriveExpandableWorkEntryDetails(
+      buildWorkLogEntry({
+        itemType: "command_execution",
+        command: "vp test",
+        rawCommand: "pnpm exec vp test",
+        stdout: "passed\n",
+        stderr: "warning\n",
+        output: "legacy output that should not render when streams exist",
+        exitCode: 0,
+        durationMs: 1234,
+        detail: "passed",
+      }),
+      undefined,
+    );
+
+    expect(details?.command).toEqual({
+      command: "vp test",
+      rawCommand: "pnpm exec vp test",
+      exitCodeLabel: "0",
+      durationLabel: "1.2s",
+      outputs: [
+        { title: "Stdout", value: "passed\n" },
+        { title: "Stderr", value: "warning\n", tone: "error" },
+      ],
+    });
+    expect(details?.fileChange).toBeNull();
+    expect(details?.supplementalDetail).toBeNull();
+    expect(details?.genericDetail).toBeNull();
+  });
+
+  it("derives legacy command output only when stdout and stderr are absent", () => {
+    const details = deriveExpandableWorkEntryDetails(
+      buildWorkLogEntry({
+        itemType: "command_execution",
+        command: "vp test",
+        output: "legacy output\n",
+      }),
+      undefined,
+    );
+
+    expect(details?.command?.outputs).toEqual([{ title: "Output", value: "legacy output\n" }]);
+  });
+
+  it("keeps collab-agent rows out of generic command and file detail derivation", () => {
+    const details = deriveExpandableWorkEntryDetails(
+      buildWorkLogEntry({
+        itemType: "collab_agent_tool_call",
+        requestKind: "command",
+        command: "vp test",
+        stdout: "passed",
+        patch: "diff --git a/a b/a\n",
+        changedFiles: ["a"],
+      }),
+      undefined,
+    );
+
+    expect(details?.command).toBeNull();
+    expect(details?.fileChange).toBeNull();
+    expect(details?.genericDetail).toContain("vp test");
+  });
+
+  it("derives generic MCP detail fallback outside command and file detail rows", () => {
+    const details = deriveExpandableWorkEntryDetails(
+      buildWorkLogEntry({
+        itemType: "mcp_tool_call",
+        toolData: {
+          server: "filesystem",
+          name: "read_file",
+          arguments: { path: "package.json" },
+        },
+        detail: "Read package metadata",
+      }),
+      undefined,
+    );
+
+    expect(details?.command).toBeNull();
+    expect(details?.fileChange).toBeNull();
+    expect(details?.genericDetail).toContain("MCP call");
+    expect(details?.genericDetail).toContain("Read package metadata");
+  });
+
+  it("keeps changed files not represented by inline diff paths", () => {
+    expect(
+      filterChangedFilesWithoutInlineDiff(
+        [
+          "/Users/example/t3code/apps/web/src/session-logic.ts",
+          "/Users/example/t3code/apps/web/src/components/chat/MessagesTimeline.tsx",
+        ],
+        ["apps/web/src/session-logic.ts"],
+      ),
+    ).toEqual(["/Users/example/t3code/apps/web/src/components/chat/MessagesTimeline.tsx"]);
+  });
+
+  it("does not hide basename-only changed files for unrelated inline diff suffixes", () => {
+    expect(filterChangedFilesWithoutInlineDiff(["index.ts"], ["apps/web/src/index.ts"])).toEqual([
+      "index.ts",
+    ]);
+
+    expect(
+      filterChangedFilesWithoutInlineDiff(["src/index.ts"], ["apps/web/src/index.ts"]),
+    ).toEqual([]);
+  });
+
+  it("derives changed-file display chips after inline diff paths are removed", () => {
+    expect(
+      deriveFileChangeDisplayFiles({
+        changedFiles: [
+          "/Users/example/t3code/apps/web/src/session-logic.ts",
+          "/Users/example/t3code/apps/web/src/components/chat/MessagesTimeline.tsx",
+        ],
+        inlineDiffPaths: ["apps/web/src/session-logic.ts"],
+        workspaceRoot: "/Users/example/t3code",
+      }),
+    ).toEqual([
+      {
+        path: "/Users/example/t3code/apps/web/src/components/chat/MessagesTimeline.tsx",
+        displayPath: "t3code/apps/web/src/components/chat/MessagesTimeline.tsx",
+      },
+    ]);
+  });
+
+  it("derives command output tail display state", () => {
+    const value = Array.from({ length: 45 }, (_, index) => `line ${index + 1}`).join("\n");
+
+    expect(deriveCommandOutputDisplay({ value, showFull: false })).toEqual({
+      isTruncated: true,
+      visibleValue: Array.from({ length: 40 }, (_, index) => `line ${index + 6}`).join("\n"),
+      suffix: "last 40 of 45 lines",
+    });
+    expect(deriveCommandOutputDisplay({ value, showFull: true }).suffix).toBe("45 lines");
+  });
+
+  it("derives work entry headings and compact previews", () => {
+    const workEntry = buildWorkLogEntry({
+      label: "Ran command complete",
+      command: "vp test",
+    });
+
+    expect(deriveToolWorkEntryHeading(workEntry)).toBe("Ran command");
+    expect(deriveWorkEntryPreview(workEntry, undefined)).toBe("vp test");
+    expect(
+      deriveWorkEntryPreview(
+        buildWorkLogEntry({
+          changedFiles: ["/Users/example/t3code/apps/web/src/session-logic.ts", "README.md"],
+        }),
+        "/Users/example/t3code",
+      ),
+    ).toBe("t3code/apps/web/src/session-logic.ts +1 more");
+    expect(
+      deriveWorkEntryPreview(
+        buildWorkLogEntry({
+          itemType: "file_change",
+          command: "apply_patch",
+          detail: "Updated files",
+          changedFiles: ["/Users/example/t3code/apps/web/src/components/chat/MessagesTimeline.tsx"],
+        }),
+        "/Users/example/t3code",
+      ),
+    ).toBe("t3code/apps/web/src/components/chat/MessagesTimeline.tsx");
+  });
+
+  it("derives compact work entry display text for expandable rows", () => {
+    expect(
+      deriveWorkEntryDisplay(
+        buildWorkLogEntry({
+          label: "Ran command complete",
+          command: "vp test",
+        }),
+        undefined,
+      ),
+    ).toEqual({
+      heading: "Ran command",
+      preview: "vp test",
+      displayText: "Ran command - vp test",
+    });
+
+    expect(
+      deriveWorkEntryDisplay(
+        buildWorkLogEntry({
+          label: "Ran command",
+          detail: "ran command completed",
+        }),
+        undefined,
+      ),
+    ).toEqual({
+      heading: "Ran command",
+      preview: null,
+      displayText: "Ran command",
+    });
+
+    expect(
+      deriveWorkEntryDisplay(
+        buildWorkLogEntry({
+          label: "Changed files",
+          itemType: "file_change",
+          command: "apply_patch",
+          detail: "Updated files",
+          changedFiles: ["/Users/example/t3code/apps/web/src/session-logic.ts"],
+        }),
+        "/Users/example/t3code",
+      ),
+    ).toEqual({
+      heading: "Changed files",
+      preview: "t3code/apps/web/src/session-logic.ts",
+      displayText: "Changed files - t3code/apps/web/src/session-logic.ts",
+    });
+  });
+
+  it("only toggles expandable work rows from row-level keyboard events", () => {
+    expect(shouldToggleWorkEntryRowFromKeyDown({ key: "Enter", targetIsCurrentTarget: true })).toBe(
+      true,
+    );
+    expect(shouldToggleWorkEntryRowFromKeyDown({ key: " ", targetIsCurrentTarget: true })).toBe(
+      true,
+    );
+    expect(
+      shouldToggleWorkEntryRowFromKeyDown({ key: "Enter", targetIsCurrentTarget: false }),
+    ).toBe(false);
+    expect(
+      shouldToggleWorkEntryRowFromKeyDown({ key: "Escape", targetIsCurrentTarget: true }),
+    ).toBe(false);
   });
 });
 
