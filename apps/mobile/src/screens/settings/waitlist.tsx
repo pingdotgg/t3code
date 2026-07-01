@@ -11,26 +11,27 @@ import { ScrollView } from "react-native";
 import { CloudWaitlistEnrollment } from "../../features/cloud/CloudWaitlistEnrollment";
 import { useClerkSettingsSheetDetent } from "../../features/cloud/ClerkSettingsSheetDetent";
 import { hasCloudPublicConfig } from "../../features/cloud/publicConfig";
+import { settingsAuthNavigation, settingsNavigation } from "../../lib/routes";
 
 export default function SettingsWaitlistRouteScreen() {
   return hasCloudPublicConfig() ? (
     <ConfiguredSettingsWaitlistRouteScreen />
   ) : (
-    <NavigateTo href="/settings" />
+    <NavigateTo href={settingsNavigation()} />
   );
 }
 
 function ConfiguredSettingsWaitlistRouteScreen() {
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { expand } = useClerkSettingsSheetDetent();
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
 
   useFocusEffect(
     useCallback(() => {
       if (isLoaded && isSignedIn) {
-        router.replace("/settings");
+        navigation.replace(settingsNavigation());
       }
-    }, [isLoaded, isSignedIn, router]),
+    }, [isLoaded, isSignedIn, navigation]),
   );
 
   return (
@@ -51,7 +52,7 @@ function ConfiguredSettingsWaitlistRouteScreen() {
         <CloudWaitlistEnrollment
           onSignIn={() => {
             expand();
-            router.push("/settings/auth");
+            navigation.push(settingsAuthNavigation());
           }}
         />
       </ScrollView>

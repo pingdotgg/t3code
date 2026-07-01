@@ -14,7 +14,12 @@ import { useRouteParams, useAppNavigation } from "../../navigation/native-stack-
 import { NativeHeaderToolbar } from "../../navigation/native-stack-header";
 import { useCallback, useMemo } from "react";
 import { Alert } from "react-native";
-import { buildThreadFilesNavigation, buildThreadReviewRoutePath } from "../../lib/routes";
+import {
+  buildGitConfirmNavigation,
+  buildGitOverviewNavigation,
+  buildThreadFilesNavigation,
+  buildThreadReviewNavigation,
+} from "../../lib/routes";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import {
   basename,
@@ -102,7 +107,7 @@ type ThreadGitControlsProps = {
 };
 
 function useThreadGitControlModel(props: ThreadGitControlsProps) {
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const { environmentId, threadId } = useRouteParams<{
     environmentId: EnvironmentId;
     threadId: ThreadId;
@@ -170,24 +175,24 @@ function useThreadGitControlModel(props: ThreadGitControlsProps) {
         !input.featureBranch &&
         requiresDefaultBranchConfirmation(input.action, isDefaultRef)
       ) {
-        router.push({
-          name: "GitConfirm",
-          params: {
-            environmentId,
-            threadId,
-            confirmAction: confirmableAction,
-            branchName,
-            includesCommit: String(
-              input.action === "commit_push" || input.action === "commit_push_pr",
-            ),
-          },
-        });
+        navigation.push(
+          buildGitConfirmNavigation(
+            { environmentId, threadId },
+            {
+              confirmAction: confirmableAction,
+              branchName,
+              includesCommit: String(
+                input.action === "commit_push" || input.action === "commit_push_pr",
+              ),
+            },
+          ),
+        );
         return;
       }
 
       await onRunAction(input);
     },
-    [environmentId, gitStatus, isDefaultRef, onRunAction, router, threadId],
+    [environmentId, gitStatus, isDefaultRef, onRunAction, navigation, threadId],
   );
 
   const runQuickAction = useCallback(async () => {
@@ -209,23 +214,20 @@ function useThreadGitControlModel(props: ThreadGitControlsProps) {
       props.onOpenFilesInspector();
       return;
     }
-    router.push(buildThreadFilesNavigation({ environmentId, threadId }));
-  }, [environmentId, props.onOpenFilesInspector, router, threadId]);
+    navigation.push(buildThreadFilesNavigation({ environmentId, threadId }));
+  }, [environmentId, props.onOpenFilesInspector, navigation, threadId]);
 
   const openReview = useCallback(() => {
-    router.push(buildThreadReviewRoutePath({ environmentId, threadId }));
-  }, [environmentId, router, threadId]);
+    navigation.push(buildThreadReviewNavigation({ environmentId, threadId }));
+  }, [environmentId, navigation, threadId]);
 
   const openGitInspector = useCallback(() => {
     if (props.onOpenGitInspector) {
       props.onOpenGitInspector();
       return;
     }
-    router.push({
-      name: "GitOverview",
-      params: { environmentId, threadId },
-    });
-  }, [environmentId, props.onOpenGitInspector, router, threadId]);
+    navigation.push(buildGitOverviewNavigation({ environmentId, threadId }));
+  }, [environmentId, props.onOpenGitInspector, navigation, threadId]);
 
   return {
     currentBranchLabel,

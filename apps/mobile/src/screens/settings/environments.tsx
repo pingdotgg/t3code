@@ -34,6 +34,7 @@ import { ConnectionStatusDot } from "../../features/connection/ConnectionStatusD
 import { splitEnvironmentSections } from "../../features/connection/environmentSections";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { settingsEnvironmentNewNavigation } from "../../lib/routes";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -45,7 +46,7 @@ export default function SettingsEnvironmentsRouteScreen() {
     onRemoveEnvironmentPress,
     onUpdateEnvironment,
   } = useRemoteConnections();
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const insets = useSafeAreaInsets();
   const { localEnvironments, connectedCloudEnvironments } = splitEnvironmentSections({
     connectedEnvironments,
@@ -69,7 +70,7 @@ export default function SettingsEnvironmentsRouteScreen() {
       <NativeHeaderToolbar placement="right">
         <NativeHeaderToolbar.Button
           icon="plus"
-          onPress={() => router.push("/settings/environment-new")}
+          onPress={() => navigation.push(settingsEnvironmentNewNavigation())}
           separateBackground
         />
       </NativeHeaderToolbar>

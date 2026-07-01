@@ -29,7 +29,7 @@ import {
   providerOptionsConfigurationLabel,
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
-import { buildThreadRoutePath } from "../../lib/routes";
+import { newTaskNavigation, threadNavigation } from "../../lib/routes";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
@@ -58,7 +58,7 @@ export function NewTaskDraftScreen(props: {
   const projects = useProjects();
   const createProjectThread = useCreateProjectThread();
   const flow = useNewTaskFlow();
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
@@ -101,13 +101,13 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
-    router.replace("/new");
+    navigation.replace(newTaskNavigation());
   }, [
     logicalProjects,
     projects,
     props.initialProjectRef?.environmentId,
     props.initialProjectRef?.projectId,
-    router,
+    navigation,
     selectedProject,
     setProject,
   ]);
@@ -429,7 +429,7 @@ export function NewTaskDraftScreen(props: {
 
     flow.setPrompt("");
     flow.clearAttachments();
-    router.replace(buildThreadRoutePath(result.value));
+    navigation.replace(threadNavigation(result.value));
   }
 
   if (!selectedProject) {

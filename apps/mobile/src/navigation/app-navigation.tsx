@@ -12,14 +12,14 @@ import {
   getFocusedRoute,
   resolveNavigationTarget,
   type AppFocusedRoute,
-  type AppHref,
+  type AppNavigationInput,
   type AppStackParamList,
   type RouteParams,
 } from "./route-model";
 
 export type AppNavigation = {
-  readonly push: (href: AppHref) => void;
-  readonly replace: (href: AppHref) => void;
+  readonly push: (target: AppNavigationInput) => void;
+  readonly replace: (target: AppNavigationInput) => void;
   readonly back: () => void;
   readonly dismiss: () => void;
   readonly dismissAll: () => void;
@@ -63,8 +63,11 @@ export function useCurrentRouteParams<T extends RouteParams = RouteParams>(): T 
 export function createAppNavigation(
   navigationRef: React.RefObject<NavigationContainerRef<AppStackParamList> | null>,
 ): AppNavigation {
-  const navigateWithAction = (href: AppHref, action: "push" | "replace" | "navigate"): void => {
-    const target = resolveNavigationTarget(href);
+  const navigateWithAction = (
+    input: AppNavigationInput,
+    action: "push" | "replace" | "navigate",
+  ): void => {
+    const target = resolveNavigationTarget(input);
     const navigation = navigationRef.current;
     if (!navigation) {
       return;

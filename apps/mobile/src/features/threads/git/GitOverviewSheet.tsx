@@ -16,7 +16,12 @@ import { useThemeColor } from "../../../lib/useThemeColor";
 import { AppText as Text } from "../../../components/AppText";
 import { nativeHeaderScrollEdgeEffects } from "../../../lib/native-scroll-edge-effect";
 import { tryOpenExternalUrl } from "../../../lib/openExternalUrl";
-import { buildThreadReviewRoutePath } from "../../../lib/routes";
+import {
+  buildGitBranchesNavigation,
+  buildGitCommitNavigation,
+  buildGitConfirmNavigation,
+  buildThreadReviewNavigation,
+} from "../../../lib/routes";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
@@ -33,7 +38,7 @@ export function GitOverviewSheet(
     readonly presentation?: "sheet" | "inspector";
   } = {},
 ) {
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const insets = useSafeAreaInsets();
   const presentation = props.presentation ?? "sheet";
   const isInspector = presentation === "inspector";
@@ -119,27 +124,27 @@ export function GitOverviewSheet(
         !input.featureBranch &&
         requiresDefaultBranchConfirmation(input.action, isDefaultRef)
       ) {
-        router.push({
-          name: "GitConfirm",
-          params: {
-            environmentId,
-            threadId,
-            confirmAction: confirmableAction,
-            branchName,
-            includesCommit: String(
-              input.action === "commit_push" || input.action === "commit_push_pr",
-            ),
-          },
-        });
+        navigation.push(
+          buildGitConfirmNavigation(
+            { environmentId, threadId },
+            {
+              confirmAction: confirmableAction,
+              branchName,
+              includesCommit: String(
+                input.action === "commit_push" || input.action === "commit_push_pr",
+              ),
+            },
+          ),
+        );
         return;
       }
 
       if (!isInspector) {
-        router.dismiss();
+        navigation.dismiss();
       }
       await gitActions.onRunSelectedThreadGitAction(input);
     },
-    [environmentId, gitActions, gitStatus.data, isDefaultRef, isInspector, router, threadId],
+    [environmentId, gitActions, gitStatus.data, isDefaultRef, isInspector, navigation, threadId],
   );
 
   const onPressMenuItem = useCallback(
@@ -150,10 +155,7 @@ export function GitOverviewSheet(
         return;
       }
       if (item.dialogAction === "commit") {
-        router.push({
-          name: "GitCommit",
-          params: { environmentId, threadId },
-        });
+        navigation.push(buildGitCommitNavigation({ environmentId, threadId }));
         return;
       }
       if (item.dialogAction === "push") {
@@ -164,7 +166,7 @@ export function GitOverviewSheet(
         await runActionWithPrompt({ action: "create_pr" });
       }
     },
-    [environmentId, openExistingPr, router, runActionWithPrompt, threadId],
+    [environmentId, openExistingPr, navigation, runActionWithPrompt, threadId],
   );
 
   const inspectorHeaderRightBarButtonItems = useMemo(
@@ -238,7 +240,7 @@ export function GitOverviewSheet(
           title="Review changes"
           subtitle="Inspect turn diffs, worktree changes, and base branch diff"
           disabled={busy || !isRepo}
-          onPress={() => router.push(buildThreadReviewRoutePath({ environmentId, threadId }))}
+          onPress={() => navigation.push(buildThreadReviewNavigation({ environmentId, threadId }))}
         />
         <View className="ml-12 h-px" style={{ backgroundColor: borderColor }} />
         <SheetListRow
@@ -246,12 +248,7 @@ export function GitOverviewSheet(
           title="Branches & worktrees"
           subtitle="Switch branch, create branch, or move to a worktree"
           disabled={busy || !isRepo}
-          onPress={() =>
-            router.push({
-              name: "GitBranches",
-              params: { environmentId, threadId },
-            })
-          }
+          onPress={() => navigation.push(buildGitBranchesNavigation({ environmentId, threadId }))}
         />
       </View>
 

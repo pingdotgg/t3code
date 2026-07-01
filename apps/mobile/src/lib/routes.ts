@@ -5,7 +5,7 @@ import type { AppNavigation } from "../navigation/app-navigation";
 import type { AppNavigationTarget } from "../navigation/route-model";
 import type { SelectedThreadRef } from "../state/remote-runtime-types";
 
-type Router = AppNavigation;
+type Navigation = AppNavigation;
 
 type ThreadRouteInput =
   | Pick<SelectedThreadRef, "environmentId" | "threadId">
@@ -27,10 +27,155 @@ export function buildThreadRoutePath(input: ThreadRouteInput | PlainThreadRouteI
   return `/threads/${encodeURIComponent(environmentId)}/${encodeURIComponent(threadId)}`;
 }
 
+export function homeNavigation(): AppNavigationTarget {
+  return { name: "Home" };
+}
+
+export function settingsNavigation(): AppNavigationTarget {
+  return { name: "Settings" };
+}
+
+export function settingsEnvironmentsNavigation(): AppNavigationTarget {
+  return { name: "SettingsEnvironments" };
+}
+
+export function settingsEnvironmentNewNavigation(): AppNavigationTarget {
+  return { name: "SettingsEnvironmentNew" };
+}
+
+export function settingsAuthNavigation(): AppNavigationTarget {
+  return { name: "SettingsAuth" };
+}
+
+export function settingsArchiveNavigation(): AppNavigationTarget {
+  return { name: "SettingsArchive" };
+}
+
+export function settingsWaitlistNavigation(): AppNavigationTarget {
+  return { name: "SettingsWaitlist" };
+}
+
+export function connectionsNavigation(): AppNavigationTarget {
+  return { name: "Connections" };
+}
+
+export function connectionsNewNavigation(): AppNavigationTarget {
+  return { name: "ConnectionsNew" };
+}
+
+export function newTaskNavigation(): AppNavigationTarget {
+  return { name: "NewTask" };
+}
+
+export function addProjectNavigation(): AppNavigationTarget {
+  return { name: "AddProject" };
+}
+
+export function addProjectRepositoryNavigation(params: {
+  readonly environmentId?: string;
+  readonly source?: string;
+}): AppNavigationTarget {
+  return { name: "AddProjectRepository", params };
+}
+
+export function addProjectLocalNavigation(params: {
+  readonly environmentId?: string;
+}): AppNavigationTarget {
+  return { name: "AddProjectLocal", params };
+}
+
+export function addProjectDestinationNavigation(params: {
+  readonly environmentId?: string;
+  readonly source?: string;
+  readonly remoteUrl?: string;
+  readonly repositoryTitle?: string;
+}): AppNavigationTarget {
+  return { name: "AddProjectDestination", params };
+}
+
+export function newTaskDraftNavigation(params: {
+  readonly environmentId: string;
+  readonly projectId: string;
+  readonly title: string;
+}): AppNavigationTarget {
+  return { name: "NewTaskDraft", params };
+}
+
+export function threadNavigation(
+  input: ThreadRouteInput | PlainThreadRouteInput,
+): AppNavigationTarget {
+  return {
+    name: "Thread",
+    params: threadRouteParams(input),
+  };
+}
+
 export function buildThreadReviewRoutePath(
   input: ThreadRouteInput | PlainThreadRouteInput,
 ): string {
   return `${buildThreadRoutePath(input)}/review`;
+}
+
+export function buildThreadReviewNavigation(
+  input: ThreadRouteInput | PlainThreadRouteInput,
+): AppNavigationTarget {
+  return {
+    name: "ThreadReview",
+    params: threadRouteParams(input),
+  };
+}
+
+export function buildThreadReviewCommentNavigation(
+  input: ThreadRouteInput | PlainThreadRouteInput,
+): AppNavigationTarget {
+  return {
+    name: "ThreadReviewComment",
+    params: threadRouteParams(input),
+  };
+}
+
+export function buildGitOverviewNavigation(
+  input: ThreadRouteInput | PlainThreadRouteInput,
+): AppNavigationTarget {
+  return {
+    name: "GitOverview",
+    params: threadRouteParams(input),
+  };
+}
+
+export function buildGitCommitNavigation(
+  input: ThreadRouteInput | PlainThreadRouteInput,
+): AppNavigationTarget {
+  return {
+    name: "GitCommit",
+    params: threadRouteParams(input),
+  };
+}
+
+export function buildGitBranchesNavigation(
+  input: ThreadRouteInput | PlainThreadRouteInput,
+): AppNavigationTarget {
+  return {
+    name: "GitBranches",
+    params: threadRouteParams(input),
+  };
+}
+
+export function buildGitConfirmNavigation(
+  input: ThreadRouteInput | PlainThreadRouteInput,
+  params: {
+    readonly confirmAction: string;
+    readonly branchName: string;
+    readonly includesCommit: string;
+  },
+): AppNavigationTarget {
+  return {
+    name: "GitConfirm",
+    params: {
+      ...threadRouteParams(input),
+      ...params,
+    },
+  };
 }
 
 export function buildThreadFilesRoutePath(
@@ -120,11 +265,21 @@ export function buildThreadFilesNavigation(
   };
 }
 
-export function dismissRoute(router: Router) {
-  if (router.canGoBack()) {
-    router.back();
+export function dismissRoute(navigation: Navigation) {
+  if (navigation.canGoBack()) {
+    navigation.back();
     return;
   }
 
-  router.replace("/");
+  navigation.replace(homeNavigation());
+}
+
+function threadRouteParams(input: ThreadRouteInput | PlainThreadRouteInput): {
+  readonly environmentId: string;
+  readonly threadId: string;
+} {
+  return {
+    environmentId: String(input.environmentId),
+    threadId: String("threadId" in input ? input.threadId : input.id),
+  };
 }

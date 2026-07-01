@@ -35,7 +35,12 @@ import {
   type WorkspacePaneLayout,
 } from "../../lib/layout";
 import { resolveThreadSelectionNavigationAction } from "../../lib/adaptive-navigation";
-import { buildThreadFilesNavigation, buildThreadRoutePath } from "../../lib/routes";
+import {
+  buildThreadFilesNavigation,
+  newTaskNavigation,
+  settingsNavigation,
+  threadNavigation,
+} from "../../lib/routes";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
   parseActiveThreadPath,
@@ -100,7 +105,7 @@ export function useAdaptiveWorkspacePaneRole(role: WorkspaceAuxiliaryPaneRole) {
 export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode }) {
   const { width, height } = useWindowDimensions();
   const pathname = useCurrentPathname();
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const [supplementaryPanePreferredVisible, setSupplementaryPanePreferredVisible] = useState(true);
@@ -222,9 +227,9 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
     if (/\/files(?:\/|$)/.test(pathname)) {
       return true;
     }
-    router.replace(buildThreadFilesNavigation(activeThread));
+    navigation.replace(buildThreadFilesNavigation(activeThread));
     return true;
-  }, [fileInspector.supported, layout.usesSplitView, pathname, router, showAuxiliaryPane]);
+  }, [fileInspector.supported, layout.usesSplitView, pathname, navigation, showAuxiliaryPane]);
   useHardwareKeyboardCommand("files", handleOpenFilesCommand);
   const toggleAuxiliaryPane = useCallback(() => {
     if (auxiliaryPaneRole === "inspector") {
@@ -271,11 +276,11 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
   );
 
   const handleOpenSettings = useCallback(() => {
-    router.push("/settings");
-  }, [router]);
+    navigation.push(settingsNavigation());
+  }, [navigation]);
   const handleStartNewTask = useCallback(() => {
-    router.push("/new");
-  }, [router]);
+    navigation.push(newTaskNavigation());
+  }, [navigation]);
 
   const renderedSidebarWidth = useSharedValue(
     panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0,
@@ -295,7 +300,7 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
 
   const handleSelectThread = useCallback(
     (thread: EnvironmentThreadShell) => {
-      const destination = buildThreadRoutePath(thread);
+      const destination = threadNavigation(thread);
       const navigationAction = resolveThreadSelectionNavigationAction({
         usesSplitView: layout.usesSplitView,
         pathname,
@@ -306,7 +311,7 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
           return;
         }
         setFileInspectorPreferredVisible(false);
-        router.setParams({
+        navigation.setParams({
           environmentId: String(thread.environmentId),
           threadId: String(thread.id),
         });
@@ -314,12 +319,12 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
       }
       if (navigationAction === "replace") {
         setFileInspectorPreferredVisible(false);
-        router.replace(destination);
+        navigation.replace(destination);
         return;
       }
-      router.push(destination);
+      navigation.push(destination);
     },
-    [layout.usesSplitView, pathname, router, selectedThreadKey],
+    [layout.usesSplitView, pathname, navigation, selectedThreadKey],
   );
 
   return (

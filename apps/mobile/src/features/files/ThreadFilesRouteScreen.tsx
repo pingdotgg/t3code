@@ -30,7 +30,7 @@ import { cn } from "../../lib/cn";
 import { resolveFileSelectionNavigationAction } from "../../lib/adaptive-navigation";
 import { nativeHeaderScrollEdgeEffects } from "../../lib/native-scroll-edge-effect";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
-import { buildThreadFilesNavigation, buildThreadRoutePath } from "../../lib/routes";
+import { buildThreadFilesNavigation, threadNavigation } from "../../lib/routes";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -468,7 +468,7 @@ function FilesToolbarBottomFade() {
 
 export function ThreadFilesTreeScreen() {
   useAdaptiveWorkspacePaneRole("inspector");
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const { fileInspector, layout, panes, showAuxiliaryPane, togglePrimarySidebar } =
     useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
@@ -486,14 +486,14 @@ export function ThreadFilesTreeScreen() {
   );
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
   const handleReturnToThread = useCallback(() => {
-    if (router.canGoBack()) {
-      router.back();
+    if (navigation.canGoBack()) {
+      navigation.back();
       return;
     }
     if (environmentId !== null && threadId !== null) {
-      router.replace(buildThreadRoutePath({ environmentId, threadId }));
+      navigation.replace(threadNavigation({ environmentId, threadId }));
     }
-  }, [environmentId, router, threadId]);
+  }, [environmentId, navigation, threadId]);
 
   const handleSelectFile = useCallback(
     (path: string) => {
@@ -505,12 +505,12 @@ export function ThreadFilesTreeScreen() {
         hasPersistentFileInspector: fileInspector.supported,
       });
       if (navigationAction === "replace") {
-        router.replace(destination);
+        navigation.replace(destination);
         return;
       }
-      router.push(destination);
+      navigation.push(destination);
     },
-    [environmentId, fileInspector.supported, router, threadId],
+    [environmentId, fileInspector.supported, navigation, threadId],
   );
   const renderInspector = useCallback(
     (headerInset: number) =>
@@ -661,7 +661,7 @@ export function ThreadFilesTreeScreen() {
 
 export function ThreadFileScreen() {
   useAdaptiveWorkspacePaneRole("inspector");
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const { fileInspector, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const iconColor = useThemeColor("--color-icon");
   const params = useRouteParams<{
@@ -714,12 +714,12 @@ export function ThreadFileScreen() {
       // We are already on the catch-all file route. Updating its params keeps
       // the current native screen mounted while replacing the selected file in
       // place, avoiding an RNSScreen snapshot/unmount for every tree click.
-      router.setParams({
+      navigation.setParams({
         line: undefined,
         path: path.split("/").filter(Boolean),
       });
     },
-    [router],
+    [navigation],
   );
   const renderInspector = useCallback(
     (headerInset: number) =>
@@ -774,7 +774,7 @@ export function ThreadFileScreen() {
               accessibilityLabel="Return to chat"
               icon="chevron.left"
               onPress={() => {
-                router.replace(buildThreadRoutePath({ environmentId, threadId }));
+                navigation.replace(threadNavigation({ environmentId, threadId }));
               }}
             />
           ) : null}

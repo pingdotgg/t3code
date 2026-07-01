@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "../components/AppText";
+import { homeNavigation } from "../lib/routes";
 
 export default function NotFoundRoute() {
   const screenBgStyle = StyleSheet.flatten(useResolveClassNames("bg-screen"));
@@ -32,7 +33,7 @@ export default function NotFoundRoute() {
       <Text className="text-3xl font-t3-bold text-foreground" selectable>
         Route not found
       </Text>
-      <NavigationLink href="/" asChild>
+      <NavigationLink href={homeNavigation()} asChild>
         <Pressable style={returnHomeButtonStyle}>
           <Text className="text-base font-t3-bold text-primary-foreground">Return home</Text>
         </Pressable>

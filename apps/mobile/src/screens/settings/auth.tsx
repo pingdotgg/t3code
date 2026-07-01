@@ -4,12 +4,13 @@ import { NavigateTo, NativeStackScreenOptions } from "../../navigation/native-st
 import { View } from "react-native";
 
 import { hasCloudPublicConfig } from "../../features/cloud/publicConfig";
+import { settingsNavigation } from "../../lib/routes";
 
 export default function SettingsAuthRouteScreen() {
   return hasCloudPublicConfig() ? (
     <ConfiguredSettingsAuthRouteScreen />
   ) : (
-    <NavigateTo href="/settings" />
+    <NavigateTo href={settingsNavigation()} />
   );
 }
 

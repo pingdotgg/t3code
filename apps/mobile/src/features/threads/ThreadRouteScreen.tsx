@@ -42,8 +42,11 @@ import { EmptyState } from "../../components/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import {
   buildThreadFilesNavigation,
-  buildThreadRoutePath,
   buildThreadTerminalNavigation,
+  connectionsNavigation,
+  homeNavigation,
+  newTaskNavigation,
+  threadNavigation,
 } from "../../lib/routes";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
@@ -273,7 +276,7 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const params = useRouteParams<{
     environmentId?: string | string[];
     threadId?: string | string[];
@@ -476,14 +479,14 @@ function ThreadRouteContent(
       if (selectedThread === null) {
         return;
       }
-      const navigation = buildThreadFilesNavigation(selectedThread, path);
+      const destination = buildThreadFilesNavigation(selectedThread, path);
       if (fileInspector.supported) {
-        router.replace(navigation);
+        navigation.replace(destination);
         return;
       }
-      router.push(navigation);
+      navigation.push(destination);
     },
-    [fileInspector.supported, router, selectedThread],
+    [fileInspector.supported, navigation, selectedThread],
   );
   const GitInspector = useCallback(
     () => <GitOverviewSheet headerInset={0} presentation="inspector" />,
@@ -519,8 +522,8 @@ function ThreadRouteContent(
   const activeInspectorRenderer = inspectorMode === null ? undefined : renderInspectorStack;
 
   const handleOpenConnectionEditor = useCallback(() => {
-    void router.push("/connections");
-  }, [router]);
+    void navigation.push(connectionsNavigation());
+  }, [navigation]);
   const handleStopThread = useCallback(() => {
     if (
       !selectedThread ||
@@ -552,9 +555,9 @@ function ThreadRouteContent(
         return;
       }
 
-      void router.push(buildThreadTerminalNavigation(selectedThread, nextTerminalId));
+      void navigation.push(buildThreadTerminalNavigation(selectedThread, nextTerminalId));
     },
-    [router, selectedThread, selectedThreadProject?.workspaceRoot],
+    [navigation, selectedThread, selectedThreadProject?.workspaceRoot],
   );
 
   const handleOpenNewTerminal = useCallback(() => {
@@ -571,8 +574,8 @@ function ThreadRouteContent(
     const nextId = nextOpenTerminalId({
       listedTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
     });
-    void router.push(buildThreadTerminalNavigation(selectedThread, nextId));
-  }, [router, selectedThread, selectedThreadProject?.workspaceRoot, terminalMenuSessions]);
+    void navigation.push(buildThreadTerminalNavigation(selectedThread, nextId));
+  }, [navigation, selectedThread, selectedThreadProject?.workspaceRoot, terminalMenuSessions]);
 
   const handleRunProjectScript = useCallback(
     async (script: ProjectScript) => {
@@ -629,10 +632,10 @@ function ThreadRouteContent(
         worktreePath: preferredWorktreePath,
       });
 
-      void router.push(buildThreadTerminalNavigation(selectedThread, targetTerminalId));
+      void navigation.push(buildThreadTerminalNavigation(selectedThread, targetTerminalId));
     },
     [
-      router,
+      navigation,
       selectedThread,
       selectedThreadDetailWorktreePath,
       selectedThreadProject,
@@ -673,16 +676,16 @@ function ThreadRouteContent(
         icon: { name: "chevron.left", type: "sfSymbol" as const },
         identifier: "thread-compact-back",
         onPress: () => {
-          if (router.canGoBack()) {
-            router.back();
+          if (navigation.canGoBack()) {
+            navigation.back();
             return;
           }
-          router.replace("/");
+          navigation.replace(homeNavigation());
         },
         type: "button" as const,
       }),
     ],
-    [router],
+    [navigation],
   );
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
@@ -719,11 +722,11 @@ function ThreadRouteContent(
         accessibilityLabel: "New task",
         icon: { name: "square.and.pencil", type: "sfSymbol" as const },
         identifier: "thread-left-new-task",
-        onPress: () => router.push("/new"),
+        onPress: () => navigation.push(newTaskNavigation()),
         type: "button" as const,
       }),
     ],
-    [panes.primarySidebarVisible, props.onReturnToThread, router, togglePrimarySidebar],
+    [panes.primarySidebarVisible, props.onReturnToThread, navigation, togglePrimarySidebar],
   );
 
   if (!environmentId || !threadId) {
@@ -799,9 +802,9 @@ function ThreadRouteContent(
               selectedThreadKey={selectedThreadKey}
               onClose={() => setDrawerVisible(false)}
               onSelectThread={(thread) => {
-                router.replace(buildThreadRoutePath(thread));
+                navigation.replace(threadNavigation(thread));
               }}
-              onStartNewTask={() => router.push("/new")}
+              onStartNewTask={() => navigation.push(newTaskNavigation())}
             />
           )}
         </View>

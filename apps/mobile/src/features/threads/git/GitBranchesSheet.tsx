@@ -15,7 +15,7 @@ import { vcsEnvironment } from "../../../state/vcs";
 import { SheetActionButton } from "./gitSheetComponents";
 
 export function GitBranchesSheet() {
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const insets = useSafeAreaInsets();
   const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
@@ -96,7 +96,7 @@ export function GitBranchesSheet() {
             if (branch.length === 0) return;
             void gitActions.onCreateSelectedThreadBranch(branch).then(() => {
               setNewBranchName("");
-              router.dismiss();
+              navigation.dismiss();
             });
           }}
         />
@@ -146,7 +146,7 @@ export function GitBranchesSheet() {
             if (baseBranch.length === 0 || newBranch.length === 0) return;
             void gitActions.onCreateSelectedThreadWorktree({ baseBranch, newBranch }).then(() => {
               setWorktreeBranchName("");
-              router.dismiss();
+              navigation.dismiss();
             });
           }}
         />
@@ -188,7 +188,7 @@ export function GitBranchesSheet() {
               }}
               onPress={() => {
                 void gitActions.onCheckoutSelectedThreadBranch(branch.name).then(() => {
-                  router.dismiss();
+                  navigation.dismiss();
                 });
               }}
             >

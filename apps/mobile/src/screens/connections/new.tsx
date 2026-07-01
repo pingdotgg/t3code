@@ -26,7 +26,7 @@ export default function ConnectionsNewRouteScreen() {
     onConnectPress,
     pairingConnectionError,
   } = useRemoteConnections();
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const params = useRouteParams<{ mode?: string }>();
   const insets = useSafeAreaInsets();
   const [hostInput, setHostInput] = useState("");
@@ -121,11 +121,11 @@ export default function ConnectionsNewRouteScreen() {
     onChangeConnectionPairingUrl(pairingUrl);
     const result = await onConnectPress(pairingUrl);
     if (AsyncResult.isSuccess(result)) {
-      dismissRoute(router);
+      dismissRoute(navigation);
     } else {
       setIsSubmitting(false);
     }
-  }, [codeInput, hostInput, onChangeConnectionPairingUrl, onConnectPress, router]);
+  }, [codeInput, hostInput, onChangeConnectionPairingUrl, onConnectPress, navigation]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">

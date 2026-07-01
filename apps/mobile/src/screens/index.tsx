@@ -9,7 +9,13 @@ import { useMemo, useState } from "react";
 
 import { useProjects, useThreadShells } from "../state/entities";
 import { useWorkspaceState } from "../state/workspace";
-import { buildThreadRoutePath } from "../lib/routes";
+import {
+  connectionsNewNavigation,
+  newTaskNavigation,
+  settingsEnvironmentsNavigation,
+  settingsNavigation,
+  threadNavigation,
+} from "../lib/routes";
 import { useSavedRemoteConnections } from "../state/use-remote-environment-registry";
 import { HomeScreen } from "../features/home/HomeScreen";
 import { HomeHeader } from "../features/home/HomeHeader";
@@ -27,7 +33,7 @@ export default function HomeRouteScreen() {
   const threads = useThreadShells();
   const { state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const [searchQuery, setSearchQuery] = useState("");
   const { archiveThread, confirmDeleteThread } = useThreadListActions();
   const environments = useMemo(
@@ -73,7 +79,7 @@ export default function HomeRouteScreen() {
             <NativeHeaderToolbar.Button
               accessibilityLabel="Start new task"
               icon="square.and.pencil"
-              onPress={() => router.push("/new")}
+              onPress={() => navigation.push(newTaskNavigation())}
             />
           }
         />
@@ -91,30 +97,30 @@ export default function HomeRouteScreen() {
         threadSortOrder={listOptions.threadSortOrder}
         projectGroupingMode={listOptions.projectGroupingMode}
         onEnvironmentChange={setSelectedEnvironmentId}
-        onOpenSettings={() => router.push("/settings")}
+        onOpenSettings={() => navigation.push(settingsNavigation())}
         onProjectGroupingModeChange={setProjectGroupingMode}
         onProjectSortOrderChange={setProjectSortOrder}
         onSearchQueryChange={setSearchQuery}
-        onStartNewTask={() => router.push("/new")}
+        onStartNewTask={() => navigation.push(newTaskNavigation())}
         onThreadSortOrderChange={setThreadSortOrder}
       />
 
       <HomeScreen
         catalogState={catalogState}
         environments={environments}
-        onAddConnection={() => router.push("/connections/new")}
+        onAddConnection={() => navigation.push(connectionsNewNavigation())}
         onArchiveThread={archiveThread}
         onDeleteThread={confirmDeleteThread}
         onEnvironmentChange={setSelectedEnvironmentId}
-        onOpenEnvironments={() => router.push("/settings/environments")}
-        onOpenSettings={() => router.push("/settings")}
+        onOpenEnvironments={() => navigation.push(settingsEnvironmentsNavigation())}
+        onOpenSettings={() => navigation.push(settingsNavigation())}
         onProjectGroupingModeChange={setProjectGroupingMode}
         onProjectSortOrderChange={setProjectSortOrder}
         onSearchQueryChange={setSearchQuery}
         onSelectThread={(thread) => {
-          router.push(buildThreadRoutePath(thread));
+          navigation.push(threadNavigation(thread));
         }}
-        onStartNewTask={() => router.push("/new")}
+        onStartNewTask={() => navigation.push(newTaskNavigation())}
         onThreadSortOrderChange={setThreadSortOrder}
         projectGroupingMode={listOptions.projectGroupingMode}
         projects={projects}

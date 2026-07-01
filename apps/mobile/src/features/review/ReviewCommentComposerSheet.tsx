@@ -41,7 +41,7 @@ import {
 const REVIEW_COMMENT_PREVIEW_MAX_LINES = 5;
 
 export function ReviewCommentComposerSheet() {
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const colorScheme = useColorScheme();
@@ -84,8 +84,8 @@ export function ReviewCommentComposerSheet() {
   const previewViewportWidth = Math.max(width - 40, 280);
   const dismissComposer = useCallback(() => {
     clearReviewCommentTarget();
-    router.dismiss();
-  }, [router]);
+    navigation.dismiss();
+  }, [navigation]);
   const handleNativePaste = useNativePaste((uris) => {
     void (async () => {
       try {

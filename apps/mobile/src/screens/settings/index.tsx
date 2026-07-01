@@ -35,13 +35,19 @@ import { WorkspaceSidebarToolbar } from "../../features/layout/workspace-sidebar
 import { runtime } from "../../lib/runtime";
 import { loadPreferences } from "../../lib/storage";
 import { useThemeColor } from "../../lib/useThemeColor";
+import {
+  settingsArchiveNavigation,
+  settingsAuthNavigation,
+  settingsEnvironmentsNavigation,
+  settingsWaitlistNavigation,
+} from "../../lib/routes";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
 
 export default function SettingsRouteScreen() {
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const { layout } = useAdaptiveWorkspaceLayout();
 
   return (
@@ -52,7 +58,7 @@ export default function SettingsRouteScreen() {
           <NativeHeaderToolbar.Button
             accessibilityLabel="Close settings"
             icon="xmark"
-            onPress={() => router.back()}
+            onPress={() => navigation.back()}
             separateBackground
           />
         </NativeHeaderToolbar>
@@ -86,7 +92,7 @@ function LocalSettingsRouteScreen() {
             icon="desktopcomputer"
             label="Environments"
             value={`${environmentCount}`}
-            href="/settings/environments"
+            href={settingsEnvironmentsNavigation()}
           />
         </SettingsSection>
 
@@ -100,7 +106,7 @@ function LocalSettingsRouteScreen() {
 
 function ConfiguredSettingsRouteScreen() {
   const insets = useSafeAreaInsets();
-  const { push } = useAppNavigation();
+  const navigation = useAppNavigation();
   const { expand: expandClerkSheet } = useClerkSettingsSheetDetent();
   const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { user } = useUser();
@@ -211,10 +217,10 @@ function ConfiguredSettingsRouteScreen() {
       "Live Activity updates require approved T3 Cloud access so relay can deliver updates to this device.",
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Continue", onPress: () => push("/settings/waitlist") },
+        { text: "Continue", onPress: () => navigation.push(settingsWaitlistNavigation()) },
       ],
     );
-  }, [push]);
+  }, [navigation]);
 
   const linkEnvironments = useCallback(async () => {
     if (!isSignedIn) {
@@ -341,12 +347,12 @@ function ConfiguredSettingsRouteScreen() {
   const openAccount = useCallback(() => {
     if (!isLoaded) return;
     if (!isSignedIn) {
-      push("/settings/waitlist");
+      navigation.push(settingsWaitlistNavigation());
       return;
     }
     expandClerkSheet();
-    push("/settings/auth");
-  }, [expandClerkSheet, isLoaded, isSignedIn, push]);
+    navigation.push(settingsAuthNavigation());
+  }, [expandClerkSheet, isLoaded, isSignedIn, navigation]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -381,7 +387,7 @@ function ConfiguredSettingsRouteScreen() {
             icon="desktopcomputer"
             label="Environments"
             value={`${environmentCount}`}
-            href="/settings/environments"
+            href={settingsEnvironmentsNavigation()}
           />
           <SettingsSwitchRow
             icon="bell.badge"
@@ -448,7 +454,7 @@ function AppSettingsSection() {
 function ArchivedThreadsSettingsSection() {
   return (
     <SettingsSection title="Threads">
-      <SettingsRow icon="archivebox" label="Archived Threads" href="/settings/archive" />
+      <SettingsRow icon="archivebox" label="Archived Threads" href={settingsArchiveNavigation()} />
     </SettingsSection>
   );
 }
@@ -458,7 +464,7 @@ function SettingsRow(props: {
   readonly icon: SymbolName;
   readonly label: string;
   readonly value?: string;
-  readonly href?: "/settings/archive" | "/settings/environments";
+  readonly href?: ComponentProps<typeof NavigationLink>["href"];
   readonly onPress?: () => void;
 }) {
   const icon = useThemeColor("--color-icon");

@@ -15,6 +15,7 @@ import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { StatusPill } from "../../components/StatusPill";
 import { nativeHeaderScrollEdgeEffects } from "../../lib/native-scroll-edge-effect";
+import { settingsEnvironmentsNavigation } from "../../lib/routes";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -257,7 +258,7 @@ export function ThreadNavigationSidebar(props: {
 }) {
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme() === "dark" ? "dark" : "light";
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const projects = useProjects();
   const threads = useThreadShells();
   const { state: catalogState } = useWorkspaceState();
@@ -693,7 +694,7 @@ export function ThreadNavigationSidebar(props: {
                     showsConnectionStatus ? (
                       <View style={styles.nativeConnectionStatus}>
                         <WorkspaceConnectionStatus
-                          onPress={() => router.push("/settings/environments")}
+                          onPress={() => navigation.push(settingsEnvironmentsNavigation())}
                           state={catalogState}
                           variant="sidebar"
                         />
@@ -870,7 +871,7 @@ export function ThreadNavigationSidebar(props: {
         {showsConnectionStatus ? (
           <View style={styles.connectionStatus}>
             <WorkspaceConnectionStatus
-              onPress={() => router.push("/settings/environments")}
+              onPress={() => navigation.push(settingsEnvironmentsNavigation())}
               state={catalogState}
               variant="sidebar"
             />

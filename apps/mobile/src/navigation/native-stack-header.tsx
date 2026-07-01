@@ -24,11 +24,11 @@ import {
 import type { ColorValue } from "react-native";
 
 import { useAppNavigation } from "./app-navigation";
-import type { AppHref, RouteParams } from "./route-model";
+import type { AppNavigationInput, RouteParams } from "./route-model";
 
 export { useFocusEffect };
 export { useAppNavigation, useCurrentPathname, useCurrentRouteParams } from "./app-navigation";
-export type { AppHref };
+export type { AppNavigationInput };
 
 export type AppNativeStackNavigationOptions = Omit<
   NativeStackNavigationOptions,
@@ -366,7 +366,7 @@ function NativeStackScreenTitle(_props: {
 
 NativeStackScreenOptions.Title = NativeStackScreenTitle;
 
-export function NavigateTo(props: { readonly href: AppHref }) {
+export function NavigateTo(props: { readonly href: AppNavigationInput }) {
   const navigation = useAppNavigation();
   useEffect(() => {
     navigation.replace(props.href);
@@ -375,7 +375,7 @@ export function NavigateTo(props: { readonly href: AppHref }) {
 }
 
 export function NavigationLink(props: {
-  readonly href: AppHref;
+  readonly href: AppNavigationInput;
   readonly asChild?: boolean;
   readonly children?: ReactNode;
 }) {

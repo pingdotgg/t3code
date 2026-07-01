@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
-import { buildThreadFilesNavigation, buildThreadFilesRoutePath } from "./routes";
+import {
+  buildGitConfirmNavigation,
+  buildThreadFilesNavigation,
+  buildThreadFilesRoutePath,
+  buildThreadReviewCommentNavigation,
+  newTaskDraftNavigation,
+  threadNavigation,
+} from "./routes";
 
 const thread = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -39,6 +46,64 @@ describe("thread file routes", () => {
       params: {
         environmentId: "environment-1",
         threadId: "thread-1",
+      },
+    });
+  });
+});
+
+describe("named navigation targets", () => {
+  it("builds thread params without string route templates", () => {
+    expect(threadNavigation(thread)).toEqual({
+      name: "Thread",
+      params: {
+        environmentId: "environment-1",
+        threadId: "thread-1",
+      },
+    });
+  });
+
+  it("builds review comment params without string route templates", () => {
+    expect(buildThreadReviewCommentNavigation(thread)).toEqual({
+      name: "ThreadReviewComment",
+      params: {
+        environmentId: "environment-1",
+        threadId: "thread-1",
+      },
+    });
+  });
+
+  it("builds git confirmation params with action metadata", () => {
+    expect(
+      buildGitConfirmNavigation(thread, {
+        branchName: "main",
+        confirmAction: "push",
+        includesCommit: "false",
+      }),
+    ).toEqual({
+      name: "GitConfirm",
+      params: {
+        environmentId: "environment-1",
+        threadId: "thread-1",
+        branchName: "main",
+        confirmAction: "push",
+        includesCommit: "false",
+      },
+    });
+  });
+
+  it("builds new task draft params in one place", () => {
+    expect(
+      newTaskDraftNavigation({
+        environmentId: "environment-1",
+        projectId: "project-1",
+        title: "Project",
+      }),
+    ).toEqual({
+      name: "NewTaskDraft",
+      params: {
+        environmentId: "environment-1",
+        projectId: "project-1",
+        title: "Project",
       },
     });
   });

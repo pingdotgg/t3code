@@ -61,13 +61,7 @@ export type AppStackParamList = {
   NotFound: RouteParams | undefined;
 };
 
-export type AppHref =
-  | string
-  | AppNavigationTarget
-  | {
-      readonly pathname: string;
-      readonly params?: RouteParams;
-    };
+export type AppNavigationInput = string | AppNavigationTarget;
 
 export type AppNavigationTarget = {
   readonly name: AppRouteName;
@@ -147,55 +141,14 @@ function mergeParams(
   return normalizeRouteParams({ ...base, ...extra });
 }
 
-export function resolveNavigationTarget(href: AppHref): AppNavigationTarget {
-  if (typeof href !== "string") {
-    if ("name" in href) {
-      return withParams(href.name, href.params);
-    }
-    return resolveNavigationObject(href.pathname, href.params);
+export function resolveNavigationTarget(input: AppNavigationInput): AppNavigationTarget {
+  if (typeof input !== "string") {
+    return withParams(input.name, input.params);
   }
 
-  const { pathname, query } = splitPathAndQuery(href);
+  const { pathname, query } = splitPathAndQuery(input);
   const target = resolveNavigationPath(pathname);
   return { name: target.name, params: mergeParams(target.params, query) };
-}
-
-function resolveNavigationObject(
-  pathname: string,
-  params: RouteParams | undefined,
-): AppNavigationTarget {
-  switch (pathname) {
-    case "/threads/[environmentId]/[threadId]/terminal":
-      return withParams("ThreadTerminal", params);
-    case "/threads/[environmentId]/[threadId]/files":
-      return withParams("ThreadFiles", params);
-    case "/threads/[environmentId]/[threadId]/files/[...path]":
-      return withParams("ThreadFile", params);
-    case "/threads/[environmentId]/[threadId]/review":
-      return withParams("ThreadReview", params);
-    case "/threads/[environmentId]/[threadId]/review-comment":
-      return withParams("ThreadReviewComment", params);
-    case "/threads/[environmentId]/[threadId]/git":
-      return withParams("GitOverview", params);
-    case "/threads/[environmentId]/[threadId]/git/commit":
-      return withParams("GitCommit", params);
-    case "/threads/[environmentId]/[threadId]/git/branches":
-      return withParams("GitBranches", params);
-    case "/threads/[environmentId]/[threadId]/git-confirm":
-      return withParams("GitConfirm", params);
-    case "/new/draft":
-      return withParams("NewTaskDraft", params);
-    case "/new/add-project/repository":
-      return withParams("AddProjectRepository", params);
-    case "/new/add-project/destination":
-      return withParams("AddProjectDestination", params);
-    case "/new/add-project/local":
-      return withParams("AddProjectLocal", params);
-    default: {
-      const target = resolveNavigationPath(pathname);
-      return { ...target, params: mergeParams(target.params, params) };
-    }
-  }
 }
 
 export function resolveNavigationPath(pathname: string): AppNavigationTarget {

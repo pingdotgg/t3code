@@ -17,6 +17,11 @@ import { useProjects, useThreadShells } from "../../state/entities";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
+import {
+  addProjectNavigation,
+  connectionsNewNavigation,
+  newTaskDraftNavigation,
+} from "../../lib/routes";
 import { useAdaptiveWorkspaceLayout } from "../../features/layout/AdaptiveWorkspaceLayout";
 
 function deriveProjectEmptyState(catalogState: WorkspaceState): {
@@ -78,7 +83,7 @@ export default function NewTaskRoute() {
   const projects = useProjects();
   const threads = useThreadShells();
   const { state: catalogState } = useWorkspaceState();
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const { layout } = useAdaptiveWorkspaceLayout();
   const insets = useSafeAreaInsets();
   const chevronColor = useThemeColor("--color-chevron");
@@ -121,13 +126,13 @@ export default function NewTaskRoute() {
           <NativeHeaderToolbar.Button
             accessibilityLabel="Close new task"
             icon="xmark"
-            onPress={() => router.dismiss()}
+            onPress={() => navigation.dismiss()}
             separateBackground
           />
         ) : null}
         <NativeHeaderToolbar.Button
           icon="plus"
-          onPress={() => router.push("/new/add-project")}
+          onPress={() => navigation.push(addProjectNavigation())}
           separateBackground
         />
       </NativeHeaderToolbar>
@@ -153,7 +158,7 @@ export default function NewTaskRoute() {
             {!catalogState.hasReadyEnvironment ? (
               <Pressable
                 className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
-                onPress={() => router.push("/connections/new")}
+                onPress={() => navigation.push(connectionsNewNavigation())}
               >
                 <Text className="text-sm font-t3-bold text-primary-foreground">
                   Add environment
@@ -162,7 +167,7 @@ export default function NewTaskRoute() {
             ) : (
               <Pressable
                 className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
-                onPress={() => router.push("/new/add-project")}
+                onPress={() => navigation.push(addProjectNavigation())}
               >
                 <Text className="text-sm font-t3-bold text-primary-foreground">
                   Add new project
@@ -179,14 +184,11 @@ export default function NewTaskRoute() {
               return (
                 <NavigationLink
                   key={item.key}
-                  href={{
-                    name: "NewTaskDraft",
-                    params: {
-                      environmentId: item.environmentId,
-                      projectId: item.id,
-                      title: item.title,
-                    },
-                  }}
+                  href={newTaskDraftNavigation({
+                    environmentId: item.environmentId,
+                    projectId: item.id,
+                    title: item.title,
+                  })}
                   asChild
                 >
                   <Pressable

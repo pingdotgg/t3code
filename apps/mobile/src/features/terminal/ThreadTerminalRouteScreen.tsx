@@ -203,7 +203,7 @@ function pickRunningTerminalSessionForBootstrap(
 }
 
 export function ThreadTerminalRouteScreen() {
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const resizeTerminal = useAtomCommand(terminalEnvironment.resize, "terminal resize");
   const clearTerminal = useAtomCommand(terminalEnvironment.clear, "terminal clear");
@@ -613,8 +613,10 @@ export function ThreadTerminalRouteScreen() {
     if (!shouldRedirectToRunningTerminal || !selectedThread || !runningSession) {
       return;
     }
-    router.replace(buildThreadTerminalNavigation(selectedThread, runningSession.target.terminalId));
-  }, [router, runningSession, selectedThread, shouldRedirectToRunningTerminal]);
+    navigation.replace(
+      buildThreadTerminalNavigation(selectedThread, runningSession.target.terminalId),
+    );
+  }, [navigation, runningSession, selectedThread, shouldRedirectToRunningTerminal]);
 
   useEffect(() => {
     const initialInput = pendingLaunch?.initialInput;
@@ -839,9 +841,9 @@ export function ThreadTerminalRouteScreen() {
         return;
       }
 
-      router.replace(buildThreadTerminalNavigation(selectedThread, nextTerminalId));
+      navigation.replace(buildThreadTerminalNavigation(selectedThread, nextTerminalId));
     },
-    [router, selectedThread, terminalId],
+    [navigation, selectedThread, terminalId],
   );
 
   const handleOpenNewTerminal = useCallback(() => {
@@ -849,7 +851,7 @@ export function ThreadTerminalRouteScreen() {
       return;
     }
 
-    router.replace(
+    navigation.replace(
       buildThreadTerminalNavigation(
         selectedThread,
         nextOpenTerminalId({
@@ -858,7 +860,7 @@ export function ThreadTerminalRouteScreen() {
         }),
       ),
     );
-  }, [router, selectedThread, terminalId, terminalMenuSessions]);
+  }, [navigation, selectedThread, terminalId, terminalMenuSessions]);
 
   const adjustFontSize = useCallback((delta: number) => {
     setTimeout(() => {

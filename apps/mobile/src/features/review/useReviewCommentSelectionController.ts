@@ -6,6 +6,7 @@ import { pipe } from "effect/Function";
 import * as Result from "effect/Result";
 
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { buildThreadReviewCommentNavigation } from "../../lib/routes";
 
 import {
   buildReviewCommentTarget,
@@ -34,7 +35,7 @@ export function useReviewCommentSelectionController(input: {
   readonly nativeReviewDiffData: NativeReviewDiffData;
 }) {
   const { environmentId, nativeReviewDiffData, selectedSection, threadId } = input;
-  const { push } = useAppNavigation();
+  const navigation = useAppNavigation();
   const activeCommentTarget = useReviewCommentTarget();
   const [pendingNativeCommentSelection, setPendingNativeCommentSelection] =
     useState<PendingNativeCommentSelection | null>(null);
@@ -44,11 +45,8 @@ export function useReviewCommentSelectionController(input: {
       return;
     }
 
-    push({
-      name: "ThreadReviewComment",
-      params: { environmentId, threadId },
-    });
-  }, [environmentId, push, threadId]);
+    navigation.push(buildThreadReviewCommentNavigation({ environmentId, threadId }));
+  }, [environmentId, navigation, threadId]);
 
   const selectedRowIds = useMemo(() => {
     if (

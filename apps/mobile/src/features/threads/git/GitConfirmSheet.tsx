@@ -13,7 +13,7 @@ import { useSelectedThreadGitState } from "../../../state/use-selected-thread-gi
 import { SheetActionButton } from "./gitSheetComponents";
 
 export function GitConfirmSheet() {
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const insets = useSafeAreaInsets();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
@@ -49,17 +49,17 @@ export function GitConfirmSheet() {
 
   const continuePendingAction = useCallback(async () => {
     if (!confirmAction) return;
-    router.dismissAll();
+    navigation.dismissAll();
     await gitActions.onRunSelectedThreadGitAction({
       action: confirmAction,
       ...(params.commitMessage ? { commitMessage: params.commitMessage } : {}),
       ...(params.filePaths ? { filePaths: params.filePaths.split(",") } : {}),
     });
-  }, [confirmAction, gitActions, params, router]);
+  }, [confirmAction, gitActions, params, navigation]);
 
   const movePendingActionToFeatureBranch = useCallback(async () => {
     if (!confirmAction) return;
-    router.dismissAll();
+    navigation.dismissAll();
 
     if (includesCommit) {
       await gitActions.onRunSelectedThreadGitAction({
@@ -82,7 +82,14 @@ export function GitConfirmSheet() {
     );
     await gitActions.onCreateSelectedThreadBranch(newBranchName);
     await gitActions.onRunSelectedThreadGitAction({ action: confirmAction });
-  }, [confirmAction, gitActions, gitState.selectedThreadBranches, includesCommit, params, router]);
+  }, [
+    confirmAction,
+    gitActions,
+    gitState.selectedThreadBranches,
+    includesCommit,
+    params,
+    navigation,
+  ]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">

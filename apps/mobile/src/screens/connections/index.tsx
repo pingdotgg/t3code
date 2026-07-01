@@ -12,6 +12,7 @@ import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
+import { connectionsNewNavigation } from "../../lib/routes";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { ConnectionEnvironmentRow } from "../../features/connection/ConnectionEnvironmentRow";
 
@@ -22,7 +23,7 @@ export default function ConnectionsRouteScreen() {
     onRemoveEnvironmentPress,
     onUpdateEnvironment,
   } = useRemoteConnections();
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const insets = useSafeAreaInsets();
   const hasEnvironments = connectedEnvironments.length > 0;
   const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
@@ -43,7 +44,7 @@ export default function ConnectionsRouteScreen() {
       <NativeHeaderToolbar placement="right">
         <NativeHeaderToolbar.Button
           icon="plus"
-          onPress={() => router.push("/connections/new")}
+          onPress={() => navigation.push(connectionsNewNavigation())}
           separateBackground
         />
       </NativeHeaderToolbar>

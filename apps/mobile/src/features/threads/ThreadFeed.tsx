@@ -1125,7 +1125,7 @@ function ThreadFeedPlaceholder(props: {
 }
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const foldSettleFrameRef = useRef<number | null>(null);
   const foldSettleSecondFrameRef = useRef<number | null>(null);
@@ -1180,7 +1180,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         );
         if (relativePath) {
           void Haptics.selectionAsync();
-          router.push(
+          navigation.push(
             buildThreadFilesNavigation(
               { environmentId: props.environmentId, threadId: props.threadId },
               relativePath,
@@ -1195,7 +1195,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         void Linking.openURL(presentation.href);
       }
     },
-    [props.environmentId, props.threadId, props.workspaceRoot, router],
+    [props.environmentId, props.threadId, props.workspaceRoot, navigation],
   );
   const markdownStyles = useMarkdownStyles(onMarkdownLinkPress);
   const reviewCommentColors = useReviewCommentColors();

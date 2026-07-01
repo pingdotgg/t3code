@@ -6,7 +6,7 @@ import { routeAgentNotificationResponseOnce } from "./notificationPayload";
 import { consumeLastAgentNotificationResponse } from "./notificationResponseConsumer";
 
 export function useAgentNotificationNavigation(): void {
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const handledResponseIds = useRef(new Set<string>());
 
   useEffect(() => {
@@ -14,7 +14,7 @@ export function useAgentNotificationNavigation(): void {
       routeAgentNotificationResponseOnce({
         handledResponseIds: handledResponseIds.current,
         response,
-        navigate: (deepLink) => router.push(deepLink as never),
+        navigate: (deepLink) => navigation.push(deepLink as never),
       });
     };
 
@@ -28,5 +28,5 @@ export function useAgentNotificationNavigation(): void {
     return () => {
       subscription.remove();
     };
-  }, [router]);
+  }, [navigation]);
 }

@@ -2,10 +2,11 @@ import { useCurrentPathname, useAppNavigation } from "../../navigation/native-st
 import { useCallback, useMemo, useSyncExternalStore, type PropsWithChildren } from "react";
 
 import {
-  buildThreadFilesRoutePath,
-  buildThreadReviewRoutePath,
-  buildThreadTerminalRoutePath,
+  buildThreadFilesNavigation,
+  buildThreadReviewNavigation,
+  buildThreadTerminalNavigation,
   dismissRoute,
+  newTaskNavigation,
 } from "../../lib/routes";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import {
@@ -19,7 +20,7 @@ import {
 
 export function HardwareKeyboardCommandProvider({ children }: PropsWithChildren) {
   const pathname = useCurrentPathname();
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const registrationVersion = useSyncExternalStore(
     subscribeToHardwareKeyboardCommandRegistrations,
     getHardwareKeyboardCommandRegistrationVersion,
@@ -28,41 +29,41 @@ export function HardwareKeyboardCommandProvider({ children }: PropsWithChildren)
   const enabledCommands = useMemo(() => {
     const commands = new Set<HardwareKeyboardCommand>(getRegisteredHardwareKeyboardCommands());
     commands.add("newTask");
-    if (pathname !== "/" || router.canGoBack()) commands.add("back");
+    if (pathname !== "/" || navigation.canGoBack()) commands.add("back");
     if (parseActiveThreadPath(pathname)) {
       commands.add("files");
       commands.add("terminal");
       commands.add("review");
     }
     return [...commands];
-  }, [pathname, registrationVersion, router]);
+  }, [pathname, registrationVersion, navigation]);
 
   const onCommand = useCallback(
     (command: HardwareKeyboardCommand) => {
       if (dispatchHardwareKeyboardCommand(command)) return;
 
       if (command === "newTask") {
-        router.push("/new");
+        navigation.push(newTaskNavigation());
         return;
       }
       if (command === "back") {
-        dismissRoute(router);
+        dismissRoute(navigation);
         return;
       }
 
       const thread = parseActiveThreadPath(pathname);
       if (!thread) return;
       if (command === "files" && !/\/files(?:\/|$)/.test(pathname)) {
-        router.push(buildThreadFilesRoutePath(thread));
+        navigation.push(buildThreadFilesNavigation(thread));
       }
       if (command === "terminal" && !/\/terminal(?:\/|$)/.test(pathname)) {
-        router.push(buildThreadTerminalRoutePath(thread));
+        navigation.push(buildThreadTerminalNavigation(thread));
       }
       if (command === "review" && !/\/review(?:\/|$)/.test(pathname)) {
-        router.push(buildThreadReviewRoutePath(thread));
+        navigation.push(buildThreadReviewNavigation(thread));
       }
     },
-    [pathname, router],
+    [pathname, navigation],
   );
 
   return (

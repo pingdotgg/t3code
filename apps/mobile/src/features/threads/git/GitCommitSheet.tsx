@@ -14,7 +14,7 @@ import { vcsEnvironment } from "../../../state/vcs";
 import { SheetActionButton } from "./gitSheetComponents";
 
 export function GitCommitSheet() {
-  const router = useAppNavigation();
+  const navigation = useAppNavigation();
   const insets = useSafeAreaInsets();
   const isDarkMode = useColorScheme() === "dark";
   const { selectedThread } = useThreadSelection();
@@ -55,7 +55,7 @@ export function GitCommitSheet() {
   const runCommitAction = useCallback(
     async (featureBranch: boolean) => {
       const commitMessage = dialogCommitMessage.trim();
-      router.dismiss();
+      navigation.dismiss();
       await gitActions.onRunSelectedThreadGitAction({
         action: "commit",
         featureBranch,
@@ -63,7 +63,7 @@ export function GitCommitSheet() {
         ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
       });
     },
-    [allSelected, dialogCommitMessage, gitActions, router, selectedFiles],
+    [allSelected, dialogCommitMessage, gitActions, navigation, selectedFiles],
   );
 
   return (
