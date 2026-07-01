@@ -1,5 +1,7 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 
+import { claudeLocalBashTaskInput } from "./claude_local_bash_task/input.ts";
+import { assertClaudeLocalBashTaskOutput } from "./claude_local_bash_task/output.ts";
 import { grokSubagentLineageInput } from "./grok_subagent_lineage/input.ts";
 import { assertGrokSubagentLineageOutput } from "./grok_subagent_lineage/output.ts";
 import { assertClaudeMessageSteeringOutput } from "./message_steering/claude_output.ts";
@@ -78,6 +80,21 @@ import {
 } from "./shared.ts";
 
 export const ORCHESTRATOR_REPLAY_FIXTURES = [
+  {
+    name: "claude_local_bash_task",
+    buildInput: claudeLocalBashTaskInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_local_bash_task/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeLocalBashTaskOutput,
+      },
+    ],
+  },
   {
     name: "grok_subagent_lineage",
     buildInput: grokSubagentLineageInput,
