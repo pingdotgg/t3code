@@ -673,15 +673,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
     }),
-    resourceTelemetry: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:server:resource-telemetry",
-      tag: WS_METHODS.subscribeResourceTelemetry,
-      idleTtlMs: 0,
-    }),
-    resourceTelemetryHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:resource-telemetry-history",
-      tag: WS_METHODS.serverGetResourceTelemetryHistory,
-      staleTimeMs: 5_000,
+    /** Live scheduled-task list: snapshot on subscribe, fresh list after every server-side change. */
+    scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:scheduled-tasks:live",
+      tag: WS_METHODS.scheduledTasksSubscribe,
     }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
@@ -729,13 +724,30 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,
     }),
-    retryResourceTelemetry: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:retry-resource-telemetry",
-      tag: WS_METHODS.serverRetryResourceTelemetry,
-      concurrency: {
-        mode: "singleFlight",
-        key: ({ environmentId }) => environmentId,
-      },
+    upsertScheduledTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:upsert",
+      tag: WS_METHODS.scheduledTasksUpsert,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    setScheduledTaskEnabled: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:set-enabled",
+      tag: WS_METHODS.scheduledTasksSetEnabled,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    deleteScheduledTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:delete",
+      tag: WS_METHODS.scheduledTasksDelete,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    // Deliberately not on the config lane: run-now blocks until the run is
+    // dispatched, and a slow run must not stall settings/keybinding/provider
+    // mutations (or other scheduled-task edits) queued behind it.
+    runScheduledTaskNow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:run-now",
+      tag: WS_METHODS.scheduledTasksRunNow,
     }),
   };
 }
