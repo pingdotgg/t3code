@@ -15,6 +15,9 @@ import { migrateLegacyConnectionCatalog } from "./migration";
 export const CONNECTION_CATALOG_KEY = "t3code.connection-catalog.v1";
 export const LEGACY_CONNECTIONS_KEY = "t3code.connections";
 
+const decodeConnectionCatalogDocument = Schema.decodeUnknownResult(ConnectionCatalogDocument);
+const encodeConnectionCatalogDocument = Schema.encodeUnknownResult(ConnectionCatalogDocument);
+
 function catalogError(operation: string, cause: unknown) {
   return new ConnectionTransientError({
     reason: "remote-unavailable",
@@ -27,17 +30,17 @@ const decodeCatalog = Effect.fn("mobile.connectionStorage.decodeCatalog")(functi
     try: () => JSON.parse(raw) as unknown,
     catch: (cause) => catalogError("decode", cause),
   });
-  return yield* Effect.fromResult(
-    Schema.decodeUnknownResult(ConnectionCatalogDocument)(parsed),
-  ).pipe(Effect.mapError((cause) => catalogError("decode", cause)));
+  return yield* Effect.fromResult(decodeConnectionCatalogDocument(parsed)).pipe(
+    Effect.mapError((cause) => catalogError("decode", cause)),
+  );
 });
 
 const encodeCatalog = Effect.fn("mobile.connectionStorage.encodeCatalog")(function* (
   catalog: ConnectionCatalogDocumentType,
 ) {
-  const encoded = yield* Effect.fromResult(
-    Schema.encodeUnknownResult(ConnectionCatalogDocument)(catalog),
-  ).pipe(Effect.mapError((cause) => catalogError("encode", cause)));
+  const encoded = yield* Effect.fromResult(encodeConnectionCatalogDocument(catalog)).pipe(
+    Effect.mapError((cause) => catalogError("encode", cause)),
+  );
   return JSON.stringify(encoded);
 });
 
