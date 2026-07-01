@@ -9,6 +9,7 @@ import { type ServerProviderSkill } from "@t3tools/contracts";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import {
   $applyNodeReplacement,
+  $createRangeSelectionFromDom,
   $createRangeSelection,
   $getSelection,
   $setSelection,
@@ -23,6 +24,7 @@ import {
   KEY_ARROW_LEFT_COMMAND,
   KEY_ARROW_RIGHT_COMMAND,
   KEY_ARROW_UP_COMMAND,
+  KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   KEY_TAB_COMMAND,
   COMMAND_PRIORITY_HIGH,
@@ -63,7 +65,7 @@ import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
 } from "~/lib/terminalContext";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
 import {
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
@@ -1022,6 +1024,53 @@ function ComposerInlineTokenArrowPlugin() {
   return null;
 }
 
+function ComposerHomeEndKeyPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    return editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (event) => {
+        if (!isMacPlatform(navigator.platform)) {
+          return false;
+        }
+        if (event.key !== "Home" && event.key !== "End") {
+          return false;
+        }
+        if (event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
+          return false;
+        }
+
+        const rootElement = editor.getRootElement();
+        const selection = window.getSelection();
+        const anchorNode = selection?.anchorNode;
+        if (!rootElement || !selection || !anchorNode || !rootElement.contains(anchorNode)) {
+          return false;
+        }
+        if (selection.rangeCount === 0 || typeof selection.modify !== "function") {
+          return false;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        selection.modify(
+          event.shiftKey ? "extend" : "move",
+          event.key === "Home" ? "backward" : "forward",
+          "lineboundary",
+        );
+        editor.update(() => {
+          $setSelection($createRangeSelectionFromDom(selection, editor));
+        });
+        return true;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
+  }, [editor]);
+
+  return null;
+}
+
 function ComposerInlineTokenSelectionNormalizePlugin() {
   const [editor] = useLexicalComposerContext();
 
@@ -1631,6 +1680,7 @@ function ComposerPromptEditorInner({
         <OnChangePlugin onChange={handleEditorChange} />
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
         <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
+        <ComposerHomeEndKeyPlugin />
         <ComposerInlineTokenArrowPlugin />
         <ComposerInlineTokenSelectionNormalizePlugin />
         <ComposerInlineTokenBackspacePlugin />
