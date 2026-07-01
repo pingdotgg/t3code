@@ -304,18 +304,18 @@ describe("getStartedThreadModelChangeBlockReason", () => {
     ).toBeNull();
   });
 
-  it("blocks started-session model changes when either provider requires a new thread", () => {
+  it("blocks started-session model changes for providers that require a new thread", () => {
     expect(
       getStartedThreadModelChangeBlockReason({
         providers,
         hasStartedSession: true,
         currentModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5.4",
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-build",
         },
         nextModelSelection: {
           instanceId: ProviderInstanceId.make("grok"),
-          model: "grok-build",
+          model: "grok-other",
         },
       }),
     ).toEqual({
