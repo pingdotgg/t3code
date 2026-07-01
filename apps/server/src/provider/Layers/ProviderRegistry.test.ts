@@ -304,21 +304,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
     describe("checkCodexProviderStatus", () => {
       it.effect("uses the app-server account and model list for provider status", () =>
         Effect.gen(function* () {
-          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
-            Effect.succeed(
-              makeCodexProbeSnapshot({
-                skills: [
-                  {
-                    name: "github:gh-fix-ci",
-                    path: "/Users/test/.codex/skills/gh-fix-ci/SKILL.md",
-                    enabled: true,
-                    displayName: "CI Debug",
-                    shortDescription: "Debug failing GitHub Actions checks",
-                  },
-                ],
-              }),
-            ),
+          let observedCwd: string | null = null;
+          const status = yield* checkCodexProviderStatus(
+            defaultCodexSettings,
+            "/tmp/t3-code-cwd",
+            (input) => {
+              observedCwd = input.cwd;
+              return Effect.succeed(
+                makeCodexProbeSnapshot({
+                  skills: [
+                    {
+                      name: "github:gh-fix-ci",
+                      path: "/Users/test/.codex/skills/gh-fix-ci/SKILL.md",
+                      enabled: true,
+                      displayName: "CI Debug",
+                      shortDescription: "Debug failing GitHub Actions checks",
+                    },
+                  ],
+                }),
+              );
+            },
           );
+          assert.strictEqual(observedCwd, "/tmp/t3-code-cwd");
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
           assert.strictEqual(status.version, "1.0.0");
@@ -348,7 +355,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
       it.effect("returns unauthenticated when app-server requires OpenAI auth", () =>
         Effect.gen(function* () {
-          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, process.cwd(), () =>
             Effect.succeed(
               makeCodexProbeSnapshot({
                 account: {
@@ -372,15 +379,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         "returns ready with unknown auth when app-server does not require OpenAI auth",
         () =>
           Effect.gen(function* () {
-            const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
-              Effect.succeed(
-                makeCodexProbeSnapshot({
-                  account: {
-                    account: null,
-                    requiresOpenaiAuth: false,
-                  },
-                }),
-              ),
+            const status = yield* checkCodexProviderStatus(
+              defaultCodexSettings,
+              process.cwd(),
+              () =>
+                Effect.succeed(
+                  makeCodexProbeSnapshot({
+                    account: {
+                      account: null,
+                      requiresOpenaiAuth: false,
+                    },
+                  }),
+                ),
             );
 
             assert.strictEqual(status.status, "ready");
@@ -390,7 +400,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
       it.effect("returns an api key label for codex api key auth", () =>
         Effect.gen(function* () {
-          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, process.cwd(), () =>
             Effect.succeed(
               makeCodexProbeSnapshot({
                 account: {
@@ -410,7 +420,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
       it.effect("returns an Amazon Bedrock label for codex Bedrock auth", () =>
         Effect.gen(function* () {
-          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, process.cwd(), () =>
             Effect.succeed(
               makeCodexProbeSnapshot({
                 account: {
@@ -430,7 +440,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
       it.effect("returns unavailable when codex is missing", () =>
         Effect.gen(function* () {
-          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, process.cwd(), () =>
             Effect.fail(
               new CodexErrors.CodexAppServerSpawnError({
                 command: "codex app-server",
@@ -451,10 +461,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
       it.effect("closes the app-server probe scope when provider status times out", () =>
         Effect.gen(function* () {
           const killCalls = yield* Ref.make(0);
-          const statusFiber = yield* checkCodexProviderStatus(defaultCodexSettings).pipe(
-            Effect.provide(hangingScopedSpawnerLayer(killCalls)),
-            Effect.forkChild,
-          );
+          const statusFiber = yield* checkCodexProviderStatus(
+            defaultCodexSettings,
+            process.cwd(),
+          ).pipe(Effect.provide(hangingScopedSpawnerLayer(killCalls)), Effect.forkChild);
 
           yield* Effect.yieldNow;
           yield* TestClock.adjust("11 seconds");
@@ -1452,7 +1462,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
       it.effect("skips codex probes entirely when the provider is disabled", () =>
         Effect.gen(function* () {
-          const status = yield* checkCodexProviderStatus(disabledCodexSettings).pipe(
+          const status = yield* checkCodexProviderStatus(disabledCodexSettings, process.cwd()).pipe(
             Effect.provide(failingSpawnerLayer("spawn codex ENOENT")),
           );
           assert.strictEqual(status.enabled, false);

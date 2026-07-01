@@ -26,6 +26,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ResolvedKeybindingRule,
+  type ServerProvider,
+  type ServerProviderSkill,
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
@@ -1123,6 +1125,24 @@ const responseJsonEffect = <A>(response: HttpClientResponse.HttpClientResponse) 
 
 const responseOk = (response: HttpClientResponse.HttpClientResponse) =>
   response.status >= 200 && response.status < 300;
+
+const makeServerProviderSnapshot = (
+  input: Partial<ServerProvider> & {
+    readonly instanceId: ProviderInstanceId;
+    readonly driver: ProviderDriverKind;
+  },
+): ServerProvider => ({
+  enabled: true,
+  installed: true,
+  version: "1.0.0",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-04-11T00:00:00.000Z",
+  models: [],
+  slashCommands: [],
+  skills: [],
+  ...input,
+});
 
 const getAuthenticatedSessionCookieHeader = (credential = defaultDesktopBootstrapToken) =>
   Effect.gen(function* () {
@@ -4324,6 +4344,242 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         type: "providerStatuses",
         payload: { providers: nextProviders },
       });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc server.listProviderSkills errors for missing provider", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverListProviderSkills]({
+            instanceId: ProviderInstanceId.make("codex"),
+            cwd: process.cwd(),
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ServerProviderSkillsListError");
+      assert.equal(result.failure.message, "Provider instance 'codex' was not found.");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "routes websocket rpc server.listProviderSkills returns non-Codex snapshot skills",
+    () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("claudeAgent");
+        const skill: ServerProviderSkill = {
+          name: "plan",
+          path: "/providers/claudeAgent/skills/plan/SKILL.md",
+          enabled: true,
+        };
+        const providers = [
+          makeServerProviderSnapshot({
+            instanceId,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            skills: [skill],
+          }),
+        ];
+
+        yield* buildAppUnderTest({
+          layers: {
+            providerRegistry: {
+              getProviders: Effect.succeed(providers),
+            },
+          },
+        });
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const response = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.serverListProviderSkills]({
+              instanceId,
+              cwd: "/definitely/not/a/real/workspace/path",
+            }),
+          ),
+        );
+
+        assert.deepEqual(response.skills, [skill]);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "routes websocket rpc server.listProviderSkills returns disabled Codex snapshot skills",
+    () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("codex");
+        const driver = ProviderDriverKind.make("codex");
+        const skill: ServerProviderSkill = {
+          name: "fallback",
+          path: "/providers/codex/skills/fallback/SKILL.md",
+          enabled: true,
+        };
+        const providers = [
+          makeServerProviderSnapshot({
+            instanceId,
+            driver,
+            skills: [skill],
+          }),
+        ];
+
+        yield* buildAppUnderTest({
+          layers: {
+            providerRegistry: {
+              getProviders: Effect.succeed(providers),
+            },
+            serverSettings: {
+              getSettings: Effect.succeed({
+                ...DEFAULT_SERVER_SETTINGS,
+                providerInstances: {
+                  [instanceId]: {
+                    driver,
+                    enabled: false,
+                    config: {},
+                  },
+                },
+              }),
+            },
+          },
+        });
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const response = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.serverListProviderSkills]({
+              instanceId,
+              cwd: "/definitely/not/a/real/workspace/path",
+            }),
+          ),
+        );
+
+        assert.deepEqual(response.skills, [skill]);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc server.listProviderSkills validates enabled Codex cwd", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex");
+      const driver = ProviderDriverKind.make("codex");
+      const providers = [
+        makeServerProviderSnapshot({
+          instanceId,
+          driver,
+        }),
+      ];
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerRegistry: {
+            getProviders: Effect.succeed(providers),
+          },
+          serverSettings: {
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              providerInstances: {
+                [instanceId]: {
+                  driver,
+                  enabled: true,
+                  config: {},
+                },
+              },
+            }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const missingWorkspacePath = "/definitely/not/a/real/workspace/path";
+      const requestedCwd = `  ${missingWorkspacePath}  `;
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverListProviderSkills]({
+            instanceId,
+            cwd: requestedCwd,
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ServerProviderSkillsListError");
+      assert.equal(result.failure.message, `Invalid Codex skills cwd '${missingWorkspacePath}'.`);
+      assert.equal(result.failure.cwd, missingWorkspacePath);
+      assert.notInclude(result.failure.message, "Workspace root does not exist");
+      assert.equal(
+        result.failure.detail,
+        `Workspace root does not exist: ${missingWorkspacePath}.`,
+      );
+      assert.property(result.failure, "cause");
+      const failureCause = result.failure.cause;
+      assert.instanceOf(failureCause, Error);
+      assert.include(failureCause.message, "Workspace root does not exist");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc server.listProviderSkills reports Codex home details", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const instanceId = ProviderInstanceId.make("codex");
+      const driver = ProviderDriverKind.make("codex");
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-provider-skills-",
+      });
+      const sharedHomePath = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-codex-home-",
+      });
+      const providers = [
+        makeServerProviderSnapshot({
+          instanceId,
+          driver,
+        }),
+      ];
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerRegistry: {
+            getProviders: Effect.succeed(providers),
+          },
+          serverSettings: {
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              providerInstances: {
+                [instanceId]: {
+                  driver,
+                  enabled: true,
+                  config: {
+                    homePath: sharedHomePath,
+                    shadowHomePath: sharedHomePath,
+                  },
+                },
+              },
+            }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverListProviderSkills]({
+            instanceId,
+            cwd: workspaceDir,
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ServerProviderSkillsListError");
+      assert.equal(result.failure.reason, "home-prepare-failed");
+      assert.equal(result.failure.message, "Failed to prepare Codex home for 'codex'.");
+      assert.include(result.failure.detail ?? "", "Codex shadow home path");
+      assert.include(result.failure.detail ?? "", sharedHomePath);
+      assert.property(result.failure, "cause");
+      const failureCause = result.failure.cause;
+      assert.instanceOf(failureCause, Error);
+      assert.include(failureCause.message, "Codex shadow home path");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
