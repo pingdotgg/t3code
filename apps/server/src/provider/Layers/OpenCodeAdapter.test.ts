@@ -70,6 +70,7 @@ const runtimeMock = {
     transientErrorSessionIds: new Set<string>(),
     sessionDirectoryById: new Map<string, string>(),
     sessionUpdateCalls: [] as Array<{ sessionID: string; permission: unknown }>,
+    forkCalls: [] as Array<{ sessionID: string; directory?: string }>,
   },
   reset() {
     this.state.startCalls.length = 0;
@@ -89,6 +90,7 @@ const runtimeMock = {
     this.state.transientErrorSessionIds.clear();
     this.state.sessionDirectoryById.clear();
     this.state.sessionUpdateCalls.length = 0;
+    this.state.forkCalls.length = 0;
   },
 };
 
@@ -163,6 +165,16 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         update: async ({ sessionID, permission }: { sessionID: string; permission: unknown }) => {
           runtimeMock.state.sessionUpdateCalls.push({ sessionID, permission });
           return { data: { id: sessionID } };
+        },
+        fork: async ({ sessionID, directory }: { sessionID: string; directory?: string }) => {
+          // Model OpenCode fork: clones history into a NEW session bound to the
+          // requested directory (all prior messages carried over upstream).
+          const forkedId = `${sessionID}_fork`;
+          runtimeMock.state.forkCalls.push({ sessionID, ...(directory ? { directory } : {}) });
+          if (directory) {
+            runtimeMock.state.sessionDirectoryById.set(forkedId, directory);
+          }
+          return { data: { id: forkedId, ...(directory ? { directory } : {}) } };
         },
         abort: async ({ sessionID }: { sessionID: string }) => {
           runtimeMock.state.abortCalls.push(sessionID);
@@ -469,32 +481,42 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
-  it.effect("starts fresh when the resumed session is bound to a different directory", () =>
-    Effect.gen(function* () {
-      const adapter = yield* OpenCodeAdapter;
-      const threadId = asThreadId("thread-opencode-cwd");
-      // The persisted session still exists but lives in another working dir.
-      runtimeMock.state.sessionDirectoryById.set("ses_otherdir", "/some/other/worktree");
+  it.effect(
+    "forks the resumed session into the requested directory instead of losing context",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-opencode-cwd");
+        // The persisted session still exists but was created in another working dir
+        // (e.g. the thread moved from the project root into a git worktree).
+        runtimeMock.state.sessionDirectoryById.set("ses_otherdir", "/some/other/worktree");
 
-      const session = yield* adapter.startSession({
-        provider: ProviderDriverKind.make("opencode"),
-        threadId,
-        runtimeMode: "full-access",
-        resumeCursor: { schemaVersion: 1, sessionId: "ses_otherdir" },
-      });
+        const session = yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+          resumeCursor: { schemaVersion: 1, sessionId: "ses_otherdir" },
+        });
 
-      // OpenCode routes prompts to the session's stored directory, so a cwd
-      // change must NOT silently reuse the old-directory session — create fresh.
-      NodeAssert.deepEqual(runtimeMock.state.sessionGetIds, ["ses_otherdir"]);
-      NodeAssert.deepEqual(runtimeMock.state.sessionCreateUrls, ["http://127.0.0.1:9999"]);
-      NodeAssert.deepEqual(runtimeMock.state.sessionUpdateCalls, []);
-      NodeAssert.deepEqual(session.resumeCursor, {
-        schemaVersion: 1,
-        sessionId: "http://127.0.0.1:9999/session",
-      });
+        // A cwd change must NOT mint an empty session and drop context. OpenCode routes
+        // tools by the request directory, so the adapter FORKS the persisted session into
+        // the requested cwd — carrying all prior messages forward — instead of session.create.
+        NodeAssert.deepEqual(runtimeMock.state.sessionGetIds, ["ses_otherdir"]);
+        NodeAssert.deepEqual(runtimeMock.state.sessionCreateUrls, []);
+        NodeAssert.equal(runtimeMock.state.forkCalls.length, 1);
+        NodeAssert.equal(runtimeMock.state.forkCalls[0]?.sessionID, "ses_otherdir");
+        NodeAssert.equal(typeof runtimeMock.state.forkCalls[0]?.directory, "string");
+        // Permission ruleset re-asserted on the fork for the current runtimeMode.
+        NodeAssert.equal(runtimeMock.state.sessionUpdateCalls.length, 1);
+        NodeAssert.equal(runtimeMock.state.sessionUpdateCalls[0]?.sessionID, "ses_otherdir_fork");
+        // Durable cursor now points at the history-complete fork in the new directory.
+        NodeAssert.deepEqual(session.resumeCursor, {
+          schemaVersion: 1,
+          sessionId: "ses_otherdir_fork",
+        });
 
-      yield* adapter.stopSession(threadId);
-    }),
+        yield* adapter.stopSession(threadId);
+      }),
   );
 
   it.effect("fails sendTurn for missing sessions through the typed error channel", () =>

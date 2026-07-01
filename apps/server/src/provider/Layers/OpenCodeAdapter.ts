@@ -1230,11 +1230,10 @@ export function makeOpenCodeAdapter(
                     )
                   : undefined;
 
-                // Reuse the upstream session only when it still matches the
-                // requested working directory. OpenCode routes a prompt to the
-                // session's OWN stored directory, so resuming a session created
-                // under a different cwd would silently run there — in that case
-                // start fresh in the requested directory instead.
+                // Reuse the upstream session as-is only when it still matches the
+                // requested working directory. When the cwd changed (e.g. the thread
+                // moved from the project root into a git worktree), the session is
+                // forked into the new directory below rather than reused in place.
                 const reusable =
                   adopted && (!adopted.directory || adopted.directory === directory)
                     ? adopted
@@ -1255,11 +1254,40 @@ export function makeOpenCodeAdapter(
                   return { openCodeSession: reusable, created: false };
                 }
 
+                // The persisted session exists but was created under a DIFFERENT working
+                // directory (e.g. the thread moved from the project root into a git worktree
+                // between turns). OpenCode routes tool execution by the per-request `directory`,
+                // NOT the session's stored directory, so resuming under a new cwd does not run
+                // in the wrong tree. Fork the session INTO the requested directory instead of
+                // minting an empty one: this carries the full message history forward and binds
+                // the fork to the correct worktree, so the follow-up keeps its context (issue
+                // #3604, worktree cwd-change facet). Only a genuinely missing session starts fresh.
+                if (adopted) {
+                  yield* Effect.logInfo(
+                    `OpenCode session '${adopted.id}' was created under a different working directory; forking into '${directory}' to preserve conversation history.`,
+                  );
+                  const forkedSession = yield* runOpenCodeSdk("session.fork", () =>
+                    client.session.fork({ sessionID: adopted.id, directory }),
+                  );
+                  const forked = forkedSession.data;
+                  if (!forked) {
+                    return yield* new OpenCodeRuntimeError({
+                      operation: "session.fork",
+                      detail: "OpenCode session.fork returned no session payload.",
+                    });
+                  }
+                  yield* runOpenCodeSdk("session.update", () =>
+                    client.session.update({
+                      sessionID: forked.id,
+                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                    }),
+                  );
+                  return { openCodeSession: forked, created: true };
+                }
+
                 if (resumeSessionId) {
                   yield* Effect.logWarning(
-                    adopted !== undefined
-                      ? `OpenCode session '${resumeSessionId}' is bound to a different working directory; starting a fresh session.`
-                      : `OpenCode session '${resumeSessionId}' no longer exists; starting a fresh session.`,
+                    `OpenCode session '${resumeSessionId}' no longer exists; starting a fresh session.`,
                   );
                 }
                 const createdSession = yield* runOpenCodeSdk("session.create", () =>
