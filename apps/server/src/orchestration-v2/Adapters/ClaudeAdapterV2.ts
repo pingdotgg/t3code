@@ -1311,6 +1311,18 @@ function commandInputFromClaudeTool(toolName: string, input: ClaudeNativeToolInp
   );
 }
 
+function claudeTaskTypeFromSdkMessage(message: SDKMessage): string | null {
+  if (typeof message !== "object" || message === null) {
+    return null;
+  }
+  const taskType = Reflect.get(message, "task_type");
+  return typeof taskType === "string" ? taskType : null;
+}
+
+function isClaudeNonSubagentTask(message: SDKMessage): boolean {
+  return claudeTaskTypeFromSdkMessage(message) === "local_bash";
+}
+
 function fileNameFromClaudeTool(toolName: string, input: ClaudeNativeToolInput): string {
   return (
     firstStringInputField(input, ["file_path", "path", "filename", "fileName"]) ??
@@ -1753,10 +1765,12 @@ interface ActiveClaudeTurnContext {
   readonly providerTurnOrdinal: number;
   readonly startedAt: DateTime.Utc;
   readonly assistant: {
-    text: string;
-    nativeItemId: string;
+    fallbackText: string;
+    fallbackNativeItemId: string;
+    emittedNativeItemIds: Set<string>;
   };
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
+  readonly ignoredTaskIds: Set<string>;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly subagentNodesByTaskId: Map<string, OrchestrationV2ExecutionNode["id"]>;
@@ -2549,17 +2563,20 @@ export function makeClaudeAdapterV2(
           }
           input.context.toolCalls.clear();
 
-          if (input.context.assistant.text.length > 0) {
+          if (
+            input.context.assistant.emittedNativeItemIds.size === 0 &&
+            input.context.assistant.fallbackText.length > 0
+          ) {
             const ordinal = yield* resolveItemOrdinal(
               input.context,
-              input.context.assistant.nativeItemId,
+              input.context.assistant.fallbackNativeItemId,
             );
             const artifacts = buildAssistantArtifacts({
               idAllocator,
               turnInput: input.context.input,
               providerTurnId: input.context.providerTurnId,
-              nativeItemId: input.context.assistant.nativeItemId,
-              text: input.context.assistant.text,
+              nativeItemId: input.context.assistant.fallbackNativeItemId,
+              text: input.context.assistant.fallbackText,
               ordinal,
               startedAt: input.context.startedAt,
               completedAt: input.completedAt,
@@ -2658,6 +2675,49 @@ export function makeClaudeAdapterV2(
           });
         });
 
+        const emitAssistantTextArtifacts = Effect.fnUntraced(function* (input: {
+          readonly context: ActiveClaudeTurnContext;
+          readonly nativeItemId: string;
+          readonly text: string;
+        }) {
+          if (input.context.assistant.emittedNativeItemIds.has(input.nativeItemId)) {
+            return;
+          }
+          input.context.assistant.emittedNativeItemIds.add(input.nativeItemId);
+          const now = yield* DateTime.now;
+          const ordinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
+          const artifacts = buildAssistantArtifacts({
+            idAllocator,
+            turnInput: input.context.input,
+            providerTurnId: input.context.providerTurnId,
+            nativeItemId: input.nativeItemId,
+            text: input.text,
+            ordinal,
+            startedAt: now,
+            completedAt: now,
+          });
+          yield* Effect.all(
+            [
+              emitProviderEvent({
+                type: "node.updated",
+                driver: CLAUDE_PROVIDER,
+                node: artifacts.node,
+              }),
+              emitProviderEvent({
+                type: "message.updated",
+                driver: CLAUDE_PROVIDER,
+                message: artifacts.message,
+              }),
+              emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: artifacts.turnItem,
+              }),
+            ],
+            { concurrency: 1 },
+          );
+        });
+
         const finalizeActiveTurnAfterQueryExit = Effect.fnUntraced(function* (
           cause?: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
         ) {
@@ -2715,19 +2775,23 @@ export function makeClaudeAdapterV2(
           }
 
           if (message.type === "system" && message.subtype === "task_started") {
-            yield* updateClaudeSubagentNode({
-              context,
-              taskId: message.task_id,
-              ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
-              ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
-              title: message.description,
-              status: "running",
-            });
+            if (isClaudeNonSubagentTask(message)) {
+              context.ignoredTaskIds.add(message.task_id);
+            } else {
+              yield* updateClaudeSubagentNode({
+                context,
+                taskId: message.task_id,
+                ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+                ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
+                title: message.description,
+                status: "running",
+              });
+            }
           }
 
           if (message.type === "system" && message.subtype === "task_progress") {
             const progress = message.description.trim();
-            if (progress.length > 0) {
+            if (progress.length > 0 && !context.ignoredTaskIds.has(message.task_id)) {
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
@@ -2739,18 +2803,20 @@ export function makeClaudeAdapterV2(
           }
 
           if (message.type === "system" && message.subtype === "task_notification") {
-            yield* updateClaudeSubagentNode({
-              context,
-              taskId: message.task_id,
-              ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
-              result: message.summary,
-              status:
-                message.status === "completed"
-                  ? "completed"
-                  : message.status === "stopped"
-                    ? "cancelled"
-                    : "failed",
-            });
+            if (!context.ignoredTaskIds.has(message.task_id)) {
+              yield* updateClaudeSubagentNode({
+                context,
+                taskId: message.task_id,
+                ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+                result: message.summary,
+                status:
+                  message.status === "completed"
+                    ? "completed"
+                    : message.status === "stopped"
+                      ? "cancelled"
+                      : "failed",
+              });
+            }
           }
 
           for (const toolUse of claudeToolUseBlocksFromAssistantMessage(message)) {
@@ -2812,19 +2878,23 @@ export function makeClaudeAdapterV2(
 
           const assistantText = assistantTextFromSdkMessage(message);
           if (assistantText !== null && assistantText.text.length > 0) {
-            context.assistant.text += assistantText.text;
-            context.assistant.nativeItemId = assistantText.nativeItemId;
+            yield* emitAssistantTextArtifacts({
+              context,
+              nativeItemId: assistantText.nativeItemId,
+              text: assistantText.text,
+            });
             return;
           }
 
           const resultText = resultTextFromSdkMessage(message);
           if (
-            context.assistant.text.length === 0 &&
+            context.assistant.emittedNativeItemIds.size === 0 &&
+            context.assistant.fallbackText.length === 0 &&
             resultText !== null &&
             resultText.text.length > 0
           ) {
-            context.assistant.text = resultText.text;
-            context.assistant.nativeItemId = resultText.nativeItemId;
+            context.assistant.fallbackText = resultText.text;
+            context.assistant.fallbackNativeItemId = resultText.nativeItemId;
           }
 
           if (message.type === "result") {
@@ -3067,10 +3137,12 @@ export function makeClaudeAdapterV2(
               providerTurnOrdinal,
               startedAt,
               assistant: {
-                text: "",
-                nativeItemId: `assistant:${turnInput.runId}`,
+                fallbackText: "",
+                fallbackNativeItemId: `assistant:${turnInput.runId}`,
+                emittedNativeItemIds: new Set(),
               },
               toolCalls: new Map(),
+              ignoredTaskIds: new Set(),
               subagentsByTaskId: new Map(),
               subagentsByToolUseId: new Map(),
               subagentNodesByTaskId: new Map(),
