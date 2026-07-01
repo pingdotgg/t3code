@@ -86,6 +86,19 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     }),
   );
 
+  it.effect("returns undefined when the cache file does not exist", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-cache-" });
+      const missingPath = yield* resolveProviderStatusCachePath({
+        cacheDir: tempDir,
+        instanceId: defaultInstanceIdForDriver(CODEX_DRIVER),
+      });
+
+      assert.strictEqual(yield* readProviderStatusCache(missingPath), undefined);
+    }),
+  );
+
   it("hydrates cached provider status while preserving current settings-derived models", () => {
     const cachedCodex = makeProvider(CODEX_DRIVER, {
       checkedAt: "2026-04-10T12:00:00.000Z",

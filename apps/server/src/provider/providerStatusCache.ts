@@ -114,11 +114,6 @@ export const resolveLegacyProviderStatusCachePath = Effect.fn(
 export const readProviderStatusCache = (filePath: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const exists = yield* fs.exists(filePath).pipe(Effect.orElseSucceed(() => false));
-    if (!exists) {
-      return undefined;
-    }
-
     const raw = yield* fs.readFileString(filePath).pipe(Effect.orElseSucceed(() => ""));
     const trimmed = raw.trim();
     if (trimmed.length === 0) {
