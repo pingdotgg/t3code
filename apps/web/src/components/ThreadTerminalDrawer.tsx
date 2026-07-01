@@ -69,6 +69,18 @@ import { useAtomCommand } from "../state/use-atom-command";
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
+const TERMINAL_FONT_FAMILY = [
+  '"SF Mono"',
+  '"SFMono-Regular"',
+  "Consolas",
+  '"Liberation Mono"',
+  "Menlo",
+  // Keep the default terminal fonts first; Nerd Font fallbacks cover prompt glyphs when available.
+  '"MesloLGS NF"',
+  '"JetBrainsMono Nerd Font Mono"',
+  '"JetBrainsMono NF"',
+  "monospace",
+].join(", ");
 
 function maxDrawerHeight(): number {
   if (typeof window === "undefined") return DEFAULT_THREAD_TERMINAL_HEIGHT;
@@ -390,8 +402,7 @@ export function TerminalViewport({
       lineHeight: 1,
       fontSize: 12,
       scrollback: 5_000,
-      fontFamily:
-        '"SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace',
+      fontFamily: TERMINAL_FONT_FAMILY,
       theme: terminalThemeFromApp(mount),
     });
     terminal.loadAddon(fitAddon);
