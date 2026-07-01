@@ -381,9 +381,27 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   );
   const handleRowClick = useCallback(
     (event: React.MouseEvent) => {
+      const isMac = isMacPlatform(navigator.platform);
+      const isModKey = isMac ? event.metaKey : event.ctrlKey;
+
+      if (event.shiftKey && !isModKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        setThreadPinned(projectKey, threadKey, !isPinned);
+        return;
+      }
+
       handleThreadClick(event, threadRef, orderedProjectThreadKeys);
     },
-    [handleThreadClick, orderedProjectThreadKeys, threadRef],
+    [
+      handleThreadClick,
+      isPinned,
+      orderedProjectThreadKeys,
+      projectKey,
+      setThreadPinned,
+      threadKey,
+      threadRef,
+    ],
   );
   const handleRowKeyDown = useCallback(
     (event: React.KeyboardEvent) => {

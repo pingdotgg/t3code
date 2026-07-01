@@ -741,6 +741,7 @@ function AssistantChangedFilesSectionInner({
   const selectedScope = preferredScope;
   const visibleFiles = selectedScope === "turn" ? turnFiles : snapshotFiles;
   const summaryStat = summarizeTurnDiffStats(visibleFiles);
+  if (summaryStat.additions === 0 && summaryStat.deletions === 0) return null;
 
   return (
     <div
