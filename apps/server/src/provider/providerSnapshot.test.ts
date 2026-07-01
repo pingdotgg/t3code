@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { Effect, Stream } from "effect";
 import { ProviderDriverKind, type ModelCapabilities } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 
-import { providerModelsFromSettings } from "./providerSnapshot.ts";
+import { collectStreamAsString, providerModelsFromSettings } from "./providerSnapshot.ts";
 
 const OPENCODE_CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [
@@ -40,5 +41,18 @@ describe("providerModelsFromSettings", () => {
         capabilities: OPENCODE_CUSTOM_MODEL_CAPABILITIES,
       },
     ]);
+  });
+});
+
+describe("collectStreamAsString", () => {
+  it("collects decoded stream chunks in order", async () => {
+    const encoder = new TextEncoder();
+    const result = await Effect.runPromise(
+      collectStreamAsString(
+        Stream.fromIterable(["hello", " ", "world"].map((chunk) => encoder.encode(chunk))),
+      ),
+    );
+
+    expect(result).toBe("hello world");
   });
 });

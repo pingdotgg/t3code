@@ -215,7 +215,11 @@ export const collectStreamAsString = <E>(
   stream.pipe(
     Stream.decodeText(),
     Stream.runFold(
-      () => "",
-      (acc, chunk) => acc + chunk,
+      (): Array<string> => [],
+      (chunks, chunk) => {
+        chunks.push(chunk);
+        return chunks;
+      },
     ),
+    Effect.map((chunks) => chunks.join("")),
   );
