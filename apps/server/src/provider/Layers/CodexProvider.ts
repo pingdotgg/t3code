@@ -291,11 +291,70 @@ export const resolveCodexLaunchArgs = (
   environment: NodeJS.ProcessEnv = process.env,
 ) => environment[T3CODE_CODEX_LAUNCH_ARGS_ENV]?.trim() || launchArgs?.trim() || "";
 
-export const codexAppServerArgs = (launchArgs?: string) =>
-  launchArgs?.trim() ? ["app-server", ...launchArgs.trim().split(/\s+/)] : ["app-server"];
+export const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => {
+  const input = launchArgs?.trim();
+  if (!input) return [];
+
+  const args: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | undefined;
+  let quoted = false;
+
+  for (let index = 0; index < input.length; index++) {
+    const char = input[index];
+    if (char === undefined) continue;
+
+    if (quote) {
+      if (char === quote) {
+        quote = undefined;
+        quoted = true;
+      } else if (char === "\\" && quote === '"') {
+        const next = input[index + 1];
+        if (next !== undefined) {
+          current += next;
+          index++;
+        } else {
+          current += char;
+        }
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
+    if (char === "'" || char === '"') {
+      quote = char;
+      quoted = true;
+    } else if (/\s/.test(char)) {
+      if (current || quoted) {
+        args.push(current);
+        current = "";
+        quoted = false;
+      }
+    } else if (char === "\\") {
+      const next = input[index + 1];
+      if (next !== undefined) {
+        current += next;
+        index++;
+      } else {
+        current += char;
+      }
+    } else {
+      current += char;
+    }
+  }
+
+  if (current || quoted) args.push(current);
+  return args;
+};
+
+export const codexAppServerArgs = (launchArgs?: string) => [
+  "app-server",
+  ...codexLaunchArgv(launchArgs),
+];
 
 export const codexExecLaunchArgs = (launchArgs?: string) => {
-  const args = launchArgs?.trim().split(/\s+/).filter(Boolean) ?? [];
+  const args = codexLaunchArgv(launchArgs);
   const execArgs: Array<string> = [];
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];

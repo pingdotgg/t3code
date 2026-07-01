@@ -5,6 +5,7 @@ import { describe, it } from "vite-plus/test";
 import {
   codexAppServerArgs,
   codexExecLaunchArgs,
+  codexLaunchArgv,
   resolveCodexLaunchArgs,
 } from "./CodexProvider.ts";
 
@@ -28,12 +29,23 @@ describe("resolveCodexLaunchArgs", () => {
   });
 });
 
+describe("codexLaunchArgv", () => {
+  it("preserves quoted values and escaped spaces", () => {
+    NodeAssert.deepStrictEqual(
+      codexLaunchArgv(
+        String.raw`--config model="gpt 5" --enable foo\ bar --config=profile='work profile'`,
+      ),
+      ["--config", "model=gpt 5", "--enable", "foo bar", "--config=profile=work profile"],
+    );
+  });
+});
+
 describe("codexAppServerArgs", () => {
   it("returns the app-server command for empty launch args", () => {
     NodeAssert.deepStrictEqual(codexAppServerArgs(""), ["app-server"]);
   });
 
-  it("appends whitespace-split launch args after app-server", () => {
+  it("appends parsed launch args after app-server", () => {
     NodeAssert.deepStrictEqual(codexAppServerArgs("--strict-config --enable foo"), [
       "app-server",
       "--strict-config",
@@ -46,8 +58,8 @@ describe("codexAppServerArgs", () => {
 describe("codexExecLaunchArgs", () => {
   it("keeps shared codex flags and omits app-server-only flags", () => {
     NodeAssert.deepStrictEqual(
-      codexExecLaunchArgs('--strict-config --enable foo --listen off --config model="gpt-5"'),
-      ["--strict-config", "--enable", "foo", "--config", 'model="gpt-5"'],
+      codexExecLaunchArgs('--strict-config --enable foo --listen off --config model="gpt 5"'),
+      ["--strict-config", "--enable", "foo", "--config", "model=gpt 5"],
     );
   });
 
