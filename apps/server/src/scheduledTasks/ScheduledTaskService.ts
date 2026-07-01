@@ -356,18 +356,29 @@ export const layer = Layer.effect(
       );
 
     // Best-effort escape hatch: if anything fails between markRunning and
-    // markCompleted, flip the row back to 'failed' so runDueTasks does not
-    // skip the task forever (it filters out 'running' rows).
-    const releaseStuckRun = (id: ScheduledTaskId, message: string) =>
-      sql`
-        UPDATE scheduled_tasks
-        SET last_run_status = 'failed',
-            last_run_error = ${message}
-        WHERE task_id = ${id} AND last_run_status = 'running'
-      `.pipe(
-        Effect.andThen(notifyChanged),
+    // markCompleted, write a full terminal record so runDueTasks neither skips
+    // the task forever (it filters out 'running' rows) nor re-fires it
+    // immediately: the dispatch may already have gone out, so next_run_at must
+    // advance and run_count must count the attempt.
+    const releaseStuckRun = (task: ScheduledTask, message: string) =>
+      Effect.gen(function* () {
+        const now = yield* localNow;
+        yield* sql`
+          UPDATE scheduled_tasks
+          SET last_run_status = 'failed',
+              last_run_error = ${message},
+              next_run_at = ${nextRunAt(task, now)},
+              updated_at = ${iso(now)},
+              run_count = run_count + 1
+          WHERE task_id = ${task.id} AND last_run_status = 'running'
+        `;
+        yield* notifyChanged;
+      }).pipe(
         Effect.catch((cause) =>
-          Effect.logWarning("Could not release stuck schedule task run", { taskId: id, cause }),
+          Effect.logWarning("Could not release stuck schedule task run", {
+            taskId: task.id,
+            cause,
+          }),
         ),
       );
 
@@ -472,7 +483,7 @@ export const layer = Layer.effect(
         }
         return completed;
       }).pipe(
-        Effect.onError((cause) => releaseStuckRun(task.id, errorMessage(cause))),
+        Effect.onError((cause) => releaseStuckRun(task, errorMessage(cause))),
         Effect.ensuring(
           Ref.update(activeRuns, (active) => {
             const next = new Set(active);
