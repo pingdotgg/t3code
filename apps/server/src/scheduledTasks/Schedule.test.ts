@@ -73,6 +73,32 @@ describe("scheduled task schedule calculation", () => {
         { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 2] },
       ),
     ).toBe(true);
+    // Weekday masks are sets: order and duplicates do not change firing.
+    expect(
+      isSameSchedule(
+        { type: "fixed_time", timeOfDay: "09:00", weekdays: [5, 1] },
+        { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 5, 5] },
+      ),
+    ).toBe(true);
+    // Omitted, empty, and all-seven masks all mean daily.
+    expect(
+      isSameSchedule(
+        { type: "fixed_time", timeOfDay: "09:00" },
+        { type: "fixed_time", timeOfDay: "09:00", weekdays: [0, 1, 2, 3, 4, 5, 6] },
+      ),
+    ).toBe(true);
+    expect(
+      isSameSchedule(
+        { type: "fixed_time", timeOfDay: "09:00", weekdays: [] },
+        { type: "fixed_time", timeOfDay: "09:00" },
+      ),
+    ).toBe(true);
+    expect(
+      isSameSchedule(
+        { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 2] },
+        { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 3] },
+      ),
+    ).toBe(false);
     expect(
       isSameSchedule(
         { type: "fixed_time", timeOfDay: "09:00" },

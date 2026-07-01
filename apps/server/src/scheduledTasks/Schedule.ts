@@ -35,7 +35,18 @@ export function nextScheduledRunAt(
   return null;
 }
 
-/** Structural equality for schedules, independent of JSON key order. */
+/**
+ * Canonical form of a weekday mask, mirroring how `nextScheduledRunAt` reads
+ * it: order and duplicates are irrelevant, and an empty/omitted mask means the
+ * same as explicitly listing all seven days — daily.
+ */
+function weekdayKey(weekdays: ReadonlyArray<number> | undefined): string {
+  const unique = [...new Set(weekdays ?? [])].toSorted((x, y) => x - y);
+  if (unique.length === 0 || unique.length === 7) return "daily";
+  return unique.join(",");
+}
+
+/** Semantic equality for schedules: true iff both fire at the same times. */
 export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedule): boolean {
   if (a.type === "interval") {
     return b.type === "interval" && a.everyMs === b.everyMs;
@@ -43,7 +54,7 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
   return (
     b.type === "fixed_time" &&
     a.timeOfDay === b.timeOfDay &&
-    (a.weekdays ?? []).join(",") === (b.weekdays ?? []).join(",")
+    weekdayKey(a.weekdays) === weekdayKey(b.weekdays)
   );
 }
 
