@@ -3,8 +3,7 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { type ScopedProjectRef } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
+import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
@@ -20,24 +19,19 @@ import {
   getProjectOrderKey,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { readThreadShell, useProjects, useThread } from "../state/entities";
+import { readThreadShell, useProjects, useServerConfigs, useThread } from "../state/entities";
 import {
   buildNewDraftExecutionDefaults,
   resolveNewDraftStartFromOrigin,
 } from "../lib/chatThreadActions";
-import { getNewThreadRuntimeMode } from "../lib/newThreadSettings";
 import { resolveThreadRouteTarget } from "../threadRoutes";
-import { primaryServerConfigAtom } from "../state/server";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
-import { useSettings } from "./useSettings";
+import { useClientSettings } from "./useSettings";
 
 export function useNewThreadHandler() {
   const projects = useProjects();
-  const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
-  const newWorktreesStartFromOrigin = useSettings(
-    (settings) => settings.newWorktreesStartFromOrigin,
-  );
-  const serverSettings = useAtomValue(primaryServerConfigAtom)?.settings ?? null;
+  const serverConfigs = useServerConfigs();
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const router = useRouter();
   const getCurrentRouteTarget = useCallback(() => {
     const currentRouteParams = router.state.matches[router.state.matches.length - 1]?.params ?? {};
@@ -68,6 +62,8 @@ export function useNewThreadHandler() {
           candidate.id === projectRef.projectId &&
           candidate.environmentId === projectRef.environmentId,
       );
+      const environmentSettings =
+        serverConfigs.get(projectRef.environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS;
       const logicalProjectKey = project
         ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
         : scopedProjectKey(projectRef);
@@ -159,16 +155,11 @@ export function useNewThreadHandler() {
         return Promise.resolve();
       }
 
+      const draftId = newDraftId();
+      const threadId = newThreadId();
+      const createdAt = new Date().toISOString();
+      const initialEnvMode = options?.envMode ?? environmentSettings.defaultThreadEnvMode;
       return (async () => {
-        const defaultRuntimeMode = getNewThreadRuntimeMode(serverSettings);
-        if (!defaultRuntimeMode) {
-          return;
-        }
-
-        const draftId = newDraftId();
-        const threadId = newThreadId();
-        const createdAt = new Date().toISOString();
-        const initialEnvMode = options?.envMode ?? "local";
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
           threadId,
           createdAt,
@@ -179,9 +170,9 @@ export function useNewThreadHandler() {
             options?.startFromOrigin ??
             resolveNewDraftStartFromOrigin({
               envMode: initialEnvMode,
-              newWorktreesStartFromOrigin,
+              newWorktreesStartFromOrigin: environmentSettings.newWorktreesStartFromOrigin,
             }),
-          ...buildNewDraftExecutionDefaults(defaultRuntimeMode),
+          ...buildNewDraftExecutionDefaults(environmentSettings.defaultRuntimeMode),
         });
         applyStickyState(draftId);
 
@@ -191,14 +182,7 @@ export function useNewThreadHandler() {
         });
       })();
     },
-    [
-      newWorktreesStartFromOrigin,
-      getCurrentRouteTarget,
-      projectGroupingSettings,
-      router,
-      projects,
-      serverSettings,
-    ],
+    [getCurrentRouteTarget, projectGroupingSettings, projects, router, serverConfigs],
   );
 }
 

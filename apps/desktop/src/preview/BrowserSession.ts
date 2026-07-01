@@ -2,45 +2,107 @@ import type { Session } from "electron";
 import { session } from "electron";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
 
-export class BrowserSessionError extends Data.TaggedError("BrowserSessionError")<{
-  readonly operation: string;
-  readonly cause: unknown;
-}> {
-  override get message() {
-    return `Desktop preview browser session operation failed: ${this.operation}`;
+export class BrowserSessionPartitionDerivationError extends Schema.TaggedErrorClass<BrowserSessionPartitionDerivationError>()(
+  "BrowserSessionPartitionDerivationError",
+  {
+    scope: Schema.String,
+    cause: Schema.instanceOf(PlatformError.PlatformError),
+  },
+) {
+  override get message(): string {
+    return `Failed to derive a desktop preview browser partition for scope ${this.scope}.`;
   }
 }
 
-export interface BrowserSessionShape {
-  readonly getPartition: (scope?: string) => Effect.Effect<string, BrowserSessionError>;
-  readonly isPartition: (partition: string) => boolean;
-  readonly getSession: (scope?: string) => Effect.Effect<Session, BrowserSessionError>;
-  readonly clearCookies: () => Effect.Effect<void, BrowserSessionError>;
-  readonly clearCache: () => Effect.Effect<void, BrowserSessionError>;
+export class BrowserSessionCreationError extends Schema.TaggedErrorClass<BrowserSessionCreationError>()(
+  "BrowserSessionCreationError",
+  {
+    scope: Schema.String,
+    partition: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to create a desktop preview browser session for scope ${this.scope} (partition ${this.partition}).`;
+  }
 }
 
-export class BrowserSession extends Context.Service<BrowserSession, BrowserSessionShape>()(
-  "@t3tools/desktop/preview/BrowserSession",
-) {}
+export class BrowserSessionStorageClearError extends Schema.TaggedErrorClass<BrowserSessionStorageClearError>()(
+  "BrowserSessionStorageClearError",
+  {
+    partition: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to clear desktop preview browser storage for partition ${this.partition}.`;
+  }
+}
 
-const make = Effect.gen(function* BrowserSessionMake() {
+export class BrowserSessionCacheClearError extends Schema.TaggedErrorClass<BrowserSessionCacheClearError>()(
+  "BrowserSessionCacheClearError",
+  {
+    partition: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to clear the desktop preview browser cache for partition ${this.partition}.`;
+  }
+}
+
+export const BrowserSessionGetSessionError = Schema.Union([
+  BrowserSessionPartitionDerivationError,
+  BrowserSessionCreationError,
+]);
+export type BrowserSessionGetSessionError = typeof BrowserSessionGetSessionError.Type;
+export const isBrowserSessionGetSessionError = Schema.is(BrowserSessionGetSessionError);
+
+export const BrowserSessionError = Schema.Union([
+  BrowserSessionPartitionDerivationError,
+  BrowserSessionCreationError,
+  BrowserSessionStorageClearError,
+  BrowserSessionCacheClearError,
+]);
+export type BrowserSessionError = typeof BrowserSessionError.Type;
+export const isBrowserSessionError = Schema.is(BrowserSessionError);
+
+export class BrowserSession extends Context.Service<
+  BrowserSession,
+  {
+    readonly getPartition: (
+      scope?: string,
+    ) => Effect.Effect<string, BrowserSessionPartitionDerivationError>;
+    readonly isPartition: (partition: string) => boolean;
+    readonly getSession: (scope?: string) => Effect.Effect<Session, BrowserSessionGetSessionError>;
+    readonly clearCookies: () => Effect.Effect<void, BrowserSessionStorageClearError>;
+    readonly clearCache: () => Effect.Effect<void, BrowserSessionCacheClearError>;
+  }
+>()("@t3tools/desktop/preview/BrowserSession") {}
+
+export const make = Effect.gen(function* BrowserSessionMake() {
   const crypto = yield* Crypto.Crypto;
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
 
   const getPartition = Effect.fn("BrowserSession.getPartition")(function* (scope = "shared") {
-    const digest = yield* crypto
-      .digest("SHA-256", new TextEncoder().encode(scope))
-      .pipe(
-        Effect.mapError((cause) => new BrowserSessionError({ operation: "getPartition", cause })),
-      );
+    const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(scope)).pipe(
+      Effect.mapError(
+        (cause) =>
+          new BrowserSessionPartitionDerivationError({
+            scope,
+            cause,
+          }),
+      ),
+    );
     return `${PREVIEW_PARTITION_PREFIX}${Encoding.encodeHex(digest).slice(0, 20)}`;
   });
 
@@ -65,7 +127,12 @@ const make = Effect.gen(function* BrowserSessionMake() {
           next.set(partition, browserSession);
           return [browserSession, next] as const;
         },
-        catch: (cause) => new BrowserSessionError({ operation: "getSession", cause }),
+        catch: (cause) =>
+          new BrowserSessionCreationError({
+            scope,
+            partition,
+            cause,
+          }),
       });
     });
   });
@@ -77,13 +144,17 @@ const make = Effect.gen(function* BrowserSessionMake() {
     clearCookies: Effect.fn("BrowserSession.clearCookies")(function* () {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
       yield* Effect.all(
-        [...sessions.values()].map((browserSession) =>
+        [...sessions.entries()].map(([partition, browserSession]) =>
           Effect.tryPromise({
             try: () =>
               browserSession.clearStorageData({
                 storages: ["cookies", "localstorage", "indexdb", "websql", "serviceworkers"],
               }),
-            catch: (cause) => new BrowserSessionError({ operation: "clearCookies", cause }),
+            catch: (cause) =>
+              new BrowserSessionStorageClearError({
+                partition,
+                cause,
+              }),
           }),
         ),
         { concurrency: "unbounded", discard: true },
@@ -92,10 +163,14 @@ const make = Effect.gen(function* BrowserSessionMake() {
     clearCache: Effect.fn("BrowserSession.clearCache")(function* () {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
       yield* Effect.all(
-        [...sessions.values()].map((browserSession) =>
+        [...sessions.entries()].map(([partition, browserSession]) =>
           Effect.tryPromise({
             try: () => browserSession.clearCache(),
-            catch: (cause) => new BrowserSessionError({ operation: "clearCache", cause }),
+            catch: (cause) =>
+              new BrowserSessionCacheClearError({
+                partition,
+                cause,
+              }),
           }),
         ),
         { concurrency: "unbounded", discard: true },

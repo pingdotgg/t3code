@@ -21,6 +21,7 @@ import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { uuidv4 } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
+import { validateProjectThreadCreation } from "./projectThreadCreationValidation";
 
 function deriveThreadTitleFromPrompt(value: string): string {
   const trimmed = value.trim();
@@ -52,15 +53,16 @@ export function useCreateProjectThread() {
       const initialMessageText = input.initialMessageText.trim();
       const nextTitle = deriveThreadTitleFromPrompt(input.initialMessageText);
 
-      if (initialMessageText.length === 0) {
-        const error = new Error("Enter a task before starting the thread.");
-        setPendingConnectionError(error.message);
-        return AsyncResult.failure(Cause.fail(error));
-      }
-      if (input.envMode === "worktree" && !input.branch) {
-        const error = new Error("Select a base branch before creating a worktree.");
-        setPendingConnectionError(error.message);
-        return AsyncResult.failure(Cause.fail(error));
+      const validationError = validateProjectThreadCreation({
+        environmentId: input.project.environmentId,
+        projectId: input.project.id,
+        environmentMode: input.envMode,
+        branch: input.branch,
+        initialMessageText,
+      });
+      if (validationError !== null) {
+        setPendingConnectionError(validationError.message);
+        return AsyncResult.failure(Cause.fail(validationError));
       }
 
       const isWorktree = input.envMode === "worktree";

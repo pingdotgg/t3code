@@ -1,7 +1,44 @@
+import type { LocalApi } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { type MouseEvent, useCallback } from "react";
 
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { readLocalApi } from "../localApi";
+
+export class PullRequestLinkOpenError extends Schema.TaggedErrorClass<PullRequestLinkOpenError>()(
+  "PullRequestLinkOpenError",
+  {
+    targetOrigin: Schema.NullOr(Schema.String),
+    cause: Schema.Defect(),
+  },
+) {
+  static fromCause(targetUrl: string, cause: unknown): PullRequestLinkOpenError {
+    let targetOrigin: string | null = null;
+    try {
+      targetOrigin = new URL(targetUrl).origin;
+    } catch {
+      // Keep malformed URLs out of diagnostics while preserving the open failure below.
+    }
+    return new PullRequestLinkOpenError({ targetOrigin, cause });
+  }
+
+  override get message(): string {
+    return this.targetOrigin === null
+      ? "Unable to open pull request link."
+      : `Unable to open pull request link at ${this.targetOrigin}.`;
+  }
+}
+
+export async function openPullRequestLink(
+  shell: Pick<LocalApi["shell"], "openExternal">,
+  targetUrl: string,
+): Promise<void> {
+  try {
+    await shell.openExternal(targetUrl);
+  } catch (cause) {
+    throw PullRequestLinkOpenError.fromCause(targetUrl, cause);
+  }
+}
 
 /**
  * Returns a click handler that opens a pull request URL in the system browser.
@@ -24,7 +61,8 @@ export function useOpenPrLink() {
       return;
     }
 
-    void api.shell.openExternal(prUrl).catch((error) => {
+    void openPullRequestLink(api.shell, prUrl).catch((error) => {
+      console.error(error);
       toastManager.add(
         stackedThreadToast({
           type: "error",

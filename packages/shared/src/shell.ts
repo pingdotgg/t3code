@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { execFileSync } from "node:child_process";
-import { accessSync, constants as fileSystemConstants, statSync } from "node:fs";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -26,7 +26,7 @@ type ExecFileSyncLike = (
 
 function canExecuteFile(filePath: string): boolean {
   try {
-    accessSync(filePath, fileSystemConstants.X_OK);
+    NodeFS.accessSync(filePath, NodeFS.constants.X_OK);
     return true;
   } catch {
     return false;
@@ -108,7 +108,7 @@ function resolveSpawnExecutableWithNode(
   );
   const isExecutable = (candidate: string) => {
     try {
-      if (!statSync(candidate).isFile()) return false;
+      if (!NodeFS.statSync(candidate).isFile()) return false;
       if (platform === "win32") {
         return windowsPathExtensions.includes(path.extname(candidate).toUpperCase());
       }
@@ -192,13 +192,13 @@ export function extractPathFromShellOutput(output: string): string | null {
 
 export function readPathFromLoginShell(
   shell: string,
-  execFile: ExecFileSyncLike = execFileSync,
+  execFile: ExecFileSyncLike = NodeChildProcess.execFileSync,
 ): string | undefined {
   return readEnvironmentFromLoginShell(shell, ["PATH"], execFile).PATH;
 }
 
 export function readPathFromLaunchctl(
-  execFile: ExecFileSyncLike = execFileSync,
+  execFile: ExecFileSyncLike = NodeChildProcess.execFileSync,
 ): string | undefined {
   try {
     return trimNonEmpty(
@@ -305,7 +305,7 @@ export type ShellEnvironmentReader = (
 export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
   shell,
   names,
-  execFile = execFileSync,
+  execFile = NodeChildProcess.execFileSync,
 ) => {
   if (names.length === 0) {
     return {};
@@ -371,7 +371,7 @@ export function readEnvironmentFromWindowsShell(
   const execFile: ExecFileSyncLike =
     typeof optionsOrExecFile === "function"
       ? optionsOrExecFile
-      : (maybeExecFile ?? (execFileSync as ExecFileSyncLike));
+      : (maybeExecFile ?? (NodeChildProcess.execFileSync as ExecFileSyncLike));
   const command = buildWindowsEnvironmentCaptureCommand(names);
   const args = [
     "-NoLogo",

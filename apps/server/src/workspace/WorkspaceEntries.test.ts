@@ -1,26 +1,32 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import fsPromises from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { FileFinder } from "@ff-labs/fff-node";
-import { it, afterEach, describe, expect, vi } from "@effect/vitest";
+import { it, afterEach, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import { vi } from "vite-plus/test";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
-import { WorkspacePathsLive } from "./Layers/WorkspacePaths.ts";
+import * as WorkspacePaths from "./WorkspacePaths.ts";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, readdir: vi.fn(actual.readdir) };
+});
 
 const TestLayer = Layer.empty.pipe(
-  Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePathsLive))),
-  Layer.provideMerge(WorkspacePathsLive),
+  Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+  Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provide(
-    ServerConfig.layerTest(process.cwd(), {
+    ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-workspace-entries-test-",
     }),
   ),
@@ -363,7 +369,10 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           })
           .pipe(Effect.flip);
 
-        expect(error.detail).toBe("Relative filesystem browse paths require a current project.");
+        expect(error._tag).toBe("WorkspaceEntriesCurrentProjectRequiredError");
+        expect(error.message).toBe(
+          "A current project is required to browse relative workspace path './src'.",
+        );
       }),
     );
 
@@ -373,7 +382,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-eacces-" });
 
         const denied = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
-        vi.spyOn(fsPromises, "readdir").mockRejectedValueOnce(denied);
+        vi.mocked(NodeFSP.readdir).mockRejectedValueOnce(denied);
 
         const result = yield* workspaceEntries.browse({
           partialPath: yield* appendSeparator(cwd),

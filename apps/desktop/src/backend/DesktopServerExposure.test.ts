@@ -7,21 +7,18 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
-import {
-  DesktopEnvironment,
-  layer as makeDesktopEnvironmentLayer,
-} from "../app/DesktopEnvironment.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
+import * as DesktopNetworkInterfaces from "./DesktopNetworkInterfaces.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
-import type { DesktopNetworkInterfaces } from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 
 const encoder = new TextEncoder();
 
-const emptyNetworkInterfaces: DesktopNetworkInterfaces = {};
-const lanNetworkInterfaces: DesktopNetworkInterfaces = {
+const emptyNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {};
+const lanNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   en0: [
     {
       address: "192.168.1.20",
@@ -31,7 +28,7 @@ const lanNetworkInterfaces: DesktopNetworkInterfaces = {
   ],
 };
 
-const tailnetNetworkInterfaces: DesktopNetworkInterfaces = {
+const tailnetNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   tailscale0: [
     {
       address: "100.90.1.2",
@@ -72,7 +69,7 @@ function dieOnSpawnLayer() {
 }
 
 function makeEnvironmentLayer(baseDir: string, env: Record<string, string | undefined> = {}) {
-  return makeDesktopEnvironmentLayer({
+  return DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
     platform: "darwin",
@@ -91,18 +88,19 @@ function makeEnvironmentLayer(baseDir: string, env: Record<string, string | unde
 
 function makeLayer(input: {
   readonly baseDir: string;
-  readonly networkInterfaces?: DesktopNetworkInterfaces;
+  readonly networkInterfaces?: DesktopNetworkInterfaces.NetworkInterfaces;
   readonly env?: Record<string, string | undefined>;
   readonly spawnerLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
+  readonly desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>;
 }) {
   const env = { T3CODE_HOME: input.baseDir, ...input.env };
   const environmentLayer = makeEnvironmentLayer(input.baseDir, env);
-  const networkLayer = Layer.succeed(DesktopServerExposure.DesktopNetworkInterfacesService, {
+  const networkLayer = Layer.succeed(DesktopNetworkInterfaces.DesktopNetworkInterfaces, {
     read: Effect.succeed(input.networkInterfaces ?? emptyNetworkInterfaces),
   });
 
   return DesktopServerExposure.layer.pipe(
-    Layer.provideMerge(DesktopAppSettings.layer),
+    Layer.provideMerge(input.desktopSettingsLayer ?? DesktopAppSettings.layer),
     Layer.provideMerge(NodeFileSystem.layer),
     Layer.provideMerge(NodeHttpClient.layerUndici),
     Layer.provideMerge(input.spawnerLayer ?? mockSpawnerLayer()),
@@ -113,18 +111,19 @@ function makeLayer(input: {
 }
 
 const withHarness = <A, E, R>(
-  networkInterfaces: DesktopNetworkInterfaces,
+  networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
   effect: Effect.Effect<
     A,
     E,
     | R
-    | DesktopEnvironment
+    | DesktopEnvironment.DesktopEnvironment
     | FileSystem.FileSystem
     | DesktopServerExposure.DesktopServerExposure
     | DesktopAppSettings.DesktopAppSettings
   >,
   env: Record<string, string | undefined> = {},
   spawnerLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>,
+  desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>,
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -138,6 +137,7 @@ const withHarness = <A, E, R>(
           networkInterfaces,
           env,
           ...(spawnerLayer ? { spawnerLayer } : {}),
+          ...(desktopSettingsLayer ? { desktopSettingsLayer } : {}),
         }),
       ),
     );
@@ -239,6 +239,72 @@ describe("DesktopServerExposure", () => {
       }),
     ),
   );
+
+  it.effect("preserves persistence request context and the settings failure chain", () => {
+    const diskFailure = new Error("disk exploded");
+    const settingsFailure = new DesktopAppSettings.DesktopSettingsWriteError({
+      operation: "replace-settings-file",
+      path: "/tmp/desktop-settings.json",
+      cause: diskFailure,
+    });
+    const settingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
+      get: Effect.succeed(DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS),
+      load: Effect.succeed(DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS),
+      setServerExposureMode: () => Effect.fail(settingsFailure),
+      setTailscaleServe: () => Effect.fail(settingsFailure),
+      setUpdateChannel: () => Effect.die("unexpected update channel change"),
+      setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
+      setWslDistro: () => Effect.die("unexpected WSL distro change"),
+      setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
+      applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
+      applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
+    } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
+
+    return withHarness(
+      lanNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const modeError = yield* serverExposure.setMode("network-accessible").pipe(Effect.flip);
+        assert.instanceOf(
+          modeError,
+          DesktopServerExposure.DesktopServerExposureModePersistenceError,
+        );
+        assert.isTrue(DesktopServerExposure.isDesktopServerExposureSetModeError(modeError));
+        assert.isTrue(DesktopServerExposure.isDesktopServerExposureError(modeError));
+        assert.equal(modeError.mode, "network-accessible");
+        assert.strictEqual(modeError.cause, settingsFailure);
+        assert.strictEqual(modeError.cause.cause, diskFailure);
+        assert.equal(
+          modeError.message,
+          "Failed to persist desktop server exposure mode network-accessible.",
+        );
+        assert.notInclude(modeError.message, diskFailure.message);
+
+        const tailscaleError = yield* serverExposure
+          .setTailscaleServeEnabled({ enabled: true, port: 8443 })
+          .pipe(Effect.flip);
+        assert.instanceOf(
+          tailscaleError,
+          DesktopServerExposure.DesktopTailscaleServePersistenceError,
+        );
+        assert.isTrue(DesktopServerExposure.isDesktopServerExposureError(tailscaleError));
+        assert.equal(tailscaleError.enabled, true);
+        assert.equal(tailscaleError.port, 8443);
+        assert.strictEqual(tailscaleError.cause, settingsFailure);
+        assert.strictEqual(tailscaleError.cause.cause, diskFailure);
+        assert.equal(
+          tailscaleError.message,
+          "Failed to persist desktop Tailscale Serve settings (enabled: true, port: 8443).",
+        );
+        assert.notInclude(tailscaleError.message, diskFailure.message);
+      }),
+      {},
+      undefined,
+      settingsLayer,
+    );
+  });
 
   it.effect("resolves advertised endpoints from the scoped runtime state", () =>
     withHarness(

@@ -3,42 +3,63 @@ import type {
   RelayDeliveryKind,
   RelayLiveActivityRegistrationRequest,
 } from "@t3tools/contracts/relay";
-import { RelayAgentActivityAggregateState as RelayAgentActivityAggregateStateSchema } from "@t3tools/contracts/relay";
+import {
+  RelayAgentActivityAggregateState as RelayAgentActivityAggregateStateSchema,
+  RelayDeliveryKind as RelayDeliveryKindSchema,
+} from "@t3tools/contracts/relay";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { cast } from "effect/Function";
+import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { and, eq, sql } from "drizzle-orm";
 
-import { RelayDb } from "../db.ts";
+import * as RelayDb from "../db.ts";
 import { relayLiveActivities, relayMobileDevices } from "../persistence/schema.ts";
 
 export class LiveActivityRegistrationPersistenceError extends Schema.TaggedErrorClass<LiveActivityRegistrationPersistenceError>()(
   "LiveActivityRegistrationPersistenceError",
-  { cause: Schema.Defect() },
+  {
+    userId: Schema.String,
+    deviceId: Schema.String,
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return "Failed to persist Live Activity registration";
+    return `Failed to persist Live Activity registration for user ${this.userId} and device ${this.deviceId}.`;
   }
 }
 
 export class LiveActivityTargetListPersistenceError extends Schema.TaggedErrorClass<LiveActivityTargetListPersistenceError>()(
   "LiveActivityTargetListPersistenceError",
-  { cause: Schema.Defect() },
+  {
+    userId: Schema.String,
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return "Failed to list Live Activity delivery targets";
+    return `Failed to list Live Activity delivery targets for user ${this.userId}.`;
   }
 }
 
 export class LiveActivityDeliveryMarkPersistenceError extends Schema.TaggedErrorClass<LiveActivityDeliveryMarkPersistenceError>()(
   "LiveActivityDeliveryMarkPersistenceError",
-  { cause: Schema.Defect() },
+  {
+    operation: Schema.Literals([
+      "mark-delivery",
+      "mark-start-queued",
+      "clear-start-queued",
+      "invalidate-delivery-token",
+    ]),
+    userId: Schema.String,
+    deviceId: Schema.String,
+    kind: Schema.NullOr(RelayDeliveryKindSchema),
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return "Failed to persist Live Activity delivery state";
+    return `Failed to persist Live Activity state during ${this.operation} for user ${this.userId} and device ${this.deviceId}.`;
   }
 }
 
@@ -64,41 +85,40 @@ export interface LiveActivityRow {
 
 export type TargetRow = DeviceRow & LiveActivityRow;
 
-export interface LiveActivitiesShape {
-  readonly register: (input: {
-    readonly userId: string;
-    readonly registration: RelayLiveActivityRegistrationRequest;
-  }) => Effect.Effect<void, LiveActivityRegistrationPersistenceError>;
-  readonly listTargets: (input: {
-    readonly userId: string;
-  }) => Effect.Effect<ReadonlyArray<TargetRow>, LiveActivityTargetListPersistenceError>;
-  readonly markDelivery: (input: {
-    readonly userId: string;
-    readonly deviceId: string;
-    readonly kind: RelayDeliveryKind;
-    readonly aggregate: RelayAgentActivityAggregateState | null;
-    readonly deliveredAt: string;
-  }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
-  readonly markStartQueued: (input: {
-    readonly userId: string;
-    readonly deviceId: string;
-    readonly queuedAt: string;
-  }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
-  readonly clearStartQueued: (input: {
-    readonly userId: string;
-    readonly deviceId: string;
-  }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
-  readonly invalidateDeliveryToken: (input: {
-    readonly userId: string;
-    readonly deviceId: string;
-    readonly kind: RelayDeliveryKind;
-    readonly invalidatedAt: string;
-  }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
-}
-
-export class LiveActivities extends Context.Service<LiveActivities, LiveActivitiesShape>()(
-  "t3code-relay/agentActivity/LiveActivities",
-) {}
+export class LiveActivities extends Context.Service<
+  LiveActivities,
+  {
+    readonly register: (input: {
+      readonly userId: string;
+      readonly registration: RelayLiveActivityRegistrationRequest;
+    }) => Effect.Effect<void, LiveActivityRegistrationPersistenceError>;
+    readonly listTargets: (input: {
+      readonly userId: string;
+    }) => Effect.Effect<ReadonlyArray<TargetRow>, LiveActivityTargetListPersistenceError>;
+    readonly markDelivery: (input: {
+      readonly userId: string;
+      readonly deviceId: string;
+      readonly kind: RelayDeliveryKind;
+      readonly aggregate: RelayAgentActivityAggregateState | null;
+      readonly deliveredAt: string;
+    }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
+    readonly markStartQueued: (input: {
+      readonly userId: string;
+      readonly deviceId: string;
+      readonly queuedAt: string;
+    }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
+    readonly clearStartQueued: (input: {
+      readonly userId: string;
+      readonly deviceId: string;
+    }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
+    readonly invalidateDeliveryToken: (input: {
+      readonly userId: string;
+      readonly deviceId: string;
+      readonly kind: RelayDeliveryKind;
+      readonly invalidatedAt: string;
+    }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
+  }
+>()("t3code-relay/agentActivity/LiveActivities") {}
 
 const decodeJsonString = Schema.decodeEffect(Schema.UnknownFromJsonString);
 const encodeJsonValue = Schema.encodeEffect(Schema.UnknownFromJsonString);
@@ -107,15 +127,15 @@ const encodeRelayAgentActivityAggregateStateJson = Schema.encodeEffect(
   Schema.fromJsonString(RelayAgentActivityAggregateStateSchema),
 );
 
-const make = Effect.gen(function* () {
-  const db = yield* RelayDb;
+export const make = Effect.gen(function* () {
+  const db = yield* RelayDb.RelayDb;
 
   return LiveActivities.of({
-    register: Effect.fn("relay.live_activities.register")(
-      function* (input) {
-        yield* Effect.annotateCurrentSpan({
-          "relay.mobile.device_id": input.registration.deviceId,
-        });
+    register: Effect.fn("relay.live_activities.register")(function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "relay.mobile.device_id": input.registration.deviceId,
+      });
+      yield* Effect.gen(function* () {
         const updatedAt = DateTime.formatIso(yield* DateTime.now);
         const registration = input.registration;
 
@@ -156,9 +176,17 @@ const make = Effect.gen(function* () {
               updatedAt,
             },
           });
-      },
-      Effect.mapError((cause) => new LiveActivityRegistrationPersistenceError({ cause })),
-    ),
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new LiveActivityRegistrationPersistenceError({
+              userId: input.userId,
+              deviceId: input.registration.deviceId,
+              cause,
+            }),
+        ),
+      );
+    }),
 
     listTargets: Effect.fn("relay.live_activities.list_targets")(function* (input) {
       return yield* db
@@ -208,22 +236,28 @@ const make = Effect.gen(function* () {
             ),
           ),
           Effect.map((rows): ReadonlyArray<TargetRow> => rows),
-          Effect.mapError((cause) => new LiveActivityTargetListPersistenceError({ cause })),
+          Effect.mapError(
+            (cause) =>
+              new LiveActivityTargetListPersistenceError({
+                userId: input.userId,
+                cause,
+              }),
+          ),
         );
     }),
 
-    markDelivery: Effect.fn("relay.live_activities.mark_delivery")(
-      function* (input) {
-        yield* Effect.annotateCurrentSpan({
-          "relay.mobile.device_id": input.deviceId,
-          "relay.delivery.kind": input.kind,
-        });
+    markDelivery: Effect.fn("relay.live_activities.mark_delivery")(function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "relay.mobile.device_id": input.deviceId,
+        "relay.delivery.kind": input.kind,
+      });
+      yield* Effect.gen(function* () {
         const aggregateJson =
           input.aggregate === null
             ? null
             : yield* encodeRelayAgentActivityAggregateStateJson(input.aggregate).pipe(
                 Effect.flatMap(decodeJsonString),
-                Effect.map(cast<unknown, RelayAgentActivityAggregateState>),
+                Effect.map(Function.cast<unknown, RelayAgentActivityAggregateState>),
               );
 
         yield* db
@@ -258,9 +292,19 @@ const make = Effect.gen(function* () {
               updatedAt: input.deliveredAt,
             },
           });
-      },
-      Effect.mapError((cause) => new LiveActivityDeliveryMarkPersistenceError({ cause })),
-    ),
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new LiveActivityDeliveryMarkPersistenceError({
+              operation: "mark-delivery",
+              userId: input.userId,
+              deviceId: input.deviceId,
+              kind: input.kind,
+              cause,
+            }),
+        ),
+      );
+    }),
 
     markStartQueued: Effect.fn("relay.live_activities.mark_start_queued")(function* (input) {
       yield* Effect.annotateCurrentSpan({
@@ -288,7 +332,18 @@ const make = Effect.gen(function* () {
             updatedAt: input.queuedAt,
           },
         })
-        .pipe(Effect.mapError((cause) => new LiveActivityDeliveryMarkPersistenceError({ cause })));
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new LiveActivityDeliveryMarkPersistenceError({
+                operation: "mark-start-queued",
+                userId: input.userId,
+                deviceId: input.deviceId,
+                kind: null,
+                cause,
+              }),
+          ),
+        );
     }),
 
     clearStartQueued: Effect.fn("relay.live_activities.clear_start_queued")(function* (input) {
@@ -304,7 +359,18 @@ const make = Effect.gen(function* () {
             eq(relayLiveActivities.deviceId, input.deviceId),
           ),
         )
-        .pipe(Effect.mapError((cause) => new LiveActivityDeliveryMarkPersistenceError({ cause })));
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new LiveActivityDeliveryMarkPersistenceError({
+                operation: "clear-start-queued",
+                userId: input.userId,
+                deviceId: input.deviceId,
+                kind: null,
+                cause,
+              }),
+          ),
+        );
     }),
 
     invalidateDeliveryToken: Effect.fn("relay.live_activities.invalidate_delivery_token")(
@@ -313,39 +379,58 @@ const make = Effect.gen(function* () {
           "relay.mobile.device_id": input.deviceId,
           "relay.delivery.kind": input.kind,
         });
-        if (input.kind === "push_notification") {
-          yield* db
-            .update(relayMobileDevices)
-            .set({
-              pushToken: null,
-              updatedAt: input.invalidatedAt,
-            })
-            .where(
-              and(
-                eq(relayMobileDevices.userId, input.userId),
-                eq(relayMobileDevices.deviceId, input.deviceId),
-              ),
-            );
-          return;
-        }
+        yield* Effect.gen(function* () {
+          if (input.kind === "push_notification") {
+            yield* db
+              .update(relayMobileDevices)
+              .set({
+                pushToken: null,
+                updatedAt: input.invalidatedAt,
+              })
+              .where(
+                and(
+                  eq(relayMobileDevices.userId, input.userId),
+                  eq(relayMobileDevices.deviceId, input.deviceId),
+                ),
+              );
+            return;
+          }
 
-        if (input.kind === "live_activity_start") {
-          yield* db
-            .update(relayMobileDevices)
-            .set({
-              pushToStartToken: null,
-              updatedAt: input.invalidatedAt,
-            })
-            .where(
-              and(
-                eq(relayMobileDevices.userId, input.userId),
-                eq(relayMobileDevices.deviceId, input.deviceId),
-              ),
-            );
+          if (input.kind === "live_activity_start") {
+            yield* db
+              .update(relayMobileDevices)
+              .set({
+                pushToStartToken: null,
+                updatedAt: input.invalidatedAt,
+              })
+              .where(
+                and(
+                  eq(relayMobileDevices.userId, input.userId),
+                  eq(relayMobileDevices.deviceId, input.deviceId),
+                ),
+              );
+            yield* db
+              .update(relayLiveActivities)
+              .set({
+                remoteStartQueuedAt: null,
+                updatedAt: input.invalidatedAt,
+              })
+              .where(
+                and(
+                  eq(relayLiveActivities.userId, input.userId),
+                  eq(relayLiveActivities.deviceId, input.deviceId),
+                ),
+              );
+            return;
+          }
+
           yield* db
             .update(relayLiveActivities)
             .set({
+              activityPushToken: null,
               remoteStartQueuedAt: null,
+              remoteStartedAt: null,
+              endedAt: input.invalidatedAt,
               updatedAt: input.invalidatedAt,
             })
             .where(
@@ -354,26 +439,19 @@ const make = Effect.gen(function* () {
                 eq(relayLiveActivities.deviceId, input.deviceId),
               ),
             );
-          return;
-        }
-
-        yield* db
-          .update(relayLiveActivities)
-          .set({
-            activityPushToken: null,
-            remoteStartQueuedAt: null,
-            remoteStartedAt: null,
-            endedAt: input.invalidatedAt,
-            updatedAt: input.invalidatedAt,
-          })
-          .where(
-            and(
-              eq(relayLiveActivities.userId, input.userId),
-              eq(relayLiveActivities.deviceId, input.deviceId),
-            ),
-          );
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new LiveActivityDeliveryMarkPersistenceError({
+                operation: "invalidate-delivery-token",
+                userId: input.userId,
+                deviceId: input.deviceId,
+                kind: input.kind,
+                cause,
+              }),
+          ),
+        );
       },
-      Effect.mapError((cause) => new LiveActivityDeliveryMarkPersistenceError({ cause })),
     ),
   });
 });

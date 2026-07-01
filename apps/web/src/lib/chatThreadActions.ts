@@ -39,7 +39,6 @@ export interface ChatThreadActionContext {
   readonly activeDraftThread: DraftThreadContextLike | null;
   readonly activeThread: ThreadContextLike | undefined;
   readonly defaultProjectRef: ScopedProjectRef | null;
-  readonly defaultThreadEnvMode: DraftThreadEnvMode;
   readonly handleNewThread: NewThreadHandler;
 }
 
@@ -89,12 +88,6 @@ function buildContextualThreadOptions(context: ChatThreadActionContext): NewThre
   };
 }
 
-function buildDefaultThreadOptions(context: ChatThreadActionContext): NewThreadOptions {
-  return {
-    envMode: context.defaultThreadEnvMode,
-  };
-}
-
 export async function startNewThreadInProjectFromContext(
   context: ChatThreadActionContext,
   projectRef: ScopedProjectRef,
@@ -122,6 +115,6 @@ export async function startNewLocalThreadFromContext(
     return false;
   }
 
-  await context.handleNewThread(projectRef, buildDefaultThreadOptions(context));
+  await context.handleNewThread(projectRef);
   return true;
 }

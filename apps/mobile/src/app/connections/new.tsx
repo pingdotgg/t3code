@@ -171,7 +171,7 @@ export default function ConnectionsNewRouteScreen() {
                 className="items-center gap-3 rounded-[24px] bg-card px-5 py-8"
                 style={{ borderCurve: "continuous" }}
               >
-                <Text className="text-center text-[14px] leading-[20px] text-foreground-muted">
+                <Text className="text-center text-sm leading-[20px] text-foreground-muted">
                   Camera permission is required to scan a QR code.
                 </Text>
                 <ConnectionSheetButton
@@ -189,7 +189,7 @@ export default function ConnectionsNewRouteScreen() {
             <View collapsable={false} className="gap-4 rounded-[24px] bg-card p-4">
               <View collapsable={false} className="gap-1.5">
                 <Text
-                  className="text-[11px] font-t3-bold uppercase text-foreground-muted"
+                  className="text-2xs font-t3-bold uppercase text-foreground-muted"
                   style={{ letterSpacing: 0.8 }}
                 >
                   Host
@@ -202,13 +202,13 @@ export default function ConnectionsNewRouteScreen() {
                   placeholderTextColor={placeholderColor}
                   value={hostInput}
                   onChangeText={handleHostChange}
-                  className="rounded-[14px] border border-input-border bg-input px-4 py-3.5 text-[15px] text-foreground"
+                  className="rounded-[14px] border border-input-border bg-input px-4 py-3.5 text-base text-foreground"
                 />
               </View>
 
               <View collapsable={false} className="gap-1.5">
                 <Text
-                  className="text-[11px] font-t3-bold uppercase text-foreground-muted"
+                  className="text-2xs font-t3-bold uppercase text-foreground-muted"
                   style={{ letterSpacing: 0.8 }}
                 >
                   Pairing code
@@ -220,7 +220,7 @@ export default function ConnectionsNewRouteScreen() {
                   placeholderTextColor={placeholderColor}
                   value={codeInput}
                   onChangeText={handleCodeChange}
-                  className="rounded-[14px] border border-input-border bg-input px-4 py-3.5 text-[15px] text-foreground"
+                  className="rounded-[14px] border border-input-border bg-input px-4 py-3.5 text-base text-foreground"
                 />
               </View>
 

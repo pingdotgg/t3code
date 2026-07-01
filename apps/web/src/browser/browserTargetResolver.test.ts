@@ -47,6 +47,14 @@ describe("browser target resolver", () => {
     ).toBe("http://localhost:3000/app");
   });
 
+  it("preserves localhost server-picker values when the prepared base is 127.0.0.1", async () => {
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://127.0.0.1:3773" });
+    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
+    expect(
+      resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:5173/app?x=1#top"),
+    ).toBe("http://localhost:5173/app?x=1#top");
+  });
+
   it("normalizes public URLs without treating them as environment ports", async () => {
     const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
     expect(resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "example.com/app")).toBe(

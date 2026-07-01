@@ -78,6 +78,114 @@ const initRepoWithCommit = (
   });
 
 it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
+  describe("structured errors", () => {
+    it.effect("preserves structured spawn context and the platform cause", () =>
+      Effect.gen(function* () {
+        const parent = yield* makeTmpDir();
+        const pathService = yield* Path.Path;
+        const cwd = pathService.join(parent, "missing");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver
+          .execute({
+            operation: "GitVcsDriver.test.missingCwd",
+            cwd,
+            args: ["status", "--short"],
+          })
+          .pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.test.missingCwd",
+          command: "git",
+          argumentCount: 2,
+          cwd,
+          detail: "Failed to spawn Git process.",
+        });
+        if (!(error.cause instanceof PlatformError.PlatformError)) {
+          return assert.fail("expected the original platform error cause");
+        }
+        assert.equal(error.cause.reason._tag, "NotFound");
+        assert.notInclude(error.detail, error.cause.message);
+      }),
+    );
+
+    it.effect("does not retain git arguments or stderr in command failures", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+
+        const secret = "secret-token-value";
+        const error = yield* driver
+          .execute({
+            operation: "GitVcsDriver.test.redactedFailure",
+            cwd,
+            args: ["status", `--unknown-option=${secret}`],
+          })
+          .pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.test.redactedFailure",
+          command: "git",
+          argumentCount: 2,
+          cwd,
+        });
+        assert.isNumber(error.exitCode);
+        assert.isAbove(error.stderrLength ?? 0, 0);
+        assert.notInclude(error.detail, secret);
+        assert.notInclude(error.message, secret);
+        assert.notProperty(error, "args");
+        assert.notProperty(error, "stderr");
+      }),
+    );
+
+    it.effect("recovers a structurally identified missing cwd as a non-repository", () =>
+      Effect.gen(function* () {
+        const parent = yield* makeTmpDir();
+        const pathService = yield* Path.Path;
+        const cwd = pathService.join(parent, "missing");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const [localStatus, remoteStatus, refs] = yield* Effect.all([
+          driver.statusDetails(cwd),
+          driver.statusDetailsRemote(cwd, { refreshUpstream: false }),
+          driver.listRefs({ cwd }),
+        ]);
+
+        assert.equal(localStatus.isRepo, false);
+        assert.equal(remoteStatus.isRepo, false);
+        assert.equal(refs.isRepo, false);
+        assert.deepStrictEqual(refs.refs, []);
+      }),
+    );
+
+    it.effect("does not wrap a remove-worktree command failure in a synthetic error", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const pathService = yield* Path.Path;
+        const missingWorktree = pathService.join(cwd, "missing-worktree");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+
+        const error = yield* driver
+          .removeWorktree({ cwd, path: missingWorktree })
+          .pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.removeWorktree",
+          command: "git",
+          argumentCount: 3,
+          cwd,
+        });
+        assert.notProperty(error, "cause");
+        assert.notInclude(error.detail, "Git command failed in");
+      }),
+    );
+  });
+
   describe("review diff previews", () => {
     it.effect("drops an unterminated path from truncated NUL-separated git output", () =>
       Effect.sync(() => {
@@ -98,6 +206,41 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         });
 
         assert.deepStrictEqual(paths, ["complete.txt", "final.txt"]);
+      }),
+    );
+
+    it.effect("honors whitespace filtering for worktree and branch previews", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/whitespace"]);
+        yield* writeTextFile(cwd, "README.md", "#  test\n");
+        yield* git(cwd, ["add", "README.md"]);
+        yield* git(cwd, ["commit", "-m", "change whitespace"]);
+        yield* writeTextFile(cwd, "README.md", "#   test\n");
+
+        const included = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          ignoreWhitespace: false,
+        });
+        const ignored = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          ignoreWhitespace: true,
+        });
+
+        assert.isNotEmpty(included.sources.find((source) => source.kind === "working-tree")?.diff);
+        assert.isNotEmpty(included.sources.find((source) => source.kind === "branch-range")?.diff);
+        assert.strictEqual(
+          ignored.sources.find((source) => source.kind === "working-tree")?.diff,
+          "",
+        );
+        assert.strictEqual(
+          ignored.sources.find((source) => source.kind === "branch-range")?.diff,
+          "",
+        );
       }),
     );
   });
@@ -342,6 +485,44 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("refName operations", () => {
+    it.effect("optionally includes remote refs that match local branches", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const deduplicated = yield* driver.listRefs({ cwd });
+        assert.equal(
+          deduplicated.refs.some((ref) => ref.name === `origin/${initialBranch}`),
+          false,
+        );
+
+        const complete = yield* driver.listRefs({ cwd, includeMatchingRemoteRefs: true });
+        assert.equal(
+          complete.refs.some((ref) => ref.name === initialBranch),
+          true,
+        );
+        assert.equal(
+          complete.refs.some((ref) => ref.name === `origin/${initialBranch}`),
+          true,
+        );
+
+        const remoteOnly = yield* driver.listRefs({
+          cwd,
+          includeMatchingRemoteRefs: true,
+          refKind: "remote",
+          limit: 1,
+        });
+        assert.equal(remoteOnly.refs.length, 1);
+        assert.equal(remoteOnly.refs[0]?.name, `origin/${initialBranch}`);
+        assert.equal(remoteOnly.refs[0]?.isRemote, true);
+      }),
+    );
+
     it.effect("creates, checks out, renames, and lists refs", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -495,13 +676,21 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           path: worktreePath,
           refName: resolvedBase.commitSha,
           newRefName: "t3code/fetched-origin",
+          baseRefName: resolvedBase.remoteRefName,
         });
 
         assert.equal(yield* git(worktreePath, ["rev-parse", "HEAD"]), remoteHead);
         assert.equal(
+          yield* driver.readConfigValue(worktreePath, "branch.t3code/fetched-origin.gh-merge-base"),
+          initialBranch,
+        );
+        assert.equal(
           yield* driver.readConfigValue(worktreePath, "branch.t3code/fetched-origin.remote"),
           null,
         );
+        const status = yield* driver.statusDetails(worktreePath);
+        assert.equal(status.aheadCount, 0);
+        assert.equal(status.aheadOfDefaultCount, 0);
       }),
     );
 

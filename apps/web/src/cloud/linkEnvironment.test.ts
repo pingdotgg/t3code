@@ -15,19 +15,13 @@ import { HttpClient } from "effect/unstable/http";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 import {
   AVAILABLE_CONNECTION_STATE,
-  type EnvironmentRegistryService,
   EnvironmentSupervisor,
-  type EnvironmentSupervisorService,
   type PreparedConnection,
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { type RpcSession } from "@t3tools/client-runtime/rpc";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
-import {
-  managedRelayClientLayer,
-  ManagedRelayClient,
-  ManagedRelayDpopSigner,
-} from "@t3tools/client-runtime/relay";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth";
 
@@ -39,6 +33,7 @@ import {
   readPrimaryCloudLinkState,
   type CloudLinkTarget,
   unlinkPrimaryEnvironmentFromCloud,
+  updatePrimaryCloudPreferences,
 } from "./linkEnvironment";
 
 const TARGET: CloudLinkTarget = {
@@ -62,8 +57,8 @@ vi.mock("./relayClientInstallDialog", () => ({
 
 const createProof = vi.fn(() => Effect.succeed("dpop-proof"));
 const dpopSignerLayer = Layer.succeed(
-  ManagedRelayDpopSigner,
-  ManagedRelayDpopSigner.of({
+  ManagedRelay.ManagedRelayDpopSigner,
+  ManagedRelay.ManagedRelayDpopSigner.of({
     thumbprint: Effect.succeed("thumbprint"),
     createProof,
   }),
@@ -73,7 +68,7 @@ function relayLayer() {
   const http = remoteHttpClientLayer(globalThis.fetch);
   return Layer.mergeAll(
     http,
-    managedRelayClientLayer({
+    ManagedRelay.layer({
       relayUrl: "https://relay.example.test",
       clientId: RelayWebClientId,
     }).pipe(Layer.provideMerge(dpopSignerLayer), Layer.provide(http)),
@@ -114,13 +109,13 @@ function registryLayer(options?: {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
-      } satisfies EnvironmentSupervisorService);
+      } satisfies EnvironmentSupervisor["Service"]);
       const registry = {
         run: <A, E, R>(_environmentId: EnvironmentId, effect: Effect.Effect<A, E, R>) =>
           Effect.provideService(effect, EnvironmentSupervisor, supervisor),
         runStream: <A, E, R>(_environmentId: EnvironmentId, stream: Stream.Stream<A, E, R>) =>
           Stream.provideService(stream, EnvironmentSupervisor, supervisor),
-      } as unknown as EnvironmentRegistryService;
+      } as unknown as EnvironmentRegistry["Service"];
       return EnvironmentRegistry.of(registry);
     }),
   );
@@ -131,7 +126,11 @@ function services(options?: Parameters<typeof registryLayer>[0]) {
 }
 
 function withServices<A, E>(
-  effect: Effect.Effect<A, E, HttpClient.HttpClient | ManagedRelayClient | EnvironmentRegistry>,
+  effect: Effect.Effect<
+    A,
+    E,
+    HttpClient.HttpClient | ManagedRelay.ManagedRelayClient | EnvironmentRegistry
+  >,
   options?: Parameters<typeof registryLayer>[0],
 ) {
   return effect.pipe(Effect.provide(services(options)));
@@ -251,6 +250,38 @@ describe("web cloud link environment client", () => {
       const request = new Request(fetchMock.mock.calls[0]?.[0], fetchMock.mock.calls[0]?.[1]);
       expect(request.credentials).not.toBe("include");
       expect(request.headers.get("authorization")).toBe("Bearer desktop-bearer-token");
+    }),
+  );
+
+  it.effect("updates agent activity publishing for the explicit primary target", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi.fn().mockResolvedValue(
+        Response.json({
+          linked: true,
+          cloudUserId: "user-1",
+          relayUrl: "https://relay.example.test",
+          relayIssuer: "https://relay.example.test",
+          publishAgentActivity: true,
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const state = yield* withServices(
+        updatePrimaryCloudPreferences({
+          target: TARGET,
+          publishAgentActivity: true,
+        }),
+      );
+
+      expect(state.publishAgentActivity).toBe(true);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+        "http://127.0.0.1:3000/api/connect/preferences",
+      );
+      expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(bodyText(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+        publishAgentActivity: true,
+      });
     }),
   );
 

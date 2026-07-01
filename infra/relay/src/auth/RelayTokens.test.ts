@@ -33,9 +33,7 @@ const config = RelayConfiguration.RelayConfiguration.of({
   managedEndpointNamespace: undefined,
 });
 
-const layer = RelayTokens.layer.pipe(
-  Layer.provide(Layer.succeed(RelayConfiguration.RelayConfiguration, config)),
-);
+const layer = RelayTokens.layer.pipe(Layer.provide(RelayConfiguration.layer(config)));
 
 describe("RelayTokens", () => {
   it.effect("issues a user-bound environment link challenge", () =>

@@ -19,9 +19,7 @@ export function EmptyState(props: {
           className="mt-4 self-start rounded-full bg-primary px-4 py-2.5 active:opacity-70"
           onPress={props.onAction}
         >
-          <Text className="text-[13px] font-t3-bold text-primary-foreground">
-            {props.actionLabel}
-          </Text>
+          <Text className="text-sm font-t3-bold text-primary-foreground">{props.actionLabel}</Text>
         </Pressable>
       ) : null}
     </View>

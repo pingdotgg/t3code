@@ -1,5 +1,17 @@
 import { relayClerkTokenOptions } from "@t3tools/shared/relayAuth";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import * as Schema from "effect/Schema";
+
+export class CloudPublicConfigMissingError extends Schema.TaggedErrorClass<CloudPublicConfigMissingError>()(
+  "CloudPublicConfigMissingError",
+  {
+    key: Schema.Literal("T3CODE_CLERK_JWT_TEMPLATE"),
+  },
+) {
+  override get message(): string {
+    return `${this.key} is not configured.`;
+  }
+}
 
 export interface CloudPublicConfig {
   readonly clerkPublishableKey: string | null;
@@ -65,7 +77,7 @@ export function hasCloudPublicConfig(): boolean {
 export function resolveRelayClerkTokenOptions() {
   const { clerkJwtTemplate } = resolveCloudPublicConfig();
   if (!clerkJwtTemplate) {
-    throw new Error("T3CODE_CLERK_JWT_TEMPLATE is not configured.");
+    throw new CloudPublicConfigMissingError({ key: "T3CODE_CLERK_JWT_TEMPLATE" });
   }
   return relayClerkTokenOptions(clerkJwtTemplate);
 }

@@ -1,11 +1,20 @@
-import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
-import { KeyboardAvoidingLegendList } from "@legendapp/list/keyboard";
+import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
-import type { EnvironmentId, ThreadId, TurnId } from "@t3tools/contracts";
+import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { SymbolView } from "expo-symbols";
 import { useRouter } from "expo-router";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import {
   Markdown,
   type CustomRenderers,
@@ -16,8 +25,6 @@ import {
   ActivityIndicator,
   Image,
   Linking,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -30,7 +37,9 @@ import {
 import { TouchableOpacity } from "react-native-gesture-handler";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import type { SharedValue } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import {
   hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
@@ -56,6 +65,7 @@ import { buildReviewParsedDiff } from "../review/reviewModel";
 import { cn } from "../../lib/cn";
 import type { LayoutVariant } from "../../lib/layout";
 import { buildThreadFilesNavigation } from "../../lib/routes";
+import { MOBILE_CODE_SURFACE, MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
 import {
@@ -63,14 +73,11 @@ import {
   type ThreadFeedEntry,
   type ThreadFeedLatestTurn,
 } from "../../lib/threadActivity";
-import { isThreadFeedNearEnd } from "../../lib/threadFeedLayout";
-import { relativeTime } from "../../lib/time";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
-import { ThreadWorkLog } from "./thread-work-log";
+import { ThreadWorkGroupToggle, ThreadWorkLog } from "./thread-work-log";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
 
-const THREAD_FEED_END_THRESHOLD = 80;
 const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
@@ -92,10 +99,13 @@ export interface ThreadFeedProps {
   readonly contentPresentation: ThreadContentPresentation;
   readonly agentLabel: string;
   readonly latestTurn: ThreadFeedLatestTurn | null;
+  readonly listRef: RefObject<LegendListRef | null>;
+  readonly freeze: SharedValue<boolean>;
+  readonly anchorMessageId: MessageId | null;
+  readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
   readonly layoutVariant?: LayoutVariant;
-  readonly composerExpanded?: boolean;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
 }
 
@@ -444,8 +454,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
                     marginRight: 5,
                     color: inlineTextColor,
                     fontFamily: "DMSans_400Regular",
-                    fontSize: 15,
-                    lineHeight: 22,
+                    ...MOBILE_TYPOGRAPHY.body,
                     textAlign: ordered ? "right" : "center",
                   }}
                 >
@@ -466,7 +475,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
             style={{
               color: inlineCodeTextColor,
               fontFamily: "ui-monospace",
-              fontSize: 12,
+              fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
               lineHeight: 22,
             }}
           >
@@ -503,7 +512,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
                 style={{
                   color: markdownBodyColor,
                   fontFamily: "ui-monospace",
-                  fontSize: 12,
+                  fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
                   opacity: 0.7,
                   textTransform: "uppercase",
                 }}
@@ -523,7 +532,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
               style={{
                 color: blockTextColor,
                 fontFamily: "ui-monospace",
-                fontSize: 12,
+                fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
                 lineHeight: 18,
               }}
             >
@@ -603,8 +612,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           skillTextColor: "#f0abfc",
           quoteMarkerColor: markdownUserBodyColor,
           dividerColor: markdownUserBodyColor,
-          fontSize: 15,
-          lineHeight: 22,
+          ...MOBILE_TYPOGRAPHY.body,
           fontFamily: "DMSans_400Regular",
           headingFontFamily: "DMSans_700Bold",
           boldFontFamily: "DMSans_700Bold",
@@ -633,8 +641,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           skillTextColor: inlineSkillForeground,
           quoteMarkerColor: markdownBlockquoteBorder,
           dividerColor: markdownHrColor,
-          fontSize: 15,
-          lineHeight: 22,
+          ...MOBILE_TYPOGRAPHY.body,
           fontFamily: "DMSans_400Regular",
           headingFontFamily: "DMSans_700Bold",
           boldFontFamily: "DMSans_700Bold",
@@ -648,7 +655,6 @@ function renderFeedEntry(
   info: { item: ThreadFeedEntry; index: number },
   props: Pick<ThreadFeedProps, "environmentId" | "skills"> & {
     readonly copiedRowId: string | null;
-    readonly expandedWorkGroups: Record<string, boolean>;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
     readonly unsettledTurnId: TurnId | null;
@@ -688,6 +694,18 @@ function renderFeedEntry(
           type="monochrome"
         />
       </Pressable>
+    );
+  }
+
+  if (entry.type === "work-toggle") {
+    return (
+      <ThreadWorkGroupToggle
+        expanded={entry.expanded}
+        hiddenCount={entry.hiddenCount}
+        iconSubtleColor={iconSubtleColor}
+        onlyToolActivities={entry.onlyToolActivities}
+        onToggle={() => props.onToggleWorkGroup(entry.groupId)}
+      />
     );
   }
 
@@ -814,39 +832,13 @@ function renderFeedEntry(
     );
   }
 
-  if (entry.type === "queued-message") {
-    return (
-      <View className="mb-5 items-end">
-        <View
-          className="max-w-[85%] gap-2 rounded-[22px] rounded-br-[6px] px-3.5 py-2.5 opacity-60"
-          style={{ backgroundColor: userBubbleColor }}
-        >
-          <Text className="font-sans text-[15px] leading-[22px] text-white">
-            {entry.queuedMessage.text}
-          </Text>
-          {entry.queuedMessage.attachments.length > 0 ? (
-            <Text className="font-t3-medium text-xs text-white/75">
-              {entry.queuedMessage.attachments.length} image
-              {entry.queuedMessage.attachments.length === 1 ? "" : "s"} attached
-            </Text>
-          ) : null}
-        </View>
-        <Text className="mt-1.5 px-1 text-right font-t3-medium text-xs text-neutral-600 dark:text-neutral-400">
-          {entry.sending ? "dispatching" : `${relativeTime(entry.createdAt)} • pending`}
-        </Text>
-      </View>
-    );
-  }
-
   return (
     <ThreadWorkLog
       activities={entry.activities}
       copiedRowId={props.copiedRowId}
-      expanded={props.expandedWorkGroups[entry.id] ?? false}
       expandedRows={props.expandedWorkRows}
       iconSubtleColor={iconSubtleColor}
       onCopyRow={props.onCopyWorkRow}
-      onToggleGroup={() => props.onToggleWorkGroup(entry.id)}
       onToggleRow={props.onToggleWorkRow}
     />
   );
@@ -995,7 +987,7 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
         </View>
         <View className="min-w-0 flex-1">
           <Text
-            className="font-mono text-[12px] leading-[16px]"
+            className="font-mono text-xs leading-[16px]"
             numberOfLines={1}
             style={{ color: props.colors.text }}
           >
@@ -1040,8 +1032,8 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
             style={{
               color: props.colors.text,
               fontFamily: "ui-monospace",
-              fontSize: 12,
-              lineHeight: 18,
+              fontSize: MOBILE_CODE_SURFACE.fontSize,
+              lineHeight: MOBILE_CODE_SURFACE.rowHeight,
             }}
           >
             {props.comment.diff.trim()}
@@ -1052,7 +1044,7 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
         <View className="border-t px-3 py-3" style={{ borderColor: props.colors.border }}>
           <Text
             selectable
-            className="text-[15px] leading-[21px]"
+            className="text-base leading-[21px]"
             style={{ color: props.colors.text }}
           >
             {props.comment.text}
@@ -1124,17 +1116,13 @@ function ThreadFeedPlaceholder(props: {
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const router = useRouter();
-  const listRef = useRef<LegendListRef>(null);
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scrollFrameRef = useRef<number | null>(null);
   const foldSettleFrameRef = useRef<number | null>(null);
   const foldSettleSecondFrameRef = useRef<number | null>(null);
-  const suppressAutoFollowRef = useRef(false);
+  const disclosureAnchorKeyRef = useRef<string | null>(null);
   const previousLatestTurnRef = useRef(props.latestTurn);
-  const isNearEndRef = useRef(true);
-  const initialScrollReadyRef = useRef(false);
-  const lastContentHeightRef = useRef(0);
   const { width: viewportWidth } = useWindowDimensions();
+  const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const [interactionState, setInteractionState] = useState<{
     readonly copiedRowId: string | null;
     readonly expandedWorkGroups: Record<string, boolean>;
@@ -1195,7 +1183,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const listAppearanceData = useMemo(
     () => ({
       copiedRowId,
-      expandedWorkGroups,
       expandedWorkRows,
       iconSubtleColor,
       markdownStyles,
@@ -1204,7 +1191,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }),
     [
       copiedRowId,
-      expandedWorkGroups,
       expandedWorkRows,
       iconSubtleColor,
       markdownStyles,
@@ -1212,9 +1198,34 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       userBubbleColor,
     ],
   );
+  const expandedWorkGroupIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [groupId, expanded] of Object.entries(expandedWorkGroups)) {
+      if (expanded) {
+        ids.add(groupId);
+      }
+    }
+    return ids;
+  }, [expandedWorkGroups]);
   const presentedFeed = useMemo(
-    () => deriveThreadFeedPresentation(props.feed, props.latestTurn, expandedTurnIds),
-    [expandedTurnIds, props.feed, props.latestTurn],
+    () =>
+      deriveThreadFeedPresentation(
+        props.feed,
+        props.latestTurn,
+        expandedTurnIds,
+        expandedWorkGroupIds,
+      ),
+    [expandedTurnIds, expandedWorkGroupIds, props.feed, props.latestTurn],
+  );
+  const anchoredEndSpace = useMemo(
+    () =>
+      resolveChatListAnchoredEndSpace(
+        presentedFeed,
+        props.anchorMessageId,
+        (entry) => (entry.type === "message" ? entry.id : null),
+        { anchorOffset: topContentInset + CHAT_LIST_ANCHOR_OFFSET },
+      ),
+    [presentedFeed, props.anchorMessageId, topContentInset],
   );
   const terminalAssistantMessageIds = useMemo(() => {
     const terminalIdsByTurn = new Map<TurnId, string>();
@@ -1230,54 +1241,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (props.latestTurn.completedAt === null || props.latestTurn.state === "running")
       ? props.latestTurn.turnId
       : null;
-
-  const scrollToEnd = useCallback(() => {
-    if (scrollFrameRef.current !== null) {
-      return;
-    }
-    scrollFrameRef.current = requestAnimationFrame(() => {
-      scrollFrameRef.current = null;
-      listRef.current?.scrollToEnd({ animated: false });
-    });
-  }, []);
-
-  const onListScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent> | NativeScrollEvent) => {
-      const scrollEvent = "nativeEvent" in event ? event.nativeEvent : event;
-      const { contentInset, contentOffset, contentSize, layoutMeasurement } = scrollEvent;
-      isNearEndRef.current = isThreadFeedNearEnd(
-        {
-          contentHeight: contentSize.height,
-          viewportHeight: layoutMeasurement.height,
-          offsetY: contentOffset.y,
-          bottomInset: contentInset.bottom,
-        },
-        THREAD_FEED_END_THRESHOLD,
-      );
-    },
-    [],
-  );
-
-  const onListContentSizeChange = useCallback(
-    (_width: number, height: number) => {
-      const contentGrew = height > lastContentHeightRef.current + 0.5;
-      lastContentHeightRef.current = height;
-
-      if (
-        initialScrollReadyRef.current &&
-        contentGrew &&
-        isNearEndRef.current &&
-        !suppressAutoFollowRef.current
-      ) {
-        scrollToEnd();
-      }
-    },
-    [scrollToEnd],
-  );
-
-  const onListLoad = useCallback(() => {
-    initialScrollReadyRef.current = true;
-  }, []);
 
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
@@ -1310,9 +1273,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       if (copyFeedbackTimeoutRef.current) {
         clearTimeout(copyFeedbackTimeoutRef.current);
       }
-      if (scrollFrameRef.current !== null) {
-        cancelAnimationFrame(scrollFrameRef.current);
-      }
       if (foldSettleFrameRef.current !== null) {
         cancelAnimationFrame(foldSettleFrameRef.current);
       }
@@ -1322,9 +1282,44 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     };
   }, []);
 
+  const suspendEndScrollMaintenanceForDisclosure = useCallback((anchorKey: string | null) => {
+    disclosureAnchorKeyRef.current = anchorKey;
+    setDisclosureToggleSettling(true);
+    if (foldSettleFrameRef.current !== null) {
+      cancelAnimationFrame(foldSettleFrameRef.current);
+    }
+    if (foldSettleSecondFrameRef.current !== null) {
+      cancelAnimationFrame(foldSettleSecondFrameRef.current);
+    }
+    foldSettleFrameRef.current = requestAnimationFrame(() => {
+      foldSettleSecondFrameRef.current = requestAnimationFrame(() => {
+        disclosureAnchorKeyRef.current = null;
+        setDisclosureToggleSettling(false);
+        foldSettleFrameRef.current = null;
+        foldSettleSecondFrameRef.current = null;
+      });
+    });
+  }, []);
+
+  const shouldRestoreVisibleContentPosition = useCallback((entry: ThreadFeedEntry) => {
+    const disclosureAnchorKey = disclosureAnchorKeyRef.current;
+    return disclosureAnchorKey === null || entry.id === disclosureAnchorKey;
+  }, []);
+
+  const maintainVisibleContentPosition = useMemo(
+    () => ({
+      data: true,
+      size: true,
+      shouldRestorePosition: shouldRestoreVisibleContentPosition,
+    }),
+    [shouldRestoreVisibleContentPosition],
+  );
+
   const onCopyWorkRow = useCallback((rowId: string, value: string) => {
-    void Clipboard.setStringAsync(value);
-    void Haptics.selectionAsync();
+    copyTextWithHaptic(value, {
+      target: "thread-work-row",
+      feedback: "selection",
+    });
     setInteractionState((current) => ({ ...current, copiedRowId: rowId }));
     if (copyFeedbackTimeoutRef.current) {
       clearTimeout(copyFeedbackTimeoutRef.current);
@@ -1337,51 +1332,49 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }, 1200);
   }, []);
 
-  const onToggleWorkGroup = useCallback((groupId: string) => {
-    setInteractionState((current) => ({
-      ...current,
-      expandedWorkGroups: {
-        ...current.expandedWorkGroups,
-        [groupId]: !(current.expandedWorkGroups[groupId] ?? false),
-      },
-    }));
-  }, []);
+  const onToggleWorkGroup = useCallback(
+    (groupId: string) => {
+      suspendEndScrollMaintenanceForDisclosure(`work-toggle:${groupId}`);
+      setInteractionState((current) => ({
+        ...current,
+        expandedWorkGroups: {
+          ...current.expandedWorkGroups,
+          [groupId]: !(current.expandedWorkGroups[groupId] ?? false),
+        },
+      }));
+    },
+    [suspendEndScrollMaintenanceForDisclosure],
+  );
 
-  const onToggleWorkRow = useCallback((rowId: string) => {
-    setInteractionState((current) => ({
-      ...current,
-      expandedWorkRows: {
-        ...current.expandedWorkRows,
-        [rowId]: !(current.expandedWorkRows[rowId] ?? false),
-      },
-    }));
-  }, []);
+  const onToggleWorkRow = useCallback(
+    (rowId: string) => {
+      suspendEndScrollMaintenanceForDisclosure(rowId);
+      setInteractionState((current) => ({
+        ...current,
+        expandedWorkRows: {
+          ...current.expandedWorkRows,
+          [rowId]: !(current.expandedWorkRows[rowId] ?? false),
+        },
+      }));
+    },
+    [suspendEndScrollMaintenanceForDisclosure],
+  );
 
-  const onToggleTurnFold = useCallback((turnId: TurnId) => {
-    suppressAutoFollowRef.current = true;
-    if (foldSettleFrameRef.current !== null) {
-      cancelAnimationFrame(foldSettleFrameRef.current);
-    }
-    if (foldSettleSecondFrameRef.current !== null) {
-      cancelAnimationFrame(foldSettleSecondFrameRef.current);
-    }
-    setInteractionState((current) => {
-      const next = new Set(current.expandedTurnIds);
-      if (next.has(turnId)) {
-        next.delete(turnId);
-      } else {
-        next.add(turnId);
-      }
-      return { ...current, expandedTurnIds: next };
-    });
-    foldSettleFrameRef.current = requestAnimationFrame(() => {
-      foldSettleSecondFrameRef.current = requestAnimationFrame(() => {
-        suppressAutoFollowRef.current = false;
-        foldSettleFrameRef.current = null;
-        foldSettleSecondFrameRef.current = null;
+  const onToggleTurnFold = useCallback(
+    (turnId: TurnId) => {
+      suspendEndScrollMaintenanceForDisclosure(`turn-fold:${turnId}`);
+      setInteractionState((current) => {
+        const next = new Set(current.expandedTurnIds);
+        if (next.has(turnId)) {
+          next.delete(turnId);
+        } else {
+          next.add(turnId);
+        }
+        return { ...current, expandedTurnIds: next };
       });
-    });
-  }, []);
+    },
+    [suspendEndScrollMaintenanceForDisclosure],
+  );
 
   const onPressImage = useCallback((uri: string, headers?: Record<string, string>) => {
     setExpandedImage({ uri, headers });
@@ -1392,7 +1385,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       renderFeedEntry(info, {
         environmentId: props.environmentId,
         copiedRowId,
-        expandedWorkGroups,
         expandedWorkRows,
         terminalAssistantMessageIds,
         unsettledTurnId,
@@ -1412,7 +1404,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       }),
     [
       copiedRowId,
-      expandedWorkGroups,
       expandedWorkRows,
       terminalAssistantMessageIds,
       unsettledTurnId,
@@ -1458,59 +1449,60 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     );
   }
 
-  if (props.feed.length === 0) {
-    return (
-      <ThreadFeedPlaceholder
-        title="No conversation yet"
-        detail="Ask the agent to inspect the repo, run a command, or continue the active thread."
-        topInset={topContentInset}
-        bottomInset={bottomContentInset}
-        horizontalPadding={horizontalPadding}
-      />
-    );
-  }
-
   return (
     <>
       <View style={{ flex: 1 }}>
-        <KeyboardAvoidingLegendList
-          ref={listRef}
+        <KeyboardAwareLegendList
+          ref={props.listRef}
           key={props.threadId}
           style={{ flex: 1 }}
           automaticallyAdjustsScrollIndicatorInsets={false}
-          contentInset={{ top: 0, bottom: 0 }}
           scrollIndicatorInsets={{ top: topContentInset, bottom: 0 }}
-          alignItemsAtEnd
-          maintainScrollAtEnd={{
-            animated: false,
-            on: {
-              dataChange: true,
-              itemLayout: true,
-              layout: true,
-            },
-          }}
+          {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+          contentInsetEndAdjustment={props.contentInsetEndAdjustment}
+          freeze={props.freeze}
+          maintainScrollAtEnd={
+            disclosureToggleSettling
+              ? false
+              : {
+                  animated: false,
+                  on: {
+                    dataChange: true,
+                    itemLayout: true,
+                    layout: true,
+                  },
+                }
+          }
+          maintainVisibleContentPosition={maintainVisibleContentPosition}
           data={presentedFeed}
           extraData={listAppearanceData}
           renderItem={renderItem}
-          keyExtractor={(entry) => `${entry.type}:${entry.id}`}
+          keyExtractor={(entry) => entry.id}
           getItemType={(entry) =>
             entry.type === "message" ? `message:${entry.message.role}` : entry.type
           }
           keyboardShouldPersistTaps="always"
           keyboardDismissMode="none"
+          keyboardLiftBehavior="whenAtEnd"
           estimatedItemSize={180}
           initialScrollAtEnd
-          onContentSizeChange={onListContentSizeChange}
-          onLoad={onListLoad}
-          onScroll={onListScroll}
-          scrollEventThrottle={16}
           ListHeaderComponent={<View style={{ height: topContentInset }} />}
           contentContainerStyle={{
             paddingTop: 12,
-            paddingBottom: bottomContentInset,
             paddingHorizontal: horizontalPadding,
           }}
         />
+        {props.feed.length === 0 ? (
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            <ThreadFeedPlaceholder
+              title="No conversation yet"
+              detail="Ask the agent to inspect the repo, run a command, or continue the active thread."
+              topInset={topContentInset}
+              bottomInset={bottomContentInset}
+              horizontalPadding={horizontalPadding}
+            />
+          </View>
+        ) : null}
       </View>
 
       <ImageViewing

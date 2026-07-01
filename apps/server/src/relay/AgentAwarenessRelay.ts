@@ -1,8 +1,3 @@
-import {
-  RelayApi,
-  type RelayAgentActivityPublishProofPayload,
-  type RelayAgentActivityState,
-} from "@t3tools/contracts/relay";
 import type {
   EnvironmentId,
   OrchestrationEvent,
@@ -10,13 +5,18 @@ import type {
   OrchestrationThreadShell,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  RelayApi,
+  type RelayAgentActivityPublishProofPayload,
+  type RelayAgentActivityState,
+} from "@t3tools/contracts/relay";
 import { projectThreadAwareness } from "@t3tools/shared/agentAwareness";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
+  normalizeRelayIssuer,
   RELAY_ACTIVITY_PUBLISH_TYP,
   signRelayJwt,
-  normalizeRelayIssuer,
 } from "@t3tools/shared/relayJwt";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -28,31 +28,29 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient } from "effect/unstable/http";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { getOrCreateEnvironmentKeyPairFromSecretStore } from "../cloud/environmentKeys.ts";
 import {
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
-import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-
-export interface AgentAwarenessRelayShape {
-  readonly publishThread: (threadId: ThreadId) => Effect.Effect<void>;
-  readonly start: () => Effect.Effect<void, never, Scope.Scope>;
-}
+import { getOrCreateEnvironmentKeyPairFromSecretStore } from "../cloud/environmentKeys.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 
 export class AgentAwarenessRelay extends Context.Service<
   AgentAwarenessRelay,
-  AgentAwarenessRelayShape
+  {
+    readonly publishThread: (threadId: ThreadId) => Effect.Effect<void>;
+    readonly start: () => Effect.Effect<void, never, Scope.Scope>;
+  }
 >()("t3/relay/AgentAwarenessRelay") {}
 
 export function eventThreadId(event: OrchestrationEvent): ThreadId | null {
@@ -265,11 +263,11 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
     .map((thread) => thread.id);
 }
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
-  const serverEnvironment = yield* ServerEnvironment;
-  const snapshotQuery = yield* ProjectionSnapshotQuery;
-  const orchestrationEngine = yield* OrchestrationEngineService;
+  const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+  const snapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const crypto = yield* Crypto.Crypto;
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
   const activeSnapshotPublishedRef = yield* Ref.make(false);
@@ -417,7 +415,7 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const publishThread: AgentAwarenessRelayShape["publishThread"] = (threadId) =>
+  const publishThread: AgentAwarenessRelay["Service"]["publishThread"] = (threadId) =>
     publishThreadUnsafe(threadId).pipe(
       Effect.catchCause((cause) => {
         return Effect.logWarning("agent activity publish failed", {
@@ -480,7 +478,7 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(publishThread);
 
-  const start: AgentAwarenessRelayShape["start"] = Effect.fn("AgentAwarenessRelay.start")(
+  const start: AgentAwarenessRelay["Service"]["start"] = Effect.fn("AgentAwarenessRelay.start")(
     function* () {
       const [relayConfig, publishEnabled] = yield* Effect.all([
         readRelayConfig.pipe(Effect.orElseSucceed(() => null)),
@@ -536,10 +534,10 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return {
+  return AgentAwarenessRelay.of({
     publishThread,
     start,
-  } satisfies AgentAwarenessRelayShape;
+  });
 });
 
 export const layer = Layer.effect(AgentAwarenessRelay, make);

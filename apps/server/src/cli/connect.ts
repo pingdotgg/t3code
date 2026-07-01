@@ -7,6 +7,7 @@ import {
 import { RelayOkResponse } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
+import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -31,9 +32,8 @@ import * as CliTokenManager from "../cloud/CliTokenManager.ts";
 import { CLOUD_LINKED_USER_ID, RELAY_URL_SECRET } from "../cloud/config.ts";
 import { relayUrlConfig } from "../cloud/publicConfig.ts";
 import { headlessRelayClientTracingLayer } from "../cloud/relayTracing.ts";
-import { ServerConfig } from "../config.ts";
-import { ServerEnvironmentLive } from "../environment/Layers/ServerEnvironment.ts";
-import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
+import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -145,7 +145,7 @@ const reportRelayClientInstallProgress = (event: RelayClientInstallProgressEvent
 
 export const acquireRelayClientForLink = Effect.fn("cloud.cli.acquire_relay_client_for_link")(
   function* <ConfirmError, ConfirmContext>(
-    relayClient: RelayClient.RelayClientShape,
+    relayClient: RelayClient.RelayClient["Service"],
     confirmInstall: (version: string) => Effect.Effect<boolean, ConfirmError, ConfirmContext>,
     reportProgress: (event: RelayClientInstallProgressEvent) => Effect.Effect<void>,
   ) {
@@ -164,7 +164,7 @@ export const acquireRelayClientForLink = Effect.fn("cloud.cli.acquire_relay_clie
 );
 
 const withCloudCliSessionToken = <A, E, R>(
-  environmentAuth: EnvironmentAuth.EnvironmentAuthShape,
+  environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
   run: (token: string) => Effect.Effect<A, E, R>,
 ) =>
   Effect.acquireUseRelease(
@@ -180,10 +180,10 @@ const withCloudCliSessionToken = <A, E, R>(
 type LiveCloudActionResult =
   | { readonly status: "not-running" }
   | { readonly status: "succeeded" }
-  | { readonly status: "failed"; readonly cause: unknown };
+  | { readonly status: "failed"; readonly cause: Cause.Cause<unknown> };
 
 const runLiveCloudUnlink = Effect.fn("cloud.cli.run_live_unlink")(function* () {
-  const config = yield* ServerConfig;
+  const config = yield* ServerConfig.ServerConfig;
   const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
   if (Option.isNone(runtimeState)) {
     return { status: "not-running" } satisfies LiveCloudActionResult;
@@ -212,6 +212,21 @@ type RelayUnlinkResult =
   | { readonly status: "revoked" }
   | { readonly status: "not-linked" };
 
+type CloudDisconnectOperation = "live-server-unlink" | "relay-environment-unlink";
+
+const logCloudDisconnectFailure = (
+  operation: CloudDisconnectOperation,
+  clearAuthorization: boolean,
+  cause: Cause.Cause<unknown>,
+) =>
+  Effect.logWarning("T3 Connect disconnect operation failed.").pipe(
+    Effect.annotateLogs({
+      operation,
+      clearAuthorization,
+      cause: Cause.pretty(cause),
+    }),
+  );
+
 const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(function* () {
   const tokens = yield* CliTokenManager.CloudCliTokenManager;
   const token = yield* tokens.getExisting;
@@ -219,7 +234,7 @@ const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(f
     return { status: "not-authenticated" } satisfies RelayUnlinkResult;
   }
 
-  const environment = yield* ServerEnvironment;
+  const environment = yield* ServerEnvironment.ServerEnvironment;
   const environmentId = yield* environment.getEnvironmentId;
   const relayUrl = yield* relayUrlConfig;
   const httpClient = yield* HttpClient.HttpClient;
@@ -237,6 +252,42 @@ const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(f
     : ({ status: "not-linked" } satisfies RelayUnlinkResult);
 });
 
+export const reportCloudDisconnectResults = Effect.fn("cloud.cli.report_disconnect_results")(
+  function* (input: {
+    readonly clearAuthorization: boolean;
+    readonly liveResult: LiveCloudActionResult;
+    readonly relayResult: Exit.Exit<RelayUnlinkResult, unknown>;
+  }) {
+    if (input.liveResult.status === "failed") {
+      yield* logCloudDisconnectFailure(
+        "live-server-unlink",
+        input.clearAuthorization,
+        input.liveResult.cause,
+      );
+      yield* Console.warn(
+        "T3 Connect is disabled, but the running server could not stop its tunnel.\nRestart that server to stop the connector.",
+      );
+    } else {
+      yield* Console.log("T3 Connect is disabled locally.");
+    }
+
+    if (Exit.isFailure(input.relayResult)) {
+      yield* logCloudDisconnectFailure(
+        "relay-environment-unlink",
+        input.clearAuthorization,
+        input.relayResult.cause,
+      );
+      yield* Console.warn(
+        input.clearAuthorization
+          ? "Could not revoke the relay-side environment record before signing out.\nThe stored CLI authorization was still removed locally."
+          : "Could not revoke the relay-side environment record yet.\nRun `t3 connect unlink` again when the relay is reachable.",
+      );
+    } else if (input.relayResult.value.status === "revoked") {
+      yield* Console.log("Revoked the relay-side environment record.");
+    }
+  },
+);
+
 const disconnectCloud = Effect.fn("cloud.cli.disconnect")(function* (options: {
   readonly clearAuthorization: boolean;
 }) {
@@ -250,23 +301,11 @@ const disconnectCloud = Effect.fn("cloud.cli.disconnect")(function* (options: {
     yield* tokens.clear;
   }
 
-  if (liveResult.status === "failed") {
-    yield* Console.warn(
-      `T3 Connect is disabled, but the running server could not stop its tunnel: ${String(liveResult.cause)}\nRestart that server to stop the connector.`,
-    );
-  } else {
-    yield* Console.log("T3 Connect is disabled locally.");
-  }
-
-  if (Exit.isFailure(relayResult)) {
-    yield* Console.warn(
-      options.clearAuthorization
-        ? `Could not revoke the relay-side environment record before signing out: ${String(relayResult.cause)}\nThe stored CLI authorization was still removed locally.`
-        : `Could not revoke the relay-side environment record yet: ${String(relayResult.cause)}\nRun \`t3 connect unlink\` again when the relay is reachable.`,
-    );
-  } else if (relayResult.value.status === "revoked") {
-    yield* Console.log("Revoked the relay-side environment record.");
-  }
+  yield* reportCloudDisconnectResults({
+    clearAuthorization: options.clearAuthorization,
+    liveResult,
+    relayResult,
+  });
 
   if (options.clearAuthorization) {
     yield* Console.log("Signed out of T3 Connect locally.");
@@ -285,8 +324,8 @@ const runCloudCommand = <A, E>(
     | FileSystem.FileSystem
     | HttpClient.HttpClient
     | Prompt.Environment
-    | ServerConfig
-    | ServerEnvironment
+    | ServerConfig.ServerConfig
+    | ServerEnvironment.ServerEnvironment
   >,
   options?: {
     readonly quietLogs?: boolean;
@@ -301,11 +340,11 @@ const runCloudCommand = <A, E>(
       CliTokenManager.layer.pipe(Layer.provide(ServerSecretStore.layer)),
       RelayClient.layerCloudflared({ baseDir: config.baseDir }),
       EnvironmentAuth.runtimeLayer,
-      ServerEnvironmentLive,
+      ServerEnvironment.layer,
       headlessRelayClientTracingLayer,
     ).pipe(
       Layer.provideMerge(FetchHttpClient.layer),
-      Layer.provideMerge(Layer.succeed(ServerConfig, config)),
+      Layer.provideMerge(ServerConfig.layer(config)),
       Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
     );
     return yield* run.pipe(Effect.provide(runtimeLayer));
