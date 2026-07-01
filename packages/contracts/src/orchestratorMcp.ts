@@ -9,10 +9,12 @@ import {
   PositiveInt,
   ProjectId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
+import { ScheduledTaskRunStatus, ScheduledTaskSchedule } from "./scheduledTask.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import {
   OrchestrationV2Actor,
@@ -363,10 +365,73 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
     batchThreadCreation: Schema.Boolean,
     threadManagement: Schema.Boolean,
     incrementalThreadRead: Schema.Boolean,
+    scheduledTasks: Schema.Boolean,
     maxBatchThreads: Schema.Number,
   }),
 });
 export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabilitiesResult.Type;
+
+export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
+  prompt: OrchestratorMcpPrompt,
+  schedule: ScheduledTaskSchedule,
+  title: Schema.optional(OrchestratorMcpTitle),
+  enabled: Schema.optional(Schema.Boolean),
+  /**
+   * When true (the default), the scheduled task fires into the calling thread
+   * on each run instead of launching a fresh thread. This is the recurring
+   * "wake up in this thread" behaviour reserved for agent-created tasks.
+   */
+  bindToCurrentThread: Schema.optional(Schema.Boolean),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
+
+/** Summary of a scheduled task returned by the schedule/list/update tools. */
+export const OrchestratorMcpScheduledTask = Schema.Struct({
+  scheduledTaskId: ScheduledTaskId,
+  title: Schema.String,
+  prompt: Schema.String,
+  enabled: Schema.Boolean,
+  projectId: ProjectId,
+  boundThreadId: Schema.NullOr(ThreadId),
+  schedule: ScheduledTaskSchedule,
+  nextRunAt: Schema.NullOr(IsoDateTime),
+  lastRunStatus: ScheduledTaskRunStatus,
+});
+export type OrchestratorMcpScheduledTask = typeof OrchestratorMcpScheduledTask.Type;
+
+export const OrchestratorMcpScheduleTaskResult = OrchestratorMcpScheduledTask;
+export type OrchestratorMcpScheduleTaskResult = typeof OrchestratorMcpScheduleTaskResult.Type;
+
+export const OrchestratorMcpListScheduledTasksResult = Schema.Struct({
+  tasks: Schema.Array(OrchestratorMcpScheduledTask),
+});
+export type OrchestratorMcpListScheduledTasksResult =
+  typeof OrchestratorMcpListScheduledTasksResult.Type;
+
+export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
+  scheduledTaskId: ScheduledTaskId,
+  prompt: Schema.optional(OrchestratorMcpPrompt),
+  title: Schema.optional(OrchestratorMcpTitle),
+  schedule: Schema.optional(ScheduledTaskSchedule),
+  enabled: Schema.optional(Schema.Boolean),
+  bindToCurrentThread: Schema.optional(Schema.Boolean),
+});
+export type OrchestratorMcpUpdateScheduledTaskInput =
+  typeof OrchestratorMcpUpdateScheduledTaskInput.Type;
+
+export const OrchestratorMcpDeleteScheduledTaskInput = Schema.Struct({
+  scheduledTaskId: ScheduledTaskId,
+});
+export type OrchestratorMcpDeleteScheduledTaskInput =
+  typeof OrchestratorMcpDeleteScheduledTaskInput.Type;
+
+export const OrchestratorMcpDeleteScheduledTaskResult = Schema.Struct({
+  scheduledTaskId: ScheduledTaskId,
+  deleted: Schema.Boolean,
+});
+export type OrchestratorMcpDeleteScheduledTaskResult =
+  typeof OrchestratorMcpDeleteScheduledTaskResult.Type;
 
 export class OrchestratorMcpFailure extends Schema.TaggedErrorClass<OrchestratorMcpFailure>()(
   "OrchestratorMcpFailure",

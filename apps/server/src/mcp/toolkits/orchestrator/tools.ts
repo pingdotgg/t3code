@@ -5,9 +5,15 @@ import {
   OrchestratorMcpCreateThreadsResult,
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
+  OrchestratorMcpDeleteScheduledTaskInput,
+  OrchestratorMcpDeleteScheduledTaskResult,
   OrchestratorMcpFailure,
+  OrchestratorMcpListScheduledTasksResult,
+  OrchestratorMcpScheduleTaskInput,
+  OrchestratorMcpScheduleTaskResult,
   OrchestratorMcpTaskCancelInput,
   OrchestratorMcpTaskCancelResult,
+  OrchestratorMcpUpdateScheduledTaskInput,
   OrchestratorMcpTaskStatusInput,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
@@ -78,6 +84,56 @@ export const TaskCancelTool = Tool.make("task_cancel", {
   dependencies,
 })
   .annotate(Tool.Title, "Cancel delegated task")
+  .annotate(Tool.Destructive, true);
+
+export const ScheduleTaskTool = Tool.make("schedule_task", {
+  description:
+    "Create a recurring scheduled task that automatically runs a prompt on a schedule. Use this to set up autonomous recurring work — the app's scheduler fires it even when no turn is active. By default (bindToCurrentThread=true) each run posts into THIS thread, which is how you 'wake up' and continue here on an interval or at a fixed time; set bindToCurrentThread=false to launch a fresh thread each run instead. Provider, model, and runtime settings inherit from the calling thread. Schedule is either {type:'interval', everyMs} (e.g. everyMs=60000 for every minute) or {type:'fixed_time', timeOfDay:'HH:MM', weekdays?:[0-6] where 0=Sunday}.",
+  parameters: OrchestratorMcpScheduleTaskInput,
+  success: OrchestratorMcpScheduleTaskResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Schedule a recurring task")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
+export const ListScheduledTasksTool = Tool.make("list_scheduled_tasks", {
+  description:
+    "List the recurring scheduled tasks in the calling thread's project, including their id, schedule, prompt, enabled state, bound thread, next run time, and last run status. Use the returned scheduledTaskId with update_scheduled_task or delete_scheduled_task.",
+  success: OrchestratorMcpListScheduledTasksResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "List scheduled tasks")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+export const UpdateScheduledTaskTool = Tool.make("update_scheduled_task", {
+  description:
+    "Update an existing scheduled task by scheduledTaskId (from list_scheduled_tasks). Only the provided fields change; omit a field to leave it as-is. Use enabled=false to pause a task without deleting it. Set bindToCurrentThread to move the task between posting into this thread and launching a fresh thread per run.",
+  parameters: OrchestratorMcpUpdateScheduledTaskInput,
+  success: OrchestratorMcpScheduleTaskResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Update a scheduled task")
+  .annotate(Tool.Destructive, true);
+
+export const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
+  description:
+    "Permanently delete a scheduled task by scheduledTaskId (from list_scheduled_tasks). The task stops running immediately. To keep it but stop runs, use update_scheduled_task with enabled=false instead.",
+  parameters: OrchestratorMcpDeleteScheduledTaskInput,
+  success: OrchestratorMcpDeleteScheduledTaskResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Delete a scheduled task")
   .annotate(Tool.Destructive, true);
 
 export const CreateThreadsTool = Tool.make("create_threads", {
@@ -178,6 +234,10 @@ export const OrchestratorToolkit = Toolkit.make(
   DelegateTaskTool,
   TaskStatusTool,
   TaskCancelTool,
+  ScheduleTaskTool,
+  ListScheduledTasksTool,
+  UpdateScheduledTaskTool,
+  DeleteScheduledTaskTool,
   CreateThreadsTool,
   ThreadStartTool,
   ThreadListTool,
