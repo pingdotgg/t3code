@@ -8,17 +8,12 @@
  *
  * @module provider/Drivers/CopilotDriver
  */
-import {
-  CopilotSettings,
-  ProviderDriverKind,
-  TextGenerationError,
-  type ServerProvider,
-} from "@t3tools/contracts";
+import { CopilotSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { Duration, Effect, FileSystem, Schema, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../../config.ts";
-import type { TextGenerationShape } from "../../git/Services/TextGeneration.ts";
+import { makeCopilotTextGeneration } from "../../git/Layers/CopilotTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCopilotAdapter } from "../Layers/CopilotAdapter.ts";
 import {
@@ -62,21 +57,6 @@ const withInstanceIdentity =
     continuation: { groupKey: input.continuationGroupKey },
   });
 
-const unsupportedTextGeneration = (operation: string) =>
-  Effect.fail(
-    new TextGenerationError({
-      operation,
-      detail: "Git text generation is not implemented for the GitHub Copilot provider.",
-    }),
-  );
-
-const CopilotTextGeneration: TextGenerationShape = {
-  generateCommitMessage: () => unsupportedTextGeneration("generateCommitMessage"),
-  generatePrContent: () => unsupportedTextGeneration("generatePrContent"),
-  generateBranchName: () => unsupportedTextGeneration("generateBranchName"),
-  generateThreadTitle: () => unsupportedTextGeneration("generateThreadTitle"),
-};
-
 const makeCopilotDriver = (input: {
   readonly driverKind: ProviderDriverKind;
   readonly displayName: string;
@@ -109,6 +89,7 @@ const makeCopilotDriver = (input: {
       const adapter = yield* makeCopilotAdapter(
         eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : undefined,
       );
+      const textGeneration = yield* makeCopilotTextGeneration(effectiveConfig);
 
       const checkProvider = checkCopilotProviderStatusForSettings({
         settings: effectiveConfig,
@@ -147,7 +128,7 @@ const makeCopilotDriver = (input: {
         enabled,
         snapshot,
         adapter,
-        textGeneration: CopilotTextGeneration,
+        textGeneration,
       } satisfies ProviderInstance;
     }),
 });

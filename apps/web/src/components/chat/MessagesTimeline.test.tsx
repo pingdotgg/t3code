@@ -315,9 +315,10 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Tool calls (2)");
+    expect(markup).toContain("Tool Calls (2)");
     expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain("Expand");
+    expect(markup).toContain('aria-label="Expand Tool Calls (2)"');
+    expect(markup).not.toContain(">Expand<");
     expect(markup).not.toContain("Read file");
     expect(markup).not.toContain("Ran command");
   });
@@ -358,7 +359,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).not.toContain("Tool calls (2)");
+    expect(markup).not.toContain("Tool Calls (2)");
     expect(markup).not.toContain('aria-expanded="false"');
     expect(markup).toContain("Read file");
     expect(markup).toContain("Ran command");
@@ -415,7 +416,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Tool calls (2)");
+    expect(markup).toContain("Tool Calls (2)");
     expect(markup).toContain('aria-expanded="false"');
     expect(markup).not.toContain("Read file");
     expect(markup).not.toContain("Ran command");
@@ -458,7 +459,8 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Work log (2)");
     expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain("Expand");
+    expect(markup).toContain('aria-label="Expand Work log (2)"');
+    expect(markup).not.toContain(">Expand<");
     expect(markup).not.toContain("Plan updated");
     expect(markup).not.toContain("Read file");
   });

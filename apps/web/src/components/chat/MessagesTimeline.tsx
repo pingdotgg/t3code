@@ -621,39 +621,35 @@ const WorkGroupSection = memo(function WorkGroupSection({
       : hasOverflow && !isExpanded
         ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
         : groupedEntries;
-  const hiddenCount = groupedEntries.length - visibleEntries.length;
   const showHeader = shouldAutoCollapse || hasOverflow || !onlyToolEntries;
-  const groupLabel = onlyToolEntries ? "Tool calls" : "Work log";
+  const groupLabel = onlyToolEntries ? "Tool Calls" : "Work log";
   const showCollapseToggle = shouldAutoCollapse || hasOverflow;
   const CollapseIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
-  const toggleLabel = shouldAutoCollapse
-    ? isExpanded
-      ? "Collapse"
-      : "Expand"
-    : isExpanded
-      ? "Show less"
-      : `Show ${hiddenCount} more`;
+  const toggleLabel = isExpanded ? "Collapse" : "Expand";
 
   return (
     <div className="work-group-section rounded-xl border border-border/45 bg-card/25 px-2 py-1.5">
-      {showHeader && (
-        <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
-          <p className="text-[0.75em] uppercase tracking-[0.16em] text-muted-foreground/55">
-            {groupLabel} ({groupedEntries.length})
-          </p>
-          {showCollapseToggle && (
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 text-[0.75em] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
-              onClick={() => setExpansionOverride(isExpanded ? "collapsed" : "expanded")}
-              aria-expanded={isExpanded}
-            >
-              <CollapseIcon className="size-3" />
-              {toggleLabel}
-            </button>
-          )}
-        </div>
-      )}
+      {showHeader &&
+        (showCollapseToggle ? (
+          <button
+            type="button"
+            className="mb-1.5 flex w-full items-center justify-between gap-2 px-0.5 text-left text-[0.75em] tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
+            onClick={() => setExpansionOverride(isExpanded ? "collapsed" : "expanded")}
+            aria-expanded={isExpanded}
+            aria-label={`${toggleLabel} ${groupLabel} (${groupedEntries.length})`}
+          >
+            <span>
+              {groupLabel} ({groupedEntries.length})
+            </span>
+            <CollapseIcon className="size-3 shrink-0" />
+          </button>
+        ) : (
+          <div className="mb-1.5 flex items-center px-0.5">
+            <p className="text-[0.75em] tracking-[0.12em] text-muted-foreground/55">
+              {groupLabel} ({groupedEntries.length})
+            </p>
+          </div>
+        ))}
       <div className="space-y-0.5">
         {visibleEntries.map((workEntry) => (
           <SimpleWorkEntryRow
