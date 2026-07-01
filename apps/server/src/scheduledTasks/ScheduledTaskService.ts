@@ -29,7 +29,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import { isMissedFixedTimeRun, nextScheduledRunAt } from "./Schedule.ts";
+import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 
 const decodeTask = Schema.decodeUnknownEffect(ScheduledTask);
 const decodeScheduleJson = Schema.decodeUnknownEffect(
@@ -361,6 +361,7 @@ export const layer = Layer.effect(
       readonly nextRunAtIso: string | null;
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
+      readonly startedAtIso: string;
     }) =>
       sql`
         UPDATE scheduled_tasks
@@ -370,6 +371,8 @@ export const layer = Layer.effect(
             last_run_error = ${input.error},
             run_count = run_count + 1
         WHERE task_id = ${input.id}
+          AND last_run_status = 'running'
+          AND last_run_at = ${input.startedAtIso}
       `.pipe(
         Effect.mapError((cause) =>
           taskError("Could not record schedule task run.", { taskId: input.id, cause }),
@@ -505,12 +508,16 @@ export const layer = Layer.effect(
           runCount: scheduleSource.runCount + 1,
         };
         if (current !== null) {
+          // startedAtIso in the guard ensures this writes only to the row this
+          // run marked as running — a task deleted mid-run and recreated with
+          // the same id (idempotent commandId replay) must not be stamped.
           yield* markCompleted({
             id: task.id,
             completedAtIso: completed.updatedAt,
             nextRunAtIso: completed.nextRunAt,
             status: lastRunStatus,
             error: lastRunError,
+            startedAtIso,
           });
           yield* notifyChanged;
         }
@@ -680,6 +687,13 @@ export const layer = Layer.effect(
         // keep their run history, and so real load failures propagate instead
         // of silently resetting an existing row.
         const existingTask = yield* findTask(id);
+        // Keep the existing next_run_at when the schedule itself is untouched:
+        // editing a title or prompt must not postpone (or resurrect) a due
+        // run — only schedule/enabled changes restart the clock.
+        const scheduleUnchanged =
+          existingTask !== null &&
+          existingTask.enabled === input.enabled &&
+          isSameSchedule(existingTask.schedule, input.schedule);
         const task: ScheduledTask = {
           id,
           title: input.title,
@@ -696,7 +710,9 @@ export const layer = Layer.effect(
           creationSource: input.creationSource ?? "web",
           createdAt: existingTask?.createdAt ?? iso(now),
           updatedAt: iso(now),
-          nextRunAt: nextRunAt({ enabled: input.enabled, schedule: input.schedule }, now),
+          nextRunAt: scheduleUnchanged
+            ? existingTask.nextRunAt
+            : nextRunAt({ enabled: input.enabled, schedule: input.schedule }, now),
           lastRunAt: existingTask?.lastRunAt ?? null,
           lastRunStatus: existingTask?.lastRunStatus ?? "never",
           lastRunError: existingTask?.lastRunError ?? null,

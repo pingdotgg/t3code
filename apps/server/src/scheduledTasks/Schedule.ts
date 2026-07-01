@@ -35,6 +35,18 @@ export function nextScheduledRunAt(
   return null;
 }
 
+/** Structural equality for schedules, independent of JSON key order. */
+export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedule): boolean {
+  if (a.type === "interval") {
+    return b.type === "interval" && a.everyMs === b.everyMs;
+  }
+  return (
+    b.type === "fixed_time" &&
+    a.timeOfDay === b.timeOfDay &&
+    (a.weekdays ?? []).join(",") === (b.weekdays ?? []).join(",")
+  );
+}
+
 /**
  * How late a fixed-time run may fire before it counts as missed. Covers poll
  * jitter and short sleeps, while a server booted hours after the slot skips

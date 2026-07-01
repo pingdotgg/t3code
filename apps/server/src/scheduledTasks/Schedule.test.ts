@@ -1,7 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
-import { isMissedFixedTimeRun, nextScheduledRunAt, parseTimeOfDay } from "./Schedule.ts";
+import {
+  isMissedFixedTimeRun,
+  isSameSchedule,
+  nextScheduledRunAt,
+  parseTimeOfDay,
+} from "./Schedule.ts";
 
 describe("scheduled task schedule calculation", () => {
   it("parses 24-hour times", () => {
@@ -52,6 +57,30 @@ describe("scheduled task schedule calculation", () => {
     // Interval schedules always catch up with a single run, never skip.
     expect(
       isMissedFixedTimeRun({ type: "interval", everyMs: 60_000 }, dueAt, pastGrace),
+    ).toBe(false);
+  });
+
+  it("compares schedules structurally", () => {
+    expect(
+      isSameSchedule({ type: "interval", everyMs: 60_000 }, { type: "interval", everyMs: 60_000 }),
+    ).toBe(true);
+    expect(
+      isSameSchedule({ type: "interval", everyMs: 60_000 }, { type: "interval", everyMs: 30_000 }),
+    ).toBe(false);
+    expect(
+      isSameSchedule(
+        { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 2] },
+        { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 2] },
+      ),
+    ).toBe(true);
+    expect(
+      isSameSchedule(
+        { type: "fixed_time", timeOfDay: "09:00" },
+        { type: "fixed_time", timeOfDay: "09:30" },
+      ),
+    ).toBe(false);
+    expect(
+      isSameSchedule({ type: "interval", everyMs: 60_000 }, { type: "fixed_time", timeOfDay: "09:00" }),
     ).toBe(false);
   });
 });
