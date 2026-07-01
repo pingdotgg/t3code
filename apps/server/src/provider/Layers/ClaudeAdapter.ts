@@ -2561,6 +2561,63 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     yield* completeTurn(context, status, errorMessage, message);
   });
 
+  const detectExternalTurns = Effect.fn("detectExternalTurns")(function* (
+    context: ClaudeSessionContext,
+    initMessage: SDKMessage,
+  ) {
+    const sessionCwd = context.session.cwd;
+    const sessionId =
+      (typeof initMessage.session_id === "string" && initMessage.session_id) ||
+      context.resumeSessionId;
+    if (!sessionCwd || !sessionId) {
+      return;
+    }
+
+    const t3TurnCount = context.session.resumeCursor?.turnCount ?? 0;
+
+    // Build the path to Claude's session .jsonl file.
+    // Claude encodes the project path by prepending "-" and replacing "/" with "-".
+    const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+    const encoded = "-" + sessionCwd.replace(/^\//, "").replace(/\//g, "-");
+    const jsonlPath = `${home}/.claude/projects/${encoded}/${sessionId}.jsonl`;
+
+    yield* Effect.tryPromise(() =>
+      import("node:fs/promises").then((fs) => fs.readFile(jsonlPath, "utf-8")),
+    ).pipe(
+      Effect.map((content) => {
+        // Count user-prompt turns (not tool-result user entries).
+        // User prompts: `"type":"user"` with `"content":"text"` (string).
+        // Tool results: `"type":"user"` with `"content":[{"type":"tool_result",...}]` (array).
+        const lines = content.split("\n");
+        let fileTurnCount = 0;
+        for (const line of lines) {
+          if (line.length === 0) continue;
+          if (line.includes('"type":"user"') && !line.includes('"tool_result"')) {
+            fileTurnCount++;
+          }
+        }
+
+        if (fileTurnCount > t3TurnCount) {
+          const delta = fileTurnCount - t3TurnCount;
+          context.session.resumeCursor = {
+            ...context.session.resumeCursor,
+            turnCount: fileTurnCount,
+          };
+          return { synced: true, delta };
+        }
+
+        return { synced: false };
+      }),
+      Effect.catchAll((cause) =>
+        Effect.logWarning("claude.session.sync-failed", {
+          sessionId,
+          cwd: sessionCwd,
+          cause,
+        }),
+      ),
+    );
+  });
+
   const handleSystemMessage = Effect.fn("handleSystemMessage")(function* (
     context: ClaudeSessionContext,
     message: SDKMessage,
@@ -2586,7 +2643,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     };
 
     switch (message.subtype) {
-      case "init":
+      case "init": {
         yield* offerRuntimeEvent({
           ...base,
           type: "session.configured",
@@ -2594,7 +2651,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             config: message as Record<string, unknown>,
           },
         });
+
+        yield* detectExternalTurns(context, message);
+
         return;
+      }
       case "status":
         yield* offerRuntimeEvent({
           ...base,
