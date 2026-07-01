@@ -595,6 +595,49 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(yield* fileSystem.exists(worktreePath), false);
       }),
     );
+
+    it.effect("creates a new worktree when the base branch name is also a remote ref", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "feature-ambiguous-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", initialBranch, remote]);
+        yield* git(cwd, ["push", initialBranch, `${initialBranch}:${initialBranch}`]);
+        yield* git(cwd, [
+          "fetch",
+          initialBranch,
+          `${initialBranch}:refs/remotes/${initialBranch}/${initialBranch}`,
+        ]);
+
+        const refs = yield* git(cwd, ["show-ref", initialBranch]);
+        assert.include(refs, `refs/heads/${initialBranch}`);
+        assert.include(refs, `refs/remotes/${initialBranch}/${initialBranch}`);
+
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/ambiguous-worktree",
+        });
+
+        assert.equal(created.worktree.path, worktreePath);
+        assert.equal(created.worktree.refName, "feature/ambiguous-worktree");
+        assert.equal(
+          yield* git(worktreePath, ["branch", "--show-current"]),
+          "feature/ambiguous-worktree",
+        );
+
+        yield* driver.removeWorktree({ cwd, path: worktreePath });
+      }),
+    );
   });
 
   describe("commit context", () => {
