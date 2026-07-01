@@ -274,6 +274,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
+const ORCHESTRATION_DOMAIN_EVENT_SUBSCRIPTION_BUFFER_CAPACITY = 1_024;
 
 const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.dispatchCommand, AuthOrchestrationOperateScope],
@@ -617,7 +618,14 @@ const makeWsRpcLayer = (
         makeStream: (events: Stream.Stream<OrchestrationEvent>) => Stream.Stream<A, E, R>,
       ): Effect.Effect<Stream.Stream<A, E, R>, never, Scope.Scope> =>
         Effect.map(orchestrationEngine.subscribeDomainEvents, (subscription) =>
-          makeStream(Stream.fromSubscription(subscription)),
+          makeStream(
+            Stream.fromSubscription(subscription).pipe(
+              Stream.buffer({
+                capacity: ORCHESTRATION_DOMAIN_EVENT_SUBSCRIPTION_BUFFER_CAPACITY,
+                strategy: "sliding",
+              }),
+            ),
+          ),
         );
 
       const streamThreadDetailEvents = (
