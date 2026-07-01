@@ -473,6 +473,7 @@ export function deriveLockedProvider(input: {
 export function getStartedThreadModelChangeBlockReason(input: {
   providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "requiresNewThreadForModelChange">>;
   hasStartedSession: boolean;
+  supportsProviderSwitchingViaHandoff?: boolean;
   currentModelSelection: ModelSelection;
   currentProviderInstanceId?: ModelSelection["instanceId"] | null | undefined;
   nextModelSelection: ModelSelection;
@@ -489,6 +490,15 @@ export function getStartedThreadModelChangeBlockReason(input: {
     currentModelSelection.model === input.nextModelSelection.model
   ) {
     return null;
+  }
+  if (currentModelSelection.instanceId !== input.nextModelSelection.instanceId) {
+    if (input.supportsProviderSwitchingViaHandoff === true) {
+      return null;
+    }
+    return {
+      title: "Start a new chat to switch providers",
+      description: "This thread does not support switching providers after it has started.",
+    };
   }
   const currentProvider = input.providers.find(
     (snapshot) => snapshot.instanceId === currentModelSelection.instanceId,
