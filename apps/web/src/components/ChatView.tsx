@@ -2929,6 +2929,39 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadRef, diffOpen, dismissPlanSidebarForCurrentTurn, onDiffPanelOpen, planSidebarOpen],
   );
+  // Returns false when the right panel is closed so terminal.toggle falls back to the drawer.
+  const toggleTerminalInRightPanel = useCallback(() => {
+    if (!activeThreadRef) return false;
+    const store = useRightPanelStore.getState();
+    const panelState = selectThreadRightPanelState(store.byThreadKey, activeThreadRef);
+    if (!panelState.isOpen) return false;
+    const activeSurface = panelState.surfaces.find(
+      (surface) => surface.id === panelState.activeSurfaceId,
+    );
+    if (activeSurface?.kind === "terminal") {
+      setMaximizedRightPanelThreadKey(null);
+      store.close(activeThreadRef);
+      return true;
+    }
+    const terminalSurface = panelState.surfaces.find((surface) => surface.kind === "terminal");
+    if (terminalSurface) {
+      activateRightPanelSurface(terminalSurface);
+      return true;
+    }
+    if (!activeThreadId || !activeProject) return false;
+    if (activeSurface?.kind === "plan") {
+      dismissPlanSidebarForCurrentTurn();
+    }
+    addTerminalSurface();
+    return true;
+  }, [
+    activeProject,
+    activeThreadId,
+    activeThreadRef,
+    activateRightPanelSurface,
+    addTerminalSurface,
+    dismissPlanSidebarForCurrentTurn,
+  ]);
   const toggleRightPanel = useCallback(() => {
     if (!activeThreadRef) return;
     if (rightPanelOpen) {
@@ -3725,7 +3758,9 @@ function ChatViewContent(props: ChatViewProps) {
       if (command === "terminal.toggle") {
         event.preventDefault();
         event.stopPropagation();
-        toggleTerminalVisibility();
+        if (terminalFocusOwner === "drawer" || !toggleTerminalInRightPanel()) {
+          toggleTerminalVisibility();
+        }
         return;
       }
 
@@ -3838,6 +3873,7 @@ function ChatViewContent(props: ChatViewProps) {
     keybindings,
     onToggleDiff,
     toggleRightPanel,
+    toggleTerminalInRightPanel,
     toggleThreadPanel,
     toggleTerminalVisibility,
     composerRef,
