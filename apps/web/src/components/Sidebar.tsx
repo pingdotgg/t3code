@@ -2942,7 +2942,6 @@ interface SidebarProjectsContentProps {
   suppressProjectClickAfterDragRef: React.RefObject<boolean>;
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   attachProjectListAutoAnimateRef: (node: HTMLElement | null) => void;
-  projectsLength: number;
 }
 
 const SidebarProjectsContent = memo(function SidebarProjectsContent(
@@ -2986,7 +2985,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     suppressProjectClickAfterDragRef,
     suppressProjectClickForContextMenuRef,
     attachProjectListAutoAnimateRef,
-    projectsLength,
   } = props;
 
   const handleProjectSortOrderChange = useCallback(
@@ -3182,7 +3180,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </SidebarMenu>
         )}
 
-        {projectsLength === 0 && (
+        {sortedProjects.length === 0 && (
           <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
             No projects yet
           </div>
@@ -3897,7 +3895,6 @@ export default function Sidebar() {
             suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
             suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
             attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
-            projectsLength={projects.length}
           />
 
           <SidebarSeparator />
