@@ -44,6 +44,7 @@ type CopilotTextGenerationOperation =
   | "generateBranchName"
   | "generateThreadTitle";
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
+type CopilotContextTier = NonNullable<SessionConfig["contextTier"]>;
 
 interface SharedCopilotTextClientState {
   readonly client: CopilotClient;
@@ -325,6 +326,9 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
         input.modelSelection,
         "reasoningEffort",
       ) as CopilotReasoningEffort | undefined;
+      const contextTier = getModelSelectionStringOptionValue(input.modelSelection, "contextTier") as
+        | CopilotContextTier
+        | undefined;
 
       // Keep request state isolated per generation call while reusing the
       // started SDK client so git helpers do not respawn the Copilot CLI.
@@ -342,6 +346,7 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
                   clientName: "t3-code-git-text",
                   model: input.modelSelection.model,
                   ...(reasoningEffort ? { reasoningEffort } : {}),
+                  ...(contextTier ? { contextTier } : {}),
                   workingDirectory: input.cwd,
                   streaming: false,
                   availableTools: [],

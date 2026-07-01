@@ -18,6 +18,7 @@ const runtimeMock = vi.hoisted(() => {
         readonly createSession: ReturnType<typeof vi.fn>;
       };
     }>,
+    sessionConfigs: [] as Array<unknown>,
     sessions: [] as Array<{
       readonly disconnect: ReturnType<typeof vi.fn>;
       readonly sendAndWait: ReturnType<typeof vi.fn>;
@@ -28,6 +29,7 @@ const runtimeMock = vi.hoisted(() => {
     state,
     reset() {
       state.createdClients = [];
+      state.sessionConfigs = [];
       state.sessions = [];
     },
   };
@@ -44,7 +46,8 @@ vi.mock("../provider/copilotRuntime.ts", async () => {
       (input: { readonly cwd?: string; readonly baseDirectory?: string }) => {
         const start = vi.fn(async () => undefined);
         const stop = vi.fn(async () => undefined);
-        const createSession = vi.fn(async () => {
+        const createSession = vi.fn(async (config: unknown) => {
+          runtimeMock.state.sessionConfigs.push(config);
           const sendAndWait = vi.fn(async () => ({
             data: {
               content: JSON.stringify({
@@ -146,6 +149,32 @@ it.layer(CopilotTextGenerationTestLayer)("CopilotTextGeneration", (it) => {
 
       expect(runtimeMock.state.createdClients).toHaveLength(1);
       expect(runtimeMock.state.createdClients[0]?.input.baseDirectory).toBe("/tmp/t3-copilot-home");
+    }),
+  );
+
+  it.effect("passes model options to Copilot text generation sessions", () =>
+    Effect.gen(function* () {
+      const textGeneration = yield* makeCopilotTextGeneration(defaultCopilotSettings);
+      const modelSelection = createModelSelection(ProviderInstanceId.make("copilot"), "gpt-4.1", [
+        { id: "reasoningEffort", value: "high" },
+        { id: "contextTier", value: "long_context" },
+      ]);
+
+      yield* textGeneration.generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "feature/copilot-options",
+        stagedSummary: "M README.md",
+        stagedPatch: "diff --git a/README.md b/README.md",
+        modelSelection,
+      });
+
+      expect(runtimeMock.state.sessionConfigs).toMatchObject([
+        {
+          model: "gpt-4.1",
+          reasoningEffort: "high",
+          contextTier: "long_context",
+        },
+      ]);
     }),
   );
 });
