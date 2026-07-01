@@ -9,7 +9,11 @@
 import { spawn } from "node:child_process";
 
 import { EDITORS, OpenError, type EditorId } from "@t3tools/contracts";
-import { isCommandAvailable, type CommandAvailabilityOptions } from "@t3tools/shared/shell";
+import {
+  isCommandAvailable,
+  resolveWindowsSpawn,
+  type CommandAvailabilityOptions,
+} from "@t3tools/shared/shell";
 import { Context, Effect, Layer } from "effect";
 
 // ==============================
@@ -191,16 +195,12 @@ export const launchDetached = (launch: EditorLaunch) =>
     yield* Effect.callback<void, OpenError>((resume) => {
       let child;
       try {
-        const isWin32 = process.platform === "win32";
-        child = spawn(
-          launch.command,
-          isWin32 ? launch.args.map((a) => `"${a}"`) : [...launch.args],
-          {
-            detached: true,
-            stdio: "ignore",
-            shell: isWin32,
-          },
-        );
+        const { command: spawnTarget, shell } = resolveWindowsSpawn(launch.command);
+        child = spawn(spawnTarget, [...launch.args], {
+          detached: true,
+          stdio: "ignore",
+          shell,
+        });
       } catch (error) {
         return resume(
           Effect.fail(new OpenError({ message: "failed to spawn detached process", cause: error })),

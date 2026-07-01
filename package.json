@@ -59,7 +59,7 @@
     "install:t3:dev": "bash scripts/install-t3-dev.sh",
     "install:t3:alpha": "bash scripts/install-t3-alpha.sh",
     "release:smoke": "node scripts/release-smoke.ts",
-    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
+    "clean": "node scripts/clean.ts",
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
   },
   "devDependencies": {

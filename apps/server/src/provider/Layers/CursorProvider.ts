@@ -18,6 +18,7 @@ import {
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
 } from "@t3tools/shared/model";
+import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 
 import {
   buildBooleanOptionDescriptor,
@@ -1038,9 +1039,12 @@ const runCursorCommand = (
 ) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const command = ChildProcess.make(cursorSettings.binaryPath, [...args], {
+    const { command: spawnTarget, shell } = resolveWindowsSpawn(cursorSettings.binaryPath, {
       env: environment,
-      shell: process.platform === "win32",
+    });
+    const command = ChildProcess.make(spawnTarget, [...args], {
+      env: environment,
+      shell,
     });
 
     const child = yield* spawner.spawn(command);

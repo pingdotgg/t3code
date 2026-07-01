@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   extractPathFromShellOutput,
@@ -10,8 +13,10 @@ import {
   readEnvironmentFromWindowsShell,
   readPathFromLaunchctl,
   readPathFromLoginShell,
+  resolveExecutablePath,
   resolveKnownWindowsCliDirs,
   resolveWindowsEnvironment,
+  resolveWindowsSpawn,
 } from "./shell.ts";
 
 describe("extractPathFromShellOutput", () => {
@@ -454,5 +459,63 @@ describe("resolveWindowsEnvironment", () => {
       FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
     });
     expect(commandAvailable).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("resolveWindowsSpawn", () => {
+  it("launches directly on POSIX without a shell", () => {
+    expect(resolveWindowsSpawn("codex", { platform: "linux", env: {} })).toEqual({
+      command: "codex",
+      shell: false,
+    });
+  });
+
+  it("resolves a Windows .exe to its full path and avoids the shell", () => {
+    const dir = mkdtempSync(join(tmpdir(), "t3-spawn-exe-"));
+    try {
+      const exePath = join(dir, "tool.exe");
+      writeFileSync(exePath, "");
+      const resolution = resolveWindowsSpawn("tool", {
+        platform: "win32",
+        env: { PATH: dir, PATHEXT: ".EXE;.CMD;.BAT" },
+      });
+      expect(resolution.shell).toBe(false);
+      expect(resolution.command.toLowerCase()).toBe(exePath.toLowerCase());
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("requires a shell only for .cmd/.bat batch shims", () => {
+    const dir = mkdtempSync(join(tmpdir(), "t3-spawn-cmd-"));
+    try {
+      const cmdPath = join(dir, "codex.cmd");
+      writeFileSync(cmdPath, "");
+      const resolution = resolveWindowsSpawn("codex", {
+        platform: "win32",
+        env: { PATH: dir, PATHEXT: ".EXE;.CMD;.BAT" },
+      });
+      expect(resolution.shell).toBe(true);
+      expect(resolution.command.toLowerCase()).toBe(cmdPath.toLowerCase());
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to a shell so unresolved commands still resolve via PATHEXT", () => {
+    expect(
+      resolveWindowsSpawn("missing-tool", {
+        platform: "win32",
+        env: { PATH: "C:\\nope", PATHEXT: ".EXE;.CMD" },
+      }),
+    ).toEqual({ command: "missing-tool", shell: true });
+  });
+});
+
+describe("resolveExecutablePath", () => {
+  it("returns null when nothing matches on PATH", () => {
+    expect(
+      resolveExecutablePath("definitely-missing", { platform: "linux", env: { PATH: "" } }),
+    ).toBeNull();
   });
 });

@@ -4,6 +4,7 @@ import * as EffectAcpClient from "effect-acp/client";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
+import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 
 import {
   collectSessionConfigOptionValues,
@@ -204,12 +205,16 @@ const makeAcpSessionRuntime = (
         ),
       );
 
+    const spawnEnv = options.spawn.env ? { ...process.env, ...options.spawn.env } : undefined;
+    const { command: spawnTarget, shell } = resolveWindowsSpawn(options.spawn.command, {
+      ...(spawnEnv ? { env: spawnEnv } : {}),
+    });
     const child = yield* spawner
       .spawn(
-        ChildProcess.make(options.spawn.command, [...options.spawn.args], {
+        ChildProcess.make(spawnTarget, [...options.spawn.args], {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
-          ...(options.spawn.env ? { env: { ...process.env, ...options.spawn.env } } : {}),
-          shell: process.platform === "win32",
+          ...(spawnEnv ? { env: spawnEnv } : {}),
+          shell,
         }),
       )
       .pipe(

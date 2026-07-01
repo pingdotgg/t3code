@@ -376,23 +376,33 @@ function isExecutableFile(
   }
 }
 
-export function isCommandAvailable(
+/**
+ * Resolve a command to the absolute path of the executable that would run.
+ *
+ * Mirrors the platform's own lookup rules: on Windows it applies `PATHEXT`
+ * candidate expansion (so a bare `codex` resolves to `codex.cmd`/`codex.exe`),
+ * on POSIX it checks the executable bit. Returns `null` when nothing matches.
+ */
+export function resolveExecutablePath(
   command: string,
   options: CommandAvailabilityOptions = {},
-): boolean {
+): string | null {
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
   const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
   const commandCandidates = resolveCommandCandidates(command, platform, windowsPathExtensions);
 
   if (command.includes("/") || command.includes("\\")) {
-    return commandCandidates.some((candidate) =>
-      isExecutableFile(candidate, platform, windowsPathExtensions),
-    );
+    for (const candidate of commandCandidates) {
+      if (isExecutableFile(candidate, platform, windowsPathExtensions)) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   const pathValue = resolvePathEnvironmentVariable(env);
-  if (pathValue.length === 0) return false;
+  if (pathValue.length === 0) return null;
   const pathEntries = pathValue
     .split(pathDelimiterForPlatform(platform))
     .map((entry) => stripWrappingQuotes(entry.trim()))
@@ -400,12 +410,68 @@ export function isCommandAvailable(
 
   for (const pathEntry of pathEntries) {
     for (const candidate of commandCandidates) {
-      if (isExecutableFile(join(pathEntry, candidate), platform, windowsPathExtensions)) {
-        return true;
+      const fullPath = join(pathEntry, candidate);
+      if (isExecutableFile(fullPath, platform, windowsPathExtensions)) {
+        return fullPath;
       }
     }
   }
-  return false;
+  return null;
+}
+
+export function isCommandAvailable(
+  command: string,
+  options: CommandAvailabilityOptions = {},
+): boolean {
+  return resolveExecutablePath(command, options) !== null;
+}
+
+const WINDOWS_BATCH_EXTENSIONS = new Set([".CMD", ".BAT"]);
+
+export interface WindowsSpawnResolution {
+  /** Command to hand to `spawn`: the resolved absolute path when available. */
+  readonly command: string;
+  /**
+   * Whether the child must be launched through a shell.
+   *
+   * Only ever `true` on Windows for `.cmd`/`.bat` targets, which `CreateProcess`
+   * cannot execute directly. Patched Node (>= 20.11 / 22) escapes arguments for
+   * batch files when `shell` is set, closing the CVE-2024-27980 ("BatBadBut")
+   * argument-injection vector. Non-batch targets launch directly.
+   */
+  readonly shell: boolean;
+}
+
+/**
+ * Decide how a command should be spawned on the current platform.
+ *
+ * Blanket `shell: true` on Windows routes every launch through `cmd.exe`, which
+ * parses metacharacters in arguments and enables command injection for
+ * non-batch targets. This resolver instead:
+ *   - returns the resolved executable path so `.exe`/binary targets launch
+ *     directly (`shell: false` — no shell parsing, faster, injection-safe), and
+ *   - only requests a shell for `.cmd`/`.bat` targets, which genuinely require
+ *     `cmd.exe` and where patched Node applies argument escaping.
+ *
+ * When the command cannot be resolved on `PATH`, it preserves the historical
+ * `shell: true` fallback so bare names still resolve via `PATHEXT`.
+ */
+export function resolveWindowsSpawn(
+  command: string,
+  options: CommandAvailabilityOptions = {},
+): WindowsSpawnResolution {
+  const platform = options.platform ?? process.platform;
+  if (platform !== "win32") {
+    return { command, shell: false };
+  }
+
+  const resolved = resolveExecutablePath(command, { ...options, platform });
+  if (resolved === null) {
+    return { command, shell: true };
+  }
+
+  const isBatchFile = WINDOWS_BATCH_EXTENSIONS.has(extname(resolved).toUpperCase());
+  return { command: resolved, shell: isBatchFile };
 }
 
 export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {

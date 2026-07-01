@@ -3,6 +3,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { type CodexSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -160,8 +161,18 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const reasoningEffort =
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
         CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT;
-      const command = ChildProcess.make(
+      const codexEnv = {
+        ...environment,
+        ...(codexConfig.homePath ? { CODEX_HOME: expandHomePath(codexConfig.homePath) } : {}),
+      };
+      const { command: spawnTarget, shell } = resolveWindowsSpawn(
         codexConfig.binaryPath || "codex",
+        {
+          env: codexEnv,
+        },
+      );
+      const command = ChildProcess.make(
+        spawnTarget,
         [
           "exec",
           "--ephemeral",
@@ -183,12 +194,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           "-",
         ],
         {
-          env: {
-            ...environment,
-            ...(codexConfig.homePath ? { CODEX_HOME: expandHomePath(codexConfig.homePath) } : {}),
-          },
+          env: codexEnv,
           cwd,
-          shell: process.platform === "win32",
+          shell,
           stdin: {
             stream: Stream.encodeText(Stream.make(prompt)),
           },

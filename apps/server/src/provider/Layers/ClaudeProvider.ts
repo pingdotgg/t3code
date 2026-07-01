@@ -14,6 +14,7 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
+import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 import {
   query as claudeQuery,
   type SlashCommand as ClaudeSlashCommand,
@@ -503,9 +504,12 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
-  const command = ChildProcess.make(claudeSettings.binaryPath, [...args], {
+  const { command: spawnTarget, shell } = resolveWindowsSpawn(claudeSettings.binaryPath, {
     env: claudeEnvironment,
-    shell: process.platform === "win32",
+  });
+  const command = ChildProcess.make(spawnTarget, [...args], {
+    env: claudeEnvironment,
+    shell,
   });
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });

@@ -9,6 +9,7 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 import { Effect, Equal, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -198,8 +199,9 @@ export function buildInitialCopilotProviderSnapshot(
 const runCopilotCommand = (settings: CopilotSettings, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const command = ChildProcess.make(settings.binaryPath, [...args], {
-      shell: process.platform === "win32",
+    const { command: spawnTarget, shell } = resolveWindowsSpawn(settings.binaryPath);
+    const command = ChildProcess.make(spawnTarget, [...args], {
+      shell,
     });
     const child = yield* spawner.spawn(command);
     const [stdout, stderr, exitCode] = yield* Effect.all(

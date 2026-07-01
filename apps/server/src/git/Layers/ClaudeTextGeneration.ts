@@ -12,6 +12,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { type ClaudeSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 
 import { TextGenerationError } from "@t3tools/contracts";
 import { type TextGenerationShape } from "../Services/TextGeneration.ts";
@@ -115,8 +116,12 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     };
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
-      const command = ChildProcess.make(
+      const { command: spawnTarget, shell } = resolveWindowsSpawn(
         claudeSettings.binaryPath || "claude",
+        { env: claudeEnvironment },
+      );
+      const command = ChildProcess.make(
+        spawnTarget,
         [
           "-p",
           "--output-format",
@@ -132,7 +137,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         {
           env: claudeEnvironment,
           cwd,
-          shell: process.platform === "win32",
+          shell,
           stdin: {
             stream: Stream.encodeText(Stream.make(prompt)),
           },

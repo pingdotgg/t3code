@@ -24,6 +24,10 @@
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
     },
+    "./processTree": {
+      "types": "./src/processTree.ts",
+      "import": "./src/processTree.ts"
+    },
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"

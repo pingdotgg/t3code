@@ -1,4 +1,6 @@
-import { type ChildProcess as ChildProcessHandle, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess as ChildProcessHandle, spawn } from "node:child_process";
+import { resolveWindowsSpawn } from "@t3tools/shared/shell";
+import { killProcessTree } from "@t3tools/shared/processTree";
 
 export interface ProcessRunOptions {
   cwd?: string | undefined;
@@ -95,19 +97,11 @@ const DEFAULT_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 
 /**
  * On Windows with `shell: true`, `child.kill()` only terminates the `cmd.exe`
- * wrapper, leaving the actual command running. Use `taskkill /T` to kill the
- * entire process tree instead.
+ * wrapper, leaving the actual command running. `killProcessTree` uses
+ * `taskkill /T` to terminate the entire process tree instead.
  */
 function killChild(child: ChildProcessHandle, signal: NodeJS.Signals = "SIGTERM"): void {
-  if (process.platform === "win32" && child.pid !== undefined) {
-    try {
-      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-      return;
-    } catch {
-      // fallback to direct kill
-    }
-  }
-  child.kill(signal);
+  killProcessTree(child, signal);
 }
 
 function appendChunkWithinLimit(
@@ -148,11 +142,15 @@ export async function runProcess(
   const outputMode = options.outputMode ?? "error";
 
   return new Promise<ProcessRunResult>((resolve, reject) => {
-    const child = spawn(command, args, {
+    const { command: spawnTarget, shell } = resolveWindowsSpawn(
+      command,
+      options.env ? { env: options.env } : {},
+    );
+    const child = spawn(spawnTarget, args, {
       cwd: options.cwd,
       env: options.env,
       stdio: "pipe",
-      shell: process.platform === "win32",
+      shell,
     });
 
     let stdout = "";

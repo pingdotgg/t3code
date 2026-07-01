@@ -4,6 +4,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import { Effect } from "effect";
+import { resolveWindowsSpawn } from "@t3tools/shared/shell";
+import { killProcessTree } from "@t3tools/shared/processTree";
 
 type JsonRpcId = string | number | null;
 
@@ -168,15 +170,17 @@ async function terminalTool(root: string, args: Record<string, unknown>): Promis
       : DEFAULT_TERMINAL_TIMEOUT_MS;
 
   return await new Promise<string>((resolve) => {
-    const child = spawn(command, commandArgs, {
+    const { command: spawnTarget, shell } = resolveWindowsSpawn(command);
+    const child = spawn(spawnTarget, commandArgs, {
       cwd: root,
       stdio: ["ignore", "pipe", "pipe"],
+      shell,
     });
     let stdout = "";
     let stderr = "";
     let settled = false;
     const timer = setTimeout(() => {
-      child.kill("SIGTERM");
+      killProcessTree(child, "SIGTERM");
     }, timeoutMs);
     child.stdout?.on("data", (chunk) => {
       stdout = `${stdout}${String(chunk)}`.slice(-MAX_TERMINAL_OUTPUT_BYTES);

@@ -15,6 +15,7 @@ import type {
 import { ServerSettingsError } from "@t3tools/contracts";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
@@ -258,15 +259,18 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
   // Expand here for parity with `CodexTextGeneration`/`CodexSessionRuntime`.
   const resolvedHomePath = input.homePath ? expandHomePath(input.homePath) : undefined;
+  const codexEnv = {
+    ...(input.environment ?? process.env),
+    ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
+  };
+  const { command: spawnTarget, shell } = resolveWindowsSpawn(input.binaryPath, { env: codexEnv });
   const clientContext = yield* Layer.build(
     CodexClient.layerCommand({
-      command: input.binaryPath,
+      command: spawnTarget,
       args: ["app-server"],
       cwd: input.cwd,
-      env: {
-        ...(input.environment ?? process.env),
-        ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
-      },
+      env: codexEnv,
+      shell,
     }),
   );
   const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(

@@ -32,6 +32,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
 import { NetService } from "@t3tools/shared/Net";
+import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 
 const OPENCODE_SERVER_READY_PREFIX = "opencode server listening";
 const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 5_000;
@@ -274,10 +275,14 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
 
   const runOpenCodeCommand: OpenCodeRuntimeShape["runOpenCodeCommand"] = (input) =>
     Effect.gen(function* () {
+      const spawnEnv = input.environment ?? process.env;
+      const { command: spawnTarget, shell } = resolveWindowsSpawn(input.binaryPath, {
+        env: spawnEnv,
+      });
       const child = yield* spawner.spawn(
-        ChildProcess.make(input.binaryPath, [...input.args], {
-          shell: process.platform === "win32",
-          env: input.environment ?? process.env,
+        ChildProcess.make(spawnTarget, [...input.args], {
+          shell,
+          env: spawnEnv,
         }),
       );
       const [stdout, stderr, code] = yield* Effect.all(
@@ -330,15 +335,19 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const timeoutMs = input.timeoutMs ?? DEFAULT_OPENCODE_SERVER_TIMEOUT_MS;
       const args = ["serve", `--hostname=${hostname}`, `--port=${port}`];
 
+      const serverEnv = {
+        ...(input.environment ?? process.env),
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({}),
+      };
+      const { command: serverTarget, shell: serverShell } = resolveWindowsSpawn(input.binaryPath, {
+        env: serverEnv,
+      });
       const child = yield* spawner
         .spawn(
-          ChildProcess.make(input.binaryPath, args, {
+          ChildProcess.make(serverTarget, args, {
             detached: process.platform !== "win32",
-            shell: process.platform === "win32",
-            env: {
-              ...(input.environment ?? process.env),
-              OPENCODE_CONFIG_CONTENT: JSON.stringify({}),
-            },
+            shell: serverShell,
+            env: serverEnv,
           }),
         )
         .pipe(

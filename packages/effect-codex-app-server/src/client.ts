@@ -262,6 +262,13 @@ export interface CodexAppServerCommandLayerOptions extends CodexAppServerClientO
   readonly args?: ReadonlyArray<string>;
   readonly cwd?: string;
   readonly env?: Record<string, string>;
+  /**
+   * Whether to launch the command through a shell. Defaults to `true` on
+   * Windows for backwards compatibility. Callers that resolve the executable
+   * path themselves (e.g. via `resolveWindowsSpawn`) should pass the computed
+   * value so non-batch targets launch directly without `cmd.exe`.
+   */
+  readonly shell?: boolean;
 }
 
 export const layerCommand = (
@@ -279,7 +286,7 @@ export const layerCommand = (
         const command = ChildProcess.make(options.command, [...(options.args ?? [])], {
           ...(options.cwd ? { cwd: options.cwd } : {}),
           ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
-          shell: process.platform === "win32",
+          shell: options.shell ?? process.platform === "win32",
         });
         return yield* spawner.spawn(command).pipe(
           Effect.mapError(
