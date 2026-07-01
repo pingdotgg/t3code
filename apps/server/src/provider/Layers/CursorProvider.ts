@@ -45,6 +45,10 @@ import {
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
+import {
+  flattenSessionConfigSelectOptions,
+  type AcpSessionConfigSelectOptionValue,
+} from "../acp/AcpRuntimeModel.ts";
 import { CursorListAvailableModelsResponse } from "../acp/CursorAcpExtension.ts";
 
 const decodeCursorListAvailableModelsResponse = Schema.decodeUnknownEffect(
@@ -114,39 +118,10 @@ export function buildInitialCursorProviderSnapshot(
   });
 }
 
-interface CursorSessionSelectOption {
-  readonly value: string;
-  readonly name: string;
-}
-
 interface CursorAcpDiscoveredModel {
   readonly slug: string;
   readonly name: string;
   readonly capabilities: ModelCapabilities;
-}
-
-function flattenSessionConfigSelectOptions(
-  configOption: EffectAcpSchema.SessionConfigOption | undefined,
-): ReadonlyArray<CursorSessionSelectOption> {
-  if (!configOption || configOption.type !== "select") {
-    return [];
-  }
-  return configOption.options.flatMap((entry) =>
-    "value" in entry
-      ? [
-          {
-            value: entry.value.trim(),
-            name: entry.name.trim(),
-          } satisfies CursorSessionSelectOption,
-        ]
-      : entry.options.map(
-          (option) =>
-            ({
-              value: option.value.trim(),
-              name: option.name.trim(),
-            }) satisfies CursorSessionSelectOption,
-        ),
-  );
 }
 
 function normalizeCursorReasoningValue(value: string | null | undefined): string | undefined {
@@ -450,7 +425,7 @@ function normalizeCursorConfigOptionToken(value: string | null | undefined): str
 
 function findCursorSelectOptionValue(
   configOption: EffectAcpSchema.SessionConfigOption | undefined,
-  matcher: (option: CursorSessionSelectOption) => boolean,
+  matcher: (option: AcpSessionConfigSelectOptionValue) => boolean,
 ): string | undefined {
   return flattenSessionConfigSelectOptions(configOption).find(matcher)?.value;
 }

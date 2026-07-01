@@ -56,6 +56,16 @@ export interface AcpSessionModeState {
   readonly availableModes: ReadonlyArray<AcpSessionMode>;
 }
 
+export interface AcpSessionConfigSelectOptionValue {
+  readonly value: string;
+  readonly name: string;
+}
+
+export type AcpSessionSelectConfigOption = Extract<
+  EffectAcpSchema.SessionConfigOption,
+  { readonly type: "select" }
+>;
+
 export interface AcpToolCallState {
   readonly toolCallId: string;
   readonly kind?: string;
@@ -120,15 +130,26 @@ type AcpToolCallUpdate = Extract<
   { readonly sessionUpdate: "tool_call" | "tool_call_update" }
 >;
 
+function configOptionToken(value: string | null | undefined): string {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+export function findSessionModelConfigOption(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): AcpSessionSelectConfigOption | undefined {
+  const selectOptions = configOptions?.filter((option) => option.type === "select") ?? [];
+  return (
+    selectOptions.find((option) => configOptionToken(option.category) === "model") ??
+    selectOptions.find((option) => {
+      const id = configOptionToken(option.id);
+      const name = configOptionToken(option.name);
+      return id === "model" || name === "model";
+    })
+  );
+}
+
 export function extractModelConfigId(sessionResponse: AcpSessionSetupResponse): string | undefined {
-  const configOptions = sessionResponse.configOptions;
-  if (!configOptions) return undefined;
-  for (const opt of configOptions) {
-    if (opt.category === "model" && opt.id.trim().length > 0) {
-      return opt.id.trim();
-    }
-  }
-  return undefined;
+  return findSessionModelConfigOption(sessionResponse.configOptions)?.id.trim() || undefined;
 }
 
 export function findSessionConfigOption(
@@ -148,11 +169,30 @@ export function findSessionConfigOption(
 export function collectSessionConfigOptionValues(
   configOption: EffectAcpSchema.SessionConfigOption,
 ): ReadonlyArray<string> {
-  if (configOption.type !== "select") {
+  return flattenSessionConfigSelectOptions(configOption).map((option) => option.value);
+}
+
+export function flattenSessionConfigSelectOptions(
+  configOption: EffectAcpSchema.SessionConfigOption | undefined,
+): ReadonlyArray<AcpSessionConfigSelectOptionValue> {
+  if (!configOption || configOption.type !== "select") {
     return [];
   }
   return configOption.options.flatMap((entry) =>
-    "value" in entry ? [entry.value] : entry.options.map((option) => option.value),
+    "value" in entry
+      ? [
+          {
+            value: entry.value.trim(),
+            name: entry.name.trim(),
+          } satisfies AcpSessionConfigSelectOptionValue,
+        ]
+      : entry.options.map(
+          (option) =>
+            ({
+              value: option.value.trim(),
+              name: option.name.trim(),
+            }) satisfies AcpSessionConfigSelectOptionValue,
+        ),
   );
 }
 

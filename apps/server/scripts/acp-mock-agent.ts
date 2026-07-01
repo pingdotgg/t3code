@@ -19,6 +19,7 @@ const emitInterleavedAssistantToolCalls =
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
+const emitElicitation = process.env.T3_ACP_EMIT_ELICITATION === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
@@ -805,6 +806,52 @@ const program = Effect.gen(function* () {
           result.answers === null
         ) {
           throw new Error("Expected accepted _x.ai/ask_user_question response answers.");
+        }
+
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitElicitation) {
+        const result = yield* agent.client.elicit({
+          sessionId: requestedSessionId,
+          mode: "form",
+          message: "Choose Devin options",
+          requestedSchema: {
+            type: "object",
+            title: "Devin options",
+            required: ["scope", "fast", "notes"],
+            properties: {
+              scope: {
+                type: "string",
+                title: "Scope",
+                description: "Which scope should Devin use?",
+                oneOf: [
+                  { const: "workspace", title: "Workspace" },
+                  { const: "session", title: "Session" },
+                ],
+              },
+              fast: {
+                type: "boolean",
+                title: "Fast mode",
+                description: "Use fast mode?",
+              },
+              notes: {
+                type: "string",
+                title: "Notes",
+                description: "Any extra notes?",
+              },
+            },
+          },
+        });
+        if (result.action.action !== "accept" || !result.action.content) {
+          throw new Error("Expected accepted session/elicitation response.");
+        }
+        if (
+          result.action.content.scope !== "workspace" ||
+          result.action.content.fast !== true ||
+          result.action.content.notes !== "Keep it focused"
+        ) {
+          throw new Error("Unexpected session/elicitation response content.");
         }
 
         return { stopReason: "end_turn" };

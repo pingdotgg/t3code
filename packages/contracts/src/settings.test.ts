@@ -99,6 +99,27 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+describe("ServerSettings Devin provider settings", () => {
+  it("decodes Devin defaults and trims patch paths", () => {
+    const decoded = decodeServerSettings({});
+    expect(decoded.providers.devin.enabled).toBe(false);
+    expect(decoded.providers.devin.binaryPath).toBe("devin");
+    expect(decoded.providers.devin.configPath).toBe("");
+
+    const patch = decodeServerSettingsPatch({
+      providers: {
+        devin: {
+          binaryPath: "  /usr/local/bin/devin  ",
+          configPath: "  .devin/config.json  ",
+        },
+      },
+    });
+
+    expect(patch.providers?.devin?.binaryPath).toBe("/usr/local/bin/devin");
+    expect(patch.providers?.devin?.configPath).toBe(".devin/config.json");
+  });
+});
+
 describe("ServerSettingsPatch.providerInstances", () => {
   it("treats providerInstances as an optional whole-map replacement", () => {
     const patch = decodeServerSettingsPatch({});

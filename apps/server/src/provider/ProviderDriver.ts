@@ -25,6 +25,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  ServerProviderModel,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -68,9 +69,18 @@ export interface ProviderInstance {
   readonly displayName: string | undefined;
   readonly accentColor?: string | undefined;
   readonly enabled: boolean;
+  readonly modelMergePolicy?: ProviderModelMergePolicy | undefined;
   readonly snapshot: ServerProviderShape;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+}
+
+export interface ProviderModelMergePolicy {
+  readonly shouldCarryPreviousModel?: (input: {
+    readonly previousModel: ServerProviderModel;
+    readonly nextModels: ReadonlyArray<ServerProviderModel>;
+    readonly nextModelSlugs: ReadonlySet<string>;
+  }) => boolean;
 }
 
 export interface ProviderContinuationIdentity {
