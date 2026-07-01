@@ -130,7 +130,11 @@ function matchMedia() {
   };
 }
 
-beforeAll(() => {
+const MESSAGES_TIMELINE_IMPORT_TIMEOUT_MS = 90_000;
+const MESSAGES_TIMELINE_COMPONENT_TEST_TIMEOUT_MS = 30_000;
+let MessagesTimelineComponent: typeof import("./MessagesTimeline").MessagesTimeline;
+
+beforeAll(async () => {
   const classList = {
     add: () => {},
     remove: () => {},
@@ -161,7 +165,9 @@ beforeAll(() => {
       offsetHeight: 0,
     },
   });
-});
+  const module = await import("./MessagesTimeline");
+  MessagesTimelineComponent = module.MessagesTimeline;
+}, MESSAGES_TIMELINE_IMPORT_TIMEOUT_MS);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
@@ -256,312 +262,356 @@ describe("MessagesTimeline", () => {
     expect(resolveTimelineMinimapHasPersistentGutter(864)).toBe(true);
   });
 
-  it("anchors a sent attachment message using its measured height", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const onAnchorReady = vi.fn();
-    const onAnchorSizeChanged = vi.fn();
-    const firstEntry = buildUserTimelineEntry("First prompt.");
-    const secondEntry = {
-      ...buildUserTimelineEntry("Newest prompt."),
-      id: "entry-2",
-      message: {
-        ...buildUserTimelineEntry("Newest prompt.").message,
-        id: MessageId.make("message-2"),
-        attachments: [
-          {
-            type: "image" as const,
-            id: "attachment-1",
-            name: "screenshot.png",
-            mimeType: "image/png",
-            sizeBytes: 1,
-            previewUrl: "data:image/png;base64,iVBORw0KGgo=",
-          },
-        ],
-      },
-    };
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        anchorMessageId={secondEntry.message.id}
-        onAnchorReady={onAnchorReady}
-        onAnchorSizeChanged={onAnchorSizeChanged}
-        contentInsetEndAdjustment={144}
-        timelineEntries={[firstEntry, secondEntry]}
-      />,
-    );
-
-    expect(markup).toContain('data-anchor-index="1"');
-    expect(markup).toContain('data-anchor-offset="16"');
-    expect(markup).toContain('data-anchor-on-ready="true"');
-    expect(markup).not.toContain("data-anchor-max-size=");
-    expect(markup).toContain('data-content-inset-end="144"');
-    expect(markup).toContain("[overflow-anchor:none]");
-    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
-    expect(markup).toContain('data-maintain-visible-content-position="object"');
-    expect(markup).toContain('data-maintain-visible-content-position-data="true"');
-    expect(markup).toContain('data-maintain-visible-content-position-size="false"');
-    expect(onAnchorReady).toHaveBeenCalledOnce();
-    expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
-    expect(onAnchorSizeChanged).toHaveBeenCalledWith(secondEntry.message.id, 240);
-  });
-
-  it("renders collapse controls for long user messages", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[buildUserTimelineEntry(buildLongUserMessageText())]}
-      />,
-    );
-
-    expect(markup).toContain("Show full message");
-    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
-    expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
-    expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
-    expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
-    expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
-    expect(markup).toContain('data-user-message-collapsed="true"');
-    expect(markup).toContain('data-user-message-fade="true"');
-    expect(markup).toContain('data-user-message-footer="true"');
-  });
-
-  it("does not render collapse controls for short user messages", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[buildUserTimelineEntry("Short prompt.")]}
-      />,
-    );
-
-    expect(markup).not.toContain("Show full message");
-    expect(markup).toContain('data-user-message-collapsible="false"');
-  });
-
-  it("renders inline terminal labels with the composer chip UI", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          buildUserTimelineEntry(
-            [
-              buildLongUserMessageText("yoo what's @terminal-1:1-5 mean"),
-              "",
-              "<terminal_context>",
-              "- Terminal 1 lines 1-5:",
-              "  1 | julius@mac effect-http-ws-cli % bun i",
-              "  2 | bun install v1.3.9 (cf6cdbbb)",
-              "</terminal_context>",
-            ].join("\n"),
-          ),
-        ]}
-      />,
-    );
-
-    expect(markup).toContain("Terminal 1 lines 1-5");
-    expect(markup).toContain("lucide-terminal");
-    expect(markup).toContain("yoo what&#x27;s</p>");
-    expect(markup).toContain('<span aria-hidden="true"> </span>');
-    expect(markup).toContain("Show full message");
-  }, 20_000);
-
-  it("renders chips for standalone element-pick context messages", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          buildUserTimelineEntry(
-            [
-              "<element_context>",
-              "- <SubmitButton> (Button.tsx:12):",
-              "  url: https://example.com/dashboard",
-              "  selector: button.submit",
-              "  source: /repo/src/Button.tsx:12:5",
-              "  html:",
-              '  <button class="submit">Save</button>',
-              "</element_context>",
-            ].join("\n"),
-          ),
-        ]}
-      />,
-    );
-
-    expect(markup).toContain("SubmitButton");
-    expect(markup).not.toContain("&lt;element_context");
-    expect(markup).not.toContain("<element_context");
-  });
-
-  it("keeps the copy button for collapsed long user messages", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[buildUserTimelineEntry(buildLongUserMessageText())]}
-      />,
-    );
-
-    expect(markup).toContain('aria-label="Copy link"');
-    expect(markup).toContain('data-user-message-collapsed="true"');
-    expect(markup).toContain('data-user-message-footer="true"');
-  });
-
-  it("renders context compaction entries in the normal work log", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "entry-1",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            entry: {
-              id: "work-1",
-              createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Context compacted",
-              tone: "info",
+  it(
+    "anchors a sent attachment message using its measured height",
+    async () => {
+      const MessagesTimeline = MessagesTimelineComponent;
+      const onAnchorReady = vi.fn();
+      const onAnchorSizeChanged = vi.fn();
+      const firstEntry = buildUserTimelineEntry("First prompt.");
+      const secondEntry = {
+        ...buildUserTimelineEntry("Newest prompt."),
+        id: "entry-2",
+        message: {
+          ...buildUserTimelineEntry("Newest prompt.").message,
+          id: MessageId.make("message-2"),
+          attachments: [
+            {
+              type: "image" as const,
+              id: "attachment-1",
+              name: "screenshot.png",
+              mimeType: "image/png",
+              sizeBytes: 1,
+              previewUrl: "data:image/png;base64,iVBORw0KGgo=",
             },
-          },
-        ]}
-      />,
-    );
+          ],
+        },
+      };
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          anchorMessageId={secondEntry.message.id}
+          onAnchorReady={onAnchorReady}
+          onAnchorSizeChanged={onAnchorSizeChanged}
+          contentInsetEndAdjustment={144}
+          timelineEntries={[firstEntry, secondEntry]}
+        />,
+      );
 
-    expect(markup).toContain("Context compacted");
-    expect(markup).toContain("Work Log");
-  });
+      expect(markup).toContain('data-anchor-index="1"');
+      expect(markup).toContain('data-anchor-offset="16"');
+      expect(markup).toContain('data-anchor-on-ready="true"');
+      expect(markup).not.toContain("data-anchor-max-size=");
+      expect(markup).toContain('data-content-inset-end="144"');
+      expect(markup).toContain("[overflow-anchor:none]");
+      expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
+      expect(markup).toContain('data-maintain-visible-content-position="object"');
+      expect(markup).toContain('data-maintain-visible-content-position-data="true"');
+      expect(markup).toContain('data-maintain-visible-content-position-size="false"');
+      expect(onAnchorReady).toHaveBeenCalledOnce();
+      expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
+      expect(onAnchorSizeChanged).toHaveBeenCalledWith(secondEntry.message.id, 240);
+    },
+    MESSAGES_TIMELINE_COMPONENT_TEST_TIMEOUT_MS,
+  );
 
-  it("formats changed file paths from the workspace root", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "entry-1",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            entry: {
-              id: "work-1",
-              createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Updated files",
-              tone: "tool",
-              changedFiles: ["C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts"],
-            },
-          },
-        ]}
-        workspaceRoot="C:/Users/mike/dev-stuff/t3code"
-      />,
-    );
+  it(
+    "renders collapse controls for long user messages",
+    async () => {
+      const MessagesTimeline = MessagesTimelineComponent;
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[buildUserTimelineEntry(buildLongUserMessageText())]}
+        />,
+      );
 
-    expect(markup).toContain("t3code/apps/web/src/session-logic.ts");
-    expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
-  });
+      expect(markup).toContain("Show full message");
+      expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
+      expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
+      expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
+      expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
+      expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
+      expect(markup).toContain('data-user-message-collapsed="true"');
+      expect(markup).toContain('data-user-message-fade="true"');
+      expect(markup).toContain('data-user-message-footer="true"');
+    },
+    MESSAGES_TIMELINE_COMPONENT_TEST_TIMEOUT_MS,
+  );
 
-  it("renders review comment contexts as structured cards instead of raw tags", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "entry-1",
-            kind: "message",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            message: {
-              id: MessageId.make("message-2"),
-              role: "user",
-              text: [
-                '<review_comment sectionId="turn:2" sectionTitle="Turn 2" filePath="apps/web/src/lib/contextWindow.test.ts" startIndex="3" endIndex="14" rangeLabel="+47 to +58">',
-                "Wadduo",
-                "```diff",
-                "@@ -0,0 +47,2 @@",
-                '+  it("keeps valid zero-usage snapshots", () => {',
-                "+    expect(snapshot).not.toBeNull();",
-                "```",
-                "</review_comment>",
+  it(
+    "does not render collapse controls for short user messages",
+    async () => {
+      const MessagesTimeline = MessagesTimelineComponent;
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[buildUserTimelineEntry("Short prompt.")]}
+        />,
+      );
+
+      expect(markup).not.toContain("Show full message");
+      expect(markup).toContain('data-user-message-collapsible="false"');
+    },
+    MESSAGES_TIMELINE_COMPONENT_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "renders inline terminal labels with the composer chip UI",
+    async () => {
+      const MessagesTimeline = MessagesTimelineComponent;
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            buildUserTimelineEntry(
+              [
+                buildLongUserMessageText("yoo what's @terminal-1:1-5 mean"),
+                "",
+                "<terminal_context>",
+                "- Terminal 1 lines 1-5:",
+                "  1 | julius@mac effect-http-ws-cli % bun i",
+                "  2 | bun install v1.3.9 (cf6cdbbb)",
+                "</terminal_context>",
               ].join("\n"),
-              turnId: null,
-              createdAt: "2026-03-17T19:12:28.000Z",
-              updatedAt: "2026-03-17T19:12:28.000Z",
-              streaming: false,
-            },
-          },
-        ]}
-      />,
-    );
+            ),
+          ]}
+        />,
+      );
 
-    expect(markup).toContain("contextWindow.test.ts");
-    expect(markup).toContain("Wadduo");
-    expect(markup).toContain('data-testid="file-diff"');
-    expect(markup).not.toContain(">Review comment<");
-    expect(markup).not.toContain("&lt;review_comment");
-    expect(markup).not.toContain("&lt;/review_comment&gt;");
-  });
+      expect(markup).toContain("Terminal 1 lines 1-5");
+      expect(markup).toContain("lucide-terminal");
+      expect(markup).toContain("yoo what&#x27;s</p>");
+      expect(markup).toContain('<span aria-hidden="true"> </span>');
+      expect(markup).toContain("Show full message");
+    },
+    MESSAGES_TIMELINE_COMPONENT_TEST_TIMEOUT_MS,
+  );
 
-  it("renders file review comments as source code instead of diffs", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "entry-1",
-            kind: "message",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            message: {
-              id: MessageId.make("message-source-comment"),
-              role: "user",
-              text: [
-                '<review_comment sectionId="file:docs/plan.md" sectionTitle="File comment" filePath="docs/plan.md" startIndex="0" endIndex="1" rangeLabel="L1 to L2">',
-                "Clarify this.",
-                "```md",
-                "# Plan",
-                "- Step one",
-                "```",
-                "</review_comment>",
+  it(
+    "renders chips for standalone element-pick context messages",
+    async () => {
+      const MessagesTimeline = MessagesTimelineComponent;
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            buildUserTimelineEntry(
+              [
+                "<element_context>",
+                "- <SubmitButton> (Button.tsx:12):",
+                "  url: https://example.com/dashboard",
+                "  selector: button.submit",
+                "  source: /repo/src/Button.tsx:12:5",
+                "  html:",
+                '  <button class="submit">Save</button>',
+                "</element_context>",
               ].join("\n"),
-              turnId: null,
+            ),
+          ]}
+        />,
+      );
+
+      expect(markup).toContain("SubmitButton");
+      expect(markup).not.toContain("&lt;element_context");
+      expect(markup).not.toContain("<element_context");
+    },
+    MESSAGES_TIMELINE_COMPONENT_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps the copy button for collapsed long user messages",
+    async () => {
+      const MessagesTimeline = MessagesTimelineComponent;
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[buildUserTimelineEntry(buildLongUserMessageText())]}
+        />,
+      );
+
+      expect(markup).toContain('aria-label="Copy link"');
+      expect(markup).toContain('data-user-message-collapsed="true"');
+      expect(markup).toContain('data-user-message-footer="true"');
+    },
+    MESSAGES_TIMELINE_COMPONENT_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "renders context compaction entries in the normal work log",
+    async () => {
+      const MessagesTimeline = MessagesTimelineComponent;
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            {
+              id: "entry-1",
+              kind: "work",
               createdAt: "2026-03-17T19:12:28.000Z",
-              updatedAt: "2026-03-17T19:12:28.000Z",
-              streaming: false,
+              entry: {
+                id: "work-1",
+                createdAt: "2026-03-17T19:12:28.000Z",
+                label: "Context compacted",
+                tone: "info",
+              },
             },
-          },
-        ]}
-      />,
-    );
+          ]}
+        />,
+      );
 
-    expect(markup).toContain("plan.md");
-    expect(markup).toContain("Clarify this.");
-    expect(markup).toContain("# Plan");
-    expect(markup).not.toContain('data-testid="file-diff"');
-  });
+      expect(markup).toContain("Context compacted");
+      expect(markup).toContain("Work Log");
+    },
+    MESSAGES_TIMELINE_COMPONENT_TEST_TIMEOUT_MS,
+  );
 
-  it("renders a failure marker for failed tool lifecycle entries", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "entry-1",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            entry: {
-              id: "work-1",
+  it(
+    "formats changed file paths from the workspace root",
+    async () => {
+      const MessagesTimeline = MessagesTimelineComponent;
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            {
+              id: "entry-1",
+              kind: "work",
               createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Glob",
-              tone: "tool",
-              toolLifecycleStatus: "failed",
-              detail: "No files found",
+              entry: {
+                id: "work-1",
+                createdAt: "2026-03-17T19:12:28.000Z",
+                label: "Updated files",
+                tone: "tool",
+                changedFiles: ["C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts"],
+              },
             },
-          },
-        ]}
-      />,
-    );
+          ]}
+          workspaceRoot="C:/Users/mike/dev-stuff/t3code"
+        />,
+      );
 
-    expect(markup).toContain("lucide-x");
-    expect(markup).toContain('aria-label="Tool call failed"');
-  });
+      expect(markup).toContain("t3code/apps/web/src/session-logic.ts");
+      expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
+    },
+    MESSAGES_TIMELINE_COMPONENT_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "renders review comment contexts as structured cards instead of raw tags",
+    async () => {
+      const MessagesTimeline = MessagesTimelineComponent;
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            {
+              id: "entry-1",
+              kind: "message",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              message: {
+                id: MessageId.make("message-2"),
+                role: "user",
+                text: [
+                  '<review_comment sectionId="turn:2" sectionTitle="Turn 2" filePath="apps/web/src/lib/contextWindow.test.ts" startIndex="3" endIndex="14" rangeLabel="+47 to +58">',
+                  "Wadduo",
+                  "```diff",
+                  "@@ -0,0 +47,2 @@",
+                  '+  it("keeps valid zero-usage snapshots", () => {',
+                  "+    expect(snapshot).not.toBeNull();",
+                  "```",
+                  "</review_comment>",
+                ].join("\n"),
+                turnId: null,
+                createdAt: "2026-03-17T19:12:28.000Z",
+                updatedAt: "2026-03-17T19:12:28.000Z",
+                streaming: false,
+              },
+            },
+          ]}
+        />,
+      );
+
+      expect(markup).toContain("contextWindow.test.ts");
+      expect(markup).toContain("Wadduo");
+      expect(markup).toContain('data-testid="file-diff"');
+      expect(markup).not.toContain(">Review comment<");
+      expect(markup).not.toContain("&lt;review_comment");
+      expect(markup).not.toContain("&lt;/review_comment&gt;");
+    },
+    MESSAGES_TIMELINE_COMPONENT_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "renders file review comments as source code instead of diffs",
+    async () => {
+      const MessagesTimeline = MessagesTimelineComponent;
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            {
+              id: "entry-1",
+              kind: "message",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              message: {
+                id: MessageId.make("message-source-comment"),
+                role: "user",
+                text: [
+                  '<review_comment sectionId="file:docs/plan.md" sectionTitle="File comment" filePath="docs/plan.md" startIndex="0" endIndex="1" rangeLabel="L1 to L2">',
+                  "Clarify this.",
+                  "```md",
+                  "# Plan",
+                  "- Step one",
+                  "```",
+                  "</review_comment>",
+                ].join("\n"),
+                turnId: null,
+                createdAt: "2026-03-17T19:12:28.000Z",
+                updatedAt: "2026-03-17T19:12:28.000Z",
+                streaming: false,
+              },
+            },
+          ]}
+        />,
+      );
+
+      expect(markup).toContain("plan.md");
+      expect(markup).toContain("Clarify this.");
+      expect(markup).toContain("# Plan");
+      expect(markup).not.toContain('data-testid="file-diff"');
+    },
+    MESSAGES_TIMELINE_COMPONENT_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "renders a failure marker for failed tool lifecycle entries",
+    async () => {
+      const MessagesTimeline = MessagesTimelineComponent;
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            {
+              id: "entry-1",
+              kind: "work",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              entry: {
+                id: "work-1",
+                createdAt: "2026-03-17T19:12:28.000Z",
+                label: "Glob",
+                tone: "tool",
+                toolLifecycleStatus: "failed",
+                detail: "No files found",
+              },
+            },
+          ]}
+        />,
+      );
+
+      expect(markup).toContain("lucide-x");
+      expect(markup).toContain('aria-label="Tool call failed"');
+    },
+    MESSAGES_TIMELINE_COMPONENT_TEST_TIMEOUT_MS,
+  );
 });

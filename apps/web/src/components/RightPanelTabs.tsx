@@ -45,6 +45,7 @@ interface RightPanelTabsProps {
   onAddDiff: () => void;
   onAddFiles: () => void;
   browserAvailable: boolean;
+  terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   children: ReactNode;
@@ -52,6 +53,7 @@ interface RightPanelTabsProps {
 
 const SURFACE_DISABLED_REASONS = {
   browser: "Browser previews are only available in the T3 Code desktop app.",
+  terminal: "Terminals are only available when a project host is connected.",
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
 } as const;
@@ -92,6 +94,7 @@ function RightPanelEmptyState(props: {
   onAddDiff: () => void;
   onAddFiles: () => void;
   browserAvailable: boolean;
+  terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
 }) {
@@ -108,8 +111,8 @@ function RightPanelEmptyState(props: {
       label: "Terminal",
       description: "Start a shell in this workspace.",
       icon: TerminalSquare,
-      available: true,
-      disabledReason: null,
+      available: props.terminalAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.terminal,
       onClick: props.onAddTerminal,
     },
     {
@@ -450,7 +453,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     <Globe2 />
                     Browser
                   </SurfaceMenuItem>
-                  <SurfaceMenuItem available onClick={props.onAddTerminal}>
+                  <SurfaceMenuItem
+                    available={props.terminalAvailable}
+                    disabledReason={SURFACE_DISABLED_REASONS.terminal}
+                    onClick={props.onAddTerminal}
+                  >
                     <TerminalSquare />
                     Terminal
                   </SurfaceMenuItem>
@@ -485,6 +492,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
             browserAvailable={props.browserAvailable}
+            terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
           />

@@ -102,6 +102,7 @@ interface ProjectScriptsControlProps {
   scripts: ReadonlyArray<ProjectScript>;
   keybindings: ResolvedKeybindingsConfig;
   preferredScriptId?: string | null;
+  runAvailable?: boolean;
   onRunScript: (script: ProjectScript) => void;
   onAddScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateScript: (
@@ -115,6 +116,7 @@ export default function ProjectScriptsControl({
   scripts,
   keybindings,
   preferredScriptId = null,
+  runAvailable = true,
   onRunScript,
   onAddScript,
   onUpdateScript,
@@ -258,6 +260,7 @@ export default function ProjectScriptsControl({
                   size="xs"
                   variant="outline"
                   aria-label={`Run ${primaryScript.name}`}
+                  disabled={!runAvailable}
                   onClick={() => onRunScript(primaryScript)}
                 />
               }
@@ -267,7 +270,11 @@ export default function ProjectScriptsControl({
                 {primaryScript.name}
               </span>
             </TooltipTrigger>
-            <TooltipPopup side="top">Run {primaryScript.name}</TooltipPopup>
+            <TooltipPopup side="top">
+              {runAvailable
+                ? `Run ${primaryScript.name}`
+                : "Connect the project host to run actions"}
+            </TooltipPopup>
           </Tooltip>
           <GroupSeparator className="hidden @3xl/header-actions:block" />
           <Menu highlightItemOnHover={false}>
@@ -285,19 +292,32 @@ export default function ProjectScriptsControl({
                 return (
                   <MenuItem
                     key={script.id}
-                    className={`group ${dropdownItemClassName}`}
-                    onClick={() => onRunScript(script)}
+                    aria-disabled={!runAvailable}
+                    className={`group ${dropdownItemClassName} ${
+                      runAvailable ? "" : "text-muted-foreground"
+                    }`}
+                    onClick={(event) => {
+                      if (!runAvailable) {
+                        event.preventDefault();
+                        return;
+                      }
+                      onRunScript(script);
+                    }}
                   >
                     <ScriptIcon icon={script.icon} className="size-4" />
                     <span className="truncate">
                       {script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name}
                     </span>
                     <span className="relative ms-auto flex h-6 min-w-6 items-center justify-end">
-                      {shortcutLabel && (
+                      {!runAvailable ? (
+                        <span className="ms-2 text-muted-foreground text-xs transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0">
+                          Unavailable
+                        </span>
+                      ) : shortcutLabel ? (
                         <MenuShortcut className="ms-0 transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0">
                           {shortcutLabel}
                         </MenuShortcut>
-                      )}
+                      ) : null}
                       <Button
                         type="button"
                         variant="ghost"

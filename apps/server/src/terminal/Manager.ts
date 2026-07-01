@@ -84,6 +84,16 @@ const DEFAULT_OPEN_ROWS = 30;
 const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const MAX_TERMINAL_LABEL_LENGTH = 128;
+const INTERACTIVE_SHELL_COMMANDS = new Set([
+  "bash",
+  "csh",
+  "fish",
+  "powershell",
+  "pwsh",
+  "sh",
+  "tcsh",
+  "zsh",
+]);
 
 class TerminalSubprocessCheckError extends Schema.TaggedErrorClass<TerminalSubprocessCheckError>()(
   "TerminalSubprocessCheckError",
@@ -311,6 +321,78 @@ function normalizeChildCommandName(raw: string, platform: NodeJS.Platform): stri
   const withoutExe =
     platform === "win32" && base.toLowerCase().endsWith(".exe") ? base.slice(0, -4) : base;
   return withoutExe.length > 0 ? withoutExe : null;
+}
+
+function isInteractiveShellCommand(command: string | null): boolean {
+  return (
+    command !== null &&
+    INTERACTIVE_SHELL_COMMANDS.has(command.trim().toLowerCase().replace(/^-+/, ""))
+  );
+}
+
+interface ProcessTableEntry {
+  readonly pid: number;
+  readonly ppid: number;
+  readonly command: string | null;
+}
+
+function inspectPosixProcessTree(input: {
+  readonly terminalPid: number;
+  readonly childPid: number;
+  readonly childCommand: string | null;
+  readonly platform: NodeJS.Platform;
+  readonly processTable: ReadonlyArray<ProcessTableEntry>;
+}): TerminalSubprocessInspectResult {
+  const childrenByParent = new Map<number, number[]>();
+  const commandByPid = new Map<number, string>();
+  for (const entry of input.processTable) {
+    const children = childrenByParent.get(entry.ppid) ?? [];
+    children.push(entry.pid);
+    childrenByParent.set(entry.ppid, children);
+    if (entry.command !== null && entry.command.trim().length > 0) {
+      commandByPid.set(entry.pid, entry.command);
+    }
+  }
+
+  const processIds = new Set<number>([input.terminalPid]);
+  const pending = [input.terminalPid];
+  while (pending.length > 0) {
+    const parentPid = pending.pop();
+    if (parentPid === undefined) continue;
+    for (const child of childrenByParent.get(parentPid) ?? []) {
+      if (processIds.has(child)) continue;
+      processIds.add(child);
+      pending.push(child);
+    }
+  }
+
+  let normalized = input.childCommand;
+  if (isInteractiveShellCommand(normalized)) {
+    normalized = null;
+    const descendantPending = [...(childrenByParent.get(input.childPid) ?? [])];
+    while (descendantPending.length > 0) {
+      const pid = descendantPending.shift();
+      if (pid === undefined) continue;
+      const descendantCommand = normalizeChildCommandName(
+        commandByPid.get(pid) ?? "",
+        input.platform,
+      );
+      if (descendantCommand !== null && !isInteractiveShellCommand(descendantCommand)) {
+        normalized = descendantCommand;
+        break;
+      }
+      descendantPending.push(...(childrenByParent.get(pid) ?? []));
+    }
+    if (normalized === null) {
+      return { hasRunningSubprocess: false, childCommand: null, processIds: [] };
+    }
+  }
+
+  return {
+    hasRunningSubprocess: true,
+    childCommand: normalized ? truncateTerminalWireLabel(normalized) : null,
+    processIds: [...processIds],
+  };
 }
 
 function terminalWireLabel(session: TerminalSessionState): string {
@@ -726,7 +808,7 @@ const posixInspectSubprocess = Effect.fn("terminal.posixInspectSubprocess")(func
   const runPs = processRunner
     .run({
       command: "ps",
-      args: ["-eo", "pid=,ppid="],
+      args: ["-eo", "pid=,ppid=,comm="],
       timeout: "1 second",
       maxOutputBytes: 262_144,
       outputMode: "truncate",
@@ -807,36 +889,34 @@ const posixInspectSubprocess = Effect.fn("terminal.posixInspectSubprocess")(func
   }
 
   const normalized = rawComm ? normalizeChildCommandName(rawComm, platform) : null;
-  const processIds = new Set<number>([terminalPid]);
   const psResult = yield* Effect.exit(runPs);
   if (psResult._tag === "Success" && psResult.value.code === 0) {
-    const childrenByParent = new Map<number, number[]>();
+    const processTable: ProcessTableEntry[] = [];
     for (const line of psResult.value.stdout.split(/\r?\n/g)) {
-      const [pidRaw, ppidRaw] = line.trim().split(/\s+/g);
+      const [pidRaw, ppidRaw, ...commandParts] = line.trim().split(/\s+/g);
       const pid = Number(pidRaw);
       const ppid = Number(ppidRaw);
       if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
-      const children = childrenByParent.get(ppid) ?? [];
-      children.push(pid);
-      childrenByParent.set(ppid, children);
+      const command = commandParts.join(" ").trim();
+      processTable.push({
+        pid,
+        ppid,
+        command: command.length > 0 ? command : null,
+      });
     }
-    const pending = [terminalPid];
-    while (pending.length > 0) {
-      const parentPid = pending.pop();
-      if (parentPid === undefined) continue;
-      for (const child of childrenByParent.get(parentPid) ?? []) {
-        if (processIds.has(child)) continue;
-        processIds.add(child);
-        pending.push(child);
-      }
-    }
-  } else {
-    processIds.add(childPid);
+    return inspectPosixProcessTree({
+      terminalPid,
+      childPid,
+      childCommand: normalized,
+      platform,
+      processTable,
+    });
   }
+
   return {
     hasRunningSubprocess: true,
     childCommand: normalized ? truncateTerminalWireLabel(normalized) : null,
-    processIds: [...processIds],
+    processIds: [terminalPid, childPid],
   };
 });
 
@@ -2621,3 +2701,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 });
 
 export const layer = Layer.effect(TerminalManager, make()).pipe(Layer.provide(ProcessRunner.layer));
+
+export const __testing = {
+  inspectPosixProcessTree,
+  posixInspectSubprocess,
+};
