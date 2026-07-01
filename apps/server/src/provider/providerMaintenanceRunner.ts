@@ -73,6 +73,7 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
     readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
     readonly command: string;
     readonly args: ReadonlyArray<string>;
+    readonly env?: Readonly<Record<string, string>>;
   }) {
     const collectCommandResult = Effect.fn("ProviderMaintenanceRunner.collectCommandResult")(
       function* () {
@@ -83,7 +84,12 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
         // shell. On Linux/macOS (incl. the WSL backend) this is a no-op.
         const resolved = yield* resolveSpawnCommand(input.command, input.args);
         const child = yield* input.spawner
-          .spawn(ChildProcess.make(resolved.command, resolved.args, { shell: resolved.shell }))
+          .spawn(
+            ChildProcess.make(resolved.command, resolved.args, {
+              shell: resolved.shell,
+              ...(input.env ? { env: input.env, extendEnv: true } : {}),
+            }),
+          )
           .pipe(
             Effect.mapError(
               (cause) =>
@@ -201,11 +207,16 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
-  const runMaintenanceCommand = (command: string, args: ReadonlyArray<string>) =>
+  const runMaintenanceCommand = (
+    command: string,
+    args: ReadonlyArray<string>,
+    env?: Readonly<Record<string, string>>,
+  ) =>
     runProviderMaintenanceCommandWithSpawner({
       spawner,
       command,
       args,
+      ...(env ? { env } : {}),
     });
   const commandCoordinator = yield* makeProviderMaintenanceCommandCoordinator({
     makeAlreadyRunningError: () =>
@@ -339,7 +350,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               }),
             );
 
-            const result = yield* runMaintenanceCommand(update.executable, update.args);
+            const result = yield* runMaintenanceCommand(update.executable, update.args, update.env);
             const finishedAt = yield* nowIso;
             if (result.timedOut || result.exitCode !== 0) {
               return yield* finish(

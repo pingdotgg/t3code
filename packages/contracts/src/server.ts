@@ -128,6 +128,7 @@ export const ServerProviderVersionAdvisory = Schema.Struct({
   currentVersion: Schema.NullOr(TrimmedNonEmptyString),
   latestVersion: Schema.NullOr(TrimmedNonEmptyString),
   updateCommand: Schema.NullOr(TrimmedNonEmptyString),
+  updateActionKey: Schema.optionalKey(TrimmedNonEmptyString),
   canUpdate: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   checkedAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(TrimmedNonEmptyString),

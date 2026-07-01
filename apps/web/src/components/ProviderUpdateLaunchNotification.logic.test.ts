@@ -54,6 +54,7 @@ function provider(input: {
   readonly latestVersion?: string | null;
   readonly canUpdate?: boolean;
   readonly updateCommand?: string | null;
+  readonly updateActionKey?: string;
   readonly updateState?: ServerProvider["updateState"];
   readonly advisoryStatus?: NonNullable<ServerProvider["versionAdvisory"]>["status"];
 }): ServerProvider {
@@ -74,6 +75,7 @@ function provider(input: {
       currentVersion: input.version ?? "1.0.0",
       latestVersion: "latestVersion" in input ? input.latestVersion : "1.1.0",
       updateCommand: "updateCommand" in input ? input.updateCommand : "npm install -g provider",
+      ...("updateActionKey" in input ? { updateActionKey: input.updateActionKey } : {}),
       canUpdate: input.canUpdate ?? true,
       checkedAt,
       message: "Update available.",
@@ -141,6 +143,31 @@ describe("provider update launch notification logic", () => {
           latestVersion: "2.1.123",
           canUpdate: true,
           updateCommand: "bun add -g @anthropic-ai/claude-code@latest",
+        }),
+      ]),
+    ).toBe(false);
+  });
+
+  it("disables one-click updates when provider instances share a command but run different actions", () => {
+    const candidate = updateCandidate({
+      driver: driver("codex"),
+      instanceId: instanceId("codex_personal"),
+      latestVersion: "0.143.0",
+      updateCommand: "codex update",
+      updateActionKey: "codex-native /home/me/.codex/packages/standalone/current/bin/codex update",
+    });
+
+    expect(
+      canOneClickUpdateProviderCandidate(candidate, [
+        candidate,
+        provider({
+          driver: driver("codex"),
+          instanceId: instanceId("codex_work"),
+          latestVersion: "0.143.0",
+          canUpdate: true,
+          updateCommand: "codex update",
+          updateActionKey:
+            "codex-native /home/me/work-codex/packages/standalone/current/bin/codex update",
         }),
       ]),
     ).toBe(false);

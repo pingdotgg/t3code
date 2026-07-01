@@ -165,7 +165,7 @@ export function hasOneClickUpdateProviderCandidate(
     return false;
   }
 
-  const updateCommands = new Set<string>();
+  const updateActionKeys = new Set<string>();
   for (const provider of driverProviders) {
     if (!isProviderUpdateCandidate(provider)) {
       continue;
@@ -174,10 +174,10 @@ export function hasOneClickUpdateProviderCandidate(
     if (!advisory || advisory.canUpdate !== true || advisory.updateCommand === null) {
       return false;
     }
-    updateCommands.add(advisory.updateCommand);
+    updateActionKeys.add(advisory.updateActionKey ?? advisory.updateCommand);
   }
 
-  return updateCommands.size === 1;
+  return updateActionKeys.size === 1;
 }
 
 export function canOneClickUpdateProviderCandidate(

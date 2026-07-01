@@ -666,6 +666,72 @@ describe("providerMaintenanceRunner", () => {
       ),
   );
 
+  it.effect("spawns native updates with the action's derived environment", () => {
+    const captured: Array<{
+      readonly command: string;
+      readonly args: ReadonlyArray<string>;
+      readonly env: Record<string, string | undefined> | undefined;
+      readonly extendEnv: boolean | undefined;
+    }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const runner = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider: CODEX_DRIVER,
+              packageName: "@openai/codex",
+              updateExecutable: "/home/u/codex-home/packages/standalone/current/codex",
+              updateArgs: ["update"],
+              updateLockKey: "codex-native",
+              updateEnv: { CODEX_HOME: "/home/u/codex-home" },
+            }),
+          ),
+      });
+
+      const result = yield* runner.updateProvider(CODEX_DRIVER);
+
+      assert.strictEqual(captured.length, 1);
+      const call = captured[0];
+      assert.ok(call, "expected the spawner to be invoked once");
+      assert.strictEqual(call.command, "/home/u/codex-home/packages/standalone/current/codex");
+      assert.deepStrictEqual(call.args, ["update"]);
+      // The derived env extends the server env rather than replacing it, so
+      // PATH and friends stay intact for the updater.
+      assert.deepStrictEqual(call.env, { CODEX_HOME: "/home/u/codex-home" });
+      assert.strictEqual(call.extendEnv, true);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              const childProcess = command as unknown as {
+                readonly command: string;
+                readonly args: ReadonlyArray<string>;
+                readonly options: {
+                  readonly env?: Record<string, string | undefined> | undefined;
+                  readonly extendEnv?: boolean | undefined;
+                };
+              };
+              captured.push({
+                command: childProcess.command,
+                args: childProcess.args,
+                env: childProcess.options.env,
+                extendEnv: childProcess.options.extendEnv,
+              });
+              return Effect.succeed(mockHandle({ stdout: "updated" }));
+            }),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect("resolves npm to a .cmd shim and routes through the shell on win32", () => {
     const captured: Array<{
       readonly command: string;

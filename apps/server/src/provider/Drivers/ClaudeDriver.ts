@@ -74,7 +74,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
   npmPackageName: "@anthropic-ai/claude-code",
   homebrewFormula: "claude-code",
   nativeUpdate: {
-    executable: "claude",
+    defaultExecutable: "claude",
     args: ["update"],
     lockKey: "claude-native",
     isCommandPath: isClaudeNativeCommandPath,
