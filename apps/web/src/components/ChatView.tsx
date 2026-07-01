@@ -101,7 +101,6 @@ import {
 } from "../proposedPlan";
 import {
   DEFAULT_INTERACTION_MODE,
-  DEFAULT_RUNTIME_MODE,
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
@@ -153,7 +152,10 @@ import { getProviderModelCapabilities, resolveSelectableProvider } from "../prov
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
-import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import {
+  buildNewDraftExecutionDefaults,
+  resolveNewDraftStartFromOrigin,
+} from "../lib/chatThreadActions";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -1242,7 +1244,8 @@ function ChatViewContent(props: ChatViewProps) {
   const threadError = isServerThread
     ? (localServerError ?? serverThread?.session?.lastError ?? null)
     : localDraftError;
-  const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const runtimeMode =
+    composerRuntimeMode ?? activeThread?.runtimeMode ?? settings.defaultRuntimeMode;
   const interactionMode =
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
@@ -1564,8 +1567,7 @@ function ChatViewContent(props: ChatViewProps) {
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
         threadId: nextThreadId,
         createdAt: new Date().toISOString(),
-        runtimeMode: DEFAULT_RUNTIME_MODE,
-        interactionMode: DEFAULT_INTERACTION_MODE,
+        ...buildNewDraftExecutionDefaults(settings.defaultRuntimeMode),
         ...input,
       });
       await navigate({
@@ -1585,6 +1587,7 @@ function ChatViewContent(props: ChatViewProps) {
       routeKind,
       setDraftThreadContext,
       setLogicalProjectDraftThreadId,
+      settings.defaultRuntimeMode,
     ],
   );
 

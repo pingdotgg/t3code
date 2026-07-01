@@ -2,8 +2,9 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
-  resolveThreadActionProjectRef,
+  buildNewDraftExecutionDefaults,
   resolveNewDraftStartFromOrigin,
+  resolveThreadActionProjectRef,
   startNewLocalThreadFromContext,
   startNewThreadFromContext,
   type ChatThreadActionContext,
@@ -24,6 +25,13 @@ function createContext(overrides: Partial<ChatThreadActionContext> = {}): ChatTh
 }
 
 describe("chatThreadActions", () => {
+  it("initializes new drafts with the configured default access mode", () => {
+    expect(buildNewDraftExecutionDefaults("approval-required")).toEqual({
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+    });
+  });
+
   it("only applies the start-from-origin default to new worktree drafts", () => {
     expect(
       resolveNewDraftStartFromOrigin({

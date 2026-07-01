@@ -1,5 +1,12 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
+import {
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  type EnvironmentId,
+  type ProjectId,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+  type ScopedProjectRef,
+} from "@t3tools/contracts";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 interface ThreadContextLike {
@@ -40,6 +47,16 @@ export function resolveNewDraftStartFromOrigin(input: {
   newWorktreesStartFromOrigin: boolean;
 }): boolean {
   return input.envMode === "worktree" && input.newWorktreesStartFromOrigin;
+}
+
+export function buildNewDraftExecutionDefaults(defaultRuntimeMode: RuntimeMode): {
+  runtimeMode: RuntimeMode;
+  interactionMode: ProviderInteractionMode;
+} {
+  return {
+    runtimeMode: defaultRuntimeMode,
+    interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+  };
 }
 
 export function resolveThreadActionProjectRef(

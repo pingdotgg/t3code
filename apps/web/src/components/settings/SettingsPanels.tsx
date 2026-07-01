@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
+  type RuntimeMode,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -109,6 +110,12 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const RUNTIME_MODE_LABELS: Record<RuntimeMode, string> = {
+  "approval-required": "Supervised",
+  "auto-accept-edits": "Auto-accept edits",
+  "full-access": "Full access",
+};
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
@@ -412,6 +419,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
         ? ["New worktrees start from origin"]
         : []),
+      ...(settings.defaultRuntimeMode !== DEFAULT_UNIFIED_SETTINGS.defaultRuntimeMode
+        ? ["Default access mode"]
+        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -429,6 +439,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
+      settings.defaultRuntimeMode,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
@@ -462,6 +473,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+      defaultRuntimeMode: DEFAULT_UNIFIED_SETTINGS.defaultRuntimeMode,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
@@ -796,6 +808,52 @@ export function GeneralSettingsPanel() {
             }
           />
         ) : null}
+
+        <SettingsRow
+          title="Default access"
+          description="Pick the permission mode used when newly created draft threads start."
+          resetAction={
+            settings.defaultRuntimeMode !== DEFAULT_UNIFIED_SETTINGS.defaultRuntimeMode ? (
+              <SettingResetButton
+                label="default access mode"
+                onClick={() =>
+                  updateSettings({
+                    defaultRuntimeMode: DEFAULT_UNIFIED_SETTINGS.defaultRuntimeMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.defaultRuntimeMode}
+              onValueChange={(value) => {
+                if (
+                  value === "approval-required" ||
+                  value === "auto-accept-edits" ||
+                  value === "full-access"
+                ) {
+                  updateSettings({ defaultRuntimeMode: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Default access mode">
+                <SelectValue>{RUNTIME_MODE_LABELS[settings.defaultRuntimeMode]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="approval-required">
+                  {RUNTIME_MODE_LABELS["approval-required"]}
+                </SelectItem>
+                <SelectItem hideIndicator value="auto-accept-edits">
+                  {RUNTIME_MODE_LABELS["auto-accept-edits"]}
+                </SelectItem>
+                <SelectItem hideIndicator value="full-access">
+                  {RUNTIME_MODE_LABELS["full-access"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
 
         <SettingsRow
           title="Add project starts in"
