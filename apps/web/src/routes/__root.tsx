@@ -1,4 +1,4 @@
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
+import { ThreadId, type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -8,7 +8,7 @@ import {
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
@@ -42,11 +42,22 @@ import { useAtomValue } from "@effect/atom-react";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
+  deriveNotificationTriggers,
+  notificationSoundManager,
+  type NotificationSettingsSlice,
+  type ThreadShellMap,
+} from "../notificationSound";
+import {
   primaryServerConfigAtom,
   primaryServerConfigEventAtom,
   primaryServerWelcomeAtom,
 } from "../state/server";
-import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import {
+  readProject,
+  setActiveEnvironmentId,
+  useActiveEnvironmentId,
+  useThreadShells,
+} from "../state/entities";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
@@ -131,6 +142,7 @@ function RootRouteView() {
         <SshPasswordPromptDialog />
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
+        <NotificationSoundBootstrap />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
@@ -259,6 +271,55 @@ function AuthenticatedTracingBootstrap() {
   useEffect(() => {
     void configureClientTracing();
   }, []);
+
+  return null;
+}
+
+function selectNotificationSettings(
+  settings: NotificationSettingsSlice,
+): NotificationSettingsSlice {
+  return {
+    notificationSoundEnabled: settings.notificationSoundEnabled,
+    notificationSoundOnTurnEnd: settings.notificationSoundOnTurnEnd,
+    notificationSoundOnApproval: settings.notificationSoundOnApproval,
+    notificationSoundOnQuestion: settings.notificationSoundOnQuestion,
+    notificationSoundFocusRule: settings.notificationSoundFocusRule,
+  };
+}
+
+function NotificationSoundBootstrap() {
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const settings = useClientSettings(selectNotificationSettings);
+  const threads = useThreadShells();
+  const previousShellsRef = useRef<ThreadShellMap | null>(null);
+  const currentThreadId = useMemo(() => {
+    const segments = pathname.split("/").filter(Boolean);
+    if (segments.length < 2 || segments[0] === "draft" || segments[0] === "settings") {
+      return null;
+    }
+    return ThreadId.make(segments[1]!);
+  }, [pathname]);
+
+  useEffect(() => {
+    notificationSoundManager.setCurrentThreadAccessor(() => currentThreadId);
+    return () => {
+      notificationSoundManager.setCurrentThreadAccessor(() => null);
+    };
+  }, [currentThreadId]);
+
+  useEffect(() => {
+    const nextShells: ThreadShellMap = new Map(threads.map((thread) => [thread.id, thread]));
+    const previousShells = previousShellsRef.current;
+    previousShellsRef.current = nextShells;
+    if (previousShells === null) {
+      return;
+    }
+
+    notificationSoundManager.maybePlay(
+      deriveNotificationTriggers(previousShells, nextShells, []),
+      settings,
+    );
+  }, [settings, threads]);
 
   return null;
 }

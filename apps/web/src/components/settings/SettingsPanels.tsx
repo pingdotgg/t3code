@@ -44,6 +44,7 @@ import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
+import { notificationSoundManager } from "../../notificationSound";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -108,6 +109,12 @@ const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
   "12-hour": "12-hour",
   "24-hour": "24-hour",
+} as const;
+
+const NOTIFICATION_FOCUS_RULE_LABELS = {
+  always: "Always",
+  "unfocused-only": "Window not focused",
+  "unfocused-or-different-thread": "Window not focused or viewing a different thread",
 } as const;
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -421,6 +428,25 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
+      ...(settings.notificationSoundEnabled !== DEFAULT_UNIFIED_SETTINGS.notificationSoundEnabled
+        ? ["Notification sound"]
+        : []),
+      ...(settings.notificationSoundOnTurnEnd !==
+      DEFAULT_UNIFIED_SETTINGS.notificationSoundOnTurnEnd
+        ? ["Notification on agent finish"]
+        : []),
+      ...(settings.notificationSoundOnApproval !==
+      DEFAULT_UNIFIED_SETTINGS.notificationSoundOnApproval
+        ? ["Notification on approval"]
+        : []),
+      ...(settings.notificationSoundOnQuestion !==
+      DEFAULT_UNIFIED_SETTINGS.notificationSoundOnQuestion
+        ? ["Notification on question"]
+        : []),
+      ...(settings.notificationSoundFocusRule !==
+      DEFAULT_UNIFIED_SETTINGS.notificationSoundFocusRule
+        ? ["Notification focus rule"]
+        : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
     ],
     [
@@ -435,6 +461,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.automaticGitFetchInterval,
       settings.enableAssistantStreaming,
       settings.sidebarThreadPreviewCount,
+      settings.notificationSoundEnabled,
+      settings.notificationSoundOnTurnEnd,
+      settings.notificationSoundOnApproval,
+      settings.notificationSoundOnQuestion,
+      settings.notificationSoundFocusRule,
       settings.timestampFormat,
       settings.wordWrap,
       theme,
@@ -465,6 +496,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+      notificationSoundEnabled: DEFAULT_UNIFIED_SETTINGS.notificationSoundEnabled,
+      notificationSoundOnTurnEnd: DEFAULT_UNIFIED_SETTINGS.notificationSoundOnTurnEnd,
+      notificationSoundOnApproval: DEFAULT_UNIFIED_SETTINGS.notificationSoundOnApproval,
+      notificationSoundOnQuestion: DEFAULT_UNIFIED_SETTINGS.notificationSoundOnQuestion,
+      notificationSoundFocusRule: DEFAULT_UNIFIED_SETTINGS.notificationSoundFocusRule,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
     });
     onRestored?.();
@@ -948,6 +984,193 @@ export function GeneralSettingsPanel() {
                 }}
               />
             </div>
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Notifications">
+        <SettingsRow
+          title="Notification sound"
+          description="Play a sound when an agent needs your attention."
+          resetAction={
+            settings.notificationSoundEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.notificationSoundEnabled ? (
+              <SettingResetButton
+                label="notification sound"
+                onClick={() =>
+                  updateSettings({
+                    notificationSoundEnabled: DEFAULT_UNIFIED_SETTINGS.notificationSoundEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <>
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => {
+                  void notificationSoundManager.playTest().catch((error) => {
+                    toastManager.add(
+                      stackedThreadToast({
+                        type: "error",
+                        title: "Could not play sound",
+                        description:
+                          error instanceof Error
+                            ? error.message
+                            : "Audio playback was blocked by the browser.",
+                      }),
+                    );
+                  });
+                }}
+              >
+                Play sound
+              </Button>
+              <Switch
+                checked={settings.notificationSoundEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ notificationSoundEnabled: Boolean(checked) })
+                }
+                aria-label="Enable notification sound"
+              />
+            </>
+          }
+        />
+
+        <SettingsRow
+          title="When agent finishes"
+          description="Play when a turn completes, errors, or is interrupted."
+          resetAction={
+            settings.notificationSoundOnTurnEnd !==
+            DEFAULT_UNIFIED_SETTINGS.notificationSoundOnTurnEnd ? (
+              <SettingResetButton
+                label="notification on agent finish"
+                onClick={() =>
+                  updateSettings({
+                    notificationSoundOnTurnEnd: DEFAULT_UNIFIED_SETTINGS.notificationSoundOnTurnEnd,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.notificationSoundOnTurnEnd}
+              disabled={!settings.notificationSoundEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ notificationSoundOnTurnEnd: Boolean(checked) })
+              }
+              aria-label="Play sound when an agent finishes"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="When approval requested"
+          description="Play when the agent asks to run a command, edit a file, or proposes a plan."
+          resetAction={
+            settings.notificationSoundOnApproval !==
+            DEFAULT_UNIFIED_SETTINGS.notificationSoundOnApproval ? (
+              <SettingResetButton
+                label="notification on approval"
+                onClick={() =>
+                  updateSettings({
+                    notificationSoundOnApproval:
+                      DEFAULT_UNIFIED_SETTINGS.notificationSoundOnApproval,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.notificationSoundOnApproval}
+              disabled={!settings.notificationSoundEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ notificationSoundOnApproval: Boolean(checked) })
+              }
+              aria-label="Play sound when an approval is requested"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="When question asked"
+          description="Play when the agent asks a clarifying question."
+          resetAction={
+            settings.notificationSoundOnQuestion !==
+            DEFAULT_UNIFIED_SETTINGS.notificationSoundOnQuestion ? (
+              <SettingResetButton
+                label="notification on question"
+                onClick={() =>
+                  updateSettings({
+                    notificationSoundOnQuestion:
+                      DEFAULT_UNIFIED_SETTINGS.notificationSoundOnQuestion,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.notificationSoundOnQuestion}
+              disabled={!settings.notificationSoundEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ notificationSoundOnQuestion: Boolean(checked) })
+              }
+              aria-label="Play sound when a question is asked"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Play sound when"
+          description="Choose when sounds are allowed to play."
+          resetAction={
+            settings.notificationSoundFocusRule !==
+            DEFAULT_UNIFIED_SETTINGS.notificationSoundFocusRule ? (
+              <SettingResetButton
+                label="notification focus rule"
+                onClick={() =>
+                  updateSettings({
+                    notificationSoundFocusRule: DEFAULT_UNIFIED_SETTINGS.notificationSoundFocusRule,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.notificationSoundFocusRule}
+              disabled={!settings.notificationSoundEnabled}
+              onValueChange={(value) => {
+                if (
+                  value === "always" ||
+                  value === "unfocused-only" ||
+                  value === "unfocused-or-different-thread"
+                ) {
+                  updateSettings({ notificationSoundFocusRule: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-72" aria-label="Notification focus rule">
+                <SelectValue>
+                  {NOTIFICATION_FOCUS_RULE_LABELS[settings.notificationSoundFocusRule]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="always">
+                  {NOTIFICATION_FOCUS_RULE_LABELS.always}
+                </SelectItem>
+                <SelectItem hideIndicator value="unfocused-only">
+                  {NOTIFICATION_FOCUS_RULE_LABELS["unfocused-only"]}
+                </SelectItem>
+                <SelectItem hideIndicator value="unfocused-or-different-thread">
+                  {NOTIFICATION_FOCUS_RULE_LABELS["unfocused-or-different-thread"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
       </SettingsSection>
