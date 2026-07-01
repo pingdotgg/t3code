@@ -53,6 +53,13 @@ export function getProviderInteractionModeToggle(
   return getProviderSnapshot(providers, provider)?.showInteractionModeToggle ?? true;
 }
 
+export function getProviderAutoRuntimeModeSupport(
+  providers: ReadonlyArray<ServerProvider>,
+  provider: ProviderDriverKind,
+): boolean {
+  return getProviderSnapshot(providers, provider)?.supportsAutoRuntimeMode ?? false;
+}
+
 export function isProviderEnabled(
   providers: ReadonlyArray<ServerProvider>,
   provider: ProviderDriverKind,

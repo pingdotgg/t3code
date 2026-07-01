@@ -552,10 +552,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             ? "Approve actions"
             : currentRuntimeMode === "auto-accept-edits"
               ? "Auto-accept edits"
-              : "Full access",
+              : currentRuntimeMode === "auto"
+                ? "Auto"
+                : "Full access",
         subactions: [
           { id: "options:runtime:approval-required", title: "Approve actions" },
           { id: "options:runtime:auto-accept-edits", title: "Auto-accept edits" },
+          ...(currentModelOption?.supportsAutoRuntimeMode
+            ? [{ id: "options:runtime:auto", title: "Auto" }]
+            : []),
           { id: "options:runtime:full-access", title: "Full access" },
         ].map((option) => {
           const value = option.id.replace("options:runtime:", "");
@@ -583,7 +588,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         }),
       },
     ],
-    [currentInteractionMode, currentRuntimeMode, providerOptionDescriptors],
+    [
+      currentInteractionMode,
+      currentModelOption?.supportsAutoRuntimeMode,
+      currentRuntimeMode,
+      providerOptionDescriptors,
+    ],
   );
 
   // ── Menu handlers ────────────────────────────────────────

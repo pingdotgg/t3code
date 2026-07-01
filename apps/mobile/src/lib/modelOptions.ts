@@ -15,6 +15,7 @@ export type ModelOption = {
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly providerDriver: string;
+  readonly supportsAutoRuntimeMode: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
 };
@@ -78,6 +79,7 @@ export function buildModelOptions(
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
+        supportsAutoRuntimeMode: provider.supportsAutoRuntimeMode ?? false,
         capabilities: model.capabilities,
         selection: normalizeSelectionOptions(
           {
@@ -107,6 +109,7 @@ export function buildModelOptions(
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver: fallbackModelSelection.instanceId,
+        supportsAutoRuntimeMode: false,
         capabilities: null,
         selection: fallbackModelSelection,
       });
