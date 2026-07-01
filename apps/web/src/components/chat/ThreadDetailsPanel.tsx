@@ -20,6 +20,7 @@ import ProjectScriptsControl, {
 import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
 import { OpenInPicker } from "./OpenInPicker";
+import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 
 interface VersionMismatchIssue {
@@ -233,6 +234,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             ) : null}
           </div>
         </section>
+      ) : null}
+
+      {!props.draftId ? (
+        <ThreadAutomationsPanel environmentId={props.environmentId} threadId={props.threadId} />
       ) : null}
 
       {!props.draftId ? (

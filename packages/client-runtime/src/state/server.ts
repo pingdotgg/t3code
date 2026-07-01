@@ -353,13 +353,8 @@ const cachedConfigSnapshotEvent = (config: ServerConfig): ServerConfigStreamEven
   config,
 });
 
-export interface ServerConfigSubscriptionOptions {
-  readonly environmentThemes?: boolean;
-  readonly usageLimitSources?: boolean;
-}
-
 export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConfigState.make")(
-  function* (subscription: ServerConfigSubscriptionOptions) {
+  function* (environmentThemes?: boolean) {
     const supervisor = yield* EnvironmentSupervisor;
     const cache = yield* EnvironmentCacheStore;
     const environmentId = supervisor.target.environmentId;
@@ -420,10 +415,10 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       Effect.forkScoped,
     );
 
-    yield* subscribe(WS_METHODS.subscribeServerConfig, {
-      ...(subscription.environmentThemes === true ? { environmentThemes: true } : {}),
-      ...(subscription.usageLimitSources === true ? { usageLimitSources: true } : {}),
-    }).pipe(
+    yield* subscribe(
+      WS_METHODS.subscribeServerConfig,
+      environmentThemes === true ? { environmentThemes: true } : {},
+    ).pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
           const next = applyServerConfigProjection(yield* SubscriptionRef.get(state), event);
@@ -455,12 +450,12 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
 
 export function serverConfigStateChanges(
   environmentId: EnvironmentId,
-  subscription: ServerConfigSubscriptionOptions,
+  environmentThemes?: boolean,
 ) {
   return followStreamInEnvironment(
     environmentId,
     Stream.unwrap(
-      makeEnvironmentServerConfigState(subscription).pipe(
+      makeEnvironmentServerConfigState(environmentThemes).pipe(
         Effect.map((state) =>
           SubscriptionRef.changes(state).pipe(
             Stream.filterMap((projection) =>
@@ -519,8 +514,6 @@ export function createServerEnvironmentAtoms<R, E>(
      * receives the payload.
      */
     readonly environmentThemes?: boolean;
-    /** Whether this surface renders quota from configured usage-limit sources. */
-    readonly usageLimitSources?: boolean;
   },
 ) {
   const configScheduler = createAtomCommandScheduler();
@@ -532,12 +525,7 @@ export function createServerEnvironmentAtoms<R, E>(
   };
   const configProjectionFamily = Atom.family((environmentId: EnvironmentId) =>
     runtime
-      .atom(
-        serverConfigStateChanges(environmentId, {
-          ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
-          ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
-        }),
-      )
+      .atom(serverConfigStateChanges(environmentId, options.environmentThemes))
       .pipe(
         Atom.setIdleTTL(5 * 60_000),
         Atom.withLabel(`environment-data:server:config-projection:${environmentId}`),
@@ -839,52 +827,6 @@ export function createServerEnvironmentAtoms<R, E>(
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,
-    providerAuthState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:provider:auth-state",
-      tag: WS_METHODS.providerAuthSubscribe,
-      idleTtlMs: 0,
-    }),
-    startProviderAuth: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:provider:auth-start",
-      tag: WS_METHODS.providerAuthStart,
-      concurrency: {
-        mode: "singleFlight",
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
-      },
-    }),
-    completeProviderAuth: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:provider:auth-complete",
-      tag: WS_METHODS.providerAuthComplete,
-    }),
-    cancelProviderAuth: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:provider:auth-cancel",
-      tag: WS_METHODS.providerAuthCancel,
-    }),
-    logoutProviderAuth: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:provider:auth-logout",
-      tag: WS_METHODS.providerAuthLogout,
-    }),
-    providerInstallState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:provider:install-state",
-      tag: WS_METHODS.providerInstallSubscribe,
-      idleTtlMs: 0,
-    }),
-    startProviderInstall: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:provider:install-start",
-      tag: WS_METHODS.providerInstallStart,
-      concurrency: {
-        mode: "singleFlight",
-        key: ({ environmentId }) => environmentId,
-      },
-    }),
-    cancelProviderInstall: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:provider:install-cancel",
-      tag: WS_METHODS.providerInstallCancel,
-    }),
-    removeProviderInstallation: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:provider:install-remove",
-      tag: WS_METHODS.providerInstallRemove,
-    }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
@@ -897,15 +839,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
     }),
-    resourceTelemetry: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:server:resource-telemetry",
-      tag: WS_METHODS.subscribeResourceTelemetry,
-      idleTtlMs: 0,
-    }),
-    resourceTelemetryHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:resource-telemetry-history",
-      tag: WS_METHODS.serverGetResourceTelemetryHistory,
-      staleTimeMs: 5_000,
+    /** Live scheduled-task list: snapshot on subscribe, fresh list after every server-side change. */
+    scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:scheduled-tasks:live",
+      tag: WS_METHODS.scheduledTasksSubscribe,
     }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan.
@@ -924,27 +861,13 @@ export function createServerEnvironmentAtoms<R, E>(
           Stream.mapAccum(Option.none<ServerLifecycleWelcomePayload>, projectServerWelcome),
         ),
     }),
-    consumeResetCredit: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:consume-reset-credit",
-      tag: WS_METHODS.providerConsumeResetCredit,
-      concurrency: {
-        mode: "singleFlight",
-        // Both ids are free-form strings; a delimiter could collide.
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
-      },
-    }),
     refreshProviders: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-providers",
       tag: WS_METHODS.serverRefreshProviders,
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId, input }) =>
-          JSON.stringify([
-            environmentId,
-            input.instanceId ?? null,
-            input.cwd ?? null,
-            input.refreshModels ?? false,
-          ]),
+          JSON.stringify([environmentId, input.instanceId ?? null, input.cwd ?? null]),
       },
     }),
     updateProvider: createEnvironmentRpcCommand(runtime, {
@@ -976,21 +899,30 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,
     }),
-    refreshUsageRates: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:refresh-usage-rates",
-      tag: WS_METHODS.serverRefreshUsageRates,
-      concurrency: {
-        mode: "singleFlight",
-        key: ({ environmentId }) => environmentId,
-      },
+    upsertScheduledTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:upsert",
+      tag: WS_METHODS.scheduledTasksUpsert,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
     }),
-    retryResourceTelemetry: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:retry-resource-telemetry",
-      tag: WS_METHODS.serverRetryResourceTelemetry,
-      concurrency: {
-        mode: "singleFlight",
-        key: ({ environmentId }) => environmentId,
-      },
+    setScheduledTaskEnabled: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:set-enabled",
+      tag: WS_METHODS.scheduledTasksSetEnabled,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    deleteScheduledTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:delete",
+      tag: WS_METHODS.scheduledTasksDelete,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    // Deliberately not on the config lane: run-now blocks until the run is
+    // dispatched, and a slow run must not stall settings/keybinding/provider
+    // mutations (or other scheduled-task edits) queued behind it.
+    runScheduledTaskNow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:run-now",
+      tag: WS_METHODS.scheduledTasksRunNow,
     }),
   };
 }
