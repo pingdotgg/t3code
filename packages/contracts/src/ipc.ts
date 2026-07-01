@@ -13,6 +13,8 @@ import type {
   GitPullInput,
   GitPullResult,
   GitRemoveWorktreeInput,
+  GitResolveReviewChangesContextInput,
+  GitResolveReviewChangesContextResult,
   GitResolvePullRequestResult,
   GitStatusInput,
   GitStatusResult,
@@ -319,6 +321,9 @@ export interface EnvironmentApi {
     preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Promise<GitPreparePullRequestThreadResult>;
+    resolveReviewChangesContext: (
+      input: GitResolveReviewChangesContextInput,
+    ) => Promise<GitResolveReviewChangesContextResult>;
     pull: (input: GitPullInput) => Promise<GitPullResult>;
     refreshStatus: (input: GitStatusInput) => Promise<GitStatusResult>;
     onStatus: (

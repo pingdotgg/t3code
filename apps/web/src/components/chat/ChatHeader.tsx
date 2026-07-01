@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   type EditorId,
   type ProjectScript,
+  type ReviewChangesScope,
   type ResolvedKeybindingsConfig,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -18,6 +19,7 @@ import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
 import { usePrimaryEnvironmentId } from "../../environments/primary";
+import { ReviewCodeControl } from "./ReviewCodeControl";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -39,7 +41,11 @@ interface ChatHeaderProps {
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
   diffOpen: boolean;
+  reviewCodeEnabled: boolean;
+  reviewCodeDefaultScope: ReviewChangesScope;
+  reviewCodeRunning: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
+  onReviewCode: (scope: ReviewChangesScope) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
@@ -69,7 +75,11 @@ export const ChatHeader = memo(function ChatHeader({
   diffToggleShortcutLabel,
   gitCwd,
   diffOpen,
+  reviewCodeEnabled,
+  reviewCodeDefaultScope,
+  reviewCodeRunning,
   onRunProjectScript,
+  onReviewCode,
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
@@ -123,6 +133,20 @@ export const ChatHeader = memo(function ChatHeader({
             gitCwd={gitCwd}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
             {...(draftId ? { draftId } : {})}
+          />
+        )}
+        {reviewCodeEnabled && activeProjectName && (
+          <ReviewCodeControl
+            defaultScope={reviewCodeDefaultScope}
+            isRunning={reviewCodeRunning}
+            disabledReason={
+              !isGitRepo
+                ? "Review Code is unavailable because this project is not a git repository."
+                : gitCwd === null
+                  ? "Review Code is unavailable until this thread has an active project."
+                  : null
+            }
+            onReview={onReviewCode}
           />
         )}
         <Tooltip>

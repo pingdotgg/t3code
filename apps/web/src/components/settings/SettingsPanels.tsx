@@ -7,13 +7,16 @@ import {
   RefreshCwIcon,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE,
+  DEFAULT_REVIEW_CHANGES_SCOPE,
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
+  type ReviewChangesScope,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
@@ -79,6 +82,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { DraftInput } from "../ui/draft-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
@@ -147,6 +151,14 @@ const THREAD_COMPLETION_NOTIFICATION_OPTIONS: ReadonlyArray<{
   { value: "background-only", label: "Background only" },
   { value: "all", label: "All completions" },
   { value: "off", label: "Off" },
+];
+
+const REVIEW_CHANGES_SCOPE_OPTIONS: ReadonlyArray<{
+  value: ReviewChangesScope;
+  label: string;
+}> = [
+  { value: "uncommitted", label: "Uncommitted changes" },
+  { value: "against-base", label: "Against base branch" },
 ];
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -221,6 +233,48 @@ const FONT_SIZE_OPTIONS: ReadonlyArray<{ value: FontSize; label: string }> = [
 
 function isFontSize(value: unknown): value is FontSize {
   return FONT_SIZE_OPTIONS.some((option) => String(option.value) === String(value));
+}
+
+function isReviewChangesScope(value: unknown): value is ReviewChangesScope {
+  return REVIEW_CHANGES_SCOPE_OPTIONS.some((option) => option.value === value);
+}
+
+function ReviewPromptTemplateEditor({
+  value,
+  onCommit,
+}: {
+  value: string;
+  onCommit: (nextValue: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  const commitDraft = useCallback(() => {
+    if (draft !== value) {
+      onCommit(draft);
+    }
+  }, [draft, onCommit, value]);
+
+  return (
+    <Textarea
+      className="mt-4 w-full"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commitDraft}
+      onKeyDown={(event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+          event.currentTarget.blur();
+        }
+      }}
+      placeholder={DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE}
+      aria-label="Review Code prompt template"
+      spellCheck={false}
+      rows={9}
+    />
+  );
 }
 
 type InstallProviderSettings = {
@@ -592,6 +646,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.threadCompletionNotifications
         ? ["Completion notifications"]
         : []),
+      ...(!Equal.equals(
+        settings.agentWorkflows.reviewChanges,
+        DEFAULT_UNIFIED_SETTINGS.agentWorkflows.reviewChanges,
+      )
+        ? ["Review Code workflow"]
+        : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
       ...(areProviderSettingsDirty ? ["Providers"] : []),
     ],
@@ -609,6 +669,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
+      settings.agentWorkflows.reviewChanges,
       settings.sidebarFontSize,
       settings.sidebarTranslucency,
       settings.threadCompletionNotifications,
@@ -802,6 +863,21 @@ export function GeneralSettingsPanel() {
       });
     },
     [settings.chatExportDetail, updateSettings],
+  );
+
+  const updateReviewChangesWorkflow = useCallback(
+    (patch: Partial<typeof settings.agentWorkflows.reviewChanges>) => {
+      updateSettings({
+        agentWorkflows: {
+          ...settings.agentWorkflows,
+          reviewChanges: {
+            ...settings.agentWorkflows.reviewChanges,
+            ...patch,
+          },
+        },
+      });
+    },
+    [settings.agentWorkflows, updateSettings],
   );
 
   const openKeybindingsError = openPathErrorByTarget.keybindings ?? null;
@@ -1909,6 +1985,100 @@ export function GeneralSettingsPanel() {
             </div>
           }
         />
+      </SettingsSection>
+
+      <SettingsSection title="Agent workflows">
+        <SettingsRow
+          title="Review Code"
+          description="Show the Review Code header action and allow it to create review chats."
+          resetAction={
+            settings.agentWorkflows.reviewChanges.enabled !==
+            DEFAULT_UNIFIED_SETTINGS.agentWorkflows.reviewChanges.enabled ? (
+              <SettingResetButton
+                label="Review Code workflow enabled state"
+                onClick={() =>
+                  updateReviewChangesWorkflow({
+                    enabled: DEFAULT_UNIFIED_SETTINGS.agentWorkflows.reviewChanges.enabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.agentWorkflows.reviewChanges.enabled}
+              onCheckedChange={(checked) =>
+                updateReviewChangesWorkflow({ enabled: Boolean(checked) })
+              }
+              aria-label="Enable Review Code workflow"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Review scope"
+          description="Default scope for the Review Code button. The dropdown can still run either scope."
+          resetAction={
+            settings.agentWorkflows.reviewChanges.defaultScope !== DEFAULT_REVIEW_CHANGES_SCOPE ? (
+              <SettingResetButton
+                label="Review Code default scope"
+                onClick={() =>
+                  updateReviewChangesWorkflow({
+                    defaultScope: DEFAULT_REVIEW_CHANGES_SCOPE,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.agentWorkflows.reviewChanges.defaultScope}
+              onValueChange={(value) => {
+                if (isReviewChangesScope(value)) {
+                  updateReviewChangesWorkflow({ defaultScope: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-48" aria-label="Review Code default scope">
+                <SelectValue>
+                  {REVIEW_CHANGES_SCOPE_OPTIONS.find(
+                    (option) => option.value === settings.agentWorkflows.reviewChanges.defaultScope,
+                  )?.label ?? "Uncommitted changes"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {REVIEW_CHANGES_SCOPE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Review prompt"
+          description="Instructions inserted after the fixed scope context. Leave blank to use the built-in default prompt."
+          resetAction={
+            settings.agentWorkflows.reviewChanges.promptTemplate !==
+            DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE ? (
+              <SettingResetButton
+                label="Review Code prompt"
+                onClick={() =>
+                  updateReviewChangesWorkflow({
+                    promptTemplate: DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE,
+                  })
+                }
+              />
+            ) : null
+          }
+        >
+          <ReviewPromptTemplateEditor
+            value={settings.agentWorkflows.reviewChanges.promptTemplate}
+            onCommit={(promptTemplate) => updateReviewChangesWorkflow({ promptTemplate })}
+          />
+        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection
