@@ -19,6 +19,7 @@ export type SettingsPath =
   | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/integrations"
+  | "/settings/scheduled-tasks"
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"

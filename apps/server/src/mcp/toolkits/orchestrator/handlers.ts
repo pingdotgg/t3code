@@ -29,6 +29,30 @@ const handlers = {
       const service = yield* OrchestratorMcpService;
       return yield* service.cancelTask(scope, input);
     }),
+  schedule_task: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext;
+      const service = yield* OrchestratorMcpService;
+      return yield* service.scheduleTask(scope, input);
+    }),
+  list_scheduled_tasks: () =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext;
+      const service = yield* OrchestratorMcpService;
+      return yield* service.listScheduledTasks(scope);
+    }),
+  update_scheduled_task: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext;
+      const service = yield* OrchestratorMcpService;
+      return yield* service.updateScheduledTask(scope, input);
+    }),
+  delete_scheduled_task: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext;
+      const service = yield* OrchestratorMcpService;
+      return yield* service.deleteScheduledTask(scope, input);
+    }),
   create_threads: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;
