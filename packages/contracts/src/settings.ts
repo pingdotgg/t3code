@@ -363,10 +363,6 @@ export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
 // ── Local voice (speech-to-text + text-to-speech) ──────────────
 
-export const VoiceSubmitMode = Schema.Literals(["push-to-talk", "auto-silence"]);
-export type VoiceSubmitMode = typeof VoiceSubmitMode.Type;
-export const DEFAULT_VOICE_SUBMIT_MODE: VoiceSubmitMode = "push-to-talk";
-export const DEFAULT_SEND_PROMPT_CODEWORD = "send prompt";
 export const DEFAULT_KOKORO_VOICE = "af_heart";
 
 /**
@@ -434,18 +430,6 @@ export const SpeechSettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: DEFAULT_KOKORO_VOICE, clearWhenEmpty: "omit" },
       }),
     ),
-    sendPromptCodeword: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed(DEFAULT_SEND_PROMPT_CODEWORD)),
-      Schema.annotateKey({
-        title: "Send-prompt codeword",
-        description: "Say this phrase to submit the current transcript.",
-        providerSettingsForm: { placeholder: DEFAULT_SEND_PROMPT_CODEWORD, clearWhenEmpty: "omit" },
-      }),
-    ),
-    submitMode: VoiceSubmitMode.pipe(
-      Schema.withDecodingDefault(Effect.succeed(DEFAULT_VOICE_SUBMIT_MODE)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
   },
   {
     order: [
@@ -456,7 +440,6 @@ export const SpeechSettings = makeProviderSettingsSchema(
       "kokoroCommand",
       "kokoroModelPath",
       "kokoroVoice",
-      "sendPromptCodeword",
     ],
   },
 );
@@ -627,8 +610,6 @@ export const ServerSettingsPatch = Schema.Struct({
       kokoroCommand: Schema.optionalKey(TrimmedString),
       kokoroModelPath: Schema.optionalKey(TrimmedString),
       kokoroVoice: Schema.optionalKey(TrimmedString),
-      sendPromptCodeword: Schema.optionalKey(TrimmedString),
-      submitMode: Schema.optionalKey(VoiceSubmitMode),
     }),
   ),
   providers: Schema.optionalKey(
