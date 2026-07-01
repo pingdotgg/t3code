@@ -44,7 +44,6 @@ import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
-const COPILOT_PROVIDER = ProviderDriverKind.make("copilot");
 
 type ProviderIntentEvent = Extract<
   OrchestrationEvent,
@@ -123,19 +122,6 @@ function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolea
     (!currentLooksUserEditedFromTruncatedSeed &&
       truncate(trimmedCurrentTitle, Math.max(0, trimmedTitleSeed.length - 3)) === trimmedTitleSeed)
   );
-}
-
-function textGenerationUsesCopilot(input: {
-  readonly modelSelection: ModelSelection;
-  readonly providerInstances: Record<string, { readonly driver: ProviderDriverKind }>;
-}): boolean {
-  const instanceDriver = input.providerInstances[input.modelSelection.instanceId]?.driver;
-  const driver =
-    instanceDriver ??
-    (isProviderDriverKind(input.modelSelection.instanceId)
-      ? input.modelSelection.instanceId
-      : null);
-  return driver !== null && Equal.equals(driver, COPILOT_PROVIDER);
 }
 
 function findProviderAdapterRequestError(
@@ -731,16 +717,8 @@ const make = Effect.gen(function* () {
     }) {
       const attachments = input.attachments ?? [];
       yield* Effect.gen(function* () {
-        const settings = yield* serverSettingsService.getSettings;
-        const modelSelection = settings.textGenerationModelSelection;
-        if (
-          textGenerationUsesCopilot({
-            modelSelection,
-            providerInstances: settings.providerInstances,
-          })
-        ) {
-          return;
-        }
+        const { textGenerationModelSelection: modelSelection } =
+          yield* serverSettingsService.getSettings;
         const generated = yield* Effect.suspend(() =>
           textGeneration.generateThreadTitle({
             cwd: input.cwd,

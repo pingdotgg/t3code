@@ -641,7 +641,7 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.title).toBe("Generated after retry");
   });
 
-  it("skips Copilot thread title generation while starting the first Copilot turn", async () => {
+  it("generates a Copilot thread title while starting the first Copilot turn", async () => {
     const copilotSelection = createModelSelection(ProviderInstanceId.make("copilot"), "gpt-4.1");
     const harness = await createHarness({
       threadModelSelection: copilotSelection,
@@ -681,10 +681,10 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     await harness.drain();
 
-    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+    expect(harness.generateThreadTitle).toHaveBeenCalledOnce();
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread?.title).toBe(seededTitle);
+    expect(thread?.title).toBe("Generated title");
   });
 
   it("does not overwrite an existing custom thread title on the first turn", async () => {
