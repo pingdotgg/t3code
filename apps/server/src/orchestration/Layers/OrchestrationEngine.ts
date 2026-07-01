@@ -320,14 +320,15 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       return yield* Deferred.await(result);
     });
 
+  const subscribeDomainEvents: OrchestrationEngineShape["subscribeDomainEvents"] =
+    PubSub.subscribe(eventPubSub);
+
   return {
     readEvents,
     dispatch,
-    // Each access creates a fresh PubSub subscription so that multiple
-    // consumers (wsServer, ProviderRuntimeIngestion, CheckpointReactor, etc.)
-    // each independently receive all domain events.
+    subscribeDomainEvents,
     get streamDomainEvents(): OrchestrationEngineShape["streamDomainEvents"] {
-      return Stream.fromPubSub(eventPubSub);
+      return Stream.unwrap(Effect.map(subscribeDomainEvents, Stream.fromSubscription));
     },
   } satisfies OrchestrationEngineShape;
 });

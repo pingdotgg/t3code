@@ -16,7 +16,9 @@ import {
   KeybindingRule,
   MessageId,
   ExternalLauncherCommandNotFoundError,
+  type OrchestrationProjectShell,
   type OrchestrationThreadShell,
+  type OrchestrationThread,
   TerminalNotRunningError,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -45,6 +47,7 @@ import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -355,6 +358,7 @@ const buildAppUnderTest = (options?: {
     const baseDir = options?.config?.baseDir ?? tempBaseDir;
     const devUrl = options?.config?.devUrl;
     const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl);
+    const orchestrationEventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
     const config: ServerConfig.ServerConfig["Service"] = {
       logLevel: "Info",
       traceMinLevel: "Info",
@@ -676,7 +680,8 @@ const buildAppUnderTest = (options?: {
         Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
           readEvents: () => Stream.empty,
           dispatch: () => Effect.succeed({ sequence: 0 }),
-          streamDomainEvents: Stream.empty,
+          streamDomainEvents: Stream.fromPubSub(orchestrationEventPubSub),
+          subscribeDomainEvents: PubSub.subscribe(orchestrationEventPubSub),
           ...options?.layers?.orchestrationEngine,
         }),
       ),
@@ -5574,6 +5579,215 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       assert.deepEqual(replayResult, []);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("buffers thread detail events emitted while loading the initial thread snapshot", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const threadId = ThreadId.make("thread-racy-subscribe");
+      const messageId = MessageId.make("message-racy-first-user");
+      const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
+      const snapshotStarted = yield* Deferred.make<void>();
+      const snapshotGate = yield* Deferred.make<void>();
+      const thread = {
+        id: threadId,
+        projectId: defaultProjectId,
+        title: "Racy Subscribe",
+        modelSelection: defaultModelSelection,
+        interactionMode: "default" as const,
+        runtimeMode: "full-access" as const,
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        latestTurn: null,
+        messages: [],
+        session: null,
+        activities: [],
+        proposedPlans: [],
+        checkpoints: [],
+        deletedAt: null,
+      } satisfies OrchestrationThread;
+      const userMessageEvent = {
+        sequence: 2,
+        eventId: EventId.make("event-racy-first-user"),
+        aggregateKind: "thread" as const,
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-racy-first-user"),
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.message-sent" as const,
+        payload: {
+          threadId,
+          messageId,
+          role: "user" as const,
+          text: "hi",
+          attachments: [],
+          turnId: null,
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      } satisfies OrchestrationEvent;
+
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getThreadDetailById: () =>
+              Deferred.succeed(snapshotStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(snapshotGate)),
+                Effect.as(Option.some(thread)),
+              ),
+            getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 1 }),
+          },
+          orchestrationEngine: {
+            streamDomainEvents: Stream.fromPubSub(eventPubSub),
+            subscribeDomainEvents: PubSub.subscribe(eventPubSub),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const fiber = yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+              threadId,
+            }).pipe(Stream.take(2), Stream.runCollect, Effect.forkScoped);
+            yield* Deferred.await(snapshotStarted);
+            yield* PubSub.publish(eventPubSub, userMessageEvent);
+            yield* Deferred.succeed(snapshotGate, undefined);
+            return Array.from(yield* Fiber.join(fiber));
+          }),
+        ),
+      );
+
+      assert.equal(items[0]?.kind, "snapshot");
+      assert.equal(items[1]?.kind, "event");
+      if (items[1]?.kind === "event") {
+        const event = items[1].event;
+        assert.equal(event.type, "thread.message-sent");
+        if (event.type === "thread.message-sent") {
+          assert.equal(event.payload.text, "hi");
+        }
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("buffers shell events emitted while loading the initial shell snapshot", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const projectId = ProjectId.make("project-racy-shell");
+      const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
+      const snapshotStarted = yield* Deferred.make<void>();
+      const snapshotGate = yield* Deferred.make<void>();
+      const project = {
+        id: projectId,
+        title: "Racy Shell Project",
+        workspaceRoot: "/tmp/racy-shell-project",
+        defaultModelSelection,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+      } satisfies OrchestrationProjectShell;
+      const staleProject = {
+        ...project,
+        id: ProjectId.make("project-racy-shell-stale"),
+        title: "Already Snapshotted Project",
+      } satisfies OrchestrationProjectShell;
+      const alreadySnapshottedEvent = {
+        sequence: 1,
+        eventId: EventId.make("event-racy-shell-stale-project"),
+        aggregateKind: "project" as const,
+        aggregateId: staleProject.id,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-racy-shell-stale-project"),
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "project.created" as const,
+        payload: {
+          projectId: staleProject.id,
+          title: staleProject.title,
+          workspaceRoot: staleProject.workspaceRoot,
+          defaultModelSelection,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      } satisfies OrchestrationEvent;
+      const projectCreatedEvent = {
+        sequence: 2,
+        eventId: EventId.make("event-racy-shell-project"),
+        aggregateKind: "project" as const,
+        aggregateId: projectId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-racy-shell-project"),
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "project.created" as const,
+        payload: {
+          projectId,
+          title: project.title,
+          workspaceRoot: project.workspaceRoot,
+          defaultModelSelection,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      } satisfies OrchestrationEvent;
+
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getShellSnapshot: () =>
+              Deferred.succeed(snapshotStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(snapshotGate)),
+                Effect.as({
+                  snapshotSequence: 1,
+                  projects: [],
+                  threads: [],
+                  updatedAt: now,
+                }),
+              ),
+            getProjectShellById: (id) =>
+              Effect.succeed(id === projectId ? Option.some(project) : Option.none()),
+          },
+          orchestrationEngine: {
+            streamDomainEvents: Stream.fromPubSub(eventPubSub),
+            subscribeDomainEvents: PubSub.subscribe(eventPubSub),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const fiber = yield* client[ORCHESTRATION_WS_METHODS.subscribeShell]({}).pipe(
+              Stream.take(2),
+              Stream.runCollect,
+              Effect.forkScoped,
+            );
+            yield* Deferred.await(snapshotStarted);
+            yield* PubSub.publish(eventPubSub, alreadySnapshottedEvent);
+            yield* PubSub.publish(eventPubSub, projectCreatedEvent);
+            yield* Deferred.succeed(snapshotGate, undefined);
+            return Array.from(yield* Fiber.join(fiber));
+          }),
+        ),
+      );
+
+      assert.equal(items[0]?.kind, "snapshot");
+      assert.equal(items[1]?.kind, "project-upserted");
+      if (items[1]?.kind === "project-upserted") {
+        assert.equal(items[1].project.id, projectId);
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
