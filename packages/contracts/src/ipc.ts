@@ -6,6 +6,30 @@ import type {
   VcsInitInput,
   VcsListRefsInput,
   VcsListRefsResult,
+  VcsPanelAddRemoteInput,
+  VcsPanelBranchActionInput,
+  VcsPanelBranchCommitsInput,
+  VcsPanelBranchCommitsResult,
+  VcsPanelBranchDetails,
+  VcsPanelBranchDetailsInput,
+  VcsPanelCommitActionInput,
+  VcsPanelCommitInput,
+  VcsPanelCompareInput,
+  VcsPanelCompareResult,
+  VcsPanelDeleteBranchInput,
+  VcsPanelFileActionInput,
+  VcsPanelFileDiffInput,
+  VcsPanelFileDiffResult,
+  VcsPanelRemoteInput,
+  VcsPanelRefActionInput,
+  VcsPanelSnapshotInput,
+  VcsPanelSnapshotResult,
+  VcsPanelStashDetails,
+  VcsPanelStashDetailsInput,
+  VcsPanelStashInput,
+  VcsPanelUndoCommitInput,
+  VcsPanelWorkingTreeFileEnrichmentInput,
+  VcsPanelWorkingTreeFileEnrichmentResult,
   VcsPullInput,
   VcsPullResult,
   VcsRemoveWorktreeInput,
@@ -118,6 +142,8 @@ export interface ContextMenuItem<T extends string = string> {
   label: string;
   destructive?: boolean;
   disabled?: boolean;
+  /** Renders a visual separator. */
+  separator?: boolean;
   /** Renders as a non-interactive section header label. Web fallback only — stripped on desktop native menus. */
   header?: boolean;
   /** Icon keyword resolved by the web fallback. Stripped on desktop native menus. */
@@ -130,6 +156,7 @@ export interface ContextMenuItemSchemaType {
   readonly label: string;
   readonly destructive?: boolean;
   readonly disabled?: boolean;
+  readonly separator?: boolean;
   readonly header?: boolean;
   readonly icon?: string;
   readonly children?: readonly ContextMenuItemSchemaType[];
@@ -140,6 +167,7 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   label: Schema.String,
   destructive: Schema.optionalKey(Schema.Boolean),
   disabled: Schema.optionalKey(Schema.Boolean),
+  separator: Schema.optionalKey(Schema.Boolean),
   header: Schema.optionalKey(Schema.Boolean),
   icon: Schema.optionalKey(Schema.String),
   children: Schema.optionalKey(
@@ -1186,6 +1214,37 @@ export interface EnvironmentApi {
     init: (input: VcsInitInput) => Promise<void>;
     pull: (input: VcsPullInput) => Promise<VcsPullResult>;
     refreshStatus: (input: VcsStatusInput) => Promise<VcsStatusResult>;
+    panelSnapshot: (input: VcsPanelSnapshotInput) => Promise<VcsPanelSnapshotResult>;
+    branchDetails: (input: VcsPanelBranchDetailsInput) => Promise<VcsPanelBranchDetails>;
+    branchCommits: (input: VcsPanelBranchCommitsInput) => Promise<VcsPanelBranchCommitsResult>;
+    stashDetails: (input: VcsPanelStashDetailsInput) => Promise<VcsPanelStashDetails>;
+    stageFiles: (input: VcsPanelFileActionInput) => Promise<void>;
+    unstageFiles: (input: VcsPanelFileActionInput) => Promise<void>;
+    discardFiles: (input: VcsPanelFileActionInput) => Promise<void>;
+    enrichWorkingTreeFiles: (
+      input: VcsPanelWorkingTreeFileEnrichmentInput,
+    ) => Promise<VcsPanelWorkingTreeFileEnrichmentResult>;
+    readFileDiff: (input: VcsPanelFileDiffInput) => Promise<VcsPanelFileDiffResult>;
+    commitStaged: (input: VcsPanelCommitInput) => Promise<void>;
+    pullBranch: (input: VcsPanelBranchActionInput) => Promise<VcsPullResult>;
+    pushBranch: (input: VcsPanelBranchActionInput) => Promise<void>;
+    deleteBranch: (input: VcsPanelDeleteBranchInput) => Promise<void>;
+    undoLatestCommit: (input: VcsPanelUndoCommitInput) => Promise<void>;
+    revertCommit: (input: VcsPanelCommitActionInput) => Promise<void>;
+    checkoutCommit: (input: VcsPanelCommitActionInput) => Promise<VcsSwitchRefResult>;
+    createBranchFromCommit: (input: VcsPanelCommitActionInput) => Promise<VcsCreateRefResult>;
+    mergeBranchIntoCurrent: (input: VcsPanelRefActionInput) => Promise<void>;
+    rebaseCurrentOnto: (input: VcsPanelRefActionInput) => Promise<void>;
+    fetchBranch: (input: VcsPanelBranchActionInput) => Promise<void>;
+    fetchRemote: (input: VcsPanelRemoteInput) => Promise<void>;
+    fetchAllRemotes: (input: VcsPanelSnapshotInput) => Promise<void>;
+    addRemote: (input: VcsPanelAddRemoteInput) => Promise<void>;
+    removeRemote: (input: VcsPanelRemoteInput) => Promise<void>;
+    createStash: (input: VcsPanelStashInput) => Promise<void>;
+    applyStash: (input: VcsPanelStashInput) => Promise<void>;
+    popStash: (input: VcsPanelStashInput) => Promise<void>;
+    dropStash: (input: VcsPanelStashInput) => Promise<void>;
+    compare: (input: VcsPanelCompareInput) => Promise<VcsPanelCompareResult>;
     onStatus: (
       input: VcsStatusInput,
       callback: (status: VcsStatusResult) => void,

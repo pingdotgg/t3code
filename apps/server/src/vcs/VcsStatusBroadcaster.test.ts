@@ -13,6 +13,7 @@ import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import type {
   VcsStatusLocalResult,
   VcsStatusRemoteResult,
@@ -22,6 +23,7 @@ import type {
 import { GitManagerError } from "@t3tools/contracts";
 
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
+import * as VcsProcess from "./VcsProcess.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 
 const baseLocalStatus: VcsStatusLocalResult = {
@@ -100,6 +102,57 @@ function makeTestLayer(state: {
 }
 
 describe("VcsStatusBroadcaster", () => {
+  it("ignores Git internal watcher paths", () => {
+    assert.isTrue(VcsStatusBroadcaster.shouldIgnoreWatchEventPath(".git/FETCH_HEAD"));
+    assert.isTrue(VcsStatusBroadcaster.shouldIgnoreWatchEventPath(".git/logs/HEAD"));
+    assert.isFalse(VcsStatusBroadcaster.shouldIgnoreWatchEventPath("src/.gitkeep"));
+    assert.isFalse(VcsStatusBroadcaster.shouldIgnoreWatchEventPath("src/app.ts"));
+  });
+
+  it.effect("batches watcher refresh decisions after ignored roots are filtered", () =>
+    Effect.gen(function* () {
+      const checkedBatches: string[][] = [];
+      const refreshes = Array.from(
+        yield* Stream.runCollect(
+          VcsStatusBroadcaster.localWatchRefreshSignals(
+            Stream.make("src/app.ts", "dist/app.js"),
+            (relativePaths) =>
+              Effect.sync(() => {
+                checkedBatches.push([...relativePaths]);
+                return relativePaths.some((relativePath) => relativePath !== "dist/app.js");
+              }),
+            Duration.millis(1),
+          ),
+        ).pipe(Effect.timeout("2 seconds")),
+      );
+
+      assert.deepStrictEqual(checkedBatches, [["src/app.ts", "dist/app.js"]]);
+      assert.equal(refreshes.length, 1);
+    }),
+  );
+
+  it.effect("does not refresh when every debounced watcher path is ignored", () =>
+    Effect.gen(function* () {
+      const checkedBatches: string[][] = [];
+      const refreshes = Array.from(
+        yield* Stream.runCollect(
+          VcsStatusBroadcaster.localWatchRefreshSignals(
+            Stream.make(".git/FETCH_HEAD", "dist/app.js", "dist/app.css"),
+            (relativePaths) =>
+              Effect.sync(() => {
+                checkedBatches.push([...relativePaths]);
+                return false;
+              }),
+            Duration.millis(1),
+          ),
+        ).pipe(Effect.timeout("2 seconds")),
+      );
+
+      assert.deepStrictEqual(checkedBatches, [["dist/app.js", "dist/app.css"]]);
+      assert.deepStrictEqual(refreshes, []);
+    }),
+  );
+
   it.effect("reuses the cached VCS status across repeated reads", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
@@ -367,6 +420,131 @@ describe("VcsStatusBroadcaster", () => {
         remote: baseRemoteStatus,
       } satisfies VcsStatusStreamEvent);
     }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it.effect("publishes explicit local updates even when the status summary is unchanged", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const snapshotDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
+      const localUpdatedDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
+
+      yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/repo" }), (event) => {
+        if (event._tag === "snapshot") {
+          return Deferred.succeed(snapshotDeferred, event).pipe(Effect.ignore);
+        }
+        if (event._tag === "localUpdated") {
+          return Deferred.succeed(localUpdatedDeferred, event).pipe(Effect.ignore);
+        }
+        return Effect.void;
+      }).pipe(Effect.forkScoped);
+
+      yield* Deferred.await(snapshotDeferred).pipe(Effect.timeout("2 seconds"));
+      yield* broadcaster.refreshLocalStatus("/repo");
+      const localUpdated = yield* Deferred.await(localUpdatedDeferred).pipe(
+        Effect.timeout("2 seconds"),
+      );
+
+      assert.deepStrictEqual(localUpdated, {
+        _tag: "localUpdated",
+        local: baseLocalStatus,
+      } satisfies VcsStatusStreamEvent);
+      assert.isAtLeast(state.localStatusCalls, 2);
+      assert.isAtLeast(state.localInvalidationCalls, 1);
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it("parses worktree paths from porcelain output", () => {
+    assert.deepStrictEqual(
+      VcsStatusBroadcaster.parseWorktreePaths(
+        [
+          "worktree /repo",
+          "HEAD abc",
+          "branch refs/heads/main",
+          "",
+          "worktree /repo.worktrees/feature",
+          "HEAD def",
+          "branch refs/heads/feature/source-control",
+          "",
+        ].join("\n"),
+      ),
+      ["/repo", "/repo.worktrees/feature"],
+    );
+  });
+
+  it.effect("skips missing sibling worktree paths before retaining watchers", () => {
+    const rootDir = process.cwd();
+    const siblingDir = `${rootDir}/..`;
+    const missingDir = `${rootDir}/.missing-worktree-for-vcs-status-test`;
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const snapshotDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+      yield* Stream.runForEach(broadcaster.streamStatus({ cwd: rootDir }), (event) => {
+        if (event._tag === "snapshot") {
+          return Deferred.succeed(snapshotDeferred, event).pipe(Effect.ignore);
+        }
+        return Effect.void;
+      }).pipe(Effect.forkScoped);
+
+      const snapshot = yield* Deferred.await(snapshotDeferred).pipe(Effect.timeout("2 seconds"));
+
+      assert.deepStrictEqual(snapshot, {
+        _tag: "snapshot",
+        local: baseLocalStatus,
+        remote: null,
+      } satisfies VcsStatusStreamEvent);
+      assert.equal(state.localStatusCalls, 1);
+      assert.equal(state.remoteStatusCalls, 0);
+      assert.isFalse(yield* fileSystem.exists(missingDir));
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          makeTestLayer(state),
+          Layer.succeed(VcsProcess.VcsProcess, {
+            run: () =>
+              Effect.succeed({
+                exitCode: ChildProcessSpawner.ExitCode(0),
+                stdout: [
+                  `worktree ${rootDir}`,
+                  "HEAD abc",
+                  "branch refs/heads/main",
+                  "",
+                  `worktree ${siblingDir}`,
+                  "HEAD def",
+                  "branch refs/heads/feature/live",
+                  "",
+                  `worktree ${missingDir}`,
+                  "HEAD ghi",
+                  "branch refs/heads/feature/missing",
+                  "",
+                ].join("\n"),
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              }),
+          }),
+        ),
+      ),
+    );
   });
 
   it.effect("loads remote status once when periodic refreshes are disabled", () => {

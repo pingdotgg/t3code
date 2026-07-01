@@ -157,6 +157,7 @@ const AzureDevOpsRepositoryDecodeOperation = Schema.Literals([
   "getRepositoryCloneUrls",
   "getDefaultBranch",
   "createRepository",
+  "getCommitAvatarUrl",
 ]);
 
 export class AzureDevOpsRepositoryDecodeError extends Schema.TaggedErrorClass<AzureDevOpsRepositoryDecodeError>()(
@@ -207,6 +208,8 @@ export class AzureDevOpsCli extends Context.Service<
       readonly cwd: string;
       readonly headSelector: string;
       readonly source?: SourceControlProvider.SourceControlRefSelector;
+      readonly repository?: string;
+      readonly project?: string;
       readonly state: "open" | "closed" | "merged" | "all";
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<NormalizedAzureDevOpsPullRequestRecord>, AzureDevOpsCliError>;
@@ -220,6 +223,13 @@ export class AzureDevOpsCli extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
     }) => Effect.Effect<AzureDevOpsRepositoryCloneUrls, AzureDevOpsCliError>;
+
+    readonly getCommitAvatarUrl: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly sha: string;
+      readonly project?: string;
+    }) => Effect.Effect<string | null, AzureDevOpsCliError>;
 
     readonly createRepository: (input: {
       readonly cwd: string;
@@ -279,6 +289,14 @@ const RawAzureDevOpsRepositorySchema = Schema.Struct({
     }),
   ),
   defaultBranch: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const RawAzureDevOpsCommitSchema = Schema.Struct({
+  author: Schema.optional(
+    Schema.Struct({
+      imageUrl: Schema.optional(Schema.NullOr(Schema.String)),
+    }),
+  ),
 });
 
 function normalizeDefaultBranch(value: string | null | undefined): string | null {
@@ -377,6 +395,8 @@ export const make = Effect.gen(function* () {
           "list",
           "--detect",
           "true",
+          ...(input.repository ? ["--repository", input.repository] : []),
+          ...(input.project ? ["--project", input.project] : []),
           "--source-branch",
           SourceControlProvider.sourceBranch(input),
           "--status",
@@ -457,6 +477,35 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
+      ),
+    getCommitAvatarUrl: (input) =>
+      executeJson({
+        cwd: input.cwd,
+        args: [
+          "devops",
+          "invoke",
+          "--detect",
+          "true",
+          "--area",
+          "git",
+          "--resource",
+          "commits",
+          "--route-parameters",
+          ...(input.project ? [`project=${input.project}`] : []),
+          `repositoryId=${input.repository}`,
+          `commitId=${input.sha}`,
+          "--api-version",
+          "7.1-preview",
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          decodeAzureDevOpsJson(raw, RawAzureDevOpsCommitSchema, "getCommitAvatarUrl", input.cwd),
+        ),
+        Effect.map((commit) => {
+          const avatarUrl = commit.author?.imageUrl?.trim();
+          return avatarUrl && avatarUrl.length > 0 ? avatarUrl : null;
+        }),
       ),
     createRepository: (input) => {
       const repository = parseRepositorySpecifier(input.repository);

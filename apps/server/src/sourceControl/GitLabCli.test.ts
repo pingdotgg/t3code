@@ -184,6 +184,149 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads GitLab-hosted avatar URLs through the official Avatar API", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              avatar_url: "https://gitlab.example.test/uploads/-/system/user/avatar/123/avatar.png",
+            }),
+          ),
+        ),
+      );
+
+      const result = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab.getCommitAvatarUrl({
+          cwd: "/repo",
+          email: "author@example.test",
+          providerBaseUrl: "https://gitlab.example.test",
+        });
+      });
+
+      assert.strictEqual(
+        result,
+        "https://gitlab.example.test/uploads/-/system/user/avatar/123/avatar.png",
+      );
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: "glab",
+          cwd: "/repo",
+          args: ["api", "--hostname", "gitlab.example.test", "avatar?email=author%40example.test"],
+        }),
+      );
+    }),
+  );
+
+  it.effect("passes through external GitLab Avatar API fallback URLs", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              avatar_url: "https://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61",
+            }),
+          ),
+        ),
+      );
+
+      const result = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab.getCommitAvatarUrl({
+          cwd: "/repo",
+          email: "author@example.test",
+          providerBaseUrl: "https://gitlab.example.test",
+        });
+      });
+
+      assert.strictEqual(
+        result,
+        "https://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61",
+      );
+    }),
+  );
+
+  it.effect("preserves structured process failures when normalizing CLI errors", () =>
+    Effect.gen(function* () {
+      const cause = {
+        _tag: "VcsProcessSpawnError",
+        detail: "Command not found: glab",
+      };
+      mockedRun.mockReturnValueOnce(Effect.fail(cause) as never);
+
+      const error = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab
+          .execute({
+            cwd: "/repo",
+            args: ["mr", "list"],
+          })
+          .pipe(Effect.flip);
+      });
+
+      expect(error.detail).toBe("GitLab CLI (`glab`) is required but not available on PATH.");
+      expect(error._tag).toBe("GitLabCliUnavailableError");
+      expect(error.cause).toEqual({
+        _tag: "VcsProcessSpawnError",
+        detail: "Command not found: glab",
+      });
+    }),
+  );
+
+  it.effect("classifies GitLab CLI errors from detail text without rendering tags", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "gitlab.execute",
+        command: "glab mr view 42",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "fatal: could not read from remote repository",
+      });
+      mockedRun.mockReturnValueOnce(Effect.fail(cause) as never);
+
+      const error = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab
+          .execute({
+            cwd: "/repo",
+            args: ["mr", "view", "42"],
+          })
+          .pipe(Effect.flip);
+      });
+
+      expect(error.detail).toBe("GitLab CLI command failed.");
+      expect(error.detail).not.toContain("VcsProcessExitError");
+      expect(error.cause).toBe(cause);
+    }),
+  );
+
+  it.effect("does not classify ambiguous token text as authentication failures", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.fail({
+          _tag: "VcsProcessExitError",
+          detail: "GraphQL parser found token near merge request query",
+        }) as never,
+      );
+
+      const error = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab
+          .execute({
+            cwd: "/repo",
+            args: ["mr", "list"],
+          })
+          .pipe(Effect.flip);
+      });
+
+      expect(error._tag).toBe("GitLabCliCommandError");
+      expect(error.detail).toBe("GitLab CLI command failed.");
+    }),
+  );
+
   it.effect("creates merge requests through the GitLab API without placing the body in argv", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));

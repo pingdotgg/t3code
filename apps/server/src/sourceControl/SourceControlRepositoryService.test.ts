@@ -37,6 +37,7 @@ function makeProvider(
     createChangeRequest: () => unsupported("createChangeRequest"),
     getRepositoryCloneUrls: () => Effect.succeed(CLONE_URLS),
     createRepository: () => Effect.succeed(CLONE_URLS),
+    getCommitAvatarUrl: () => Effect.succeed(null),
     getDefaultBranch: () => Effect.succeed(null),
     checkoutChangeRequest: () => unsupported("checkoutChangeRequest"),
     ...overrides,

@@ -295,6 +295,43 @@ describe("executeAtomQuery", () => {
 
     registry.dispose();
   });
+
+  it("forces cached swr queries to refresh before resolving", async () => {
+    let reads = 0;
+    const atom = Atom.make(Effect.sync(() => ++reads)).pipe(Atom.swr({ staleTime: 60_000 }));
+    const registry = AtomRegistry.make();
+
+    const first = await executeAtomQuery(registry, atom);
+    const cached = await executeAtomQuery(registry, atom);
+    const refreshed = await executeAtomQuery(registry, atom, { forceRefresh: true });
+
+    expect(first._tag).toBe("Success");
+    expect(cached._tag).toBe("Success");
+    expect(refreshed._tag).toBe("Success");
+    if (first._tag === "Success" && cached._tag === "Success" && refreshed._tag === "Success") {
+      expect(first.value).toBe(1);
+      expect(cached.value).toBe(1);
+      expect(refreshed.value).toBe(2);
+    }
+
+    registry.dispose();
+  });
+
+  it("does not duplicate an uncached first query when forcing refreshes", async () => {
+    let reads = 0;
+    const atom = Atom.make(Effect.sync(() => ++reads)).pipe(Atom.swr({ staleTime: 60_000 }));
+    const registry = AtomRegistry.make();
+
+    const first = await executeAtomQuery(registry, atom, { forceRefresh: true });
+
+    expect(first._tag).toBe("Success");
+    if (first._tag === "Success") {
+      expect(first.value).toBe(1);
+    }
+    expect(reads).toBe(1);
+
+    registry.dispose();
+  });
 });
 
 describe("runtime command runner", () => {

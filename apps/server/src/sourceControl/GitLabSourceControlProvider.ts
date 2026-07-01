@@ -87,6 +87,20 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
   } as const;
 }
 
+function repositoryFromContext(
+  context: SourceControlProvider.SourceControlProviderContext | undefined,
+): string | undefined {
+  if (!context) return undefined;
+  const repository = SourceControlProvider.repositoryPathFromRemoteUrl(context.remoteUrl);
+  if (!repository) return undefined;
+  try {
+    const host = new URL(context.provider.baseUrl).host;
+    return host && host !== "gitlab.com" ? `${host}/${repository}` : repository;
+  } catch {
+    return repository;
+  }
+}
+
 export const discovery = {
   type: "cli",
   kind: "gitlab",
@@ -107,11 +121,13 @@ export const make = Effect.gen(function* () {
     kind: "gitlab",
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
+      const repository = repositoryFromContext(input.context);
       return gitlab
         .listMergeRequests({
           cwd: input.cwd,
           headSelector: input.headSelector,
           ...(source ? { source } : {}),
+          ...(repository ? { repository } : {}),
           state: input.state,
           ...(input.limit !== undefined ? { limit: input.limit } : {}),
         })
@@ -197,6 +213,30 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
+    getCommitAvatarUrl: (input) => {
+      const authorEmail = input.authorEmail?.trim();
+      if (!authorEmail) {
+        return Effect.succeed(null);
+      }
+
+      return gitlab
+        .getCommitAvatarUrl({
+          cwd: input.cwd,
+          email: authorEmail,
+          providerBaseUrl: input.context?.provider.baseUrl ?? "https://gitlab.com",
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "gitlab",
+              operation: "getCommitAvatarUrl",
+              cwd: input.cwd,
+              reference: input.sha,
+              error,
+            }),
+          ),
+        );
+    },
     createRepository: (input) =>
       gitlab.createRepository(input).pipe(
         Effect.mapError(

@@ -74,6 +74,42 @@ export function shouldWriteThreadErrorToCurrentServerThread(input: {
   );
 }
 
+export function clearThreadErrorRecord(
+  existing: Record<string, string | null>,
+  threadKey: string,
+): Record<string, string | null> {
+  if ((existing[threadKey] ?? null) === null) {
+    return existing;
+  }
+  return {
+    ...existing,
+    [threadKey]: null,
+  };
+}
+
+export function retainThreadKeyRecord<T>(
+  existing: Record<string, T>,
+  retainedThreadKeys: ReadonlySet<string>,
+): Record<string, T> {
+  let changed = false;
+  const next: Record<string, T> = {};
+  for (const [threadKey, value] of Object.entries(existing)) {
+    if (retainedThreadKeys.has(threadKey)) {
+      next[threadKey] = value;
+    } else {
+      changed = true;
+    }
+  }
+  return changed ? next : existing;
+}
+
+export function shouldApplySourceControlMetadataUpdateResult(input: {
+  readonly currentSequence: number | undefined;
+  readonly requestSequence: number;
+}): boolean {
+  return input.currentSequence === input.requestSequence;
+}
+
 export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "session">): {
   threadId: ThreadId;
   turnId?: TurnId;

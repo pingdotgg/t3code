@@ -102,6 +102,57 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("preserves saved file surface cwd overrides during migration", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "file:/repo.worktrees/feature:src/index.ts",
+            surfaces: [
+              {
+                id: "file:/repo.worktrees/feature:src/index.ts",
+                kind: "file",
+                cwd: "/repo.worktrees/feature",
+                relativePath: "src/index.ts",
+              },
+              {
+                id: "file:README.md",
+                kind: "file",
+                cwd: 42,
+                relativePath: "README.md",
+              },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "file:/repo.worktrees/feature:src/index.ts",
+          surfaces: [
+            {
+              id: "file:/repo.worktrees/feature:src/index.ts",
+              kind: "file",
+              cwd: "/repo.worktrees/feature",
+              relativePath: "src/index.ts",
+              revealLine: null,
+              revealRequestId: 0,
+            },
+            {
+              id: "file:README.md",
+              kind: "file",
+              relativePath: "README.md",
+              revealLine: null,
+              revealRequestId: 0,
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("open sets the active panel for a thread", () => {
     useRightPanelStore.getState().open(refA, "preview");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("preview");
@@ -185,6 +236,34 @@ describe("rightPanelStore", () => {
           relativePath: "src/index.ts",
           revealLine: null,
           revealRequestId: 3,
+        },
+      ],
+    });
+  });
+
+  it("keeps cwd-specific file surfaces separate from workspace file surfaces", () => {
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+    useRightPanelStore.getState().openFile(refA, "src/index.ts", undefined, "/repo.worktrees/a");
+    useRightPanelStore.getState().openFile(refA, "src/index.ts", 9, "/repo.worktrees/a");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "file:/repo.worktrees/a:src/index.ts",
+      surfaces: [
+        {
+          id: "file:src/index.ts",
+          kind: "file",
+          relativePath: "src/index.ts",
+          revealLine: null,
+          revealRequestId: 1,
+        },
+        {
+          id: "file:/repo.worktrees/a:src/index.ts",
+          kind: "file",
+          cwd: "/repo.worktrees/a",
+          relativePath: "src/index.ts",
+          revealLine: 9,
+          revealRequestId: 2,
         },
       ],
     });

@@ -99,6 +99,35 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+describe("ServerSettings source control provider options", () => {
+  it("defaults provider avatar lookups off for legacy configs", () => {
+    const decoded = decodeServerSettings({});
+
+    expect(decoded.sourceControl.providers.github.showCommitAuthorAvatar).toBe(false);
+    expect(decoded.sourceControl.providers["azure-devops"].showCommitAuthorAvatar).toBe(false);
+    expect(decoded.sourceControl.providers.bitbucket.showCommitAuthorAvatar).toBe(false);
+    expect(decoded.sourceControl.providers.gitlab.showCommitAuthorAvatar).toBe(false);
+  });
+
+  it("accepts provider-scoped commit author avatar opt-in patches", () => {
+    const patch = decodeServerSettingsPatch({
+      sourceControl: {
+        providers: {
+          github: { showCommitAuthorAvatar: true },
+          gitlab: { showCommitAuthorAvatar: true },
+          "azure-devops": { showCommitAuthorAvatar: true },
+          bitbucket: { showCommitAuthorAvatar: true },
+        },
+      },
+    });
+
+    expect(patch.sourceControl?.providers?.github?.showCommitAuthorAvatar).toBe(true);
+    expect(patch.sourceControl?.providers?.gitlab?.showCommitAuthorAvatar).toBe(true);
+    expect(patch.sourceControl?.providers?.["azure-devops"]?.showCommitAuthorAvatar).toBe(true);
+    expect(patch.sourceControl?.providers?.bitbucket?.showCommitAuthorAvatar).toBe(true);
+  });
+});
+
 describe("ServerSettingsPatch.providerInstances", () => {
   it("treats providerInstances as an optional whole-map replacement", () => {
     const patch = decodeServerSettingsPatch({});

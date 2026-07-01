@@ -581,6 +581,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           cwd: input.cwd,
           args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
         }).pipe(Effect.map((result) => JSON.parse(result.stdout))),
+      getCommitAvatarUrl: () => Effect.succeed(null),
       createRepository: (input) =>
         Effect.fail(
           new GitHubCli.GitHubCliCommandError({

@@ -46,7 +46,124 @@ it.effect("maps Azure DevOps PR summaries into provider-neutral change requests"
   }),
 );
 
-it.effect("adds change-request context while retaining Azure CLI causes", () =>
+it.effect("lists Azure DevOps PRs against the requested remote repository context", () =>
+  Effect.gen(function* () {
+    let listInput:
+      | Parameters<AzureDevOpsCli.AzureDevOpsCli["Service"]["listPullRequests"]>[0]
+      | null = null;
+    const provider = yield* makeProvider({
+      listPullRequests: (input) => {
+        listInput = input;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "azure-devops",
+          name: "Azure DevOps",
+          baseUrl: "https://dev.azure.com",
+        },
+        remoteName: "upstream",
+        remoteUrl: "https://dev.azure.com/acme/project/_git/repo",
+      },
+      headSelector: "feature/provider",
+      state: "open",
+      limit: 10,
+    });
+
+    assert.deepStrictEqual(listInput, {
+      cwd: "/repo",
+      headSelector: "feature/provider",
+      repository: "repo",
+      project: "project",
+      state: "open",
+      limit: 10,
+    });
+  }),
+);
+
+it.effect("preserves Azure DevOps fallback project context when _git is absent", () =>
+  Effect.gen(function* () {
+    let listInput:
+      | Parameters<AzureDevOpsCli.AzureDevOpsCli["Service"]["listPullRequests"]>[0]
+      | null = null;
+    const provider = yield* makeProvider({
+      listPullRequests: (input) => {
+        listInput = input;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "azure-devops",
+          name: "Azure DevOps",
+          baseUrl: "https://dev.azure.com",
+        },
+        remoteName: "legacy",
+        remoteUrl: "https://dev.azure.com/acme/project/repo",
+      },
+      headSelector: "feature/provider",
+      state: "open",
+    });
+
+    assert.deepStrictEqual(listInput, {
+      cwd: "/repo",
+      headSelector: "feature/provider",
+      repository: "repo",
+      project: "project",
+      state: "open",
+    });
+  }),
+);
+
+it.effect("uses Azure DevOps commit author image URLs from the remote repository context", () =>
+  Effect.gen(function* () {
+    let avatarInput:
+      | Parameters<AzureDevOpsCli.AzureDevOpsCli["Service"]["getCommitAvatarUrl"]>[0]
+      | null = null;
+    const provider = yield* makeProvider({
+      getCommitAvatarUrl: (input) => {
+        avatarInput = input;
+        return Effect.succeed(
+          "https://dev.azure.com/acme/_apis/GraphProfile/MemberAvatars/aad.123",
+        );
+      },
+    });
+
+    const avatarUrl = yield* provider.getCommitAvatarUrl({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "azure-devops",
+          name: "Azure DevOps",
+          baseUrl: "https://dev.azure.com",
+        },
+        remoteName: "upstream",
+        remoteUrl: "https://dev.azure.com/acme/project/_git/repo",
+      },
+      sha: "abc123",
+    });
+
+    assert.strictEqual(
+      avatarUrl,
+      "https://dev.azure.com/acme/_apis/GraphProfile/MemberAvatars/aad.123",
+    );
+    assert.deepStrictEqual(avatarInput, {
+      cwd: "/repo",
+      repository: "repo",
+      project: "project",
+      sha: "abc123",
+    });
+  }),
+);
+
+it.effect("adds change-request context while bounding Azure CLI causes", () =>
   Effect.gen(function* () {
     const cause = new AzureDevOpsCli.AzureDevOpsCommandFailedError({
       operation: "execute",
@@ -81,7 +198,14 @@ it.effect("adds change-request context while retaining Azure CLI causes", () =>
         detail: "Azure DevOps CLI command failed.",
       },
     );
-    assert.strictEqual(error.cause, cause);
+    assert.deepStrictEqual(error.cause, {
+      _tag: "AzureDevOpsCommandFailedError",
+      name: "AzureDevOpsCommandFailedError",
+      operation: "execute",
+      command: "az",
+      detail: "Azure DevOps CLI command failed.",
+      message: "Azure DevOps CLI failed in execute: Azure DevOps CLI command failed.",
+    });
     assert.equal(error.message.includes("raw upstream detail"), false);
   }),
 );

@@ -19,7 +19,6 @@ import {
   ProviderInteractionMode,
   ProviderDriverKind,
   RuntimeMode,
-  TerminalOpenInput,
 } from "@t3tools/contracts";
 import {
   connectionStatusText,
@@ -102,7 +101,6 @@ import {
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
-  DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
   type SessionPhase,
@@ -180,7 +178,7 @@ import { appendPreviewAnnotationPrompt } from "../lib/previewAnnotation";
 import { appendReviewCommentsToPrompt, type ReviewCommentContext } from "../reviewCommentContext";
 import { environmentCatalog } from "../connection/catalog";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
+import { useKnownTerminalSessions } from "../state/terminalSessions";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import {
@@ -235,6 +233,10 @@ import {
   revokeUserMessagePreviewUrls,
   waitForStartedServerThread,
 } from "./ChatView.logic";
+import {
+  useSourceControlRightPanelSurfaceState,
+  useSourceControlThreadMetadataRouting,
+} from "./ChatView.sourceControl";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
@@ -261,6 +263,11 @@ const PreviewPanel = lazy(() =>
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+const SourceControlPanel = lazy(() =>
+  import("./source-control/SourceControlPanel").then((module) => ({
+    default: module.SourceControlPanel,
+  })),
+);
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -1046,6 +1053,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const timestampFormat = settings.timestampFormat;
   const autoOpenPlanSidebar = settings.autoOpenPlanSidebar;
+  const terminalEnabled = true;
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
@@ -1239,19 +1247,17 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const isServerThread = routeKind === "server" && serverThread !== null;
   const activeThread = isServerThread ? serverThread : localDraftThread;
-  const threadError = isServerThread
-    ? (localServerError ?? serverThread?.session?.lastError ?? null)
-    : localDraftError;
+  const activeThreadRef = useMemo(
+    () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
+    [activeThread],
+  );
+  const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
-  const runningTerminalIds = useThreadRunningTerminalIds({
-    environmentId: activeThread?.environmentId ?? null,
-    threadId: activeThreadId,
-  });
   const activeThreadKnownSessionsRaw = useKnownTerminalSessions({
     environmentId: activeThread?.environmentId ?? null,
     threadId: activeThreadId,
@@ -1282,11 +1288,6 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return labels;
   }, [activeThreadKnownSessions]);
-  const activeThreadRef = useMemo(
-    () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
-    [activeThread],
-  );
-  const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
     readonly messageId: MessageId | null;
@@ -1333,10 +1334,36 @@ function ChatViewContent(props: ChatViewProps) {
 
   const planSidebarOpen = activeRightPanelKind === "plan";
 
-  const existingOpenTerminalThreadKeys = useMemo(() => {
-    const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
-    return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
-  }, [draftThreadKeys, openTerminalThreadKeys, serverThreadKeys]);
+  const existingThreadKeys = useMemo(() => {
+    const threadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
+    if (activeThreadKey) {
+      threadKeys.add(activeThreadKey);
+    }
+    return threadKeys;
+  }, [activeThreadKey, draftThreadKeys, serverThreadKeys]);
+  const existingOpenTerminalThreadKeys = useMemo(
+    () => openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey)),
+    [existingThreadKeys, openTerminalThreadKeys],
+  );
+  const {
+    clearActiveSourceControlMetadataError,
+    handleSourceControlThreadRefChange,
+    sourceControlMetadataError,
+  } = useSourceControlThreadMetadataRouting({
+    activeThreadKey,
+    activeThreadRef,
+    draftId,
+    existingThreadKeys,
+    isServerThread,
+    setDraftThreadContext,
+    updateThreadMetadata,
+  });
+  const threadError = isServerThread
+    ? (localServerError ?? sourceControlMetadataError ?? serverThread?.session?.lastError ?? null)
+    : localDraftError;
+  const isThreadErrorDismissible = isServerThread
+    ? localServerError != null || sourceControlMetadataError != null
+    : localDraftError !== null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const sourcePlanThreadRef = useMemo(() => {
     const sourceThreadId = activeLatestTurn?.sourceProposedPlan?.threadId;
@@ -1397,9 +1424,10 @@ function ChatViewContent(props: ChatViewProps) {
   const handleFilePendingChange = useCallback(
     (relativePath: string, pending: boolean) => {
       if (!activeProjectKey) return;
+      const cwd = activeFileSurface?.cwd;
       setPendingFileSurfaceIdsByProject((currentByProject) => {
         const current = currentByProject.get(activeProjectKey) ?? EMPTY_PENDING_FILE_SURFACE_IDS;
-        const surfaceId = `file:${relativePath}`;
+        const surfaceId = cwd ? `file:${cwd}:${relativePath}` : `file:${relativePath}`;
         if (current.has(surfaceId) === pending) return currentByProject;
         const next = new Set(current);
         if (pending) next.add(surfaceId);
@@ -1410,7 +1438,7 @@ function ChatViewContent(props: ChatViewProps) {
         return nextByProject;
       });
     },
-    [activeProjectKey],
+    [activeFileSurface?.cwd, activeProjectKey],
   );
   const configuredPreviewUrls = useMemo(
     () => getConfiguredPreviewUrls(activeProject?.scripts),
@@ -2120,6 +2148,17 @@ function ChatViewContent(props: ChatViewProps) {
           input: { cwd: gitCwd },
         }),
   );
+  const {
+    addSourceControlSurface,
+    sourceControlAvailable,
+    visibleActiveRightPanelSurface,
+    visibleRightPanelSurfaces,
+  } = useSourceControlRightPanelSurfaceState({
+    activeRightPanelSurface,
+    activeThreadRef,
+    gitCwd,
+    rightPanelSurfaces: rightPanelState.surfaces,
+  });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   // Prefer an instance-id match so a custom Codex instance (e.g.
@@ -2274,12 +2313,13 @@ function ChatViewContent(props: ChatViewProps) {
   const setTerminalOpen = useCallback(
     (open: boolean) => {
       if (!activeThreadRef) return;
+      if (open && !terminalEnabled) return;
       storeSetTerminalOpen(activeThreadRef, open);
     },
-    [activeThreadRef, storeSetTerminalOpen],
+    [activeThreadRef, storeSetTerminalOpen, terminalEnabled],
   );
   const toggleTerminalVisibility = useCallback(() => {
-    if (!activeThreadRef) return;
+    if (!activeThreadRef || !terminalEnabled) return;
     const nextOpen = !terminalUiState.terminalOpen;
     if (nextOpen && terminalUiState.terminalIds.length === 0) {
       if (!activeThreadId || !activeProject) {
@@ -2319,11 +2359,13 @@ function ChatViewContent(props: ChatViewProps) {
     panelTerminalIds,
     setTerminalOpen,
     storeEnsureTerminal,
+    terminalEnabled,
     terminalUiState.terminalIds.length,
     terminalUiState.terminalOpen,
   ]);
   const splitTerminal = useCallback(
     (direction: "horizontal" | "vertical" = "horizontal") => {
+      if (!terminalEnabled) return;
       if (!activeThreadRef || hasReachedSplitLimit || !activeThreadId || !activeProject) {
         return;
       }
@@ -2364,9 +2406,11 @@ function ChatViewContent(props: ChatViewProps) {
       hasReachedSplitLimit,
       storeSplitTerminal,
       storeSplitTerminalVertical,
+      terminalEnabled,
     ],
   );
   const createNewTerminal = useCallback(() => {
+    if (!terminalEnabled) return;
     if (!activeThreadRef || !activeThreadId || !activeProject) {
       return;
     }
@@ -2400,6 +2444,7 @@ function ChatViewContent(props: ChatViewProps) {
     environmentId,
     gitCwd,
     storeNewTerminal,
+    terminalEnabled,
   ]);
   const closeTerminal = useCallback(
     (terminalId: string) => {
@@ -2445,6 +2490,7 @@ function ChatViewContent(props: ChatViewProps) {
         rememberAsLastInvoked?: boolean;
       },
     ) => {
+      if (!terminalEnabled) return;
       if (!activeThreadId || !activeProject || !activeThread) return;
       if (options?.rememberAsLastInvoked !== false) {
         setLastInvokedScriptByProjectId((current) => {
@@ -2453,11 +2499,6 @@ function ChatViewContent(props: ChatViewProps) {
         });
       }
       const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
-      const baseTerminalId =
-        terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
-      const isBaseTerminalBusy = runningTerminalIds.includes(baseTerminalId);
-      const wantsNewTerminal = Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
-      const shouldCreateNewTerminal = wantsNewTerminal;
       const targetWorktreePath = options?.worktreePath ?? activeThread.worktreePath ?? null;
 
       setTerminalUiLaunchContext({
@@ -2478,28 +2519,24 @@ function ChatViewContent(props: ChatViewProps) {
         worktreePath: targetWorktreePath,
         ...(options?.env ? { extraEnv: options.env } : {}),
       });
-      const targetTerminalId = shouldCreateNewTerminal
-        ? nextTerminalId(activeKnownTerminalIds)
-        : baseTerminalId;
-      const openTerminalInput: TerminalOpenInput = shouldCreateNewTerminal
-        ? {
-            threadId: activeThreadId,
-            terminalId: targetTerminalId,
-            cwd: targetCwd,
-            ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
-            env: runtimeEnv,
-            cols: SCRIPT_TERMINAL_COLS,
-            rows: SCRIPT_TERMINAL_ROWS,
-          }
-        : {
-            threadId: activeThreadId,
-            terminalId: targetTerminalId,
-            cwd: targetCwd,
-            ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
-            env: runtimeEnv,
-          };
+      const targetTerminalId =
+        options?.preferNewTerminal === true
+          ? nextTerminalId(activeKnownTerminalIds)
+          : (terminalUiState.activeTerminalId ?? nextTerminalId(activeKnownTerminalIds));
+      const isKnownServerTerminal = activeServerOrderedTerminalIds.includes(targetTerminalId);
+      const isVisibleTerminal = terminalUiState.terminalIds.includes(targetTerminalId);
+      const openTerminalInput = {
+        threadId: activeThreadId,
+        terminalId: targetTerminalId,
+        cwd: targetCwd,
+        ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
+        env: runtimeEnv,
+        ...(!isKnownServerTerminal
+          ? { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS }
+          : {}),
+      };
 
-      if (shouldCreateNewTerminal) {
+      if (!isVisibleTerminal) {
         storeNewTerminal(activeThreadRef, targetTerminalId);
       } else {
         storeSetActiveTerminal(activeThreadRef, targetTerminalId);
@@ -2544,11 +2581,13 @@ function ChatViewContent(props: ChatViewProps) {
       storeNewTerminal,
       storeSetActiveTerminal,
       setLastInvokedScriptByProjectId,
+      activeServerOrderedTerminalIds,
       environmentId,
       openTerminal,
       activeKnownTerminalIds,
-      runningTerminalIds,
+      terminalEnabled,
       terminalUiState.activeTerminalId,
+      terminalUiState.terminalIds,
       writeTerminal,
     ],
   );
@@ -2774,6 +2813,11 @@ function ChatViewContent(props: ChatViewProps) {
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
   }, [activeThreadRef, isGitRepo, isServerThread, onDiffPanelOpen]);
+
+  const dismissThreadError = useCallback(() => {
+    setThreadError(activeThreadId, null);
+    clearActiveSourceControlMetadataError();
+  }, [activeThreadId, clearActiveSourceControlMetadataError, setThreadError]);
   const addFilesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
@@ -2781,9 +2825,11 @@ function ChatViewContent(props: ChatViewProps) {
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
-      useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
+      useRightPanelStore
+        .getState()
+        .openFile(activeThreadRef, relativePath, undefined, activeFileSurface?.cwd);
     },
-    [activeProject, activeThreadRef],
+    [activeFileSurface?.cwd, activeProject, activeThreadRef],
   );
   const togglePreviewPanel = useCallback(() => {
     if (!activeThreadRef || !isPreviewSupportedInRuntime()) return;
@@ -2805,6 +2851,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, [activeThreadRef]);
   const addTerminalSurface = useCallback(() => {
+    if (!terminalEnabled) return;
     if (!activeThreadRef || !activeThreadId || !activeProject) return;
     const cwd = gitCwd ?? activeProject.workspaceRoot;
     const terminalId = nextTerminalId([...activeKnownTerminalIds, ...panelTerminalIds]);
@@ -2832,9 +2879,11 @@ function ChatViewContent(props: ChatViewProps) {
     gitCwd,
     openTerminal,
     panelTerminalIds,
+    terminalEnabled,
   ]);
   const splitPanelTerminal = useCallback(
     (direction: "horizontal" | "vertical" = "horizontal") => {
+      if (!terminalEnabled) return;
       if (
         !activeThreadRef ||
         !activeThreadId ||
@@ -2874,6 +2923,7 @@ function ChatViewContent(props: ChatViewProps) {
       gitCwd,
       openTerminal,
       panelTerminalIds,
+      terminalEnabled,
     ],
   );
   const splitPanelTerminalVertical = useCallback(() => {
@@ -3814,6 +3864,7 @@ function ChatViewContent(props: ChatViewProps) {
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,
+    terminalEnabled,
   ]);
 
   const onRevertToTurnCount = useCallback(
@@ -4938,20 +4989,20 @@ function ChatViewContent(props: ChatViewProps) {
     </div>
   );
   const rightPanelContent = activeThreadRef ? (
-    activeRightPanelSurface?.kind === "preview" ? (
+    visibleActiveRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
         <PreviewPanel
           mode="embedded"
           threadRef={activeThreadRef}
-          tabId={activeRightPanelSurface.resourceId}
+          tabId={visibleActiveRightPanelSurface.resourceId}
           configuredUrls={configuredPreviewUrls}
           visible
         />
       </Suspense>
-    ) : activeRightPanelSurface?.kind === "terminal" ? (
+    ) : visibleActiveRightPanelSurface?.kind === "terminal" ? (
       <PersistentThreadTerminalPanel
         threadRef={activeThreadRef}
-        surface={activeRightPanelSurface}
+        surface={visibleActiveRightPanelSurface}
         launchContext={activeTerminalLaunchContext ?? null}
         focusRequestId={terminalFocusRequestId}
         keybindings={keybindings}
@@ -4966,11 +5017,11 @@ function ChatViewContent(props: ChatViewProps) {
         newShortcutLabel={newTerminalShortcutLabel ?? undefined}
         closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
       />
-    ) : activeRightPanelSurface?.kind === "diff" ? (
+    ) : visibleActiveRightPanelSurface?.kind === "diff" ? (
       <Suspense fallback={null}>
         <DiffPanel mode="embedded" composerDraftTarget={composerDraftTarget} />
       </Suspense>
-    ) : activeRightPanelSurface?.kind === "plan" ? (
+    ) : visibleActiveRightPanelSurface?.kind === "plan" ? (
       <PlanSidebar
         activePlan={activePlan}
         activeProposedPlan={sidebarProposedPlan}
@@ -4982,21 +5033,35 @@ function ChatViewContent(props: ChatViewProps) {
         timestampFormat={timestampFormat}
         mode="embedded"
       />
-    ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
+    ) : visibleActiveRightPanelSurface?.kind === "source-control" && gitCwd ? (
+      <Suspense fallback={null}>
+        <SourceControlPanel
+          key={`${activeThreadRef.environmentId}:${activeThreadRef.threadId}:${gitCwd}`}
+          environmentId={activeThreadRef.environmentId}
+          threadId={activeThreadRef.threadId}
+          cwd={gitCwd}
+          worktreePath={activeThreadWorktreePath}
+          onThreadRefChange={handleSourceControlThreadRefChange}
+        />
+      </Suspense>
+    ) : (visibleActiveRightPanelSurface?.kind === "files" ||
+        visibleActiveRightPanelSurface?.kind === "file") &&
       activeProject &&
       activeWorkspaceRoot ? (
       <Suspense fallback={null}>
         <FilePreviewPanel
-          key={`${activeProject.environmentId}:${activeWorkspaceRoot}`}
+          key={`${activeProject.environmentId}:${activeFileSurface?.cwd ?? activeWorkspaceRoot}`}
           environmentId={activeProject.environmentId}
-          cwd={activeWorkspaceRoot}
+          cwd={activeFileSurface?.cwd ?? activeWorkspaceRoot}
           projectName={activeProject.title}
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
           keybindings={keybindings}
           availableEditors={availableEditors}
           relativePath={
-            activeRightPanelSurface.kind === "file" ? activeRightPanelSurface.relativePath : null
+            visibleActiveRightPanelSurface.kind === "file"
+              ? visibleActiveRightPanelSurface.relativePath
+              : null
           }
           revealLine={activeFileSurface?.revealLine ?? null}
           revealRequestId={activeFileSurface?.revealRequestId ?? 0}
@@ -5041,7 +5106,7 @@ function ChatViewContent(props: ChatViewProps) {
             activeThreadTitle={activeThread.title}
             activeProjectName={activeProject?.title}
             openInCwd={gitCwd}
-            activeProjectScripts={activeProject?.scripts}
+            activeProjectScripts={terminalEnabled ? activeProject?.scripts : undefined}
             preferredScriptId={
               activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
             }
@@ -5060,7 +5125,7 @@ function ChatViewContent(props: ChatViewProps) {
         <ProviderStatusBanner status={activeProviderStatus} />
         <ThreadErrorBanner
           error={threadError}
-          onDismiss={() => setThreadError(activeThread.id, null)}
+          {...(isThreadErrorDismissible ? { onDismiss: dismissThreadError } : {})}
         />
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
@@ -5275,32 +5340,38 @@ function ChatViewContent(props: ChatViewProps) {
         </div>
         {/* end horizontal flex container */}
 
-        {mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
-          <PersistentThreadTerminalDrawer
-            key={mountedThreadKey}
-            threadRef={mountedThreadRef}
-            threadId={mountedThreadRef.threadId}
-            visible={mountedThreadKey === activeThreadKey && terminalUiState.terminalOpen}
-            launchContext={
-              mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
-            }
-            focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
-            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-            splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
-            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            keybindings={keybindings}
-            onAddTerminalContext={addTerminalContextToDraft}
-          />
-        ))}
+        {terminalEnabled
+          ? mountedTerminalThreadRefs.map(
+              ({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
+                <PersistentThreadTerminalDrawer
+                  key={mountedThreadKey}
+                  threadRef={mountedThreadRef}
+                  threadId={mountedThreadRef.threadId}
+                  visible={mountedThreadKey === activeThreadKey && terminalUiState.terminalOpen}
+                  launchContext={
+                    mountedThreadKey === activeThreadKey
+                      ? (activeTerminalLaunchContext ?? null)
+                      : null
+                  }
+                  focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
+                  splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+                  splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
+                  newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+                  closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+                  keybindings={keybindings}
+                  onAddTerminalContext={addTerminalContextToDraft}
+                />
+              ),
+            )
+          : null}
       </div>
 
       {!shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (
         <RightPanelTabs
           mode="inline"
           maximized={rightPanelMaximized}
-          surfaces={rightPanelState.surfaces}
-          activeSurfaceId={activeRightPanelSurface?.id ?? null}
+          surfaces={visibleRightPanelSurfaces}
+          activeSurfaceId={visibleActiveRightPanelSurface?.id ?? null}
           pendingSurfaceIds={pendingFileSurfaceIds}
           previewSessions={activePreviewState.sessions}
           terminalLabelsById={activeTerminalLabelsById}
@@ -5314,9 +5385,11 @@ function ChatViewContent(props: ChatViewProps) {
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
+          onAddSourceControl={addSourceControlSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
+          sourceControlAvailable={sourceControlAvailable}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -5326,8 +5399,8 @@ function ChatViewContent(props: ChatViewProps) {
           <RightPanelTabs
             mode="sheet"
             layoutControls={panelToggleControls}
-            surfaces={rightPanelState.surfaces}
-            activeSurfaceId={activeRightPanelSurface?.id ?? null}
+            surfaces={visibleRightPanelSurfaces}
+            activeSurfaceId={visibleActiveRightPanelSurface?.id ?? null}
             pendingSurfaceIds={pendingFileSurfaceIds}
             previewSessions={activePreviewState.sessions}
             terminalLabelsById={activeTerminalLabelsById}
@@ -5341,9 +5414,11 @@ function ChatViewContent(props: ChatViewProps) {
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
+            onAddSourceControl={addSourceControlSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
+            sourceControlAvailable={sourceControlAvailable}
           >
             {rightPanelContent}
           </RightPanelTabs>

@@ -31,6 +31,30 @@ import {
   GitPreparePullRequestThreadResult,
   VcsPullInput,
   GitPullRequestRefInput,
+  VcsPanelAddRemoteInput,
+  VcsPanelBranchActionInput,
+  VcsPanelBranchCommitsInput,
+  VcsPanelBranchCommitsResult,
+  VcsPanelBranchDetails,
+  VcsPanelBranchDetailsInput,
+  VcsPanelCommitActionInput,
+  VcsPanelCommitInput,
+  VcsPanelCompareInput,
+  VcsPanelCompareResult,
+  VcsPanelDeleteBranchInput,
+  VcsPanelFileActionInput,
+  VcsPanelFileDiffInput,
+  VcsPanelFileDiffResult,
+  VcsPanelRemoteInput,
+  VcsPanelRefActionInput,
+  VcsPanelSnapshotInput,
+  VcsPanelSnapshotResult,
+  VcsPanelStashDetails,
+  VcsPanelStashDetailsInput,
+  VcsPanelStashInput,
+  VcsPanelUndoCommitInput,
+  VcsPanelWorkingTreeFileEnrichmentInput,
+  VcsPanelWorkingTreeFileEnrichmentResult,
   VcsPullResult,
   VcsRemoveWorktreeInput,
   GitResolvePullRequestResult,
@@ -164,6 +188,35 @@ export const WS_METHODS = {
   // VCS methods
   vcsPull: "vcs.pull",
   vcsRefreshStatus: "vcs.refreshStatus",
+  vcsPanelSnapshot: "vcs.panel.snapshot",
+  vcsPanelBranchDetails: "vcs.panel.branchDetails",
+  vcsPanelBranchCommits: "vcs.panel.branchCommits",
+  vcsPanelStashDetails: "vcs.panel.stashDetails",
+  vcsPanelStageFiles: "vcs.panel.stageFiles",
+  vcsPanelUnstageFiles: "vcs.panel.unstageFiles",
+  vcsPanelDiscardFiles: "vcs.panel.discardFiles",
+  vcsPanelEnrichWorkingTreeFiles: "vcs.panel.enrichWorkingTreeFiles",
+  vcsPanelReadFileDiff: "vcs.panel.readFileDiff",
+  vcsPanelCommitStaged: "vcs.panel.commitStaged",
+  vcsPanelPullBranch: "vcs.panel.pullBranch",
+  vcsPanelPushBranch: "vcs.panel.pushBranch",
+  vcsPanelDeleteBranch: "vcs.panel.deleteBranch",
+  vcsPanelUndoLatestCommit: "vcs.panel.undoLatestCommit",
+  vcsPanelRevertCommit: "vcs.panel.revertCommit",
+  vcsPanelCheckoutCommit: "vcs.panel.checkoutCommit",
+  vcsPanelCreateBranchFromCommit: "vcs.panel.createBranchFromCommit",
+  vcsPanelMergeBranchIntoCurrent: "vcs.panel.mergeBranchIntoCurrent",
+  vcsPanelRebaseCurrentOnto: "vcs.panel.rebaseCurrentOnto",
+  vcsPanelFetchBranch: "vcs.panel.fetchBranch",
+  vcsPanelFetchRemote: "vcs.panel.fetchRemote",
+  vcsPanelFetchAllRemotes: "vcs.panel.fetchAllRemotes",
+  vcsPanelAddRemote: "vcs.panel.addRemote",
+  vcsPanelRemoveRemote: "vcs.panel.removeRemote",
+  vcsPanelCreateStash: "vcs.panel.createStash",
+  vcsPanelApplyStash: "vcs.panel.applyStash",
+  vcsPanelPopStash: "vcs.panel.popStash",
+  vcsPanelDropStash: "vcs.panel.dropStash",
+  vcsPanelCompare: "vcs.panel.compare",
   vcsListRefs: "vcs.listRefs",
   vcsCreateWorktree: "vcs.createWorktree",
   vcsRemoveWorktree: "vcs.removeWorktree",
@@ -412,6 +465,170 @@ export const WsVcsRefreshStatusRpc = Rpc.make(WS_METHODS.vcsRefreshStatus, {
   payload: VcsStatusInput,
   success: VcsStatusResult,
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelSnapshotRpc = Rpc.make(WS_METHODS.vcsPanelSnapshot, {
+  payload: VcsPanelSnapshotInput,
+  success: VcsPanelSnapshotResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelBranchDetailsRpc = Rpc.make(WS_METHODS.vcsPanelBranchDetails, {
+  payload: VcsPanelBranchDetailsInput,
+  success: VcsPanelBranchDetails,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelBranchCommitsRpc = Rpc.make(WS_METHODS.vcsPanelBranchCommits, {
+  payload: VcsPanelBranchCommitsInput,
+  success: VcsPanelBranchCommitsResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelStashDetailsRpc = Rpc.make(WS_METHODS.vcsPanelStashDetails, {
+  payload: VcsPanelStashDetailsInput,
+  success: VcsPanelStashDetails,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelStageFilesRpc = Rpc.make(WS_METHODS.vcsPanelStageFiles, {
+  payload: VcsPanelFileActionInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelUnstageFilesRpc = Rpc.make(WS_METHODS.vcsPanelUnstageFiles, {
+  payload: VcsPanelFileActionInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelDiscardFilesRpc = Rpc.make(WS_METHODS.vcsPanelDiscardFiles, {
+  payload: VcsPanelFileActionInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelEnrichWorkingTreeFilesRpc = Rpc.make(
+  WS_METHODS.vcsPanelEnrichWorkingTreeFiles,
+  {
+    payload: VcsPanelWorkingTreeFileEnrichmentInput,
+    success: VcsPanelWorkingTreeFileEnrichmentResult,
+    error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsVcsPanelReadFileDiffRpc = Rpc.make(WS_METHODS.vcsPanelReadFileDiff, {
+  payload: VcsPanelFileDiffInput,
+  success: VcsPanelFileDiffResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelCommitStagedRpc = Rpc.make(WS_METHODS.vcsPanelCommitStaged, {
+  payload: VcsPanelCommitInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelPullBranchRpc = Rpc.make(WS_METHODS.vcsPanelPullBranch, {
+  payload: VcsPanelBranchActionInput,
+  success: VcsPullResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelPushBranchRpc = Rpc.make(WS_METHODS.vcsPanelPushBranch, {
+  payload: VcsPanelBranchActionInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelDeleteBranchRpc = Rpc.make(WS_METHODS.vcsPanelDeleteBranch, {
+  payload: VcsPanelDeleteBranchInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelUndoLatestCommitRpc = Rpc.make(WS_METHODS.vcsPanelUndoLatestCommit, {
+  payload: VcsPanelUndoCommitInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelRevertCommitRpc = Rpc.make(WS_METHODS.vcsPanelRevertCommit, {
+  payload: VcsPanelCommitActionInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelCheckoutCommitRpc = Rpc.make(WS_METHODS.vcsPanelCheckoutCommit, {
+  payload: VcsPanelCommitActionInput,
+  success: VcsSwitchRefResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelCreateBranchFromCommitRpc = Rpc.make(
+  WS_METHODS.vcsPanelCreateBranchFromCommit,
+  {
+    payload: VcsPanelCommitActionInput,
+    success: VcsCreateRefResult,
+    error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsVcsPanelMergeBranchIntoCurrentRpc = Rpc.make(
+  WS_METHODS.vcsPanelMergeBranchIntoCurrent,
+  {
+    payload: VcsPanelRefActionInput,
+    error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsVcsPanelRebaseCurrentOntoRpc = Rpc.make(WS_METHODS.vcsPanelRebaseCurrentOnto, {
+  payload: VcsPanelRefActionInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelFetchBranchRpc = Rpc.make(WS_METHODS.vcsPanelFetchBranch, {
+  payload: VcsPanelBranchActionInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelFetchRemoteRpc = Rpc.make(WS_METHODS.vcsPanelFetchRemote, {
+  payload: VcsPanelRemoteInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelFetchAllRemotesRpc = Rpc.make(WS_METHODS.vcsPanelFetchAllRemotes, {
+  payload: VcsPanelSnapshotInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelAddRemoteRpc = Rpc.make(WS_METHODS.vcsPanelAddRemote, {
+  payload: VcsPanelAddRemoteInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelRemoveRemoteRpc = Rpc.make(WS_METHODS.vcsPanelRemoveRemote, {
+  payload: VcsPanelRemoteInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelCreateStashRpc = Rpc.make(WS_METHODS.vcsPanelCreateStash, {
+  payload: VcsPanelStashInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelApplyStashRpc = Rpc.make(WS_METHODS.vcsPanelApplyStash, {
+  payload: VcsPanelStashInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelPopStashRpc = Rpc.make(WS_METHODS.vcsPanelPopStash, {
+  payload: VcsPanelStashInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelDropStashRpc = Rpc.make(WS_METHODS.vcsPanelDropStash, {
+  payload: VcsPanelStashInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsPanelCompareRpc = Rpc.make(WS_METHODS.vcsPanelCompare, {
+  payload: VcsPanelCompareInput,
+  success: VcsPanelCompareResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
 export const WsGitRunStackedActionRpc = Rpc.make(WS_METHODS.gitRunStackedAction, {
@@ -709,6 +926,35 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,
+  WsVcsPanelSnapshotRpc,
+  WsVcsPanelBranchDetailsRpc,
+  WsVcsPanelBranchCommitsRpc,
+  WsVcsPanelStashDetailsRpc,
+  WsVcsPanelStageFilesRpc,
+  WsVcsPanelUnstageFilesRpc,
+  WsVcsPanelDiscardFilesRpc,
+  WsVcsPanelEnrichWorkingTreeFilesRpc,
+  WsVcsPanelReadFileDiffRpc,
+  WsVcsPanelCommitStagedRpc,
+  WsVcsPanelPullBranchRpc,
+  WsVcsPanelPushBranchRpc,
+  WsVcsPanelDeleteBranchRpc,
+  WsVcsPanelUndoLatestCommitRpc,
+  WsVcsPanelRevertCommitRpc,
+  WsVcsPanelCheckoutCommitRpc,
+  WsVcsPanelCreateBranchFromCommitRpc,
+  WsVcsPanelMergeBranchIntoCurrentRpc,
+  WsVcsPanelRebaseCurrentOntoRpc,
+  WsVcsPanelFetchBranchRpc,
+  WsVcsPanelFetchRemoteRpc,
+  WsVcsPanelFetchAllRemotesRpc,
+  WsVcsPanelAddRemoteRpc,
+  WsVcsPanelRemoveRemoteRpc,
+  WsVcsPanelCreateStashRpc,
+  WsVcsPanelApplyStashRpc,
+  WsVcsPanelPopStashRpc,
+  WsVcsPanelDropStashRpc,
+  WsVcsPanelCompareRpc,
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
