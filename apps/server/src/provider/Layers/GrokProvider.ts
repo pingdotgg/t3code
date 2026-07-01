@@ -2,8 +2,11 @@ import {
   type GrokSettings,
   type ModelCapabilities,
   ProviderDriverKind,
+  type ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderAuth,
   type ServerProviderModel,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -30,7 +33,12 @@ import {
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
 import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
-
+import {
+  grokAuthFromSubscriptionProbe,
+  probeGrokAuthViaAcp,
+  type GrokAuthSubscriptionProbeResult,
+} from "../grokUsageProbe.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 const GROK_PRESENTATION = {
   displayName: "Grok",
   badgeLabel: "Early Access",
@@ -129,7 +137,12 @@ function buildGrokDiscoveredModelsFromSessionModelState(
     .filter((model): model is ServerProviderModel => model !== undefined);
 }
 
-const discoverGrokModelsViaAcp = (
+interface GrokAcpDiscoveryResult {
+  readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly auth?: GrokAuthSubscriptionProbeResult;
+}
+
+const discoverGrokProviderViaAcp = (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
 ) =>
@@ -143,8 +156,45 @@ const discoverGrokModelsViaAcp = (
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
     const started = yield* acp.start();
-    return buildGrokDiscoveredModelsFromSessionModelState(started.sessionSetupResult.models);
+    const models = buildGrokDiscoveredModelsFromSessionModelState(
+      started.sessionSetupResult.models,
+    );
+    const auth = yield* probeGrokAuthViaAcp({
+      runtime: acp,
+      sessionId: started.sessionId,
+    });
+    return {
+      models,
+      ...(auth ? { auth } : {}),
+    } satisfies GrokAcpDiscoveryResult;
   }).pipe(Effect.scoped);
+
+function grokUnauthenticatedMessage(): string {
+  return "Grok CLI is not authenticated. Run `grok login` and try again.";
+}
+
+function resolveGrokProbeAuth(
+  auth: GrokAuthSubscriptionProbeResult | undefined,
+): ServerProviderAuth {
+  if (!auth) {
+    return { status: "unknown" };
+  }
+  return grokAuthFromSubscriptionProbe(auth);
+}
+
+function resolveGrokProbeUsageLimits(input: {
+  readonly checkedAt: string;
+  readonly auth: GrokAuthSubscriptionProbeResult | undefined;
+}): ServerProviderUsageLimits | undefined {
+  if (!input.auth?.authenticated) {
+    return undefined;
+  }
+  return makeUnavailableUsageLimits({
+    source: "grokAcp",
+    checkedAt: input.checkedAt,
+    reason: "Grok does not expose subscription usage",
+  });
+}
 
 const runGrokVersionCommand = (
   grokSettings: GrokSettings,
@@ -167,6 +217,7 @@ const runGrokVersionCommand = (
 export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(function* (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  _instanceId?: ProviderInstanceId,
 ): Effect.fn.Return<ServerProviderDraft, never, ChildProcessSpawner.ChildProcessSpawner> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
@@ -253,7 +304,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
 
-  const discoveryExit = yield* discoverGrokModelsViaAcp(grokSettings, environment).pipe(
+  const discoveryExit = yield* discoverGrokProviderViaAcp(grokSettings, environment).pipe(
     Effect.timeoutOption(GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
     Effect.exit,
   );
@@ -293,11 +344,32 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       },
     });
   }
-  const discoveredModels = discoveryExit.value.value;
+  const discovery = discoveryExit.value.value;
   const models =
-    discoveredModels.length > 0
-      ? grokModelsFromSettings(grokSettings.customModels, discoveredModels)
+    discovery.models.length > 0
+      ? grokModelsFromSettings(grokSettings.customModels, discovery.models)
       : fallbackModels;
+  const auth = resolveGrokProbeAuth(discovery.auth);
+  const usageLimits = resolveGrokProbeUsageLimits({
+    checkedAt,
+    auth: discovery.auth,
+  });
+
+  if (auth.status === "unauthenticated") {
+    return buildServerProvider({
+      presentation: GROK_PRESENTATION,
+      enabled: grokSettings.enabled,
+      checkedAt,
+      models,
+      probe: {
+        installed: true,
+        version,
+        status: "warning",
+        auth,
+        message: grokUnauthenticatedMessage(),
+      },
+    });
+  }
 
   return buildServerProvider({
     presentation: GROK_PRESENTATION,
@@ -308,7 +380,8 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       installed: true,
       version,
       status: "ready",
-      auth: { status: "unknown" },
+      auth,
+      ...(usageLimits ? { usageLimits } : {}),
     },
   });
 });

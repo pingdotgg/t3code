@@ -18,11 +18,19 @@ import type {
   ServerProvider,
   ServerProviderState,
   ModelCapabilities,
+  ProviderInstanceId,
   ProviderOptionDescriptor,
   ServerProviderModel,
   ServerProviderSkill,
 } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import { ServerSettingsError } from "@t3tools/contracts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
+import {
+  resolveCodexRateLimitSnapshotUsageLimits,
+  resolveCodexRefreshUsageLimits,
+} from "../codexUsageProbe.ts";
+import type { ProviderUsageState } from "../Services/ProviderUsageState.ts";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -42,8 +50,11 @@ const CODEX_PRESENTATION = {
   showInteractionModeToggle: true,
 } as const;
 
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
+
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
+  readonly rateLimits?: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitSnapshot;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
@@ -355,18 +366,23 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models] = yield* Effect.all(
+  const [skillsResponse, models, rateLimitsResponse] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
       requestAllCodexModels(client),
+      client.request("account/rateLimits/read", undefined).pipe(
+        // Rate limits are optional metadata and should not fail the whole provider probe.
+        Effect.catch(() => Effect.void),
+      ),
     ],
     { concurrency: "unbounded" },
   );
 
   return {
     account: accountResponse,
+    ...(rateLimitsResponse?.rateLimits ? { rateLimits: rateLimitsResponse.rateLimits } : {}),
     version,
     models: appendCustomCodexModels(models, input.customModels ?? []),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
@@ -472,6 +488,8 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
   > = probeCodexAppServerProvider,
   environment?: NodeJS.ProcessEnv,
+  instanceId?: ProviderInstanceId,
+  providerUsageState?: ProviderUsageState["Service"],
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
@@ -480,6 +498,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const emptyModels = emptyCodexModelsFromSettings(codexSettings);
+  const readRuntimeUsageLimits = () =>
+    providerUsageState
+      ? providerUsageState.get(CODEX_DRIVER, instanceId).pipe(Effect.orElseSucceed(() => undefined))
+      : Effect.succeed(undefined);
 
   if (!codexSettings.enabled) {
     return buildServerProvider({
@@ -497,6 +519,12 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       },
     });
   }
+
+  // Read runtime usage before the probe so sparse `account/rateLimits/updated`
+  // events that arrive during a long refresh cannot replace a full snapshot, and
+  // so quota is preserved when in-memory state is cleared while the probe runs.
+  const runtimeUsageLimits = yield* readRuntimeUsageLimits();
+  const cachedRuntimeUsageLimits = runtimeUsageLimits?.available ? runtimeUsageLimits : undefined;
 
   const probeResult = yield* probe({
     binaryPath: codexSettings.binaryPath,
@@ -527,6 +555,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         message: installed
           ? `Codex app-server provider probe failed: ${error.message}.`
           : "Codex CLI (`codex`) is not installed or not on PATH.",
+        ...(cachedRuntimeUsageLimits ? { usageLimits: cachedRuntimeUsageLimits } : {}),
       },
     });
   }
@@ -544,12 +573,29 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         status: "error",
         auth: { status: "unknown" },
         message: "Timed out while checking Codex app-server provider status.",
+        ...(cachedRuntimeUsageLimits ? { usageLimits: cachedRuntimeUsageLimits } : {}),
       },
     });
   }
 
   const snapshot = probeResult.success.value;
   const accountStatus = accountProbeStatus(snapshot.account);
+  const isApiKeyAccount = snapshot.account.account?.type === "apiKey";
+  const probedUsageLimits = isApiKeyAccount
+    ? makeUnavailableUsageLimits({
+        source: "codexAppServer",
+        checkedAt,
+        reason: "Usage limits unavailable for API key Codex accounts.",
+      })
+    : resolveCodexRateLimitSnapshotUsageLimits({
+        checkedAt,
+        ...(snapshot.rateLimits ? { snapshot: snapshot.rateLimits } : {}),
+      });
+  const usageLimits = resolveCodexRefreshUsageLimits({
+    runtimeUsageLimits,
+    probedUsageLimits,
+    isApiKeyAccount: isApiKeyAccount === true,
+  });
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,
@@ -563,6 +609,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       status: accountStatus.status,
       auth: accountStatus.auth,
       ...(accountStatus.message ? { message: accountStatus.message } : {}),
+      usageLimits,
     },
   });
 });

@@ -580,6 +580,28 @@ describe("parseCursorAboutOutput", () => {
   });
 });
 
+describe("buildCursorProviderSnapshot", () => {
+  it("builds a ready Cursor provider snapshot from about output", () => {
+    const snapshot = buildCursorProviderSnapshot({
+      checkedAt: "2026-04-18T00:00:00.000Z",
+      cursorSettings: {
+        enabled: true,
+        binaryPath: "agent",
+        apiEndpoint: "",
+        customModels: [],
+      } satisfies CursorSettings,
+      parsed: {
+        version: "2026.04.18-123456",
+        status: "ready",
+        auth: { status: "authenticated" },
+      },
+    });
+
+    expect(snapshot.status).toBe("ready");
+    expect(snapshot.auth.status).toBe("authenticated");
+  });
+});
+
 describe("Cursor parameterized model picker preview gating", () => {
   it("parses Cursor CLI version dates from build versions", () => {
     expect(parseCursorVersionDate("2026.04.08-c4e73a3")).toBe(20260408);

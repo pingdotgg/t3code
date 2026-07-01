@@ -133,6 +133,18 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         },
       ],
       message: "Cached message",
+      usageLimits: {
+        source: "codexAppServer",
+        available: true,
+        checkedAt: "2026-04-10T12:00:00.000Z",
+        windows: [
+          {
+            kind: "session",
+            label: "Session",
+            usedPercent: 12,
+          },
+        ],
+      },
       skills: [
         {
           name: "github:gh-fix-ci",
@@ -177,6 +189,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         checkedAt: cachedCodex.checkedAt,
         slashCommands: cachedCodex.slashCommands,
         skills: cachedCodex.skills,
+        usageLimits: cachedCodex.usageLimits,
         message: cachedCodex.message,
       },
     );

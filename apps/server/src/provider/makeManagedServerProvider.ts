@@ -11,6 +11,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 import { ServerSettingsError } from "@t3tools/contracts";
+import { preserveAvailableUsageLimitsOnRefresh } from "./providerUsageLimits.ts";
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
@@ -108,7 +109,16 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return yield* Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot));
     }
 
-    const nextSnapshot = yield* input.checkProvider;
+    const previousState = yield* Ref.get(snapshotStateRef);
+    const checkedSnapshot = yield* input.checkProvider;
+    const preservedUsageLimits = preserveAvailableUsageLimitsOnRefresh(
+      previousState.snapshot.usageLimits,
+      checkedSnapshot.usageLimits,
+    );
+    const nextSnapshot =
+      preservedUsageLimits === checkedSnapshot.usageLimits
+        ? checkedSnapshot
+        : { ...checkedSnapshot, usageLimits: preservedUsageLimits };
     const nextGeneration = yield* Ref.modify(snapshotStateRef, (state) => {
       const generation = input.enrichSnapshot
         ? state.enrichmentGeneration + 1

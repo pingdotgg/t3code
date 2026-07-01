@@ -226,6 +226,106 @@ describe("makeManagedServerProvider", () => {
     ),
   );
 
+  it.effect(
+    "replaces available usage limits when a refresh reports an authoritative unavailable status",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const previousUsageLimits = {
+            source: "codexAppServer" as const,
+            available: true as const,
+            checkedAt: "2026-04-10T00:00:00.000Z",
+            windows: [
+              {
+                kind: "session" as const,
+                label: "Session",
+                usedPercent: 42,
+                windowDurationMins: 300,
+              },
+            ],
+          };
+          const authoritativeUnavailableRefresh: ServerProvider = {
+            ...refreshedSnapshot,
+            usageLimits: {
+              source: "codexAppServer",
+              available: false,
+              checkedAt: "2026-04-10T00:00:01.000Z",
+              reason: "Usage limits unavailable for API key Codex accounts.",
+              windows: [],
+            },
+          };
+          const releaseInitialCheck = yield* Deferred.make<void>();
+          const provider = yield* makeManagedServerProvider<TestSettings>({
+            maintenanceCapabilities,
+            getSettings: Effect.succeed({ enabled: true }),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+            initialSnapshot: () =>
+              Effect.succeed({ ...initialSnapshot, usageLimits: previousUsageLimits }),
+            checkProvider: Deferred.await(releaseInitialCheck).pipe(
+              Effect.as(authoritativeUnavailableRefresh),
+            ),
+            refreshInterval: "1 hour",
+          });
+
+          yield* Effect.yieldNow;
+          yield* Deferred.succeed(releaseInitialCheck, undefined);
+
+          const latest = yield* provider.getSnapshot;
+
+          assert.deepStrictEqual(latest.usageLimits, authoritativeUnavailableRefresh.usageLimits);
+        }),
+      ),
+  );
+
+  it.effect("preserves available usage limits when a refresh probe returns unavailable", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const previousUsageLimits = {
+          source: "codexAppServer" as const,
+          available: true as const,
+          checkedAt: "2026-04-10T00:00:00.000Z",
+          windows: [
+            {
+              kind: "session" as const,
+              label: "Session",
+              usedPercent: 42,
+              windowDurationMins: 300,
+            },
+          ],
+        };
+        const unavailableRefresh: ServerProvider = {
+          ...refreshedSnapshot,
+          usageLimits: {
+            source: "codexAppServer",
+            available: false,
+            checkedAt: "2026-04-10T00:00:01.000Z",
+            reason: "No Codex subscription quota windows reported.",
+            windows: [],
+          },
+        };
+        const releaseInitialCheck = yield* Deferred.make<void>();
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () =>
+            Effect.succeed({ ...initialSnapshot, usageLimits: previousUsageLimits }),
+          checkProvider: Deferred.await(releaseInitialCheck).pipe(Effect.as(unavailableRefresh)),
+          refreshInterval: "1 hour",
+        });
+
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(releaseInitialCheck, undefined);
+
+        const latest = yield* provider.getSnapshot;
+
+        assert.deepStrictEqual(latest.usageLimits, previousUsageLimits);
+      }),
+    ),
+  );
+
   it.effect("ignores stale enrichment callbacks after a newer refresh advances generation", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -5,6 +5,7 @@ import {
   type EventId,
   type ProviderApprovalDecision,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type ProviderRuntimeEvent,
   type RuntimeRequestId,
   type ThreadId,
@@ -22,6 +23,7 @@ type AcpAdapterRawSource = Extract<
 interface AcpEventStamp {
   readonly eventId: EventId;
   readonly createdAt: string;
+  readonly providerInstanceId?: ProviderInstanceId;
 }
 
 type AcpCanonicalRequestType = Extract<
@@ -232,6 +234,35 @@ export function makeAcpContentDeltaEvent(input: {
     payload: {
       streamKind: "assistant_text",
       delta: input.text,
+    },
+    raw: {
+      source: "acp.jsonrpc",
+      method: "session/update",
+      payload: input.rawPayload,
+    },
+  };
+}
+
+export function makeAcpUsageUpdatedEvent(input: {
+  readonly stamp: AcpEventStamp;
+  readonly provider: ProviderDriverKind;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | undefined;
+  readonly size: number;
+  readonly used: number;
+  readonly rawPayload: unknown;
+}): ProviderRuntimeEvent {
+  return {
+    type: "thread.token-usage.updated",
+    ...input.stamp,
+    provider: input.provider,
+    threadId: input.threadId,
+    ...(input.turnId ? { turnId: input.turnId } : {}),
+    payload: {
+      usage: {
+        usedTokens: Math.max(0, Math.round(input.used)),
+        maxTokens: Math.max(1, Math.round(input.size)),
+      },
     },
     raw: {
       source: "acp.jsonrpc",

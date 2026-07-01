@@ -1562,6 +1562,39 @@ describe("deriveWorkLogEntries context window handling", () => {
     expect(entries[0]?.label).toBe("Ran command");
   });
 
+  it("excludes account quota telemetry updates from the work log", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "quota-kind-1",
+        turnId: "turn-1",
+        kind: "account.rate-limits.updated",
+        summary: "Account quota updated",
+        tone: "info",
+      }),
+      makeActivity({
+        id: "quota-summary-legacy",
+        turnId: "turn-1",
+        kind: "tool.updated",
+        summary: "Account quota updated",
+        tone: "tool",
+        payload: {
+          title: "account quota updated",
+        },
+      }),
+      makeActivity({
+        id: "tool-1",
+        turnId: "turn-1",
+        kind: "tool.completed",
+        summary: "Ran command",
+        tone: "tool",
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.id).toBe("tool-1");
+    expect(entries[0]?.label).toBe("Ran command");
+  });
+
   it("keeps context compaction activities as normal work log entries", () => {
     const entries = deriveWorkLogEntries([
       makeActivity({

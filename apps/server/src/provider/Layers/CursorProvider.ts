@@ -3,14 +3,17 @@ import type {
   CursorSettings,
   ModelCapabilities,
   ProviderOptionSelection,
+  ProviderInstanceId,
   ServerProvider,
   ServerProviderAuth,
   ServerProviderModel,
   ServerProviderState,
+  ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -19,7 +22,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -40,16 +42,14 @@ import {
   type CommandResult,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
-import { CursorListAvailableModelsResponse } from "../acp/CursorAcpExtension.ts";
 
-const decodeCursorListAvailableModelsResponse = Schema.decodeUnknownEffect(
-  CursorListAvailableModelsResponse,
-);
 const PROVIDER = ProviderDriverKind.make("cursor");
 const CURSOR_PRESENTATION = {
   displayName: "Cursor",
@@ -61,6 +61,8 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 });
 
 const CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const CURSOR_ACP_MODEL_CAPABILITY_TIMEOUT = "4 seconds";
+const CURSOR_ACP_MODEL_DISCOVERY_CONCURRENCY = 4;
 const CURSOR_PARAMETERIZED_MODEL_PICKER_MIN_VERSION_DATE = 2026_04_08;
 const CURSOR_CLI_INSTALLATION_DOCS_URL = "https://cursor.com/docs/cli/installation";
 const CURSOR_ACP_MODEL_DISCOVERY_FAILED_MESSAGE = [
@@ -147,6 +149,12 @@ function flattenSessionConfigSelectOptions(
             }) satisfies CursorSessionSelectOption,
         ),
   );
+}
+
+function findCursorModelConfigOption(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+): EffectAcpSchema.SessionConfigOption | undefined {
+  return configOptions.find((option) => option.category === "model");
 }
 
 function normalizeCursorReasoningValue(value: string | null | undefined): string | undefined {
@@ -379,28 +387,6 @@ function buildCursorDiscoveredModels(
   });
 }
 
-function buildCursorDiscoveredModelsFromAvailableModelsResponse(
-  response: typeof CursorListAvailableModelsResponse.Type,
-): ReadonlyArray<ServerProviderModel> {
-  return buildCursorDiscoveredModels(
-    response.models.flatMap((model) => {
-      const slug = model.value.trim();
-      const name = model.name.trim();
-      if (!slug || !name) {
-        return [];
-      }
-
-      return [
-        {
-          slug,
-          name,
-          capabilities: buildCursorCapabilitiesFromConfigOptions(model.configOptions),
-        },
-      ];
-    }),
-  );
-}
-
 const makeCursorAcpProbeRuntime = (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
@@ -559,11 +545,129 @@ const discoverCursorModelsViaListAvailableModels = (
     cursorSettings,
     (acp) =>
       Effect.gen(function* () {
-        yield* acp.start();
-        const response = yield* acp.request("cursor/list_available_models", {});
-        const decoded = yield* decodeCursorListAvailableModelsResponse(response);
-        return buildCursorDiscoveredModelsFromAvailableModelsResponse(decoded);
-      }),
+        const started = yield* acp.start();
+        const initialConfigOptions = started.sessionSetupResult.configOptions ?? [];
+        const modelOption = findCursorModelConfigOption(initialConfigOptions);
+        const modelChoices = flattenSessionConfigSelectOptions(modelOption);
+        if (!modelOption || modelChoices.length === 0) {
+          return [];
+        }
+
+        const currentModelValue =
+          modelOption.type === "select" ? modelOption.currentValue?.trim() || undefined : undefined;
+        const capabilitiesBySlug = new Map<string, ModelCapabilities>();
+        if (currentModelValue) {
+          capabilitiesBySlug.set(
+            currentModelValue,
+            buildCursorCapabilitiesFromConfigOptions(initialConfigOptions),
+          );
+        }
+
+        const targetModelSlugs = new Set(
+          modelChoices
+            .map((modelChoice) => modelChoice.value.trim())
+            .filter((slug) => slug.length > 0 && !capabilitiesBySlug.has(slug)),
+        );
+        if (targetModelSlugs.size === 0) {
+          return buildCursorDiscoveredModels(
+            modelChoices.map((modelChoice) => ({
+              slug: modelChoice.value.trim(),
+              name: modelChoice.name.trim(),
+              capabilities: capabilitiesBySlug.get(modelChoice.value.trim()) ?? EMPTY_CAPABILITIES,
+            })),
+          );
+        }
+
+        type CursorAcpProbeResult =
+          | { readonly _tag: "skipped" }
+          | {
+              readonly _tag: "success";
+              readonly slug: string;
+              readonly capabilities: ModelCapabilities;
+            }
+          | { readonly _tag: "failed"; readonly slug: string };
+
+        const probedCapabilities = yield* Effect.forEach(
+          modelChoices,
+          (modelChoice) => {
+            const modelSlug = modelChoice.value.trim();
+            if (
+              !modelSlug ||
+              !targetModelSlugs.has(modelSlug) ||
+              capabilitiesBySlug.has(modelSlug)
+            ) {
+              return Effect.succeed<CursorAcpProbeResult>({ _tag: "skipped" });
+            }
+
+            return withCursorAcpProbeRuntime(
+              cursorSettings,
+              (probeAcp) =>
+                Effect.gen(function* () {
+                  const probeStarted = yield* probeAcp.start();
+                  const probeConfigOptions = probeStarted.sessionSetupResult.configOptions ?? [];
+                  const probeModelOption = findCursorModelConfigOption(probeConfigOptions);
+                  const probeCurrentModelValue =
+                    probeModelOption?.type === "select"
+                      ? probeModelOption.currentValue?.trim() || undefined
+                      : undefined;
+                  yield* Effect.annotateCurrentSpan({
+                    "cursor.acp.model.value": modelSlug,
+                    "cursor.acp.model.currentValue": probeCurrentModelValue,
+                    "cursor.acp.config_option_id": probeModelOption?.id ?? modelOption.id,
+                  });
+                  const nextConfigOptions =
+                    probeCurrentModelValue === modelSlug
+                      ? probeConfigOptions
+                      : yield* probeAcp
+                          .setConfigOption(probeModelOption?.id ?? modelOption.id, modelSlug)
+                          .pipe(
+                            Effect.map((response) => response.configOptions ?? probeConfigOptions),
+                          );
+                  return {
+                    _tag: "success",
+                    slug: modelSlug,
+                    capabilities: buildCursorCapabilitiesFromConfigOptions(nextConfigOptions),
+                  } as CursorAcpProbeResult;
+                }),
+              environment,
+            ).pipe(
+              Effect.timeout(CURSOR_ACP_MODEL_CAPABILITY_TIMEOUT),
+              Effect.retry({ times: 3 }),
+              Effect.withSpan("cursor-acp-model-capability-probe"),
+              Effect.catchCause((cause) =>
+                Effect.logDebug("Cursor ACP capability probe failed", {
+                  modelSlug,
+                  cause: Cause.pretty(cause),
+                }).pipe(Effect.as<CursorAcpProbeResult>({ _tag: "failed", slug: modelSlug })),
+              ),
+            );
+          },
+          { concurrency: CURSOR_ACP_MODEL_DISCOVERY_CONCURRENCY },
+        );
+
+        const failedModels: Array<string> = [];
+        for (const entry of probedCapabilities) {
+          if (entry._tag === "failed") {
+            failedModels.push(entry.slug);
+          } else if (entry._tag === "success") {
+            capabilitiesBySlug.set(entry.slug, entry.capabilities);
+          }
+        }
+
+        if (failedModels.length > 0) {
+          yield* Effect.logWarning(
+            `Cursor ACP capability probe failed for ${failedModels.length} model(s) — Cursor Agent may be unresponsive`,
+          );
+        }
+
+        return buildCursorDiscoveredModels(
+          modelChoices.map((modelChoice) => ({
+            slug: modelChoice.value.trim(),
+            name: modelChoice.name.trim(),
+            capabilities: capabilitiesBySlug.get(modelChoice.value.trim()) ?? EMPTY_CAPABILITIES,
+          })),
+        );
+      }).pipe(Effect.withSpan("cursor-acp-model-capability-discovery", {})),
     environment,
   );
 
@@ -629,6 +733,7 @@ export function buildCursorProviderSnapshot(input: {
   readonly parsed: CursorAboutResult;
   readonly discoveredModels?: ReadonlyArray<ServerProviderModel>;
   readonly discoveryWarning?: string;
+  readonly usageLimits?: ServerProviderUsageLimits;
 }): ServerProviderDraft {
   const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
   return buildServerProvider({
@@ -648,6 +753,7 @@ export function buildCursorProviderSnapshot(input: {
         input.discoveryWarning && input.parsed.status === "ready" ? "warning" : input.parsed.status,
       auth: input.parsed.auth,
       ...(message ? { message } : {}),
+      ...(input.usageLimits ? { usageLimits: input.usageLimits } : {}),
     },
   });
 }
@@ -989,6 +1095,7 @@ const runCursorAboutCommand = (cursorSettings: CursorSettings, environment?: Nod
 export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
+  _instanceId?: ProviderInstanceId,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -1103,6 +1210,16 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       discoveredModels = discoveryExit.value;
     }
   }
+
+  const usageLimits =
+    parsed.auth.status !== "unauthenticated"
+      ? makeUnavailableUsageLimits({
+          source: "cursorAcp",
+          checkedAt,
+          reason: "Cursor does not expose subscription usage",
+        })
+      : undefined;
+
   return buildCursorProviderSnapshot({
     checkedAt,
     cursorSettings,
@@ -1112,6 +1229,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       () => [] as const,
     ),
     ...(discoveryWarning ? { discoveryWarning } : {}),
+    ...(usageLimits ? { usageLimits } : {}),
   });
 });
 

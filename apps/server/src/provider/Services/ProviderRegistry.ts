@@ -11,6 +11,7 @@ import type {
   ProviderDriverKind,
   ServerProvider,
   ServerProviderUpdateState,
+  ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -68,6 +69,16 @@ export interface ProviderRegistryShape {
     readonly action: ProviderMaintenanceActionKind;
     readonly state: ServerProviderUpdateState | null;
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /**
+   * Patch live usage limits for one enabled instance without re-running the
+   * full provider probe. Used when runtime telemetry arrives between
+   * scheduled refreshes.
+   */
+  readonly patchProviderUsageLimits: (
+    instanceId: ProviderInstanceId,
+    usageLimits: ServerProviderUsageLimits,
+  ) => Effect.Effect<void>;
 
   /**
    * Stream of provider snapshot updates — one emission per aggregated
