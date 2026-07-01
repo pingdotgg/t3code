@@ -28,6 +28,10 @@
       "types": "./src/processTree.ts",
       "import": "./src/processTree.ts"
     },
+    "./compileCache": {
+      "types": "./src/compileCache.ts",
+      "import": "./src/compileCache.ts"
+    },
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"

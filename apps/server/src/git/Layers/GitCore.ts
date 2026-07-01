@@ -41,6 +41,21 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
+
+/**
+ * Prepend `-c core.longpaths=true` to git args on Windows so operations that
+ * touch deep paths (e.g. `worktree add` over projects with nested
+ * `node_modules`) don't fail against the legacy `MAX_PATH` (260 char) limit.
+ * Applied as a per-invocation `-c` override to avoid mutating the user's global
+ * git config. No-op on POSIX, which has no such limit.
+ */
+export function applyWindowsGitLongPathArgs(
+  args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  return platform === "win32" ? ["-c", "core.longpaths=true", ...args] : [...args];
+}
+
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
 const RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
@@ -683,7 +698,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
         );
         const child = yield* commandSpawner
           .spawn(
-            ChildProcess.make("git", commandInput.args, {
+            ChildProcess.make("git", applyWindowsGitLongPathArgs(commandInput.args), {
               cwd: commandInput.cwd,
               env: {
                 ...process.env,

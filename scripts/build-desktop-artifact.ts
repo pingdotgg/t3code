@@ -581,6 +581,68 @@ export function resolveDesktopArtifactName(flavor: typeof DesktopBuildFlavor.Typ
     : "T3-Code-${version}-${arch}.${ext}";
 }
 
+/**
+ * Electron fuses hardening applied at package time via electron-builder.
+ *
+ * Fuses are compile-time toggles flipped into the Electron binary that cannot
+ * be re-enabled at runtime, shrinking the attack surface of the shipped app.
+ *
+ * - `runAsNode` is kept ENABLED: the desktop main process spawns the bundled
+ *   backend with `ELECTRON_RUN_AS_NODE=1` (see `apps/desktop/src/main.ts`).
+ *   Disabling this fuse would break backend startup.
+ * - `enableNodeCliInspectArguments` is DISABLED so a packaged build cannot be
+ *   relaunched with `--inspect`/`--inspect-brk` to attach a debugger and run
+ *   arbitrary code in the app's context.
+ * - `onlyLoadAppFromAsar` forces app code to load exclusively from the signed
+ *   `app.asar`, preventing an attacker from dropping a loose `app/` directory
+ *   beside the archive to shadow application files.
+ * - `enableEmbeddedAsarIntegrityValidation` validates the asar against a hash
+ *   embedded in the (signed) binary. Electron only supports asar integrity on
+ *   macOS and Windows, so it is left off for Linux to avoid breaking that build.
+ * - `resetAdHocDarwinSignature` re-seals the binary on macOS. Flipping fuses
+ *   rewrites the Electron Framework Mach-O, which invalidates its code
+ *   signature; without a fresh signature macOS kills the app at launch with
+ *   `EXC_BAD_ACCESS (SIGKILL (Code Signature Invalid))`. Enabling this makes
+ *   electron-builder re-apply an ad-hoc signature immediately after the flip so
+ *   unsigned dev builds still launch. For signed release builds the Developer
+ *   ID signing step runs afterward and takes precedence, so this stays safe.
+ */
+export function resolveElectronFuses(platform: typeof BuildPlatform.Type): Record<string, boolean> {
+  const supportsAsarIntegrity = platform === "mac" || platform === "win";
+  const fuses: Record<string, boolean> = {
+    runAsNode: true,
+    enableNodeCliInspectArguments: false,
+    onlyLoadAppFromAsar: true,
+    enableEmbeddedAsarIntegrityValidation: supportsAsarIntegrity,
+  };
+  if (platform === "mac") {
+    fuses.resetAdHocDarwinSignature = true;
+  }
+  return fuses;
+}
+
+/**
+ * NSIS installer configuration for Windows, tuned for AV/SmartScreen friction
+ * and update efficiency.
+ *
+ * - Per-user install (`perMachine: false`) targets `%LOCALAPPDATA%\Programs`,
+ *   so installation needs no admin elevation. Avoiding the UAC prompt reduces
+ *   SmartScreen friction and keeps the install path short and writable, which
+ *   also helps stay clear of the legacy `MAX_PATH` limit.
+ * - `oneClick` keeps the streamlined installer (matching the update flow the
+ *   app already ships).
+ * - `differentialPackage` emits `.blockmap` sidecars so electron-updater can
+ *   download only changed blocks, shrinking update bandwidth and the volume of
+ *   freshly-written files AV has to rescan on Windows.
+ */
+export function resolveWindowsNsisConfig(): Record<string, boolean> {
+  return {
+    oneClick: true,
+    perMachine: false,
+    differentialPackage: true,
+  };
+}
+
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -597,6 +659,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     directories: {
       buildResources: "apps/desktop/resources",
     },
+    electronFuses: resolveElectronFuses(platform),
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
   const publishConfig = resolveGitHubPublishConfig(updateChannel);
@@ -645,6 +708,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       winConfig.signAndEditExecutable = false;
     }
     buildConfig.win = winConfig;
+    buildConfig.nsis = resolveWindowsNsisConfig();
   }
 
   return buildConfig;

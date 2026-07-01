@@ -38,6 +38,11 @@ import * as Schema from "effect/Schema";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { RotatingFileSink } from "@t3tools/shared/logging";
+import {
+  enableV8CompileCache,
+  resolveCompileCacheDir,
+  withCompileCacheEnv,
+} from "@t3tools/shared/compileCache";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DEFAULT_DESKTOP_BACKEND_PORT, resolveDesktopBackendPort } from "./backendPort.ts";
 import {
@@ -82,6 +87,13 @@ import { resolveDesktopAppBranding } from "./appBranding.ts";
 import { bindFirstRevealTrigger, type RevealSubscription } from "./windowReveal.ts";
 
 syncShellEnvironment();
+
+// Persist V8 bytecode under the durable per-user data dir so repeat launches
+// skip recompiling this main bundle and any externally-required modules
+// (electron, electron-updater). On Windows this also avoids repeated
+// AV-scanned reads of the same files on every cold start.
+const compileCacheDir = resolveCompileCacheDir("t3code-desktop", app.getPath("userData"));
+enableV8CompileCache(compileCacheDir);
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
@@ -306,7 +318,14 @@ function backendChildEnv(): NodeJS.ProcessEnv {
   delete env.T3CODE_DESKTOP_WS_URL;
   delete env.T3CODE_DESKTOP_LAN_ACCESS;
   delete env.T3CODE_DESKTOP_LAN_HOST;
-  return env;
+  // Enable the backend's V8 compile cache from its very first import. Setting
+  // the env (rather than calling enableCompileCache in bin.ts) covers the
+  // entry's own static imports, which matters most here: the server keeps its
+  // dependencies external, so cold start loads hundreds of node_modules files.
+  return withCompileCacheEnv(
+    env,
+    resolveCompileCacheDir("t3code-backend", app.getPath("userData")),
+  );
 }
 
 function getDesktopServerExposureState(): DesktopServerExposureState {

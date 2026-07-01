@@ -9,8 +9,10 @@ import {
   resolveDesktopBuildIconAssets,
   resolveDesktopProductName,
   resolveDesktopUpdateChannel,
+  resolveElectronFuses,
   resolveMockUpdateServerPort,
   resolveMockUpdateServerUrl,
+  resolveWindowsNsisConfig,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 
@@ -24,6 +26,36 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopProductName("0.0.17"), "T3 Code (Alpha)");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code (Nightly)");
     assert.equal(resolveDesktopProductName("0.0.17", "dev"), "T3 Code (Dev)");
+  });
+
+  it("keeps RunAsNode enabled and hardens fuses, gating asar integrity to mac/win", () => {
+    assert.deepStrictEqual(resolveElectronFuses("mac"), {
+      runAsNode: true,
+      enableNodeCliInspectArguments: false,
+      onlyLoadAppFromAsar: true,
+      enableEmbeddedAsarIntegrityValidation: true,
+      resetAdHocDarwinSignature: true,
+    });
+    assert.deepStrictEqual(resolveElectronFuses("win"), {
+      runAsNode: true,
+      enableNodeCliInspectArguments: false,
+      onlyLoadAppFromAsar: true,
+      enableEmbeddedAsarIntegrityValidation: true,
+    });
+    assert.deepStrictEqual(resolveElectronFuses("linux"), {
+      runAsNode: true,
+      enableNodeCliInspectArguments: false,
+      onlyLoadAppFromAsar: true,
+      enableEmbeddedAsarIntegrityValidation: false,
+    });
+  });
+
+  it("configures a per-user NSIS install with differential update packages", () => {
+    assert.deepStrictEqual(resolveWindowsNsisConfig(), {
+      oneClick: true,
+      perMachine: false,
+      differentialPackage: true,
+    });
   });
 
   it("uses separate bundle identity and artifact names for dev builds", () => {

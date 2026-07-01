@@ -6,7 +6,7 @@ import { it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
 import { describe, expect, vi } from "vitest";
 
-import { GitCoreLive, makeGitCore } from "./GitCore.ts";
+import { GitCoreLive, makeGitCore, applyWindowsGitLongPathArgs } from "./GitCore.ts";
 import { GitCore, type GitCoreShape } from "../Services/GitCore.ts";
 import { GitCommandError } from "@t3tools/contracts";
 import { type ProcessRunResult, runProcess } from "../../processRunner.ts";
@@ -181,6 +181,23 @@ function splitNullSeparatedPaths(input: string): string[] {
 }
 
 // ── Tests ──
+
+describe("applyWindowsGitLongPathArgs", () => {
+  it("prepends the core.longpaths override on Windows", () => {
+    expect(applyWindowsGitLongPathArgs(["worktree", "add", "x"], "win32")).toEqual([
+      "-c",
+      "core.longpaths=true",
+      "worktree",
+      "add",
+      "x",
+    ]);
+  });
+
+  it("leaves args unchanged on POSIX platforms", () => {
+    expect(applyWindowsGitLongPathArgs(["status"], "darwin")).toEqual(["status"]);
+    expect(applyWindowsGitLongPathArgs(["status"], "linux")).toEqual(["status"]);
+  });
+});
 
 it.layer(TestLayer)("git integration", (it) => {
   describe("shell process execution", () => {
