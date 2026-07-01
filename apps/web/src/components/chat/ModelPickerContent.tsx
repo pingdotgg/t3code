@@ -43,6 +43,10 @@ type ModelPickerItem = {
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
 
+function normalizeModelPickerSearchQuery(value: string): string {
+  return value.trim();
+}
+
 // Split a `${instanceId}:${slug}` combobox key back into its pieces. Slugs
 // can contain colons (e.g. some vendor model ids), so we only split on the
 // first colon — anything after that is the slug.
@@ -55,6 +59,115 @@ function splitInstanceModelKey(key: string): { instanceId: ProviderInstanceId; s
     instanceId: key.slice(0, colonIndex) as ProviderInstanceId,
     slug: key.slice(colonIndex + 1),
   };
+}
+
+function useModelPickerJumpShortcuts(input: {
+  readonly keybindings: ResolvedKeybindingsConfig;
+  readonly modelJumpModelKeys: ReadonlyArray<string>;
+  readonly modelJumpShortcutContext: {
+    readonly terminalFocus: false;
+    readonly terminalOpen: boolean;
+    readonly modelPickerOpen: true;
+  };
+  readonly onModelSelect: (modelSlug: string, instanceId: ProviderInstanceId) => void;
+}) {
+  const { keybindings, modelJumpModelKeys, modelJumpShortcutContext, onModelSelect } = input;
+
+  useEffect(() => {
+    const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) {
+        return;
+      }
+
+      const command = resolveShortcutCommand(event, keybindings, {
+        platform: navigator.platform,
+        context: modelJumpShortcutContext,
+      });
+      const jumpIndex = modelPickerJumpIndexFromCommand(command ?? "");
+      if (jumpIndex === null) {
+        return;
+      }
+
+      const targetModelKey = modelJumpModelKeys[jumpIndex];
+      if (!targetModelKey) {
+        return;
+      }
+      const { instanceId, slug } = splitInstanceModelKey(targetModelKey);
+      event.preventDefault();
+      event.stopPropagation();
+      onModelSelect(slug, instanceId);
+    };
+
+    window.addEventListener("keydown", onWindowKeyDown, true);
+
+    return () => {
+      window.removeEventListener("keydown", onWindowKeyDown, true);
+    };
+  }, [keybindings, modelJumpModelKeys, modelJumpShortcutContext, onModelSelect]);
+}
+
+function ModelPickerSearchInput(props: {
+  readonly focusRequest: number;
+  readonly onSearchQueryChange: (query: string) => void;
+  readonly onRequestClose: (() => void) | undefined;
+  readonly onHighlightedModelSelect: () => boolean;
+}) {
+  const [rawSearchQuery, setRawSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const normalizedSearchQueryRef = useRef("");
+
+  useLayoutEffect(() => {
+    searchInputRef.current?.focus({ preventScroll: true });
+    const frame = window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus({ preventScroll: true });
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [props.focusRequest]);
+
+  return (
+    <ComboboxInput
+      ref={searchInputRef}
+      className="[&_input]:h-6.5 [&_input]:font-sans [&_input]:leading-6.5"
+      inputClassName="rounded-none bg-transparent text-sm"
+      placeholder="Search models..."
+      showTrigger={false}
+      startAddon={
+        <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground/55" />
+      }
+      value={rawSearchQuery}
+      onChange={(event) => {
+        const nextRawSearchQuery = event.target.value;
+        setRawSearchQuery(nextRawSearchQuery);
+        const nextNormalizedSearchQuery = normalizeModelPickerSearchQuery(nextRawSearchQuery);
+        if (nextNormalizedSearchQuery === normalizedSearchQueryRef.current) {
+          return;
+        }
+        normalizedSearchQueryRef.current = nextNormalizedSearchQuery;
+        props.onSearchQueryChange(nextNormalizedSearchQuery);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          props.onRequestClose?.();
+          return;
+        }
+        if (event.key === "Enter" && props.onHighlightedModelSelect()) {
+          (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        event.stopPropagation();
+      }}
+      onMouseDown={(event) => event.stopPropagation()}
+      onTouchStart={(event) => event.stopPropagation()}
+      size="sm"
+      unstyled
+    />
+  );
 }
 
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
@@ -99,7 +212,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const [searchQuery, setSearchQuery] = useState("");
   const [showTopScrollFade, setShowTopScrollFade] = useState(false);
   const [showBottomScrollFade, setShowBottomScrollFade] = useState(false);
-  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [searchFocusRequest, setSearchFocusRequest] = useState(0);
   const modelListRef = useRef<LegendListRef | null>(null);
   const highlightedModelKeyRef = useRef<string | null>(null);
   const favorites = useClientSettings((s) => s.favorites ?? []);
@@ -119,33 +232,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   );
   const updateSettings = useUpdateClientSettings();
 
-  const focusSearchInput = useCallback(() => {
-    searchInputRef.current?.focus({ preventScroll: true });
-  }, []);
-
-  const handleSelectInstance = useCallback(
-    (instanceId: ProviderInstanceId | "favorites") => {
-      setSelectedInstanceId(instanceId);
-      window.requestAnimationFrame(() => {
-        focusSearchInput();
-      });
-    },
-    [focusSearchInput],
-  );
-
-  useLayoutEffect(() => {
-    focusSearchInput();
-    const frame = window.requestAnimationFrame(() => {
-      focusSearchInput();
-    });
-    const timeout = window.setTimeout(() => {
-      focusSearchInput();
-    }, 0);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timeout);
-    };
-  }, [focusSearchInput]);
+  const handleSelectInstance = (instanceId: ProviderInstanceId | "favorites") => {
+    setSelectedInstanceId(instanceId);
+    setSearchFocusRequest((request) => request + 1);
+  };
 
   // Create a Set for efficient lookup. Favorites are keyed by
   // `${instanceId}:${slug}`; the storage schema widened from ProviderDriverKind
@@ -221,7 +311,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   }, [modelOptionsByInstance, entryByInstanceId, readyInstanceSet]);
 
   const isLocked = props.lockedProvider !== null;
-  const isSearching = searchQuery.trim().length > 0;
+  const isSearching = searchQuery.length > 0;
   const lockedDisabledInstanceIds = useMemo(() => {
     if (!isLocked) {
       return undefined;
@@ -261,7 +351,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     let result = flatModels;
 
     // Apply tokenized fuzzy search across the combined provider/model search fields.
-    if (searchQuery.trim()) {
+    if (searchQuery) {
       const rankedMatches = result
         .map((model) => ({
           model,
@@ -385,6 +475,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     },
     [entryByInstanceId, getModelDisabledReason, modelOptionsByInstance, onInstanceModelChange],
   );
+  const selectHighlightedModel = () => {
+    const highlightedModelKey = highlightedModelKeyRef.current;
+    if (!highlightedModelKey) {
+      return false;
+    }
+    const { instanceId, slug } = splitInstanceModelKey(highlightedModelKey);
+    handleModelSelect(slug, instanceId);
+    return true;
+  };
 
   const toggleFavorite = useCallback(
     (instanceId: ProviderInstanceId, model: string) => {
@@ -472,41 +571,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return mapping.size > 0 ? mapping : EMPTY_MODEL_JUMP_LABELS;
   }, [keybindings, modelJumpCommandByKey, modelJumpShortcutContext]);
 
-  useEffect(() => {
-    const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat) {
-        return;
-      }
-
-      const command = resolveShortcutCommand(event, keybindings, {
-        platform: navigator.platform,
-        context: modelJumpShortcutContext,
-      });
-      const jumpIndex = modelPickerJumpIndexFromCommand(command ?? "");
-      if (jumpIndex === null) {
-        return;
-      }
-
-      const targetModelKey = modelJumpModelKeys[jumpIndex];
-      if (!targetModelKey) {
-        return;
-      }
-      const { instanceId, slug } = splitInstanceModelKey(targetModelKey);
-      event.preventDefault();
-      event.stopPropagation();
-      handleModelSelect(slug, instanceId);
-    };
-
-    window.addEventListener("keydown", onWindowKeyDown, true);
-
-    return () => {
-      window.removeEventListener("keydown", onWindowKeyDown, true);
-    };
-  }, [handleModelSelect, keybindings, modelJumpModelKeys, modelJumpShortcutContext]);
+  useModelPickerJumpShortcuts({
+    keybindings,
+    modelJumpModelKeys,
+    modelJumpShortcutContext,
+    onModelSelect: handleModelSelect,
+  });
 
   useLayoutEffect(() => {
-    setShowTopScrollFade(false);
-    setShowBottomScrollFade(filteredModelKeys.length > 5);
     let nestedFrame = 0;
     const frame = window.requestAnimationFrame(() => {
       updateModelListScrollFades();
@@ -577,42 +649,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             {/* Search bar */}
             <div className="px-4 pt-2.5">
               <div className="-translate-y-px border-b border-border/70 pb-2.5 transition-colors focus-within:border-ring">
-                <ComboboxInput
-                  ref={searchInputRef}
-                  className="[&_input]:h-6.5 [&_input]:font-sans [&_input]:leading-6.5"
-                  inputClassName="rounded-none bg-transparent text-sm"
-                  placeholder="Search models..."
-                  showTrigger={false}
-                  startAddon={
-                    <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground/55" />
-                  }
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      props.onRequestClose?.();
-                      return;
-                    }
-                    if (e.key === "Enter" && highlightedModelKeyRef.current) {
-                      (
-                        e as typeof e & { preventBaseUIHandler?: () => void }
-                      ).preventBaseUIHandler?.();
-                      e.preventDefault();
-                      e.stopPropagation();
-                      const { instanceId, slug } = splitInstanceModelKey(
-                        highlightedModelKeyRef.current,
-                      );
-                      handleModelSelect(slug, instanceId);
-                      return;
-                    }
-                    e.stopPropagation();
-                  }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onTouchStart={(e) => e.stopPropagation()}
-                  size="sm"
-                  unstyled
+                <ModelPickerSearchInput
+                  focusRequest={searchFocusRequest}
+                  onSearchQueryChange={setSearchQuery}
+                  onRequestClose={props.onRequestClose}
+                  onHighlightedModelSelect={selectHighlightedModel}
                 />
               </div>
             </div>
