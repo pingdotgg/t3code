@@ -33,10 +33,28 @@ describe("derivePendingApprovals", () => {
     expect(open).toHaveLength(0);
   });
 
-  it("Given a request then a respond.failed, then it is also closed", () => {
+  it("Given a request then a TRANSIENT respond.failed, then it stays open for retry", () => {
+    // A network blip / provider hiccup leaves the request open server-side; the
+    // prompt must stay visible so the user can respond again (matches web).
     const open = derivePendingApprovals([
       activity("approval.requested", { requestId: "r1", requestKind: "command" }, 1),
-      activity("provider.approval.respond.failed", { requestId: "r1" }, 2),
+      activity(
+        "provider.approval.respond.failed",
+        { requestId: "r1", detail: "connection reset by peer" },
+        2,
+      ),
+    ]);
+    expect(open).toHaveLength(1);
+  });
+
+  it("Given a request then a STALE-request respond.failed, then it is closed", () => {
+    const open = derivePendingApprovals([
+      activity("approval.requested", { requestId: "r1", requestKind: "command" }, 1),
+      activity(
+        "provider.approval.respond.failed",
+        { requestId: "r1", detail: "Unknown pending approval request: r1" },
+        2,
+      ),
     ]);
     expect(open).toHaveLength(0);
   });

@@ -1,5 +1,7 @@
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 
+import { isStalePendingRequestFailureDetail } from "./staleRequest.ts";
+
 export interface PendingApproval {
   readonly requestId: string;
   readonly requestKind: string;
@@ -47,12 +49,19 @@ export function derivePendingApprovals(
       continue;
     }
 
-    if (
-      requestId &&
-      (activity.kind === "approval.resolved" ||
-        activity.kind === "provider.approval.respond.failed")
-    ) {
+    if (requestId && activity.kind === "approval.resolved") {
       open.delete(requestId);
+      continue;
+    }
+
+    // A respond failure only closes the request when the provider reports it
+    // stale/unknown — a transient failure (network blip) leaves it open so the
+    // user can retry, matching the web derivation.
+    if (requestId && activity.kind === "provider.approval.respond.failed") {
+      const detail = payload && typeof payload.detail === "string" ? payload.detail : undefined;
+      if (isStalePendingRequestFailureDetail(detail)) {
+        open.delete(requestId);
+      }
     }
   }
 

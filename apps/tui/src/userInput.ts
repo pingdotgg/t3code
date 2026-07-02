@@ -1,5 +1,7 @@
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 
+import { isStalePendingRequestFailureDetail } from "./staleRequest.ts";
+
 // Pending provider user-input requests derived from the activity stream — the
 // TUI port of the web client's derivePendingUserInputs. A `user-input.requested`
 // activity opens a request (a list of questions, each with options); a later
@@ -66,14 +68,6 @@ function parseQuestions(payload: Record<string, unknown> | null): UserInputQuest
   return questions.length > 0 ? questions : null;
 }
 
-function isStaleFailure(detail: string | undefined): boolean {
-  const normalized = detail?.toLowerCase();
-  if (!normalized) return false;
-  return (
-    normalized.includes("stale pending user-input request") ||
-    normalized.includes("unknown pending user-input request")
-  );
-}
 
 export function derivePendingUserInputs(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
@@ -101,7 +95,7 @@ export function derivePendingUserInputs(
       open.delete(requestId);
       continue;
     }
-    if (activity.kind === "provider.user-input.respond.failed" && isStaleFailure(detail)) {
+    if (activity.kind === "provider.user-input.respond.failed" && isStalePendingRequestFailureDetail(detail)) {
       open.delete(requestId);
     }
   }
