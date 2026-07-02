@@ -124,18 +124,15 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
 
   it("detects SSH remotes with non-git SSH users (e.g. gitlab@, deploy@)", () => {
     expect(
-      detectSourceControlProviderFromRemoteUrl(
-        "gitlab@gitlab.example.com:group/project.git",
-      )?.kind,
+      detectSourceControlProviderFromRemoteUrl("gitlab@gitlab.example.com:group/project.git")?.kind,
     ).toBe("gitlab");
     expect(
-      detectSourceControlProviderFromRemoteUrl(
-        "gitlab@gitlab.example.com:group/project.git",
-      )?.baseUrl,
+      detectSourceControlProviderFromRemoteUrl("gitlab@gitlab.example.com:group/project.git")
+        ?.baseUrl,
     ).toBe("https://gitlab.example.com");
-    expect(
-      detectSourceControlProviderFromRemoteUrl("deploy@github.com:owner/repo.git")?.kind,
-    ).toBe("github");
+    expect(detectSourceControlProviderFromRemoteUrl("deploy@github.com:owner/repo.git")?.kind).toBe(
+      "github",
+    );
     expect(
       detectSourceControlProviderFromRemoteUrl("git@bitbucket.org:workspace/repo.git")?.kind,
     ).toBe("bitbucket");
