@@ -2956,9 +2956,16 @@ const SidebarChatThreadRow = memo(function SidebarChatThreadRow({
 }: SidebarChatThreadRowProps) {
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
+  const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const scheduledOrigin = useScheduledThreadOrigin(thread);
   const isThreadRunning =
     thread.session?.status === "running" && thread.session.activeTurnId != null;
+  const threadStatus = resolveThreadStatusPill({
+    thread: {
+      ...thread,
+      lastVisitedAt,
+    },
+  });
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
   const isHighlighted = isActive;
   const threadMetaClassName = isConfirmingArchive
@@ -3058,6 +3065,7 @@ const SidebarChatThreadRow = memo(function SidebarChatThreadRow({
         {scheduledOrigin ? null : (
           <MessageSquareIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
         )}
+        {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
         <span
           className={cn(
             "min-w-0 flex-1 truncate text-left",
