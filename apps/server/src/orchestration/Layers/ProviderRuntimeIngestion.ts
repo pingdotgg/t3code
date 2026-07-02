@@ -38,6 +38,10 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  assistantSegmentBaseKeyFromRuntimeItem,
+  assistantSegmentMessageId,
+} from "../assistantMessageIds.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 
@@ -194,14 +198,9 @@ function proposedPlanIdFromEvent(event: ProviderRuntimeEvent, threadId: ThreadId
 }
 
 function assistantSegmentBaseKeyFromEvent(event: ProviderRuntimeEvent): string {
-  return String(event.itemId ?? event.turnId ?? event.eventId);
+  return assistantSegmentBaseKeyFromRuntimeItem(event.itemId, event.turnId, event.eventId);
 }
 
-function assistantSegmentMessageId(baseKey: string, segmentIndex: number): MessageId {
-  return MessageId.make(
-    segmentIndex === 0 ? `assistant:${baseKey}` : `assistant:${baseKey}:segment:${segmentIndex}`,
-  );
-}
 function buildContextWindowActivityPayload(
   event: ProviderRuntimeEvent,
 ): ThreadTokenUsageSnapshot | undefined {
@@ -756,11 +755,11 @@ const make = Effect.gen(function* () {
             onNone: () => ({
               baseKey: input.baseKey,
               nextSegmentIndex: 1,
-              activeMessageId: assistantSegmentMessageId(input.baseKey, 0),
+              activeMessageId: assistantSegmentMessageId(input.baseKey, 0, input.turnId),
             }),
             onSome: (state) => {
               const segmentIndex = state.baseKey === input.baseKey ? state.nextSegmentIndex : 0;
-              const messageId = assistantSegmentMessageId(input.baseKey, segmentIndex);
+              const messageId = assistantSegmentMessageId(input.baseKey, segmentIndex, input.turnId);
               return {
                 baseKey: input.baseKey,
                 nextSegmentIndex: state.baseKey === input.baseKey ? state.nextSegmentIndex + 1 : 1,
@@ -781,7 +780,7 @@ const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       if (!input.turnId) {
-        return assistantSegmentMessageId(assistantSegmentBaseKeyFromEvent(input.event), 0);
+        return assistantSegmentMessageId(assistantSegmentBaseKeyFromEvent(input.event), 0, undefined);
       }
 
       const activeMessageId = yield* getActiveAssistantMessageIdForTurn(
@@ -1459,8 +1458,14 @@ const make = Effect.gen(function* () {
       const assistantCompletion =
         event.type === "item.completed" && event.payload.itemType === "assistant_message"
           ? {
-              messageId: MessageId.make(
-                `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
+              messageId: assistantSegmentMessageId(
+                assistantSegmentBaseKeyFromRuntimeItem(
+                  event.itemId,
+                  event.turnId,
+                  event.eventId,
+                ),
+                0,
+                toTurnId(event.turnId),
               ),
               fallbackText: event.payload.detail,
             }
@@ -1634,8 +1639,14 @@ const make = Effect.gen(function* () {
           if (hasCheckpointForTurn(checkpointContext.checkpoints, turnId)) {
             // Already tracked; no-op.
           } else {
-            const assistantMessageId = MessageId.make(
-              `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
+            const assistantMessageId = assistantSegmentMessageId(
+              assistantSegmentBaseKeyFromRuntimeItem(
+                event.itemId,
+                event.turnId,
+                event.eventId,
+              ),
+              0,
+              turnId,
             );
             yield* orchestrationEngine.dispatch({
               type: "thread.turn.diff.complete",

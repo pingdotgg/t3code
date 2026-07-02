@@ -54,6 +54,7 @@ import {
   parseThreadSegmentFromAttachmentId,
   toSafeThreadAttachmentSegment,
 } from "../../attachmentStore.ts";
+import { mergeThreadMessageProjection } from "../threadMessageProjection.ts";
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
@@ -816,18 +817,22 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             messageId: event.payload.messageId,
           });
           const previousMessage = Option.getOrUndefined(existingMessage);
-          const nextText = Option.match(existingMessage, {
-            onNone: () => event.payload.text,
-            onSome: (message) => {
-              if (event.payload.streaming) {
-                return `${message.text}${event.payload.text}`;
-              }
-              if (event.payload.text.length === 0) {
-                return message.text;
-              }
-              return event.payload.text;
+          const mergedMessage = mergeThreadMessageProjection(
+            previousMessage
+              ? {
+                  text: previousMessage.text,
+                  turnId: previousMessage.turnId,
+                  createdAt: previousMessage.createdAt,
+                }
+              : undefined,
+            {
+              text: event.payload.text,
+              turnId: event.payload.turnId,
+              streaming: event.payload.streaming,
+              createdAt: event.payload.createdAt,
+              updatedAt: event.payload.updatedAt,
             },
-          });
+          );
           const nextAttachments =
             event.payload.attachments !== undefined
               ? yield* materializeAttachmentsForProjection({
@@ -837,13 +842,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* projectionThreadMessageRepository.upsert({
             messageId: event.payload.messageId,
             threadId: event.payload.threadId,
-            turnId: event.payload.turnId,
+            turnId: mergedMessage.turnId,
             role: event.payload.role,
-            text: nextText,
+            text: mergedMessage.text,
             ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
             isStreaming: event.payload.streaming,
-            createdAt: previousMessage?.createdAt ?? event.payload.createdAt,
-            updatedAt: event.payload.updatedAt,
+            createdAt: mergedMessage.createdAt,
+            updatedAt: mergedMessage.updatedAt,
           });
           return;
         }
