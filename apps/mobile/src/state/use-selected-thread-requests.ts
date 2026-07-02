@@ -92,12 +92,15 @@ export function useSelectedThreadRequests(
     () => (requestActivities ? derivePendingApprovals(requestActivities) : []),
     [requestActivities],
   );
-  const activePendingApproval = activePendingApprovals[0] ?? null;
+  // The derivations sort ascending by createdAt; surface the NEWEST open
+  // request. With lazy-loaded older pages in the set, index 0 could be an
+  // ancient dangling request hijacking the prompt for the current one.
+  const activePendingApproval = activePendingApprovals.at(-1) ?? null;
   const activePendingUserInputs = useMemo(
     () => (requestActivities ? derivePendingUserInputs(requestActivities) : []),
     [requestActivities],
   );
-  const activePendingUserInput = activePendingUserInputs[0] ?? null;
+  const activePendingUserInput = activePendingUserInputs.at(-1) ?? null;
   const activePendingUserInputDrafts =
     activePendingUserInput && selectedThreadShell
       ? (userInputDraftsByRequestKey[
