@@ -66,6 +66,38 @@ export function nextGroupDisplayState(
   }
 }
 
+/**
+ * Structural equality for list items. Item objects are rebuilt on every
+ * collapse/show-more toggle; without this the lists would consider every
+ * mounted row changed and re-render all of them (each carrying a swipeable +
+ * a vcs-status subscription). Group/thread references are stable across
+ * toggles.
+ */
+export function homeListItemsAreEqual(previous: HomeListItem, item: HomeListItem): boolean {
+  switch (item.type) {
+    case "header":
+      return (
+        previous.type === "header" &&
+        previous.group === item.group &&
+        previous.collapsed === item.collapsed &&
+        previous.isFirst === item.isFirst
+      );
+    case "thread":
+      return (
+        previous.type === "thread" &&
+        previous.thread === item.thread &&
+        previous.isLast === item.isLast
+      );
+    case "show-more":
+      return (
+        previous.type === "show-more" &&
+        previous.groupKey === item.groupKey &&
+        previous.hiddenCount === item.hiddenCount &&
+        previous.canShowLess === item.canShowLess
+      );
+  }
+}
+
 export function buildHomeListLayout(input: {
   readonly groups: ReadonlyArray<HomeThreadGroup>;
   readonly displayStates: ReadonlyMap<string, HomeGroupDisplayState>;

@@ -12,33 +12,32 @@ import type {
   SidebarProjectGroupingMode,
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
-import { SymbolView } from "expo-symbols";
-import { memo, useCallback, useMemo, useRef, useState, type ComponentProps } from "react";
-import { ActivityIndicator, Platform, Pressable, useWindowDimensions, View } from "react-native";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Platform, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
-import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
-import { ProjectFavicon } from "../../components/ProjectFavicon";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
-import { relativeTime } from "../../lib/time";
-import { useThreadPr } from "../../state/use-thread-pr";
-import { resolveThreadStatus } from "../threads/threadPresentation";
+import {
+  ThreadListGroupHeader,
+  ThreadListRow,
+  ThreadListShowMoreRow,
+} from "../threads/thread-list-items";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
   buildHomeListLayout,
   DEFAULT_GROUP_DISPLAY_STATE,
+  homeListItemsAreEqual,
   nextGroupDisplayState,
   type HomeGroupDisplayAction,
   type HomeGroupDisplayState,
   type HomeListItem,
 } from "./homeListItems";
 import { buildHomeThreadGroups, type HomeProjectSortOrder } from "./homeThreadList";
-import { ThreadSwipeable } from "./thread-swipe-actions";
 import { WorkspaceConnectionStatus } from "./WorkspaceConnectionStatus";
 import { shouldShowWorkspaceConnectionStatus } from "./workspace-connection-status";
 
@@ -72,8 +71,6 @@ interface HomeScreenProps {
 /* ─── Layout constants ───────────────────────────────────────────────── */
 
 const ESTIMATED_THREAD_ROW_HEIGHT = 64;
-/** Left inset that aligns secondary rows with the thread title column. */
-const THREAD_TEXT_COLUMN_INSET = 20;
 /** Height of the floating custom header on non-iOS platforms. */
 const CUSTOM_HEADER_HEIGHT = 78;
 
@@ -140,296 +137,9 @@ function deriveEmptyState(props: {
   };
 }
 
-/* ─── Project group header ───────────────────────────────────────────── */
-
-const ProjectGroupHeader = memo(function ProjectGroupHeader(props: {
-  readonly project: EnvironmentProject;
-  readonly title: string;
-  readonly threadCount: number;
-  readonly collapsed: boolean;
-  readonly isFirst: boolean;
-  readonly groupKey: string;
-  readonly onGroupAction: (key: string, action: HomeGroupDisplayAction) => void;
-}) {
-  const iconSubtleColor = useThemeColor("--color-icon-subtle");
-  const { groupKey, onGroupAction } = props;
-  const handleToggle = useCallback(
-    () => onGroupAction(groupKey, "toggle-collapsed"),
-    [groupKey, onGroupAction],
-  );
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ expanded: !props.collapsed }}
-      accessibilityLabel={`${props.title}, ${props.threadCount} threads`}
-      accessibilityHint={props.collapsed ? "Expands the project" : "Collapses the project"}
-      className="bg-screen"
-      onPress={handleToggle}
-    >
-      <View
-        className={`flex-row items-center gap-2.5 px-5 pb-3 ${props.isFirst ? "pt-2" : "pt-6"}`}
-        style={{ minHeight: 44 }}
-      >
-        <ProjectFavicon
-          environmentId={props.project.environmentId}
-          size={22}
-          projectTitle={props.project.title}
-          workspaceRoot={props.project.workspaceRoot}
-        />
-        <Text
-          className="flex-shrink text-base font-t3-bold text-foreground-muted"
-          style={{ letterSpacing: 0.2 }}
-          numberOfLines={1}
-        >
-          {props.title}
-        </Text>
-        <Text className="flex-1 text-sm font-t3-medium text-foreground-tertiary">
-          {props.threadCount}
-        </Text>
-        <SymbolView
-          name={props.collapsed ? "chevron.right" : "chevron.down"}
-          size={13}
-          tintColor={iconSubtleColor}
-          type="monochrome"
-          weight="semibold"
-        />
-      </View>
-    </Pressable>
-  );
-});
-
-/* ─── Show more / show less row ──────────────────────────────────────── */
-
-const ShowMoreRow = memo(function ShowMoreRow(props: {
-  readonly hiddenCount: number;
-  readonly canShowLess: boolean;
-  readonly groupKey: string;
-  readonly onGroupAction: (key: string, action: HomeGroupDisplayAction) => void;
-}) {
-  const iconSubtleColor = useThemeColor("--color-icon-subtle");
-  const showsMore = props.hiddenCount > 0;
-  const { groupKey, onGroupAction } = props;
-  const handleShowMore = useCallback(
-    () => onGroupAction(groupKey, "show-more"),
-    [groupKey, onGroupAction],
-  );
-  const handleShowLess = useCallback(
-    () => onGroupAction(groupKey, "show-less"),
-    [groupKey, onGroupAction],
-  );
-
-  return (
-    <View
-      className="flex-row items-center gap-2.5 bg-screen"
-      style={{
-        paddingLeft: THREAD_TEXT_COLUMN_INSET,
-        paddingRight: 18,
-        paddingVertical: 12,
-      }}
-    >
-      {showsMore ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Show more threads"
-          className="rounded-full bg-subtle"
-          hitSlop={6}
-          onPress={handleShowMore}
-          style={({ pressed }) => ({
-            opacity: pressed ? 0.6 : 1,
-            paddingHorizontal: 14,
-            paddingVertical: 7,
-            borderCurve: "continuous",
-          })}
-        >
-          <View className="flex-row items-center gap-1.5">
-            <SymbolView
-              name="chevron.down"
-              size={10}
-              tintColor={iconSubtleColor}
-              type="monochrome"
-              weight="semibold"
-            />
-            <Text className="text-sm font-t3-medium text-foreground-muted">Show more</Text>
-          </View>
-        </Pressable>
-      ) : null}
-      {props.canShowLess ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Show fewer threads"
-          className="rounded-full bg-subtle"
-          hitSlop={6}
-          onPress={handleShowLess}
-          style={({ pressed }) => ({
-            opacity: pressed ? 0.6 : 1,
-            paddingHorizontal: 14,
-            paddingVertical: 7,
-            borderCurve: "continuous",
-          })}
-        >
-          <View className="flex-row items-center gap-1.5">
-            <SymbolView
-              name="chevron.up"
-              size={10}
-              tintColor={iconSubtleColor}
-              type="monochrome"
-              weight="semibold"
-            />
-            <Text className="text-sm font-t3-medium text-foreground-muted">Show less</Text>
-          </View>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-});
-
 function HomeTopContentSpacer(props: { readonly topInset: number }) {
   return <View style={{ height: props.topInset + CUSTOM_HEADER_HEIGHT }} />;
 }
-
-/* ─── Thread row ─────────────────────────────────────────────────────── */
-
-const ThreadRow = memo(function ThreadRow(props: {
-  readonly thread: EnvironmentThreadShell;
-  readonly environmentLabel: string | null;
-  readonly projectCwd: string | null;
-  readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
-  readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
-  readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
-  readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
-  readonly onSwipeableClose: (methods: SwipeableMethods) => void;
-  readonly simultaneousSwipeGesture?: ComponentProps<
-    typeof ThreadSwipeable
-  >["simultaneousWithExternalGesture"];
-  readonly isLast: boolean;
-}) {
-  const { width: windowWidth } = useWindowDimensions();
-  const separatorColor = useThemeColor("--color-separator");
-  const iconSubtleColor = useThemeColor("--color-icon-subtle");
-  const screenColor = useThemeColor("--color-screen");
-  const { thread, onSelectThread, onArchiveThread, onDeleteThread } = props;
-  const status = resolveThreadStatus(thread);
-  const pr = useThreadPr(thread, props.projectCwd);
-  const timestamp = relativeTime(
-    thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
-  );
-  const branch = thread.branch;
-  const subtitleParts = [props.environmentLabel, branch].filter((part): part is string =>
-    Boolean(part),
-  );
-  const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
-  const primaryAction = useMemo(
-    () => ({
-      accessibilityLabel: `Archive ${thread.title}`,
-      icon: "archivebox" as const,
-      label: "Archive",
-      onPress: () => onArchiveThread(thread),
-    }),
-    [onArchiveThread, thread],
-  );
-
-  return (
-    <ThreadSwipeable
-      backgroundColor={screenColor}
-      fullSwipeWidth={windowWidth - 32}
-      onDelete={handleDelete}
-      onSwipeableClose={props.onSwipeableClose}
-      onSwipeableWillOpen={props.onSwipeableWillOpen}
-      primaryAction={primaryAction}
-      simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
-      threadTitle={thread.title}
-    >
-      {(close) => (
-        <Pressable
-          accessibilityHint="Swipe left for archive and delete actions"
-          accessibilityLabel={thread.title}
-          accessibilityRole="button"
-          className="bg-screen"
-          onPress={() => {
-            close();
-            onSelectThread(thread);
-          }}
-          style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
-        >
-          <View
-            style={{
-              paddingLeft: THREAD_TEXT_COLUMN_INSET,
-              paddingRight: 18,
-              paddingTop: 10,
-            }}
-          >
-            <View
-              style={{
-                gap: 3,
-                borderBottomWidth: props.isLast ? 0 : 1,
-                borderBottomColor: separatorColor,
-                paddingBottom: 10,
-              }}
-            >
-              <View className="flex-row items-center justify-between gap-2">
-                <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
-                  {thread.title}
-                </Text>
-                <View className="flex-row items-center gap-2">
-                  {status ? (
-                    <View
-                      className={status.pillClassName}
-                      style={{ borderRadius: 99, paddingHorizontal: 6, paddingVertical: 2 }}
-                    >
-                      <Text className={`text-3xs font-t3-bold ${status.textClassName}`}>
-                        {status.label}
-                      </Text>
-                    </View>
-                  ) : null}
-                  <Text
-                    className="text-base text-foreground-tertiary"
-                    style={{ fontVariant: ["tabular-nums"] }}
-                  >
-                    {timestamp}
-                  </Text>
-                  <SymbolView
-                    name="chevron.right"
-                    size={13}
-                    tintColor={iconSubtleColor}
-                    type="monochrome"
-                  />
-                </View>
-              </View>
-
-              {subtitleParts.length > 0 || pr !== null ? (
-                <View className="flex-row items-center gap-1.5" style={{ marginTop: 1 }}>
-                  {subtitleParts.length > 0 ? (
-                    <>
-                      <SymbolView
-                        name="arrow.triangle.branch"
-                        size={10}
-                        tintColor={iconSubtleColor}
-                        type="monochrome"
-                      />
-                      <Text
-                        className="text-sm text-foreground-muted"
-                        numberOfLines={1}
-                        style={{ flexShrink: 1 }}
-                      >
-                        {subtitleParts.join(" · ")}
-                      </Text>
-                    </>
-                  ) : null}
-                  {pr !== null ? (
-                    <Text className={`text-sm font-t3-medium ${pr.textClassName}`}>
-                      {pr.label}
-                    </Text>
-                  ) : null}
-                </View>
-              ) : null}
-            </View>
-          </View>
-        </Pressable>
-      )}
-    </ThreadSwipeable>
-  );
-});
 
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
@@ -520,7 +230,8 @@ export function HomeScreen(props: HomeScreenProps) {
       switch (item.type) {
         case "header":
           return (
-            <ProjectGroupHeader
+            <ThreadListGroupHeader
+              variant="compact"
               collapsed={item.collapsed}
               isFirst={item.isFirst}
               groupKey={item.group.key}
@@ -533,7 +244,8 @@ export function HomeScreen(props: HomeScreenProps) {
         case "thread": {
           const thread = item.thread;
           return (
-            <ThreadRow
+            <ThreadListRow
+              variant="compact"
               thread={thread}
               environmentLabel={
                 props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
@@ -553,7 +265,8 @@ export function HomeScreen(props: HomeScreenProps) {
         }
         case "show-more":
           return (
-            <ShowMoreRow
+            <ThreadListShowMoreRow
+              variant="compact"
               hiddenCount={item.hiddenCount}
               canShowLess={item.canShowLess}
               groupKey={item.groupKey}
@@ -575,36 +288,6 @@ export function HomeScreen(props: HomeScreenProps) {
   );
 
   const keyExtractor = useCallback((item: HomeListItem) => item.key, []);
-
-  // Item objects are rebuilt on every collapse/show-more toggle; without this
-  // LegendList would consider every mounted row changed and re-render all of
-  // them (each carrying a swipeable + a vcs-status subscription), which made
-  // taps visibly laggy. Group/thread references are stable across toggles.
-  const itemsAreEqual = useCallback((previous: HomeListItem, item: HomeListItem) => {
-    if (previous.type !== item.type) return false;
-    switch (item.type) {
-      case "header":
-        return (
-          previous.type === "header" &&
-          previous.group === item.group &&
-          previous.collapsed === item.collapsed &&
-          previous.isFirst === item.isFirst
-        );
-      case "thread":
-        return (
-          previous.type === "thread" &&
-          previous.thread === item.thread &&
-          previous.isLast === item.isLast
-        );
-      case "show-more":
-        return (
-          previous.type === "show-more" &&
-          previous.groupKey === item.groupKey &&
-          previous.hiddenCount === item.hiddenCount &&
-          previous.canShowLess === item.canShowLess
-        );
-    }
-  }, []);
 
   /* Empty states */
   const hasAnyThreads = props.threads.some((thread) => thread.archivedAt === null);
@@ -699,7 +382,7 @@ export function HomeScreen(props: HomeScreenProps) {
         data={listLayout.items}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
-        itemsAreEqual={itemsAreEqual}
+        itemsAreEqual={homeListItemsAreEqual}
         estimatedItemSize={ESTIMATED_THREAD_ROW_HEIGHT}
         extraData={extraData}
         ListHeaderComponent={listHeader}

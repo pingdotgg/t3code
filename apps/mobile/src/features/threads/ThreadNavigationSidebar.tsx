@@ -3,22 +3,13 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "expo-symbols";
-import {
-  memo,
-  useCallback,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentProps,
-  type ReactNode,
-} from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
-  ColorValue,
   LayoutChangeEvent,
   NativeScrollEvent,
   NativeSyntheticEvent,
 } from "react-native";
-import { Platform, Pressable, StyleSheet, TextInput, View, useColorScheme } from "react-native";
+import { Platform, StyleSheet, TextInput, View, useColorScheme } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -27,10 +18,8 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
-import { StatusPill } from "../../components/StatusPill";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { scopedThreadKey } from "../../lib/scopedEntities";
-import { relativeTime } from "../../lib/time";
+import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useWorkspaceState } from "../../state/workspace";
@@ -44,8 +33,16 @@ import {
   useHomeListOptions,
 } from "../home/home-list-options";
 import { buildHomeListFilterMenu } from "../home/home-list-filter-menu";
+import {
+  buildHomeListLayout,
+  DEFAULT_GROUP_DISPLAY_STATE,
+  homeListItemsAreEqual,
+  nextGroupDisplayState,
+  type HomeGroupDisplayAction,
+  type HomeGroupDisplayState,
+  type HomeListItem,
+} from "../home/homeListItems";
 import { buildHomeThreadGroups } from "../home/homeThreadList";
-import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { useThreadListActions } from "../home/useThreadListActions";
 import { WorkspaceConnectionStatus } from "../home/WorkspaceConnectionStatus";
 import { shouldShowWorkspaceConnectionStatus } from "../home/workspace-connection-status";
@@ -53,7 +50,11 @@ import { SidebarHeaderActions } from "./sidebar-header-actions";
 import { SidebarFilterButton } from "./sidebar-filter-button";
 import { createSidebarHeaderItems } from "./sidebar-native-header-items";
 import { SidebarNavigationShell } from "./sidebar-navigation-shell";
-import { resolveThreadStatus } from "./threadPresentation";
+import {
+  ThreadListGroupHeader,
+  ThreadListRow,
+  ThreadListShowMoreRow,
+} from "./thread-list-items";
 
 /**
  * Shared capsule behind the sidebar header buttons — a native liquid-glass
@@ -99,182 +100,6 @@ const SIDEBAR_HEADER_WASH_OPACITY = {
   dark: [0.22, 0.14, 0.04],
   light: [0.46, 0.3, 0.08],
 } as const;
-
-const ThreadNavigationRow = memo(function ThreadNavigationRow(props: {
-  readonly backgroundColor: ColorValue;
-  readonly foregroundColor: ColorValue;
-  readonly fullSwipeWidth: number;
-  readonly mutedColor: ColorValue;
-  readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
-  readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
-  readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
-  readonly onSwipeableClose: (methods: SwipeableMethods) => void;
-  readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
-  readonly pressedBackgroundColor: ColorValue;
-  readonly selected: boolean;
-  readonly selectedBackgroundColor: ColorValue;
-  readonly selectedForegroundColor: ColorValue;
-  readonly selectedMutedColor: ColorValue;
-  readonly selectedPressedBackgroundColor: ColorValue;
-  readonly simultaneousSwipeGesture?: ComponentProps<
-    typeof ThreadSwipeable
-  >["simultaneousWithExternalGesture"];
-  readonly thread: EnvironmentThreadShell;
-  readonly environmentLabel: string | null;
-}) {
-  const [hovered, setHovered] = useState(false);
-  const {
-    backgroundColor,
-    foregroundColor,
-    fullSwipeWidth,
-    mutedColor,
-    onArchiveThread,
-    onDeleteThread,
-    onSelectThread,
-    onSwipeableClose,
-    onSwipeableWillOpen,
-    pressedBackgroundColor,
-    selected,
-    selectedBackgroundColor,
-    selectedForegroundColor,
-    selectedMutedColor,
-    selectedPressedBackgroundColor,
-    simultaneousSwipeGesture,
-    thread,
-    environmentLabel,
-  } = props;
-  const effectiveForegroundColor = selected ? selectedForegroundColor : foregroundColor;
-  const effectiveMutedColor = selected ? selectedMutedColor : mutedColor;
-  const effectivePressedBackgroundColor = selected
-    ? selectedPressedBackgroundColor
-    : pressedBackgroundColor;
-  const handleArchive = useCallback(() => {
-    onArchiveThread(thread);
-  }, [onArchiveThread, thread]);
-  const handleDelete = useCallback(() => {
-    onDeleteThread(thread);
-  }, [onDeleteThread, thread]);
-  const primaryAction = useMemo(
-    () => ({
-      accessibilityLabel: `Archive ${thread.title}`,
-      icon: "archivebox" as const,
-      label: "Archive",
-      onPress: handleArchive,
-    }),
-    [handleArchive, thread.title],
-  );
-  const threadActions = useMemo<MenuAction[]>(
-    () => [
-      { id: "archive", title: "Archive", image: "archivebox" },
-      { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-    ],
-    [],
-  );
-  const handleMenuAction = useCallback(
-    ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
-      if (nativeEvent.event === "archive") handleArchive();
-      if (nativeEvent.event === "delete") handleDelete();
-    },
-    [handleArchive, handleDelete],
-  );
-  const subtitle = [environmentLabel, thread.branch].filter((part): part is string =>
-    Boolean(part),
-  );
-  const statusTone = resolveThreadStatus(thread);
-  const effectiveStatusTone =
-    selected && statusTone
-      ? {
-          ...statusTone,
-          pillClassName: "bg-white/20",
-          textClassName: "text-white",
-        }
-      : statusTone;
-
-  return (
-    <ThreadSwipeable
-      backgroundColor={backgroundColor}
-      containerStyle={styles.threadRowContainer}
-      enableTrackpadSwipe
-      fullSwipeWidth={fullSwipeWidth}
-      onDelete={handleDelete}
-      onSwipeableClose={onSwipeableClose}
-      onSwipeableWillOpen={onSwipeableWillOpen}
-      primaryAction={primaryAction}
-      simultaneousWithExternalGesture={simultaneousSwipeGesture}
-      threadTitle={thread.title}
-    >
-      {() => (
-        // Messages-style row actions: a native context menu on long-press /
-        // pointer right-click (MenuViewImplementation attaches a real
-        // UIContextMenuInteraction). No visible ⋯ button; touch users also
-        // have the swipe actions.
-        <ControlPillMenu
-          actions={threadActions}
-          onPressAction={handleMenuAction}
-          shouldOpenOnLongPress
-        >
-          <View
-            style={[
-              styles.threadRow,
-              { backgroundColor: selected ? selectedBackgroundColor : backgroundColor },
-            ]}
-          >
-          <Pressable
-            accessibilityHint="Opens the thread"
-            accessibilityLabel={thread.title}
-            accessibilityRole="button"
-            accessibilityState={{ selected }}
-            onHoverIn={() => setHovered(true)}
-            onHoverOut={() => setHovered(false)}
-            onPress={() => onSelectThread(thread)}
-            style={({ pressed }) => [
-              styles.threadSelectionTarget,
-              {
-                backgroundColor:
-                  pressed || hovered ? effectivePressedBackgroundColor : "transparent",
-                cursor: "pointer",
-              },
-            ]}
-          >
-            <View style={styles.threadText}>
-              <Text
-                className="text-base font-t3-medium"
-                numberOfLines={1}
-                style={{ color: effectiveForegroundColor }}
-              >
-                {thread.title}
-              </Text>
-              <View style={styles.threadMetadata}>
-                {subtitle.length > 0 ? (
-                  <Text
-                    className="min-w-0 flex-1 text-xs"
-                    numberOfLines={1}
-                    style={{ color: effectiveMutedColor }}
-                  >
-                    {subtitle.join(" · ")}
-                  </Text>
-                ) : null}
-                <Text className="text-xs" numberOfLines={1} style={{ color: effectiveMutedColor }}>
-                  {relativeTime(thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt)}
-                </Text>
-              </View>
-            </View>
-            {effectiveStatusTone ? <StatusPill {...effectiveStatusTone} size="compact" /> : null}
-          </Pressable>
-          </View>
-        </ControlPillMenu>
-      )}
-    </ThreadSwipeable>
-  );
-});
-
-type SidebarListItem =
-  | { readonly kind: "section"; readonly key: string; readonly title: string }
-  | {
-      readonly kind: "thread";
-      readonly key: string;
-      readonly thread: EnvironmentThreadShell;
-    };
 
 interface ThreadNavigationSidebarProps {
   readonly width: number;
@@ -378,18 +203,36 @@ function ThreadNavigationSidebarPane(
       }),
     [options, projects, props.searchQuery, threads],
   );
-  const listItems = useMemo<ReadonlyArray<SidebarListItem>>(
+  const [groupDisplayStates, setGroupDisplayStates] = useState<
+    ReadonlyMap<string, HomeGroupDisplayState>
+  >(() => new Map());
+  const updateGroupDisplay = useCallback((key: string, action: HomeGroupDisplayAction) => {
+    setGroupDisplayStates((previous) => {
+      const next = new Map(previous);
+      next.set(
+        key,
+        nextGroupDisplayState(previous.get(key) ?? DEFAULT_GROUP_DISPLAY_STATE, action),
+      );
+      return next;
+    });
+  }, []);
+  const hasSearchQuery = props.searchQuery.trim().length > 0;
+  const listLayout = useMemo(
     () =>
-      groups.flatMap((group) => [
-        { kind: "section" as const, key: `section:${group.key}`, title: group.title },
-        ...group.threads.map((thread) => ({
-          kind: "thread" as const,
-          key: scopedThreadKey(thread.environmentId, thread.id),
-          thread,
-        })),
-      ]),
-    [groups],
+      buildHomeListLayout({
+        groups,
+        displayStates: groupDisplayStates,
+        showAllThreads: hasSearchQuery,
+      }),
+    [groups, groupDisplayStates, hasSearchQuery],
   );
+  const projectCwdByKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const project of projects) {
+      map.set(scopedProjectKey(project.environmentId, project.id), project.workspaceRoot);
+    }
+    return map;
+  }, [projects]);
   const showsConnectionStatus = shouldShowWorkspaceConnectionStatus(catalogState);
   const listMenuActions = useMemo<MenuAction[]>(
     () => [
@@ -493,13 +336,7 @@ function ThreadNavigationSidebarPane(
   const placeholderColor = useThemeColor("--color-placeholder");
   const searchBackgroundColor =
     colorScheme === "dark" ? IOS_SEARCH_FILL_DARK : IOS_SEARCH_FILL_LIGHT;
-  const selectedBackgroundColor = useThemeColor("--color-user-bubble");
-  const selectedForegroundColor = useThemeColor("--color-user-bubble-foreground");
-  const selectedMutedColor = useThemeColor("--color-user-bubble-foreground-muted");
-  const selectedPressedBackgroundColor = "rgba(255,255,255,0.16)";
-  const pressedBackgroundColor = useThemeColor("--color-subtle");
-  const listThemeKey = `${colorScheme}:${String(backgroundColor)}:${String(selectedBackgroundColor)}`;
-  const listExtraData = `${listThemeKey}:${props.selectedThreadKey ?? ""}:${props.searchQuery}`;
+  const listExtraData = `${props.selectedThreadKey ?? ""}:${props.searchQuery}`;
   const headerFadeColor = String(backgroundColor);
   const headerWashOpacity = SIDEBAR_HEADER_WASH_OPACITY[colorScheme];
   const [measuredHeaderHeight, setMeasuredHeaderHeight] = useState<number | null>(null);
@@ -556,63 +393,72 @@ function ThreadNavigationSidebarPane(
   }, [props.nativeChrome, props.onRequestVisibility, props.visible]);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
   const renderListItem = useCallback(
-    ({ item }: { readonly item: SidebarListItem }) => {
-      if (item.kind === "section") {
-        return (
-          <Text
-            className="text-xs font-t3-bold"
-            numberOfLines={1}
-            style={[styles.sectionTitle, { color: mutedColor }]}
-          >
-            {item.title}
-          </Text>
-        );
+    ({ item }: { readonly item: HomeListItem }) => {
+      switch (item.type) {
+        case "header":
+          return (
+            <ThreadListGroupHeader
+              variant="sidebar"
+              collapsed={item.collapsed}
+              isFirst={item.isFirst}
+              groupKey={item.group.key}
+              onGroupAction={updateGroupDisplay}
+              project={item.group.representative}
+              threadCount={item.group.threads.length}
+              title={item.group.title}
+            />
+          );
+        case "thread": {
+          const thread = item.thread;
+          return (
+            <ThreadListRow
+              variant="sidebar"
+              thread={thread}
+              environmentLabel={
+                savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
+              }
+              projectCwd={
+                projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ??
+                null
+              }
+              isLast={item.isLast}
+              selected={
+                scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey
+              }
+              fullSwipeWidth={props.width - 20}
+              onArchiveThread={archiveThread}
+              onDeleteThread={confirmDeleteThread}
+              onSelectThread={handleSelectThread}
+              onSwipeableClose={handleSwipeableClose}
+              onSwipeableWillOpen={handleSwipeableWillOpen}
+              simultaneousSwipeGesture={sidebarScrollGesture}
+            />
+          );
+        }
+        case "show-more":
+          return (
+            <ThreadListShowMoreRow
+              variant="sidebar"
+              hiddenCount={item.hiddenCount}
+              canShowLess={item.canShowLess}
+              groupKey={item.groupKey}
+              onGroupAction={updateGroupDisplay}
+            />
+          );
       }
-      const thread = item.thread;
-      return (
-        <View style={styles.threadItem}>
-          <ThreadNavigationRow
-            key={`${item.key}:${listThemeKey}`}
-            backgroundColor={backgroundColor}
-            foregroundColor={foregroundColor}
-            fullSwipeWidth={props.width - 20}
-            mutedColor={mutedColor}
-            onArchiveThread={archiveThread}
-            onDeleteThread={confirmDeleteThread}
-            onSelectThread={handleSelectThread}
-            onSwipeableClose={handleSwipeableClose}
-            onSwipeableWillOpen={handleSwipeableWillOpen}
-            pressedBackgroundColor={pressedBackgroundColor}
-            selected={item.key === props.selectedThreadKey}
-            selectedBackgroundColor={selectedBackgroundColor}
-            selectedForegroundColor={selectedForegroundColor}
-            selectedMutedColor={selectedMutedColor}
-            selectedPressedBackgroundColor={selectedPressedBackgroundColor}
-            simultaneousSwipeGesture={sidebarScrollGesture}
-            thread={thread}
-            environmentLabel={savedConnectionsById[thread.environmentId]?.environmentLabel ?? null}
-          />
-        </View>
-      );
     },
     [
       archiveThread,
-      backgroundColor,
-      foregroundColor,
       confirmDeleteThread,
       handleSelectThread,
       handleSwipeableClose,
       handleSwipeableWillOpen,
-      pressedBackgroundColor,
+      projectCwdByKey,
       props.selectedThreadKey,
       props.width,
       savedConnectionsById,
-      selectedBackgroundColor,
-      selectedForegroundColor,
-      selectedMutedColor,
-      selectedPressedBackgroundColor,
-      listThemeKey,
-      mutedColor,
+      sidebarScrollGesture,
+      updateGroupDisplay,
     ],
   );
   const filterIcon = hasCustomHomeListOptions(options)
@@ -687,10 +533,11 @@ function ThreadNavigationSidebarPane(
         <View style={styles.container}>
           <GestureDetector gesture={sidebarScrollGesture}>
             <LegendList
-              data={listItems}
-              estimatedItemSize={58}
+              data={listLayout.items}
+              estimatedItemSize={64}
               extraData={listExtraData}
-              getItemType={(item) => item.kind}
+              getItemType={(item) => item.type}
+              itemsAreEqual={homeListItemsAreEqual}
               keyExtractor={(item) => item.key}
               renderItem={renderListItem}
               automaticallyAdjustsScrollIndicatorInsets
@@ -743,10 +590,11 @@ function ThreadNavigationSidebarPane(
       <View style={{ flex: 1, paddingBottom: insets.bottom }}>
         <GestureDetector gesture={sidebarScrollGesture}>
           <LegendList
-            data={listItems}
-            estimatedItemSize={58}
+            data={listLayout.items}
+            estimatedItemSize={64}
             extraData={listExtraData}
-            getItemType={(item) => item.kind}
+            getItemType={(item) => item.type}
+            itemsAreEqual={homeListItemsAreEqual}
             keyExtractor={(item) => item.key}
             renderItem={renderListItem}
             contentContainerStyle={[
@@ -935,47 +783,5 @@ const styles = StyleSheet.create({
   },
   threadListContent: {
     paddingHorizontal: 8,
-  },
-  sectionTitle: {
-    paddingHorizontal: 20,
-    paddingBottom: 4,
-    paddingTop: 16,
-  },
-  threadItem: {
-    paddingBottom: 0,
-  },
-  threadRow: {
-    minHeight: 64,
-    borderRadius: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingRight: 6,
-  },
-  threadSelectionTarget: {
-    minWidth: 0,
-    flex: 1,
-    alignSelf: "stretch",
-    borderRadius: 12,
-    paddingLeft: 14,
-    paddingRight: 6,
-    paddingVertical: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  threadRowContainer: {
-    borderRadius: 12,
-    overflow: "hidden",
-  },
-  threadText: {
-    minWidth: 0,
-    flex: 1,
-    gap: 2,
-  },
-  threadMetadata: {
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
   },
 });
