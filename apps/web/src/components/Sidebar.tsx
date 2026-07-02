@@ -191,6 +191,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useOpenAddProjectCommandPalette } from "../commandPaletteContext";
 import {
   getSidebarThreadIdsToPrewarm,
+  getVisibleThreadsForSidebarSection,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
@@ -2621,6 +2622,142 @@ type SortableProjectHandleProps = Pick<
   "attributes" | "listeners" | "setActivatorNodeRef"
 >;
 
+function ThreadSortMenuGroup({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: SidebarThreadSortOrder;
+  onChange: (sortOrder: SidebarThreadSortOrder) => void;
+}) {
+  return (
+    <MenuGroup>
+      <div className="px-2 pt-2 pb-1 sm:text-xs font-medium text-muted-foreground">{label}</div>
+      <MenuRadioGroup
+        value={value}
+        onValueChange={(nextValue) => {
+          onChange(nextValue as SidebarThreadSortOrder);
+        }}
+      >
+        {(
+          Object.entries(SIDEBAR_THREAD_SORT_LABELS) as Array<[SidebarThreadSortOrder, string]>
+        ).map(([nextValue, nextLabel]) => (
+          <MenuRadioItem key={nextValue} value={nextValue} className="min-h-7 py-1 sm:text-xs">
+            {nextLabel}
+          </MenuRadioItem>
+        ))}
+      </MenuRadioGroup>
+    </MenuGroup>
+  );
+}
+
+function ThreadPreviewCountMenuGroup({
+  label,
+  ariaLabel,
+  value,
+  onChange,
+}: {
+  label: string;
+  ariaLabel: string;
+  value: SidebarThreadPreviewCount;
+  onChange: (count: SidebarThreadPreviewCount) => void;
+}) {
+  const handleValueChange = useCallback(
+    (nextValue: number | null) => {
+      if (nextValue === null) {
+        return;
+      }
+
+      const clampedValue = clampSidebarThreadPreviewCount(nextValue);
+      if (clampedValue !== value) {
+        onChange(clampedValue);
+      }
+    },
+    [onChange, value],
+  );
+
+  return (
+    <MenuGroup>
+      <div className="px-2 pt-2 pb-1 text-muted-foreground sm:text-xs font-medium">{label}</div>
+      <div className="px-2 py-1">
+        <NumberField
+          aria-label={ariaLabel}
+          className="w-28 gap-0"
+          max={MAX_SIDEBAR_THREAD_PREVIEW_COUNT}
+          min={MIN_SIDEBAR_THREAD_PREVIEW_COUNT}
+          onValueChange={handleValueChange}
+          size="sm"
+          step={1}
+          value={value}
+        >
+          <NumberFieldGroup className="h-7 rounded-md sm:h-6.5">
+            <NumberFieldDecrement
+              aria-label={`Decrease ${ariaLabel.toLowerCase()}`}
+              className="px-2 sm:px-2 [&_svg]:size-3.5"
+            />
+            <NumberFieldInput
+              aria-label={ariaLabel}
+              className="h-7 w-9 grow-0 px-0 text-xs leading-7 sm:h-6.5 sm:leading-6.5"
+              inputMode="numeric"
+              onKeyDownCapture={(event) => {
+                event.stopPropagation();
+              }}
+            />
+            <NumberFieldIncrement
+              aria-label={`Increase ${ariaLabel.toLowerCase()}`}
+              className="px-2 sm:px-2 [&_svg]:size-3.5"
+            />
+          </NumberFieldGroup>
+        </NumberField>
+      </div>
+    </MenuGroup>
+  );
+}
+
+function ChatSortMenu({
+  threadSortOrder,
+  threadPreviewCount,
+  onThreadSortOrderChange,
+  onThreadPreviewCountChange,
+}: {
+  threadSortOrder: SidebarThreadSortOrder;
+  threadPreviewCount: SidebarThreadPreviewCount;
+  onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
+  onThreadPreviewCountChange: (count: SidebarThreadPreviewCount) => void;
+}) {
+  return (
+    <Menu>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              aria-label="Chat options"
+              className="inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+            />
+          }
+        >
+          <ArrowUpDownIcon className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipPopup side="right">Chat options</TooltipPopup>
+      </Tooltip>
+      <MenuPopup align="end" side="bottom" className="min-w-52">
+        <ThreadSortMenuGroup
+          label="Sort chats"
+          value={threadSortOrder}
+          onChange={onThreadSortOrderChange}
+        />
+        <ThreadPreviewCountMenuGroup
+          label="Visible chats"
+          ariaLabel="Visible chat count"
+          value={threadPreviewCount}
+          onChange={onThreadPreviewCountChange}
+        />
+      </MenuPopup>
+    </Menu>
+  );
+}
+
 function ProjectSortMenu({
   projectSortOrder,
   threadSortOrder,
@@ -2640,26 +2777,15 @@ function ProjectSortMenu({
   onProjectGroupingModeChange: (mode: SidebarProjectGroupingMode) => void;
   onThreadPreviewCountChange: (count: SidebarThreadPreviewCount) => void;
 }) {
-  const handleThreadPreviewCountChange = useCallback(
-    (nextValue: number | null) => {
-      if (nextValue === null) {
-        return;
-      }
-
-      const clampedValue = clampSidebarThreadPreviewCount(nextValue);
-      if (clampedValue !== threadPreviewCount) {
-        onThreadPreviewCountChange(clampedValue);
-      }
-    },
-    [onThreadPreviewCountChange, threadPreviewCount],
-  );
-
   return (
     <Menu>
       <Tooltip>
         <TooltipTrigger
           render={
-            <MenuTrigger className="inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground" />
+            <MenuTrigger
+              aria-label="Sidebar options"
+              className="inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+            />
           }
         >
           <ArrowUpDownIcon className="size-3.5" />
@@ -2686,61 +2812,17 @@ function ProjectSortMenu({
             )}
           </MenuRadioGroup>
         </MenuGroup>
-        <MenuGroup>
-          <div className="px-2 pt-2 pb-1 sm:text-xs font-medium text-muted-foreground">
-            Sort threads
-          </div>
-          <MenuRadioGroup
-            value={threadSortOrder}
-            onValueChange={(value) => {
-              onThreadSortOrderChange(value as SidebarThreadSortOrder);
-            }}
-          >
-            {(
-              Object.entries(SIDEBAR_THREAD_SORT_LABELS) as Array<[SidebarThreadSortOrder, string]>
-            ).map(([value, label]) => (
-              <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
-                {label}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuGroup>
-        <MenuGroup>
-          <div className="px-2 pt-2 pb-1 text-muted-foreground sm:text-xs font-medium">
-            Visible threads
-          </div>
-          <div className="px-2 py-1">
-            <NumberField
-              aria-label="Visible thread count"
-              className="w-28 gap-0"
-              max={MAX_SIDEBAR_THREAD_PREVIEW_COUNT}
-              min={MIN_SIDEBAR_THREAD_PREVIEW_COUNT}
-              onValueChange={handleThreadPreviewCountChange}
-              size="sm"
-              step={1}
-              value={threadPreviewCount}
-            >
-              <NumberFieldGroup className="h-7 rounded-md sm:h-6.5">
-                <NumberFieldDecrement
-                  aria-label="Decrease visible thread count"
-                  className="px-2 sm:px-2 [&_svg]:size-3.5"
-                />
-                <NumberFieldInput
-                  aria-label="Visible thread count"
-                  className="h-7 w-9 grow-0 px-0 text-xs leading-7 sm:h-6.5 sm:leading-6.5"
-                  inputMode="numeric"
-                  onKeyDownCapture={(event) => {
-                    event.stopPropagation();
-                  }}
-                />
-                <NumberFieldIncrement
-                  aria-label="Increase visible thread count"
-                  className="px-2 sm:px-2 [&_svg]:size-3.5"
-                />
-              </NumberFieldGroup>
-            </NumberField>
-          </div>
-        </MenuGroup>
+        <ThreadSortMenuGroup
+          label="Sort threads"
+          value={threadSortOrder}
+          onChange={onThreadSortOrderChange}
+        />
+        <ThreadPreviewCountMenuGroup
+          label="Visible threads"
+          ariaLabel="Visible thread count"
+          value={threadPreviewCount}
+          onChange={onThreadPreviewCountChange}
+        />
         <MenuSeparator />
         <MenuGroup>
           <div className="px-2 pt-2 pb-1 font-medium text-muted-foreground sm:text-xs">
@@ -2908,6 +2990,7 @@ interface SidebarProjectsContentProps {
   threadSortOrder: SidebarThreadSortOrder;
   projectGroupingMode: SidebarProjectGroupingMode;
   threadPreviewCount: SidebarThreadPreviewCount;
+  chatPreviewCount: SidebarThreadPreviewCount;
   updateSettings: ReturnType<typeof useUpdateClientSettings>;
   openAddProject: () => void;
   isManualProjectSorting: boolean;
@@ -3156,6 +3239,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     threadSortOrder,
     projectGroupingMode,
     threadPreviewCount,
+    chatPreviewCount,
     updateSettings,
     openAddProject,
     isManualProjectSorting,
@@ -3184,6 +3268,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     projectsLength,
   } = props;
 
+  const [isChatThreadListExpanded, setIsChatThreadListExpanded] = useState(false);
   const handleProjectSortOrderChange = useCallback(
     (sortOrder: SidebarProjectSortOrder) => {
       updateSettings({ sidebarProjectSortOrder: sortOrder });
@@ -3208,6 +3293,13 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     },
     [updateSettings],
   );
+  const handleChatPreviewCountChange = useCallback(
+    (count: SidebarThreadPreviewCount) => {
+      setIsChatThreadListExpanded(false);
+      updateSettings({ sidebarChatPreviewCount: count });
+    },
+    [updateSettings],
+  );
   const chatThreads = useThreadShells();
   const handleNewChat = useNewChatHandler();
   const navigate = useNavigate();
@@ -3224,6 +3316,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
   const [confirmingArchiveThreadKey, setConfirmingArchiveThreadKey] = useState<string | null>(null);
   const confirmArchiveButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const attemptArchiveThread = useAttemptArchiveThread(archiveThread);
+  const showMoreChatsButtonRender = useMemo(() => <button type="button" />, []);
+  const showLessChatsButtonRender = useMemo(() => <button type="button" />, []);
   const chatEnvironmentId = primaryChatEnvironmentId ?? environments[0]?.environmentId ?? null;
   const visibleChatThreads = useMemo(
     () =>
@@ -3231,11 +3325,54 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         chatThreads.filter(
           (thread) => thread.projectId === STANDALONE_CHAT_PROJECT_ID && thread.archivedAt === null,
         ),
-        "updated_at",
+        threadSortOrder,
       ),
-    [chatThreads],
+    [chatThreads, threadSortOrder],
   );
-  const previewChatThreads = visibleChatThreads.slice(0, threadPreviewCount);
+  const chatThreadLastVisitedAts = useUiStateStore(
+    useShallow((state) =>
+      visibleChatThreads.map(
+        (thread) =>
+          state.threadLastVisitedAtById[
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+          ] ?? null,
+      ),
+    ),
+  );
+  const {
+    hasOverflowingThreads: hasOverflowingChatThreads,
+    hiddenThreads: hiddenChatThreads,
+    visibleThreads: previewChatThreads,
+  } = useMemo(
+    () =>
+      getVisibleThreadsForSidebarSection({
+        threads: visibleChatThreads,
+        isExpanded: isChatThreadListExpanded,
+        previewLimit: chatPreviewCount,
+      }),
+    [chatPreviewCount, isChatThreadListExpanded, visibleChatThreads],
+  );
+  const hiddenChatThreadStatus = useMemo(() => {
+    const lastVisitedAtByThreadKey = new Map(
+      visibleChatThreads.map((thread, index) => [
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        chatThreadLastVisitedAts[index] ?? null,
+      ]),
+    );
+    return resolveProjectStatusIndicator(
+      hiddenChatThreads.map((thread) => {
+        const lastVisitedAt = lastVisitedAtByThreadKey.get(
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        );
+        return resolveThreadStatusPill({
+          thread: {
+            ...thread,
+            ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
+          },
+        });
+      }),
+    );
+  }, [chatThreadLastVisitedAts, hiddenChatThreads, visibleChatThreads]);
   const handleCreateChat = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -3338,7 +3475,13 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
             Chat
           </span>
-          <div className={SIDEBAR_SECTION_ACTIONS_CLASS}>
+          <div className={cn("flex items-center gap-1", SIDEBAR_SECTION_ACTIONS_CLASS)}>
+            <ChatSortMenu
+              threadSortOrder={threadSortOrder}
+              threadPreviewCount={chatPreviewCount}
+              onThreadSortOrderChange={handleThreadSortOrderChange}
+              onThreadPreviewCountChange={handleChatPreviewCountChange}
+            />
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -3357,7 +3500,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             </Tooltip>
           </div>
         </div>
-        <SidebarMenu>
+        <SidebarMenu ref={attachThreadListAutoAnimateRef}>
           {previewChatThreads.map((thread) => {
             const threadRef = scopeThreadRef(thread.environmentId, thread.id);
             const threadKey = scopedThreadKey(threadRef);
@@ -3376,6 +3519,41 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               />
             );
           })}
+          {hasOverflowingChatThreads && !isChatThreadListExpanded ? (
+            <SidebarMenuItem className="w-full">
+              <SidebarMenuButton
+                render={showMoreChatsButtonRender}
+                data-thread-selection-safe
+                size="sm"
+                className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                onClick={() => {
+                  setIsChatThreadListExpanded(true);
+                }}
+              >
+                <span className="flex min-w-0 flex-1 items-center gap-2">
+                  {hiddenChatThreadStatus ? (
+                    <ThreadStatusLabel status={hiddenChatThreadStatus} compact />
+                  ) : null}
+                  <span>Show more</span>
+                </span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ) : null}
+          {hasOverflowingChatThreads && isChatThreadListExpanded ? (
+            <SidebarMenuItem className="w-full">
+              <SidebarMenuButton
+                render={showLessChatsButtonRender}
+                data-thread-selection-safe
+                size="sm"
+                className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                onClick={() => {
+                  setIsChatThreadListExpanded(false);
+                }}
+              >
+                <span>Show less</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ) : null}
         </SidebarMenu>
       </SidebarGroup>
       <SidebarGroup className="px-2 py-2">
@@ -3514,6 +3692,7 @@ export default function Sidebar() {
   const sidebarProjectGroupingMode = useClientSettings((s) => s.sidebarProjectGroupingMode);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const sidebarThreadPreviewCount = useClientSettings((s) => s.sidebarThreadPreviewCount);
+  const sidebarChatPreviewCount = useClientSettings((s) => s.sidebarChatPreviewCount);
   const updateSettings = useUpdateClientSettings();
   const handleNewThread = useNewThreadHandler();
   const { archiveThread, deleteThread } = useThreadActions();
@@ -4112,6 +4291,7 @@ export default function Sidebar() {
             threadSortOrder={sidebarThreadSortOrder}
             projectGroupingMode={sidebarProjectGroupingMode}
             threadPreviewCount={sidebarThreadPreviewCount}
+            chatPreviewCount={sidebarChatPreviewCount}
             updateSettings={updateSettings}
             openAddProject={openAddProjectCommandPalette}
             isManualProjectSorting={isManualProjectSorting}

@@ -493,6 +493,32 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   };
 }
 
+export function getVisibleThreadsForSidebarSection<T>(input: {
+  threads: readonly T[];
+  isExpanded: boolean;
+  previewLimit: number;
+}): {
+  hasOverflowingThreads: boolean;
+  hiddenThreads: T[];
+  visibleThreads: T[];
+} {
+  const { threads, isExpanded, previewLimit } = input;
+  const hasOverflowingThreads = threads.length > previewLimit;
+  if (!hasOverflowingThreads || isExpanded) {
+    return {
+      hasOverflowingThreads,
+      hiddenThreads: [],
+      visibleThreads: [...threads],
+    };
+  }
+
+  return {
+    hasOverflowingThreads,
+    hiddenThreads: threads.slice(previewLimit),
+    visibleThreads: threads.slice(0, previewLimit),
+  };
+}
+
 export function getFallbackThreadIdAfterDelete<
   T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
 >(input: {

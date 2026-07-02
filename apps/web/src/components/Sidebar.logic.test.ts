@@ -6,6 +6,7 @@ import {
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
+  getVisibleThreadsForSidebarSection,
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
@@ -550,6 +551,50 @@ describe("getVisibleSidebarThreadIds", () => {
         },
       ]),
     ).toEqual([ThreadId.make("thread-12"), ThreadId.make("thread-11")]);
+  });
+});
+
+describe("getVisibleThreadsForSidebarSection", () => {
+  it("limits visible threads when the section is collapsed", () => {
+    const result = getVisibleThreadsForSidebarSection({
+      threads: ["thread-1", "thread-2", "thread-3"],
+      isExpanded: false,
+      previewLimit: 2,
+    });
+
+    expect(result).toEqual({
+      hasOverflowingThreads: true,
+      hiddenThreads: ["thread-3"],
+      visibleThreads: ["thread-1", "thread-2"],
+    });
+  });
+
+  it("returns every thread when the section is expanded", () => {
+    const result = getVisibleThreadsForSidebarSection({
+      threads: ["thread-1", "thread-2", "thread-3"],
+      isExpanded: true,
+      previewLimit: 2,
+    });
+
+    expect(result).toEqual({
+      hasOverflowingThreads: true,
+      hiddenThreads: [],
+      visibleThreads: ["thread-1", "thread-2", "thread-3"],
+    });
+  });
+
+  it("does not mark threads as hidden when the list fits the preview limit", () => {
+    const result = getVisibleThreadsForSidebarSection({
+      threads: ["thread-1", "thread-2"],
+      isExpanded: false,
+      previewLimit: 2,
+    });
+
+    expect(result).toEqual({
+      hasOverflowingThreads: false,
+      hiddenThreads: [],
+      visibleThreads: ["thread-1", "thread-2"],
+    });
   });
 });
 
