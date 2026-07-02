@@ -1527,6 +1527,86 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
 ]);
 export type OrchestrationV2TurnItemJson = typeof OrchestrationV2TurnItemJson.Type;
 
+export const OrchestrationV2ProjectedTurnItemJson = OrchestrationV2ProjectedTurnItem.mapFields(
+  (fields) => ({
+    ...fields,
+    item: OrchestrationV2TurnItemJson,
+  }),
+);
+export type OrchestrationV2ProjectedTurnItemJson = typeof OrchestrationV2ProjectedTurnItemJson.Type;
+
+export const OrchestrationV2ThreadProjectionJson = OrchestrationV2ThreadProjection.mapFields(
+  (fields) => ({
+    ...fields,
+    thread: OrchestrationV2AppThreadJson,
+    runs: Schema.Array(OrchestrationV2RunJson),
+    attempts: Schema.Array(OrchestrationV2RunAttemptJson),
+    nodes: Schema.Array(OrchestrationV2ExecutionNodeJson),
+    subagents: Schema.Array(OrchestrationV2SubagentJson),
+    providerSessions: Schema.Array(OrchestrationV2ProviderSessionJson),
+    providerThreads: Schema.Array(OrchestrationV2ProviderThreadJson),
+    providerTurns: Schema.Array(OrchestrationV2ProviderTurnJson),
+    runtimeRequests: Schema.Array(OrchestrationV2RuntimeRequestJson),
+    messages: Schema.Array(OrchestrationV2ConversationMessageJson),
+    plans: Schema.Array(OrchestrationV2PlanArtifact),
+    turnItems: Schema.Array(OrchestrationV2TurnItemJson),
+    checkpointScopes: Schema.Array(OrchestrationV2CheckpointScopeJson),
+    checkpoints: Schema.Array(OrchestrationV2CheckpointJson),
+    contextHandoffs: Schema.Array(OrchestrationV2ContextHandoffJson),
+    contextTransfers: Schema.Array(OrchestrationV2ContextTransferJson),
+    visibleTurnItems: Schema.Array(OrchestrationV2ProjectedTurnItemJson),
+    updatedAt: Schema.DateTimeUtcFromString,
+  }),
+);
+export type OrchestrationV2ThreadProjectionJson = typeof OrchestrationV2ThreadProjectionJson.Type;
+
+export const OrchestrationV2PendingRuntimeRequestSummaryJson =
+  OrchestrationV2PendingRuntimeRequestSummary.mapFields((fields) => ({
+    ...fields,
+    createdAt: Schema.DateTimeUtcFromString,
+  }));
+export type OrchestrationV2PendingRuntimeRequestSummaryJson =
+  typeof OrchestrationV2PendingRuntimeRequestSummaryJson.Type;
+
+export const OrchestrationV2LatestVisibleMessageSummaryJson =
+  OrchestrationV2LatestVisibleMessageSummary.mapFields((fields) => ({
+    ...fields,
+    updatedAt: Schema.DateTimeUtcFromString,
+  }));
+export type OrchestrationV2LatestVisibleMessageSummaryJson =
+  typeof OrchestrationV2LatestVisibleMessageSummaryJson.Type;
+
+export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFields((fields) => ({
+  ...fields,
+  pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummaryJson),
+  latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummaryJson),
+  latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  createdAt: Schema.DateTimeUtcFromString,
+  updatedAt: Schema.DateTimeUtcFromString,
+  archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+}));
+export type OrchestrationV2ThreadShellJson = typeof OrchestrationV2ThreadShellJson.Type;
+
+export const OrchestrationV2ThreadShellSnapshotJson = OrchestrationV2ThreadShellSnapshot.mapFields(
+  (fields) => ({
+    ...fields,
+    threads: Schema.Array(OrchestrationV2ThreadShellJson),
+    archivedThreads: Schema.Array(OrchestrationV2ThreadShellJson),
+  }),
+);
+export type OrchestrationV2ThreadShellSnapshotJson =
+  typeof OrchestrationV2ThreadShellSnapshotJson.Type;
+
+export const OrchestrationV2ShellSnapshotJson = OrchestrationV2ShellSnapshot.mapFields(
+  (fields) => ({
+    ...fields,
+    threads: Schema.Array(OrchestrationV2ThreadShellJson),
+    archivedThreads: Schema.Array(OrchestrationV2ThreadShellJson),
+  }),
+);
+export type OrchestrationV2ShellSnapshotJson = typeof OrchestrationV2ShellSnapshotJson.Type;
+
 const OrchestrationV2JsonEventBaseFields = {
   ...OrchestrationV2EventBase.fields,
   occurredAt: Schema.DateTimeUtcFromString,

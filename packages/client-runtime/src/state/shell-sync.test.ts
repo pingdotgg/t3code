@@ -8,6 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
@@ -67,7 +68,7 @@ describe("environment shell synchronization", () => {
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const cache = Persistence.EnvironmentCacheStore.of({
         loadShell: () => Effect.succeed(Option.none()),
-        saveShell: () => Effect.never,
+        saveShell: () => Effect.void,
         loadThread: () => Effect.succeed(Option.none()),
         saveThread: () => Effect.void,
         removeThread: () => Effect.void,
@@ -114,6 +115,88 @@ describe("environment shell synchronization", () => {
       const state = yield* SubscriptionRef.get(shellState);
       expect(state.status).toBe("live");
       expect(Option.getOrThrow(state.snapshot)).toEqual(LIVE_SHELL_SNAPSHOT);
+    }),
+  );
+
+  it.effect("flushes the latest live shell snapshot when the environment disconnects", () =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
+      const saved = yield* Ref.make<ReadonlyArray<OrchestrationV2ShellSnapshot>>([]);
+      const client = {
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () => Stream.fromQueue(events),
+      } as unknown as WsRpcProtocolClient;
+      const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
+      const activeSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
+        Option.some(session(client)),
+      );
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: supervisorState,
+        session: activeSession,
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const cache = Persistence.EnvironmentCacheStore.of({
+        loadShell: () => Effect.succeed(Option.none()),
+        saveShell: (_environmentId, snapshot) =>
+          Ref.update(saved, (values) => [...values, snapshot]),
+        loadThread: () => Effect.succeed(Option.none()),
+        saveThread: () => Effect.void,
+        removeThread: () => Effect.void,
+        clear: () => Effect.void,
+      });
+
+      const shellState = yield* makeEnvironmentShellState().pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+      );
+
+      yield* SubscriptionRef.set(supervisorState, {
+        desired: true,
+        network: "online",
+        phase: "connecting",
+        stage: "synchronizing",
+        attempt: 1,
+        generation: 0,
+        lastFailure: null,
+        retryAt: null,
+      });
+      yield* Queue.offer(events, {
+        kind: "snapshot",
+        snapshot: LIVE_SHELL_SNAPSHOT,
+      });
+      yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter((state) => state.status === "live"),
+        Stream.runHead,
+      );
+
+      yield* SubscriptionRef.set(supervisorState, {
+        desired: true,
+        network: "online",
+        phase: "connecting",
+        stage: "synchronizing",
+        attempt: 2,
+        generation: 1,
+        lastFailure: null,
+        retryAt: null,
+      });
+      yield* SubscriptionRef.set(supervisorState, {
+        desired: false,
+        network: "online",
+        phase: "available",
+        stage: null,
+        attempt: 2,
+        generation: 2,
+        lastFailure: null,
+        retryAt: null,
+      });
+      for (let index = 0; index < 10; index += 1) {
+        yield* Effect.yieldNow;
+      }
+
+      expect(yield* Ref.get(saved)).toEqual([LIVE_SHELL_SNAPSHOT]);
     }),
   );
 });
