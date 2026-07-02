@@ -37,6 +37,7 @@ import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment
 
 const DRIVER_KIND = ProviderDriverKind.make("opencode");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
+const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 export type OpenCodeDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
@@ -69,7 +70,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
     supportsMultipleInstances: true,
   },
   configSchema: OpenCodeSettings,
-  defaultConfig: (): OpenCodeSettings => Schema.decodeSync(OpenCodeSettings)({}),
+  defaultConfig: (): OpenCodeSettings => decodeOpenCodeSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const openCodeRuntime = yield* OpenCodeRuntime;

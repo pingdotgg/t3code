@@ -70,6 +70,9 @@ const decodeReadModel = HttpClientResponse.schemaBodyJson(OrchestrationReadModel
 const decodeDispatchResult = HttpClientResponse.schemaBodyJson(DispatchResult);
 const decodeWsToken = HttpClientResponse.schemaBodyJson(AuthWebSocketTokenResult);
 const makeWsRpcClient = RpcClient.make(WsRpcGroup);
+const isCliRpcError = Schema.is(CliRpcError);
+const isCliLiveTargetError = Schema.is(CliLiveTargetError);
+const isCliPayloadError = Schema.is(CliPayloadError);
 
 export type WsRpcClient =
   typeof makeWsRpcClient extends Effect.Effect<infer Client, any, any> ? Client : never;
@@ -447,9 +450,7 @@ export const callRawRpc = (input: {
     return result as Effect.Effect<unknown, Error, never>;
   }).pipe(
     Effect.mapError((cause) =>
-      Schema.is(CliRpcError)(cause) ||
-      Schema.is(CliLiveTargetError)(cause) ||
-      Schema.is(CliPayloadError)(cause)
+      isCliRpcError(cause) || isCliLiveTargetError(cause) || isCliPayloadError(cause)
         ? cause
         : new CliRpcError({ message: `RPC call failed: ${String(cause)}`, cause }),
     ),

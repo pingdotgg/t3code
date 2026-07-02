@@ -39,6 +39,7 @@ import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
+const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 export type ClaudeDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
@@ -70,7 +71,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
     supportsMultipleInstances: true,
   },
   configSchema: ClaudeSettings,
-  defaultConfig: (): ClaudeSettings => Schema.decodeSync(ClaudeSettings)({}),
+  defaultConfig: (): ClaudeSettings => decodeClaudeSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

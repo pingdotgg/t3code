@@ -82,8 +82,11 @@ export function toPersistenceDecodeCauseError(operation: string) {
     });
 }
 
+const isPersistenceSqlError = Schema.is(PersistenceSqlError);
+const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
+
 export const isPersistenceError = (u: unknown) =>
-  Schema.is(PersistenceSqlError)(u) || Schema.is(PersistenceDecodeError)(u);
+  isPersistenceSqlError(u) || isPersistenceDecodeError(u);
 
 // ===============================
 // Provider Session Repository Errors

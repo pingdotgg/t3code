@@ -9,13 +9,15 @@ import {
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
 
+const decodeCodexSettingsSchema = Schema.decodeSync(CodexSettings);
+
 const decodeCodexSettings = (input: {
   readonly enabled?: boolean;
   readonly homePath?: string;
   readonly shadowHomePath?: string;
   readonly customModels?: readonly string[];
   readonly binaryPath?: string;
-}): CodexSettings => Schema.decodeSync(CodexSettings)(input);
+}): CodexSettings => decodeCodexSettingsSchema(input);
 
 const makeTempDir = Effect.fn("CodexHomeLayout.test.makeTempDir")(function* (prefix: string) {
   const fileSystem = yield* FileSystem.FileSystem;

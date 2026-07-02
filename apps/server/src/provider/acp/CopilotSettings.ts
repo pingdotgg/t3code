@@ -45,6 +45,7 @@ const CONFIG_FILE = "config.json";
 type JsonRecord = Record<string, unknown>;
 
 const LenientJsonUnknown = fromLenientJson(Schema.Unknown);
+const decodeLenientJsonUnknown = Schema.decodeUnknownSync(LenientJsonUnknown);
 
 function isJsonRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -90,7 +91,7 @@ function parseConfigFile(
 ): CopilotConfigFile | CopilotConfigReadWarning {
   let parsed: unknown;
   try {
-    parsed = Schema.decodeUnknownSync(LenientJsonUnknown)(contents);
+    parsed = decodeLenientJsonUnknown(contents);
   } catch (error) {
     return {
       path,

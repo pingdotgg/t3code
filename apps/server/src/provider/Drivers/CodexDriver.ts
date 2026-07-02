@@ -43,6 +43,7 @@ import {
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
+const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 /**
  * Services the driver needs to materialize an instance. Surfaced as the
@@ -85,7 +86,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
     supportsMultipleInstances: true,
   },
   configSchema: CodexSettings,
-  defaultConfig: (): CodexSettings => Schema.decodeSync(CodexSettings)({}),
+  defaultConfig: (): CodexSettings => decodeCodexSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

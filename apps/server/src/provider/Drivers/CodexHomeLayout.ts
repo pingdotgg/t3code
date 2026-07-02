@@ -72,6 +72,8 @@ export class CodexShadowHomeError extends Schema.TaggedErrorClass<CodexShadowHom
   }
 }
 
+const isCodexShadowHomeError = Schema.is(CodexShadowHomeError);
+
 type LinkState =
   | {
       readonly _tag: "Missing";
@@ -85,7 +87,7 @@ type LinkState =
     };
 
 function toShadowHomeError(cause: unknown): CodexShadowHomeError {
-  return Schema.is(CodexShadowHomeError)(cause)
+  return isCodexShadowHomeError(cause)
     ? cause
     : new CodexShadowHomeError({
         detail: "Failed to materialize Codex shadow home.",

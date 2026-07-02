@@ -32,6 +32,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 const DRIVER_KIND = ProviderDriverKind.make("copilot");
 const NATIVE_DRIVER_KIND = ProviderDriverKind.make("copilot-acp-native");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.hours(1);
+const decodeCopilotSettings = Schema.decodeSync(CopilotSettings);
 
 export type CopilotDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
@@ -67,7 +68,7 @@ const makeCopilotDriver = (input: {
     supportsMultipleInstances: false,
   },
   configSchema: CopilotSettings,
-  defaultConfig: (): CopilotSettings => Schema.decodeSync(CopilotSettings)({}),
+  defaultConfig: (): CopilotSettings => decodeCopilotSettings({}),
   create: ({ instanceId, displayName, accentColor, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
