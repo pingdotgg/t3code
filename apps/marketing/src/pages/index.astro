@@ -406,11 +406,11 @@ const mobileEndorsementRows = [
     const kbd = document.getElementById("pr-button-kbd");
 
     const platform = detectPlatform();
-    if (kbd && platform?.os !== "mac") kbd.textContent = "Ctrl ⏎";
     if (!platform) return;
     document.documentElement.dataset.platform = platform.os;
     if (label) label.textContent = platform.label;
     if (ctaLabel) ctaLabel.textContent = platform.label;
+    if (kbd && platform.os !== "mac") kbd.textContent = "Ctrl ⏎";
 
     try {
       const release = await fetchLatestRelease();
