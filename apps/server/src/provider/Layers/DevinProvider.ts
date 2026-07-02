@@ -259,8 +259,9 @@ export const checkDevinProviderStatus = Effect.fn("checkDevinProviderStatus")(fu
 
   // Devin's ACP server never reads local CLI credentials — without an API
   // key the authenticate call would start a PKCE browser login, which must
-  // not happen from a background status probe. Skip discovery and surface
-  // the auth gap instead.
+  // not happen from a background status probe. Skip model discovery, but
+  // keep the provider selectable: starting a session triggers the PKCE
+  // browser flow as an interactive fallback.
   if (!hasDevinCredentials(devinSettings, environment)) {
     return buildServerProvider({
       presentation: DEVIN_PRESENTATION,
@@ -270,10 +271,10 @@ export const checkDevinProviderStatus = Effect.fn("checkDevinProviderStatus")(fu
       probe: {
         installed: true,
         version,
-        status: "warning",
+        status: "ready",
         auth: { status: "unauthenticated" },
         message:
-          "Devin CLI is installed, but no API key is configured. Set one in provider settings or export WINDSURF_API_KEY.",
+          "No API key configured — starting a session will open Devin's browser login. Set an API key in provider settings (or WINDSURF_API_KEY) to skip it and enable model discovery.",
       },
     });
   }
