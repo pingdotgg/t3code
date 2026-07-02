@@ -55,6 +55,7 @@ export interface DevinAcpModelVariantGroup {
   readonly baseModelId: string;
   readonly baseModelName: string;
   readonly variants: ReadonlyArray<DevinAcpModelVariant>;
+  readonly currentVariant?: DevinAcpModelVariant;
 }
 
 export const DEVIN_REASONING_LEVEL_ORDER: ReadonlyArray<DevinAcpReasoningLevel> = [
@@ -243,11 +244,15 @@ export function devinAcpModelVariantsFromConfigOptions(
 export function devinAcpModelVariantGroupsFromConfigOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
 ): ReadonlyArray<DevinAcpModelVariantGroup> {
+  const modelConfigOption = findSessionModelConfigOption(configOptions);
+  const currentModelId = modelConfigOption?.currentValue?.trim();
   const groups = new Map<
     string,
     { baseModelName: string; variants: Array<DevinAcpModelVariant> }
   >();
-  for (const variant of devinAcpModelVariantsFromConfigOptions(configOptions)) {
+  for (const variant of flattenSessionConfigSelectOptions(modelConfigOption)
+    .map(parseDevinAcpModelVariant)
+    .filter((variant): variant is DevinAcpModelVariant => variant !== undefined)) {
     const existing = groups.get(variant.baseModelId);
     if (existing) {
       existing.variants.push(variant);
@@ -258,11 +263,17 @@ export function devinAcpModelVariantGroupsFromConfigOptions(
       variants: [variant],
     });
   }
-  return Array.from(groups, ([baseModelId, group]) => ({
-    baseModelId,
-    baseModelName: group.baseModelName,
-    variants: group.variants,
-  }));
+  return Array.from(groups, ([baseModelId, group]) => {
+    const currentVariant = currentModelId
+      ? group.variants.find((variant) => variant.exactModelId === currentModelId)
+      : undefined;
+    return {
+      baseModelId,
+      baseModelName: group.baseModelName,
+      variants: group.variants,
+      ...(currentVariant ? { currentVariant } : {}),
+    };
+  });
 }
 
 function normalizeDevinReasoningSelection(
@@ -331,8 +342,10 @@ export function isDevinAcpModelCoveredByBaseModelIds(input: {
 }): boolean {
   const requestedModel = resolveDevinAcpBaseModelId(input.modelId);
   if (
-    [...input.baseModelIds].some((baseModelId) =>
-      modelAliasMatchesDevinBaseModelId(requestedModel, baseModelId),
+    [...input.baseModelIds].some(
+      (baseModelId) =>
+        modelAliasMatchesDevinBaseModelId(requestedModel, baseModelId) ||
+        modelAliasMatchesDevinBaseModelId(baseModelId, requestedModel),
     )
   ) {
     return true;
@@ -373,9 +386,9 @@ function selectPreferredDevinVariant(input: {
   readonly requestedFastMode: boolean | undefined;
   readonly requestedContextWindow: string | undefined;
 }): DevinAcpModelVariant {
-  const exactRequested = input.group.variants.find(
-    (variant) => variant.exactModelId === input.requestedExactModelId,
-  );
+  const exactRequested =
+    input.group.variants.find((variant) => variant.exactModelId === input.requestedExactModelId) ??
+    input.group.currentVariant;
   let candidates = input.group.variants;
 
   const desiredReasoning =
@@ -421,16 +434,19 @@ export function resolveDevinAcpModelSelection(input: {
   readonly model: string | null | undefined;
   readonly selections: ReadonlyArray<ProviderOptionSelection> | null | undefined;
 }): string {
+  const rawRequestedModel = input.model?.trim();
   const requestedModel = resolveDevinAcpBaseModelId(input.model);
   const groups = devinAcpModelVariantGroupsFromConfigOptions(input.configOptions);
-  const group = findDevinVariantGroup(groups, requestedModel);
+  const group =
+    (rawRequestedModel ? findDevinVariantGroup(groups, rawRequestedModel) : undefined) ??
+    findDevinVariantGroup(groups, requestedModel);
   if (!group) {
     return requestedModel;
   }
 
   return selectPreferredDevinVariant({
     group,
-    requestedExactModelId: requestedModel,
+    requestedExactModelId: rawRequestedModel ?? requestedModel,
     requestedReasoning: normalizeDevinReasoningSelection(
       getProviderOptionStringSelectionValue(input.selections, "reasoning"),
     ),
@@ -446,8 +462,17 @@ export function resolveDevinAcpDisplayModelId(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
   model: string | null | undefined,
 ): string {
-  const resolvedModel = resolveDevinAcpBaseModelId(model);
   const groups = devinAcpModelVariantGroupsFromConfigOptions(configOptions);
+  const rawModel = model?.trim();
+  if (rawModel) {
+    const exactGroup = groups.find((group) =>
+      group.variants.some((variant) => variant.exactModelId === rawModel),
+    );
+    if (exactGroup) {
+      return exactGroup.baseModelId;
+    }
+  }
+  const resolvedModel = resolveDevinAcpBaseModelId(model);
   const group = findDevinVariantGroup(groups, resolvedModel);
   return group?.baseModelId ?? resolvedModel;
 }

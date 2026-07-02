@@ -449,9 +449,6 @@ function parseUserInputQuestions(
           };
         })
         .filter((option): option is UserInputQuestion["options"][number] => option !== null);
-      if (options.length === 0) {
-        return null;
-      }
       return {
         id: question.id,
         header: question.header,

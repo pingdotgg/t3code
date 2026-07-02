@@ -4,6 +4,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { type DevinSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
@@ -77,9 +78,20 @@ export const makeDevinTextGeneration = Effect.fn("makeDevinTextGeneration")(func
         }
         return Ref.update(outputRef, (current) => current + content.text);
       });
+      yield* runtime.handleElicitation(() =>
+        Effect.succeed({
+          action: { action: "cancel" },
+        } satisfies EffectAcpSchema.ElicitationResponse),
+      );
+      yield* runtime.handleRequestPermission(() =>
+        Effect.succeed({
+          outcome: { outcome: "cancelled" },
+        } satisfies EffectAcpSchema.RequestPermissionResponse),
+      );
 
       const promptResult = yield* Effect.gen(function* () {
         const started = yield* runtime.start();
+        yield* Effect.ignore(runtime.setMode("ask"));
         const resolvedModel = resolveDevinAcpModelSelection({
           configOptions: started.sessionSetupResult.configOptions,
           model: modelSelection.model,

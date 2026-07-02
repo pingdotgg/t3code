@@ -92,11 +92,16 @@ interface PendingApproval {
 }
 
 type PendingUserInputResolution =
-  | { readonly _tag: "answered"; readonly answers: ProviderUserInputAnswers }
+  | {
+      readonly _tag: "answered";
+      readonly answers: ProviderUserInputAnswers;
+      readonly response: EffectAcpSchema.ElicitationResponse;
+    }
   | { readonly _tag: "cancelled" };
 
 interface PendingUserInput {
   readonly resolution: Deferred.Deferred<PendingUserInputResolution>;
+  readonly makeResponse: (answers: ProviderUserInputAnswers) => EffectAcpSchema.ElicitationResponse;
 }
 
 interface DevinSessionContext {
@@ -920,7 +925,10 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                   const runtimeRequestId = RuntimeRequestId.make(requestId);
                   const resolution = yield* Deferred.make<PendingUserInputResolution>();
                   const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
-                  pendingUserInputs.set(requestId, { resolution });
+                  pendingUserInputs.set(requestId, {
+                    resolution,
+                    makeResponse: elicitationPrompt.makeResponse,
+                  });
                   yield* offerRuntimeEvent({
                     type: "user-input.requested",
                     ...(yield* makeEventStamp()),
@@ -953,7 +961,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                     },
                   });
                   return resolved._tag === "answered"
-                    ? elicitationPrompt.makeResponse(resolved.answers)
+                    ? resolved.response
                     : ({
                         action: { action: "cancel" },
                       } satisfies EffectAcpSchema.ElicitationResponse);
@@ -1051,13 +1059,17 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                 selections: devinModelSelection.options,
               })
             : undefined;
+          const sessionSetupModelId = currentDevinModelIdFromSessionSetup(
+            started.sessionSetupResult,
+          );
           const boundModelId = yield* applyDevinAcpModelSelection({
             runtime: acp,
-            currentModelId: currentDevinModelIdFromSessionSetup(started.sessionSetupResult),
+            currentModelId: sessionSetupModelId,
             requestedModelId: requestedStartModelId,
             mapError: (cause) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
           });
+          const activeAcpModelId = boundModelId ?? sessionSetupModelId;
           yield* applyDevinRequestedMode({
             runtime: acp,
             runtimeMode: input.runtimeMode,
@@ -1073,11 +1085,11 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             status: "ready",
             runtimeMode: input.runtimeMode,
             cwd,
-            ...(boundModelId
+            ...(activeAcpModelId
               ? {
                   model: resolveDevinAcpDisplayModelId(
                     started.sessionSetupResult.configOptions,
-                    boundModelId,
+                    activeAcpModelId,
                   ),
                 }
               : {}),
@@ -1104,7 +1116,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
-            currentModelId: boundModelId,
+            currentModelId: activeAcpModelId,
             stopped: false,
           };
 
@@ -1727,7 +1739,15 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             detail: `Unknown pending user-input request: ${requestId}`,
           });
         }
-        yield* Deferred.succeed(pending.resolution, { _tag: "answered", answers });
+        const response = pending.makeResponse(answers);
+        if (response.action.action === "decline") {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "session/elicitation",
+            detail: "Invalid Devin elicitation response: missing required answers.",
+          });
+        }
+        yield* Deferred.succeed(pending.resolution, { _tag: "answered", answers, response });
       });
 
     const readThread: DevinAdapterShape["readThread"] = (threadId) =>

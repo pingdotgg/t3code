@@ -393,6 +393,24 @@ it.layer(devinAdapterTestLayer)("DevinAdapterLive", (it) => {
         ],
       );
 
+      const invalidError = yield* Effect.flip(
+        adapter.respondToUserInput(
+          threadId,
+          ApprovalRequestId.make(String(requestedEvent.requestId)),
+          {
+            scope: "Workspace",
+            fast: "Yes",
+          },
+        ),
+      );
+      assert.equal(invalidError._tag, "ProviderAdapterRequestError");
+      if (invalidError._tag === "ProviderAdapterRequestError") {
+        assert.equal(
+          invalidError.detail,
+          "Invalid Devin elicitation response: missing required answers.",
+        );
+      }
+
       yield* adapter.respondToUserInput(
         threadId,
         ApprovalRequestId.make(String(requestedEvent.requestId)),

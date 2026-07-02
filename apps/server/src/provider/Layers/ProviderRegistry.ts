@@ -619,11 +619,7 @@ export const ProviderRegistryLive = Layer.effect(
               const source = buildSnapshotSource(instance);
               const provider = yield* source.getSnapshot;
               yield* correlateSnapshotWithSource(source, provider).pipe(
-                Effect.flatMap((provider) =>
-                  syncProvider(provider, {
-                    modelMergePolicies: modelMergePolicyForSource(source),
-                  }),
-                ),
+                Effect.flatMap(syncProvider),
               );
             }).pipe(Effect.ignoreCause({ log: true })),
           { concurrency: "unbounded", discard: true },

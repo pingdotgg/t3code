@@ -174,7 +174,7 @@ function uniqueSortedDevinReasoningLevels(group: DevinAcpModelVariantGroup) {
 }
 
 function buildDevinCapabilitiesForVariantGroup(group: DevinAcpModelVariantGroup) {
-  const defaultVariant = group.variants[0];
+  const defaultVariant = group.currentVariant ?? group.variants[0];
   const reasoningLevels = uniqueSortedDevinReasoningLevels(group);
   const contextWindows = Array.from(new Set(group.variants.map(devinContextWindowKeyForVariant)));
   const hasFastVariants = group.variants.some((variant) => variant.fastMode);

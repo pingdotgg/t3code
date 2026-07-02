@@ -9,6 +9,8 @@ import {
   currentDevinModelIdFromSessionSetup,
   devinAcpModelVariantGroupsFromConfigOptions,
   devinModelConfigOptionsFromSessionSetup,
+  isDevinAcpModelCoveredByBaseModelIds,
+  resolveDevinAcpDisplayModelId,
   resolveDevinAcpModelSelection,
 } from "./DevinAcpSupport.ts";
 
@@ -96,7 +98,7 @@ describe("DevinAcpSupport", () => {
         name: "Model",
         category: "model",
         type: "select",
-        currentValue: "adaptive",
+        currentValue: "gpt-5-5-high-priority",
         options: [
           { value: "gpt-5-5-low", name: "GPT-5.5 Low Thinking" },
           { value: "gpt-5-5-high-priority", name: "GPT-5.5 High Thinking Fast" },
@@ -110,6 +112,7 @@ describe("DevinAcpSupport", () => {
       groups.map((group) => ({
         id: group.baseModelId,
         name: group.baseModelName,
+        current: group.currentVariant?.exactModelId,
         variants: group.variants.map((variant) => ({
           exact: variant.exactModelId,
           reasoning: variant.reasoning,
@@ -120,6 +123,7 @@ describe("DevinAcpSupport", () => {
       {
         id: "gpt-5-5",
         name: "GPT-5.5",
+        current: "gpt-5-5-high-priority",
         variants: [
           { exact: "gpt-5-5-low", reasoning: "low", fast: false },
           { exact: "gpt-5-5-high-priority", reasoning: "high", fast: true },
@@ -128,6 +132,7 @@ describe("DevinAcpSupport", () => {
       {
         id: "claude-sonnet-4-5",
         name: "Claude Sonnet 4.5",
+        current: undefined,
         variants: [
           { exact: "MODEL_PRIVATE_2", reasoning: undefined, fast: false },
           { exact: "MODEL_PRIVATE_3", reasoning: "thinking", fast: false },
@@ -171,6 +176,60 @@ describe("DevinAcpSupport", () => {
         selections: [{ id: "reasoning", value: "thinking" }],
       }),
     ).toBe("MODEL_PRIVATE_3");
+  });
+
+  it("resolves base model selections to the ACP current variant when no options are supplied", () => {
+    const configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> = [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "gpt-5-5-high-priority",
+        options: [
+          { value: "gpt-5-5-low", name: "GPT-5.5 Low Thinking" },
+          { value: "gpt-5-5-high-priority", name: "GPT-5.5 High Thinking Fast" },
+        ],
+      },
+    ];
+
+    expect(
+      resolveDevinAcpModelSelection({
+        configOptions,
+        model: "gpt-5-5",
+        selections: [],
+      }),
+    ).toBe("gpt-5-5-high-priority");
+  });
+
+  it("maps exact private ACP model ids to grouped display ids", () => {
+    const configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> = [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "MODEL_PRIVATE_2",
+        options: [
+          { value: "MODEL_PRIVATE_2", name: "Claude Sonnet 4.5" },
+          { value: "MODEL_PRIVATE_3", name: "Claude Sonnet 4.5 Thinking" },
+        ],
+      },
+    ];
+
+    expect(resolveDevinAcpDisplayModelId(configOptions, "MODEL_PRIVATE_2")).toBe(
+      "claude-sonnet-4-5",
+    );
+  });
+
+  it("treats built-in Devin aliases as covering previous discovered concrete slugs", () => {
+    expect(
+      isDevinAcpModelCoveredByBaseModelIds({
+        modelId: "claude-sonnet-4-5",
+        modelName: "Claude Sonnet 4.5",
+        baseModelIds: new Set(["sonnet"]),
+      }),
+    ).toBe(true);
   });
 
   it.effect("switches Devin models through ACP set_config_option", () =>

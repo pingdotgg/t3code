@@ -69,7 +69,7 @@ describe("buildDevinDiscoveredModelsFromSessionSetup", () => {
           name: "Model",
           category: "model",
           type: "select",
-          currentValue: "adaptive",
+          currentValue: "gpt-5-5-high-priority",
           options: [
             { value: "gpt-5-5-low", name: "GPT-5.5 Low Thinking" },
             { value: "gpt-5-5-medium", name: "GPT-5.5 Medium Thinking" },
@@ -92,18 +92,18 @@ describe("buildDevinDiscoveredModelsFromSessionSetup", () => {
         id: "reasoning",
         label: "Thinking",
         type: "select",
-        currentValue: "low",
+        currentValue: "high",
         options: [
-          { id: "low", label: "Low", isDefault: true },
+          { id: "low", label: "Low" },
           { id: "medium", label: "Medium" },
-          { id: "high", label: "High" },
+          { id: "high", label: "High", isDefault: true },
         ],
       },
       {
         id: "fastMode",
         label: "Fast Mode",
         type: "boolean",
-        currentValue: false,
+        currentValue: true,
       },
     ]);
 

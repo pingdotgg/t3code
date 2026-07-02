@@ -265,6 +265,46 @@ describe("derivePendingUserInputs", () => {
     ]);
   });
 
+  it("tracks free-text user-input prompts with no options", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "user-input-free-text",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-free-text",
+          questions: [
+            {
+              id: "notes",
+              header: "Devin",
+              question: "Any notes?",
+              options: [],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities)).toEqual([
+      {
+        requestId: "req-user-input-free-text",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        questions: [
+          {
+            id: "notes",
+            header: "Devin",
+            question: "Any notes?",
+            options: [],
+            multiSelect: false,
+          },
+        ],
+      },
+    ]);
+  });
+
   it("clears stale pending user-input prompts when the provider reports an orphaned request", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

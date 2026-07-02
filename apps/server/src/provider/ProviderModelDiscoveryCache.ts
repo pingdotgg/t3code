@@ -31,12 +31,8 @@ export function makeProviderModelDiscoveryCache(): Effect.Effect<
     return {
       getModels: Ref.get(modelsRef),
       setRefresh: (refresh) => Ref.set(refreshRef, refresh),
-      recordModels: (models) => {
-        if (models.length === 0) {
-          return Effect.void;
-        }
-        return Ref.set(modelsRef, models).pipe(Effect.andThen(scheduleRefresh), Effect.asVoid);
-      },
+      recordModels: (models) =>
+        Ref.set(modelsRef, models).pipe(Effect.andThen(scheduleRefresh), Effect.asVoid),
     } satisfies ProviderModelDiscoveryCache;
   });
 }
