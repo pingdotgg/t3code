@@ -1,6 +1,7 @@
 import {
   ArchiveIcon,
   ArrowUpDownIcon,
+  CalendarClockIcon,
   ChevronRightIcon,
   CloudIcon,
   ContainerIcon,
@@ -208,7 +209,11 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
-import { primaryServerConfigAtom, primaryServerKeybindingsAtom } from "../state/server";
+import {
+  primaryServerConfigAtom,
+  primaryServerKeybindingsAtom,
+  primaryServerScheduledTasksAtom,
+} from "../state/server";
 import {
   derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
@@ -216,6 +221,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import type { SidebarThreadSummary } from "../types";
+import { resolveScheduledThreadOrigin } from "../scheduledTaskOrigin";
 import {
   buildPhysicalToLogicalProjectKeyMap,
   buildSidebarProjectSnapshots,
@@ -244,6 +250,28 @@ const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> =
 };
 const SIDEBAR_ICON_ACTION_BUTTON_CLASS =
   "inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring";
+
+function ThreadScheduledOriginIndicator({ thread }: { readonly thread: SidebarThreadSummary }) {
+  const scheduledTasks = useAtomValue(primaryServerScheduledTasksAtom);
+  const origin = resolveScheduledThreadOrigin({ thread, scheduledTasks });
+  if (!origin) return null;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            aria-label={`Scheduled task: ${origin.scheduledTaskTitle}`}
+            className="inline-flex h-4 shrink-0 items-center justify-center rounded-sm border border-emerald-500/25 bg-emerald-500/10 px-0.5 text-emerald-700 dark:text-emerald-300"
+          />
+        }
+      >
+        <CalendarClockIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Scheduled task: {origin.scheduledTaskTitle}</TooltipPopup>
+    </Tooltip>
+  );
+}
 
 function SidebarThreadDetailPrewarmer({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   useEnvironmentThread(threadRef.environmentId, threadRef.threadId);
@@ -732,6 +760,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             </Tooltip>
           )}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
+          <ThreadScheduledOriginIndicator thread={thread} />
           {renamingThreadKey === threadKey ? (
             <input
               ref={handleRenameInputRef}
@@ -2997,6 +3026,7 @@ const SidebarChatThreadRow = memo(function SidebarChatThreadRow({
         className="relative isolate gap-2 px-2 py-1.5 pr-8 text-xs"
       >
         <MessageSquareIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
+        <ThreadScheduledOriginIndicator thread={thread} />
         <span className="min-w-0 flex-1 truncate text-left">{thread.title}</span>
         <span
           className={`shrink-0 text-[10px] tabular-nums text-muted-foreground/40 ${threadMetaClassName}`}
@@ -3128,9 +3158,14 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
   );
   const chatThreads = useThreadShells();
   const handleNewChat = useNewChatHandler();
+  const navigate = useNavigate();
+  const isScheduledTasksActive = useLocation({
+    select: (location) => location.pathname === "/scheduled-tasks",
+  });
   const { environments } = useEnvironments();
   const primaryChatEnvironmentId = usePrimaryEnvironmentId();
   const { isMobile, setOpenMobile } = useSidebar();
+  const scheduledTasks = useAtomValue(primaryServerScheduledTasksAtom);
   const appSettingsConfirmThreadArchive = useClientSettings<boolean>(
     (settings) => settings.confirmThreadArchive,
   );
@@ -3166,6 +3201,12 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
       }
     })();
   }, [chatEnvironmentId, handleNewChat, isMobile, setOpenMobile]);
+  const handleScheduledTasksClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/scheduled-tasks" });
+  }, [isMobile, navigate, setOpenMobile]);
 
   return (
     <SidebarContent className="gap-0">
@@ -3216,6 +3257,30 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         </SidebarGroup>
       ) : null}
       <LocalSecondaryStatus />
+      <SidebarGroup className="px-2 py-1">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="sm"
+              isActive={isScheduledTasksActive}
+              className={
+                isScheduledTasksActive
+                  ? "gap-2 px-2 py-1.5 text-foreground"
+                  : "gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+              }
+              onClick={handleScheduledTasksClick}
+            >
+              <CalendarClockIcon className="size-3.5 shrink-0" />
+              <span className="min-w-0 flex-1 truncate text-left text-xs">Scheduled Tasks</span>
+              {scheduledTasks.length > 0 ? (
+                <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground">
+                  {scheduledTasks.length}
+                </span>
+              ) : null}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroup>
       <SidebarGroup className="px-2 py-2">
         <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">

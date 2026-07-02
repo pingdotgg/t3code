@@ -78,6 +78,7 @@ import * as GitManager from "./git/GitManager.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
+import * as ThreadTurnBootstrapDispatcher from "./orchestration/ThreadTurnBootstrapDispatcher.ts";
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
@@ -87,6 +88,7 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/provid
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as ScheduledTasks from "./scheduledTasks.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -318,6 +320,7 @@ const buildAppUnderTest = (options?: {
     keybindings?: Partial<Keybindings.Keybindings["Service"]>;
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
+    scheduledTasks?: Partial<ScheduledTasks.ScheduledTasks["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
@@ -515,10 +518,11 @@ const buildAppUnderTest = (options?: {
         })
       : VcsStatusBroadcaster.layer.pipe(Layer.provide(gitWorkflowLayer));
 
-    const servedRoutesLayer = HttpRouter.serve(makeRoutesLayer, {
+    const servedRoutesBaseLayer = HttpRouter.serve(makeRoutesLayer, {
       disableListenLog: true,
       disableLogger: true,
     }).pipe(
+      Layer.provide(ThreadTurnBootstrapDispatcher.layer),
       Layer.provide(
         Layer.mock(Keybindings.Keybindings)({
           loadConfigState: Effect.succeed({
@@ -551,6 +555,19 @@ const buildAppUnderTest = (options?: {
           updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
           streamChanges: Stream.empty,
           ...options?.layers?.serverSettings,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ScheduledTasks.ScheduledTasks)({
+          list: Effect.succeed({ tasks: [] }),
+          create: () => Effect.die("ScheduledTasks.create not stubbed in this test"),
+          update: () => Effect.die("ScheduledTasks.update not stubbed in this test"),
+          delete: () => Effect.die("ScheduledTasks.delete not stubbed in this test"),
+          runNow: () => Effect.die("ScheduledTasks.runNow not stubbed in this test"),
+          runDueTasks: Effect.void,
+          start: Effect.void,
+          streamChanges: Stream.empty,
+          ...options?.layers?.scheduledTasks,
         }),
       ),
       Layer.provide(
@@ -622,6 +639,9 @@ const buildAppUnderTest = (options?: {
             }),
         }),
       ),
+    );
+
+    const servedRoutesLayer = servedRoutesBaseLayer.pipe(
       Layer.provide(gitManagerLayer),
       Layer.provide(gitVcsDriverLayer),
       Layer.provide(gitWorkflowLayer),

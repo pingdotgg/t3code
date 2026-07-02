@@ -124,6 +124,14 @@ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
+export const OrchestrationThreadOrigin = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("scheduled-task"),
+    scheduledTaskId: TrimmedNonEmptyString,
+    scheduledTaskTitle: TrimmedNonEmptyString,
+  }),
+]);
+export type OrchestrationThreadOrigin = typeof OrchestrationThreadOrigin.Type;
 export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
@@ -358,6 +366,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  origin: Schema.optionalKey(OrchestrationThreadOrigin),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -405,6 +414,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  origin: Schema.optionalKey(OrchestrationThreadOrigin),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -511,6 +521,7 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  origin: Schema.optionalKey(OrchestrationThreadOrigin),
   createdAt: IsoDateTime,
 });
 
@@ -566,6 +577,7 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  origin: Schema.optionalKey(OrchestrationThreadOrigin),
   createdAt: IsoDateTime,
 });
 
@@ -857,6 +869,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  origin: Schema.optionalKey(OrchestrationThreadOrigin),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

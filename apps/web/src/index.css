@@ -156,17 +156,19 @@
   }
 
   .chat-composer-glass {
-    background: color-mix(in srgb, var(--card) 20%, transparent);
+    background: color-mix(in srgb, var(--card) 78%, transparent);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    backdrop-filter: blur(14px) saturate(1.2);
   }
 
   .dark .chat-composer-glass {
-    background: color-mix(in srgb, var(--card) 45%, transparent);
+    background: color-mix(in srgb, var(--card) 88%, transparent);
   }
 
   .chat-composer-lower-chrome {
     margin-top: -1px;
     padding-top: 1px;
-    background: var(--background);
+    background: transparent;
   }
 
   @media (min-width: 40rem) {

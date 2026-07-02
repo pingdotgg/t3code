@@ -356,6 +356,63 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
   }),
 );
 
+it.effect("decodes scheduled task thread origin on bootstrap and thread.created payloads", () =>
+  Effect.gen(function* () {
+    const origin = {
+      type: "scheduled-task" as const,
+      scheduledTaskId: "task-1",
+      scheduledTaskTitle: "Morning triage",
+    };
+    const command = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-scheduled",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-bootstrap",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      bootstrap: {
+        createThread: {
+          projectId: "project-1",
+          title: "Morning triage",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5.4",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          origin,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const payload = yield* decodeThreadCreatedPayload({
+      threadId: "thread-1",
+      projectId: "project-1",
+      title: "Morning triage",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      origin,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.deepStrictEqual(command.bootstrap?.createThread?.origin, origin);
+    assert.deepStrictEqual(payload.origin, origin);
+  }),
+);
+
 it.effect("decodes thread.created runtime mode for historical events", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadCreatedPayload({

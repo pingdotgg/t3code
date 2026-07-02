@@ -52,6 +52,7 @@ function mapInitialConfigError(error: InitialConfigError): ConnectionAttemptErro
       });
     case "KeybindingsConfigParseError":
     case "ServerSettingsError":
+    case "ScheduledTaskError":
       return new ConnectionTransientErrorClass({
         reason: "remote-unavailable",
         detail: error.message,

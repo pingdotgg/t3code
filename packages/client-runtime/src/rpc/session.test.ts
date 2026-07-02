@@ -121,6 +121,7 @@ const SERVER_CONFIG: ServerConfigType = {
   keybindingsConfigPath: "/tmp/workspace/keybindings.json",
   keybindings: [],
   issues: [],
+  scheduledTasks: [],
   providers: [],
   availableEditors: [],
   availableTerminals: [],

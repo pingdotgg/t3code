@@ -20,6 +20,7 @@ import { EditorId, ExternalTerminalId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerSettings } from "./settings.ts";
+import { ScheduledTaskSnapshot } from "./scheduledTasks.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -418,6 +419,7 @@ export const ServerConfig = Schema.Struct({
   availableTerminals: Schema.Array(ExternalTerminalId),
   observability: ServerObservability,
   settings: ServerSettings,
+  scheduledTasks: Schema.Array(ScheduledTaskSnapshot),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
@@ -471,6 +473,12 @@ export const ServerConfigSettingsUpdatedPayload = Schema.Struct({
 });
 export type ServerConfigSettingsUpdatedPayload = typeof ServerConfigSettingsUpdatedPayload.Type;
 
+export const ServerConfigScheduledTasksUpdatedPayload = Schema.Struct({
+  scheduledTasks: Schema.Array(ScheduledTaskSnapshot),
+});
+export type ServerConfigScheduledTasksUpdatedPayload =
+  typeof ServerConfigScheduledTasksUpdatedPayload.Type;
+
 export const ServerConfigStreamSnapshotEvent = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("snapshot"),
@@ -502,11 +510,20 @@ export const ServerConfigStreamSettingsUpdatedEvent = Schema.Struct({
 export type ServerConfigStreamSettingsUpdatedEvent =
   typeof ServerConfigStreamSettingsUpdatedEvent.Type;
 
+export const ServerConfigStreamScheduledTasksUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("scheduledTasksUpdated"),
+  payload: ServerConfigScheduledTasksUpdatedPayload,
+});
+export type ServerConfigStreamScheduledTasksUpdatedEvent =
+  typeof ServerConfigStreamScheduledTasksUpdatedEvent.Type;
+
 export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
   ServerConfigStreamProviderStatusesEvent,
   ServerConfigStreamSettingsUpdatedEvent,
+  ServerConfigStreamScheduledTasksUpdatedEvent,
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 

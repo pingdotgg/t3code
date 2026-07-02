@@ -33,6 +33,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
+import * as ScheduledTasks from "./scheduledTasks.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -264,6 +265,7 @@ export const make = Effect.gen(function* () {
   const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+  const scheduledTasks = yield* ScheduledTasks.ScheduledTasks;
   const crypto = yield* Crypto.Crypto;
 
   const commandGate = yield* makeCommandGate;
@@ -398,6 +400,8 @@ export const make = Effect.gen(function* () {
 
       yield* Effect.logDebug("Accepting commands");
       yield* commandGate.signalCommandReady;
+      yield* Effect.logDebug("startup phase: starting scheduled task runner");
+      yield* runStartupPhase("scheduled-tasks.start", scheduledTasks.start);
       yield* Effect.logDebug("startup phase: waiting for http listener");
       yield* runStartupPhase("http.wait", Deferred.await(httpListening));
       yield* Effect.logDebug("startup phase: publishing ready event");

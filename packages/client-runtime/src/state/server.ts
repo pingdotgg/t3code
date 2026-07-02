@@ -57,6 +57,14 @@ export function applyServerConfigProjection(
         },
         latestEvent: event,
       }));
+    case "scheduledTasksUpdated":
+      return Option.map(current, (projection) => ({
+        config: {
+          ...projection.config,
+          scheduledTasks: event.payload.scheduledTasks,
+        },
+        latestEvent: event,
+      }));
   }
 }
 
@@ -128,11 +136,17 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:providers:${environmentId}`),
     ),
   );
+  const scheduledTasksValueAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => get(configValueAtom(environmentId))?.scheduledTasks ?? null).pipe(
+      Atom.withLabel(`environment-data:server:scheduled-tasks:${environmentId}`),
+    ),
+  );
 
   return {
     configValueAtom,
     settingsValueAtom,
     providersValueAtom,
+    scheduledTasksValueAtom,
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
@@ -183,6 +197,30 @@ export function createServerEnvironmentAtoms<R, E>(
     updateSettings: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-settings",
       tag: WS_METHODS.serverUpdateSettings,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    scheduledTasksCreate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-tasks:create",
+      tag: WS_METHODS.scheduledTasksCreate,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    scheduledTasksUpdate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-tasks:update",
+      tag: WS_METHODS.scheduledTasksUpdate,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    scheduledTasksDelete: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-tasks:delete",
+      tag: WS_METHODS.scheduledTasksDelete,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    scheduledTasksRunNow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-tasks:run-now",
+      tag: WS_METHODS.scheduledTasksRunNow,
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),

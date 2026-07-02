@@ -188,6 +188,7 @@ import {
   primaryServerAvailableEditorsAtom,
   primaryServerAvailableTerminalsAtom,
   primaryServerKeybindingsAtom,
+  primaryServerScheduledTasksAtom,
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
@@ -214,6 +215,7 @@ import { resolveEffectiveEnvMode } from "./BranchToolbar.logic";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { resolveScheduledThreadOrigin } from "../scheduledTaskOrigin";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
@@ -1242,6 +1244,11 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const isServerThread = routeKind === "server" && serverThread !== null;
   const activeThread = isServerThread ? serverThread : localDraftThread;
+  const scheduledTasks = useAtomValue(primaryServerScheduledTasksAtom);
+  const activeThreadOrigin = useMemo(
+    () => resolveScheduledThreadOrigin({ thread: activeThread, scheduledTasks }),
+    [activeThread, scheduledTasks],
+  );
   const threadError = isServerThread
     ? (localServerError ?? serverThread?.session?.lastError ?? null)
     : localDraftError;
@@ -5090,6 +5097,7 @@ function ChatViewContent(props: ChatViewProps) {
             activeThreadId={activeThread.id}
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
+            activeThreadOrigin={activeThreadOrigin}
             activeProjectName={hasWorkspaceProject ? activeProject?.title : undefined}
             openInCwd={hasWorkspaceProject ? gitCwd : null}
             activeProjectScripts={hasWorkspaceProject ? activeProject?.scripts : undefined}

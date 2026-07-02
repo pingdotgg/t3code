@@ -218,6 +218,11 @@ describe("environment entity projections", () => {
       title: "Current thread",
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
+      origin: {
+        type: "scheduled-task",
+        scheduledTaskId: "task-1",
+        scheduledTaskTitle: "Morning triage",
+      } as const,
     };
 
     const merged = mergeEnvironmentThread(detail, shell);
@@ -226,6 +231,11 @@ describe("environment entity projections", () => {
       title: "Current thread",
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
+      origin: {
+        type: "scheduled-task",
+        scheduledTaskId: "task-1",
+        scheduledTaskTitle: "Morning triage",
+      },
     });
     expect(merged?.messages).toBe(messages);
   });

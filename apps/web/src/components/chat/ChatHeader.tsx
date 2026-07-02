@@ -2,11 +2,13 @@ import {
   type EnvironmentId,
   type EditorId,
   type ExternalTerminalId,
+  type OrchestrationThreadOrigin,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { CalendarClockIcon } from "lucide-react";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
@@ -25,6 +27,7 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   draftId?: DraftId;
   activeThreadTitle: string;
+  activeThreadOrigin?: OrchestrationThreadOrigin | null;
   activeProjectName: string | undefined;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
@@ -62,6 +65,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   draftId,
   activeThreadTitle,
+  activeThreadOrigin,
   activeProjectName,
   openInCwd,
   activeProjectScripts,
@@ -83,6 +87,7 @@ export const ChatHeader = memo(function ChatHeader({
     openInCwd,
     primaryEnvironmentId,
   });
+  const scheduledOrigin = activeThreadOrigin?.type === "scheduled-task" ? activeThreadOrigin : null;
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
@@ -91,7 +96,7 @@ export const ChatHeader = memo(function ChatHeader({
             render={
               <h2
                 aria-label={activeThreadTitle}
-                className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
+                className="min-w-0 truncate text-sm font-medium text-foreground"
               >
                 {activeThreadTitle}
               </h2>
@@ -99,6 +104,24 @@ export const ChatHeader = memo(function ChatHeader({
           />
           <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
         </Tooltip>
+        {scheduledOrigin ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  aria-label={`Scheduled task: ${scheduledOrigin.scheduledTaskTitle}`}
+                  className="inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-1.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300"
+                />
+              }
+            >
+              <CalendarClockIcon className="size-3" />
+              <span>Scheduled</span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              Scheduled task: {scheduledOrigin.scheduledTaskTitle}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
       </div>
       <div
         data-chat-header-actions

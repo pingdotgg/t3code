@@ -7,6 +7,7 @@ import {
   type ServerLifecycleWelcomePayload,
   type ServerProvider,
   type ServerSettings,
+  type ScheduledTaskSnapshot,
 } from "@t3tools/contracts";
 import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/server";
 import { createEnvironmentServerConfigsAtom } from "@t3tools/client-runtime/state/shell";
@@ -36,6 +37,7 @@ interface PrimaryServerState {
 const EMPTY_AVAILABLE_EDITORS: ReadonlyArray<EditorId> = [];
 const EMPTY_AVAILABLE_TERMINALS: ReadonlyArray<ExternalTerminalId> = [];
 const EMPTY_SERVER_PROVIDERS: ReadonlyArray<ServerProvider> = [];
+const EMPTY_SCHEDULED_TASKS: ReadonlyArray<ScheduledTaskSnapshot> = [];
 const EMPTY_PRIMARY_SERVER_STATE: PrimaryServerState = {
   config: null,
   latestEvent: null,
@@ -81,6 +83,11 @@ export const primaryServerProvidersAtom = Atom.make(
   (get): ReadonlyArray<ServerProvider> =>
     get(primaryServerConfigAtom)?.providers ?? EMPTY_SERVER_PROVIDERS,
 ).pipe(Atom.withLabel("web-primary-server-providers"));
+
+export const primaryServerScheduledTasksAtom = Atom.make(
+  (get): ReadonlyArray<ScheduledTaskSnapshot> =>
+    get(primaryServerConfigAtom)?.scheduledTasks ?? EMPTY_SCHEDULED_TASKS,
+).pipe(Atom.withLabel("web-primary-server-scheduled-tasks"));
 
 export const primaryServerKeybindingsAtom = Atom.make(
   (get): ServerConfig["keybindings"] =>
