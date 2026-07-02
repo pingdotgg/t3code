@@ -50,6 +50,25 @@ describe("ClientSettings open-with defaults", () => {
   });
 });
 
+describe("ClientSettings sidebar preview counts", () => {
+  it("defaults chat and project thread preview counts independently", () => {
+    const decoded = decodeClientSettings({});
+
+    expect(decoded.sidebarThreadPreviewCount).toBe(6);
+    expect(decoded.sidebarChatPreviewCount).toBe(6);
+  });
+
+  it("accepts different chat and project thread preview counts", () => {
+    const decoded = decodeClientSettings({
+      sidebarThreadPreviewCount: 8,
+      sidebarChatPreviewCount: 3,
+    });
+
+    expect(decoded.sidebarThreadPreviewCount).toBe(8);
+    expect(decoded.sidebarChatPreviewCount).toBe(3);
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});
