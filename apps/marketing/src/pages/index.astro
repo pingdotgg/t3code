@@ -254,7 +254,7 @@ const mobileEndorsementRows = [
           <button class="pr-button">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M6 8v8M18 8v5a3 3 0 01-3 3h-3M13 13l-2 3 2 3"/></svg>
             Commit &amp; push
-            <span class="pr-button-kbd">⌘⏎</span>
+            <span id="pr-button-kbd" class="pr-button-kbd">⌘⏎</span>
           </button>
         </div>
       </div>
@@ -403,12 +403,14 @@ const mobileEndorsementRows = [
     const label = document.getElementById("download-label");
     const ctaBtn = document.getElementById("cta-download-btn") as HTMLAnchorElement | null;
     const ctaLabel = document.getElementById("cta-download-label");
+    const kbd = document.getElementById("pr-button-kbd");
 
     const platform = detectPlatform();
     if (!platform) return;
     document.documentElement.dataset.platform = platform.os;
     if (label) label.textContent = platform.label;
     if (ctaLabel) ctaLabel.textContent = platform.label;
+    if (kbd && platform.os !== "mac") kbd.textContent = "Ctrl+Enter";
 
     try {
       const release = await fetchLatestRelease();
