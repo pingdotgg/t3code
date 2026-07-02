@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
+import { mergeThreadMessageProjection } from "./threadMessageProjection.ts";
 import {
   MessageSentPayloadSchema,
   ProjectCreatedPayload,
@@ -413,20 +414,33 @@ export function projectEvent(
         const messages = existingMessage
           ? thread.messages.map((entry) =>
               entry.id === message.id
-                ? {
-                    ...entry,
-                    text: message.streaming
-                      ? `${entry.text}${message.text}`
-                      : message.text.length > 0
-                        ? message.text
-                        : entry.text,
-                    streaming: message.streaming,
-                    updatedAt: message.updatedAt,
-                    turnId: message.turnId,
-                    ...(message.attachments !== undefined
-                      ? { attachments: message.attachments }
-                      : {}),
-                  }
+                ? (() => {
+                    const mergedMessage = mergeThreadMessageProjection(
+                      {
+                        text: entry.text,
+                        turnId: entry.turnId,
+                        createdAt: entry.createdAt,
+                      },
+                      {
+                        text: message.text,
+                        turnId: message.turnId,
+                        streaming: message.streaming,
+                        createdAt: message.createdAt,
+                        updatedAt: message.updatedAt,
+                      },
+                    );
+                    return {
+                      ...entry,
+                      text: mergedMessage.text,
+                      streaming: message.streaming,
+                      createdAt: mergedMessage.createdAt,
+                      updatedAt: mergedMessage.updatedAt,
+                      turnId: mergedMessage.turnId,
+                      ...(message.attachments !== undefined
+                        ? { attachments: message.attachments }
+                        : {}),
+                    };
+                  })()
                 : entry,
             )
           : [...thread.messages, message];
