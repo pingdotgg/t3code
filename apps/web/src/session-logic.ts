@@ -46,6 +46,12 @@ export const PROVIDER_OPTIONS: Array<{
     pickerSidebarBadge: "new",
   },
   {
+    value: ProviderDriverKind.make("copilot"),
+    label: "GitHub Copilot",
+    available: true,
+    pickerSidebarBadge: "new",
+  },
+  {
     value: ProviderDriverKind.make("grok"),
     label: "Grok",
     available: true,
