@@ -164,9 +164,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           </span>
         ) : null}
       </div>
-      <p className="text-sm text-foreground/90">{activeQuestion.question}</p>
+      <p dir="auto" className="text-sm text-foreground/90">
+        {activeQuestion.question}
+      </p>
       {activeQuestion.multiSelect ? (
-        <p className="mt-1 text-xs text-muted-foreground/65">Select one or more options.</p>
+        <p dir="auto" className="mt-1 text-xs text-muted-foreground/65">
+          Select one or more options.
+        </p>
       ) : null}
       <div className="mt-3 space-y-1.5">
         {activeQuestion.options.map((option, index) => {
@@ -178,7 +182,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             (!customAnswerActive && progress.selectedOptionLabels.includes(option.label));
           const shortcutKey = index < 9 ? index + 1 : null;
           const className = cn(
-            "group flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left outline-none transition-all duration-150 focus-visible:border-primary/40 focus-visible:ring-1 focus-visible:ring-primary/25",
+            "group flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-start outline-none transition-all duration-150 focus-visible:border-primary/40 focus-visible:ring-1 focus-visible:ring-primary/25",
             isSelected
               ? "border-primary/30 bg-primary/8 text-foreground"
               : "border-transparent bg-muted/22 text-foreground/85 hover:border-border/45 hover:bg-muted/34",
@@ -188,9 +192,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           const content = (
             <>
               <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                <span className="text-sm font-medium">{option.label}</span>
+                <span dir="auto" className="text-sm font-medium">
+                  {option.label}
+                </span>
                 {option.description && option.description !== option.label ? (
-                  <span className="text-xs text-muted-foreground/50">{option.description}</span>
+                  <span dir="auto" className="text-xs text-muted-foreground/50">
+                    {option.description}
+                  </span>
                 ) : null}
               </div>
               {isSelected ? (

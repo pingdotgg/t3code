@@ -420,6 +420,36 @@ label:has(> select#reasoning-effort) select {
   word-break: break-word;
 }
 
+/* Bidirectional text direction detection for mixed RTL/LTR content */
+.chat-markdown p,
+.chat-markdown li,
+.chat-markdown td,
+.chat-markdown th,
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6,
+.chat-markdown blockquote {
+  unicode-bidi: plaintext;
+}
+
+/* Code and tables remain LTR regardless of surrounding text direction */
+.chat-markdown pre,
+.chat-markdown code,
+.chat-markdown table {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+/* Per-line direction detection for pre-wrap user messages and composer */
+.user-message-text,
+.composer-editor-bidi,
+.composer-editor-bidi p {
+  unicode-bidi: plaintext;
+}
+
 .chat-markdown > :first-child {
   margin-top: 0;
 }
@@ -472,12 +502,12 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown ul {
-  padding-left: 1.25rem;
+  padding-inline-start: 1.25rem;
   list-style-type: disc;
 }
 
 .chat-markdown ol {
-  padding-left: 1.25rem;
+  padding-inline-start: 1.25rem;
   list-style-type: decimal;
 }
 
@@ -537,8 +567,8 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown blockquote {
-  border-left: 2px solid var(--border);
-  padding-left: 0.8rem;
+  border-inline-start: 2px solid var(--border);
+  padding-inline-start: 0.8rem;
   color: var(--muted-foreground);
 }
 
@@ -721,7 +751,7 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown th,
 .chat-markdown td {
   padding: 0.45rem 0.75rem;
-  text-align: left;
+  text-align: start;
 }
 
 .chat-markdown thead th {

@@ -1593,7 +1593,7 @@ export function ArchivedThreadsPanel() {
                     }
                   })();
                 }}
-                title={thread.title}
+                title={<span dir="auto">{thread.title}</span>}
                 description={
                   <>
                     Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}

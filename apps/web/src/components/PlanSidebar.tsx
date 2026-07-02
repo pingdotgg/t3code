@@ -197,7 +197,7 @@ const PlanSidebar = memo(function PlanSidebar({
         <div className="p-3 space-y-4">
           {/* Explanation */}
           {activePlan?.explanation ? (
-            <p className="text-[13px] leading-relaxed text-muted-foreground/80">
+            <p dir="auto" className="text-[13px] leading-relaxed text-muted-foreground/80">
               {activePlan.explanation}
             </p>
           ) : null}
@@ -219,6 +219,7 @@ const PlanSidebar = memo(function PlanSidebar({
                 >
                   {stepStatusIcon(step.status)}
                   <p
+                    dir="auto"
                     className={cn(
                       "text-[13px] leading-snug",
                       step.status === "completed"
@@ -240,7 +241,7 @@ const PlanSidebar = memo(function PlanSidebar({
             <div className="space-y-2">
               <button
                 type="button"
-                className="group flex w-full items-center gap-1.5 text-left"
+                className="group flex w-full items-center gap-1.5 text-start"
                 onClick={() => setProposedPlanExpanded((v) => !v)}
               >
                 {proposedPlanExpanded ? (
@@ -248,7 +249,10 @@ const PlanSidebar = memo(function PlanSidebar({
                 ) : (
                   <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground/40 transition-transform" />
                 )}
-                <span className="text-[10px] font-semibold tracking-widest text-muted-foreground/40 uppercase group-hover:text-muted-foreground/60">
+                <span
+                  dir="auto"
+                  className="text-[10px] font-semibold tracking-widest text-muted-foreground/40 uppercase group-hover:text-muted-foreground/60"
+                >
                   {planTitle ?? "Full Plan"}
                 </span>
               </button>
