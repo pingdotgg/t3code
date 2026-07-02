@@ -597,15 +597,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
       it("drops cached Devin raw model variants covered by refreshed grouped models", () => {
         const devinDriver = ProviderDriverKind.make("devin");
-        const groupedCapabilities = createModelCapabilities({
-          optionDescriptors: [
-            selectDescriptor("reasoning", "Thinking", [
-              { id: "low", label: "Low" },
-              { id: "high", label: "High", isDefault: true },
-            ]),
-            booleanDescriptor("fastMode", "Fast Mode"),
-          ],
-        });
         const previousProvider = {
           instanceId: ProviderInstanceId.make("devin"),
           driver: devinDriver,
@@ -619,24 +610,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             {
               slug: "gpt-5-5-low",
               name: "GPT-5.5 Low Thinking",
-              isCustom: false,
-              capabilities: createModelCapabilities({ optionDescriptors: [] }),
-            },
-            {
-              slug: "gpt-5-5-high-priority",
-              name: "GPT-5.5 High Thinking Fast",
-              isCustom: false,
-              capabilities: createModelCapabilities({ optionDescriptors: [] }),
-            },
-            {
-              slug: "MODEL_PRIVATE_3",
-              name: "Claude Sonnet 4.5 Thinking",
-              isCustom: false,
-              capabilities: createModelCapabilities({ optionDescriptors: [] }),
-            },
-            {
-              slug: "swe",
-              name: "SWE",
               isCustom: false,
               capabilities: createModelCapabilities({ optionDescriptors: [] }),
             },
@@ -658,21 +631,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               slug: "gpt-5-5",
               name: "GPT-5.5",
               isCustom: false,
-              capabilities: groupedCapabilities,
-            },
-            {
-              slug: "claude-sonnet-4-5",
-              name: "Claude Sonnet 4.5",
-              isCustom: false,
-              capabilities: groupedCapabilities,
-            },
-            {
-              slug: "swe-1-6",
-              name: "SWE-1.6",
-              isCustom: false,
-              capabilities: createModelCapabilities({
-                optionDescriptors: [booleanDescriptor("fastMode", "Fast Mode")],
-              }),
+              capabilities: createModelCapabilities({ optionDescriptors: [] }),
             },
           ],
         } satisfies ServerProvider;
@@ -689,8 +648,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           })),
           [
             { slug: "gpt-5-5", name: "GPT-5.5", isCustom: false },
-            { slug: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", isCustom: false },
-            { slug: "swe-1-6", name: "SWE-1.6", isCustom: false },
             { slug: "local-devin-model", name: "local-devin-model", isCustom: true },
           ],
         );

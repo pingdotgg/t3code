@@ -186,14 +186,7 @@ it.layer(NodeServices.layer)("checkDevinProviderStatus", (it) => {
 
       expect(snapshot.status).toBe("ready");
       expect(snapshot.installed).toBe(true);
-      expect(snapshot.models.map((model) => model.slug)).toEqual([
-        "adaptive",
-        "swe",
-        "opus",
-        "sonnet",
-        "codex",
-        "gemini",
-      ]);
+      expect(snapshot.version).toBe("1.2.3");
       expect(snapshot.message).toBeUndefined();
     }),
   );

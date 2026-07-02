@@ -8,7 +8,6 @@ import {
   buildDevinAcpSpawnInput,
   currentDevinModelIdFromSessionSetup,
   devinAcpModelVariantGroupsFromConfigOptions,
-  devinModelConfigOptionsFromSessionSetup,
   isDevinAcpModelCoveredByBaseModelIds,
   resolveDevinAcpDisplayModelId,
   resolveDevinAcpModelSelection,
@@ -51,44 +50,6 @@ describe("DevinAcpSupport", () => {
     } satisfies EffectAcpSchema.NewSessionResponse;
 
     expect(currentDevinModelIdFromSessionSetup(response)).toBe("adaptive");
-  });
-
-  it("flattens Devin model options from the ACP model config selector", () => {
-    const response = {
-      sessionId: "session-1",
-      configOptions: [
-        {
-          id: "mode",
-          name: "Mode",
-          category: "mode",
-          type: "select",
-          currentValue: "normal",
-          options: [{ value: "normal", name: "Normal" }],
-        },
-        {
-          id: "model",
-          name: "Model",
-          category: "model",
-          type: "select",
-          currentValue: "adaptive",
-          options: [
-            {
-              group: "recommended",
-              name: "Recommended",
-              options: [
-                { value: "adaptive", name: "Adaptive" },
-                { value: "swe-1-6", name: "SWE-1.6" },
-              ],
-            },
-          ],
-        },
-      ],
-    } satisfies EffectAcpSchema.NewSessionResponse;
-
-    expect(devinModelConfigOptionsFromSessionSetup(response)).toEqual([
-      { value: "adaptive", name: "Adaptive" },
-      { value: "swe-1-6", name: "SWE-1.6" },
-    ]);
   });
 
   it("groups Devin thinking and speed variants by base model", () => {

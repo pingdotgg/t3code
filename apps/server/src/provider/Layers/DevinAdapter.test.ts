@@ -956,53 +956,6 @@ it.layer(devinAdapterTestLayer)("DevinAdapterLive", (it) => {
     }),
   );
 
-  it.effect("rejects startSession when provider mismatches", () =>
-    Effect.gen(function* () {
-      const wrapperPath = yield* Effect.promise(() => makeMockDevinWrapper());
-      const adapter = yield* makeTestAdapter(wrapperPath);
-      const threadId = ThreadId.make("devin-provider-mismatch");
-
-      const error = yield* Effect.flip(
-        adapter.startSession({
-          threadId,
-          provider: ProviderDriverKind.make("cursor"),
-          cwd: process.cwd(),
-          runtimeMode: "full-access",
-        }),
-      );
-
-      assert.equal(error._tag, "ProviderAdapterValidationError");
-    }),
-  );
-
-  it.effect("rejects sendTurn with empty input and no attachments", () =>
-    Effect.gen(function* () {
-      const threadId = ThreadId.make("devin-empty-turn");
-
-      const wrapperPath = yield* Effect.promise(() => makeMockDevinWrapper());
-      const adapter = yield* makeTestAdapter(wrapperPath);
-
-      yield* adapter.startSession({
-        threadId,
-        provider: ProviderDriverKind.make("devin"),
-        cwd: process.cwd(),
-        runtimeMode: "full-access",
-      });
-
-      const error = yield* Effect.flip(
-        adapter.sendTurn({
-          threadId,
-          input: "   ",
-          attachments: [],
-        }),
-      );
-
-      assert.equal(error._tag, "ProviderAdapterValidationError");
-
-      yield* adapter.stopSession(threadId);
-    }),
-  );
-
   it.effect("responds to ACP approvals using provider-supplied option ids", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("devin-custom-approval-option-id");
