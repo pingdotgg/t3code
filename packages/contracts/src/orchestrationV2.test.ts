@@ -24,16 +24,42 @@ import {
   OrchestrationV2CheckpointScope,
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
+  OrchestrationV2ShellSnapshot,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "./orchestrationV2.ts";
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
+const LegacyShellStreamItem = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("synchronized") }),
+  Schema.Struct({
+    kind: Schema.Literal("snapshot"),
+    snapshot: OrchestrationV2ShellSnapshot,
+  }),
+]);
+const decodeLegacyShellStreamItem = Schema.decodeUnknownSync(LegacyShellStreamItem);
 const decodeOrchestrationV2Command = Schema.decodeUnknownSync(OrchestrationV2Command);
 const decodeOrchestrationV2TurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 
 describe("orchestration V2 contracts", () => {
+  it("lets legacy snapshot decoders ignore enrichment metadata", () => {
+    const decoded = decodeLegacyShellStreamItem({
+      kind: "snapshot",
+      snapshot: {
+        schemaVersion: 1,
+        snapshotSequence: 0,
+        projects: [],
+        threads: [],
+        archivedThreads: [],
+      },
+      resolvedRepositoryIdentityRoots: ["/workspace/project"],
+    });
+
+    expect(decoded.kind).toBe("snapshot");
+    expect("resolvedRepositoryIdentityRoots" in decoded).toBe(false);
+  });
+
   it("decodes nested checkpoint scopes without making child scopes advance app run count", () => {
     const rootScope = Schema.decodeUnknownSync(OrchestrationV2CheckpointScope)({
       id: "scope-root-1",
