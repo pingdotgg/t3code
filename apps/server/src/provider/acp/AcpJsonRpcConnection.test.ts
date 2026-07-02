@@ -712,6 +712,40 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect("completes ad-hoc loadSession after replay becomes idle while RPC stays pending", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+      const loaded = yield* runtime.loadSession("mock-session-1").pipe(Effect.timeout("2 seconds"));
+
+      expect(loaded.sessionId).toBe("mock-session-1");
+      expect(loaded.sessionSetupResult._meta).toMatchObject({
+        t3SessionLoadReady: "replay_idle",
+      });
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY: "1",
+              T3_ACP_LOAD_SESSION_DELAY_MS: "10000",
+            },
+          },
+          cwd: process.cwd(),
+          sessionLoadReplayIdleGap: "50 millis",
+          sessionLoadTimeout: "1 second",
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+      TestClock.withLive,
+    ),
+  );
+
   it.effect("rejects invalid config option values before sending session/set_config_option", () => {
     const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-runtime-"));
     const requestLogPath = NodePath.join(tempDir, "requests.ndjson");

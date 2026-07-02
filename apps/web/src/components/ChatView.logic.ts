@@ -3,6 +3,7 @@ import {
   isProviderDriverKind,
   ProjectId,
   type ModelSelection,
+  type OrchestrationV2ProjectedTurnItem,
   type ProviderDriverKind,
   type ServerProvider,
   type ScopedThreadRef,
@@ -388,6 +389,22 @@ export function createLocalDispatchSnapshot(
     runtimeStatus: runtime?.status ?? null,
     runtimeUpdatedAt: runtime?.updatedAt ?? null,
   };
+}
+
+/**
+ * The timeline renders committed user rows from `visibleTurnItems`, but
+ * `message.updated` can land in `projection.messages` one event earlier than
+ * the matching `turn-item.updated`. Basing optimistic eviction on visible user
+ * turn items avoids dropping steer rows in that gap.
+ */
+export function deriveCommittedServerUserMessageIds(
+  visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+): ReadonlySet<ChatMessage["id"]> {
+  return new Set(
+    visibleTurnItems.flatMap((row) =>
+      row.item.type === "user_message" ? [row.item.messageId] : [],
+    ),
+  );
 }
 
 export function hasServerAcknowledgedLocalDispatch(input: {

@@ -236,6 +236,7 @@ import {
   buildLocalDraftThread,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
+  deriveCommittedServerUserMessageIds,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
   getStartedThreadModelChangeBlockReason,
@@ -1066,8 +1067,8 @@ function ChatViewContent(props: ChatViewProps) {
     routeKind === "server" ? routeThreadRef : null,
   );
   const committedServerMessageIds = useMemo(
-    () => new Set(serverProjection?.messages.map((message) => message.id) ?? []),
-    [serverProjection],
+    () => deriveCommittedServerUserMessageIds(serverVisibleTurnItems),
+    [serverVisibleTurnItems],
   );
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const activeThreadLastVisitedAt = useUiStateStore((store) =>

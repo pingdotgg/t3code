@@ -132,12 +132,16 @@ export function makeGrokAdapterV2(options: GrokAdapterV2Options) {
   const flavor: AcpAdapterV2Flavor = {
     driver: GROK_PROVIDER,
     capabilities: GrokProviderCapabilitiesV2,
+    settleRootTurnWhenIdle: true,
+    interruptPromptOnCancel: false,
+    restartRuntimeAfterInterrupt: true,
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
     makeRuntime:
       options.makeRuntime ??
       ((input) =>
         makeGrokAcpRuntime({
           ...input,
+          interruptPromptOnCancel: input.interruptPromptOnCancel ?? false,
           grokSettings: options.settings,
           environment: options.environment,
           childProcessSpawner: options.childProcessSpawner,

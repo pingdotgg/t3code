@@ -147,6 +147,7 @@ export const layer: Layer.Layer<
           yield* loaded.session.value.interruptTurn({
             providerThread: loaded.providerThread,
             providerTurnId: loaded.providerTurn.id,
+            requestRuntimeRestart: true,
           });
         }).pipe(
           Effect.mapError((cause) =>
