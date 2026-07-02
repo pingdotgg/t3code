@@ -7,6 +7,7 @@ import * as Scope from "effect/Scope";
 import type * as Electron from "electron";
 
 import { makeComponentLogger } from "./DesktopObservability.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import {
   DESKTOP_THREAD_DEEP_LINK_SCHEME,
   findThreadDeepLinkInArgv,
@@ -16,10 +17,13 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import type { DesktopWindowError } from "../window/DesktopWindow.ts";
 
-type DesktopDeepLinkRuntimeServices = DesktopWindow.DesktopWindow | ElectronApp.ElectronApp;
+type DesktopDeepLinkRuntimeServices =
+  | DesktopEnvironment.DesktopEnvironment
+  | DesktopWindow.DesktopWindow
+  | ElectronApp.ElectronApp;
 
 /**
- * @effect-expect-leaking DesktopWindow | ElectronApp
+ * @effect-expect-leaking DesktopEnvironment | DesktopWindow | ElectronApp
  */
 export class DesktopDeepLinks extends Context.Service<
   DesktopDeepLinks,
@@ -39,6 +43,7 @@ const { logInfo: logDeepLinkInfo, logError: logDeepLinkError } =
 export const make = Effect.gen(function* () {
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const electronApp = yield* ElectronApp.ElectronApp;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const context = yield* Effect.context<DesktopDeepLinkRuntimeServices>();
   const runPromise = Effect.runPromiseWith(context);
 
@@ -82,7 +87,21 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.withSpan("desktop.deeplink.registerEarly")),
 
     configure: Effect.gen(function* () {
-      yield* electronApp.setAsDefaultProtocolClient(DESKTOP_THREAD_DEEP_LINK_SCHEME);
+      // Pin registration to this executable on macOS so Launch Services routes
+      // `t3://` links to the running channel (Alpha/Nightly) instead of whichever
+      // app happens to share the production bundle id.
+      const registered = yield* environment.platform === "darwin"
+        ? electronApp.setAsDefaultProtocolClient(
+            DESKTOP_THREAD_DEEP_LINK_SCHEME,
+            process.execPath,
+            [],
+          )
+        : electronApp.setAsDefaultProtocolClient(DESKTOP_THREAD_DEEP_LINK_SCHEME);
+      if (!registered) {
+        yield* logDeepLinkError("failed to register default protocol client", {
+          scheme: DESKTOP_THREAD_DEEP_LINK_SCHEME,
+        });
+      }
 
       const launchThreadId = findThreadDeepLinkInArgv(process.argv);
       if (Option.isSome(launchThreadId)) {
