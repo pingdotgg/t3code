@@ -298,7 +298,7 @@ function formatProcessName(command: string): string {
 
 function formatProcessType(process: ServerProcessDiagnosticsEntry): string {
   if (process.depth > 0) return "Subprocess";
-  if (/\b(codex|claude|opencode|cursor)\b/i.test(process.command)) return "Agent";
+  if (/\b(codex|claude|opencode|cursor|pi)\b/i.test(process.command)) return "Agent";
   return "Process";
 }
 
