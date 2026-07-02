@@ -7,7 +7,6 @@ import {
   type ProviderSession,
   type ServerProviderModel,
   type ProviderUserInputAnswers,
-  type UserInputQuestion,
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
@@ -21,15 +20,11 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -45,6 +40,18 @@ import {
 } from "../Errors.ts";
 import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
+import {
+  acpPromptSettlementBelongsToContext,
+  appendPromptResultToTurn,
+  encodeJsonStringForDiagnostics,
+  makeAcpPromptSettler,
+  makeAcpThreadLock,
+  parseAcpResume,
+  selectAutoApprovedPermissionOption,
+  selectPermissionOptionId,
+  type AcpAdapterPromptContext,
+  type AcpAdapterPromptTurnStore,
+} from "../acp/AcpAdapterRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
   makeAcpContentDeltaEvent,
@@ -63,19 +70,13 @@ import {
   resolveDevinAcpDisplayModelId,
   resolveDevinAcpModelSelection,
 } from "../acp/DevinAcpSupport.ts";
+import { makeDevinElicitationPrompt } from "../acp/DevinElicitation.ts";
 import { type DevinAdapterShape } from "../Services/DevinAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { buildDevinDiscoveredModelsFromSessionSetup } from "./DevinProvider.ts";
 
-const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
-
 const PROVIDER = ProviderDriverKind.make("devin");
 const DEVIN_RESUME_VERSION = 1 as const;
-
-function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
-  const result = encodeUnknownJsonStringExit(input);
-  return Exit.isSuccess(result) ? result.value : undefined;
-}
 
 export interface DevinAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
@@ -104,7 +105,7 @@ interface PendingUserInput {
   readonly makeResponse: (answers: ProviderUserInputAnswers) => EffectAcpSchema.ElicitationResponse;
 }
 
-interface DevinSessionContext {
+interface DevinSessionContext extends AcpAdapterPromptContext, AcpAdapterPromptTurnStore {
   readonly threadId: ThreadId;
   readonly acpSessionId: string;
   session: ProviderSession;
@@ -146,26 +147,6 @@ function settlePendingUserInputsAsCancelled(
   );
 }
 
-function appendPromptResultToTurn(
-  ctx: DevinSessionContext,
-  turnId: TurnId,
-  promptParts: ReadonlyArray<EffectAcpSchema.ContentBlock>,
-  result: EffectAcpSchema.PromptResponse,
-): void {
-  const existingTurnRecord = ctx.turns.find((turn) => turn.id === turnId);
-  ctx.turns = existingTurnRecord
-    ? ctx.turns.map((turn) =>
-        turn.id === turnId
-          ? { ...turn, items: [...turn.items, { prompt: promptParts, result }] }
-          : turn,
-      )
-    : [...ctx.turns, { id: turnId, items: [{ prompt: promptParts, result }] }];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 const resolveNotificationTurnId = (ctx: DevinSessionContext): TurnId | undefined =>
   ctx.activeTurnId;
 
@@ -179,358 +160,13 @@ const resolveSessionCallbackTurnId = (
   return ctx ? resolveCallbackTurnId(ctx) : undefined;
 };
 
-function parseDevinResume(raw: unknown): { sessionId: string } | undefined {
-  if (!isRecord(raw)) return undefined;
-  if (raw.schemaVersion !== DEVIN_RESUME_VERSION) return undefined;
-  if (typeof raw.sessionId !== "string" || !raw.sessionId.trim()) return undefined;
-  return { sessionId: raw.sessionId.trim() };
-}
-
-function selectPermissionOptionId(
-  request: EffectAcpSchema.RequestPermissionRequest,
-  decision: Exclude<ProviderApprovalDecision, "cancel">,
-): string | undefined {
-  const kind =
-    decision === "acceptForSession"
-      ? "allow_always"
-      : decision === "accept"
-        ? "allow_once"
-        : "reject_once";
-  const option = request.options.find((entry) => entry.kind === kind);
-  return option?.optionId.trim() || undefined;
-}
-
-function selectAutoApprovedPermissionOption(
-  request: EffectAcpSchema.RequestPermissionRequest,
-): string | undefined {
-  return (
-    selectPermissionOptionId(request, "acceptForSession") ??
-    selectPermissionOptionId(request, "accept")
-  );
-}
-
-function trimmedString(value: string | null | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : undefined;
-}
-
-function optionDescription(label: string, fallback: string | undefined): string {
-  return trimmedString(fallback) ?? label;
-}
-
-function enumOptionMaps(entries: ReadonlyArray<EffectAcpSchema.EnumOption>): {
-  readonly options: UserInputQuestion["options"];
-  readonly valuesByLabel: ReadonlyMap<string, string>;
-} {
-  const valuesByLabel = new Map<string, string>();
-  const options = entries.flatMap((entry) => {
-    const label = trimmedString(entry.title) ?? trimmedString(entry.const);
-    const value = trimmedString(entry.const);
-    if (!label || !value) {
-      return [];
-    }
-    valuesByLabel.set(label, value);
-    return [
-      {
-        label,
-        description: optionDescription(label, value),
-      },
-    ];
-  });
-  return { options, valuesByLabel };
-}
-
-function stringEnumOptionMaps(values: ReadonlyArray<string>): {
-  readonly options: UserInputQuestion["options"];
-  readonly valuesByLabel: ReadonlyMap<string, string>;
-} {
-  const valuesByLabel = new Map<string, string>();
-  const options = values.flatMap((entry) => {
-    const label = trimmedString(entry);
-    if (!label) {
-      return [];
-    }
-    valuesByLabel.set(label, label);
-    return [{ label, description: label }];
-  });
-  return { options, valuesByLabel };
-}
-
-function answerStrings(answer: unknown): ReadonlyArray<string> {
-  if (Array.isArray(answer)) {
-    return answer.flatMap((entry) => {
-      const value = typeof entry === "string" ? trimmedString(entry) : undefined;
-      return value ? [value] : [];
-    });
-  }
-  if (typeof answer !== "string") {
-    return [];
-  }
-  const value = trimmedString(answer);
-  return value ? [value] : [];
-}
-
-function normalizeStringAnswer(
-  answer: unknown,
-  valuesByLabel: ReadonlyMap<string, string>,
-  fallback: string | null | undefined,
-): string | undefined {
-  const value = answerStrings(answer)[0] ?? trimmedString(fallback);
-  return value ? (valuesByLabel.get(value) ?? value) : undefined;
-}
-
-function normalizeStringArrayAnswer(
-  answer: unknown,
-  valuesByLabel: ReadonlyMap<string, string>,
-  fallback: ReadonlyArray<string> | null | undefined,
-): ReadonlyArray<string> | undefined {
-  const values = Array.isArray(answer)
-    ? answerStrings(answer)
-    : typeof answer === "string"
-      ? answer
-          .split(",")
-          .map((entry) => entry.trim())
-          .filter((entry) => entry.length > 0)
-      : (fallback ?? []).flatMap((entry) => {
-          const value = trimmedString(entry);
-          return value ? [value] : [];
-        });
-  const normalized = values.map((value) => valuesByLabel.get(value) ?? value);
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function normalizeNumberAnswer(
-  answer: unknown,
-  fallback: number | null | undefined,
-  integer: boolean,
-): number | undefined {
-  const value =
-    typeof answer === "number"
-      ? answer
-      : typeof answer === "string"
-        ? Number(answer.trim())
-        : fallback;
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return undefined;
-  }
-  if (integer && !Number.isInteger(value)) {
-    return undefined;
-  }
-  return value;
-}
-
-function normalizeBooleanAnswer(
-  answer: unknown,
-  fallback: boolean | null | undefined,
-): boolean | undefined {
-  if (typeof answer === "boolean") {
-    return answer;
-  }
-  if (typeof answer === "string") {
-    const normalized = answer.trim().toLowerCase();
-    if (normalized === "yes" || normalized === "true") {
-      return true;
-    }
-    if (normalized === "no" || normalized === "false") {
-      return false;
-    }
-  }
-  return typeof fallback === "boolean" ? fallback : undefined;
-}
-
-interface DevinElicitationQuestionMapping {
-  readonly id: string;
-  readonly question: UserInputQuestion;
-  readonly toContentValue: (answer: unknown) => EffectAcpSchema.ElicitationContentValue | undefined;
-}
-
-interface DevinElicitationPrompt {
-  readonly questions: ReadonlyArray<UserInputQuestion>;
-  readonly makeResponse: (answers: ProviderUserInputAnswers) => EffectAcpSchema.ElicitationResponse;
-}
-
-function makeDevinElicitationQuestion(
-  request: Extract<EffectAcpSchema.ElicitationRequest, { readonly mode: "form" }>,
-  id: string,
-  property: EffectAcpSchema.ElicitationPropertySchema,
-): DevinElicitationQuestionMapping | undefined {
-  const schema = request.requestedSchema;
-  const header = trimmedString(schema.title) ?? "Question";
-  const title = trimmedString(property.title) ?? id;
-  const question = trimmedString(property.description) ?? title;
-
-  switch (property.type) {
-    case "string": {
-      const mappedOptions =
-        property.oneOf && property.oneOf.length > 0
-          ? enumOptionMaps(property.oneOf)
-          : property.enum && property.enum.length > 0
-            ? stringEnumOptionMaps(property.enum)
-            : { options: [], valuesByLabel: new Map<string, string>() };
-      return {
-        id,
-        question: {
-          id,
-          header,
-          question,
-          options: mappedOptions.options,
-          multiSelect: false,
-        },
-        toContentValue: (answer) =>
-          normalizeStringAnswer(answer, mappedOptions.valuesByLabel, property.default),
-      };
-    }
-    case "number":
-    case "integer":
-      return {
-        id,
-        question: {
-          id,
-          header,
-          question,
-          options: [],
-          multiSelect: false,
-        },
-        toContentValue: (answer) =>
-          normalizeNumberAnswer(answer, property.default, property.type === "integer"),
-      };
-    case "boolean":
-      return {
-        id,
-        question: {
-          id,
-          header,
-          question,
-          options: [
-            { label: "Yes", description: "True" },
-            { label: "No", description: "False" },
-          ],
-          multiSelect: false,
-        },
-        toContentValue: (answer) => normalizeBooleanAnswer(answer, property.default),
-      };
-    case "array": {
-      const mappedOptions =
-        "anyOf" in property.items
-          ? enumOptionMaps(property.items.anyOf)
-          : stringEnumOptionMaps(property.items.enum);
-      return {
-        id,
-        question: {
-          id,
-          header,
-          question,
-          options: mappedOptions.options,
-          multiSelect: true,
-        },
-        toContentValue: (answer) =>
-          normalizeStringArrayAnswer(answer, mappedOptions.valuesByLabel, property.default),
-      };
-    }
-  }
-}
-
-function makeDevinFormElicitationPrompt(
-  request: Extract<EffectAcpSchema.ElicitationRequest, { readonly mode: "form" }>,
-): DevinElicitationPrompt {
-  const properties = request.requestedSchema.properties ?? {};
-  const required = new Set(request.requestedSchema.required ?? []);
-  const mappings = Object.entries(properties).flatMap(([id, property]) => {
-    const mapping = makeDevinElicitationQuestion(request, id, property);
-    return mapping ? [mapping] : [];
-  });
-
-  if (mappings.length === 0) {
-    const id = "__devin_elicitation_continue";
-    const question = {
-      id,
-      header: trimmedString(request.requestedSchema.title) ?? "Question",
-      question: trimmedString(request.message) ?? "Continue?",
-      options: [{ label: "Continue", description: "Continue" }],
-      multiSelect: false,
-    } satisfies UserInputQuestion;
-    return {
-      questions: [question],
-      makeResponse: () => ({ action: { action: "accept" } }),
-    };
-  }
-
-  return {
-    questions: mappings.map((mapping) => mapping.question),
-    makeResponse: (answers) => {
-      const content: Record<string, EffectAcpSchema.ElicitationContentValue> = {};
-      for (const mapping of mappings) {
-        const value = mapping.toContentValue(answers[mapping.id]);
-        if (value === undefined) {
-          if (required.has(mapping.id)) {
-            return { action: { action: "decline" } };
-          }
-          continue;
-        }
-        content[mapping.id] = value;
-      }
-      return {
-        action: {
-          action: "accept",
-          ...(Object.keys(content).length > 0 ? { content } : {}),
-        },
-      };
-    },
-  };
-}
-
-function makeDevinUrlElicitationPrompt(
-  request: Extract<EffectAcpSchema.ElicitationRequest, { readonly mode: "url" }>,
-): DevinElicitationPrompt {
-  const id = "__devin_elicitation_url";
-  return {
-    questions: [
-      {
-        id,
-        header: "Devin",
-        question: `${request.message}\n${request.url}`,
-        options: [
-          { label: "Done", description: "Continue after completing the request" },
-          { label: "Cancel", description: "Cancel this request" },
-        ],
-        multiSelect: false,
-      },
-    ],
-    makeResponse: (answers) => {
-      const answer = normalizeStringAnswer(answers[id], new Map(), undefined);
-      return answer === "Cancel"
-        ? { action: { action: "cancel" } }
-        : { action: { action: "accept" } };
-    },
-  };
-}
-
-function makeDevinElicitationPrompt(
-  request: EffectAcpSchema.ElicitationRequest,
-): DevinElicitationPrompt {
-  return request.mode === "form"
-    ? makeDevinFormElicitationPrompt(request)
-    : makeDevinUrlElicitationPrompt(request);
-}
-
 function completedStopReasonFromPromptResponse(
   response: EffectAcpSchema.PromptResponse | undefined,
 ): EffectAcpSchema.StopReason | null {
   return response?.stopReason ?? null;
 }
 
-export function devinPromptSettlementBelongsToContext(input: {
-  readonly liveAcpSessionId: string;
-  readonly expectedAcpSessionId: string;
-  readonly liveActiveTurnId: TurnId | undefined;
-  readonly liveSessionActiveTurnId: TurnId | undefined;
-  readonly turnId: TurnId;
-}): boolean {
-  return (
-    input.liveAcpSessionId === input.expectedAcpSessionId &&
-    (input.liveActiveTurnId === input.turnId || input.liveSessionActiveTurnId === input.turnId)
-  );
-}
+export const devinPromptSettlementBelongsToContext = acpPromptSettlementBelongsToContext;
 
 export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAdapterLiveOptions) {
   return Effect.gen(function* () {
@@ -550,7 +186,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
     const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
 
     const sessions = new Map<ThreadId, DevinSessionContext>();
-    const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
+    const withThreadLock = yield* makeAcpThreadLock();
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
 
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -581,164 +217,13 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
 
-    const getThreadSemaphore = (threadId: string) =>
-      SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
-        const existing: Option.Option<Semaphore.Semaphore> = Option.fromNullishOr(
-          current.get(threadId),
-        );
-        return Option.match(existing, {
-          onNone: () =>
-            Semaphore.make(1).pipe(
-              Effect.map((semaphore) => {
-                const next = new Map(current);
-                next.set(threadId, semaphore);
-                return [semaphore, next] as const;
-              }),
-            ),
-          onSome: (semaphore) => Effect.succeed([semaphore, current] as const),
-        });
-      });
-
-    const withThreadLock = <A, E, R>(threadId: string, effect: Effect.Effect<A, E, R>) =>
-      Effect.flatMap(getThreadSemaphore(threadId), (semaphore) => semaphore.withPermit(effect));
-
-    const settlePromptInFlight = (
-      threadId: ThreadId,
-      turnId: TurnId,
-      expectedAcpSessionId: string,
-      options?: {
-        readonly errorMessage?: string;
-        readonly completedStopReason?: EffectAcpSchema.StopReason | null;
-        readonly emitTurnCompletion?: boolean;
-        /** Interrupt/cancel: drop every outstanding prompt slot and settle once. */
-        readonly settleAllPrompts?: boolean;
-      },
-    ) =>
-      Effect.gen(function* () {
-        const liveCtx = sessions.get(threadId);
-        if (!liveCtx) {
-          return;
-        }
-        const settlementBelongsToLiveContext = devinPromptSettlementBelongsToContext({
-          liveAcpSessionId: liveCtx.acpSessionId,
-          expectedAcpSessionId,
-          liveActiveTurnId: liveCtx.activeTurnId,
-          liveSessionActiveTurnId: liveCtx.session.activeTurnId,
-          turnId,
-        });
-        if (!settlementBelongsToLiveContext) {
-          // interruptTurn already consumed every prompt slot for this turn. A
-          // late prompt result must neither emit a second terminal event nor
-          // consume a slot belonging to a newer turn on the same ACP session.
-          if (
-            liveCtx.acpSessionId !== expectedAcpSessionId ||
-            liveCtx.interruptedTurnIds.has(turnId)
-          ) {
-            return;
-          }
-          if (options?.emitTurnCompletion !== false) {
-            if (options?.errorMessage !== undefined) {
-              yield* offerRuntimeEvent({
-                type: "turn.completed",
-                ...(yield* makeEventStamp()),
-                provider: PROVIDER,
-                threadId,
-                turnId,
-                payload: {
-                  state: "failed",
-                  errorMessage: options.errorMessage,
-                },
-              });
-            } else if (options?.completedStopReason !== undefined) {
-              yield* offerRuntimeEvent({
-                type: "turn.completed",
-                ...(yield* makeEventStamp()),
-                provider: PROVIDER,
-                threadId,
-                turnId,
-                payload: {
-                  state: options.completedStopReason === "cancelled" ? "cancelled" : "completed",
-                  stopReason: options.completedStopReason ?? null,
-                },
-              });
-            }
-          }
-          return;
-        }
-        let settleTurnId = turnId;
-        if (options?.settleAllPrompts) {
-          liveCtx.promptsInFlight = 0;
-          if (liveCtx.activeTurnId !== turnId && liveCtx.session.activeTurnId !== turnId) {
-            const fallbackTurnId = liveCtx.activeTurnId ?? liveCtx.session.activeTurnId;
-            if (!fallbackTurnId) {
-              if (liveCtx.session.status === "running" || liveCtx.session.status === "connecting") {
-                const updatedAt = yield* nowIso;
-                const { activeTurnId: _activeTurnId, ...readySession } = liveCtx.session;
-                liveCtx.activeTurnId = undefined;
-                liveCtx.session = {
-                  ...readySession,
-                  status: "ready",
-                  updatedAt,
-                };
-              }
-              return;
-            }
-            settleTurnId = fallbackTurnId;
-          }
-        } else {
-          const remainingPrompts = Math.max(0, liveCtx.promptsInFlight - 1);
-          if (
-            remainingPrompts > 0 ||
-            liveCtx.activeTurnId !== settleTurnId ||
-            liveCtx.session.activeTurnId !== settleTurnId
-          ) {
-            liveCtx.promptsInFlight = remainingPrompts;
-            return;
-          }
-          liveCtx.promptsInFlight = remainingPrompts;
-        }
-        const updatedAt = yield* nowIso;
-        const canEmitTurnCompletion =
-          liveCtx.session.status === "running" || liveCtx.session.status === "connecting";
-        const shouldEmitFailedTurn = options?.errorMessage !== undefined && canEmitTurnCompletion;
-        const shouldEmitCompletedTurn =
-          options?.completedStopReason !== undefined && canEmitTurnCompletion;
-        const { activeTurnId: _activeTurnId, ...readySession } = liveCtx.session;
-        liveCtx.activeTurnId = undefined;
-        liveCtx.session = {
-          ...readySession,
-          status: "ready",
-          updatedAt,
-        };
-        if (options?.emitTurnCompletion === false) {
-          return;
-        }
-        if (shouldEmitFailedTurn) {
-          yield* offerRuntimeEvent({
-            type: "turn.completed",
-            ...(yield* makeEventStamp()),
-            provider: PROVIDER,
-            threadId,
-            turnId: settleTurnId,
-            payload: {
-              state: "failed",
-              errorMessage: options.errorMessage,
-            },
-          });
-        } else if (shouldEmitCompletedTurn) {
-          yield* offerRuntimeEvent({
-            type: "turn.completed",
-            ...(yield* makeEventStamp()),
-            provider: PROVIDER,
-            threadId,
-            turnId: settleTurnId,
-            payload: {
-              state: options.completedStopReason === "cancelled" ? "cancelled" : "completed",
-              stopReason: options.completedStopReason ?? null,
-            },
-          });
-        }
-      });
+    const settlePromptInFlight = makeAcpPromptSettler({
+      provider: PROVIDER,
+      sessions,
+      nowIso,
+      makeEventStamp,
+      offerRuntimeEvent,
+    });
 
     const logNative = (threadId: ThreadId, method: string, payload: unknown) =>
       Effect.gen(function* () {
@@ -870,7 +355,10 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
           );
 
-          const resumeSessionId = parseDevinResume(input.resumeCursor)?.sessionId;
+          const resumeSessionId = parseAcpResume(
+            input.resumeCursor,
+            DEVIN_RESUME_VERSION,
+          )?.sessionId;
           const acpNativeLoggers = makeAcpNativeLoggers({
             nativeEventLogger,
             provider: PROVIDER,
