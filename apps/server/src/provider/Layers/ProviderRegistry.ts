@@ -51,7 +51,7 @@ import {
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
 } from "../providerStatusCache.ts";
-import type { ProviderInstance } from "../ProviderDriver.ts";
+import type { ProviderInstance, ProviderModelMergePolicy } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
 
@@ -81,6 +81,7 @@ const hasModelCapabilities = (model: ServerProvider["models"][number]): boolean 
 const mergeProviderModels = (
   previousModels: ReadonlyArray<ServerProvider["models"][number]>,
   nextModels: ReadonlyArray<ServerProvider["models"][number]>,
+  modelMergePolicy?: ProviderModelMergePolicy | undefined,
 ): ReadonlyArray<ServerProvider["models"][number]> => {
   if (nextModels.length === 0 && previousModels.length > 0) {
     return previousModels;
@@ -98,32 +99,49 @@ const mergeProviderModels = (
     };
   });
   const nextSlugs = new Set(nextModels.map((model) => model.slug));
-  return [...mergedModels, ...previousModels.filter((model) => !nextSlugs.has(model.slug))];
+  const shouldCarryPreviousModel: NonNullable<
+    ProviderModelMergePolicy["shouldCarryPreviousModel"]
+  > =
+    modelMergePolicy?.shouldCarryPreviousModel ??
+    (({ previousModel, nextModelSlugs }) => !nextModelSlugs.has(previousModel.slug));
+  return [
+    ...mergedModels,
+    ...previousModels.filter((model) =>
+      shouldCarryPreviousModel({
+        previousModel: model,
+        nextModels,
+        nextModelSlugs: nextSlugs,
+      }),
+    ),
+  ];
 };
 
 export const mergeProviderSnapshot = (
   previousProvider: ServerProvider | undefined,
   nextProvider: ServerProvider,
+  modelMergePolicy?: ProviderModelMergePolicy | undefined,
 ): ServerProvider =>
   !previousProvider
     ? nextProvider
     : {
         ...nextProvider,
-        models: mergeProviderModels(previousProvider.models, nextProvider.models),
+        models: mergeProviderModels(previousProvider.models, nextProvider.models, modelMergePolicy),
       };
 
 export const mergeProviderSnapshots = (
   previousProviders: ReadonlyArray<ServerProvider>,
   nextProviders: ReadonlyArray<ServerProvider>,
+  modelMergePolicies?: ReadonlyMap<ProviderInstanceId, ProviderModelMergePolicy>,
 ): ReadonlyArray<ServerProvider> => {
   const mergedProviders = new Map(
     previousProviders.map((provider) => [snapshotInstanceKey(provider), provider] as const),
   );
 
   for (const provider of nextProviders) {
+    const key = snapshotInstanceKey(provider);
     mergedProviders.set(
-      snapshotInstanceKey(provider),
-      mergeProviderSnapshot(mergedProviders.get(snapshotInstanceKey(provider)), provider),
+      key,
+      mergeProviderSnapshot(mergedProviders.get(key), provider, modelMergePolicies?.get(key)),
     );
   }
 
@@ -179,10 +197,30 @@ const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
 const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource => ({
   instanceId: instance.instanceId,
   driverKind: instance.driverKind,
+  modelMergePolicy: instance.modelMergePolicy,
   getSnapshot: instance.snapshot.getSnapshot,
   refresh: instance.snapshot.refresh,
   streamChanges: instance.snapshot.streamChanges,
 });
+
+const modelMergePoliciesByInstance = (
+  sources: ReadonlyArray<ProviderSnapshotSource>,
+): ReadonlyMap<ProviderInstanceId, ProviderModelMergePolicy> => {
+  const policies = new Map<ProviderInstanceId, ProviderModelMergePolicy>();
+  for (const source of sources) {
+    if (source.modelMergePolicy !== undefined) {
+      policies.set(source.instanceId, source.modelMergePolicy);
+    }
+  }
+  return policies;
+};
+
+const modelMergePolicyForSource = (
+  source: ProviderSnapshotSource,
+): ReadonlyMap<ProviderInstanceId, ProviderModelMergePolicy> =>
+  source.modelMergePolicy === undefined
+    ? new Map()
+    : new Map([[source.instanceId, source.modelMergePolicy]]);
 
 export const ProviderRegistryLive = Layer.effect(
   ProviderRegistry,
@@ -206,6 +244,7 @@ export const ProviderRegistryLive = Layer.effect(
     // below.
     const bootInstances = yield* instanceRegistry.listInstances;
     const bootSources = bootInstances.map(buildSnapshotSource);
+    const bootModelMergePolicies = modelMergePoliciesByInstance(bootSources);
     const fallbackProviders = yield* loadProviders(bootSources);
     const fallbackByInstance = new Map<ProviderInstanceId, ServerProvider>();
     for (let index = 0; index < fallbackProviders.length; index++) {
@@ -328,6 +367,7 @@ export const ProviderRegistryLive = Layer.effect(
         readonly publish?: boolean;
         readonly persist?: boolean;
         readonly replace?: boolean;
+        readonly modelMergePolicies?: ReadonlyMap<ProviderInstanceId, ProviderModelMergePolicy>;
       },
     ) {
       const nextProvidersWithUpdateState = yield* Effect.forEach(
@@ -352,7 +392,11 @@ export const ProviderRegistryLive = Layer.effect(
               key,
               options?.replace === true
                 ? provider
-                : mergeProviderSnapshot(mergedProviders.get(key), provider),
+                : mergeProviderSnapshot(
+                    mergedProviders.get(key),
+                    provider,
+                    options?.modelMergePolicies?.get(key),
+                  ),
             );
           }
 
@@ -383,6 +427,7 @@ export const ProviderRegistryLive = Layer.effect(
       provider: ServerProvider,
       options?: {
         readonly publish?: boolean;
+        readonly modelMergePolicies?: ReadonlyMap<ProviderInstanceId, ProviderModelMergePolicy>;
       },
     ) {
       return yield* upsertProviders([provider], options);
@@ -433,7 +478,11 @@ export const ProviderRegistryLive = Layer.effect(
       return yield* providerSource.refresh.pipe(
         Effect.flatMap((nextProvider) =>
           correlateSnapshotWithSource(providerSource, nextProvider).pipe(
-            Effect.flatMap(syncProvider),
+            Effect.flatMap((provider) =>
+              syncProvider(provider, {
+                modelMergePolicies: modelMergePolicyForSource(providerSource),
+              }),
+            ),
           ),
         ),
       );
@@ -548,7 +597,13 @@ export const ProviderRegistryLive = Layer.effect(
         for (const [, instance] of newlyAdded) {
           const source = buildSnapshotSource(instance);
           yield* Stream.runForEach(source.streamChanges, (provider) =>
-            correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
+            correlateSnapshotWithSource(source, provider).pipe(
+              Effect.flatMap((provider) =>
+                syncProvider(provider, {
+                  modelMergePolicies: modelMergePolicyForSource(source),
+                }),
+              ),
+            ),
           ).pipe(Effect.forkScoped);
         }
         yield* Effect.yieldNow;
@@ -627,7 +682,10 @@ export const ProviderRegistryLive = Layer.effect(
     // resolves. Cached snapshots (already in `providersRef`) merge with
     // these via `upsertProviders` so on-disk state wins where present
     // and pending fallbacks fill the gaps.
-    yield* upsertProviders(fallbackProviders, { publish: false });
+    yield* upsertProviders(fallbackProviders, {
+      publish: false,
+      modelMergePolicies: bootModelMergePolicies,
+    });
     // Subscribe to registry mutations BEFORE running the initial sync.
     // `subscribeChanges` acquires the dequeue synchronously in this
     // fibre; the subscription is active the instant this `yield*`

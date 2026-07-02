@@ -46,6 +46,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
+import { DEVIN_MODEL_MERGE_POLICY } from "../Drivers/DevinDriver.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
@@ -592,6 +593,64 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
           ...previousProvider.models,
         ]);
+      });
+
+      it("drops cached Devin raw model variants covered by refreshed grouped models", () => {
+        const devinDriver = ProviderDriverKind.make("devin");
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("devin"),
+          driver: devinDriver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "unknown" },
+          checkedAt: "2026-04-14T00:00:00.000Z",
+          version: "1.2.3",
+          models: [
+            {
+              slug: "gpt-5-5-low",
+              name: "GPT-5.5 Low Thinking",
+              isCustom: false,
+              capabilities: createModelCapabilities({ optionDescriptors: [] }),
+            },
+            {
+              slug: "local-devin-model",
+              name: "local-devin-model",
+              isCustom: true,
+              capabilities: createModelCapabilities({ optionDescriptors: [] }),
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-04-14T00:01:00.000Z",
+          models: [
+            {
+              slug: "gpt-5-5",
+              name: "GPT-5.5",
+              isCustom: false,
+              capabilities: createModelCapabilities({ optionDescriptors: [] }),
+            },
+          ],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(
+            previousProvider,
+            refreshedProvider,
+            DEVIN_MODEL_MERGE_POLICY,
+          ).models.map((model) => ({
+            slug: model.slug,
+            name: model.name,
+            isCustom: model.isCustom,
+          })),
+          [
+            { slug: "gpt-5-5", name: "GPT-5.5", isCustom: false },
+            { slug: "local-devin-model", name: "local-devin-model", isCustom: true },
+          ],
+        );
       });
 
       it.effect("does not run provider probes during layer construction", () =>
@@ -1436,6 +1495,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "claudeAgent",
                 "codex",
                 "cursor",
+                "devin",
                 "grok",
                 "opencode",
               ]);

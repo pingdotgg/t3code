@@ -4,6 +4,8 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import {
   extractModelConfigId,
+  findSessionModelConfigOption,
+  flattenSessionConfigSelectOptions,
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionModeState,
@@ -59,6 +61,69 @@ describe("AcpRuntimeModel", () => {
     } satisfies EffectAcpSchema.NewSessionResponse);
 
     expect(modelConfigId).toBe("model");
+  });
+
+  it("finds model config options by category first and then id or name", () => {
+    const categoryMatch = findSessionModelConfigOption([
+      {
+        id: "display-model",
+        name: "Display Model",
+        category: "model",
+        type: "select",
+        currentValue: "adaptive",
+        options: [{ value: "adaptive", name: "Adaptive" }],
+      },
+      {
+        id: "model",
+        name: "Model",
+        type: "select",
+        currentValue: "fallback",
+        options: [{ value: "fallback", name: "Fallback" }],
+      },
+    ]);
+    expect(categoryMatch?.id).toBe("display-model");
+
+    const nameFallback = findSessionModelConfigOption([
+      {
+        id: "agent-model",
+        name: "Model",
+        type: "select",
+        currentValue: "adaptive",
+        options: [{ value: "adaptive", name: "Adaptive" }],
+      },
+    ]);
+    expect(nameFallback?.id).toBe("agent-model");
+  });
+
+  it("flattens grouped ACP select config options", () => {
+    const options = flattenSessionConfigSelectOptions({
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: "adaptive",
+      options: [
+        {
+          group: "recommended",
+          name: "Recommended",
+          options: [
+            { value: " adaptive ", name: " Adaptive " },
+            { value: "swe-1-6", name: "SWE-1.6" },
+          ],
+        },
+        {
+          group: "private",
+          name: "Private",
+          options: [{ value: "MODEL_PRIVATE_11", name: "Private Model" }],
+        },
+      ],
+    });
+
+    expect(options).toEqual([
+      { value: "adaptive", name: "Adaptive" },
+      { value: "swe-1-6", name: "SWE-1.6" },
+      { value: "MODEL_PRIVATE_11", name: "Private Model" },
+    ]);
   });
 
   it("detects Grok session replay updates from _meta.isReplay", () => {

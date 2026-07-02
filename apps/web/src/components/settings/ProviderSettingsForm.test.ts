@@ -36,6 +36,33 @@ describe("ProviderSettingsForm helpers", () => {
     });
   });
 
+  it("derives Devin provider metadata and configurable fields", () => {
+    const devin = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("devin")];
+
+    expect(devin).toMatchObject({
+      label: "Devin",
+      badgeLabel: "Early Access",
+    });
+    expect(
+      deriveProviderSettingsFields(devin!).map((field) => ({
+        key: field.key,
+        label: field.label,
+        placeholder: field.placeholder,
+      })),
+    ).toEqual([
+      {
+        key: "binaryPath",
+        label: "Binary path",
+        placeholder: "devin",
+      },
+      {
+        key: "configPath",
+        label: "Config path",
+        placeholder: ".devin/config.json",
+      },
+    ]);
+  });
+
   it("preserves unknown config keys while omitting empty configurable fields", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();

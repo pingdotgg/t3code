@@ -1,9 +1,10 @@
 import {
   ApprovalRequestId,
-  type GrokSettings,
+  type DevinSettings,
   EventId,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type ServerProviderModel,
   ProviderDriverKind,
   ProviderInstanceId,
   type ThreadId,
@@ -55,36 +56,35 @@ import {
 } from "../acp/AcpAdapterRuntime.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
-  applyGrokAcpModelSelection,
-  currentGrokModelIdFromSessionSetup,
-  makeGrokAcpRuntime,
-  resolveGrokAcpBaseModelId,
-} from "../acp/GrokAcpSupport.ts";
-import {
-  extractXAiAskUserQuestions,
-  makeXAiAskUserQuestionCancelledResponse,
-  makeXAiAskUserQuestionResponse,
-  promptResponseHasMissingXAiStopReason,
-  XAiAskUserQuestionRequest,
-  type XAiAskUserQuestionResponse,
-} from "../acp/XAiAcpExtension.ts";
-import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
+  applyDevinAcpModelSelection,
+  applyDevinRequestedMode,
+  currentDevinModelIdFromSessionSetup,
+  makeDevinAcpRuntime,
+  resolveDevinAcpDisplayModelId,
+  resolveDevinAcpModelSelection,
+} from "../acp/DevinAcpSupport.ts";
+import { makeDevinElicitationPrompt } from "../acp/DevinElicitation.ts";
+import { type DevinAdapterShape } from "../Services/DevinAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { buildDevinDiscoveredModelsFromSessionSetup } from "./DevinProvider.ts";
 
-const PROVIDER = ProviderDriverKind.make("grok");
-const GROK_RESUME_VERSION = 1 as const;
+const PROVIDER = ProviderDriverKind.make("devin");
+const DEVIN_RESUME_VERSION = 1 as const;
 
-export interface GrokAdapterLiveOptions {
+export interface DevinAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly instanceId?: ProviderInstanceId;
+  readonly onSessionModelsDiscovered?: (
+    models: ReadonlyArray<ServerProviderModel>,
+  ) => Effect.Effect<void>;
 }
 
 type PendingApproval = AcpAdapterPendingApproval;
-type PendingUserInput = AcpAdapterPendingUserInput<XAiAskUserQuestionResponse>;
+type PendingUserInput = AcpAdapterPendingUserInput<EffectAcpSchema.ElicitationResponse>;
 
-interface GrokSessionContext extends AcpAdapterSessionContext {
+interface DevinSessionContext extends AcpAdapterSessionContext {
   readonly threadId: ThreadId;
   readonly acpSessionId: string;
   session: ProviderSession;
@@ -109,17 +109,14 @@ interface GrokSessionContext extends AcpAdapterSessionContext {
 function completedStopReasonFromPromptResponse(
   response: EffectAcpSchema.PromptResponse | undefined,
 ): EffectAcpSchema.StopReason | null {
-  if (response === undefined || promptResponseHasMissingXAiStopReason(response)) {
-    return null;
-  }
-  return response.stopReason;
+  return response?.stopReason ?? null;
 }
 
-export const grokPromptSettlementBelongsToContext = acpPromptSettlementBelongsToContext;
+export const devinPromptSettlementBelongsToContext = acpPromptSettlementBelongsToContext;
 
-export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapterLiveOptions) {
+export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAdapterLiveOptions) {
   return Effect.gen(function* () {
-    const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("grok");
+    const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("devin");
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -134,7 +131,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
     const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
 
-    const sessions = new Map<ThreadId, GrokSessionContext>();
+    const sessions = new Map<ThreadId, DevinSessionContext>();
     const withThreadLock = yield* makeAcpThreadLock();
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
 
@@ -145,7 +142,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           new ProviderAdapterRequestError({
             provider: PROVIDER,
             method: "crypto/randomUUIDv4",
-            detail: "Failed to generate Grok runtime identifier.",
+            detail: "Failed to generate Devin runtime identifier.",
             cause,
           }),
       ),
@@ -158,7 +155,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         Effect.mapError(
           (cause) =>
             new EffectAcpErrors.AcpTransportError({
-              detail: "Failed to process Grok ACP callback.",
+              detail: "Failed to process Devin ACP callback.",
               cause,
             }),
         ),
@@ -196,7 +193,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         );
       }).pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning("Failed to write native Grok notification log.", {
+          Effect.logWarning("Failed to write native Devin notification log.", {
             cause,
             threadId,
             method,
@@ -206,7 +203,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     const requireSession = (
       threadId: ThreadId,
-    ): Effect.Effect<GrokSessionContext, ProviderAdapterSessionNotFoundError> => {
+    ): Effect.Effect<DevinSessionContext, ProviderAdapterSessionNotFoundError> => {
       const ctx = sessions.get(threadId);
       if (!ctx || ctx.stopped) {
         return Effect.fail(
@@ -216,7 +213,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       return Effect.succeed(ctx);
     };
 
-    const stopSessionInternal = (ctx: GrokSessionContext) =>
+    const stopSessionInternal = (ctx: DevinSessionContext) =>
       Effect.gen(function* () {
         if (ctx.stopped) return;
         ctx.stopped = true;
@@ -236,7 +233,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         });
       });
 
-    const startSession: GrokAdapterShape["startSession"] = (input) =>
+    const startSession: DevinAdapterShape["startSession"] = (input) =>
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
@@ -256,7 +253,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           }
 
           const cwd = path.resolve(input.cwd.trim());
-          const grokModelSelection =
+          const devinModelSelection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
           const existing = sessions.get(input.threadId);
           if (existing && !existing.stopped) {
@@ -273,7 +270,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
           const resumeSessionId = parseAcpResume(
             input.resumeCursor,
-            GROK_RESUME_VERSION,
+            DEVIN_RESUME_VERSION,
           )?.sessionId;
           const acpNativeLoggers = makeAcpNativeLoggers({
             nativeEventLogger,
@@ -282,8 +279,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           });
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-          const acp = yield* makeGrokAcpRuntime({
-            grokSettings,
+          const acp = yield* makeDevinAcpRuntime({
+            devinSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
@@ -320,32 +317,33 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             ),
           );
           const started = yield* Effect.gen(function* () {
-            yield* Effect.forEach(
-              ["x.ai/ask_user_question", "_x.ai/ask_user_question"] as const,
-              (method) =>
-                acp.handleExtRequest(method, XAiAskUserQuestionRequest, (params) =>
-                  mapAcpCallbackFailure(
-                    handleAcpUserInputRequest({
-                      provider: PROVIDER,
-                      threadId: input.threadId,
-                      method,
-                      source: "acp.grok.extension",
-                      request: params,
-                      prompt: {
-                        questions: extractXAiAskUserQuestions(params),
-                        makeResponse: (answers) => makeXAiAskUserQuestionResponse(params, answers),
-                        makeCancelledResponse: makeXAiAskUserQuestionCancelledResponse,
-                      },
-                      pendingUserInputs,
-                      resolveTurnId: () => sessions.get(input.threadId)?.activeTurnId,
-                      makeRequestId: nextApprovalRequestId,
-                      makeEventStamp,
-                      offerRuntimeEvent,
-                      logNative,
-                    }),
-                  ),
-                ),
-              { discard: true },
+            yield* acp.handleElicitation((params) =>
+              mapAcpCallbackFailure(
+                handleAcpUserInputRequest({
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  method: "session/elicitation",
+                  source: "acp.jsonrpc",
+                  request: params,
+                  prompt: {
+                    ...makeDevinElicitationPrompt(params),
+                    makeCancelledResponse: () =>
+                      ({
+                        action: { action: "cancel" },
+                      }) satisfies EffectAcpSchema.ElicitationResponse,
+                    validateResponse: (response) =>
+                      response.action.action === "decline"
+                        ? "Invalid Devin elicitation response: missing required answers."
+                        : undefined,
+                  },
+                  pendingUserInputs,
+                  resolveTurnId: () => sessions.get(input.threadId)?.activeTurnId,
+                  makeRequestId: nextApprovalRequestId,
+                  makeEventStamp,
+                  offerRuntimeEvent,
+                  logNative,
+                }),
+              ),
             );
             yield* acp.handleRequestPermission((params) =>
               mapAcpCallbackFailure(
@@ -369,16 +367,43 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/start", error),
             ),
           );
+          const discoveredModels = buildDevinDiscoveredModelsFromSessionSetup(
+            started.sessionSetupResult,
+          );
+          if (discoveredModels.length > 0) {
+            yield* (options?.onSessionModelsDiscovered?.(discoveredModels) ?? Effect.void).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Failed to record Devin ACP session model discovery.", {
+                  cause,
+                }),
+              ),
+            );
+          }
 
-          const requestedStartModelId = grokModelSelection?.model
-            ? resolveGrokAcpBaseModelId(grokModelSelection.model)
+          const requestedStartModelId = devinModelSelection
+            ? resolveDevinAcpModelSelection({
+                configOptions: started.sessionSetupResult.configOptions,
+                model: devinModelSelection.model,
+                selections: devinModelSelection.options,
+              })
             : undefined;
-          const boundModelId = yield* applyGrokAcpModelSelection({
+          const sessionSetupModelId = currentDevinModelIdFromSessionSetup(
+            started.sessionSetupResult,
+          );
+          const boundModelId = yield* applyDevinAcpModelSelection({
             runtime: acp,
-            currentModelId: currentGrokModelIdFromSessionSetup(started.sessionSetupResult),
+            currentModelId: sessionSetupModelId,
             requestedModelId: requestedStartModelId,
             mapError: (cause) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
+          });
+          const activeAcpModelId = boundModelId ?? sessionSetupModelId;
+          yield* applyDevinRequestedMode({
+            runtime: acp,
+            runtimeMode: input.runtimeMode,
+            interactionMode: undefined,
+            mapError: (cause) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_mode", cause),
           });
 
           const now = yield* nowIso;
@@ -388,17 +413,24 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             status: "ready",
             runtimeMode: input.runtimeMode,
             cwd,
-            ...(boundModelId ? { model: resolveGrokAcpBaseModelId(boundModelId) } : {}),
+            ...(activeAcpModelId
+              ? {
+                  model: resolveDevinAcpDisplayModelId(
+                    started.sessionSetupResult.configOptions,
+                    activeAcpModelId,
+                  ),
+                }
+              : {}),
             threadId: input.threadId,
             resumeCursor: {
-              schemaVersion: GROK_RESUME_VERSION,
+              schemaVersion: DEVIN_RESUME_VERSION,
               sessionId: started.sessionId,
             },
             createdAt: now,
             updatedAt: now,
           };
 
-          const ctx: GrokSessionContext = {
+          const ctx: DevinSessionContext = {
             threadId: input.threadId,
             acpSessionId: started.sessionId,
             session,
@@ -412,7 +444,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
-            currentModelId: boundModelId,
+            currentModelId: activeAcpModelId,
             stopped: false,
           };
 
@@ -423,7 +455,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             makeEventStamp,
             offerRuntimeEvent,
             logNative,
-            logErrorMessage: "Failed to process Grok runtime notification.",
+            logErrorMessage: "Failed to process Devin runtime notification.",
           });
 
           ctx.notificationFiber = nf;
@@ -435,7 +467,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             threadId: input.threadId,
             providerThreadId: started.sessionId,
             initializeResult: started.initializeResult,
-            readyReason: "Grok ACP session ready",
+            readyReason: "Devin ACP session ready",
             makeEventStamp,
             offerRuntimeEvent,
           });
@@ -444,7 +476,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         }).pipe(Effect.scoped),
       );
 
-    const sendTurn: GrokAdapterShape["sendTurn"] = (input) =>
+    const sendTurn: DevinAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const prepared = yield* withThreadLock(
           input.threadId,
@@ -474,15 +506,27 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 input.modelSelection?.instanceId === boundInstanceId
                   ? input.modelSelection
                   : undefined;
-              const requestedTurnModelId = turnModelSelection?.model
-                ? resolveGrokAcpBaseModelId(turnModelSelection.model)
+              const configOptions = yield* ctx.acp.getConfigOptions;
+              const requestedTurnModelId = turnModelSelection
+                ? resolveDevinAcpModelSelection({
+                    configOptions,
+                    model: turnModelSelection.model,
+                    selections: turnModelSelection.options,
+                  })
                 : undefined;
-              const currentModelId = yield* applyGrokAcpModelSelection({
+              const currentModelId = yield* applyDevinAcpModelSelection({
                 runtime: ctx.acp,
                 currentModelId: ctx.currentModelId,
                 requestedModelId: requestedTurnModelId,
                 mapError: (cause) =>
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
+              });
+              yield* applyDevinRequestedMode({
+                runtime: ctx.acp,
+                runtimeMode: ctx.session.runtimeMode,
+                interactionMode: input.interactionMode,
+                mapError: (cause) =>
+                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_mode", cause),
               });
 
               const promptParts = yield* prepareAcpPromptContent({
@@ -495,7 +539,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
               ctx.currentModelId = currentModelId;
               const displayModel = currentModelId
-                ? resolveGrokAcpBaseModelId(currentModelId)
+                ? resolveDevinAcpDisplayModelId(configOptions, currentModelId)
                 : undefined;
               for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
                 yield* Effect.yieldNow;
@@ -509,7 +553,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 return yield* new ProviderAdapterRequestError({
                   provider: PROVIDER,
                   method: "session/prompt",
-                  detail: "Grok prompt was interrupted during preparation.",
+                  detail: "Devin prompt was interrupted during preparation.",
                 });
               }
               if (steeringTurnId === undefined) {
@@ -549,7 +593,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     return;
                   }
                   yield* settlePromptInFlight(input.threadId, turnId, liveCtx.acpSessionId, {
-                    errorMessage: "Grok prompt preparation failed.",
+                    errorMessage: "Devin prompt preparation failed.",
                     emitTurnCompletion: false,
                   });
                 }),
@@ -598,7 +642,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   prepared.turnId,
                   prepared.acpSessionId,
                   {
-                    errorMessage: "Grok session changed before the turn completed.",
+                    errorMessage: "Devin session changed before the turn completed.",
                     settleAllPrompts: true,
                   },
                 );
@@ -606,7 +650,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 return yield* new ProviderAdapterRequestError({
                   provider: PROVIDER,
                   method: "session/prompt",
-                  detail: "Grok session changed before the turn completed.",
+                  detail: "Devin session changed before the turn completed.",
                 });
               }
               // Keep prompt settlement atomic with respect to Stop and steering.
@@ -721,7 +765,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         prepared.turnId,
                         prepared.acpSessionId,
                         {
-                          errorMessage: "Grok session changed before the turn completed.",
+                          errorMessage: "Devin session changed before the turn completed.",
                           settleAllPrompts: true,
                         },
                       );
@@ -760,7 +804,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               yield* withThreadLock(
                 input.threadId,
                 settlePromptInFlight(input.threadId, prepared.turnId, prepared.acpSessionId, {
-                  errorMessage: errorMessage ?? "Grok prompt request failed.",
+                  errorMessage: errorMessage ?? "Devin prompt request failed.",
                 }),
               );
             }).pipe(Effect.catch(() => Effect.void)),
@@ -768,7 +812,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         );
       });
 
-    const interruptTurn: GrokAdapterShape["interruptTurn"] = (threadId, turnId) =>
+    const interruptTurn: DevinAdapterShape["interruptTurn"] = (threadId, turnId) =>
       Effect.gen(function* () {
         const observed = yield* Effect.sync(() => {
           const ctx = sessions.get(threadId);
@@ -851,7 +895,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         );
       });
 
-    const respondToRequest: GrokAdapterShape["respondToRequest"] = (
+    const respondToRequest: DevinAdapterShape["respondToRequest"] = (
       threadId,
       requestId,
       decision,
@@ -866,7 +910,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         });
       });
 
-    const respondToUserInput: GrokAdapterShape["respondToUserInput"] = (
+    const respondToUserInput: DevinAdapterShape["respondToUserInput"] = (
       threadId,
       requestId,
       answers,
@@ -875,20 +919,20 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         const ctx = yield* requireSession(threadId);
         yield* respondToAcpUserInput({
           provider: PROVIDER,
-          method: "_x.ai/ask_user_question",
+          method: "session/elicitation",
           requestId,
           answers,
           pendingUserInputs: ctx.pendingUserInputs,
         });
       });
 
-    const readThread: GrokAdapterShape["readThread"] = (threadId) =>
+    const readThread: DevinAdapterShape["readThread"] = (threadId) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
         return { threadId, turns: ctx.turns };
       });
 
-    const rollbackThread: GrokAdapterShape["rollbackThread"] = (threadId, numTurns) =>
+    const rollbackThread: DevinAdapterShape["rollbackThread"] = (threadId, numTurns) =>
       Effect.gen(function* () {
         yield* requireSession(threadId);
         if (!Number.isInteger(numTurns) || numTurns < 1) {
@@ -901,11 +945,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         return yield* new ProviderAdapterRequestError({
           provider: PROVIDER,
           method: "thread/rollback",
-          detail: "Grok ACP sessions do not support provider-side rollback yet.",
+          detail: "Devin ACP sessions do not support provider-side rollback yet.",
         });
       });
 
-    const stopSession: GrokAdapterShape["stopSession"] = (threadId) =>
+    const stopSession: DevinAdapterShape["stopSession"] = (threadId) =>
       withThreadLock(
         threadId,
         Effect.gen(function* () {
@@ -914,16 +958,16 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         }),
       );
 
-    const listSessions: GrokAdapterShape["listSessions"] = () =>
+    const listSessions: DevinAdapterShape["listSessions"] = () =>
       Effect.sync(() => Array.from(sessions.values(), (c) => ({ ...c.session })));
 
-    const hasSession: GrokAdapterShape["hasSession"] = (threadId) =>
+    const hasSession: DevinAdapterShape["hasSession"] = (threadId) =>
       Effect.sync(() => {
         const c = sessions.get(threadId);
         return c !== undefined && !c.stopped;
       });
 
-    const stopAll: GrokAdapterShape["stopAll"] = () =>
+    const stopAll: DevinAdapterShape["stopAll"] = () =>
       Effect.forEach(Array.from(sessions.values()), stopSessionInternal, { discard: true });
 
     yield* Effect.addFinalizer(() =>
@@ -950,6 +994,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       hasSession,
       stopAll,
       streamEvents,
-    } satisfies GrokAdapterShape;
+    } satisfies DevinAdapterShape;
   });
 }

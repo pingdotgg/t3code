@@ -1,5 +1,6 @@
 import type { ProviderDriverKind, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import type * as Stream from "effect/Stream";
+import type { ProviderModelMergePolicy } from "./ProviderDriver.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 
 export type ProviderSnapshotSource = {
@@ -11,6 +12,7 @@ export type ProviderSnapshotSource = {
   readonly instanceId: ProviderInstanceId;
   /** Driver implementation kind. */
   readonly driverKind: ProviderDriverKind;
+  readonly modelMergePolicy?: ProviderModelMergePolicy | undefined;
   readonly getSnapshot: ServerProviderShape["getSnapshot"];
   readonly refresh: ServerProviderShape["refresh"];
   readonly streamChanges: Stream.Stream<ServerProvider>;

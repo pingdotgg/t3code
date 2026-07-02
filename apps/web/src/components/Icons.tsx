@@ -211,6 +211,25 @@ export const GrokIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+export const DevinIcon: Icon = ({ className, ...props }) => (
+  <svg {...props} viewBox="0 0 256 256" className={cn("overflow-visible", className)}>
+    <image
+      href="/brand/devin.png"
+      width="256"
+      height="256"
+      className="dark:hidden"
+      preserveAspectRatio="xMidYMid meet"
+    />
+    <image
+      href="/brand/devin-light.png"
+      width="256"
+      height="256"
+      className="hidden dark:block"
+      preserveAspectRatio="xMidYMid meet"
+    />
+  </svg>
+);
+
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
     {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}
