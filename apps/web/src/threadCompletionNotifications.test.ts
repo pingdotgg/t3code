@@ -47,6 +47,7 @@ function makeEnvironmentState(overrides: {
         id: nextThreadId,
         environmentId,
         projectId,
+        parentThreadId: null,
         title: overrides.title ?? "Existing completed thread",
         interactionMode: "default",
         session: null,

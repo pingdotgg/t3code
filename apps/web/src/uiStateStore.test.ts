@@ -13,6 +13,7 @@ import {
   reorderProjects,
   setChangedFilesDiffScope,
   setProjectExpanded,
+  setThreadExpanded,
   setThreadChangedFilesExpanded,
   setThreadPinned,
   syncProjects,
@@ -26,6 +27,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     pinnedThreadKeysByProjectId: {},
     threadLastVisitedAtById: {},
+    threadExpandedById: {},
     threadChangedFilesExpandedById: {},
     changedFilesDiffScope: "turn",
     ...overrides,
@@ -89,6 +91,17 @@ describe("uiStateStore pure functions", () => {
     const next = markThreadUnread(initialState, threadId, null);
 
     expect(next).toBe(initialState);
+  });
+
+  it("setThreadExpanded stores only collapsed thread overrides", () => {
+    const threadId = ThreadId.make("thread-1");
+    const initialState = makeUiState();
+
+    const collapsed = setThreadExpanded(initialState, threadId, false);
+    expect(collapsed.threadExpandedById[threadId]).toBe(false);
+
+    const expanded = setThreadExpanded(collapsed, threadId, true);
+    expect(expanded.threadExpandedById[threadId]).toBeUndefined();
   });
 
   it("reorderProjects moves a project to a target index", () => {

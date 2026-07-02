@@ -37,6 +37,7 @@ const BASE_SNAPSHOT: OrchestrationShellSnapshot = {
     {
       id: ThreadId.make("thread-1"),
       projectId: ProjectId.make("project-1"),
+      parentThreadId: null,
       title: "Thread",
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
       runtimeMode: "full-access",

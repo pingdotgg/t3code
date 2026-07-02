@@ -54,6 +54,7 @@ const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPaylo
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -650,7 +651,7 @@ it.effect(
         updatedAt: "2026-01-01T00:00:00.000Z",
       });
 
-      const encoded = yield* Schema.encodeEffect(ThreadCreatedPayload)(decoded);
+      const encoded = yield* encodeThreadCreatedPayload(decoded);
       assert.deepStrictEqual(encoded.modelSelection.options, [{ id: "fastMode", value: true }]);
     }),
 );

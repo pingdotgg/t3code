@@ -12,6 +12,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     environmentId: localEnvironmentId,
     codexThreadId: null,
     projectId: ProjectId.make("project-1"),
+    parentThreadId: null,
     title: "Thread",
     modelSelection: {
       instanceId: ProviderInstanceId.make("codex"),

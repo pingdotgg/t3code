@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyOrchestrationEvent,
   applyOrchestrationEvents,
+  applyShellEvent,
   selectExistingThreadKeys,
   selectEnvironmentState,
   selectProjectsAcrossEnvironments,
@@ -69,6 +70,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     environmentId: localEnvironmentId,
     codexThreadId: null,
     projectId: ProjectId.make("project-1"),
+    parentThreadId: null,
     title: "Thread",
     modelSelection: {
       instanceId: ProviderInstanceId.make("codex"),
@@ -100,6 +102,7 @@ function makeSidebarThreadSummary(
     id: thread.id,
     environmentId: thread.environmentId,
     projectId: thread.projectId,
+    parentThreadId: null,
     title: thread.title,
     interactionMode: thread.interactionMode,
     session: thread.session,
@@ -148,6 +151,7 @@ function makeState(thread: Thread): AppState {
         environmentId: thread.environmentId,
         codexThreadId: thread.codexThreadId,
         projectId: thread.projectId,
+        parentThreadId: thread.parentThreadId ?? null,
         title: thread.title,
         modelSelection: thread.modelSelection,
         runtimeMode: thread.runtimeMode,
@@ -798,6 +802,109 @@ describe("incremental orchestration updates", () => {
     expect(localEnvironmentStateOf(next).threadIdsByProjectId[recreatedProjectId]).toEqual([
       threadId,
     ]);
+  });
+
+  it("preserves parentThreadId from thread.created for immediate sidebar nesting", () => {
+    const parentThreadId = ThreadId.make("thread-parent");
+    const childThreadId = ThreadId.make("thread-child");
+    const projectId = ProjectId.make("project-1");
+    const parent = makeThread({
+      id: parentThreadId,
+      projectId,
+      title: "Parent thread",
+    });
+    const state = withActiveEnvironmentState(localEnvironmentStateOf(makeState(parent)), {
+      sidebarThreadSummaryById: {
+        [parentThreadId]: makeSidebarThreadSummary(parent),
+      },
+    });
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.created", {
+        threadId: childThreadId,
+        projectId,
+        parentThreadId,
+        title: "Review uncommitted changes",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: DEFAULT_MODEL,
+        },
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        pendingRuntimeMode: null,
+        interactionMode: DEFAULT_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-02-27T00:00:01.000Z",
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    const child = threadsOf(next).find((thread) => thread.id === childThreadId);
+    expect(child?.parentThreadId).toBe(parentThreadId);
+  });
+
+  it("preserves parentThreadId through the sidebar shell stream", () => {
+    const parentThreadId = ThreadId.make("thread-parent");
+    const childThreadId = ThreadId.make("thread-child");
+    const projectId = ProjectId.make("project-1");
+    const now = "2026-02-27T00:00:00.000Z";
+    const baseShell = {
+      projectId,
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: DEFAULT_MODEL,
+      },
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      pendingRuntimeMode: null,
+      interactionMode: DEFAULT_INTERACTION_MODE,
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      session: null,
+      latestUserMessageAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+    } as const;
+
+    let state = makeEmptyState();
+    state = applyShellEvent(
+      state,
+      {
+        kind: "thread-upserted",
+        sequence: 1,
+        thread: {
+          ...baseShell,
+          id: parentThreadId,
+          parentThreadId: null,
+          title: "Parent thread",
+        },
+      },
+      localEnvironmentId,
+    );
+    state = applyShellEvent(
+      state,
+      {
+        kind: "thread-upserted",
+        sequence: 2,
+        thread: {
+          ...baseShell,
+          id: childThreadId,
+          parentThreadId,
+          title: "Review uncommitted changes",
+        },
+      },
+      localEnvironmentId,
+    );
+
+    const sidebarThreads = selectSidebarThreadsAcrossEnvironments(state);
+    const child = sidebarThreads.find((thread) => thread.id === childThreadId);
+    expect(child?.parentThreadId).toBe(parentThreadId);
   });
 
   it("updates only the affected thread for message events", () => {

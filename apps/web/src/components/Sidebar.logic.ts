@@ -249,37 +249,6 @@ export function orderItemsByPreferredIds<TItem, TId>(input: {
   return [...ordered, ...remaining];
 }
 
-export function orderProjectThreadsWithPinned<
-  T extends Pick<Thread, "id"> & ThreadSortInput,
->(input: {
-  threads: readonly T[];
-  pinnedThreadKeys: readonly string[];
-  sortOrder: SidebarThreadSortOrder;
-  getThreadKey: (thread: T) => string;
-}): T[] {
-  const sortedThreads = sortThreads(input.threads, input.sortOrder);
-  const sortedThreadByKey = new Map(
-    sortedThreads.map((thread) => [input.getThreadKey(thread), thread] as const),
-  );
-  const pinnedThreadKeySet = new Set(input.pinnedThreadKeys);
-  const emittedPinnedThreadKeys = new Set<string>();
-  const pinnedThreads = input.pinnedThreadKeys.flatMap((threadKey) => {
-    if (emittedPinnedThreadKeys.has(threadKey)) {
-      return [];
-    }
-    const thread = sortedThreadByKey.get(threadKey);
-    if (!thread) {
-      return [];
-    }
-    emittedPinnedThreadKeys.add(threadKey);
-    return [thread];
-  });
-  const unpinnedThreads = sortedThreads.filter(
-    (thread) => !pinnedThreadKeySet.has(input.getThreadKey(thread)),
-  );
-  return [...pinnedThreads, ...unpinnedThreads];
-}
-
 export function getVisibleSidebarThreadIds<TThreadId>(
   renderedProjects: readonly {
     shouldShowThreadPanel?: boolean;
@@ -449,54 +418,6 @@ export function resolveProjectStatusIndicator(
   }
 
   return highestPriorityStatus;
-}
-
-export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input: {
-  threads: readonly T[];
-  activeThreadId: T["id"] | undefined;
-  isThreadListExpanded: boolean;
-  previewLimit: number;
-}): {
-  hasHiddenThreads: boolean;
-  visibleThreads: T[];
-  hiddenThreads: T[];
-} {
-  const { activeThreadId, isThreadListExpanded, previewLimit, threads } = input;
-  const hasHiddenThreads = threads.length > previewLimit;
-
-  if (!hasHiddenThreads || isThreadListExpanded) {
-    return {
-      hasHiddenThreads,
-      hiddenThreads: [],
-      visibleThreads: [...threads],
-    };
-  }
-
-  const previewThreads = threads.slice(0, previewLimit);
-  if (!activeThreadId || previewThreads.some((thread) => thread.id === activeThreadId)) {
-    return {
-      hasHiddenThreads: true,
-      hiddenThreads: threads.slice(previewLimit),
-      visibleThreads: previewThreads,
-    };
-  }
-
-  const activeThread = threads.find((thread) => thread.id === activeThreadId);
-  if (!activeThread) {
-    return {
-      hasHiddenThreads: true,
-      hiddenThreads: threads.slice(previewLimit),
-      visibleThreads: previewThreads,
-    };
-  }
-
-  const visibleThreadIds = new Set([...previewThreads, activeThread].map((thread) => thread.id));
-
-  return {
-    hasHiddenThreads: true,
-    hiddenThreads: threads.filter((thread) => !visibleThreadIds.has(thread.id)),
-    visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
-  };
 }
 
 export function getFallbackThreadIdAfterDelete<

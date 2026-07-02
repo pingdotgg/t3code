@@ -7,12 +7,10 @@ import {
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
-  getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
   orderItemsByPreferredIds,
-  orderProjectThreadsWithPinned,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
@@ -175,62 +173,6 @@ describe("getSidebarThreadIdsToPrewarm", () => {
 
   it("returns no thread ids when the limit is zero", () => {
     expect(getSidebarThreadIdsToPrewarm(["t1", "t2"], 0)).toEqual([]);
-  });
-});
-
-describe("orderProjectThreadsWithPinned", () => {
-  it("keeps pinned threads above sorted unpinned threads", () => {
-    const sorted = orderProjectThreadsWithPinned({
-      threads: [
-        makeThread({
-          id: ThreadId.make("thread-1"),
-          createdAt: "2026-03-09T10:00:00.000Z",
-          updatedAt: "2026-03-09T10:00:00.000Z",
-        }),
-        makeThread({
-          id: ThreadId.make("thread-2"),
-          createdAt: "2026-03-09T10:10:00.000Z",
-          updatedAt: "2026-03-09T10:10:00.000Z",
-        }),
-        makeThread({
-          id: ThreadId.make("thread-3"),
-          createdAt: "2026-03-09T10:05:00.000Z",
-          updatedAt: "2026-03-09T10:05:00.000Z",
-        }),
-      ],
-      pinnedThreadKeys: ["thread-1", "thread-3"],
-      sortOrder: "updated_at",
-      getThreadKey: (thread) => thread.id,
-    });
-
-    expect(sorted.map((thread) => thread.id)).toEqual([
-      ThreadId.make("thread-1"),
-      ThreadId.make("thread-3"),
-      ThreadId.make("thread-2"),
-    ]);
-  });
-
-  it("ignores duplicate or stale pinned thread keys", () => {
-    const sorted = orderProjectThreadsWithPinned({
-      threads: [
-        makeThread({
-          id: ThreadId.make("thread-1"),
-          updatedAt: "2026-03-09T10:00:00.000Z",
-        }),
-        makeThread({
-          id: ThreadId.make("thread-2"),
-          updatedAt: "2026-03-09T10:10:00.000Z",
-        }),
-      ],
-      pinnedThreadKeys: ["missing", "thread-1", "thread-1"],
-      sortOrder: "updated_at",
-      getThreadKey: (thread) => thread.id,
-    });
-
-    expect(sorted.map((thread) => thread.id)).toEqual([
-      ThreadId.make("thread-1"),
-      ThreadId.make("thread-2"),
-    ]);
   });
 });
 
@@ -768,57 +710,6 @@ describe("resolveProjectStatusIndicator", () => {
   });
 });
 
-describe("getVisibleThreadsForProject", () => {
-  it("includes the active thread even when it falls below the folded preview", () => {
-    const threads = Array.from({ length: 8 }, (_, index) =>
-      makeThread({
-        id: ThreadId.make(`thread-${index + 1}`),
-        title: `Thread ${index + 1}`,
-      }),
-    );
-
-    const result = getVisibleThreadsForProject({
-      threads,
-      activeThreadId: ThreadId.make("thread-8"),
-      isThreadListExpanded: false,
-      previewLimit: 6,
-    });
-
-    expect(result.hasHiddenThreads).toBe(true);
-    expect(result.visibleThreads.map((thread) => thread.id)).toEqual([
-      ThreadId.make("thread-1"),
-      ThreadId.make("thread-2"),
-      ThreadId.make("thread-3"),
-      ThreadId.make("thread-4"),
-      ThreadId.make("thread-5"),
-      ThreadId.make("thread-6"),
-      ThreadId.make("thread-8"),
-    ]);
-    expect(result.hiddenThreads.map((thread) => thread.id)).toEqual([ThreadId.make("thread-7")]);
-  });
-
-  it("returns all threads when the list is expanded", () => {
-    const threads = Array.from({ length: 8 }, (_, index) =>
-      makeThread({
-        id: ThreadId.make(`thread-${index + 1}`),
-      }),
-    );
-
-    const result = getVisibleThreadsForProject({
-      threads,
-      activeThreadId: ThreadId.make("thread-8"),
-      isThreadListExpanded: true,
-      previewLimit: 6,
-    });
-
-    expect(result.hasHiddenThreads).toBe(true);
-    expect(result.visibleThreads.map((thread) => thread.id)).toEqual(
-      threads.map((thread) => thread.id),
-    );
-    expect(result.hiddenThreads).toEqual([]);
-  });
-});
-
 function makeProject(overrides: Partial<Project> = {}): Project {
   const { defaultModelSelection, ...rest } = overrides;
   return {
@@ -844,6 +735,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     environmentId: localEnvironmentId,
     codexThreadId: null,
     projectId: ProjectId.make("project-1"),
+    parentThreadId: null,
     title: "Thread",
     modelSelection: {
       instanceId: ProviderInstanceId.make("codex"),

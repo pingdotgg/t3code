@@ -18,10 +18,11 @@ import {
 import type { OrchestrationEngineShape } from "./Services/OrchestrationEngine.ts";
 
 const serverCommandId = (tag: string) => CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
+const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const toBootstrapDispatchCommandCauseError = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
-  return Schema.is(OrchestrationDispatchCommandError)(error)
+  return isOrchestrationDispatchCommandError(error)
     ? error
     : new OrchestrationDispatchCommandError({
         message: error instanceof Error ? error.message : "Failed to bootstrap thread turn start.",
@@ -215,6 +216,7 @@ export const makeClientCommandDispatcher = ({
             commandId: serverCommandId("bootstrap-thread-create"),
             threadId: command.threadId,
             projectId: bootstrap.createThread.projectId,
+            parentThreadId: bootstrap.createThread.parentThreadId ?? null,
             title: bootstrap.createThread.title,
             modelSelection: bootstrap.createThread.modelSelection,
             runtimeMode: bootstrap.createThread.runtimeMode,

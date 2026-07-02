@@ -243,6 +243,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     environmentId,
     codexThreadId: null,
     projectId: thread.projectId,
+    parentThreadId: thread.parentThreadId ?? null,
     title: thread.title,
     modelSelection: normalizeModelSelection(thread.modelSelection),
     runtimeMode: thread.runtimeMode,
@@ -279,6 +280,7 @@ function mapThreadShell(
     environmentId,
     codexThreadId: null,
     projectId: thread.projectId,
+    parentThreadId: thread.parentThreadId ?? null,
     title: thread.title,
     modelSelection: normalizeModelSelection(thread.modelSelection),
     runtimeMode: thread.runtimeMode,
@@ -300,6 +302,7 @@ function mapThreadShell(
     id: thread.id,
     environmentId,
     projectId: thread.projectId,
+    parentThreadId: thread.parentThreadId ?? null,
     title: thread.title,
     interactionMode: thread.interactionMode,
     session,
@@ -328,6 +331,7 @@ function toThreadShell(thread: Thread): ThreadShell {
     environmentId: thread.environmentId,
     codexThreadId: thread.codexThreadId,
     projectId: thread.projectId,
+    parentThreadId: thread.parentThreadId ?? null,
     title: thread.title,
     modelSelection: thread.modelSelection,
     runtimeMode: thread.runtimeMode,
@@ -428,6 +432,7 @@ function sidebarThreadSummariesEqual(
     left !== undefined &&
     left.id === right.id &&
     left.projectId === right.projectId &&
+    left.parentThreadId === right.parentThreadId &&
     left.title === right.title &&
     left.interactionMode === right.interactionMode &&
     threadSessionsEqual(left.session, right.session) &&
@@ -451,6 +456,7 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     left.environmentId === right.environmentId &&
     left.codexThreadId === right.codexThreadId &&
     left.projectId === right.projectId &&
+    left.parentThreadId === right.parentThreadId &&
     left.title === right.title &&
     left.modelSelection === right.modelSelection &&
     left.runtimeMode === right.runtimeMode &&
@@ -1335,6 +1341,7 @@ function applyEnvironmentOrchestrationEvent(
         {
           id: event.payload.threadId,
           projectId: event.payload.projectId,
+          parentThreadId: event.payload.parentThreadId ?? null,
           title: event.payload.title,
           modelSelection: event.payload.modelSelection,
           runtimeMode: event.payload.runtimeMode,

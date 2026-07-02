@@ -333,6 +333,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          parent_thread_id AS "parentThreadId",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -620,6 +621,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          parent_thread_id AS "parentThreadId",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -1084,6 +1086,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 return {
                   id: row.threadId,
                   projectId: row.projectId,
+                  parentThreadId: row.parentThreadId ?? null,
                   title: row.title,
                   modelSelection: row.modelSelection,
                   runtimeMode: row.runtimeMode,
@@ -1237,6 +1240,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   return {
                     id: row.threadId,
                     projectId: row.projectId,
+                    parentThreadId: row.parentThreadId ?? null,
                     title: row.title,
                     modelSelection: row.modelSelection,
                     runtimeMode: row.runtimeMode,
@@ -1441,6 +1445,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       return Option.some({
         id: threadRow.value.threadId,
         projectId: threadRow.value.projectId,
+        parentThreadId: threadRow.value.parentThreadId ?? null,
         title: threadRow.value.title,
         modelSelection: threadRow.value.modelSelection,
         runtimeMode: threadRow.value.runtimeMode,
@@ -1550,6 +1555,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       const thread = {
         id: threadRow.value.threadId,
         projectId: threadRow.value.projectId,
+        parentThreadId: threadRow.value.parentThreadId ?? null,
         title: threadRow.value.title,
         modelSelection: threadRow.value.modelSelection,
         runtimeMode: threadRow.value.runtimeMode,

@@ -3814,6 +3814,7 @@ function ChatViewBody(
             bootstrap: {
               createThread: {
                 projectId: activeProject.id,
+                parentThreadId: activeThread.id,
                 title,
                 modelSelection,
                 runtimeMode: DEFAULT_RUNTIME_MODE,

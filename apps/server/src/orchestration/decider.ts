@@ -340,6 +340,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           projectId: command.projectId,
+          parentThreadId: command.parentThreadId ?? null,
           title: command.title,
           modelSelection: command.modelSelection,
           runtimeMode: command.runtimeMode,
@@ -406,6 +407,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           projectId: sourceThread.projectId,
+          parentThreadId: command.sourceThreadId,
           title: forkedTitle(sourceThread.title),
           modelSelection: sourceThread.modelSelection,
           runtimeMode: sourceThread.runtimeMode,
