@@ -178,6 +178,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopWebAssetBrand("0.0.17-nightly.20260413.42"), "nightly");
   });
 
+  it.effect("disables publish auto-detection for local artifact builds", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig("mac", "dmg", "1.2.3", false, false, undefined, undefined).pipe(
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+      );
+
+      assert.strictEqual(config.publish, null);
+    }),
+  );
+
   it.effect("resolves GitHub desktop publish config from Effect config", () =>
     Effect.gen(function* () {
       const latestConfig = yield* resolveGitHubPublishConfig("latest").pipe(
@@ -995,7 +1005,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
       assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
       assert.deepStrictEqual(mac.protocols, [
-        { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
+        { name: "T3 Code", schemes: ["t3", "t3code", "t3code-dev"] },
       ]);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );

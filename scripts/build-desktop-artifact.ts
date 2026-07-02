@@ -2062,6 +2062,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         url: resolveMockUpdateServerUrl(mockUpdateServerPort),
       },
     ];
+  } else {
+    // Prevent electron-builder from inferring GitHub publish from GH_TOKEN when
+    // building local artifacts with `--publish never`.
+    buildConfig.publish = null;
   }
 
   if (platform === "mac") {
@@ -2072,7 +2076,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       protocols: [
         {
           name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          schemes: ["t3", "t3code", "t3code-dev"],
         },
       ],
       ...(macPasskeySigning
