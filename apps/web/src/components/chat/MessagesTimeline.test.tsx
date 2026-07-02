@@ -219,6 +219,16 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("leaves empty-thread welcome copy to the chat view", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[]} />,
+    );
+
+    expect(markup).not.toContain("Send a message to start the conversation.");
+    expect(markup).not.toContain("legend-list");
+  });
+
   it("uses LegendList isNearEnd when deciding whether the live edge is visible", async () => {
     const {
       resolveTimelineIsAtEnd,

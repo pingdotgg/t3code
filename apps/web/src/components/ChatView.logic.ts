@@ -200,6 +200,13 @@ export function shouldIncludeTurnStartBootstrap(input: {
   return input.isLocalDraftThread || input.hasBaseBranchForWorktree;
 }
 
+export function buildEmptyThreadWelcomeTitle(projectTitle: string | null | undefined): string {
+  const trimmedProjectTitle = projectTitle?.trim();
+  return trimmedProjectTitle
+    ? `What's next in ${trimmedProjectTitle}, kupo?`
+    : "What's next, kupo?";
+}
+
 export function cloneComposerImageForRetry(
   image: ComposerImageAttachment,
 ): ComposerImageAttachment {

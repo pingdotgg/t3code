@@ -5,6 +5,7 @@ import type { Thread } from "../types";
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  buildEmptyThreadWelcomeTitle,
   buildExpiredTerminalContextToastCopy,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
@@ -70,6 +71,14 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
+
+describe("buildEmptyThreadWelcomeTitle", () => {
+  it("names workspace projects and uses generic copy for standalone chats", () => {
+    expect(buildEmptyThreadWelcomeTitle("mognet")).toBe("What's next in mognet, kupo?");
+    expect(buildEmptyThreadWelcomeTitle("  studio  ")).toBe("What's next in studio, kupo?");
+    expect(buildEmptyThreadWelcomeTitle(null)).toBe("What's next, kupo?");
+  });
+});
 
 describe("buildThreadTurnInterruptInput", () => {
   it("targets the session's active running turn", () => {

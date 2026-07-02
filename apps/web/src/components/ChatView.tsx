@@ -228,6 +228,7 @@ import {
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
+  buildEmptyThreadWelcomeTitle,
   type LocalDispatchSnapshot,
   PullRequestDialogState,
   cloneComposerImageForRetry,
@@ -2094,6 +2095,10 @@ function ChatViewContent(props: ChatViewProps) {
     () =>
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
+  );
+  const showEmptyThreadWelcome = timelineEntries.length === 0 && !isWorking;
+  const emptyThreadWelcomeTitle = buildEmptyThreadWelcomeTitle(
+    hasWorkspaceProject ? activeProject.title : null,
   );
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
@@ -5189,8 +5194,20 @@ function ChatViewContent(props: ChatViewProps) {
             <div
               ref={setComposerOverlayElement}
               data-chat-composer-overlay="true"
-              className="pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
+              className={cn(
+                "pointer-events-none absolute inset-x-0 z-20",
+                showEmptyThreadWelcome
+                  ? "top-1/2 -translate-y-1/2 pt-0"
+                  : "bottom-0 pt-1.5 sm:pt-2",
+              )}
             >
+              {showEmptyThreadWelcome ? (
+                <div className="chat-composer-horizontal-inset mb-6 text-center">
+                  <h1 className="mx-auto max-w-3xl break-words text-2xl font-medium leading-tight text-foreground/88 [overflow-wrap:anywhere] sm:text-3xl">
+                    {emptyThreadWelcomeTitle}
+                  </h1>
+                </div>
+              ) : null}
               <div className="chat-composer-horizontal-inset">
                 <div className="pointer-events-auto relative z-10 isolate">
                   <ComposerBannerStack className="relative z-10" items={composerBannerItems} />
