@@ -77,7 +77,10 @@ import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import {
   archivedShellStreamItemFromSnapshot,
   coalesceShellApplicationEvents,
+  composeShellStreamWithEnrichment,
+  shellStreamItemFromEnrichmentRefresh,
   shellStreamItemFromSnapshot,
+  shellStreamItemsFromInitialSnapshot,
 } from "./orchestration-v2/ShellStream.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationEventStore from "./persistence/Services/OrchestrationEventStore.ts";
@@ -449,13 +452,28 @@ const makeWsRpcLayer = (
           Effect.forEach(
             projects,
             (project) =>
+              // Non-blocking: emit with cached identity (or null) and schedule
+              // background resolution. subscribeChanges is attached before
+              // loadSnapshot, so later identity completions push refreshed
+              // shells for multi-env grouping without blocking the initial
+              // snapshot or completion marker on slow git probes.
               projectEnrichment.getAvailable(project.workspaceRoot).pipe(
                 Effect.map((enrichment) => ({
-                  ...project,
-                  repositoryIdentity: enrichment.repositoryIdentity,
+                  project: {
+                    ...project,
+                    repositoryIdentity: enrichment.repositoryIdentity,
+                  },
+                  repositoryIdentityResolved: enrichment.repositoryIdentityResolved,
                 })),
               ),
             { concurrency: 16 },
+          ).pipe(
+            Effect.map((enriched) => ({
+              projects: enriched.map((entry) => entry.project),
+              resolvedRepositoryIdentityRoots: enriched
+                .filter((entry) => entry.repositoryIdentityResolved)
+                .map((entry) => entry.project.workspaceRoot),
+            })),
           ),
       );
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
@@ -740,8 +758,11 @@ const makeWsRpcLayer = (
                 } as const;
               }),
             );
-            const projects = yield* enrichProjectShells(base.projects);
-            return { ...base, projects };
+            const enriched = yield* enrichProjectShells(base.projects);
+            return {
+              snapshot: { ...base, projects: enriched.projects } as OrchestrationV2ShellSnapshot,
+              resolvedRepositoryIdentityRoots: enriched.resolvedRepositoryIdentityRoots,
+            };
           });
           const projectItem = Effect.fn("ws.orchestrationV2.projectShellItem")(function* (
             stored: Extract<ApplicationStoredEvent, { readonly aggregateKind: "project" }>,
@@ -805,37 +826,74 @@ const makeWsRpcLayer = (
 
           const enrichmentRefreshes = Stream.fromSubscription(enrichmentChanges).pipe(
             Stream.filter((change) => change.repositoryIdentityResolved),
-            Stream.debounce("25 millis"),
-            Stream.mapEffect(() => loadSnapshot()),
-            Stream.map((snapshot) => ({ kind: "snapshot" as const, snapshot })),
+            Stream.groupedWithin(64, Duration.millis(25)),
+            Stream.mapEffect((changes) =>
+              loadSnapshot().pipe(
+                Effect.map(({ snapshot }) =>
+                  shellStreamItemFromEnrichmentRefresh({
+                    snapshot,
+                    changes: Array.from(changes),
+                  }),
+                ),
+              ),
+            ),
           );
 
+          // Always attach the enrichment subscription before the first load so
+          // completions that race HTTP snapshot fetch still push a refresh.
           // When the client already holds a shell snapshot (cached, or loaded
-          // over HTTP) it passes that snapshot's sequence, and we resume by
-          // replaying application events after it instead of re-sending the
-          // whole projects/threads list over the socket. The event store
-          // subscribes to live events before reading the persisted tail, so no
-          // event published during the replay window is lost; overlapping events
-          // are deduped by sequence on the client.
+          // over HTTP) it passes that snapshot's sequence. We still emit one
+          // enriched snapshot up front: getAvailable may have been cold on the
+          // HTTP path (null identity), and enrichment PubSub events published
+          // before this subscribe attached are dropped. Rehydrating here fills
+          // repositoryIdentity for cross-environment project grouping even on
+          // afterSequence resumes. Application events after the sequence still
+          // stream as deltas; overlapping events are deduped by sequence on the
+          // client.
+          //
+          // After the unmarked authoritative frame, emit a same-sequence
+          // metadata-only frame for roots that already resolved successfully
+          // (including cached null). Cold/failed roots stay unmarked and use
+          // the PubSub enrichment path when they complete later.
           const completionMarker =
             input.requestCompletionMarker === true
               ? Stream.make({ kind: "synchronized" as const })
               : Stream.empty;
-          const snapshotThenLive = (snapshot: OrchestrationV2ShellSnapshot) =>
-            Stream.concat(
-              Stream.concat(Stream.make({ kind: "snapshot" as const, snapshot }), completionMarker),
-              liveFrom(snapshot.snapshotSequence),
+          const initialSnapshotItems = (loaded: {
+            readonly snapshot: OrchestrationV2ShellSnapshot;
+            readonly resolvedRepositoryIdentityRoots: ReadonlyArray<string>;
+          }) =>
+            Stream.fromIterable(
+              shellStreamItemsFromInitialSnapshot({
+                snapshot: loaded.snapshot,
+                resolvedRepositoryIdentityRoots: loaded.resolvedRepositoryIdentityRoots,
+              }),
             );
+          // Initial unmarked (+ optional same-load marked) always drains first.
+          // Enrichment merges only with the post-prefix tail so a ready marked
+          // refresh cannot interleave before the authoritative initial frame.
+          const completionThenLive = (afterSequence: number) =>
+            Stream.concat(completionMarker, liveFrom(afterSequence));
 
-          const base = yield* Effect.gen(function* () {
+          const stream = yield* Effect.gen(function* () {
+            const loaded = yield* loadSnapshot();
+            const initial = initialSnapshotItems(loaded);
             if (input.afterSequence === undefined) {
-              return snapshotThenLive(yield* loadSnapshot());
+              return composeShellStreamWithEnrichment({
+                initial,
+                tail: completionThenLive(loaded.snapshot.snapshotSequence),
+                enrichment: enrichmentRefreshes,
+              });
             }
 
             const highWater = yield* applicationEvents.latestApplicationSequence;
             const replayGap = highWater - input.afterSequence;
             if (replayGap < 0 || replayGap > 1_000) {
-              return snapshotThenLive(yield* loadSnapshot());
+              return composeShellStreamWithEnrichment({
+                initial,
+                tail: completionThenLive(loaded.snapshot.snapshotSequence),
+                enrichment: enrichmentRefreshes,
+              });
             }
 
             const replay = toShellStream(
@@ -844,7 +902,11 @@ const makeWsRpcLayer = (
                 throughSequence: highWater,
               }),
             );
-            return Stream.concat(Stream.concat(replay, completionMarker), liveFrom(highWater));
+            return composeShellStreamWithEnrichment({
+              initial,
+              tail: Stream.concat(Stream.concat(replay, completionMarker), liveFrom(highWater)),
+              enrichment: enrichmentRefreshes,
+            });
           }).pipe(
             Effect.mapError(
               (cause) =>
@@ -855,7 +917,7 @@ const makeWsRpcLayer = (
             ),
           );
 
-          return Stream.merge(base, enrichmentRefreshes).pipe(
+          return stream.pipe(
             Stream.mapError(
               (cause) =>
                 new OrchestrationV2GetShellSnapshotError({
@@ -883,7 +945,7 @@ const makeWsRpcLayer = (
         .pipe(
           Effect.flatMap((snapshot) =>
             enrichProjectShells(snapshot.projects).pipe(
-              Effect.map((projects) => ({ ...snapshot, projects })),
+              Effect.map(({ projects }) => ({ ...snapshot, projects })),
             ),
           ),
           Effect.mapError(
