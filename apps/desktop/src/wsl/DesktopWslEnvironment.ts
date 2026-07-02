@@ -223,6 +223,9 @@ const NODE_PTY_PROBE_SCRIPT = (
   linuxServerDir: string,
 ) => `printf 'nodePath:%s\\n' "$(command -v node 2>/dev/null)"
 printf 'resolvedPath:%s\\n' "$PATH"
+if command -v node >/dev/null 2>&1; then
+  _ver="$(node -p 'process.versions.node' 2>/dev/null)"; [ -n "$_ver" ] && printf 'nodeVersion:%s\\n' "$_ver"
+fi
 cd ${shellQuote(linuxServerDir)} && node <<'NODE' >/dev/null 2>&1
 // The server bundle externalizes its deps to node_modules, and the WSL Node
 // can't read inside app.asar, so confirm those deps are unpacked on the real
@@ -316,6 +319,20 @@ export const parseNodePath = (stdout: string): string | null => {
     .map((line) => line.slice("nodePath:".length).trim())
     .find((value) => value.length > 0);
   return path ?? null;
+};
+
+// Extracts the Node.js version string printed by the probe script on the
+// `nodeVersion:` line (e.g. "22.22.1"). Returns null when the line is absent
+// or empty, which the caller treats as a version-check failure when a range
+// is required.
+export const parseNodeVersion = (stdout: string): string | null => {
+  const line = stdout
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.startsWith("nodeVersion:"));
+  if (line === undefined) return null;
+  const version = line.slice("nodeVersion:".length).trim();
+  return version.length > 0 ? version : null;
 };
 
 // Captures the login-shell PATH after the shared resolver has loaded version
@@ -457,7 +474,35 @@ const ensureNodePtyImpl = (
       } as const;
     }
 
-    if (probe.exitCode === 0) return { ok: true, nodePath, resolvedPath } as const;
+    if (probe.exitCode === 0) {
+      // Even when the probe exits successfully, the resolved node might not
+      // satisfy the server's engine range (e.g. nvm default is Node 18 but
+      // the server requires ^22.16 || ^23.11 || >=24.10). Validate here so
+      // the desktop fails with an actionable message rather than launching the
+      // server and watching it exit 0 with import.meta.main === undefined.
+      if (options.nodeEngineRange) {
+        const nodeVersion = parseNodeVersion(probe.stdout);
+        if (nodeVersion === null) {
+          return {
+            ok: false,
+            reason:
+              `WSL node-pty probe succeeded but could not determine the WSL Node.js version. ` +
+              `Ensure Node.js satisfying \`${options.nodeEngineRange}\` is the default in the distro, then restart the desktop app.`,
+            fatal: true,
+          } as const;
+        }
+        if (!satisfiesSemverRange(nodeVersion, options.nodeEngineRange)) {
+          return {
+            ok: false,
+            reason:
+              `WSL node-pty unavailable: WSL Node.js ${nodeVersion} does not satisfy the server's required engine range (${options.nodeEngineRange}). ` +
+              `Install a compatible version, and restart the desktop app.`,
+            fatal: true,
+          } as const;
+        }
+      }
+      return { ok: true, nodePath, resolvedPath } as const;
+    }
 
     if (options.allowBuild !== true) {
       const packagedProbeFailure = formatNodePtyProbeFailureReason(probe.exitCode);
