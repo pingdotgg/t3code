@@ -54,13 +54,14 @@ const COPILOT_SHELL_SPAWN_BACKEND_FLAG = "SHELL_SPAWN_BACKEND";
 const COPILOT_SHELL_SPAWN_BACKEND_EXP_ENV = "COPILOT_EXP_COPILOT_CLI_SHELL_SPAWN_BACKEND";
 const COPILOT_POSIX_SHELL_CANDIDATES = ["/bin/bash", "/usr/bin/bash", "/bin/sh"] as const;
 
-export class CopilotProbePromiseError extends Error {
-  override readonly cause: unknown;
-
-  constructor(cause: unknown) {
-    super(cause instanceof Error ? cause.message : String(cause));
-    this.cause = cause;
-    this.name = "CopilotProbePromiseError";
+export class CopilotProbePromiseError extends Schema.TaggedErrorClass<CopilotProbePromiseError>()(
+  "CopilotProbePromiseError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return this.cause instanceof Error ? this.cause.message : String(this.cause);
   }
 }
 
@@ -107,7 +108,7 @@ export function trimOrUndefined(value: string | null | undefined): string | unde
 }
 
 export function toCopilotProbeError(cause: unknown): CopilotProbePromiseError {
-  return new CopilotProbePromiseError(cause);
+  return new CopilotProbePromiseError({ cause });
 }
 
 function describeCopilotProbeCause(cause: unknown): string {

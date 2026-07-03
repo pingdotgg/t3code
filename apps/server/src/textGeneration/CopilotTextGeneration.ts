@@ -75,18 +75,6 @@ ${schemaDocument}
 Do not wrap the JSON in markdown fences or include any other text.`;
 }
 
-function copilotTextGenerationError(
-  operation: CopilotTextGenerationOperation,
-  detail: string,
-  cause?: unknown,
-): TextGenerationError {
-  return new TextGenerationError({
-    operation,
-    detail,
-    ...(cause !== undefined ? { cause } : {}),
-  });
-}
-
 function detailFromCause(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.trim().length > 0 ? cause.message : fallback;
 }
@@ -212,12 +200,13 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
         platform,
         logLevel: "error",
       }).pipe(
-        Effect.mapError((cause) =>
-          copilotTextGenerationError(
-            input.operation,
-            detailFromCause(cause, "Failed to configure Copilot client."),
-            cause,
-          ),
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: input.operation,
+              detail: detailFromCause(cause, "Failed to configure Copilot client."),
+              cause,
+            }),
         ),
       );
       const client = yield* Effect.uninterruptibleMask((restore) =>
@@ -243,11 +232,11 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
                     });
                 }),
               catch: (cause) =>
-                copilotTextGenerationError(
-                  input.operation,
-                  detailFromCause(cause, "Failed to start Copilot client."),
+                new TextGenerationError({
+                  operation: input.operation,
+                  detail: detailFromCause(cause, "Failed to start Copilot client."),
                   cause,
-                ),
+                }),
             }),
           );
 
@@ -365,11 +354,11 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
                   }),
                 }),
               catch: (cause) =>
-                copilotTextGenerationError(
-                  input.operation,
-                  detailFromCause(cause, "Failed to create Copilot session."),
+                new TextGenerationError({
+                  operation: input.operation,
+                  detail: detailFromCause(cause, "Failed to create Copilot session."),
                   cause,
-                ),
+                }),
             }),
             (session: CopilotSession) =>
               Effect.tryPromise({
@@ -384,11 +373,11 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
                   return response?.data.content.trim() ?? "";
                 },
                 catch: (cause) =>
-                  copilotTextGenerationError(
-                    input.operation,
-                    detailFromCause(cause, "Copilot text generation request failed."),
+                  new TextGenerationError({
+                    operation: input.operation,
+                    detail: detailFromCause(cause, "Copilot text generation request failed."),
                     cause,
-                  ),
+                  }),
               }),
             (session) =>
               Effect.tryPromise({
