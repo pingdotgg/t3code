@@ -12,7 +12,10 @@ import {
 
 import { AppText as Text } from "../../components/AppText";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
-import { resolveNativeTerminalSurfaceView } from "./nativeTerminalModule";
+import {
+  getNativeTerminalHardwareKeyRevision,
+  resolveNativeTerminalSurfaceView,
+} from "./nativeTerminalModule";
 import {
   buildGhosttyThemeConfig,
   getPierreTerminalTheme,
@@ -189,6 +192,8 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
     terminalDebugLog("native:surface", {
       terminalKey: props.terminalKey,
       native: hasNativeSurface,
+      // null = installed binary predates native hardware-key handling (rebuild needed).
+      hardwareKeyRevision: getNativeTerminalHardwareKeyRevision(),
       bufferLen: props.buffer.length,
       isRunning: props.isRunning,
     });
@@ -198,6 +203,9 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
       if (!props.isRunning) {
         return;
       }
+      terminalDebugLog("native:onInput", {
+        codes: Array.from(event.nativeEvent.data, (char) => char.codePointAt(0)),
+      });
       onInput(event.nativeEvent.data);
     },
     [onInput, props.isRunning],

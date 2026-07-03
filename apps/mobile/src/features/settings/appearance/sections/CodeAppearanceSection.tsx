@@ -1,14 +1,18 @@
 import { useCallback } from "react";
 
 import {
+  CODE_FONT_SIZE_STEP,
   MAX_CODE_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
-  stepCodeFontSize,
 } from "../../../../lib/appearancePreferences";
 import { SettingsSection } from "../../components/SettingsSection";
 import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
-import { FontSizeControlRow } from "../components/FontSizeControlRow";
+import {
+  AppearancePreviewSeparator,
+  CodeAppearancePreview,
+} from "../components/AppearancePreviews";
+import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
 
 export function CodeAppearanceSection() {
   const { isReady, appearance, setCodeFontSize, setCodeWordBreak } = useAppearancePreferences();
@@ -21,16 +25,13 @@ export function CodeAppearanceSection() {
     [appearance.codeFontSize, setCodeFontSize],
   );
 
-  const handleDecrease = useCallback(() => {
-    setCodeFontSize(stepCodeFontSize(appearance.codeFontSize, -1));
-  }, [appearance.codeFontSize, setCodeFontSize]);
-
-  const handleIncrease = useCallback(() => {
-    setCodeFontSize(stepCodeFontSize(appearance.codeFontSize, 1));
-  }, [appearance.codeFontSize, setCodeFontSize]);
-
   return (
     <SettingsSection title="Code & Diffs">
+      <CodeAppearancePreview
+        fontSize={appearance.codeFontSize}
+        wordBreak={appearance.codeWordBreak}
+      />
+      <AppearancePreviewSeparator />
       <SettingsSwitchRow
         disabled={!isReady}
         icon="chevron.left.forwardslash.chevron.right"
@@ -38,16 +39,19 @@ export function CodeAppearanceSection() {
         onValueChange={handleToggleCustom}
         value={custom}
       />
-      <FontSizeControlRow
-        canDecrease={appearance.codeFontSize > MIN_CODE_FONT_SIZE}
-        canIncrease={appearance.codeFontSize < MAX_CODE_FONT_SIZE}
-        disabled={!isReady || !custom}
-        icon="textformat.size"
-        label="Font size"
-        onDecrease={handleDecrease}
-        onIncrease={handleIncrease}
-        valueLabel={`${appearance.codeFontSize} pt`}
-      />
+      {custom ? (
+        <FontSizeSliderRow
+          disabled={!isReady}
+          icon="textformat.size"
+          label="Font size"
+          max={MAX_CODE_FONT_SIZE}
+          min={MIN_CODE_FONT_SIZE}
+          onChange={setCodeFontSize}
+          step={CODE_FONT_SIZE_STEP}
+          value={appearance.codeFontSize}
+          valueLabel={`${appearance.codeFontSize} pt`}
+        />
+      ) : null}
       <SettingsSwitchRow
         disabled={!isReady}
         icon="text.word.spacing"

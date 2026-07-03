@@ -1,6 +1,11 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import type { StaticScreenProps } from "@react-navigation/native";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import {
+  NativeHeaderToolbar,
+  NativeStackScreenOptions,
+  nativeHeaderScrollEdgeEffects,
+} from "../../native/StackHeader";
+import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import { SymbolView } from "expo-symbols";
 import {
   memo,
@@ -33,11 +38,19 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
-import { AdaptiveInspectorLayout } from "../layout/adaptive-inspector-layout";
 import {
   useAdaptiveWorkspaceLayout,
   useAdaptiveWorkspacePaneRole,
+  useRegisterWorkspaceInspector,
 } from "../layout/AdaptiveWorkspaceLayout";
+import { useEnvironmentQuery } from "../../state/query";
+import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
+import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
+import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useThreadSelection } from "../../state/use-thread-selection";
+import { vcsEnvironment } from "../../state/vcs";
+import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
+import { ThreadGitMenu } from "../threads/ThreadGitControls";
 import { useReviewCacheForThread } from "./reviewState";
 import {
   type NativeReviewDiffViewHandle,
@@ -141,9 +154,10 @@ const ReviewFileNavigatorRow = memo(function ReviewFileNavigatorRow(props: {
   readonly onSelectFile: (fileId: string | null) => void;
 }) {
   const { file, selected, onSelectFile } = props;
+  // Tapping the selected file again returns to the all-files diff.
   const handlePress = useCallback(() => {
-    onSelectFile(file.id);
-  }, [file.id, onSelectFile]);
+    onSelectFile(selected ? null : file.id);
+  }, [file.id, onSelectFile, selected]);
 
   return (
     <Pressable
@@ -193,6 +207,10 @@ function ReviewFileNavigator({
   onSelectFile,
   ref,
 }: ReviewFileNavigatorProps) {
+  const insets = useSafeAreaInsets();
+  const sheetColor = String(useThemeColor("--color-sheet"));
+  const foregroundColor = String(useThemeColor("--color-foreground"));
+  const headerScrollEdgeEffects = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
   const [fileSelection, setFileSelection] = useState<{
     readonly sectionId: string | null;
     readonly fileId: string | null;
@@ -241,6 +259,56 @@ function ReviewFileNavigator({
     [handleSelectFile, selectedFileId],
   );
 
+  const fileList = (
+    <FlatList
+      data={files}
+      extraData={selectedFileId}
+      keyExtractor={(file) => file.id}
+      contentContainerStyle={{
+        paddingHorizontal: 8,
+        paddingBottom: 8,
+        // The nested native header is translucent; start the list below it so
+        // the scroll-edge effect can sample the content (same treatment as
+        // FileTreeBrowser in the Files pane).
+        paddingTop: Platform.OS === "ios" ? insets.top + 44 + 8 : 8,
+      }}
+      scrollIndicatorInsets={Platform.OS === "ios" ? { top: insets.top + 44 } : undefined}
+      renderItem={renderFile}
+    />
+  );
+
+  if (Platform.OS === "ios") {
+    return (
+      <View className="flex-1 border-l border-border bg-sheet">
+        <ScreenStack style={{ flex: 1 }}>
+          <Screen
+            activityState={2}
+            enabled
+            isNativeStack
+            screenId="review-file-navigator-native"
+            scrollEdgeEffects={headerScrollEdgeEffects}
+            style={{ backgroundColor: sheetColor, flex: 1 }}
+          >
+            {fileList}
+            <ScreenStackHeaderConfig
+              backgroundColor="rgba(0,0,0,0)"
+              color={foregroundColor}
+              hideBackButton
+              hideShadow={false}
+              navigationItemStyle="editor"
+              subtitle={`${files.length} ${files.length === 1 ? "file" : "files"}`}
+              title="Changed files"
+              titleColor={foregroundColor}
+              titleFontSize={17}
+              titleFontWeight="700"
+              translucent
+            />
+          </Screen>
+        </ScreenStack>
+      </View>
+    );
+  }
+
   return (
     <View className="flex-1 border-l border-border bg-sheet">
       <View className="border-b border-border" style={{ paddingTop: headerInset }}>
@@ -251,30 +319,7 @@ function ReviewFileNavigator({
           </Text>
         </View>
       </View>
-      <FlatList
-        data={files}
-        extraData={selectedFileId}
-        keyExtractor={(file) => file.id}
-        contentContainerStyle={{ paddingHorizontal: 8, paddingVertical: 8 }}
-        ListHeaderComponent={
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ selected: selectedFileId === null }}
-            className={
-              selectedFileId === null
-                ? "min-h-11 justify-center rounded-xl bg-subtle-strong px-3"
-                : "min-h-11 justify-center rounded-xl px-3 active:bg-subtle"
-            }
-            onPress={() => handleSelectFile(null)}
-          >
-            <Text className="text-sm font-t3-bold text-foreground">All files</Text>
-            <Text className="text-xs text-foreground-muted">
-              {files.length} changed {files.length === 1 ? "file" : "files"}
-            </Text>
-          </Pressable>
-        }
-        renderItem={renderFile}
-      />
+      {fileList}
     </View>
   );
 }
@@ -287,8 +332,8 @@ type ReviewSheetProps = StaticScreenProps<{
 export function ReviewSheet(props: ReviewSheetProps) {
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   useAdaptiveWorkspacePaneRole("inspector");
-  const { layout, panes, showAuxiliaryPane, toggleAuxiliaryPane, togglePrimarySidebar } =
-    useAdaptiveWorkspaceLayout();
+  const { panes, showAuxiliaryPane, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const headerIcon = String(useThemeColor("--color-icon"));
@@ -298,6 +343,23 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const { draftMessage } = useThreadDraftForThread({ environmentId, threadId });
   const reviewCache = useReviewCacheForThread({ environmentId, threadId });
+  /* ─── Git actions for the toolbar menu (commit/push without leaving review) ── */
+  const { selectedThread } = useThreadSelection();
+  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const gitState = useSelectedThreadGitState();
+  const gitActions = useSelectedThreadGitActions();
+  const gitStatusQuery = useEnvironmentQuery(
+    selectedThread !== null && selectedThreadCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: selectedThread.environmentId,
+          input: { cwd: selectedThreadCwd },
+        })
+      : null,
+  );
+  // The selection-based git hooks only apply when this review belongs to the
+  // selected thread (it always does when reached from the thread's toolbar).
+  const gitMenuAvailable =
+    selectedThread !== null && String(selectedThread.id) === String(threadId);
   const selectedTheme = colorScheme === "dark" ? "dark" : "light";
   // With a solid (non-overlay) header the content lays out below the header
   // natively, so no manual top inset is needed.
@@ -395,13 +457,14 @@ export function ReviewSheet(props: ReviewSheetProps) {
       <ReviewFileNavigator
         ref={reviewFileNavigatorRef}
         files={nativeReviewDiffData.files}
-        // Solid header: pane content starts below the header natively.
-        headerInset={0}
+        // The workspace inspector column spans the full window height, so the
+        // pane clears the status bar itself.
+        headerInset={insets.top}
         sectionId={selectedSection?.id ?? null}
         onSelectFile={handleSelectFile}
       />
     ),
-    [handleSelectFile, nativeReviewDiffData.files, selectedSection?.id],
+    [handleSelectFile, insets.top, nativeReviewDiffData.files, selectedSection?.id],
   );
 
   const handleNativeToggleFile = useCallback(
@@ -438,6 +501,22 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const handleRetryEnvironment = useCallback(() => {
     void retryEnvironment(environmentId);
   }, [environmentId, retryEnvironment]);
+  const handleReturnToThread = useCallback(() => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.navigate("Thread", {
+      environmentId: String(environmentId),
+      threadId: String(threadId),
+    });
+  }, [environmentId, navigation, threadId]);
+
+  // The changed-files navigator lives in the workspace inspector column —
+  // the single right-hand pane per route — instead of an in-screen panel.
+  const showChangedFilesPane =
+    !showConnectionNotice && selectedSection !== null && parsedDiff.kind === "files";
+  useRegisterWorkspaceInspector(showChangedFilesPane ? renderInspector : undefined);
 
   const listHeader = useMemo(() => {
     const children: ReactElement[] = [];
@@ -487,20 +566,15 @@ export function ReviewSheet(props: ReviewSheetProps) {
         }}
       />
 
-      {layout.usesSplitView ? (
-        <NativeHeaderToolbar placement="left">
-          <NativeHeaderToolbar.Button
-            accessibilityLabel={panes.primarySidebarVisible ? "Maximize review" : "Show threads"}
-            icon={
-              panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left"
-            }
-            onPress={togglePrimarySidebar}
-            separateBackground
-          />
-        </NativeHeaderToolbar>
-      ) : null}
+      <WorkspaceSidebarToolbar>
+        <NativeHeaderToolbar.Button
+          accessibilityLabel="Back to chat"
+          icon="chevron.left"
+          onPress={handleReturnToThread}
+        />
+      </WorkspaceSidebarToolbar>
 
-      {showSectionToolbar || panes.supportsAuxiliaryPane ? (
+      {showSectionToolbar || panes.supportsAuxiliaryPane || gitMenuAvailable ? (
         <NativeHeaderToolbar placement="right">
           {panes.supportsAuxiliaryPane ? (
             <NativeHeaderToolbar.Button
@@ -510,6 +584,17 @@ export function ReviewSheet(props: ReviewSheetProps) {
               icon="sidebar.right"
               onPress={toggleAuxiliaryPane}
               separateBackground
+            />
+          ) : null}
+          {gitMenuAvailable && selectedThread !== null ? (
+            <ThreadGitMenu
+              environmentId={environmentId}
+              threadId={threadId}
+              currentBranch={selectedThread.branch ?? null}
+              gitStatus={gitStatusQuery.data}
+              gitOperationLabel={gitState.gitOperationLabel}
+              onPull={gitActions.onPullSelectedThreadBranch}
+              onRunAction={gitActions.onRunSelectedThreadGitAction}
             />
           ) : null}
           {showSectionToolbar ? (
@@ -591,43 +676,41 @@ export function ReviewSheet(props: ReviewSheetProps) {
               backgroundColor: nativeBridge.theme.background,
             }}
           >
-            <AdaptiveInspectorLayout renderInspector={renderInspector}>
-              <View
-                className="min-w-0 flex-1"
-                style={{ paddingTop: topContentInset + REVIEW_HEADER_SPACING }}
-              >
-                {listHeader}
-                <View className="min-w-0 flex-1" collapsable={false}>
-                  <NativeReviewDiffView
-                    collapsable={false}
-                    testID="review-native-diff-view"
-                    refreshing={isPullRefreshing}
-                    onPullToRefresh={() => void handlePullToRefresh()}
-                    style={StyleSheet.absoluteFill}
-                    appearanceScheme={selectedTheme}
-                    collapsedFileIdsJson={nativeBridge.collapsedFileIdsJson}
-                    collapsedCommentIdsJson={nativeBridge.collapsedCommentIdsJson}
-                    contentResetKey={`${reviewCache.threadKey}:${selectedSection.id}`}
-                    contentWidth={NATIVE_REVIEW_DIFF_CONTENT_WIDTH}
-                    nativeViewRef={nativeReviewDiffViewRef}
-                    rowHeight={nativeReviewDiffStyle.rowHeight}
-                    rowsJson={nativeBridge.rowsJson}
-                    selectedRowIdsJson={nativeBridge.selectedRowIdsJson}
-                    styleJson={nativeBridge.styleJson}
-                    themeJson={nativeBridge.themeJson}
-                    tokensPatchJson={nativeBridge.tokensPatchJson}
-                    tokensResetKey={nativeBridge.tokensResetKey}
-                    viewedFileIdsJson={nativeBridge.viewedFileIdsJson}
-                    onDebug={nativeBridge.onDebug}
-                    onPressLine={commentSelection.onPressLine}
-                    onVisibleFileChange={handleVisibleFileChange}
-                    onToggleComment={nativeBridge.onToggleComment}
-                    onToggleFile={handleNativeToggleFile}
-                    onToggleViewedFile={handleNativeToggleViewedFile}
-                  />
-                </View>
+            <View
+              className="min-w-0 flex-1"
+              style={{ paddingTop: topContentInset + REVIEW_HEADER_SPACING }}
+            >
+              {listHeader}
+              <View className="min-w-0 flex-1" collapsable={false}>
+                <NativeReviewDiffView
+                  collapsable={false}
+                  testID="review-native-diff-view"
+                  refreshing={isPullRefreshing}
+                  onPullToRefresh={() => void handlePullToRefresh()}
+                  style={StyleSheet.absoluteFill}
+                  appearanceScheme={selectedTheme}
+                  collapsedFileIdsJson={nativeBridge.collapsedFileIdsJson}
+                  collapsedCommentIdsJson={nativeBridge.collapsedCommentIdsJson}
+                  contentResetKey={`${reviewCache.threadKey}:${selectedSection.id}`}
+                  contentWidth={NATIVE_REVIEW_DIFF_CONTENT_WIDTH}
+                  nativeViewRef={nativeReviewDiffViewRef}
+                  rowHeight={nativeReviewDiffStyle.rowHeight}
+                  rowsJson={nativeBridge.rowsJson}
+                  selectedRowIdsJson={nativeBridge.selectedRowIdsJson}
+                  styleJson={nativeBridge.styleJson}
+                  themeJson={nativeBridge.themeJson}
+                  tokensPatchJson={nativeBridge.tokensPatchJson}
+                  tokensResetKey={nativeBridge.tokensResetKey}
+                  viewedFileIdsJson={nativeBridge.viewedFileIdsJson}
+                  onDebug={nativeBridge.onDebug}
+                  onPressLine={commentSelection.onPressLine}
+                  onVisibleFileChange={handleVisibleFileChange}
+                  onToggleComment={nativeBridge.onToggleComment}
+                  onToggleFile={handleNativeToggleFile}
+                  onToggleViewedFile={handleNativeToggleViewedFile}
+                />
               </View>
-            </AdaptiveInspectorLayout>
+            </View>
           </View>
         ) : (
           <ScrollView

@@ -9,6 +9,7 @@ import {
   useColorScheme,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import {
   EnvironmentId,
@@ -29,10 +30,10 @@ import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useEnvironmentQuery } from "../../state/query";
 import { projectEnvironment } from "../../state/projects";
-import { AdaptiveInspectorLayout } from "../layout/adaptive-inspector-layout";
 import {
   useAdaptiveWorkspaceLayout,
   useAdaptiveWorkspacePaneRole,
+  useRegisterWorkspaceInspector,
 } from "../layout/AdaptiveWorkspaceLayout";
 import { createNativeMailSearchToolbarItem } from "../layout/native-mail-search-toolbar";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
@@ -506,6 +507,18 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       ) : undefined,
     [cwd, environmentId, fileInspector.supported, handleSelectFile, projectName, relativePath],
   );
+  // The workspace inspector column spans the full window height. On iOS the
+  // pane brings its own nested native header; elsewhere it pads itself below
+  // the top inset.
+  const safeAreaInsets = useSafeAreaInsets();
+  const inspectorHeaderInset = Platform.OS === "ios" ? 0 : safeAreaInsets.top;
+  // Hand the file navigator to the workspace so it renders beside the
+  // navigator, outside this screen's native header.
+  const renderWorkspaceInspector = useCallback(
+    () => renderInspector(inspectorHeaderInset),
+    [inspectorHeaderInset, renderInspector],
+  );
+  useRegisterWorkspaceInspector(fileInspector.supported ? renderWorkspaceInspector : undefined);
 
   if (selectedThread === null || environmentId === null || threadId === null) {
     return <LoadingScreen message="Opening file..." messagePlacement="above-spinner" />;
@@ -616,20 +629,16 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             ) : null}
           </NativeHeaderToolbar.Menu>
         </NativeHeaderToolbar>
-        <AdaptiveInspectorLayout
-          renderInspector={fileInspector.supported ? () => renderInspector(0) : undefined}
-        >
-          <FileContent
-            activeMode={resolvedActiveMode}
-            previewUri={previewUri}
-            fileContents={fileData?.contents ?? null}
-            fileError={fileQuery.error}
-            initialLine={targetLine}
-            relativePath={relativePath}
-            truncated={fileData?.truncated ?? false}
-            onRefresh={() => fileQuery.refresh()}
-          />
-        </AdaptiveInspectorLayout>
+        <FileContent
+          activeMode={resolvedActiveMode}
+          previewUri={previewUri}
+          fileContents={fileData?.contents ?? null}
+          fileError={fileQuery.error}
+          initialLine={targetLine}
+          relativePath={relativePath}
+          truncated={fileData?.truncated ?? false}
+          onRefresh={() => fileQuery.refresh()}
+        />
       </View>
     </ReviewHighlighterProvider>
   );

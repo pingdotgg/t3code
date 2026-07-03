@@ -77,32 +77,36 @@ type QuickActionIcon =
   | "checkmark.circle"
   | "arrow.up.circle";
 
-type ThreadGitControlsProps = {
+/** The subset of git-control wiring the standalone git menu needs. */
+export type ThreadGitMenuProps = {
   readonly environmentId: EnvironmentId | string;
   readonly threadId: ThreadId | string;
+  readonly currentBranch: string | null;
+  readonly gitStatus: VcsStatusResult | null;
+  readonly gitOperationLabel: string | null;
+  readonly onOpenFilesInspector?: () => void;
+  readonly onOpenGitInspector?: () => void;
+  readonly onPull: () => Promise<void>;
+  readonly onRunAction: (input: GitActionRequestInput) => Promise<GitRunStackedActionResult | null>;
+};
+
+type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly auxiliaryPaneControl?: {
     readonly accessibilityLabel: string;
     readonly onPress: () => void;
   };
-  readonly currentBranch: string | null;
-  readonly gitStatus: VcsStatusResult | null;
-  readonly gitOperationLabel: string | null;
   readonly canOpenTerminal: boolean;
   readonly canOpenFiles: boolean;
   readonly projectScripts: ReadonlyArray<ProjectScript>;
   readonly terminalSessions: ReadonlyArray<TerminalMenuSession>;
   readonly showActionControls?: boolean;
   readonly showDirectFileControl?: boolean;
-  readonly onOpenFilesInspector?: () => void;
-  readonly onOpenGitInspector?: () => void;
   readonly onOpenTerminal: (terminalId?: string | null) => void;
   readonly onOpenNewTerminal: () => void;
   readonly onRunProjectScript: (script: ProjectScript) => Promise<void>;
-  readonly onPull: () => Promise<void>;
-  readonly onRunAction: (input: GitActionRequestInput) => Promise<GitRunStackedActionResult | null>;
 };
 
-function useThreadGitControlModel(props: ThreadGitControlsProps) {
+function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const navigation = useNavigation();
   const environmentId = props.environmentId;
   const threadId = props.threadId;
@@ -485,43 +489,54 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           separateBackground
         />
       ) : null}
-      {showActionControls ? (
-        <NativeHeaderToolbar.Menu icon="point.topleft.down.curvedto.point.bottomright.up">
-          <NativeHeaderToolbar.MenuAction
-            icon="point.topleft.down.curvedto.point.bottomright.up"
-            disabled
-            onPress={() => {}}
-            subtitle={compactMenuStatus(props.gitStatus)}
-          >
-            <NativeHeaderToolbar.Label>
-              {compactMenuBranchLabel(model.currentBranchLabel)}
-            </NativeHeaderToolbar.Label>
-          </NativeHeaderToolbar.MenuAction>
-          <NativeHeaderToolbar.MenuAction
-            icon={model.quickActionIcon}
-            disabled={model.quickAction.disabled}
-            onPress={() => void model.runQuickAction()}
-            subtitle={model.quickActionHint ?? undefined}
-          >
-            <NativeHeaderToolbar.Label>{model.quickAction.label}</NativeHeaderToolbar.Label>
-          </NativeHeaderToolbar.MenuAction>
-          <NativeHeaderToolbar.MenuAction
-            icon="text.bubble"
-            disabled={!model.isRepo}
-            onPress={model.openReview}
-            subtitle="Turn diffs and worktree changes"
-          >
-            <NativeHeaderToolbar.Label>Review changes</NativeHeaderToolbar.Label>
-          </NativeHeaderToolbar.MenuAction>
-          <NativeHeaderToolbar.MenuAction
-            icon="ellipsis"
-            onPress={model.openGitInspector}
-            subtitle="Commit, files, branches"
-          >
-            <NativeHeaderToolbar.Label>More</NativeHeaderToolbar.Label>
-          </NativeHeaderToolbar.MenuAction>
-        </NativeHeaderToolbar.Menu>
-      ) : null}
+      {showActionControls ? <ThreadGitMenu {...props} /> : null}
     </NativeHeaderToolbar>
+  );
+}
+
+/**
+ * The standalone git actions menu (branch status, quick commit/push action,
+ * review, more). Rendered inside a NativeHeaderToolbar by both the thread
+ * chat header and the review screen's toolbar.
+ */
+export function ThreadGitMenu(props: ThreadGitMenuProps) {
+  const model = useThreadGitControlModel(props);
+
+  return (
+    <NativeHeaderToolbar.Menu icon="point.topleft.down.curvedto.point.bottomright.up">
+      <NativeHeaderToolbar.MenuAction
+        icon="point.topleft.down.curvedto.point.bottomright.up"
+        disabled
+        onPress={() => {}}
+        subtitle={compactMenuStatus(props.gitStatus)}
+      >
+        <NativeHeaderToolbar.Label>
+          {compactMenuBranchLabel(model.currentBranchLabel)}
+        </NativeHeaderToolbar.Label>
+      </NativeHeaderToolbar.MenuAction>
+      <NativeHeaderToolbar.MenuAction
+        icon={model.quickActionIcon}
+        disabled={model.quickAction.disabled}
+        onPress={() => void model.runQuickAction()}
+        subtitle={model.quickActionHint ?? undefined}
+      >
+        <NativeHeaderToolbar.Label>{model.quickAction.label}</NativeHeaderToolbar.Label>
+      </NativeHeaderToolbar.MenuAction>
+      <NativeHeaderToolbar.MenuAction
+        icon="text.bubble"
+        disabled={!model.isRepo}
+        onPress={model.openReview}
+        subtitle="Turn diffs and worktree changes"
+      >
+        <NativeHeaderToolbar.Label>Review changes</NativeHeaderToolbar.Label>
+      </NativeHeaderToolbar.MenuAction>
+      <NativeHeaderToolbar.MenuAction
+        icon="ellipsis"
+        onPress={model.openGitInspector}
+        subtitle="Commit, files, branches"
+      >
+        <NativeHeaderToolbar.Label>More</NativeHeaderToolbar.Label>
+      </NativeHeaderToolbar.MenuAction>
+    </NativeHeaderToolbar.Menu>
   );
 }

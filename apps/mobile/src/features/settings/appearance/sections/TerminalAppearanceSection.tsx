@@ -3,12 +3,16 @@ import { useCallback } from "react";
 import {
   MAX_TERMINAL_FONT_SIZE,
   MIN_TERMINAL_FONT_SIZE,
-  stepTerminalFontSize,
+  TERMINAL_FONT_SIZE_STEP,
 } from "../../../../lib/appearancePreferences";
 import { SettingsSection } from "../../components/SettingsSection";
 import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
-import { FontSizeControlRow } from "../components/FontSizeControlRow";
+import {
+  AppearancePreviewSeparator,
+  TerminalAppearancePreview,
+} from "../components/AppearancePreviews";
+import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
 
 export function TerminalAppearanceSection() {
   const { isReady, appearance, setTerminalFontSize } = useAppearancePreferences();
@@ -21,16 +25,10 @@ export function TerminalAppearanceSection() {
     [appearance.terminalFontSize, setTerminalFontSize],
   );
 
-  const handleDecrease = useCallback(() => {
-    setTerminalFontSize(stepTerminalFontSize(appearance.terminalFontSize, -1));
-  }, [appearance.terminalFontSize, setTerminalFontSize]);
-
-  const handleIncrease = useCallback(() => {
-    setTerminalFontSize(stepTerminalFontSize(appearance.terminalFontSize, 1));
-  }, [appearance.terminalFontSize, setTerminalFontSize]);
-
   return (
     <SettingsSection title="Terminal">
+      <TerminalAppearancePreview fontSize={appearance.terminalFontSize} />
+      <AppearancePreviewSeparator />
       <SettingsSwitchRow
         disabled={!isReady}
         icon="terminal"
@@ -38,16 +36,19 @@ export function TerminalAppearanceSection() {
         onValueChange={handleToggleCustom}
         value={custom}
       />
-      <FontSizeControlRow
-        canDecrease={appearance.terminalFontSize > MIN_TERMINAL_FONT_SIZE}
-        canIncrease={appearance.terminalFontSize < MAX_TERMINAL_FONT_SIZE}
-        disabled={!isReady || !custom}
-        icon="textformat.size"
-        label="Font size"
-        onDecrease={handleDecrease}
-        onIncrease={handleIncrease}
-        valueLabel={`${appearance.terminalFontSize.toFixed(1)} pt`}
-      />
+      {custom ? (
+        <FontSizeSliderRow
+          disabled={!isReady}
+          icon="textformat.size"
+          label="Font size"
+          max={MAX_TERMINAL_FONT_SIZE}
+          min={MIN_TERMINAL_FONT_SIZE}
+          onChange={setTerminalFontSize}
+          step={TERMINAL_FONT_SIZE_STEP}
+          value={appearance.terminalFontSize}
+          valueLabel={`${appearance.terminalFontSize.toFixed(1)} pt`}
+        />
+      ) : null}
     </SettingsSection>
   );
 }

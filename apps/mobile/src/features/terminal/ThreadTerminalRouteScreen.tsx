@@ -4,7 +4,7 @@ import { SymbolView } from "expo-symbols";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, Text as RNText, View, useColorScheme } from "react-native";
+import { Platform, Pressable, View, useColorScheme } from "react-native";
 import {
   KeyboardController,
   KeyboardEvents,
@@ -25,7 +25,6 @@ import { useEnvironmentPresentation } from "../../state/presentation";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceState } from "../../state/workspace";
-import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import {
   MAX_TERMINAL_FONT_SIZE,
   MIN_TERMINAL_FONT_SIZE,
@@ -80,47 +79,6 @@ type TerminalToolbarAction =
       readonly label: string;
       readonly modifier: PendingModifier;
     };
-
-function TerminalHeaderTitle(props: {
-  readonly topLine: string;
-  readonly bottomLine: string;
-  readonly foreground: string;
-  readonly mutedForeground: string;
-}) {
-  return (
-    <View
-      style={{
-        alignItems: "center",
-        gap: 1,
-        maxWidth: 240,
-      }}
-    >
-      <RNText
-        numberOfLines={1}
-        style={{
-          color: props.foreground,
-          fontFamily: "DMSans_700Bold",
-          fontSize: MOBILE_TYPOGRAPHY.footnote.fontSize,
-          lineHeight: 16,
-        }}
-      >
-        {props.topLine}
-      </RNText>
-      <RNText
-        ellipsizeMode="middle"
-        numberOfLines={1}
-        style={{
-          color: props.mutedForeground,
-          fontFamily: "Menlo",
-          fontSize: MOBILE_TYPOGRAPHY.caption.fontSize,
-          lineHeight: 14,
-        }}
-      >
-        {props.bottomLine}
-      </RNText>
-    </View>
-  );
-}
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
@@ -447,38 +405,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const usesNativeHeaderGlass = Platform.OS === "ios";
   const pendingModifier =
     pendingModifierState.terminalId === terminalId ? pendingModifierState.value : null;
-  const headerTitle = useMemo(() => {
-    const topLineParts = [
-      selectedEnvironmentConnection?.environmentLabel ?? null,
-      selectedThreadProject?.title ?? null,
-    ].filter((value): value is string => Boolean(value));
-
-    return {
-      topLine: topLineParts.join(" \u00b7 "),
-      bottomLine: cwd ?? selectedThreadProject?.workspaceRoot ?? "",
-    };
-  }, [
-    cwd,
-    selectedEnvironmentConnection?.environmentLabel,
-    selectedThreadProject?.title,
-    selectedThreadProject?.workspaceRoot,
-  ]);
-  const renderTerminalHeaderTitle = useCallback(
-    () => (
-      <TerminalHeaderTitle
-        topLine={headerTitle.topLine}
-        bottomLine={headerTitle.bottomLine}
-        foreground={terminalTheme.foreground}
-        mutedForeground={terminalTheme.mutedForeground}
-      />
-    ),
-    [
-      headerTitle.bottomLine,
-      headerTitle.topLine,
-      terminalTheme.foreground,
-      terminalTheme.mutedForeground,
-    ],
-  );
+  const headerSubtitle = selectedThreadProject?.title ?? "";
   const terminalToolbarActions = useMemo<ReadonlyArray<TerminalToolbarAction>>(() => {
     const modifierActions: ReadonlyArray<TerminalToolbarAction> =
       hostPlatform === "mac"
@@ -929,16 +856,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       <NativeStackScreenOptions
         options={{
           // Static header config lives in Stack.tsx (SOLID_HEADER_OPTIONS — the pty
-          // scrolls internally, nothing for glass to sample). The terminal theme's
-          // background matches the sheet color in both schemes. Only dynamic values
-          // here.
-          headerTintColor: terminalTheme.foreground,
-          headerTitle: usesNativeHeaderGlass ? headerTitle.topLine : renderTerminalHeaderTitle,
-          title: headerTitle.topLine,
+          // scrolls internally, nothing for glass to sample). Default title/subtitle
+          // styling, like every other page.
+          title: "Terminal",
           unstable_headerSubtitle:
-            usesNativeHeaderGlass && headerTitle.bottomLine.length > 0
-              ? headerTitle.bottomLine
-              : undefined,
+            usesNativeHeaderGlass && headerSubtitle.length > 0 ? headerSubtitle : undefined,
         }}
       />
 

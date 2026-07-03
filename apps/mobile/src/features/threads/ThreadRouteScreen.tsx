@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Platform, Pressable, ScrollView, Text as RNText, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useEnvironmentQuery } from "../../state/query";
@@ -57,10 +58,10 @@ import { useSelectedThreadWorktree } from "../../state/use-selected-thread-workt
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
-import { AdaptiveInspectorLayout } from "../layout/adaptive-inspector-layout";
 import {
   useAdaptiveWorkspaceLayout,
   useAdaptiveWorkspacePaneRole,
+  useRegisterWorkspaceInspector,
 } from "../layout/AdaptiveWorkspaceLayout";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { ThreadFileNavigatorPane } from "../files/thread-file-navigator-pane";
@@ -394,15 +395,20 @@ function ThreadRouteContent(
     },
     [fileInspector.supported, navigation, selectedThread],
   );
+  // The workspace inspector column spans the full window height. On iOS the
+  // panes bring their own nested native headers (which underlap the status
+  // bar); elsewhere the pane content pads itself below the top inset.
+  const safeAreaInsets = useSafeAreaInsets();
+  const inspectorHeaderInset = Platform.OS === "ios" ? 0 : safeAreaInsets.top;
   const GitInspector = useCallback(
     () => (
       <GitOverviewSheet
-        headerInset={0}
+        headerInset={inspectorHeaderInset}
         presentation="inspector"
         route={{ params: props.route.params }}
       />
     ),
-    [props.route.params],
+    [inspectorHeaderInset, props.route.params],
   );
   const FilesInspector = useCallback(
     () =>
@@ -410,15 +416,24 @@ function ThreadRouteContent(
         <ThreadFileNavigatorPane
           cwd={selectedThreadCwd}
           environmentId={selectedThread.environmentId}
-          headerInset={0}
+          headerInset={inspectorHeaderInset}
           projectName={selectedThreadProject?.title ?? "Files"}
           selectedPath={null}
           onSelectFile={handleSelectInspectorFile}
         />
       ) : null,
-    [handleSelectInspectorFile, selectedThread, selectedThreadCwd, selectedThreadProject?.title],
+    [
+      handleSelectInspectorFile,
+      inspectorHeaderInset,
+      selectedThread,
+      selectedThreadCwd,
+      selectedThreadProject?.title,
+    ],
   );
-  const RouteInspector = useCallback(() => props.renderInspector?.(0), [props.renderInspector]);
+  const RouteInspector = useCallback(
+    () => props.renderInspector?.(inspectorHeaderInset),
+    [inspectorHeaderInset, props.renderInspector],
+  );
   const renderInspectorStack = useCallback(
     () =>
       inspectorMode === null ? null : (
@@ -432,6 +447,10 @@ function ThreadRouteContent(
     [FilesInspector, GitInspector, RouteInspector, inspectorMode, props.renderInspector],
   );
   const activeInspectorRenderer = inspectorMode === null ? undefined : renderInspectorStack;
+  // Hand the inspector to the workspace so it renders beside the navigator,
+  // outside this screen's native header — the terminal/git/files toolbar
+  // stays anchored to the chat pane instead of floating above the inspector.
+  useRegisterWorkspaceInspector(activeInspectorRenderer);
 
   const handleOpenConnectionEditor = useCallback(() => {
     void navigation.navigate("Connections");
@@ -659,70 +678,68 @@ function ThreadRouteContent(
 
       <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
 
-      <AdaptiveInspectorLayout renderInspector={activeInspectorRenderer}>
-        <View className="flex-1 bg-screen">
-          <ThreadDetailScreen
-            selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
-            contentPresentation={contentPresentation}
-            screenTone={connectionTone(routeConnectionState)}
-            connectionError={routeConnectionError}
-            environmentLabel={selectedEnvironmentConnection?.environmentLabel ?? null}
-            selectedThreadFeed={composer.selectedThreadFeed}
-            activeWorkStartedAt={composer.activeWorkStartedAt}
-            activePendingApproval={requests.activePendingApproval}
-            respondingApprovalId={requests.respondingApprovalId}
-            activePendingUserInput={requests.activePendingUserInput}
-            activePendingUserInputDrafts={requests.activePendingUserInputDrafts}
-            activePendingUserInputAnswers={requests.activePendingUserInputAnswers}
-            respondingUserInputId={requests.respondingUserInputId}
-            draftMessage={composer.draftMessage}
-            draftAttachments={composer.draftAttachments}
-            connectionStateLabel={routeConnectionState}
-            threadSyncStatus={selectedThreadDetailState.status}
-            activeThreadBusy={composer.activeThreadBusy}
-            environmentId={selectedThread.environmentId}
-            projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
-            threadCwd={selectedThreadCwd}
-            selectedThreadQueueCount={composer.selectedThreadQueueCount}
-            layoutVariant={layout.variant}
-            usesAutomaticContentInsets={usesNativeHeaderGlass}
-            onOpenDrawer={handleOpenDrawer}
-            onOpenConnectionEditor={handleOpenConnectionEditor}
-            onChangeDraftMessage={composer.onChangeDraftMessage}
-            onPickDraftImages={composer.onPickDraftImages}
-            onNativePasteImages={composer.onNativePasteImages}
-            onRemoveDraftImage={composer.onRemoveDraftImage}
-            serverConfig={serverConfig}
-            onStopThread={handleStopThread}
-            onSendMessage={composer.onSendMessage}
-            onReconnectEnvironment={handleReconnectEnvironment}
-            onUpdateThreadModelSelection={composer.onUpdateModelSelection}
-            onUpdateThreadRuntimeMode={composer.onUpdateRuntimeMode}
-            onUpdateThreadInteractionMode={composer.onUpdateInteractionMode}
-            onRespondToApproval={requests.onRespondToApproval}
-            onSelectUserInputOption={requests.onSelectUserInputOption}
-            onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
-            onSubmitUserInput={requests.onSubmitUserInput}
-          />
+      <View className="flex-1 bg-screen">
+        <ThreadDetailScreen
+          selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
+          contentPresentation={contentPresentation}
+          screenTone={connectionTone(routeConnectionState)}
+          connectionError={routeConnectionError}
+          environmentLabel={selectedEnvironmentConnection?.environmentLabel ?? null}
+          selectedThreadFeed={composer.selectedThreadFeed}
+          activeWorkStartedAt={composer.activeWorkStartedAt}
+          activePendingApproval={requests.activePendingApproval}
+          respondingApprovalId={requests.respondingApprovalId}
+          activePendingUserInput={requests.activePendingUserInput}
+          activePendingUserInputDrafts={requests.activePendingUserInputDrafts}
+          activePendingUserInputAnswers={requests.activePendingUserInputAnswers}
+          respondingUserInputId={requests.respondingUserInputId}
+          draftMessage={composer.draftMessage}
+          draftAttachments={composer.draftAttachments}
+          connectionStateLabel={routeConnectionState}
+          threadSyncStatus={selectedThreadDetailState.status}
+          activeThreadBusy={composer.activeThreadBusy}
+          environmentId={selectedThread.environmentId}
+          projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
+          threadCwd={selectedThreadCwd}
+          selectedThreadQueueCount={composer.selectedThreadQueueCount}
+          layoutVariant={layout.variant}
+          usesAutomaticContentInsets={usesNativeHeaderGlass}
+          onOpenDrawer={handleOpenDrawer}
+          onOpenConnectionEditor={handleOpenConnectionEditor}
+          onChangeDraftMessage={composer.onChangeDraftMessage}
+          onPickDraftImages={composer.onPickDraftImages}
+          onNativePasteImages={composer.onNativePasteImages}
+          onRemoveDraftImage={composer.onRemoveDraftImage}
+          serverConfig={serverConfig}
+          onStopThread={handleStopThread}
+          onSendMessage={composer.onSendMessage}
+          onReconnectEnvironment={handleReconnectEnvironment}
+          onUpdateThreadModelSelection={composer.onUpdateModelSelection}
+          onUpdateThreadRuntimeMode={composer.onUpdateRuntimeMode}
+          onUpdateThreadInteractionMode={composer.onUpdateInteractionMode}
+          onRespondToApproval={requests.onRespondToApproval}
+          onSelectUserInputOption={requests.onSelectUserInputOption}
+          onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
+          onSubmitUserInput={requests.onSubmitUserInput}
+        />
 
-          {layout.usesSplitView ? null : (
-            <ThreadNavigationDrawer
-              visible={drawerVisible}
-              selectedThreadKey={selectedThreadKey}
-              onClose={() => setDrawerVisible(false)}
-              onSelectThread={(thread) => {
-                navigation.dispatch(
-                  StackActions.replace("Thread", {
-                    environmentId: String(thread.environmentId),
-                    threadId: String(thread.id),
-                  }),
-                );
-              }}
-              onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
-            />
-          )}
-        </View>
-      </AdaptiveInspectorLayout>
+        {layout.usesSplitView ? null : (
+          <ThreadNavigationDrawer
+            visible={drawerVisible}
+            selectedThreadKey={selectedThreadKey}
+            onClose={() => setDrawerVisible(false)}
+            onSelectThread={(thread) => {
+              navigation.dispatch(
+                StackActions.replace("Thread", {
+                  environmentId: String(thread.environmentId),
+                  threadId: String(thread.id),
+                }),
+              );
+            }}
+            onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+          />
+        )}
+      </View>
     </>
   );
 
