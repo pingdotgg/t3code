@@ -31,8 +31,10 @@ ref cannot be created.
 Rebase downstream commits onto upstream. For each content conflict:
 
 1. Record `REBASE_HEAD`, its subject, and unmerged paths.
-2. Save each path's exact bytes from the backup ref outside the worktree with
-   `git cat-file`; record downstream deletions explicitly.
+2. Save each path's exact downstream bytes from conflict stage 3 outside the
+   worktree with `git cat-file -p :3:<path>`. Record downstream deletions
+   explicitly. The backup ref remains the whole-branch rollback point; its
+   branch-tip blob is not a substitute for the commit currently replaying.
 3. Keep the upstream-based side (`--ours`) as the safe baseline. During rebase,
    `--theirs` is the downstream patch.
 4. Continue, or skip an empty commit.
@@ -51,9 +53,9 @@ retiring an entry. Compare new upstream code, backed-up downstream code,
 
 ## Verify or roll back
 
-Run all applicable `PATCH.md` verification commands. If a required check fails,
-abort any rebase, reset the branch to the backup ref, preserve recovery files,
-and report the failure and locations.
+Run all applicable `PATCH.md` verification commands. If a required check fails
+while a rebase is active, abort it. Otherwise reset the branch to the backup
+ref. Preserve recovery files and report the failure and locations.
 
 ## Review
 
