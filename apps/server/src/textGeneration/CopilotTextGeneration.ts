@@ -324,9 +324,10 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
         input.modelSelection,
         "reasoningEffort",
       ) as CopilotReasoningEffort | undefined;
-      const contextTier = getModelSelectionStringOptionValue(input.modelSelection, "contextTier") as
-        | CopilotContextTier
-        | undefined;
+      const contextTier = getModelSelectionStringOptionValue(
+        input.modelSelection,
+        "contextTier",
+      ) as CopilotContextTier | undefined;
 
       // Keep request state isolated per generation call while reusing the
       // started SDK client so git helpers do not respawn the Copilot CLI.
