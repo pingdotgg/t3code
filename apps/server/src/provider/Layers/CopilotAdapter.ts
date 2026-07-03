@@ -357,41 +357,6 @@ function appendTurnItem(
   ensureTurnSnapshot(context, turnId).items.push(item);
 }
 
-function processError(
-  threadId: ThreadId,
-  detail: string,
-  cause?: unknown,
-): ProviderAdapterProcessError {
-  return new ProviderAdapterProcessError({
-    provider: PROVIDER,
-    threadId,
-    detail,
-    ...(cause !== undefined ? { cause } : {}),
-  });
-}
-
-function validationError(operation: string, issue: string): ProviderAdapterValidationError {
-  return new ProviderAdapterValidationError({
-    provider: PROVIDER,
-    operation,
-    issue,
-  });
-}
-
-function sessionClosedError(threadId: ThreadId): ProviderAdapterSessionClosedError {
-  return new ProviderAdapterSessionClosedError({
-    provider: PROVIDER,
-    threadId,
-  });
-}
-
-function sessionNotFoundError(threadId: ThreadId): ProviderAdapterSessionNotFoundError {
-  return new ProviderAdapterSessionNotFoundError({
-    provider: PROVIDER,
-    threadId,
-  });
-}
-
 function detailFromCause(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.trim().length > 0 ? cause.message : fallback;
 }
@@ -411,10 +376,16 @@ function requireSessionContext(
   return Effect.gen(function* () {
     const context = sessions.get(threadId);
     if (!context) {
-      return yield* sessionNotFoundError(threadId);
+      return yield* new ProviderAdapterSessionNotFoundError({
+        provider: PROVIDER,
+        threadId,
+      });
     }
     if (context.stopped) {
-      return yield* sessionClosedError(threadId);
+      return yield* new ProviderAdapterSessionClosedError({
+        provider: PROVIDER,
+        threadId,
+      });
     }
     return context;
   });
@@ -1282,13 +1253,23 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       Effect.tryPromise({
         try: () => client.start(),
         catch: (cause) =>
-          processError(threadId, detailFromCause(cause, "Failed to start Copilot client."), cause),
+          new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId,
+            detail: detailFromCause(cause, "Failed to start Copilot client."),
+            cause,
+          }),
       }),
     stopClient: (threadId: ThreadId, client: CopilotClient) =>
       Effect.tryPromise({
         try: () => client.stop(),
         catch: (cause) =>
-          processError(threadId, detailFromCause(cause, "Failed to stop Copilot client."), cause),
+          new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId,
+            detail: detailFromCause(cause, "Failed to stop Copilot client."),
+            cause,
+          }),
       }),
     createSession: (
       threadId: ThreadId,
@@ -1298,11 +1279,12 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       Effect.tryPromise({
         try: () => client.createSession(config),
         catch: (cause) =>
-          processError(
+          new ProviderAdapterProcessError({
+            provider: PROVIDER,
             threadId,
-            detailFromCause(cause, "Failed to create Copilot session."),
+            detail: detailFromCause(cause, "Failed to create Copilot session."),
             cause,
-          ),
+          }),
       }),
     resumeSession: (
       threadId: ThreadId,
@@ -1313,11 +1295,12 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       Effect.tryPromise({
         try: () => client.resumeSession(sessionId, config),
         catch: (cause) =>
-          processError(
+          new ProviderAdapterProcessError({
+            provider: PROVIDER,
             threadId,
-            detailFromCause(cause, "Failed to resume Copilot session."),
+            detail: detailFromCause(cause, "Failed to resume Copilot session."),
             cause,
-          ),
+          }),
       }),
     setMode: (
       context: CopilotSessionContext,
@@ -2877,16 +2860,18 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
   const startSession: CopilotAdapterShape["startSession"] = Effect.fn("startSession")(
     function* (input) {
       if (input.provider !== undefined && input.provider !== PROVIDER) {
-        return yield* validationError(
-          "startSession",
-          `Expected provider '${PROVIDER}', received '${input.provider}'.`,
-        );
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "startSession",
+          issue: `Expected provider '${PROVIDER}', received '${input.provider}'.`,
+        });
       }
       if (input.providerInstanceId !== undefined && input.providerInstanceId !== boundInstanceId) {
-        return yield* validationError(
-          "startSession",
-          `Expected provider instance '${boundInstanceId}', received '${input.providerInstanceId}'.`,
-        );
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "startSession",
+          issue: `Expected provider instance '${boundInstanceId}', received '${input.providerInstanceId}'.`,
+        });
       }
 
       if (sessions.has(input.threadId)) {
@@ -2894,7 +2879,11 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       }
 
       if (!settings.enabled) {
-        return yield* validationError("startSession", "Copilot is disabled in server settings.");
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "startSession",
+          issue: "Copilot is disabled in server settings.",
+        });
       }
 
       const cwd = path.resolve(input.cwd ?? serverConfig.cwd);
@@ -2945,12 +2934,14 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         platform,
         logLevel: "error",
       }).pipe(
-        Effect.mapError((cause) =>
-          processError(
-            input.threadId,
-            detailFromCause(cause, "Failed to configure Copilot client."),
-            cause,
-          ),
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId: input.threadId,
+              detail: detailFromCause(cause, "Failed to configure Copilot client."),
+              cause,
+            }),
         ),
       );
 
@@ -3068,12 +3059,14 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         enqueueSdkEvent(context, event);
       }
       yield* Effect.promise(() => context.eventChain).pipe(
-        Effect.mapError((cause) =>
-          processError(
-            input.threadId,
-            detailFromCause(cause, "Failed to process Copilot startup events."),
-            cause,
-          ),
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId: input.threadId,
+              detail: detailFromCause(cause, "Failed to process Copilot startup events."),
+              cause,
+            }),
         ),
       );
       updateProviderSession(context, {
@@ -3109,10 +3102,11 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       });
     });
     if ((!text || text.length === 0) && attachments.length === 0) {
-      return yield* validationError(
-        "sendTurn",
-        "Copilot turns require text input or at least one attachment.",
-      );
+      return yield* new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: "sendTurn",
+        issue: "Copilot turns require text input or at least one attachment.",
+      });
     }
 
     const turnId = TurnId.make(`copilot-turn-${NodeCrypto.randomUUID()}`);
@@ -3212,11 +3206,12 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
                 errorMessage: error.detail,
               }),
             catch: (cause) =>
-              processError(
-                input.threadId,
-                detailFromCause(cause, "Failed to emit Copilot turn completion."),
+              new ProviderAdapterProcessError({
+                provider: PROVIDER,
+                threadId: input.threadId,
+                detail: detailFromCause(cause, "Failed to emit Copilot turn completion."),
                 cause,
-              ),
+              }),
           });
           return yield* error;
         }),
@@ -3288,11 +3283,12 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
                 diffText: writeDiff,
               }),
             catch: (cause) =>
-              processError(
+              new ProviderAdapterProcessError({
+                provider: PROVIDER,
                 threadId,
-                detailFromCause(cause, "Failed to emit Copilot write diff update."),
+                detail: detailFromCause(cause, "Failed to emit Copilot write diff update."),
                 cause,
-              ),
+              }),
           });
         }
       }
@@ -3384,7 +3380,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
   const stopSession: CopilotAdapterShape["stopSession"] = Effect.fn("stopSession")(
     function* (threadId) {
       if (!sessions.has(threadId)) {
-        return yield* sessionNotFoundError(threadId);
+        return yield* new ProviderAdapterSessionNotFoundError({
+          provider: PROVIDER,
+          threadId,
+        });
       }
       yield* stopSessionInternal(threadId);
     },
@@ -3412,7 +3411,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
   const rollbackThread: CopilotAdapterShape["rollbackThread"] = Effect.fn("rollbackThread")(
     function* (threadId, _numTurns) {
       if (!sessions.has(threadId)) {
-        return yield* sessionNotFoundError(threadId);
+        return yield* new ProviderAdapterSessionNotFoundError({
+          provider: PROVIDER,
+          threadId,
+        });
       }
       return yield* new ProviderAdapterRequestError({
         provider: PROVIDER,
