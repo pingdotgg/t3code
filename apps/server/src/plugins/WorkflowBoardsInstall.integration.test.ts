@@ -83,14 +83,14 @@ const LEGACY_TABLE_NAMES = [
 ] as const;
 
 // Exact column count per ported table (the faithful baseline). A dropped/added
-// column changes the count and fails the shape guard. dispatch_outbox = 17 (13
-// base + 4 folded ALTER columns); step_run = 20; ticket = 19.
+// column changes the count and fails the shape guard. dispatch_outbox = 18 (13
+// base + durable message_id + 4 folded ALTER columns); step_run = 20; ticket = 19.
 const EXPECTED_TABLE_COLUMN_COUNTS: Readonly<Record<string, number>> = {
   p_workflow_boards_agent_session: 6,
   p_workflow_boards_board_proposal: 12,
   p_workflow_boards_board_version: 6,
   p_workflow_boards_board_webhook: 4,
-  p_workflow_boards_dispatch_outbox: 17,
+  p_workflow_boards_dispatch_outbox: 18,
   p_workflow_boards_events: 7,
   p_workflow_boards_outbound_connection: 5,
   p_workflow_boards_outbound_delivery: 13,
@@ -546,6 +546,7 @@ layer("workflow-boards fixture plugin", (it) => {
             assert.include(ddlByName.get(name) ?? "", needle, `${name} DDL missing: ${needle}`);
           // The 4 dispatch_outbox ALTER columns must be folded inline.
           assertDdlIncludes("p_workflow_boards_dispatch_outbox", "options_json");
+          assertDdlIncludes("p_workflow_boards_dispatch_outbox", "message_id");
           assertDdlIncludes("p_workflow_boards_dispatch_outbox", "project_id");
           assertDdlIncludes("p_workflow_boards_dispatch_outbox", "thread_title");
           assertDdlIncludes("p_workflow_boards_dispatch_outbox", "runtime_mode");
