@@ -5,6 +5,7 @@ import {
   type PluginId,
   type PluginLockfile,
   type PluginLockfilePlugin,
+  type PluginState,
 } from "@t3tools/contracts/plugin";
 import type {
   PluginDefinition,
@@ -34,6 +35,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerLifecycleEvents from "../serverLifecycleEvents.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProjectionThreadActivities from "../persistence/Services/ProjectionThreadActivities.ts";
@@ -339,6 +341,25 @@ export const make = Effect.fn("PluginHost.make")(function* () {
   const sourceControlRegistry = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const github = yield* GitHubCli.GitHubCli;
   const terminals = yield* TerminalManager.TerminalManager;
+  const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
+
+  const publishPluginStateChanged = (pluginId: PluginId, state: PluginState) =>
+    lifecycleEvents
+      .publish({
+        version: 1,
+        type: "plugins",
+        payload: {
+          kind: "plugin-state-changed",
+          pluginId,
+          state,
+        },
+      })
+      .pipe(Effect.ignoreCause({ log: true }), Effect.asVoid);
+
+  const markFailure = (pluginId: PluginId, message: string) =>
+    updateFailure(store, pluginId, message).pipe(
+      Effect.tap(() => publishPluginStateChanged(pluginId, "failed")),
+    );
 
   const readManifest = (pluginDir: string) =>
     fs
@@ -356,9 +377,11 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         });
       }
       if (!hostApiSatisfies(manifest.hostApi, HOST_API_VERSION)) {
-        yield* store.updatePlugin(pluginId, ({ current }) =>
-          Effect.succeed(current ? { ...current, state: "disabled-by-host" } : undefined),
-        );
+        yield* store
+          .updatePlugin(pluginId, ({ current }) =>
+            Effect.succeed(current ? { ...current, state: "disabled-by-host" } : undefined),
+          )
+          .pipe(Effect.tap(() => publishPluginStateChanged(pluginId, "disabled-by-host")));
         yield* Effect.logWarning("Plugin disabled by host API version mismatch", {
           pluginId,
           requested: manifest.hostApi,
@@ -374,7 +397,7 @@ export const make = Effect.fn("PluginHost.make")(function* () {
       const serverEntry = manifest.entries.server;
       const serverEntryPath = path.join(pluginDir, serverEntry);
       if (!(yield* fs.exists(pluginDir)) || !(yield* fs.exists(serverEntryPath))) {
-        yield* updateFailure(store, pluginId, "plugin directory or server entry is missing");
+        yield* markFailure(pluginId, "plugin directory or server entry is missing");
         return;
       }
 
@@ -479,8 +502,10 @@ export const make = Effect.fn("PluginHost.make")(function* () {
       if (Exit.isFailure(exit)) {
         yield* Scope.close(scope, exit);
         const message = Cause.pretty(exit.cause);
-        yield* updateFailure(store, pluginId, message);
+        yield* markFailure(pluginId, message);
         yield* Effect.logWarning("Plugin activation failed", { pluginId, cause: message });
+      } else {
+        yield* publishPluginStateChanged(pluginId, "active");
       }
     });
 
@@ -493,34 +518,34 @@ export const make = Effect.fn("PluginHost.make")(function* () {
       }
       if (entry.state === "pending-upgrade") {
         if (!entry.staged) {
-          yield* updateFailure(
-            store,
-            pluginId,
-            "pending upgrade is missing staged plugin metadata",
-          );
+          yield* markFailure(pluginId, "pending upgrade is missing staged plugin metadata");
           return false;
         }
         const staged = entry.staged;
-        yield* store.updatePlugin(pluginId, ({ current }) =>
-          Effect.succeed(current ? upgradeLockfileEntry(current, staged) : undefined),
-        );
+        yield* store
+          .updatePlugin(pluginId, ({ current }) =>
+            Effect.succeed(current ? upgradeLockfileEntry(current, staged) : undefined),
+          )
+          .pipe(Effect.tap(() => publishPluginStateChanged(pluginId, "active")));
         return true;
       }
       if (entry.activation.activatingSince !== null) {
         const crashCount = entry.activation.crashCount + 1;
         if (crashCount >= 2) {
-          yield* store.updatePlugin(pluginId, ({ current }) =>
-            Effect.succeed(
-              current
-                ? {
-                    ...current,
-                    state: "failed",
-                    lastError: "disabled after repeated crashes",
-                    activation: { activatingSince: null, crashCount },
-                  }
-                : undefined,
-            ),
-          );
+          yield* store
+            .updatePlugin(pluginId, ({ current }) =>
+              Effect.succeed(
+                current
+                  ? {
+                      ...current,
+                      state: "failed",
+                      lastError: "disabled after repeated crashes",
+                      activation: { activatingSince: null, crashCount },
+                    }
+                  : undefined,
+              ),
+            )
+            .pipe(Effect.tap(() => publishPluginStateChanged(pluginId, "failed")));
           return false;
         }
         yield* store.updatePlugin(pluginId, ({ current }) =>
@@ -571,7 +596,7 @@ export const make = Effect.fn("PluginHost.make")(function* () {
       if (!currentEntry?.enabled || currentEntry.state !== "active") continue;
       yield* loadPlugin(pluginId, currentEntry).pipe(
         Effect.catchCause((cause) =>
-          updateFailure(store, pluginId, Cause.pretty(cause)).pipe(
+          markFailure(pluginId, Cause.pretty(cause)).pipe(
             Effect.andThen(
               Effect.logWarning("Plugin activation failed before scope acquisition", {
                 pluginId,

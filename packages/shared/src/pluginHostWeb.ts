@@ -462,6 +462,7 @@ const pluginSdkWebExports = [
   "badgeVariants",
   "buttonVariants",
   "createPluginAtoms",
+  "defineWebPlugin",
   "getAppAtomRegistry",
   "getConnectionAtomRuntime",
   "hostCompat",

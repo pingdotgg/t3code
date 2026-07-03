@@ -2,6 +2,8 @@ import {
   type EnvironmentId,
   type ServerConfig,
   type ServerConfigStreamEvent,
+  type ServerLifecycleStreamEvent,
+  type ServerLifecyclePluginStateChangedPayload,
   type ServerLifecycleWelcomePayload,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -70,10 +72,7 @@ export function projectServerConfig(
 
 export function projectServerWelcome(
   current: Option.Option<ServerLifecycleWelcomePayload>,
-  event: {
-    readonly type: "welcome" | "ready";
-    readonly payload: unknown;
-  },
+  event: Pick<ServerLifecycleStreamEvent, "type" | "payload">,
 ): readonly [
   Option.Option<ServerLifecycleWelcomePayload>,
   ReadonlyArray<ServerLifecycleWelcomePayload>,
@@ -83,6 +82,21 @@ export function projectServerWelcome(
   }
   const welcome = event.payload as ServerLifecycleWelcomePayload;
   return [Option.some(welcome), [welcome]];
+}
+
+export function isPluginStateChangedLifecycleEvent(
+  event: Pick<ServerLifecycleStreamEvent, "type" | "payload">,
+): event is {
+  readonly type: "plugins";
+  readonly payload: ServerLifecyclePluginStateChangedPayload;
+} {
+  return (
+    event.type === "plugins" &&
+    typeof event.payload === "object" &&
+    event.payload !== null &&
+    "kind" in event.payload &&
+    event.payload.kind === "plugin-state-changed"
+  );
 }
 
 export function createServerEnvironmentAtoms<R, E>(
@@ -152,6 +166,15 @@ export function createServerEnvironmentAtoms<R, E>(
       transform: (stream) =>
         stream.pipe(
           Stream.mapAccum(Option.none<ServerLifecycleWelcomePayload>, projectServerWelcome),
+        ),
+    }),
+    pluginStateChanges: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:plugin-state-changes",
+      tag: WS_METHODS.subscribeServerLifecycle,
+      transform: (stream) =>
+        stream.pipe(
+          Stream.filter(isPluginStateChangedLifecycleEvent),
+          Stream.map((event) => event.payload),
         ),
     }),
     refreshProviders: createEnvironmentRpcCommand(runtime, {

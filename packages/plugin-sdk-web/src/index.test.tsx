@@ -6,6 +6,7 @@ import {
   ProviderModelPicker,
   TraitsPicker,
   createPluginAtoms,
+  defineWebPlugin,
   hostCompat,
   pluginSdkWebExternalDependencies,
 } from "./index";
@@ -24,5 +25,33 @@ describe("plugin-sdk-web", () => {
     expect(pluginSdkWebExternalDependencies).toEqual(
       expect.arrayContaining(["@effect/atom-react", "effect", "react", "react-dom"]),
     );
+  });
+
+  it("returns defineWebPlugin definitions unchanged", () => {
+    const definition = defineWebPlugin({
+      register(ctx) {
+        ctx.registerRoute({
+          path: "overview",
+          component: () => null,
+        });
+        ctx.registerSidebarSection({
+          id: "main",
+          title: "Main",
+          render: () => null,
+        });
+        ctx.registerSettingsPage({
+          id: "settings",
+          title: "Settings",
+          component: () => null,
+        });
+        ctx.registerCommand({
+          id: "refresh",
+          title: "Refresh",
+          run: () => undefined,
+        });
+      },
+    });
+
+    expect(typeof definition.register).toBe("function");
   });
 });

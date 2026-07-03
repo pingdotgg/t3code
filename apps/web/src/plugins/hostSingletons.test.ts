@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import {
-  getPluginHostShimSource,
-  pluginHostShimExportNames,
-} from "@t3tools/shared/pluginHostWeb";
+import { getPluginHostShimSource, pluginHostShimExportNames } from "@t3tools/shared/pluginHostWeb";
 
 import { getPluginHost, whenPluginHostReady } from "./hostSingletons";
 

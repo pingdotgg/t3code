@@ -1,9 +1,10 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ServerProvider } from "./server.ts";
+import { ServerLifecycleStreamEvent, ServerProvider } from "./server.ts";
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
+const decodeServerLifecycleEvent = Schema.decodeUnknownSync(ServerLifecycleStreamEvent);
 
 describe("ServerProvider", () => {
   it("defaults capability arrays when decoding provider snapshots", () => {
@@ -70,5 +71,26 @@ describe("ServerProvider", () => {
     });
 
     expect(parsed.continuation?.groupKey).toBe("codex:home:/Users/julius/.codex");
+  });
+});
+
+describe("ServerLifecycleStreamEvent", () => {
+  it("decodes plugin state change events", () => {
+    const parsed = decodeServerLifecycleEvent({
+      version: 1,
+      sequence: 3,
+      type: "plugins",
+      payload: {
+        kind: "plugin-state-changed",
+        pluginId: "fixture-plugin",
+        state: "active",
+      },
+    });
+
+    expect(parsed.type).toBe("plugins");
+    if (parsed.type === "plugins") {
+      expect(parsed.payload.pluginId).toBe("fixture-plugin");
+      expect(parsed.payload.state).toBe("active");
+    }
   });
 });

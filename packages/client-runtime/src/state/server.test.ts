@@ -1,8 +1,16 @@
-import { type ServerConfig, type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
+import {
+  PluginId,
+  type ServerConfig,
+  type ServerLifecycleWelcomePayload,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 
-import { applyServerConfigProjection, projectServerWelcome } from "./server.ts";
+import {
+  applyServerConfigProjection,
+  isPluginStateChangedLifecycleEvent,
+  projectServerWelcome,
+} from "./server.ts";
 
 const CONFIG = {
   availableEditors: [],
@@ -45,10 +53,30 @@ describe("server state projection", () => {
     });
     const [afterReady, emitted] = projectServerWelcome(afterWelcome, {
       type: "ready",
-      payload: {},
+      payload: {} as never,
     });
 
     expect(Option.getOrThrow(afterReady)).toBe(welcome);
+    expect(emitted).toEqual([]);
+  });
+
+  it("detects plugin state change lifecycle events without disturbing welcome projection", () => {
+    const pluginId = PluginId.make("fixture-plugin");
+    const event = {
+      version: 1 as const,
+      sequence: 1,
+      type: "plugins" as const,
+      payload: {
+        kind: "plugin-state-changed" as const,
+        pluginId,
+        state: "active" as const,
+      },
+    };
+
+    const [next, emitted] = projectServerWelcome(Option.none(), event);
+
+    expect(isPluginStateChangedLifecycleEvent(event)).toBe(true);
+    expect(Option.isNone(next)).toBe(true);
     expect(emitted).toEqual([]);
   });
 });

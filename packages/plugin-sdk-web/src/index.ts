@@ -1,5 +1,6 @@
 import type { PluginId } from "@t3tools/contracts/plugin";
 import { HOST_API_VERSION } from "@t3tools/contracts/plugin";
+import type * as Stream from "effect/Stream";
 import { pluginSdkWebExternalDependencies } from "./externals";
 
 export { pluginSdkWebExternalDependencies, isPluginSdkWebExternal } from "./externals";
@@ -71,39 +72,79 @@ export const hostCompat = {
 
 export interface PluginUiContext {
   readonly pluginId: PluginId;
+  readonly rpc: PluginWebRpc;
+  readonly logger: PluginWebLogger;
+  readonly registerRoute: (registration: PluginRouteRegistration) => void;
+  readonly registerSidebarSection: (registration: PluginSidebarSectionRegistration) => void;
+  readonly registerSettingsPage: (registration: PluginSettingsPageRegistration) => void;
+  readonly registerCommand: (registration: PluginCommandRegistration) => void;
 }
 
-export type PluginComponent<Props> = (props: Props) => unknown;
+export interface PluginWebLogger {
+  readonly debug: (message: string, data?: unknown) => void;
+  readonly info: (message: string, data?: unknown) => void;
+  readonly warn: (message: string, data?: unknown) => void;
+  readonly error: (message: string, data?: unknown) => void;
+}
+
+export interface PluginWebRpc {
+  readonly call: (method: string, payload?: unknown) => Promise<unknown>;
+  readonly subscribe: (
+    method: string,
+    payload?: unknown,
+  ) => Stream.Stream<unknown, unknown, unknown>;
+}
+
+export type PluginComponent<Props = Record<string, never>> = (props: Props) => unknown;
+
+export interface PluginRouteComponentProps {
+  readonly pluginId: PluginId;
+  readonly path: string;
+}
 
 export interface PluginRouteRegistration {
-  readonly id: string;
   readonly path: string;
-  readonly title: string;
-  readonly component: PluginComponent<PluginUiContext>;
+  readonly component: PluginComponent<PluginRouteComponentProps>;
 }
 
-export interface PluginSidebarSection {
+export interface PluginSidebarSectionRenderProps {
+  readonly pluginId: PluginId;
+  readonly environmentId: string | null;
+  readonly routeBasePath: string | null;
+}
+
+export interface PluginSidebarSectionRegistration {
   readonly id: string;
   readonly title: string;
-  readonly items: ReadonlyArray<{
-    readonly id: string;
-    readonly title: string;
-    readonly routePath: string;
-    readonly icon?: PluginComponent<{ readonly className?: string }>;
-  }>;
+  readonly render: (props: PluginSidebarSectionRenderProps) => unknown;
 }
 
-export interface PluginSettingsPage {
+export interface PluginSettingsComponentProps {
+  readonly pluginId: PluginId;
+  readonly pageId: string;
+}
+
+export interface PluginSettingsPageRegistration {
   readonly id: string;
   readonly title: string;
-  readonly component: PluginComponent<PluginUiContext>;
+  readonly component: PluginComponent<PluginSettingsComponentProps>;
 }
 
-export interface PluginCommand {
+export interface PluginCommandRegistration {
   readonly id: string;
   readonly title: string;
   readonly description?: string;
   readonly run: (context: PluginUiContext) => void | Promise<void>;
+}
+
+export interface PluginWebDefinition {
+  readonly register: (context: PluginUiContext) => void | Promise<void>;
+}
+
+export function defineWebPlugin<const Definition extends PluginWebDefinition>(
+  definition: Definition,
+): Definition {
+  return definition;
 }
 
 /**
@@ -113,8 +154,8 @@ export interface PluginCommand {
  */
 export interface PluginWebRegistration {
   readonly routes?: ReadonlyArray<PluginRouteRegistration>;
-  readonly sidebarSections?: ReadonlyArray<PluginSidebarSection>;
-  readonly settingsPages?: ReadonlyArray<PluginSettingsPage>;
-  readonly commands?: ReadonlyArray<PluginCommand>;
+  readonly sidebarSections?: ReadonlyArray<PluginSidebarSectionRegistration>;
+  readonly settingsPages?: ReadonlyArray<PluginSettingsPageRegistration>;
+  readonly commands?: ReadonlyArray<PluginCommandRegistration>;
   readonly providers?: (context: PluginUiContext) => unknown;
 }
