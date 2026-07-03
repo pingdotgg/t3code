@@ -33,6 +33,7 @@ import {
   touchSessionLoadReplayActivity,
   waitForSessionLoadReplayToSettle,
   type SessionLoadGate,
+  type AcpAssistantChannel,
   type AcpParsedSessionEvent,
   type AcpSessionModeState,
   type AcpToolCallState,
@@ -262,15 +263,35 @@ type AcpStartState =
     }
   | { readonly _tag: "Started"; readonly result: AcpStartedState };
 
+interface AcpActiveAssistantSegment {
+  readonly itemId: string;
+  readonly channel: AcpAssistantChannel;
+  /** Accumulated thought text so the segment-completed event can carry it.
+   * Assistant text is not accumulated here — it streams via ContentDelta. */
+  readonly text: string;
+}
+
 interface AcpAssistantSegmentState {
   readonly nextSegmentIndex: number;
-  readonly activeItemId?: string;
+  readonly active?: AcpActiveAssistantSegment;
 }
 
 interface EnsureActiveAssistantSegmentResult {
   readonly itemId: string;
-  readonly startedEvent?: Extract<AcpParsedSessionEvent, { readonly _tag: "AssistantItemStarted" }>;
+  readonly events: ReadonlyArray<
+    Extract<
+      AcpParsedSessionEvent,
+      { readonly _tag: "AssistantItemStarted" | "AssistantItemCompleted" }
+    >
+  >;
 }
+
+/** Keeps thought accumulation bounded for very long reasoning segments. */
+const MAX_THOUGHT_SEGMENT_CHARS = 20_000;
+
+/** Differentiates runtime instances within one process; combined with the
+ * startup timestamp it makes segment item ids unique across restarts. */
+let runtimeInstanceCounter = 0;
 
 export const make = (
   options: AcpSessionRuntimeOptions,
@@ -286,6 +307,12 @@ export const make = (
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallState>());
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
+    // Segment item ids must not repeat across runtimes that resume the same
+    // ACP session (e.g. after a server restart), otherwise downstream
+    // consumers derive colliding message ids and new output gets appended to
+    // messages from a previous run. The tag makes ids runtime-unique.
+    runtimeInstanceCounter += 1;
+    const runtimeTag = `${(yield* Clock.currentTimeMillis).toString(36)}-${runtimeInstanceCounter.toString(36)}`;
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
     const promptSerializationSemaphore = yield* Semaphore.make(1);
@@ -387,6 +414,7 @@ export const make = (
           modeStateRef,
           toolCallsRef,
           assistantSegmentRef,
+          runtimeTag,
           params: notification,
         });
       }),
@@ -864,12 +892,14 @@ const handleSessionUpdate = ({
   modeStateRef,
   toolCallsRef,
   assistantSegmentRef,
+  runtimeTag,
   params,
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
   readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallState>>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
+  readonly runtimeTag: string;
   readonly params: EffectAcpSchema.SessionNotification;
 }): Effect.Effect<void> =>
   Effect.gen(function* () {
@@ -909,7 +939,8 @@ const handleSessionUpdate = ({
       if (event._tag === "ContentDelta") {
         if (event.text.trim().length === 0) {
           const assistantSegmentState = yield* Ref.get(assistantSegmentRef);
-          if (!assistantSegmentState.activeItemId) {
+          // Whitespace-only deltas may not open a segment on their own.
+          if (assistantSegmentState.active?.channel !== event.channel) {
             continue;
           }
         }
@@ -917,7 +948,22 @@ const handleSessionUpdate = ({
           queue,
           assistantSegmentRef,
           sessionId: params.sessionId,
+          runtimeTag,
+          channel: event.channel,
         });
+        if (event.channel === "thought") {
+          yield* Ref.update(assistantSegmentRef, (current) =>
+            current.active?.itemId === itemId
+              ? {
+                  ...current,
+                  active: {
+                    ...current.active,
+                    text: appendThoughtSegmentText(current.active.text, event.text),
+                  },
+                }
+              : current,
+          );
+        }
         yield* Queue.offer(queue, {
           ...event,
           itemId,
@@ -954,44 +1000,79 @@ function shouldEmitToolCallUpdate(
   return previous === undefined || previous.title !== next.title || previous.detail !== next.detail;
 }
 
-const assistantItemId = (sessionId: string, segmentIndex: number) =>
-  `assistant:${sessionId}:segment:${segmentIndex}`;
+const assistantItemId = (input: {
+  readonly sessionId: string;
+  readonly runtimeTag: string;
+  readonly channel: AcpAssistantChannel;
+  readonly segmentIndex: number;
+}) =>
+  `${input.channel === "thought" ? "thought" : "assistant"}:${input.sessionId}:${input.runtimeTag}:segment:${input.segmentIndex}`;
+
+function appendThoughtSegmentText(current: string, delta: string): string {
+  if (current.length >= MAX_THOUGHT_SEGMENT_CHARS) {
+    return current;
+  }
+  return `${current}${delta}`.slice(0, MAX_THOUGHT_SEGMENT_CHARS);
+}
+
+function completedSegmentEvent(
+  segment: AcpActiveAssistantSegment,
+): Extract<AcpParsedSessionEvent, { readonly _tag: "AssistantItemCompleted" }> {
+  return {
+    _tag: "AssistantItemCompleted",
+    itemId: segment.itemId,
+    channel: segment.channel,
+    ...(segment.channel === "thought" && segment.text.length > 0 ? { text: segment.text } : {}),
+  };
+}
 
 const ensureActiveAssistantSegment = ({
   queue,
   assistantSegmentRef,
   sessionId,
+  runtimeTag,
+  channel,
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly sessionId: string;
+  readonly runtimeTag: string;
+  readonly channel: AcpAssistantChannel;
 }) =>
   Ref.modify<AcpAssistantSegmentState, EnsureActiveAssistantSegmentResult>(
     assistantSegmentRef,
     (current) => {
-      if (current.activeItemId) {
-        return [{ itemId: current.activeItemId }, current] as const;
+      if (current.active?.channel === channel) {
+        return [{ itemId: current.active.itemId, events: [] }, current] as const;
       }
-      const itemId = assistantItemId(sessionId, current.nextSegmentIndex);
-      return [
+      const itemId = assistantItemId({
+        sessionId,
+        runtimeTag,
+        channel,
+        segmentIndex: current.nextSegmentIndex,
+      });
+      const events: EnsureActiveAssistantSegmentResult["events"] = [
+        // A channel switch (assistant <-> thought) closes the previous segment.
+        ...(current.active ? [completedSegmentEvent(current.active)] : []),
         {
+          _tag: "AssistantItemStarted",
           itemId,
-          startedEvent: {
-            _tag: "AssistantItemStarted",
-            itemId,
-          } satisfies Extract<AcpParsedSessionEvent, { readonly _tag: "AssistantItemStarted" }>,
+          channel,
         },
+      ];
+      return [
+        { itemId, events },
         {
           nextSegmentIndex: current.nextSegmentIndex + 1,
-          activeItemId: itemId,
+          active: { itemId, channel, text: "" },
         } satisfies AcpAssistantSegmentState,
       ] as const;
     },
   ).pipe(
     Effect.flatMap((result) =>
-      result.startedEvent
-        ? Queue.offer(queue, result.startedEvent).pipe(Effect.as(result.itemId))
-        : Effect.succeed(result.itemId),
+      Effect.forEach(result.events, (event) => Queue.offer(queue, event), {
+        discard: true,
+      }).pipe(Effect.as(result.itemId)),
     ),
   );
 
@@ -1003,14 +1084,11 @@ const closeActiveAssistantSegment = ({
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
 }) =>
   Ref.modify(assistantSegmentRef, (current) => {
-    if (!current.activeItemId) {
+    if (!current.active) {
       return [undefined, current] as const;
     }
     return [
-      {
-        _tag: "AssistantItemCompleted",
-        itemId: current.activeItemId,
-      } satisfies AcpParsedSessionEvent,
+      completedSegmentEvent(current.active),
       {
         nextSegmentIndex: current.nextSegmentIndex,
       } satisfies AcpAssistantSegmentState,

@@ -152,4 +152,48 @@ describe("AcpCoreRuntimeEvents", () => {
       },
     });
   });
+
+  it("maps thought-channel segments to reasoning items and reasoning_text deltas", () => {
+    const stamp = { eventId: "event-1" as never, createdAt: "2026-03-27T00:00:00.000Z" };
+    const turnId = TurnId.make("turn-1");
+
+    expect(
+      makeAcpContentDeltaEvent({
+        stamp,
+        provider: ProviderDriverKind.make("cursor"),
+        threadId: "thread-1" as never,
+        turnId,
+        itemId: "thought:session-1:tag:segment:0",
+        channel: "thought",
+        text: "Checking the failing test first.",
+        rawPayload: { sessionId: "session-1" },
+      }),
+    ).toMatchObject({
+      type: "content.delta",
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "Checking the failing test first.",
+      },
+    });
+
+    expect(
+      makeAcpAssistantItemEvent({
+        stamp,
+        provider: ProviderDriverKind.make("cursor"),
+        threadId: "thread-1" as never,
+        turnId,
+        itemId: "thought:session-1:tag:segment:0",
+        lifecycle: "item.completed",
+        channel: "thought",
+        detail: "Checking the failing test first.",
+      }),
+    ).toMatchObject({
+      type: "item.completed",
+      payload: {
+        itemType: "reasoning",
+        status: "completed",
+        detail: "Checking the failing test first.",
+      },
+    });
+  });
 });

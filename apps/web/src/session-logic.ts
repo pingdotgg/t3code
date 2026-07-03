@@ -710,7 +710,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     turnId: activity.turnId,
     label: taskLabel || activity.summary,
     tone:
-      activity.kind === "task.progress"
+      // Reasoning rows (ACP agent_thought_chunk segments) share the thinking
+      // affordance with Codex task.progress reasoning updates.
+      activity.kind === "task.progress" || activity.kind === "reasoning"
         ? "thinking"
         : activity.tone === "approval"
           ? "info"

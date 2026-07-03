@@ -12,7 +12,12 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 
-import type { AcpPermissionRequest, AcpPlanUpdate, AcpToolCallState } from "./AcpRuntimeModel.ts";
+import type {
+  AcpAssistantChannel,
+  AcpPermissionRequest,
+  AcpPlanUpdate,
+  AcpToolCallState,
+} from "./AcpRuntimeModel.ts";
 
 type AcpAdapterRawSource = Extract<
   RuntimeEventRawSource,
@@ -198,6 +203,9 @@ export function makeAcpAssistantItemEvent(input: {
   readonly turnId: TurnId | undefined;
   readonly itemId: string;
   readonly lifecycle: "item.started" | "item.completed";
+  readonly channel?: AcpAssistantChannel;
+  /** Full segment text for completed thought segments. */
+  readonly detail?: string;
 }): ProviderRuntimeEvent {
   return {
     type: input.lifecycle,
@@ -207,8 +215,11 @@ export function makeAcpAssistantItemEvent(input: {
     turnId: input.turnId,
     itemId: RuntimeItemId.make(input.itemId),
     payload: {
-      itemType: "assistant_message",
+      itemType: input.channel === "thought" ? "reasoning" : "assistant_message",
       status: input.lifecycle === "item.completed" ? "completed" : "inProgress",
+      ...(input.detail !== undefined && input.detail.trim().length > 0
+        ? { detail: input.detail }
+        : {}),
     },
   };
 }
@@ -219,6 +230,7 @@ export function makeAcpContentDeltaEvent(input: {
   readonly threadId: ThreadId;
   readonly turnId: TurnId | undefined;
   readonly itemId?: string;
+  readonly channel?: AcpAssistantChannel;
   readonly text: string;
   readonly rawPayload: unknown;
 }): ProviderRuntimeEvent {
@@ -230,7 +242,15 @@ export function makeAcpContentDeltaEvent(input: {
     turnId: input.turnId,
     ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
     payload: {
-      streamKind: "assistant_text",
+      // reasoning_text deltas are intentionally not appended to the assistant
+      // message by ProviderRuntimeIngestion (same as the Codex/Claude/OpenCode
+      // adapters' reasoning deltas). The full thought text is accumulated in
+      // AcpSessionRuntime's active segment and delivered via item.completed
+      // (itemType "reasoning"), which ingestion persists as an expandable
+      // thinking row. Segments are closed on channel switches, tool calls, and
+      // prompt settlement (including cancellation), so accumulated reasoning
+      // survives an interrupted turn.
+      streamKind: input.channel === "thought" ? "reasoning_text" : "assistant_text",
       delta: input.text,
     },
     raw: {

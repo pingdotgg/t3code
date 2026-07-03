@@ -799,6 +799,7 @@ export function makeCursorAdapter(
                         turnId: ctx.activeTurnId,
                         itemId: event.itemId,
                         lifecycle: "item.started",
+                        channel: event.channel,
                       }),
                     );
                     return;
@@ -811,6 +812,8 @@ export function makeCursorAdapter(
                         turnId: ctx.activeTurnId,
                         itemId: event.itemId,
                         lifecycle: "item.completed",
+                        channel: event.channel,
+                        ...(event.text !== undefined ? { detail: event.text } : {}),
                       }),
                     );
                     return;
@@ -861,6 +864,7 @@ export function makeCursorAdapter(
                         threadId: ctx.threadId,
                         turnId: ctx.activeTurnId,
                         ...(event.itemId ? { itemId: event.itemId } : {}),
+                        channel: event.channel,
                         text: event.text,
                         rawPayload: event.rawPayload,
                       }),
@@ -1012,6 +1016,34 @@ export function makeCursorAdapter(
                 mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
               ),
             );
+
+          // The prompt RPC can resolve while session/update notifications are
+          // still queued. Wait until the notification fiber has published all
+          // of them so content deltas and item completions reach consumers
+          // before turn.completed (otherwise buffered assistant text may be
+          // finalized against the wrong turn state). Racing against the
+          // notification fiber keeps this from hanging when the session is
+          // torn down mid-turn and nobody can acknowledge the drain barrier.
+          yield* ctx.notificationFiber
+            ? Effect.raceFirst(
+                ctx.acp.drainEvents,
+                Fiber.await(ctx.notificationFiber).pipe(Effect.asVoid),
+              )
+            : Effect.void;
+
+          // The notification fiber also terminates when stopSessionInternal
+          // interrupts it during teardown, which settles the race without the
+          // drain having happened. At that point the session is already gone
+          // (session.exited emitted, ctx removed from the map), so mutating
+          // turn state or emitting turn.completed here would produce
+          // out-of-order events against a removed session. Bail out instead.
+          if (ctx.stopped) {
+            return {
+              threadId: input.threadId,
+              turnId,
+              resumeCursor: ctx.session.resumeCursor,
+            };
+          }
 
           const turnRecord = ctx.turns.find((turn) => turn.id === turnId);
           if (turnRecord) {

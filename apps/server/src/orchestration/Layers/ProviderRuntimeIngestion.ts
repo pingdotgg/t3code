@@ -166,6 +166,19 @@ function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
 
+/** Full reasoning text is kept expandable in the work log but capped so a
+ * single thought segment cannot bloat the persisted activity payload. */
+const MAX_REASONING_ACTIVITY_CHARS = 8_000;
+
+function reasoningSummaryFromText(text: string): string {
+  const firstLine = text
+    .split("\n")
+    .find((line) => line.trim().length > 0)
+    ?.trim();
+  const cleaned = firstLine?.replaceAll("**", "").trim();
+  return truncateDetail(cleaned && cleaned.length > 0 ? cleaned : "Thinking", 120);
+}
+
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
   const trimmed = planMarkdown?.trim();
   if (!trimmed) {
@@ -591,6 +604,28 @@ function runtimeEventToActivities(
     }
 
     case "item.completed": {
+      // Reasoning segments (e.g. Cursor agent_thought_chunk) become expandable
+      // "thinking" rows in the work log instead of disappearing entirely.
+      if (event.payload.itemType === "reasoning") {
+        const reasoningText = event.payload.detail?.trim();
+        if (!reasoningText) {
+          return [];
+        }
+        return [
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: "info",
+            kind: "reasoning",
+            summary: reasoningSummaryFromText(reasoningText),
+            payload: {
+              detail: truncateDetail(reasoningText, MAX_REASONING_ACTIVITY_CHARS),
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
+          },
+        ];
+      }
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }

@@ -228,7 +228,9 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       assert.isDefined(delta);
       if (delta?.type === "content.delta") {
         assert.equal(delta.payload.delta, "hello from mock");
-        assert.match(String(delta.itemId), /^assistant:mock-session-1:segment:0$/);
+        // The middle part is a per-runtime tag that keeps segment ids unique
+        // across restarts that resume the same ACP session.
+        assert.match(String(delta.itemId), /^assistant:mock-session-1:[^:]+:segment:0$/);
       }
 
       const assistantCompleted = runtimeEvents.find(
@@ -687,7 +689,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           if (contentDelta?.type === "content.delta") {
             assert.equal(String(contentDelta.turnId), String(turn.turnId));
             assert.equal(contentDelta.payload.delta, "hello from mock");
-            assert.equal(String(contentDelta.itemId), "assistant:mock-session-1:segment:0");
+            assert.match(String(contentDelta.itemId), /^assistant:mock-session-1:[^:]+:segment:0$/);
           }
         });
 
@@ -1044,6 +1046,8 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const serverSettings = yield* ServerSettingsService;
       const threadId = ThreadId.make("cursor-stop-pending-approval");
       const approvalRequested = yield* Deferred.make<void>();
+      const sessionExited = yield* Deferred.make<void>();
+      const observedEvents: Array<ProviderRuntimeEvent> = [];
 
       const wrapperPath = yield* Effect.promise(() =>
         makeMockAgentWrapper({ T3_ACP_EMIT_TOOL_CALLS: "1" }),
@@ -1051,7 +1055,14 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
 
       yield* Stream.runForEach(adapter.streamEvents, (event) => {
-        if (String(event.threadId) !== String(threadId) || event.type !== "request.opened") {
+        if (String(event.threadId) !== String(threadId)) {
+          return Effect.void;
+        }
+        observedEvents.push(event);
+        if (event.type === "session.exited") {
+          return Deferred.succeed(sessionExited, undefined).pipe(Effect.ignore);
+        }
+        if (event.type !== "request.opened") {
           return Effect.void;
         }
         return Deferred.succeed(approvalRequested, undefined).pipe(Effect.ignore);
@@ -1078,6 +1089,17 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       yield* Fiber.await(sendTurnFiber);
 
       assert.equal(yield* adapter.hasSession(threadId), false);
+
+      // Teardown interrupts the notification fiber, which settles sendTurn's
+      // drain race. sendTurn must then bail out: emitting turn.completed after
+      // session.exited would publish out-of-order events for a removed session.
+      // sendTurn already finished above, so after session.exited arrives we
+      // only need to let the stream consumer drain any remaining events.
+      yield* Deferred.await(sessionExited);
+      for (let i = 0; i < 10; i += 1) {
+        yield* Effect.yieldNow;
+      }
+      assert.isFalse(observedEvents.some((event) => event.type === "turn.completed"));
     }),
   );
 

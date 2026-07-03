@@ -120,8 +120,13 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
           ? message.requestId
           : undefined;
     const requestId = encodedRequestId === "" ? undefined : encodedRequestId;
+    // JSON-RPC 2.0 notifications must omit the `id` member entirely. The RPC
+    // serializer would emit `"id": ""` for empty-id requests, which agents
+    // (e.g. the Cursor CLI) reject as a malformed request instead of handling
+    // the notification — so notifications are encoded by hand here.
+    const isNotification = message._tag === "Request" && message.id === "";
     const encoded = yield* Effect.try({
-      try: () => parser.encode(message),
+      try: () => (isNotification ? encodeJsonRpcNotificationWire(message) : parser.encode(message)),
       catch: (cause) => AcpError.AcpProtocolParseError.fromEncodingError(method, requestId, cause),
     });
 
@@ -576,6 +581,15 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     notify: sendNotification,
   } satisfies AcpPatchedProtocol;
 });
+
+/** Encodes a JSON-RPC 2.0 notification (no `id`) with ndjson framing. */
+function encodeJsonRpcNotificationWire(message: RpcMessage.RequestEncoded): string {
+  return `${JSON.stringify({
+    jsonrpc: "2.0",
+    method: message.tag,
+    ...(message.payload === undefined ? {} : { params: message.payload }),
+  })}\n`;
+}
 
 function isProtocolError(
   value: unknown,

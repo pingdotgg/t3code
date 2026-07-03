@@ -80,6 +80,12 @@ export interface AcpPermissionRequest {
   readonly toolCall?: AcpToolCallState;
 }
 
+/**
+ * Distinguishes the two ACP text streams: `agent_message_chunk` (final
+ * assistant prose) and `agent_thought_chunk` (intermediate reasoning).
+ */
+export type AcpAssistantChannel = "assistant" | "thought";
+
 export type AcpParsedSessionEvent =
   | {
       readonly _tag: "ModeChanged";
@@ -88,10 +94,15 @@ export type AcpParsedSessionEvent =
   | {
       readonly _tag: "AssistantItemStarted";
       readonly itemId: string;
+      readonly channel: AcpAssistantChannel;
     }
   | {
       readonly _tag: "AssistantItemCompleted";
       readonly itemId: string;
+      readonly channel: AcpAssistantChannel;
+      /** Accumulated segment text; populated for thought segments so the
+       * completed event can carry the full reasoning text downstream. */
+      readonly text?: string;
     }
   | {
       readonly _tag: "PlanUpdated";
@@ -106,6 +117,7 @@ export type AcpParsedSessionEvent =
   | {
       readonly _tag: "ContentDelta";
       readonly itemId?: string;
+      readonly channel: AcpAssistantChannel;
       readonly text: string;
       readonly rawPayload: unknown;
     };
@@ -624,6 +636,20 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       if (upd.content.type === "text" && upd.content.text.length > 0) {
         events.push({
           _tag: "ContentDelta",
+          channel: "assistant",
+          text: upd.content.text,
+          rawPayload: params,
+        });
+      }
+      break;
+    }
+    case "agent_thought_chunk": {
+      // Reasoning text; agents like the Cursor CLI stream their intermediate
+      // narration here, so dropping it hides most of the turn's text output.
+      if (upd.content.type === "text" && upd.content.text.length > 0) {
+        events.push({
+          _tag: "ContentDelta",
+          channel: "thought",
           text: upd.content.text,
           rawPayload: params,
         });
