@@ -138,6 +138,10 @@ const mapPluginHandlerStreamCause = (pluginId: PluginId, cause: Cause.Cause<Erro
 export const make = Effect.fn("PluginRpcDispatcher.make")(function* () {
   const registry = yield* PluginRuntimeRegistry;
 
+  // Error-order disclosure, by design: callers holding the transport
+  // baseline scope can distinguish invalid-method from unauthorized (method
+  // enumeration). Plugin method names are not secrets — manifests and web
+  // bundles are user-readable — and the clearer typo diagnostics win.
   const call: PluginRpcDispatcher["Service"]["call"] = (pluginId, method, payload, session) =>
     Effect.gen(function* () {
       const runtime = yield* lookupRuntime(registry, pluginId);

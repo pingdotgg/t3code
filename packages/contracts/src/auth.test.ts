@@ -2,8 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import {
+  AuthAccessWriteScope,
   AuthOrchestrationReadScope,
   AuthPluginsManageScope,
+  AuthRelayReadScope,
+  AuthStandardClientMarkerScopes,
   AuthStandardClientScopes,
   PluginScope,
   pluginOperateScope,
@@ -59,11 +62,29 @@ describe("satisfiesScope", () => {
     expect(satisfiesScope(pluginOperateScope("test-plugin"), AuthStandardClientScopes)).toBe(true);
   });
 
-  it("does not treat a partial standard client scope set as implicit plugin access", () => {
-    const partialStandard = AuthStandardClientScopes.filter(
+  it("treats the legacy five-scope standard bundle as a full standard client", () => {
+    // Sessions persisted before plugins:manage joined AuthStandardClientScopes
+    // hold exactly the marker scopes — they keep implicit plugin access AND
+    // plugins:manage after an upgrade, without re-pairing.
+    const legacyStandard = AuthStandardClientScopes.filter(
       (scope) => scope !== AuthPluginsManageScope,
     );
 
-    expect(satisfiesScope(pluginReadScope("test-plugin"), partialStandard)).toBe(false);
+    expect(satisfiesScope(pluginReadScope("test-plugin"), legacyStandard)).toBe(true);
+    expect(satisfiesScope(pluginOperateScope("test-plugin"), legacyStandard)).toBe(true);
+    expect(satisfiesScope(AuthPluginsManageScope, legacyStandard)).toBe(true);
+  });
+
+  it("does not treat a partial marker scope set as implicit plugin access", () => {
+    const partialMarker = AuthStandardClientMarkerScopes.filter(
+      (scope) => scope !== AuthRelayReadScope,
+    );
+
+    expect(satisfiesScope(pluginReadScope("test-plugin"), partialMarker)).toBe(false);
+    expect(satisfiesScope(AuthPluginsManageScope, partialMarker)).toBe(false);
+  });
+
+  it("does not let the marker imply unrelated core scopes", () => {
+    expect(satisfiesScope(AuthAccessWriteScope, [...AuthStandardClientMarkerScopes])).toBe(false);
   });
 });

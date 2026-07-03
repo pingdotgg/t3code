@@ -131,14 +131,38 @@ export const AuthAdministrativeScopes = [
   AuthRelayWriteScope,
 ] as const;
 
+/**
+ * The original standard-client scope bundle, used as the durable MARKER for
+ * the implicit grant rules below. Sessions persisted before newer scopes
+ * (e.g. `plugins:manage`) joined `AuthStandardClientScopes` still hold
+ * exactly these five — they must keep behaving as full standard clients
+ * after an upgrade, without re-pairing or a data migration.
+ *
+ * Do NOT add new scopes here: this list is frozen by definition.
+ */
+export const AuthStandardClientMarkerScopes = [
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
+  AuthReviewWriteScope,
+  AuthRelayReadScope,
+] as const;
+
+const holdsStandardClientMarker = (granted: ReadonlyArray<AuthScope>): boolean =>
+  AuthStandardClientMarkerScopes.every((markerScope) => granted.includes(markerScope));
+
 export function satisfiesScope(required: AuthScope, granted: ReadonlyArray<AuthScope>): boolean {
-  if (!isPluginScope(required)) {
-    return granted.includes(required);
+  if (isPluginScope(required)) {
+    // A full standard (local, full-trust) client implicitly satisfies every
+    // plugin scope; restricted/managed tokens must carry them explicitly.
+    return granted.includes(required) || holdsStandardClientMarker(granted);
   }
-  return (
-    granted.includes(required) ||
-    AuthStandardClientScopes.every((standardScope) => granted.includes(standardScope))
-  );
+  if (required === AuthPluginsManageScope) {
+    // plugins:manage joined the standard bundle after sessions began being
+    // persisted; the marker keeps pre-upgrade standard sessions whole.
+    return granted.includes(required) || holdsStandardClientMarker(granted);
+  }
+  return granted.includes(required);
 }
 
 export const authEnvironmentScopes = (
