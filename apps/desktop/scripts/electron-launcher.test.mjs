@@ -1,6 +1,6 @@
 import { assert, describe, it } from "vite-plus/test";
 
-import { makeDevelopmentLauncherScript } from "./electron-launcher.mjs";
+import { makeDevelopmentLauncherScript, resolveElectronBinaryPath } from "./electron-launcher.mjs";
 
 describe("electron development launcher", () => {
   it("uses captured values only as fallbacks for a live runner environment", () => {
@@ -24,5 +24,25 @@ describe("electron development launcher", () => {
       script,
       "exec '/repo/node_modules/electron/Electron' --t3code-dev-root='/repo/apps/desktop' '/repo/apps/desktop/dist-electron/main.cjs' \"$@\"",
     );
+  });
+
+  it("repairs Electron before loading the package entrypoint", () => {
+    const calls = [];
+    const electronPath = resolveElectronBinaryPath({
+      ensureRuntime: () => {
+        calls.push("ensure");
+      },
+      createRequire: () => (specifier) => {
+        calls.push(`require:${specifier}`);
+        return "/repo/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron";
+      },
+      moduleUrl: import.meta.url,
+    });
+
+    assert.equal(
+      electronPath,
+      "/repo/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+    );
+    assert.deepEqual(calls, ["ensure", "require:electron"]);
   });
 });
