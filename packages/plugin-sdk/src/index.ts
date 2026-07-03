@@ -283,6 +283,14 @@ export interface TerminalsCapability {
 
 export interface DatabaseCapability {
   /**
+   * The raw Effect SqlClient bound to the shared database. Full-trust: runtime
+   * SQL is unpoliced (the p_<id>_ namespace gate is migration-time only), so
+   * this grants no power beyond `execute`. Provided for plugins whose ported
+   * code uses tagged-template SQL / composable fragments / withTransaction.
+   */
+  readonly client: SqlClient.SqlClient;
+
+  /**
    * Execute trusted plugin SQL and return decoded row objects.
    *
    * Plugin tables are namespaced by convention as `p_<plugin_id>_*`. Runtime
