@@ -48,6 +48,7 @@ import {
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
+import { withLogContext } from "../../observability/LogContext.ts";
 
 /**
  * Hook for tests that want to override the canonical event logger pulled
@@ -542,73 +543,81 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             `Provider instance '${resolvedInstanceId}' is disabled in T3 Code settings.`,
           );
         }
-        const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
-        const effectiveResumeCursor =
-          input.resumeCursor ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
-            ? persistedBinding.resumeCursor
-            : undefined);
-        const effectiveCwd =
-          input.cwd ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
-            ? readPersistedCwd(persistedBinding.runtimePayload)
-            : undefined);
-        yield* Effect.annotateCurrentSpan({
-          "provider.kind": resolvedProvider,
-          "provider.resume_cursor.source":
-            input.resumeCursor !== undefined
-              ? "request"
-              : effectiveResumeCursor !== undefined &&
-                  persistedBinding?.providerInstanceId === resolvedInstanceId
-                ? "persisted"
-                : "none",
-          "provider.resume_cursor.present": effectiveResumeCursor !== undefined,
-          "provider.cwd.source":
-            input.cwd !== undefined
-              ? "request"
-              : effectiveCwd !== undefined &&
-                  persistedBinding?.providerInstanceId === resolvedInstanceId
-                ? "persisted"
-                : "none",
-          "provider.cwd.effective": effectiveCwd ?? "",
-        });
-        const adapter = yield* registry.getByInstance(resolvedInstanceId);
-        const session = yield* adapter.startSession({
-          ...input,
-          providerInstanceId: resolvedInstanceId,
-          ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
-          ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
-        });
+        return yield* Effect.gen(function* () {
+          const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+          const effectiveResumeCursor =
+            input.resumeCursor ??
+            (persistedBinding?.providerInstanceId === resolvedInstanceId
+              ? persistedBinding.resumeCursor
+              : undefined);
+          const effectiveCwd =
+            input.cwd ??
+            (persistedBinding?.providerInstanceId === resolvedInstanceId
+              ? readPersistedCwd(persistedBinding.runtimePayload)
+              : undefined);
+          yield* Effect.annotateCurrentSpan({
+            "provider.kind": resolvedProvider,
+            "provider.resume_cursor.source":
+              input.resumeCursor !== undefined
+                ? "request"
+                : effectiveResumeCursor !== undefined &&
+                    persistedBinding?.providerInstanceId === resolvedInstanceId
+                  ? "persisted"
+                  : "none",
+            "provider.resume_cursor.present": effectiveResumeCursor !== undefined,
+            "provider.cwd.source":
+              input.cwd !== undefined
+                ? "request"
+                : effectiveCwd !== undefined &&
+                    persistedBinding?.providerInstanceId === resolvedInstanceId
+                  ? "persisted"
+                  : "none",
+            "provider.cwd.effective": effectiveCwd ?? "",
+          });
+          const adapter = yield* registry.getByInstance(resolvedInstanceId);
+          const session = yield* adapter.startSession({
+            ...input,
+            providerInstanceId: resolvedInstanceId,
+            ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
+            ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
+          });
 
-        if (session.provider !== adapter.provider) {
-          return yield* toValidationError(
-            "ProviderService.startSession",
-            `Adapter/provider mismatch: requested '${adapter.provider}', received '${session.provider}'.`,
-          );
-        }
-        const sessionWithInstance = {
-          ...session,
-          providerInstanceId: resolvedInstanceId,
-        };
+          if (session.provider !== adapter.provider) {
+            return yield* toValidationError(
+              "ProviderService.startSession",
+              `Adapter/provider mismatch: requested '${adapter.provider}', received '${session.provider}'.`,
+            );
+          }
+          const sessionWithInstance = {
+            ...session,
+            providerInstanceId: resolvedInstanceId,
+          };
 
-        yield* stopStaleSessionsForThread({
-          threadId,
-          currentInstanceId: resolvedInstanceId,
-        });
-        yield* upsertSessionBinding(sessionWithInstance, threadId, {
-          modelSelection: input.modelSelection,
-        });
-        yield* analytics.record("provider.session.started", {
-          provider: sessionWithInstance.provider,
-          runtimeMode: input.runtimeMode,
-          hasResumeCursor: sessionWithInstance.resumeCursor !== undefined,
-          hasCwd: typeof effectiveCwd === "string" && effectiveCwd.trim().length > 0,
-          hasModel:
-            typeof input.modelSelection?.model === "string" &&
-            input.modelSelection.model.trim().length > 0,
-        });
+          yield* stopStaleSessionsForThread({
+            threadId,
+            currentInstanceId: resolvedInstanceId,
+          });
+          yield* upsertSessionBinding(sessionWithInstance, threadId, {
+            modelSelection: input.modelSelection,
+          });
+          yield* analytics.record("provider.session.started", {
+            provider: sessionWithInstance.provider,
+            runtimeMode: input.runtimeMode,
+            hasResumeCursor: sessionWithInstance.resumeCursor !== undefined,
+            hasCwd: typeof effectiveCwd === "string" && effectiveCwd.trim().length > 0,
+            hasModel:
+              typeof input.modelSelection?.model === "string" &&
+              input.modelSelection.model.trim().length > 0,
+          });
+          yield* Effect.logInfo("provider.connect", {
+            provider: sessionWithInstance.provider,
+            threadId,
+            providerInstanceId: resolvedInstanceId,
+            runtimeMode: input.runtimeMode,
+          });
 
-        return sessionWithInstance;
+          return sessionWithInstance;
+        }).pipe(withLogContext({ threadId, provider: resolvedProvider }));
       }).pipe(
         withMetrics({
           counter: providerSessionsTotal,
@@ -714,32 +723,34 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       metricProvider = routed.adapter.provider;
       metricModel = input.modelSelection?.model;
-      yield* Effect.annotateCurrentSpan({
-        "provider.kind": routed.adapter.provider,
-        ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
-      });
-      const turn = yield* routed.adapter.sendTurn(input);
-      yield* directory.upsert({
-        threadId: input.threadId,
-        provider: routed.adapter.provider,
-        providerInstanceId: routed.instanceId,
-        status: "running",
-        ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
-        runtimePayload: {
-          ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-          activeTurnId: turn.turnId,
-          lastRuntimeEvent: "provider.sendTurn",
-          lastRuntimeEventAt: new Date().toISOString(),
-        },
-      });
-      yield* analytics.record("provider.turn.sent", {
-        provider: routed.adapter.provider,
-        model: input.modelSelection?.model,
-        interactionMode: input.interactionMode,
-        attachmentCount: input.attachments.length,
-        hasInput: typeof input.input === "string" && input.input.trim().length > 0,
-      });
-      return turn;
+      return yield* Effect.gen(function* () {
+        yield* Effect.annotateCurrentSpan({
+          "provider.kind": routed.adapter.provider,
+          ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
+        });
+        const turn = yield* routed.adapter.sendTurn(input);
+        yield* directory.upsert({
+          threadId: input.threadId,
+          provider: routed.adapter.provider,
+          providerInstanceId: routed.instanceId,
+          status: "running",
+          ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
+          runtimePayload: {
+            ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+            activeTurnId: turn.turnId,
+            lastRuntimeEvent: "provider.sendTurn",
+            lastRuntimeEventAt: new Date().toISOString(),
+          },
+        });
+        yield* analytics.record("provider.turn.sent", {
+          provider: routed.adapter.provider,
+          model: input.modelSelection?.model,
+          interactionMode: input.interactionMode,
+          attachmentCount: input.attachments.length,
+          hasInput: typeof input.input === "string" && input.input.trim().length > 0,
+        });
+        return turn;
+      }).pipe(withLogContext({ threadId: input.threadId, provider: routed.adapter.provider }));
     }).pipe(
       withMetrics({
         counter: providerTurnsTotal,
@@ -880,26 +891,34 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           allowRecovery: false,
         });
         metricProvider = routed.adapter.provider;
-        yield* Effect.annotateCurrentSpan({
-          "provider.operation": "stop-session",
-          "provider.kind": routed.adapter.provider,
-          "provider.thread_id": input.threadId,
-        });
-        if (routed.isActive) {
-          yield* routed.adapter.stopSession(routed.threadId);
-        }
-        yield* directory.upsert({
-          threadId: input.threadId,
-          provider: routed.adapter.provider,
-          providerInstanceId: routed.instanceId,
-          status: "stopped",
-          runtimePayload: {
-            activeTurnId: null,
-          },
-        });
-        yield* analytics.record("provider.session.stopped", {
-          provider: routed.adapter.provider,
-        });
+        return yield* Effect.gen(function* () {
+          yield* Effect.annotateCurrentSpan({
+            "provider.operation": "stop-session",
+            "provider.kind": routed.adapter.provider,
+            "provider.thread_id": input.threadId,
+          });
+          if (routed.isActive) {
+            yield* routed.adapter.stopSession(routed.threadId);
+          }
+          yield* directory.upsert({
+            threadId: input.threadId,
+            provider: routed.adapter.provider,
+            providerInstanceId: routed.instanceId,
+            status: "stopped",
+            runtimePayload: {
+              activeTurnId: null,
+            },
+          });
+          yield* analytics.record("provider.session.stopped", {
+            provider: routed.adapter.provider,
+          });
+          yield* Effect.logInfo("provider.disconnect", {
+            provider: routed.adapter.provider,
+            threadId: input.threadId,
+            providerInstanceId: routed.instanceId,
+            reason: "stop_requested",
+          });
+        }).pipe(withLogContext({ threadId: input.threadId, provider: routed.adapter.provider }));
       }).pipe(
         withMetrics({
           counter: providerSessionsTotal,

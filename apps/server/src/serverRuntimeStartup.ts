@@ -23,6 +23,7 @@ import {
 } from "effect";
 
 import { ServerConfig } from "./config.ts";
+import packageJson from "../package.json" with { type: "json" };
 import { Keybindings } from "./keybindings.ts";
 import { Open } from "./open.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
@@ -292,7 +293,19 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const httpListening = yield* Deferred.make<void>();
   const reactorScope = yield* Scope.make("sequential");
 
+  yield* Effect.logInfo("server.start", {
+    version: packageJson.version,
+    mode: serverConfig.mode,
+    port: serverConfig.port,
+  });
+
   yield* Effect.addFinalizer(() => Scope.close(reactorScope, Exit.void));
+  yield* Effect.addFinalizer((exit) =>
+    Effect.logInfo("server.stop", {
+      reason: Exit.isSuccess(exit) ? "success" : "failure",
+      ...(Exit.isFailure(exit) ? { cause: exit.cause } : {}),
+    }),
+  );
 
   const startup = Effect.gen(function* () {
     yield* Effect.logDebug("startup phase: starting keybindings runtime");

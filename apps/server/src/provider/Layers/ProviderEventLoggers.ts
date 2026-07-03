@@ -31,6 +31,11 @@ import { Context, Effect, Layer } from "effect";
 
 import { ServerConfig } from "../../config.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { makeGlobalProviderEventSink } from "./GlobalProviderEventSink.ts";
+
+const GLOBAL_SINK_MAX_BYTES = 10 * 1024 * 1024;
+const GLOBAL_SINK_MAX_FILES = 10;
+const GLOBAL_SINK_BATCH_WINDOW_MS = 200;
 
 export interface ProviderEventLoggersShape {
   readonly native: EventNdjsonLogger | undefined;
@@ -68,12 +73,20 @@ export const NoOpProviderEventLoggers: ProviderEventLoggersShape = {
 export const ProviderEventLoggersLive = Layer.effect(
   ProviderEventLoggers,
   Effect.gen(function* () {
-    const { providerEventLogPath } = yield* ServerConfig;
+    const { providerEventLogPath, globalProviderEventLogPath } = yield* ServerConfig;
+    const globalSink = yield* makeGlobalProviderEventSink({
+      filePath: globalProviderEventLogPath,
+      maxBytes: GLOBAL_SINK_MAX_BYTES,
+      maxFiles: GLOBAL_SINK_MAX_FILES,
+      batchWindowMs: GLOBAL_SINK_BATCH_WINDOW_MS,
+    });
     const native = yield* makeEventNdjsonLogger(providerEventLogPath, {
       stream: "native",
+      globalSink,
     });
     const canonical = yield* makeEventNdjsonLogger(providerEventLogPath, {
       stream: "canonical",
+      globalSink,
     });
     return {
       native,

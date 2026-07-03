@@ -75,6 +75,7 @@ import {
   observeRpcStream,
   observeRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
+import { withLogContext } from "./observability/LogContext.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
 import { listCopilotPreconnectionCommands } from "./provider/copilotPreconnectionCommands.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
@@ -1334,7 +1335,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         );
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
-          () => rpcWebSocketHttpEffect,
+          () => rpcWebSocketHttpEffect.pipe(withLogContext({ sessionId: session.sessionId })),
           () => sessions.markDisconnected(session.sessionId),
         );
       }).pipe(Effect.catchTag("AuthError", respondToAuthError)),

@@ -32,6 +32,7 @@ export interface ServerDerivedPaths {
   readonly serverTracePath: string;
   readonly providerLogsDir: string;
   readonly providerEventLogPath: string;
+  readonly globalProviderEventLogPath: string;
   readonly terminalLogsDir: string;
   readonly anonymousIdPath: string;
   readonly environmentIdPath: string;
@@ -91,6 +92,7 @@ export const deriveServerPaths = Effect.fn(function* (
     serverTracePath: join(logsDir, "server.trace.ndjson"),
     providerLogsDir,
     providerEventLogPath: join(providerLogsDir, "events.log"),
+    globalProviderEventLogPath: join(providerLogsDir, "provider-events.ndjson"),
     terminalLogsDir: join(logsDir, "terminals"),
     anonymousIdPath: join(stateDir, "anonymous-id"),
     environmentIdPath: join(stateDir, "environment-id"),

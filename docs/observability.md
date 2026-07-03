@@ -3,22 +3,35 @@
 T3 Code has one server-side observability model:
 
 - pretty logs go to stdout for humans
+- structured JSON logs are also persisted to a rotating `server.log` file
 - completed spans go to a local NDJSON trace file
+- provider runtime events are persisted per-thread and also to a global consolidated stream
+- every log line, span, and provider event is tagged with correlation IDs (`sessionId`/`threadId`/`provider`) where available
 - traces and metrics can also be exported over OTLP to a real backend like Grafana LGTM
 
-The local trace file is the persisted source of truth. There is no separate persisted server log file anymore.
+The trace file and the structured `server.log` file are both persisted sources of truth; `server.log` captures every log line (not just ones inside an active span), while the trace file captures span/timing detail.
 
 ## Where To Find Things
 
 ### Logs
 
-Logs are human-facing only:
+Logs go to two destinations:
 
-- destination: stdout
-- format: `Logger.consolePretty()`
-- persistence: none
+- stdout, for humans: `Logger.consolePretty()`
+- `serverLogPath` (default `~/.t3/userdata/logs/server.log`), for machines: structured NDJSON via `Logger.formatJson`, batched and written through the same `RotatingFileSink` used for trace and provider event files (10MB per file, 10 backups)
+
+Each line in `server.log` is a standalone JSON object with `level`, `message`, `timestamp`, `fiberId`, `cause` (when present), `spans`, and `annotations`. Correlation IDs (see below) and any `Effect.annotateLogs` calls show up under `annotations`. This is additive: `consolePretty()` output is unchanged, and if the file sink fails to initialize (e.g. unwritable directory) the server falls back to console-only logging rather than crashing.
 
 If you want a log message to show up in the trace file, emit it inside an active span with `Effect.log...`. `Logger.tracerLogger` will attach it as a span event.
+
+### Correlation IDs
+
+`apps/server/src/observability/LogContext.ts` defines a `Context.Reference`-based correlation context (`{ sessionId?, threadId?, provider? }`). It is set once at natural boundaries and automatically annotates every log line and span underneath, without manual `annotateCurrentSpan` calls at each call site:
+
+- `sessionId` is tagged once per WebSocket connection in `apps/server/src/ws.ts`
+- `threadId` and `provider` are tagged around provider adapter operations in `apps/server/src/provider/Layers/ProviderService.ts` (`startSession`, `sendTurn`, `stopSession`)
+
+Use `withLogContext({ ... })` to wrap an `Effect` with additional correlation fields; nested calls merge with (and can override) any fields set by an outer scope.
 
 ### Traces
 
@@ -47,7 +60,16 @@ If OTLP is not configured, metrics still exist in-process, but you will not have
 
 ### Related Artifacts
 
-Provider event NDJSON files still exist for provider runtime streams. Those are separate from the main server trace file.
+Provider event NDJSON files still exist per-thread under `logs/provider/` for provider runtime streams. In addition, every provider event (native and canonical) is also written to a single global rotating file at `globalProviderEventLogPath` (default `~/.t3/userdata/logs/provider/provider-events.ndjson`), tagged with `stream`, `threadId`, and `observedAt`, so you can search or tail one file instead of grepping across hundreds of per-thread files. Both are separate from the main server trace file.
+
+### Lifecycle Events
+
+Key server and provider lifecycle transitions are emitted as structured log entries (visible in `server.log` and stdout) so session boundaries are easy to find:
+
+- `server.start`: emitted once at startup, with `version`, `mode`, and `port`
+- `server.stop`: emitted from a finalizer during shutdown (including on crash/interrupt), with `reason` (`success` or `failure`) and the failure `cause` when applicable
+- `provider.connect`: emitted when a provider session starts, with `provider`, `threadId`, `providerInstanceId`, and `runtimeMode`
+- `provider.disconnect`: emitted when a provider session stops, with `provider`, `threadId`, `providerInstanceId`, and `reason`
 
 ## Run The Server In Instrumented Mode
 
@@ -514,6 +536,5 @@ Current high-value span and metric boundaries include:
 
 ### Current Constraints
 
-- logs outside spans are not persisted
 - metrics are not snapshotted locally
-- the old `serverLogPath` still exists in config for compatibility, but the trace file is the persisted artifact that matters
+- correlation IDs (`sessionId`/`threadId`/`provider`) are only as complete as the boundaries that set them (`ws.ts`, `ProviderService.ts`); ad hoc fibers spawned outside those boundaries won't have them unless they inherit from a parent that does

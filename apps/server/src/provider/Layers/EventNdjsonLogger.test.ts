@@ -7,6 +7,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 
 import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { makeGlobalProviderEventSink } from "./GlobalProviderEventSink.ts";
 
 function parseLogLine(line: string) {
   const match = /^\[([^\]]+)\] ([A-Z]+): (.+)$/.exec(line);
@@ -205,5 +206,58 @@ describe("EventNdjsonLogger", () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
       }
     }),
+  );
+
+  it.effect("also pushes every event into the shared global sink when configured", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-log-"));
+        const basePath = path.join(tempDir, "provider-native.ndjson");
+        const globalPath = path.join(tempDir, "provider-events.ndjson");
+
+        try {
+          const globalSink = yield* makeGlobalProviderEventSink({
+            filePath: globalPath,
+            maxBytes: 10 * 1024 * 1024,
+            maxFiles: 10,
+            batchWindowMs: 5,
+          });
+
+          const logger = yield* makeEventNdjsonLogger(basePath, {
+            stream: "native",
+            globalSink,
+          });
+          assert.notEqual(logger, undefined);
+          if (!logger) {
+            return;
+          }
+
+          yield* logger.write({ id: "evt-1" }, ThreadId.make("thread-1"));
+          yield* logger.write({ id: "evt-2" }, null);
+          yield* logger.close();
+          yield* globalSink.flush;
+
+          const globalLines = fs
+            .readFileSync(globalPath, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+          assert.equal(globalLines.length, 2);
+          assert.equal(globalLines[0]?.stream, "native");
+          assert.equal(globalLines[0]?.threadId, "thread-1");
+          assert.deepStrictEqual(globalLines[0]?.event, { id: "evt-1" });
+          assert.equal(globalLines[1]?.stream, "native");
+          assert.equal(globalLines[1]?.threadId, null);
+          assert.deepStrictEqual(globalLines[1]?.event, { id: "evt-2" });
+
+          // Per-thread file is still written independently of the global sink.
+          const threadOnePath = path.join(tempDir, "thread-1.log");
+          assert.equal(fs.existsSync(threadOnePath), true);
+        } finally {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+      }),
+    ),
   );
 });

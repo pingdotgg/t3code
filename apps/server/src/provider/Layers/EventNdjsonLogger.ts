@@ -14,6 +14,8 @@ import { Effect, Exit, Logger, Scope, SynchronizedRef } from "effect";
 
 import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
 
+import type { GlobalProviderEventSink } from "./GlobalProviderEventSink.ts";
+
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_FILES = 10;
 const DEFAULT_BATCH_WINDOW_MS = 200;
@@ -33,6 +35,12 @@ export interface EventNdjsonLoggerOptions {
   readonly maxBytes?: number;
   readonly maxFiles?: number;
   readonly batchWindowMs?: number;
+  /**
+   * When provided, every event written to a per-thread file is ALSO
+   * pushed to this consolidated `provider-events.ndjson` sink (see
+   * improvement #3: a single searchable stream across all threads).
+   */
+  readonly globalSink?: GlobalProviderEventSink;
 }
 
 interface ThreadWriter {
@@ -181,6 +189,7 @@ export const makeEventNdjsonLogger = Effect.fn("makeEventNdjsonLogger")(function
   const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
   const batchWindowMs = options.batchWindowMs ?? DEFAULT_BATCH_WINDOW_MS;
   const streamLabel = resolveStreamLabel(options.stream);
+  const globalSink = options.globalSink;
 
   const directoryReady = yield* Effect.sync(() => {
     try {
@@ -251,6 +260,8 @@ export const makeEventNdjsonLogger = Effect.fn("makeEventNdjsonLogger")(function
   });
 
   const write = Effect.fn("write")(function* (event: unknown, threadId: ThreadId | null) {
+    globalSink?.push(options.stream, threadId, event);
+
     const threadSegment = resolveThreadSegment(threadId);
     const message = yield* toLogMessage(event);
     if (!message) {
