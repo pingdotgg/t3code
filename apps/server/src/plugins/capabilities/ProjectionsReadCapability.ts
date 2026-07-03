@@ -75,6 +75,15 @@ export function makeProjectionsReadCapability(input: {
       input.messages
         .listByThreadId({ threadId })
         .pipe(Effect.map((rows) => rows.slice(0, boundedLimit(limit)).map(toMessage))),
+    getMessageById: (messageId) =>
+      input.messages.getByMessageId({ messageId }).pipe(
+        Effect.map(
+          Option.match({
+            onNone: () => null,
+            onSome: toMessage,
+          }),
+        ),
+      ),
     listActivitiesByThreadId: ({ threadId, limit }) =>
       input.activities
         .listByThreadId({ threadId })

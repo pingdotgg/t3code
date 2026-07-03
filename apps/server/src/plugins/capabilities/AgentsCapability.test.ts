@@ -290,6 +290,85 @@ agentsIt("AgentsCapability", (it) => {
     }),
   );
 
+  it.effect("startTurn forwards caller-supplied ids and generates defaults when omitted", () =>
+    Effect.gen(function* () {
+      const dispatched: OrchestrationCommand[] = [];
+      const agents = makeAgentsCapability({
+        pluginId,
+        engine: {
+          readEvents: () => Stream.empty,
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command);
+              return { sequence: dispatched.length };
+            }),
+          streamDomainEvents: Stream.empty,
+        },
+        snapshots: {
+          getThreadOwnerById: () => Effect.succeed(Option.some("plugin:agent-plugin" as any)),
+          getThreadDetailById: () => Effect.succeed(Option.none()),
+          getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
+        } as any,
+        turns: {} as any,
+        messages: {} as any,
+        providerInstances: makeProviderRegistry(),
+      });
+      const threadId = ThreadId.make("thread-caller-ids");
+      const callerMessageId = MessageId.make("message-caller");
+      const callerCommandId = CommandId.make("cmd-caller-turn-start");
+
+      const callerResult = yield* agents.startTurn({
+        threadId,
+        text: "caller ids",
+        messageId: callerMessageId,
+        commandId: callerCommandId,
+      });
+      const generatedResult = yield* agents.startTurn({
+        threadId,
+        text: "generated ids",
+      });
+
+      const turnStarts = dispatched.filter((command) => command.type === "thread.turn.start");
+      expect(callerResult.messageId).toBe(callerMessageId);
+      expect(turnStarts[0]?.type).toBe("thread.turn.start");
+      if (turnStarts[0]?.type === "thread.turn.start") {
+        expect(turnStarts[0].commandId).toBe(callerCommandId);
+        expect(turnStarts[0].message.messageId).toBe(callerMessageId);
+      }
+      expect(generatedResult.messageId).not.toBe(callerMessageId);
+      expect(String(generatedResult.messageId)).toMatch(/^plugin-message:/);
+      expect(turnStarts[1]?.type).toBe("thread.turn.start");
+      if (turnStarts[1]?.type === "thread.turn.start") {
+        expect(String(turnStarts[1].commandId)).toMatch(/^plugin:turn-start:/);
+        expect(turnStarts[1].message.messageId).toBe(generatedResult.messageId);
+      }
+    }),
+  );
+
+  it.effect("startTurn re-dispatch with the same caller commandId is receipt-deduplicated", () =>
+    Effect.gen(function* () {
+      const { agents, engine, messages, turns } = yield* makeCapability;
+      yield* createProject(engine);
+      const { threadId } = yield* agents.createThread({
+        projectId: ProjectId.make("project-agents"),
+        title: "Dedup",
+        modelSelection,
+      });
+      const messageId = MessageId.make("message-dedup");
+      const commandId = CommandId.make("cmd-dedup-turn-start");
+
+      yield* agents.startTurn({ threadId, text: "first", messageId, commandId });
+      yield* agents.startTurn({ threadId, text: "second", messageId, commandId });
+
+      const projectedMessages = yield* messages.listByThreadId({ threadId });
+      expect(projectedMessages.filter((message) => message.messageId === messageId)).toHaveLength(
+        1,
+      );
+      const projectedTurns = yield* turns.listByThreadId({ threadId });
+      expect(projectedTurns.filter((turn) => turn.pendingMessageId === messageId)).toHaveLength(1);
+    }),
+  );
+
   it.effect("observeThread emits the owned snapshot followed by thread-detail events", () =>
     Effect.gen(function* () {
       const { agents, engine } = yield* makeCapability;

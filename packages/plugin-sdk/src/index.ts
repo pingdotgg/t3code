@@ -2,6 +2,7 @@ import type {
   ChangeRequestState,
   ChatAttachment,
   CheckpointRef,
+  CommandId,
   EnvironmentId,
   ExecutionEnvironmentDescriptor,
   MessageId,
@@ -342,6 +343,13 @@ export interface ProjectionsReadCapability {
     readonly threadId: ThreadId;
     readonly limit?: number;
   }) => Effect.Effect<ReadonlyArray<OrchestrationMessage>, Error>;
+
+  /**
+   * Read a projected thread message directly by message id.
+   */
+  readonly getMessageById: (
+    messageId: MessageId,
+  ) => Effect.Effect<OrchestrationMessage | null, Error>;
 
   /**
    * List projected thread activities in runtime sequence order with a bounded
@@ -735,6 +743,8 @@ export interface AgentsStartTurnBootstrapInput {
 export interface AgentsStartTurnInput {
   readonly threadId: ThreadId;
   readonly text: string;
+  readonly messageId?: MessageId | undefined;
+  readonly commandId?: CommandId | undefined;
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
   readonly modelSelection?: ModelSelection | undefined;
   readonly bootstrap?: AgentsStartTurnBootstrapInput | undefined;

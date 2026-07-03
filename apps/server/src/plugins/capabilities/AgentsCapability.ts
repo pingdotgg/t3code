@@ -329,7 +329,7 @@ export function makeAgentsCapability(input: {
             createdAt: bootstrap.createThread.createdAt ?? nowIso(),
           });
         }
-        const messageId = nextMessageId();
+        const messageId = request.messageId ?? nextMessageId();
         const turnId = nextTurnId();
         turnAliases.set(String(turnId), { threadId: request.threadId, messageId });
         // Do NOT forward bootstrap.createThread into turn-start: the thread now
@@ -338,7 +338,7 @@ export function makeAgentsCapability(input: {
         yield* input.engine
           .dispatch({
             type: "thread.turn.start",
-            commandId: nextCommandId("turn-start"),
+            commandId: request.commandId ?? nextCommandId("turn-start"),
             threadId: request.threadId,
             message: {
               messageId,

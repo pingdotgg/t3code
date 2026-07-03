@@ -177,6 +177,21 @@ it.effect("projections read returns contract-shaped thread data with caps", () =
               updatedAt: "2026-07-03T00:00:03.000Z",
             },
           ] as any),
+        getByMessageId: (input: { readonly messageId: string }) =>
+          Effect.succeed(
+            input.messageId === "message-1"
+              ? Option.some({
+                  messageId: "message-1",
+                  threadId: "thread-1",
+                  turnId: "turn-1",
+                  role: "assistant",
+                  text: "hello",
+                  isStreaming: false,
+                  createdAt: "2026-07-03T00:00:00.000Z",
+                  updatedAt: "2026-07-03T00:00:01.000Z",
+                } as any)
+              : Option.none(),
+          ),
       } as any,
       activities: {
         listByThreadId: () =>
@@ -215,6 +230,16 @@ it.effect("projections read returns contract-shaped thread data with caps", () =
         },
       ],
     );
+    assert.deepEqual(yield* capability.getMessageById("message-1" as any), {
+      id: "message-1" as any,
+      role: "assistant",
+      text: "hello",
+      turnId: "turn-1" as any,
+      streaming: false,
+      createdAt: "2026-07-03T00:00:00.000Z",
+      updatedAt: "2026-07-03T00:00:01.000Z",
+    });
+    assert.equal(yield* capability.getMessageById("message-missing" as any), null);
     assert.deepEqual(yield* capability.listActivitiesByThreadId({ threadId: "thread-1" as any }), [
       {
         id: "activity-1" as any,
