@@ -5,19 +5,17 @@ import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 
-type InputProps = Omit<InputPrimitive.Props & React.RefAttributes<HTMLInputElement>, "size"> & {
+type InputBaseProps = {
   size?: "sm" | "default" | "lg" | number;
   unstyled?: boolean;
   nativeInput?: boolean;
 };
 
-function Input({
-  className,
-  size = "default",
-  unstyled = false,
-  nativeInput = false,
-  ...props
-}: InputProps) {
+type InputProps = InputBaseProps &
+  Omit<InputPrimitive.Props & React.RefAttributes<HTMLInputElement>, "size">;
+
+function Input(props: InputProps) {
+  const { className, size = "default", unstyled = false } = props;
   const inputClassName = cn(
     "h-8.5 w-full min-w-0 rounded-[inherit] px-[calc(--spacing(3)-1px)] leading-8.5 outline-none placeholder:text-muted-foreground/72 sm:h-7.5 sm:leading-7.5 [transition:background-color_5000000s_ease-in-out_0s]",
     size === "sm" && "h-7.5 px-[calc(--spacing(2.5)-1px)] leading-7.5 sm:h-6.5 sm:leading-6.5",
@@ -27,6 +25,50 @@ function Input({
     props.type === "file" &&
       "text-muted-foreground file:me-3 file:bg-transparent file:font-medium file:text-foreground file:text-sm",
   );
+
+  if (props.nativeInput) {
+    const {
+      className: _className,
+      size: _size,
+      unstyled: _unstyled,
+      nativeInput: _nativeInput,
+      style,
+      ...nativeProps
+    } = props;
+    const normalizedNativeProps = {
+      ...nativeProps,
+      ...(typeof style === "function" ? {} : { style }),
+    };
+
+    return (
+      <span
+        className={
+          cn(
+            !unstyled &&
+              "relative inline-flex w-full rounded-lg border border-input bg-background not-dark:bg-clip-padding text-base text-foreground shadow-xs/5 ring-ring/24 transition-shadow before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] not-has-disabled:not-has-focus-visible:not-has-aria-invalid:before:shadow-[0_1px_--theme(--color-black/4%)] has-focus-visible:has-aria-invalid:border-destructive/64 has-focus-visible:has-aria-invalid:ring-destructive/16 has-aria-invalid:border-destructive/36 has-focus-visible:border-ring has-autofill:bg-foreground/4 has-disabled:opacity-64 has-[:disabled,:focus-visible,[aria-invalid]]:shadow-none has-focus-visible:ring-[3px] sm:text-sm dark:bg-input/32 dark:has-autofill:bg-foreground/8 dark:has-aria-invalid:ring-destructive/24 dark:not-has-disabled:not-has-focus-visible:not-has-aria-invalid:before:shadow-[0_-1px_--theme(--color-white/6%)]",
+            className,
+          ) || undefined
+        }
+        data-size={size}
+        data-slot="input-control"
+      >
+        <input
+          className={inputClassName}
+          data-slot="input"
+          size={typeof size === "number" ? size : undefined}
+          {...normalizedNativeProps}
+        />
+      </span>
+    );
+  }
+
+  const {
+    className: _className,
+    size: _size,
+    unstyled: _unstyled,
+    nativeInput: _nativeInput,
+    ...primitiveProps
+  } = props;
 
   return (
     <span
@@ -40,21 +82,12 @@ function Input({
       data-size={size}
       data-slot="input-control"
     >
-      {nativeInput ? (
-        <input
-          className={inputClassName}
-          data-slot="input"
-          size={typeof size === "number" ? size : undefined}
-          {...props}
-        />
-      ) : (
-        <InputPrimitive
-          className={inputClassName}
-          data-slot="input"
-          size={typeof size === "number" ? size : undefined}
-          {...props}
-        />
-      )}
+      <InputPrimitive
+        className={inputClassName}
+        data-slot="input"
+        size={typeof size === "number" ? size : undefined}
+        {...primitiveProps}
+      />
     </span>
   );
 }

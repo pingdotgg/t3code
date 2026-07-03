@@ -10,8 +10,8 @@ import {
   DEVELOPMENT_ICON_OVERRIDES,
   PUBLISH_ICON_OVERRIDES,
 } from "../../../scripts/lib/brand-assets.ts";
+import { parsePnpmWorkspaceConfig } from "../../../scripts/lib/pnpm-workspace.ts";
 import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
-import rootPackageJson from "../../../package.json" with { type: "json" };
 import serverPackageJson from "../package.json" with { type: "json" };
 
 interface PackageJson {
@@ -191,6 +191,18 @@ const publishCmd = Command.make(
       const serverDir = path.join(repoRoot, "apps/server");
       const packageJsonPath = path.join(serverDir, "package.json");
       const backupPath = `${packageJsonPath}.bak`;
+      const workspaceConfig = yield* fs
+        .readFileString(path.join(repoRoot, "pnpm-workspace.yaml"))
+        .pipe(
+          Effect.map(parsePnpmWorkspaceConfig),
+          Effect.mapError(
+            (cause) =>
+              new CliError({
+                message: "Could not read pnpm-workspace.yaml.",
+                cause,
+              }),
+          ),
+        );
 
       // Assert build assets exist
       for (const relPath of ["dist/bin.mjs", "dist/client/index.html"]) {
@@ -216,12 +228,12 @@ const publishCmd = Command.make(
             files: serverPackageJson.files,
             dependencies: resolveCatalogDependencies(
               serverPackageJson.dependencies,
-              rootPackageJson.workspaces.catalog,
+              workspaceConfig.catalog,
               "apps/server",
             ),
             overrides: resolveCatalogDependencies(
-              rootPackageJson.overrides,
-              rootPackageJson.workspaces.catalog,
+              workspaceConfig.overrides,
+              workspaceConfig.catalog,
               "apps/server",
             ),
           };

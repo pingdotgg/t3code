@@ -1,0 +1,69 @@
+packages:
+  - apps/*
+  - infra/*
+  - oxlint-plugin-t3code
+  - packages/*
+  - scripts
+
+catalog:
+  "@effect/atom-react": 4.0.0-beta.73
+  "@effect/language-service": 0.84.2
+  "@effect/openapi-generator": 4.0.0-beta.73
+  "@effect/platform-bun": 4.0.0-beta.73
+  "@effect/platform-node": 4.0.0-beta.73
+  "@effect/platform-node-shared": 4.0.0-beta.73
+  "@effect/sql-sqlite-bun": 4.0.0-beta.73
+  "@effect/tsgo": 0.13.2
+  "@effect/vitest": 4.0.0-beta.73
+  "@pierre/diffs": 1.1.20
+  "@types/bun": ^1.3.11
+  "@types/node": ^24.10.13
+  "@typescript/native-preview": 7.0.0-dev.20260604.1
+  effect: 4.0.0-beta.73
+  typescript: ~6.0.3
+  vite: npm:@voidzero-dev/vite-plus-core@0.2.1
+  vite-plus: 0.2.1
+  vitest: ^4.0.0
+  yaml: ^2.9.0
+
+ignoredBuiltDependencies:
+  - msw
+
+onlyBuiltDependencies:
+  - electron
+  - esbuild
+  - msgpackr-extract
+  - node-pty
+  - sharp
+
+overrides:
+  "@effect/atom-react": "catalog:"
+  "@effect/platform-bun": "catalog:"
+  "@effect/platform-node": "catalog:"
+  "@effect/platform-node-shared": "catalog:"
+  "@effect/sql-sqlite-bun": "catalog:"
+  "@effect/vitest": "catalog:"
+  "@effect/vitest>vitest": "-"
+  effect: "catalog:"
+  vite: "catalog:"
+  yaml: "catalog:"
+
+packageExtensions:
+  "@effect/vitest@*":
+    dependencies:
+      vite-plus: "catalog:"
+    peerDependenciesMeta:
+      vitest:
+        optional: true
+  vite-plus@*:
+    dependencies:
+      vite: "catalog:"
+
+patchedDependencies:
+  "@effect/vitest@4.0.0-beta.73": patches/@effect__vitest@4.0.0-beta.73.patch
+  "@pierre/diffs@1.1.20": patches/@pierre%2Fdiffs@1.1.20.patch
+  effect@4.0.0-beta.73: patches/effect@4.0.0-beta.73.patch
+
+peerDependencyRules:
+  allowAny:
+    - vite

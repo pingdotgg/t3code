@@ -15,59 +15,57 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
+      - name: Setup Vite Plus
+        uses: voidzero-dev/setup-vp@v1
 
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version-file: package.json
 
-      - name: Cache Bun and Turbo
+      - name: Cache pnpm store and Vite Plus
         uses: actions/cache@v5
         with:
           path: |
-            ~/.bun/install/cache
-            .turbo
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}-${{ hashFiles('turbo.json') }}
+            ~/.local/share/pnpm/store
+            .vite-plus/cache
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('**/vite.config.ts') }}
           restore-keys: |
-            ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}-
+            ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}-
 
       - name: Cache Playwright browsers
         uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('bun.lock') }}
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-playwright-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Format
-        run: bun run fmt:check
+        run: pnpm fmt:check
 
       - name: Lint
-        run: bun run lint
+        run: pnpm lint
 
       - name: Typecheck
-        run: bun run typecheck
+        run: pnpm typecheck
 
       - name: Test
-        run: bun run test
+        run: pnpm test
 
       - name: Install browser test runtime
         run: |
           cd apps/web
-          bunx playwright install --with-deps chromium
+          pnpm exec playwright install --with-deps chromium
 
       - name: Browser test
-        run: bun run --cwd apps/web test:browser
+        run: pnpm --dir apps/web test:browser
 
       - name: Build desktop pipeline
-        run: bun run build:desktop
+        run: pnpm build:desktop
 
       - name: Verify preload bundle output
         run: |
@@ -82,10 +80,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
+      - name: Setup Vite Plus
+        uses: voidzero-dev/setup-vp@v1
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -93,7 +89,7 @@ jobs:
           node-version-file: package.json
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
@@ -106,10 +102,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
+      - name: Setup Vite Plus
+        uses: voidzero-dev/setup-vp@v1
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -117,13 +111,13 @@ jobs:
           node-version-file: package.json
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        run: bun run typecheck
+        run: pnpm typecheck
 
       - name: Test
-        run: bun run test
+        run: pnpm test
 
       - name: Verify cross-platform clean script
         run: node scripts/clean.ts

@@ -1,4 +1,5 @@
 import { NetService } from "@t3tools/shared/Net";
+import type { NodeServices } from "@effect/platform-node/NodeServices";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { buildReviewChangesPrompt } from "@t3tools/shared/workflows/reviewChanges";
 import {
@@ -288,6 +289,11 @@ interface CliAuthLocationFlags {
   readonly devUrl?: Option.Option<URL>;
 }
 
+interface ResolveServerConfigOptions {
+  readonly startupPresentation?: StartupPresentation;
+  readonly forceAutoBootstrapProjectFromCwd?: boolean;
+}
+
 const resolveOptionPrecedence = <Value>(
   ...values: ReadonlyArray<Option.Option<Value>>
 ): Option.Option<Value> => Option.firstSomeOf(values);
@@ -306,11 +312,8 @@ const loadPersistedObservabilitySettings = Effect.fn(function* (settingsPath: st
 export const resolveServerConfig = (
   flags: CliServerFlags,
   cliLogLevel: Option.Option<LogLevel.LogLevel>,
-  options?: {
-    readonly startupPresentation?: StartupPresentation;
-    readonly forceAutoBootstrapProjectFromCwd?: boolean;
-  },
-) =>
+  options?: ResolveServerConfigOptions,
+): Effect.Effect<ServerConfigShape, unknown, NetService | NodeServices> =>
   Effect.gen(function* () {
     const { findAvailablePort } = yield* NetService;
     const path = yield* Path.Path;
@@ -4849,38 +4852,41 @@ const serveCommand = Command.make("serve", { ...sharedServerCommandFlags }).pipe
   ),
 );
 
-export const cli = Command.make("t3", { ...sharedServerCommandFlags }).pipe(
-  Command.withDescription(
-    "T3 Code CLI. With no subcommand, 't3' runs the T3 Code server (equivalent to 't3 start'). " +
-      "Use 't3 serve' for a headless server, or run 't3 --help' to list all management subcommands.",
-  ),
-  Command.withHandler((flags) => runServerCommand(flags)),
-  Command.withSubcommands([
-    startCommand,
-    serveCommand,
-    serverCommand,
-    authCommand,
-    projectCommand,
-    chatCommand,
-    reviewCommand,
-    approvalCommand,
-    inputCommand,
-    modelCommand,
-    diffCommand,
-    checkpointCommand,
-    exportCommand,
-    providerCommand,
-    gitCommand,
-    vcsCommand,
-    sourceControlCommand,
-    terminalCommand,
-    settingsCommand,
-    keybindingCommand,
-    diagnosticsCommand,
-    envCommand,
-    skillsCommand,
-    mcpCommand,
-    rpcCommand,
-    orchestrationCommand,
-  ]),
-);
+export const cli: Command.Command<"t3", never, {}, unknown, NetService | NodeServices> =
+  Command.make("t3", {
+    ...sharedServerCommandFlags,
+  }).pipe(
+    Command.withDescription(
+      "T3 Code CLI. With no subcommand, 't3' runs the T3 Code server (equivalent to 't3 start'). " +
+        "Use 't3 serve' for a headless server, or run 't3 --help' to list all management subcommands.",
+    ),
+    Command.withHandler((flags) => runServerCommand(flags)),
+    Command.withSubcommands([
+      startCommand,
+      serveCommand,
+      serverCommand,
+      authCommand,
+      projectCommand,
+      chatCommand,
+      reviewCommand,
+      approvalCommand,
+      inputCommand,
+      modelCommand,
+      diffCommand,
+      checkpointCommand,
+      exportCommand,
+      providerCommand,
+      gitCommand,
+      vcsCommand,
+      sourceControlCommand,
+      terminalCommand,
+      settingsCommand,
+      keybindingCommand,
+      diagnosticsCommand,
+      envCommand,
+      skillsCommand,
+      mcpCommand,
+      rpcCommand,
+      orchestrationCommand,
+    ]),
+  );

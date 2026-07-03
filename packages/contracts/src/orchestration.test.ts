@@ -175,7 +175,9 @@ it.effect("parses ready diff state snapshots", () =>
       },
     });
 
-    assert.strictEqual(parsed._tag, "ready");
+    if (parsed._tag !== "ready") {
+      assert.fail(`expected ready diff state, got ${parsed._tag}`);
+    }
     assert.strictEqual(parsed.snapshot.files[0]?.path, "a.ts");
   }),
 );
@@ -202,7 +204,9 @@ it.effect("parses stale diff state snapshots with a message", () =>
       },
     });
 
-    assert.strictEqual(parsed._tag, "stale");
+    if (parsed._tag !== "stale") {
+      assert.fail(`expected stale diff state, got ${parsed._tag}`);
+    }
     assert.strictEqual(parsed.snapshot.threadId, "thread-1");
   }),
 );
@@ -544,7 +548,9 @@ it.effect("decodes thread archived and unarchived events", () =>
       },
     });
 
-    assert.strictEqual(archived.type, "thread.archived");
+    if (archived.type !== "thread.archived") {
+      assert.fail(`expected thread.archived event, got ${archived.type}`);
+    }
     assert.strictEqual(archived.payload.archivedAt, "2026-01-01T00:00:00.000Z");
     assert.strictEqual(unarchived.type, "thread.unarchived");
   }),

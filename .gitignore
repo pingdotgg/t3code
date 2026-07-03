@@ -1,6 +1,7 @@
 node_modules
 .bun
 .turbo
+.vite-plus
 .DS_Store
 *.log
 *.tsbuildinfo
@@ -23,6 +24,7 @@ __screenshots__/
 .tanstack
 squashfs-root/
 apps/mobile/*.xcodeproj
+apps/mobile/.build/
 .vercel
 .gstack/
 dist-electron/

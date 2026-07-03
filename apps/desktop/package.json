@@ -5,13 +5,13 @@
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {
-    "dev": "bun run --parallel dev:bundle dev:electron",
-    "dev:bundle": "tsdown --watch",
+    "dev": "vp pack --watch",
+    "dev:bundle": "vp pack --watch",
     "dev:electron": "node scripts/dev-electron.mjs",
-    "build": "tsdown",
+    "build": "vp pack",
     "start": "node scripts/start-electron.mjs",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run --passWithNoTests",
     "smoke-test": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
@@ -24,7 +24,6 @@
     "@t3tools/shared": "workspace:*",
     "@types/node": "catalog:",
     "effect-acp": "workspace:*",
-    "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },

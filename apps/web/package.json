@@ -4,12 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests",
-    "test:browser": "vitest run --config vitest.browser.config.ts",
+    "dev": "vp dev",
+    "build": "vp build",
+    "preview": "vp preview",
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run --passWithNoTests",
+    "test:browser": "vp test run --config vitest.browser.config.ts",
     "test:browser:install": "playwright install --with-deps chromium"
   },
   "dependencies": {

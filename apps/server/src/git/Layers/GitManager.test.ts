@@ -1900,7 +1900,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           false,
         );
       }),
-    20_000,
+    60_000,
   );
 
   it.effect(

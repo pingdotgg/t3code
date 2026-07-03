@@ -85,10 +85,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
+      - name: Setup Vite Plus
+        uses: voidzero-dev/setup-vp@v1
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -96,7 +94,7 @@ jobs:
           node-version-file: package.json
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - id: release_meta
         name: Resolve release version
@@ -153,13 +151,13 @@ jobs:
           fi
 
       - name: Lint
-        run: bun run lint
+        run: pnpm lint
 
       - name: Typecheck
-        run: bun run typecheck
+        run: pnpm typecheck
 
       - name: Test
-        run: bun run test
+        run: pnpm test
 
       - id: previous_tag
         name: Resolve previous release tag
@@ -211,10 +209,8 @@ jobs:
           ref: ${{ needs.preflight.outputs.ref }}
           fetch-depth: 0
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
+      - name: Setup Vite Plus
+        uses: voidzero-dev/setup-vp@v1
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -222,7 +218,7 @@ jobs:
           node-version-file: package.json
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
@@ -367,7 +363,7 @@ jobs:
             echo "Signing disabled for ${{ matrix.platform }}."
           fi
 
-          bun run dist:desktop:artifact -- "${args[@]}"
+          pnpm dist:desktop:artifact -- "${args[@]}"
 
       - name: Collect release assets
         shell: bash
@@ -429,10 +425,8 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
+      - name: Setup Vite Plus
+        uses: voidzero-dev/setup-vp@v1
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -441,16 +435,16 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --filter=t3 --filter=@t3tools/web --filter=@t3tools/scripts
+        run: pnpm install --frozen-lockfile --filter=t3 --filter=@t3tools/web --filter=@t3tools/scripts
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
 
       - name: Build web package
-        run: bun --filter=@t3tools/web run build
+        run: pnpm --filter=@t3tools/web build
 
       - name: Build CLI package
-        run: bun --filter=t3 run build
+        run: pnpm --filter=t3 build
 
       - name: Publish CLI package
         run: node apps/server/scripts/cli.ts publish --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --app-version "${{ needs.preflight.outputs.version }}" --verbose
@@ -475,10 +469,8 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
+      - name: Setup Vite Plus
+        uses: voidzero-dev/setup-vp@v1
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -486,7 +478,7 @@ jobs:
           node-version-file: package.json
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --filter=@t3tools/scripts
+        run: pnpm install --frozen-lockfile --filter=@t3tools/scripts
 
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v8
@@ -609,10 +601,8 @@ jobs:
           echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
           echo "email=${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
+      - name: Setup Vite Plus
+        uses: voidzero-dev/setup-vp@v1
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -620,7 +610,7 @@ jobs:
           node-version-file: package.json
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --filter=@t3tools/scripts
+        run: pnpm install --frozen-lockfile --filter=@t3tools/scripts
 
       - id: update_versions
         name: Update version strings
@@ -630,11 +620,11 @@ jobs:
 
       - name: Format package.json files
         if: steps.update_versions.outputs.changed == 'true'
-        run: bunx oxfmt@0.40.0 apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
+        run: pnpm exec oxfmt apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
 
       - name: Refresh lockfile
         if: steps.update_versions.outputs.changed == 'true'
-        run: bun install --lockfile-only --ignore-scripts
+        run: pnpm install --lockfile-only --ignore-scripts
 
       - name: Commit and push version bump
         if: steps.update_versions.outputs.changed == 'true'
@@ -642,7 +632,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
         run: |
-          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json bun.lock; then
+          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml; then
             echo "No version changes to commit."
             exit 0
           fi
@@ -650,7 +640,7 @@ jobs:
           git config user.name "${{ steps.app_bot.outputs.name }}"
           git config user.email "${{ steps.app_bot.outputs.email }}"
 
-          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json bun.lock
+          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml
           git commit -m "chore(release): prepare $RELEASE_TAG"
           git push origin HEAD:main
 
@@ -670,10 +660,8 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
+      - name: Setup Vite Plus
+        uses: voidzero-dev/setup-vp@v1
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -681,7 +669,7 @@ jobs:
           node-version-file: package.json
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --filter=@t3tools/scripts
+        run: pnpm install --frozen-lockfile --filter=@t3tools/scripts
 
       - name: Announce prerelease on Discord
         if: needs.preflight.outputs.is_prerelease == 'true'

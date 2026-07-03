@@ -2,8 +2,8 @@
 
 ## Task Completion Requirements
 
-- All of `bun fmt`, `bun lint`, and `bun typecheck` must pass before considering tasks completed.
-- NEVER run `bun test`. Always use `bun run test` (runs Vitest).
+- All of `pnpm fmt:check`, `pnpm lint`, and `pnpm typecheck` must pass before considering tasks completed.
+- Use `pnpm test` for the Vite Plus test suite.
 
 ## Project Snapshot
 

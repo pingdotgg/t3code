@@ -31,8 +31,8 @@
     "config:preview": "APP_VARIANT=preview expo config",
     "config:prod": "APP_VARIANT=production expo config",
     "profile:android:hermes": "mkdir -p profiles/review && react-native profile-hermes profiles/review",
-    "test:vitest": "vitest run",
-    "typecheck:tsc": "tsc --noEmit"
+    "test": "vp test run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@callstack/liquid-glass": "^0.7.1",

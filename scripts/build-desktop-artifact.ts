@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
-import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
+import { parsePnpmWorkspaceConfig } from "./lib/pnpm-workspace.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -133,13 +133,11 @@ const resolveGitCommitHash = Effect.fn("resolveGitCommitHash")(function* (repoRo
       cwd: repoRoot,
     }),
   ).pipe(
-    Effect.catch(() =>
-      Effect.succeed({
-        stdout: "",
-        stderr: "",
-        exitCode: 1,
-      }),
-    ),
+    Effect.orElseSucceed(() => ({
+      stdout: "",
+      stderr: "",
+      exitCode: 1,
+    })),
   );
 
   if (result.exitCode !== 0) {
@@ -175,13 +173,11 @@ const resolvePythonForNodeGyp = Effect.fn("resolvePythonForNodeGyp")(function* (
   const probe = yield* spawnAndCollectOutput(
     ChildProcess.make("python", ["-c", "import sys;print(sys.executable)"]),
   ).pipe(
-    Effect.catch(() =>
-      Effect.succeed({
-        stdout: "",
-        stderr: "",
-        exitCode: 1,
-      }),
-    ),
+    Effect.orElseSucceed(() => ({
+      stdout: "",
+      stderr: "",
+      exitCode: 1,
+    })),
   );
 
   if (probe.exitCode !== 0) {
@@ -756,6 +752,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   const electronVersion = desktopPackageJson.dependencies.electron;
+  const workspaceConfig = yield* fs.readFileString(path.join(repoRoot, "pnpm-workspace.yaml")).pipe(
+    Effect.map(parsePnpmWorkspaceConfig),
+    Effect.mapError(
+      (cause) =>
+        new BuildScriptError({
+          message: "Could not read pnpm-workspace.yaml.",
+          cause,
+        }),
+    ),
+  );
 
   const serverDependencies = serverPackageJson.dependencies;
   if (!serverDependencies || Object.keys(serverDependencies).length === 0) {
@@ -767,24 +773,20 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const resolvedOverrides = yield* Effect.try({
     try: () =>
       resolveCatalogDependencies(
-        rootPackageJson.overrides,
-        rootPackageJson.workspaces.catalog,
+        workspaceConfig.overrides,
+        workspaceConfig.catalog,
         "apps/desktop",
       ),
     catch: (cause) =>
       new BuildScriptError({
-        message: "Could not resolve overrides from package.json.",
+        message: "Could not resolve overrides from pnpm-workspace.yaml.",
         cause,
       }),
   });
 
   const resolvedServerDependencies = yield* Effect.try({
     try: () =>
-      resolveCatalogDependencies(
-        serverDependencies,
-        rootPackageJson.workspaces.catalog,
-        "apps/server",
-      ),
+      resolveCatalogDependencies(serverDependencies, workspaceConfig.catalog, "apps/server"),
     catch: (cause) =>
       new BuildScriptError({
         message: "Could not resolve production dependencies from apps/server/package.json.",
@@ -793,10 +795,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   });
   const resolvedDesktopRuntimeDependencies = yield* Effect.try({
     try: () =>
-      resolveDesktopRuntimeDependencies(
-        desktopPackageJson.dependencies,
-        rootPackageJson.workspaces.catalog,
-      ),
+      resolveDesktopRuntimeDependencies(desktopPackageJson.dependencies, workspaceConfig.catalog),
     catch: (cause) =>
       new BuildScriptError({
         message: "Could not resolve desktop runtime dependencies from apps/desktop/package.json.",
@@ -827,23 +826,23 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ChildProcess.make({
         cwd: repoRoot,
         ...commandOutputOptions(options.verbose),
-        // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
+        // Windows needs shell mode to resolve .cmd shims.
         shell: process.platform === "win32",
-      })`bun run build:desktop`,
+      })`pnpm build:desktop`,
     );
   }
 
   for (const [label, dir] of Object.entries(distDirs)) {
     if (!(yield* fs.exists(dir))) {
       return yield* new BuildScriptError({
-        message: `Missing ${label} at ${dir}. Run 'bun run build:desktop' first.`,
+        message: `Missing ${label} at ${dir}. Run 'pnpm build:desktop' first.`,
       });
     }
   }
 
   if (!(yield* fs.exists(bundledClientEntry))) {
     return yield* new BuildScriptError({
-      message: `Missing bundled server client at ${bundledClientEntry}. Run 'bun run build:desktop' first.`,
+      message: `Missing bundled server client at ${bundledClientEntry}. Run 'pnpm build:desktop' first.`,
     });
   }
 
@@ -907,9 +906,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     ChildProcess.make({
       cwd: stageAppDir,
       ...commandOutputOptions(options.verbose),
-      // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
+      // Windows needs shell mode to resolve .cmd shims.
       shell: process.platform === "win32",
-    })`bun install --production --omit optional`,
+    })`pnpm install --prod --no-optional --ignore-scripts`,
   );
 
   const buildEnv: NodeJS.ProcessEnv = {
@@ -949,7 +948,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ...commandOutputOptions(options.verbose),
       // Windows needs shell mode to resolve .cmd shims.
       shell: process.platform === "win32",
-    })`bun x --install=fallback electron-builder ${platformConfig.cliFlag} --${options.arch} --publish never`,
+    })`pnpm exec electron-builder ${platformConfig.cliFlag} --${options.arch} --publish never`,
   );
 
   const stageDistDir = path.join(stageAppDir, "dist");
@@ -965,7 +964,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const copiedArtifacts: string[] = [];
   for (const entry of stageEntries) {
     const from = path.join(stageDistDir, entry);
-    const stat = yield* fs.stat(from).pipe(Effect.catch(() => Effect.succeed(null)));
+    const stat = yield* fs.stat(from).pipe(Effect.orElseSucceed(() => null));
     if (!stat || stat.type !== "File") continue;
 
     const to = path.join(options.outputDir, entry);
@@ -1013,7 +1012,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   skipBuild: Flag.boolean("skip-build").pipe(
     Flag.withDescription(
-      "Skip `bun run build:desktop` and use existing dist artifacts (env: T3CODE_DESKTOP_SKIP_BUILD).",
+      "Skip `pnpm build:desktop` and use existing dist artifacts (env: T3CODE_DESKTOP_SKIP_BUILD).",
     ),
     Flag.optional,
   ),

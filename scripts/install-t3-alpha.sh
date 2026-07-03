@@ -60,7 +60,7 @@ if [[ "$DO_BUILD" -eq 1 ]]; then
         "${RELEASE_DIR}"/T3-Code-[0-9]*-arm64.dmg.blockmap \
         "${RELEASE_DIR}"/T3-Code-[0-9]*-arm64.zip \
         "${RELEASE_DIR}"/T3-Code-[0-9]*-arm64.zip.blockmap
-  ( cd "$REPO_ROOT" && bun run dist:desktop:dmg:arm64 -- --flavor "$APP_FLAVOR" )
+  ( cd "$REPO_ROOT" && pnpm dist:desktop:dmg:arm64 -- --flavor "$APP_FLAVOR" )
 fi
 
 DMG_PATH="$(ls -t "${RELEASE_DIR}"/${ARTIFACT_GLOB} 2>/dev/null | head -n 1 || true)"
