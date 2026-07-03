@@ -24,7 +24,9 @@
     "@t3tools/shared": "workspace:*",
     "@types/node": "catalog:",
     "effect-acp": "workspace:*",
+    "electron-builder": "^26.15.3",
     "typescript": "catalog:",
+    "vite-plus": "catalog:",
     "vitest": "catalog:"
   },
   "productName": "T3 Code (Alpha)"

@@ -22,6 +22,7 @@
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
     "typescript": "catalog:",
+    "vite-plus": "catalog:",
     "vitest": "catalog:"
   }
 }

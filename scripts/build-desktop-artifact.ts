@@ -220,6 +220,7 @@ interface StagePackageJson {
   readonly dependencies: Record<string, unknown>;
   readonly devDependencies: {
     readonly electron: string;
+    readonly "electron-builder": string;
   };
   readonly overrides: Record<string, unknown>;
 }
@@ -752,6 +753,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   const electronVersion = desktopPackageJson.dependencies.electron;
+  const electronBuilderVersion = desktopPackageJson.devDependencies["electron-builder"];
   const workspaceConfig = yield* fs.readFileString(path.join(repoRoot, "pnpm-workspace.yaml")).pipe(
     Effect.map(parsePnpmWorkspaceConfig),
     Effect.mapError(
@@ -894,6 +896,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     },
     devDependencies: {
       electron: electronVersion,
+      "electron-builder": electronBuilderVersion,
     },
     overrides: resolvedOverrides,
   };
@@ -901,14 +904,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
 
-  yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
+  yield* Effect.log("[desktop-artifact] Installing staged packaging dependencies...");
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
       ...commandOutputOptions(options.verbose),
       // Windows needs shell mode to resolve .cmd shims.
       shell: process.platform === "win32",
-    })`pnpm install --prod --no-optional --ignore-scripts`,
+    })`pnpm install --no-optional --ignore-scripts`,
   );
 
   const buildEnv: NodeJS.ProcessEnv = {

@@ -16,6 +16,7 @@
     "@effect/vitest": "catalog:",
     "@types/bun": "catalog:",
     "typescript": "catalog:",
+    "vite-plus": "catalog:",
     "vitest": "catalog:"
   }
 }

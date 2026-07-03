@@ -44,6 +44,7 @@
     "effect-acp": "workspace:*",
     "effect-codex-app-server": "workspace:*",
     "typescript": "catalog:",
+    "vite-plus": "catalog:",
     "vitest": "catalog:",
     "yaml": "catalog:"
   },
