@@ -458,6 +458,29 @@ describe("activity detail expansion", () => {
         }),
       ),
     ).toBe(false);
+    expect(
+      hasFileChangeWorkEntryDetails(
+        buildWorkLogEntry({
+          requestKind: "file-read",
+          changedFiles: ["package.json"],
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps changed-file-only file-read entries in the generic detail fallback", () => {
+    const details = deriveExpandableWorkEntryDetails(
+      buildWorkLogEntry({
+        requestKind: "file-read",
+        changedFiles: ["package.json"],
+        detail: "Read package metadata",
+      }),
+      undefined,
+    );
+
+    expect(details?.fileChange).toBeNull();
+    expect(details?.genericDetail).toContain("package.json");
+    expect(details?.genericDetail).toContain("Read package metadata");
   });
 
   it("keeps supplemental detail only when it adds distinct information", () => {
@@ -629,10 +652,13 @@ describe("activity detail expansion", () => {
   });
 
   it("redacts and safely serializes MCP tool data", () => {
+    const sharedArguments = { path: "package.json" };
     const toolData: Record<string, unknown> = {
       server: "filesystem",
       token: "secret-token",
       nested: { apiKey: "secret-key" },
+      firstCall: { arguments: sharedArguments },
+      secondCall: { arguments: sharedArguments },
     };
     toolData.self = toolData;
 
@@ -644,7 +670,10 @@ describe("activity detail expansion", () => {
       undefined,
     );
 
-    expect(details?.genericDetail).toContain("[Circular]");
+    expect(details?.genericDetail).toContain('"self": "[Circular]"');
+    expect(details?.genericDetail).toContain('"firstCall"');
+    expect(details?.genericDetail).toContain('"secondCall"');
+    expect(details?.genericDetail).toContain('"path": "package.json"');
     expect(details?.genericDetail).toContain("[redacted]");
     expect(details?.genericDetail).not.toContain("secret-token");
     expect(details?.genericDetail).not.toContain("secret-key");

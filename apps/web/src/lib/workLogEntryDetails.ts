@@ -188,11 +188,11 @@ const SENSITIVE_TOOL_DATA_KEY_PATTERN =
 const MAX_TOOL_DATA_STRING_LENGTH = 2_000;
 
 function serializeToolDataForDisplay(toolData: unknown): string {
-  const seenObjects = new WeakSet<object>();
+  const ancestors: object[] = [];
   try {
     return JSON.stringify(
       toolData,
-      (key, value) => {
+      function serializeToolDataValue(this: unknown, key: string, value: unknown) {
         if (SENSITIVE_TOOL_DATA_KEY_PATTERN.test(key)) {
           return "[redacted]";
         }
@@ -202,10 +202,13 @@ function serializeToolDataForDisplay(toolData: unknown): string {
         if (typeof value !== "object" || value === null) {
           return value;
         }
-        if (seenObjects.has(value)) {
+        while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) {
+          ancestors.pop();
+        }
+        if (ancestors.includes(value)) {
           return "[Circular]";
         }
-        seenObjects.add(value);
+        ancestors.push(value);
         return value;
       },
       2,
@@ -402,7 +405,11 @@ export function hasFileChangeWorkEntryDetails(workEntry: WorkLogEntry): boolean 
   if (isCollabAgentWorkEntry(workEntry)) {
     return false;
   }
-  return Boolean(workEntry.patch || (workEntry.changedFiles?.length ?? 0) > 0);
+  return Boolean(
+    workEntry.patch ||
+    workEntry.itemType === "file_change" ||
+    workEntry.requestKind === "file-change",
+  );
 }
 
 export function filterChangedFilesWithoutInlineDiff(
