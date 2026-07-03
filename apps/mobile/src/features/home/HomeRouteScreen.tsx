@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useThreadShells } from "../../state/entities";
+import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -13,6 +14,7 @@ import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { HomeScreen } from "./HomeScreen";
 import { HomeHeader } from "./HomeHeader";
 import { useHomeListOptions } from "./home-list-options";
+import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 
 /* ─── Route screen ───────────────────────────────────────────────────── */
@@ -26,6 +28,8 @@ export function HomeRouteScreen() {
   const navigation = useNavigation();
   const [searchQuery, setSearchQuery] = useState("");
   const { archiveThread, confirmDeleteThread } = useThreadListActions();
+  const pendingTasks = usePendingNewTasks();
+  const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
     () =>
       Arr.sort(
@@ -116,8 +120,11 @@ export function HomeRouteScreen() {
             threadId: thread.id,
           });
         }}
+        onSelectPendingTask={openPendingTask}
+        onDeletePendingTask={confirmDeletePendingTask}
         onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
         onThreadSortOrderChange={setThreadSortOrder}
+        pendingTasks={pendingTasks}
         projectGroupingMode={listOptions.projectGroupingMode}
         projects={projects}
         projectSortOrder={listOptions.projectSortOrder}

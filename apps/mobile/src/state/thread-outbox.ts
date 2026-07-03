@@ -20,6 +20,11 @@ export function enqueueThreadOutboxMessage(message: QueuedThreadMessage): Promis
   return threadOutboxManager.enqueue(message);
 }
 
+/** Rewrite a queued message; no-op (false) if it was removed in the meantime. */
+export function updateThreadOutboxMessage(message: QueuedThreadMessage): Promise<boolean> {
+  return threadOutboxManager.update(message);
+}
+
 export function removeThreadOutboxMessage(message: QueuedThreadMessage): Promise<void> {
   return threadOutboxManager.remove(message);
 }
