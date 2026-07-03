@@ -104,7 +104,7 @@ export function SheetListRow(props: {
       <View className="flex-1 gap-0.5">
         <Text className="text-foreground text-base font-t3-bold">{props.title}</Text>
         {props.subtitle ? (
-          <Text className="text-foreground-muted text-xs leading-[17px]">{props.subtitle}</Text>
+          <Text className="text-foreground-muted text-xs leading-snug">{props.subtitle}</Text>
         ) : null}
       </View>
       <SymbolView name="chevron.right" size={13} tintColor={iconSubtleColor} type="monochrome" />

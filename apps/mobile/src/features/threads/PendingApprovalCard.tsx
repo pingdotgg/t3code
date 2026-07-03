@@ -23,7 +23,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
         {props.approval.requestKind}
       </Text>
       {props.approval.detail ? (
-        <Text className="font-sans text-sm leading-5 text-neutral-600 dark:text-neutral-400">
+        <Text className="font-sans text-sm leading-normal text-neutral-600 dark:text-neutral-400">
           {props.approval.detail}
         </Text>
       ) : null}

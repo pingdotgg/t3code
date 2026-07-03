@@ -39,7 +39,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
             <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-neutral-500 dark:text-neutral-500">
               {question.header}
             </Text>
-            <Text className="font-sans text-base leading-[21px] text-neutral-950 dark:text-neutral-50">
+            <Text className="font-sans text-base leading-snug text-neutral-950 dark:text-neutral-50">
               {question.question}
             </Text>
             <View className="flex-row flex-wrap gap-2.5">

@@ -14,8 +14,8 @@ import { Image, StyleSheet } from "react-native";
 
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
-import { MOBILE_TYPOGRAPHY } from "../lib/typography";
 import { useThemeColor } from "../lib/useThemeColor";
+import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import {
   acknowledgeComposerNativeEvent,
   isComposerNativeEcho,
@@ -69,6 +69,7 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerPasteImages?: (event: NativePasteImagesEvent) => void;
   readonly onComposerFocus?: () => void;
   readonly onComposerBlur?: () => void;
+  readonly onComposerSubmit?: () => void;
 }
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
@@ -93,6 +94,7 @@ export function ComposerEditor({
   onPasteImages,
   onFocus,
   onBlur,
+  onSubmit,
   contentInsetVertical = 0,
   ...props
 }: ComposerEditorProps) {
@@ -105,6 +107,7 @@ export function ComposerEditor({
     { eventCount: 0, value: props.value, selection: selection ?? null },
   ]);
   const confirmedTokensRef = useRef(collectComposerInlineTokens(props.value));
+  const bodyText = useScaledTextRole("body");
   const textColor = useThemeColor("--color-foreground");
   const placeholderColor = useThemeColor("--color-placeholder");
   const chipBackground = useThemeColor("--color-subtle");
@@ -230,12 +233,12 @@ export function ComposerEditor({
       fontSize={
         typeof resolvedTextStyle.fontSize === "number"
           ? resolvedTextStyle.fontSize
-          : MOBILE_TYPOGRAPHY.composer.fontSize
+          : bodyText.fontSize
       }
       lineHeight={
         typeof resolvedTextStyle.lineHeight === "number"
           ? resolvedTextStyle.lineHeight
-          : MOBILE_TYPOGRAPHY.composer.lineHeight
+          : bodyText.lineHeight
       }
       contentInsetVertical={contentInsetVertical}
       editable={props.editable ?? true}
@@ -270,6 +273,7 @@ export function ComposerEditor({
       onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
       onComposerFocus={onFocus}
       onComposerBlur={onBlur}
+      onComposerSubmit={onSubmit}
     />
   );
 }

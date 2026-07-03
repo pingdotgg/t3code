@@ -62,6 +62,15 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
 
   var themeConfig: String = ""
 
+  var focusRequest: Double = 0.0
+    set(value) {
+      val previous = field
+      field = value
+      if (value != previous && value > 0) {
+        requestKeyboardFocus()
+      }
+    }
+
   var backgroundColorHex: String = "#24292E"
     set(value) {
       field = value
@@ -113,9 +122,17 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     }
     inputView.setOnKeyListener { _, keyCode, event ->
       if (event.action != android.view.KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-      when (keyCode) {
-        android.view.KeyEvent.KEYCODE_DEL -> {
+      when {
+        keyCode == android.view.KeyEvent.KEYCODE_DEL -> {
           onInput(mapOf("data" to "\u007F"))
+          true
+        }
+        // Hardware keyboard Ctrl+A..Z -> control bytes 0x01..0x1A (Ctrl+C, Ctrl+Z, ...).
+        event.isCtrlPressed &&
+          keyCode in android.view.KeyEvent.KEYCODE_A..android.view.KeyEvent.KEYCODE_Z -> {
+          onInput(
+            mapOf("data" to (keyCode - android.view.KeyEvent.KEYCODE_A + 1).toChar().toString()),
+          )
           true
         }
         else -> false

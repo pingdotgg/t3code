@@ -2,8 +2,8 @@ import { TextInputWrapper } from "expo-paste-input";
 import { useImperativeHandle, useRef } from "react";
 import { TextInput, type TextInput as RNTextInput } from "react-native";
 
-import { MOBILE_TYPOGRAPHY } from "../lib/typography";
 import { useThemeColor } from "../lib/useThemeColor";
+import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import { useNativePaste } from "../lib/useNativePaste";
 import type { ComposerEditorProps } from "./T3ComposerEditor.types";
 
@@ -18,6 +18,7 @@ export function ComposerEditor({
   ...props
 }: ComposerEditorProps) {
   const inputRef = useRef<RNTextInput>(null);
+  const bodyText = useScaledTextRole("body");
   const foregroundColor = useThemeColor("--color-foreground");
   const placeholderColor = useThemeColor("--color-placeholder");
   const handlePaste = useNativePaste((uris) => onPasteImages?.(uris));
@@ -48,7 +49,7 @@ export function ComposerEditor({
             minHeight: 0,
             color: foregroundColor,
             fontFamily: "DMSans_400Regular",
-            ...MOBILE_TYPOGRAPHY.composer,
+            ...bodyText,
             paddingVertical: contentInsetVertical,
           },
           textStyle,

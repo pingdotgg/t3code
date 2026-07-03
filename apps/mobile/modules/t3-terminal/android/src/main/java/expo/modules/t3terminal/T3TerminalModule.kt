@@ -7,6 +7,12 @@ class T3TerminalModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("T3TerminalSurface")
 
+    // Bumped when native hardware-keyboard handling changes; surfaced in the JS debug
+    // logs so a stale native binary is distinguishable from a broken key pipeline.
+    Constants(
+      "hardwareKeyRevision" to 2,
+    )
+
     View(T3TerminalView::class) {
       Prop("terminalKey") { view: T3TerminalView, terminalKey: String ->
         view.terminalKey = terminalKey
@@ -18,6 +24,10 @@ class T3TerminalModule : Module() {
 
       Prop("fontSize") { view: T3TerminalView, fontSize: Double ->
         view.fontSize = fontSize.toFloat()
+      }
+
+      Prop("focusRequest") { view: T3TerminalView, focusRequest: Double ->
+        view.focusRequest = focusRequest
       }
 
       Prop("appearanceScheme") { view: T3TerminalView, appearanceScheme: String ->

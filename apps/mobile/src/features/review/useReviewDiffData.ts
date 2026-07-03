@@ -1,10 +1,12 @@
 import { useEffect, useMemo } from "react";
 
 import { countReviewCommentContexts, parseReviewInlineComments } from "./reviewCommentSelection";
-import { buildNativeReviewDiffData } from "./nativeReviewDiffAdapter";
+import { getCachedNativeReviewDiffData } from "./nativeReviewDiffAdapter";
 import { markReviewEvent, measureReviewWork } from "./reviewPerf";
 import { getCachedReviewParsedDiff } from "./reviewState";
 import type { ReviewParsedDiff, ReviewSectionItem } from "./reviewModel";
+
+const EMPTY_INLINE_REVIEW_COMMENTS = Object.freeze([]);
 
 function isReviewDiffDebugLoggingEnabled(): boolean {
   return typeof __DEV__ !== "undefined" ? __DEV__ : false;
@@ -43,6 +45,7 @@ export function useReviewDiffData(input: {
   readonly draftMessage: string;
 }) {
   const { draftMessage, selectedSection, threadKey } = input;
+  const selectedSectionId = selectedSection?.id ?? null;
   const parsedDiff = useMemo(
     () =>
       measureReviewWork("parse-diff", () =>
@@ -59,17 +62,16 @@ export function useReviewDiffData(input: {
     () => parseReviewInlineComments(draftMessage),
     [draftMessage],
   );
-  const selectedSectionInlineComments = useMemo(
-    () =>
-      selectedSection
-        ? inlineReviewComments.filter((comment) => comment.sectionId === selectedSection.id)
-        : [],
-    [inlineReviewComments, selectedSection],
-  );
+  const selectedSectionInlineComments = useMemo(() => {
+    if (!selectedSectionId || inlineReviewComments.length === 0) {
+      return EMPTY_INLINE_REVIEW_COMMENTS;
+    }
+    return inlineReviewComments.filter((comment) => comment.sectionId === selectedSectionId);
+  }, [inlineReviewComments, selectedSectionId]);
   const nativeReviewDiffData = useMemo(
     () =>
       measureReviewWork("build-native-diff-data", () =>
-        buildNativeReviewDiffData({
+        getCachedNativeReviewDiffData({
           parsedDiff,
           comments: selectedSectionInlineComments,
         }),

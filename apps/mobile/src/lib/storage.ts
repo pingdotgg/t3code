@@ -59,7 +59,14 @@ export class MobileStorageEncodeError extends Schema.TaggedErrorClass<MobileStor
 
 export interface Preferences {
   readonly liveActivitiesEnabled?: boolean;
-  readonly terminalFontSize?: number;
+  readonly baseFontSize?: number;
+  /** Terminal font size override; null/absent means derived from baseFontSize. */
+  readonly terminalFontSize?: number | null;
+  /** Legacy key predating baseFontSize; read once for migration. */
+  readonly markdownFontSize?: number;
+  /** Code/diff font size override; null/absent means derived from baseFontSize. */
+  readonly codeFontSize?: number | null;
+  readonly codeWordBreak?: boolean;
 }
 
 async function readStorageItem(key: MobileStorageKeyValue): Promise<string | null> {
@@ -153,14 +160,30 @@ export async function loadPreferences(): Promise<Preferences> {
 
   const preferences: {
     liveActivitiesEnabled?: boolean;
-    terminalFontSize?: number;
+    baseFontSize?: number;
+    terminalFontSize?: number | null;
+    markdownFontSize?: number;
+    codeFontSize?: number | null;
+    codeWordBreak?: boolean;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
   }
-  if (typeof parsed.terminalFontSize === "number") {
+  if (typeof parsed.baseFontSize === "number") {
+    preferences.baseFontSize = parsed.baseFontSize;
+  }
+  if (typeof parsed.terminalFontSize === "number" || parsed.terminalFontSize === null) {
     preferences.terminalFontSize = parsed.terminalFontSize;
+  }
+  if (typeof parsed.markdownFontSize === "number") {
+    preferences.markdownFontSize = parsed.markdownFontSize;
+  }
+  if (typeof parsed.codeFontSize === "number" || parsed.codeFontSize === null) {
+    preferences.codeFontSize = parsed.codeFontSize;
+  }
+  if (typeof parsed.codeWordBreak === "boolean") {
+    preferences.codeWordBreak = parsed.codeWordBreak;
   }
 
   return preferences;

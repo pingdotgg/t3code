@@ -1,0 +1,100 @@
+--- a/lib/module/views/useHeaderConfigProps.js
++++ b/lib/module/views/useHeaderConfigProps.js
+@@ -19,6 +19,12 @@
+       }
+       return item;
+     }
++    if (item.type === 'mailSearchToolbar') {
++      return {
++        ...item,
++        index
++      };
++    }
+     if (item.type === 'button' || item.type === 'menu') {
+       if (item.type === 'menu' && item.menu == null) {
+         throw new Error(`Menu item must have a 'menu' property defined: ${JSON.stringify(item)}`);
+@@ -79,7 +85,7 @@
+       }
+       return processedItem;
+     }
+-    throw new Error(`Invalid item type: ${JSON.stringify(item)}. Valid types are 'button', 'menu', 'custom' and 'spacing'.`);
++    throw new Error(`Invalid item type: ${JSON.stringify(item)}. Valid types are 'button', 'menu', 'custom', 'spacing' and 'mailSearchToolbar'.`);
+   }).filter(item => item != null);
+ };
+ const transformIcon = icon => {
+@@ -158,8 +164,12 @@
+   headerBack,
+   route,
+   title,
++  unstable_headerCenterItems: headerCenterItems,
+   unstable_headerLeftItems: headerLeftItems,
+-  unstable_headerRightItems: headerRightItems
++  unstable_headerRightItems: headerRightItems,
++  unstable_headerSubtitle: headerSubtitle,
++  unstable_headerToolbarItems: headerToolbarItems,
++  unstable_navigationItemStyle: navigationItemStyle
+ }) {
+   const {
+     direction
+@@ -255,6 +265,10 @@
+     tintColor,
+     canGoBack
+   });
++  const centerItems = headerCenterItems?.({
++    tintColor,
++    canGoBack
++  });
+   let rightItems = headerRightItems?.({
+     tintColor,
+     canGoBack
+@@ -264,6 +278,10 @@
+     // So we need to reverse them here to match the order
+     rightItems = [...rightItems].reverse();
+   }
++  const toolbarItems = headerToolbarItems?.({
++    tintColor,
++    canGoBack
++  });
+   const children = /*#__PURE__*/_jsxs(_Fragment, {
+     children: [Platform.OS === 'ios' ? /*#__PURE__*/_jsxs(_Fragment, {
+       children: [leftItems ? leftItems.map((item, index) => {
+@@ -278,7 +296,15 @@
+         return null;
+       }) : headerLeftElement != null ? /*#__PURE__*/_jsx(ScreenStackHeaderLeftView, {
+         children: headerLeftElement
+-      }) : null, headerTitleElement != null ? /*#__PURE__*/_jsx(ScreenStackHeaderCenterView, {
++      }) : null, centerItems ? centerItems.map((item, index) => {
++        if (item.type === 'custom') {
++          return /*#__PURE__*/_jsx(ScreenStackHeaderCenterView, {
++            hidesSharedBackground: item.hidesSharedBackground,
++            children: item.element
++          }, index);
++        }
++        return null;
++      }) : headerTitleElement != null ? /*#__PURE__*/_jsx(ScreenStackHeaderCenterView, {
+         children: headerTitleElement
+       }) : null]
+     }) : /*#__PURE__*/_jsxs(_Fragment, {
+@@ -356,6 +382,7 @@
+     largeTitleFontWeight,
+     largeTitleHideShadow: headerLargeTitleShadowVisible === false,
+     title: titleText,
++    subtitle: headerSubtitle,
+     titleColor,
+     titleFontFamily,
+     titleFontSize,
+@@ -364,9 +391,12 @@
+     disableTopInsetApplication: !headerTopInsetEnabled,
+     translucent: translucent === true,
+     children,
++    navigationItemStyle,
++    headerToolbarItems: processBarButtonItems(toolbarItems, colors, fonts),
++    headerCenterBarButtonItems: processBarButtonItems(centerItems, colors, fonts),
+     headerLeftBarButtonItems: processBarButtonItems(leftItems, colors, fonts),
+     headerRightBarButtonItems: processBarButtonItems(rightItems, colors, fonts),
+     experimental_userInterfaceStyle: dark ? 'dark' : 'light'
+   };
+ }
+-//# sourceMappingURL=useHeaderConfigProps.js.map
+\ No newline at end of file
++//# sourceMappingURL=useHeaderConfigProps.js.map

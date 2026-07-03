@@ -1,9 +1,10 @@
 import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { SymbolView } from "expo-symbols";
-import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, Text as RNText, View, useColorScheme } from "react-native";
+import { Platform, Pressable, View, useColorScheme } from "react-native";
 import {
   KeyboardController,
   KeyboardEvents,
@@ -24,8 +25,13 @@ import { useEnvironmentPresentation } from "../../state/presentation";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceState } from "../../state/workspace";
-import { buildThreadTerminalNavigation } from "../../lib/routes";
-import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
+import {
+  MAX_TERMINAL_FONT_SIZE,
+  MIN_TERMINAL_FONT_SIZE,
+  TERMINAL_FONT_SIZE_STEP,
+  stepTerminalFontSize,
+} from "../../lib/appearancePreferences";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   useAttachedTerminalSession,
   useKnownTerminalSessions,
@@ -33,9 +39,9 @@ import {
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadDetail } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
+import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { TerminalSurface } from "./NativeTerminalSurface";
 import { getPierreTerminalTheme } from "./terminalTheme";
-import { loadPreferences, savePreferencesPatch } from "../../lib/storage";
 import { terminalDebugLog } from "./terminalDebugLog";
 import {
   getTerminalBufferReplayKey,
@@ -55,19 +61,7 @@ import {
   resolveTerminalSessionLabel,
   type TerminalMenuSession,
 } from "./terminalMenu";
-import {
-  DEFAULT_TERMINAL_FONT_SIZE,
-  MAX_TERMINAL_FONT_SIZE,
-  MIN_TERMINAL_FONT_SIZE,
-  TERMINAL_FONT_SIZE_STEP,
-  normalizeTerminalFontSize,
-} from "./terminalPreferences";
-import {
-  cacheTerminalFontSize,
-  cacheTerminalGridSize,
-  getCachedTerminalFontSize,
-  getCachedTerminalGridSize,
-} from "./terminalUiState";
+import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
 
 const DEFAULT_TERMINAL_COLS = 80;
 const DEFAULT_TERMINAL_ROWS = 24;
@@ -153,19 +147,22 @@ function pickRunningTerminalSessionForBootstrap(
   );
 }
 
-export function ThreadTerminalRouteScreen() {
-  const router = useRouter();
+type ThreadTerminalRouteScreenProps = StaticScreenProps<{
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly terminalId?: string;
+}>;
+
+export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps) {
+  const navigation = useNavigation();
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const resizeTerminal = useAtomCommand(terminalEnvironment.resize, "terminal resize");
   const clearTerminal = useAtomCommand(terminalEnvironment.clear, "terminal clear");
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
   const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
   const { state: workspaceState } = useWorkspaceState();
-  const params = useLocalSearchParams<{
-    environmentId?: string | string[];
-    threadId?: string | string[];
-    terminalId?: string | string[];
-  }>();
+  const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
+  const params = props.route.params;
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
   const selectedThreadDetail = useSelectedThreadDetail();
@@ -179,7 +176,12 @@ export function ThreadTerminalRouteScreen() {
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const requestedTerminalId = firstRouteParam(params.terminalId);
   const terminalId = requestedTerminalId ?? DEFAULT_TERMINAL_ID;
-  const cachedFontSize = getCachedTerminalFontSize();
+  const {
+    isReady: hasResolvedFontPreference,
+    appearance,
+    setTerminalFontSize,
+  } = useAppearancePreferences();
+  const fontSize = appearance.terminalFontSize;
   const cachedRouteGridSize =
     routeEnvironmentId && routeThreadId
       ? getCachedTerminalGridSize({
@@ -239,7 +241,6 @@ export function ThreadTerminalRouteScreen() {
       rows: DEFAULT_TERMINAL_ROWS,
     },
   );
-  const [fontSize, setFontSize] = useState(cachedFontSize ?? DEFAULT_TERMINAL_FONT_SIZE);
   const [keyboardFocusRequest, setKeyboardFocusRequest] = useState(0);
   const [isAccessoryDismissed, setIsAccessoryDismissed] = useState(false);
   const bufferReplayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -247,9 +248,6 @@ export function ThreadTerminalRouteScreen() {
   const lastBufferReplayKeyRef = useRef<string | null>(null);
   const sentInitialInputKeyRef = useRef<string | null>(null);
   const [readyBufferReplayKey, setReadyBufferReplayKey] = useState<string | null>(null);
-  const [hasResolvedFontPreference, setHasResolvedFontPreference] = useState(
-    cachedFontSize !== null,
-  );
   /** Default grid is always valid for attach; onResize refines cols/rows. Requiring a cached size blocked bootstrap for new terminal routes. */
   const [hasMeasuredSurface, setHasMeasuredSurface] = useState(true);
   const [pendingModifierState, setPendingModifierState] = useState<{
@@ -404,24 +402,10 @@ export function ThreadTerminalRouteScreen() {
   );
 
   const terminalTheme = getPierreTerminalTheme(appearanceScheme);
+  const usesNativeHeaderGlass = Platform.OS === "ios";
   const pendingModifier =
     pendingModifierState.terminalId === terminalId ? pendingModifierState.value : null;
-  const headerTitle = useMemo(() => {
-    const topLineParts = [
-      selectedEnvironmentConnection?.environmentLabel ?? null,
-      selectedThreadProject?.title ?? null,
-    ].filter((value): value is string => Boolean(value));
-
-    return {
-      topLine: topLineParts.join(" \u00b7 "),
-      bottomLine: cwd ?? selectedThreadProject?.workspaceRoot ?? "",
-    };
-  }, [
-    cwd,
-    selectedEnvironmentConnection?.environmentLabel,
-    selectedThreadProject?.title,
-    selectedThreadProject?.workspaceRoot,
-  ]);
+  const headerSubtitle = selectedThreadProject?.title ?? "";
   const terminalToolbarActions = useMemo<ReadonlyArray<TerminalToolbarAction>>(() => {
     const modifierActions: ReadonlyArray<TerminalToolbarAction> =
       hostPlatform === "mac"
@@ -546,8 +530,14 @@ export function ThreadTerminalRouteScreen() {
     if (!shouldRedirectToRunningTerminal || !selectedThread || !runningSession) {
       return;
     }
-    router.replace(buildThreadTerminalNavigation(selectedThread, runningSession.target.terminalId));
-  }, [router, runningSession, selectedThread, shouldRedirectToRunningTerminal]);
+    navigation.dispatch(
+      StackActions.replace("ThreadTerminal", {
+        environmentId: String(selectedThread.environmentId),
+        threadId: String(selectedThread.id),
+        terminalId: runningSession.target.terminalId,
+      }),
+    );
+  }, [navigation, runningSession, selectedThread, shouldRedirectToRunningTerminal]);
 
   useEffect(() => {
     const initialInput = pendingLaunch?.initialInput;
@@ -636,42 +626,6 @@ export function ThreadTerminalRouteScreen() {
     );
     setHasMeasuredSurface(true);
   }, [routeEnvironmentId, routeThreadId, terminalId]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    void loadPreferences()
-      .then((preferences) => {
-        if (cancelled) {
-          return;
-        }
-
-        setFontSize(cacheTerminalFontSize(preferences.terminalFontSize));
-        setHasResolvedFontPreference(true);
-      })
-      .catch(() => {
-        if (cancelled) {
-          return;
-        }
-
-        setHasResolvedFontPreference(true);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!hasResolvedFontPreference) {
-      return;
-    }
-
-    cacheTerminalFontSize(fontSize);
-    void savePreferencesPatch({
-      terminalFontSize: normalizeTerminalFontSize(fontSize),
-    });
-  }, [fontSize, hasResolvedFontPreference]);
 
   const writeInput = useCallback(
     (data: string) => {
@@ -772,9 +726,15 @@ export function ThreadTerminalRouteScreen() {
         return;
       }
 
-      router.replace(buildThreadTerminalNavigation(selectedThread, nextTerminalId));
+      navigation.dispatch(
+        StackActions.replace("ThreadTerminal", {
+          environmentId: String(selectedThread.environmentId),
+          threadId: String(selectedThread.id),
+          terminalId: nextTerminalId,
+        }),
+      );
     },
-    [router, selectedThread, terminalId],
+    [navigation, selectedThread, terminalId],
   );
 
   const handleOpenNewTerminal = useCallback(() => {
@@ -782,30 +742,25 @@ export function ThreadTerminalRouteScreen() {
       return;
     }
 
-    router.replace(
-      buildThreadTerminalNavigation(
-        selectedThread,
-        nextOpenTerminalId({
+    navigation.dispatch(
+      StackActions.replace("ThreadTerminal", {
+        environmentId: String(selectedThread.environmentId),
+        threadId: String(selectedThread.id),
+        terminalId: nextOpenTerminalId({
           listedTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
           activeRouteTerminalId: terminalId,
         }),
-      ),
+      }),
     );
-  }, [router, selectedThread, terminalId, terminalMenuSessions]);
-
-  const adjustFontSize = useCallback((delta: number) => {
-    setTimeout(() => {
-      setFontSize((current) => cacheTerminalFontSize(current + delta));
-    }, 0);
-  }, []);
+  }, [navigation, selectedThread, terminalId, terminalMenuSessions]);
 
   const handleDecreaseFontSize = useCallback(() => {
-    adjustFontSize(-TERMINAL_FONT_SIZE_STEP);
-  }, [adjustFontSize]);
+    setTerminalFontSize(stepTerminalFontSize(fontSize, -1));
+  }, [fontSize, setTerminalFontSize]);
 
   const handleIncreaseFontSize = useCallback(() => {
-    adjustFontSize(TERMINAL_FONT_SIZE_STEP);
-  }, [adjustFontSize]);
+    setTerminalFontSize(stepTerminalFontSize(fontSize, 1));
+  }, [fontSize, setTerminalFontSize]);
 
   const handleClearTerminal = useCallback(() => {
     if (!selectedThread) {
@@ -898,80 +853,58 @@ export function ThreadTerminalRouteScreen() {
 
   return (
     <>
-      <Stack.Screen
+      <NativeStackScreenOptions
         options={{
-          headerShown: true,
-          headerBackButtonDisplayMode: "minimal",
-          headerBackTitle: "",
-          headerShadowVisible: false,
-          headerStyle: { backgroundColor: terminalTheme.background },
-          headerTintColor: terminalTheme.foreground,
-          headerTitleAlign: "center",
-          title: "",
-          headerTitle: () => (
-            <View
-              style={{
-                alignItems: "center",
-                gap: 1,
-                maxWidth: 240,
-              }}
-            >
-              <RNText
-                numberOfLines={1}
-                style={{
-                  color: terminalTheme.foreground,
-                  fontFamily: "DMSans_700Bold",
-                  fontSize: MOBILE_TYPOGRAPHY.footnote.fontSize,
-                  lineHeight: 16,
-                }}
-              >
-                {headerTitle.topLine}
-              </RNText>
-              <RNText
-                ellipsizeMode="middle"
-                numberOfLines={1}
-                style={{
-                  color: terminalTheme.mutedForeground,
-                  fontFamily: "Menlo",
-                  fontSize: MOBILE_TYPOGRAPHY.caption.fontSize,
-                  lineHeight: 14,
-                }}
-              >
-                {headerTitle.bottomLine}
-              </RNText>
-            </View>
-          ),
+          // Static header config lives in Stack.tsx (SOLID_HEADER_OPTIONS — the pty
+          // scrolls internally, nothing for glass to sample). Default title/subtitle
+          // styling, like every other page.
+          title: "Terminal",
+          unstable_headerSubtitle:
+            usesNativeHeaderGlass && headerSubtitle.length > 0 ? headerSubtitle : undefined,
         }}
       />
 
+      {layout.usesSplitView ? (
+        <NativeHeaderToolbar placement="left">
+          <NativeHeaderToolbar.Button
+            accessibilityLabel={panes.primarySidebarVisible ? "Maximize terminal" : "Show threads"}
+            icon={
+              panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left"
+            }
+            onPress={togglePrimarySidebar}
+            separateBackground
+          />
+        </NativeHeaderToolbar>
+      ) : null}
+
       {isEnvironmentReady ? (
-        <Stack.Toolbar placement="right">
-          <Stack.Toolbar.Menu icon="terminal" title="Terminal options" separateBackground>
-            <Stack.Toolbar.Label>
+        <NativeHeaderToolbar placement="right">
+          <NativeHeaderToolbar.Menu icon="terminal" title="Terminal options" separateBackground>
+            <NativeHeaderToolbar.Label>
               {getTerminalStatusLabel({
                 status: terminal.status,
                 hasRunningSubprocess: terminal.hasRunningSubprocess,
               })}
-            </Stack.Toolbar.Label>
-            <Stack.Toolbar.Menu icon="textformat.size" inline title="Text size">
-              <Stack.Toolbar.Label>Text size</Stack.Toolbar.Label>
-              <Stack.Toolbar.MenuAction
+            </NativeHeaderToolbar.Label>
+            <NativeHeaderToolbar.Menu icon="textformat.size" inline title="Text size">
+              <NativeHeaderToolbar.Label>Text size</NativeHeaderToolbar.Label>
+              <NativeHeaderToolbar.MenuAction
                 disabled={fontSize <= MIN_TERMINAL_FONT_SIZE}
                 discoverabilityLabel="Decrease terminal text size"
                 onPress={handleDecreaseFontSize}
               >
-                <Stack.Toolbar.Label>{`A- ${Math.max(MIN_TERMINAL_FONT_SIZE, fontSize - TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`}</Stack.Toolbar.Label>
-              </Stack.Toolbar.MenuAction>
-              <Stack.Toolbar.MenuAction
+                <NativeHeaderToolbar.Label>{`A- ${Math.max(MIN_TERMINAL_FONT_SIZE, fontSize - TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`}</NativeHeaderToolbar.Label>
+              </NativeHeaderToolbar.MenuAction>
+              <NativeHeaderToolbar.MenuAction
                 disabled={fontSize >= MAX_TERMINAL_FONT_SIZE}
                 discoverabilityLabel="Increase terminal text size"
                 onPress={handleIncreaseFontSize}
               >
-                <Stack.Toolbar.Label>{`A+ ${Math.min(MAX_TERMINAL_FONT_SIZE, fontSize + TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`}</Stack.Toolbar.Label>
-              </Stack.Toolbar.MenuAction>
-            </Stack.Toolbar.Menu>
+                <NativeHeaderToolbar.Label>{`A+ ${Math.min(MAX_TERMINAL_FONT_SIZE, fontSize + TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`}</NativeHeaderToolbar.Label>
+              </NativeHeaderToolbar.MenuAction>
+            </NativeHeaderToolbar.Menu>
             {terminalMenuSessions.map((session) => (
-              <Stack.Toolbar.MenuAction
+              <NativeHeaderToolbar.MenuAction
                 key={session.terminalId}
                 icon={session.terminalId === terminalId ? "checkmark" : "terminal"}
                 onPress={() => handleSelectTerminal(session.terminalId)}
@@ -982,18 +915,18 @@ export function ThreadTerminalRouteScreen() {
                   .filter(Boolean)
                   .join(" · ")}
               >
-                <Stack.Toolbar.Label>{session.displayLabel}</Stack.Toolbar.Label>
-              </Stack.Toolbar.MenuAction>
+                <NativeHeaderToolbar.Label>{session.displayLabel}</NativeHeaderToolbar.Label>
+              </NativeHeaderToolbar.MenuAction>
             ))}
-            <Stack.Toolbar.MenuAction
+            <NativeHeaderToolbar.MenuAction
               icon="plus"
               onPress={handleOpenNewTerminal}
               subtitle={`Start another shell in ${basename(selectedThreadProject.workspaceRoot) ?? "this workspace"}`}
             >
-              <Stack.Toolbar.Label>Open new terminal</Stack.Toolbar.Label>
-            </Stack.Toolbar.MenuAction>
-          </Stack.Toolbar.Menu>
-        </Stack.Toolbar>
+              <NativeHeaderToolbar.Label>Open new terminal</NativeHeaderToolbar.Label>
+            </NativeHeaderToolbar.MenuAction>
+          </NativeHeaderToolbar.Menu>
+        </NativeHeaderToolbar>
       ) : null}
 
       <View style={{ flex: 1, backgroundColor: terminalTheme.background }}>

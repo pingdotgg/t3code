@@ -1,4 +1,5 @@
-import { Stack, useRouter } from "expo-router";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Alert, InteractionManager, View, useColorScheme } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
@@ -29,9 +30,8 @@ import {
   providerOptionsConfigurationLabel,
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
-import { buildThreadRoutePath } from "../../lib/routes";
 import { scopedProjectKey } from "../../lib/scopedEntities";
-import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
+import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
 import { useProjects } from "../../state/entities";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
@@ -58,7 +58,7 @@ export function NewTaskDraftScreen(props: {
   const projects = useProjects();
   const createProjectThread = useCreateProjectThread();
   const flow = useNewTaskFlow();
-  const router = useRouter();
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
@@ -68,6 +68,7 @@ export function NewTaskDraftScreen(props: {
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
 
   const borderColor = useThemeColor("--color-border");
+  const bodyText = useScaledTextRole("body");
   const sheetFadeOpaque = colorScheme === "dark" ? "rgba(14,14,14,0.98)" : "rgba(242,242,247,0.98)";
   const sheetFadeTransparent = colorScheme === "dark" ? "rgba(14,14,14,0)" : "rgba(242,242,247,0)";
 
@@ -101,13 +102,13 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
-    router.replace("/new");
+    navigation.dispatch(StackActions.replace("NewTask"));
   }, [
     logicalProjects,
     projects,
     props.initialProjectRef?.environmentId,
     props.initialProjectRef?.projectId,
-    router,
+    navigation,
     selectedProject,
     setProject,
   ]);
@@ -429,20 +430,25 @@ export function NewTaskDraftScreen(props: {
 
     flow.setPrompt("");
     flow.clearAttachments();
-    router.replace(buildThreadRoutePath(result.value));
+    navigation.dispatch(
+      StackActions.replace("Thread", {
+        environmentId: String(result.value.environmentId),
+        threadId: String(result.value.threadId),
+      }),
+    );
   }
 
   if (!selectedProject) {
     return (
       <View className="flex-1 bg-sheet">
-        <Stack.Screen options={{ title: "Loading task" }} />
+        <NativeStackScreenOptions options={{ title: "Loading task" }} />
       </View>
     );
   }
 
   return (
     <View className="flex-1 bg-sheet">
-      <Stack.Screen options={{ title: selectedProject.title }} />
+      <NativeStackScreenOptions options={{ title: selectedProject.title }} />
 
       <KeyboardAvoidingView automaticOffset behavior="padding" style={{ flex: 1 }}>
         <View style={{ flex: 1, minHeight: 0, paddingHorizontal: 20, paddingTop: 8 }}>
@@ -457,7 +463,7 @@ export function NewTaskDraftScreen(props: {
             onPasteImages={(uris) => void handleNativePasteImages(uris)}
             placeholder={`Describe a coding task in ${selectedProject.title}`}
             style={{ flex: 1, minHeight: 0 }}
-            textStyle={MOBILE_TYPOGRAPHY.composer}
+            textStyle={bodyText}
           />
         </View>
 
