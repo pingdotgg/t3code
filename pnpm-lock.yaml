@@ -60,6 +60,7 @@ overrides:
   '@pierre/diffs>@shikijs/transformers': ^4.2.0
   '@types/node': 24.12.4
   effect: 4.0.0-beta.78
+  expo-modules-jsi: 56.0.10
   vite: npm:@voidzero-dev/vite-plus-core@0.2.2
   yaml: ^2.9.0
 

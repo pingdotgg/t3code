@@ -84,6 +84,9 @@ overrides:
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
   "@types/node": "catalog:"
   effect: "catalog:"
+  # Pin to the version our patch targets; expo-modules-core's ~56.0.10 range
+  # otherwise floats to newer releases on fresh resolves (ERR_PNPM_UNUSED_PATCH).
+  expo-modules-jsi: 56.0.10
   vite: "catalog:"
   yaml: "catalog:"
 
