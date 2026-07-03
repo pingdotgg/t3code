@@ -29,10 +29,17 @@ import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   EnvironmentRpcRequestObserver,
+  addPluginSource,
+  beginPluginInstall,
   callPlugin,
+  checkPluginUpdates,
+  confirmPluginInstall,
+  getPluginCatalog,
   listPlugins,
+  listPluginSources,
   request,
   runStream,
+  setPluginEnabled,
   subscribe,
   subscribePlugin,
 } from "./client.ts";
@@ -134,6 +141,111 @@ describe("environment RPC", () => {
       );
 
       expect(result).toEqual({ plugins: [] });
+    }),
+  );
+
+  it.effect("calls plugin management helpers with typed payloads", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("test-plugin");
+      const observedInputs: Array<unknown> = [];
+      const client = {
+        [PLUGINS_WS_METHODS.sourcesList]: () => Effect.succeed({ sources: [] }),
+        [PLUGINS_WS_METHODS.sourcesAdd]: (input: unknown) => {
+          observedInputs.push(input);
+          return Effect.succeed({
+            source: {
+              id: "src-test",
+              url: "https://example.test/marketplace.json",
+              addedAt: "2026-07-03T00:00:00.000Z",
+            },
+          });
+        },
+        [PLUGINS_WS_METHODS.catalog]: (input: unknown) => {
+          observedInputs.push(input);
+          return Effect.succeed({ entries: [], errors: [] });
+        },
+        [PLUGINS_WS_METHODS.installBegin]: (input: unknown) => {
+          observedInputs.push(input);
+          return Effect.succeed({
+            stageToken: "stage-token",
+            manifest: {
+              id: pluginId,
+              name: "Test Plugin",
+              version: "1.0.0",
+              hostApi: "^1.0.0",
+              capabilities: [],
+              entries: { web: "web/index.js" },
+            },
+            capabilityDescriptions: {},
+          });
+        },
+        [PLUGINS_WS_METHODS.installConfirm]: (input: unknown) => {
+          observedInputs.push(input);
+          return Effect.succeed({
+            plugin: {
+              id: pluginId,
+              name: "Test Plugin",
+              version: "1.0.0",
+              state: "active",
+              capabilities: [],
+              hasWeb: true,
+              lastError: null,
+            },
+          });
+        },
+        [PLUGINS_WS_METHODS.setEnabled]: (input: unknown) => {
+          observedInputs.push(input);
+          return Effect.succeed({});
+        },
+        [PLUGINS_WS_METHODS.checkUpdates]: () => Effect.succeed({ updates: [] }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const provide = Effect.provideService(
+        EnvironmentSupervisor.EnvironmentSupervisor,
+        supervisor,
+      );
+
+      expect(yield* listPluginSources().pipe(provide)).toEqual({ sources: [] });
+      expect(
+        yield* addPluginSource({ url: "https://example.test/marketplace.json" }).pipe(provide),
+      ).toEqual({
+        source: {
+          id: "src-test",
+          url: "https://example.test/marketplace.json",
+          addedAt: "2026-07-03T00:00:00.000Z",
+        },
+      });
+      expect(yield* getPluginCatalog({ sourceId: "src-test" }).pipe(provide)).toEqual({
+        entries: [],
+        errors: [],
+      });
+      expect(
+        yield* beginPluginInstall({ sourceId: "src-test", pluginId, version: "1.0.0" }).pipe(
+          provide,
+        ),
+      ).toMatchObject({ stageToken: "stage-token" });
+      expect(yield* confirmPluginInstall({ stageToken: "stage-token" }).pipe(provide)).toEqual({
+        plugin: {
+          id: pluginId,
+          name: "Test Plugin",
+          version: "1.0.0",
+          state: "active",
+          capabilities: [],
+          hasWeb: true,
+          lastError: null,
+        },
+      });
+      yield* setPluginEnabled({ pluginId, enabled: false }).pipe(provide);
+      expect(yield* checkPluginUpdates().pipe(provide)).toEqual({ updates: [] });
+
+      expect(observedInputs).toEqual([
+        { url: "https://example.test/marketplace.json" },
+        { sourceId: "src-test" },
+        { sourceId: "src-test", pluginId, version: "1.0.0" },
+        { stageToken: "stage-token" },
+        { pluginId, enabled: false },
+      ]);
     }),
   );
 

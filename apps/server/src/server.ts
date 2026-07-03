@@ -37,7 +37,10 @@ import * as PluginHttpRegistry from "./plugins/PluginHttpRegistry.ts";
 import { pluginHttpRouteLayer } from "./plugins/PluginHttpRoutes.ts";
 import { pluginWebRouteLayer } from "./plugins/PluginWebRoutes.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
+import * as PluginInstaller from "./plugins/PluginInstaller.ts";
 import * as PluginLockfileStore from "./plugins/PluginLockfileStore.ts";
+import * as PluginManagementRpcHandlers from "./plugins/PluginManagementRpcHandlers.ts";
+import * as PluginMarketplace from "./plugins/PluginMarketplace.ts";
 import * as PluginMigrator from "./plugins/PluginMigrator.ts";
 import * as PluginModuleLoader from "./plugins/PluginModuleLoader.ts";
 import * as PluginRpcDispatcher from "./plugins/PluginRpcDispatcher.ts";
@@ -335,10 +338,25 @@ const PluginCatalogLayerLive = PluginCatalog.layer.pipe(
   Layer.provideMerge(PluginLockfileStoreLayerLive),
   Layer.provideMerge(PluginRuntimeRegistryLayerLive),
 );
+const PluginMarketplaceLayerLive = PluginMarketplace.layer;
+const PluginInstallerLayerLive = PluginInstaller.layer.pipe(
+  Layer.provideMerge(PluginLockfileStoreLayerLive),
+  Layer.provideMerge(PluginMarketplaceLayerLive),
+  Layer.provideMerge(PluginHostLayerLive),
+  Layer.provideMerge(PluginCatalogLayerLive),
+);
+const PluginManagementRpcHandlersLayerLive = PluginManagementRpcHandlers.layer.pipe(
+  Layer.provideMerge(PluginLockfileStoreLayerLive),
+  Layer.provideMerge(PluginMarketplaceLayerLive),
+  Layer.provideMerge(PluginInstallerLayerLive),
+);
 const PluginLayerLive = Layer.mergeAll(
   PluginHostLayerLive,
   PluginRpcDispatcherLayerLive,
   PluginCatalogLayerLive,
+  PluginMarketplaceLayerLive,
+  PluginInstallerLayerLive,
+  PluginManagementRpcHandlersLayerLive,
   PluginHttpRegistryLayerLive,
   PluginLockfileStoreLayerLive,
 );

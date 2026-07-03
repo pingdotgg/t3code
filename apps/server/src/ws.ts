@@ -18,6 +18,7 @@ import {
   AuthTerminalOperateScope,
   AuthAccessReadScope,
   AuthAccessStreamError,
+  AuthPluginsManageScope,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
@@ -114,6 +115,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import { PluginCatalog } from "./plugins/PluginCatalog.ts";
+import { PluginManagementRpcHandlers } from "./plugins/PluginManagementRpcHandlers.ts";
 import { PluginRpcDispatcher } from "./plugins/PluginRpcDispatcher.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -352,6 +354,18 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   // performs the real per-plugin plugin:<id>:read|operate authorization.
   [PLUGINS_WS_METHODS.call, AuthOrchestrationReadScope],
   [PLUGINS_WS_METHODS.subscribe, AuthOrchestrationReadScope],
+  [PLUGINS_WS_METHODS.sourcesList, AuthPluginsManageScope],
+  [PLUGINS_WS_METHODS.sourcesAdd, AuthPluginsManageScope],
+  [PLUGINS_WS_METHODS.sourcesRemove, AuthPluginsManageScope],
+  [PLUGINS_WS_METHODS.catalog, AuthPluginsManageScope],
+  [PLUGINS_WS_METHODS.installBegin, AuthPluginsManageScope],
+  [PLUGINS_WS_METHODS.installConfirm, AuthPluginsManageScope],
+  [PLUGINS_WS_METHODS.installAbort, AuthPluginsManageScope],
+  [PLUGINS_WS_METHODS.setEnabled, AuthPluginsManageScope],
+  [PLUGINS_WS_METHODS.uninstall, AuthPluginsManageScope],
+  [PLUGINS_WS_METHODS.upgradeBegin, AuthPluginsManageScope],
+  [PLUGINS_WS_METHODS.upgradeConfirm, AuthPluginsManageScope],
+  [PLUGINS_WS_METHODS.checkUpdates, AuthPluginsManageScope],
 ]);
 
 function toAuthAccessStreamEvent(
@@ -445,6 +459,7 @@ const makeWsRpcLayer = (
       const relayClient = yield* RelayClient.RelayClient;
       const pluginCatalog = yield* PluginCatalog;
       const pluginRpcDispatcher = yield* PluginRpcDispatcher;
+      const pluginManagement = yield* PluginManagementRpcHandlers;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -1215,6 +1230,76 @@ const makeWsRpcLayer = (
               "plugin.method": input.method,
             },
           ),
+        [PLUGINS_WS_METHODS.sourcesList]: (_input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.sourcesList, pluginManagement.listSources, {
+            "rpc.aggregate": "plugins",
+          }),
+        [PLUGINS_WS_METHODS.sourcesAdd]: (input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.sourcesAdd, pluginManagement.addSource(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [PLUGINS_WS_METHODS.sourcesRemove]: (input) =>
+          observeRpcEffect(
+            PLUGINS_WS_METHODS.sourcesRemove,
+            pluginManagement.removeSource(input).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "plugins",
+            },
+          ),
+        [PLUGINS_WS_METHODS.catalog]: (input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.catalog, pluginManagement.catalog(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [PLUGINS_WS_METHODS.installBegin]: (input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.installBegin, pluginManagement.beginInstall(input), {
+            "rpc.aggregate": "plugins",
+            "plugin.id": input.pluginId,
+          }),
+        [PLUGINS_WS_METHODS.installConfirm]: (input) =>
+          observeRpcEffect(
+            PLUGINS_WS_METHODS.installConfirm,
+            pluginManagement.confirmInstall(input.stageToken),
+            { "rpc.aggregate": "plugins" },
+          ),
+        [PLUGINS_WS_METHODS.installAbort]: (input) =>
+          observeRpcEffect(
+            PLUGINS_WS_METHODS.installAbort,
+            pluginManagement.abortInstall(input.stageToken).pipe(Effect.as({})),
+            { "rpc.aggregate": "plugins" },
+          ),
+        [PLUGINS_WS_METHODS.setEnabled]: (input) =>
+          observeRpcEffect(
+            PLUGINS_WS_METHODS.setEnabled,
+            pluginManagement.setEnabled(input).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "plugins",
+              "plugin.id": input.pluginId,
+            },
+          ),
+        [PLUGINS_WS_METHODS.uninstall]: (input) =>
+          observeRpcEffect(
+            PLUGINS_WS_METHODS.uninstall,
+            pluginManagement.uninstall(input).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "plugins",
+              "plugin.id": input.pluginId,
+            },
+          ),
+        [PLUGINS_WS_METHODS.upgradeBegin]: (input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.upgradeBegin, pluginManagement.beginUpgrade(input), {
+            "rpc.aggregate": "plugins",
+            "plugin.id": input.pluginId,
+          }),
+        [PLUGINS_WS_METHODS.upgradeConfirm]: (input) =>
+          observeRpcEffect(
+            PLUGINS_WS_METHODS.upgradeConfirm,
+            pluginManagement.confirmUpgrade(input.stageToken),
+            { "rpc.aggregate": "plugins" },
+          ),
+        [PLUGINS_WS_METHODS.checkUpdates]: (_input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.checkUpdates, pluginManagement.checkUpdates, {
+            "rpc.aggregate": "plugins",
+          }),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverRefreshProviders,

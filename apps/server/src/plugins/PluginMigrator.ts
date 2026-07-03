@@ -80,7 +80,9 @@ export class PluginMigrator extends Context.Service<
   }
 >()("t3/plugins/PluginMigrator") {}
 
-const pluginSqlPrefix = (pluginId: string) => `p_${pluginId.replaceAll("-", "_")}_`;
+// The DB namespace a plugin's migrations are confined to. Exported so the
+// installer's id-collision guard checks the SAME prefix the gate enforces.
+export const pluginSqlPrefix = (pluginId: string) => `p_${pluginId.replaceAll("-", "_")}_`;
 
 const sqliteMasterSnapshot = (sql: SqlClient.SqlClient) =>
   sql<SqliteMasterObject>`

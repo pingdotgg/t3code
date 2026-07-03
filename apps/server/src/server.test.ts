@@ -118,6 +118,7 @@ import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import * as PluginHttpRegistry from "./plugins/PluginHttpRegistry.ts";
 import * as PluginLockfileStore from "./plugins/PluginLockfileStore.ts";
+import * as PluginManagementRpcHandlers from "./plugins/PluginManagementRpcHandlers.ts";
 import * as PluginRpcDispatcher from "./plugins/PluginRpcDispatcher.ts";
 import * as Data from "effect/Data";
 
@@ -753,6 +754,27 @@ const buildAppUnderTest = (options?: {
           PluginRpcDispatcher.PluginRpcDispatcher.of({
             call: () => Effect.die("PluginRpcDispatcher not stubbed in this test"),
             subscribe: () => Stream.die("PluginRpcDispatcher not stubbed in this test"),
+          }),
+        ),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          PluginManagementRpcHandlers.PluginManagementRpcHandlers,
+          PluginManagementRpcHandlers.PluginManagementRpcHandlers.of({
+            listSources: Effect.succeed({ sources: [] }),
+            addSource: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+            removeSource: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+            catalog: () => Effect.succeed({ entries: [], errors: [] }),
+            beginInstall: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+            confirmInstall: () =>
+              Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+            abortInstall: () => Effect.void,
+            setEnabled: () => Effect.void,
+            uninstall: () => Effect.void,
+            beginUpgrade: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+            confirmUpgrade: () =>
+              Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+            checkUpdates: Effect.succeed({ updates: [] }),
           }),
         ),
       ),

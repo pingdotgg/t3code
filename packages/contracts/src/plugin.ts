@@ -32,6 +32,7 @@ export type PluginCapability = typeof PluginCapability.Type;
 const SemverString = TrimmedNonEmptyString.check(Schema.isPattern(SEMVER_PATTERN));
 const HostApiRange = TrimmedNonEmptyString.check(Schema.isPattern(HOST_API_RANGE_PATTERN));
 const OptionalUrl = Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(2048)));
+const Sha256Hex = TrimmedNonEmptyString.check(Schema.isPattern(/^[a-f0-9]{64}$/i));
 
 const RelativeEntryPath = TrimmedNonEmptyString.check(
   Schema.makeFilter<string>((entryPath) => {
@@ -143,6 +144,159 @@ export const PluginListResult = Schema.Struct({
 });
 export type PluginListResult = typeof PluginListResult.Type;
 
+export const PluginSource = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  addedAt: IsoDateTime,
+});
+export type PluginSource = typeof PluginSource.Type;
+
+export const MarketplaceVersion = Schema.Struct({
+  version: SemverString,
+  tarball: TrimmedNonEmptyString,
+  sha256: Sha256Hex,
+  hostApi: HostApiRange,
+  minAppVersion: Schema.optionalKey(SemverString),
+  publishedAt: IsoDateTime,
+});
+export type MarketplaceVersion = typeof MarketplaceVersion.Type;
+
+export const MarketplaceEntry = Schema.Struct({
+  id: PluginId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  description: TrimmedString.check(Schema.isMaxLength(500)),
+  author: Schema.optionalKey(PluginAuthor),
+  capabilities: Schema.Array(PluginCapability),
+  versions: Schema.Array(MarketplaceVersion),
+});
+export type MarketplaceEntry = typeof MarketplaceEntry.Type;
+
+export const PluginInstallStaged = Schema.Struct({
+  stageToken: TrimmedNonEmptyString,
+  manifest: PluginManifest,
+  capabilityDescriptions: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
+});
+export type PluginInstallStaged = typeof PluginInstallStaged.Type;
+
+export const PluginSourceError = Schema.Struct({
+  sourceId: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  message: TrimmedNonEmptyString,
+});
+export type PluginSourceError = typeof PluginSourceError.Type;
+
+export const PluginSourcesListResult = Schema.Struct({
+  sources: Schema.Array(PluginSource),
+});
+export type PluginSourcesListResult = typeof PluginSourcesListResult.Type;
+
+export const PluginSourcesAddInput = Schema.Struct({
+  url: TrimmedNonEmptyString,
+});
+export type PluginSourcesAddInput = typeof PluginSourcesAddInput.Type;
+
+export const PluginSourcesAddResult = Schema.Struct({
+  source: PluginSource,
+});
+export type PluginSourcesAddResult = typeof PluginSourcesAddResult.Type;
+
+export const PluginSourcesRemoveInput = Schema.Struct({
+  sourceId: TrimmedNonEmptyString,
+});
+export type PluginSourcesRemoveInput = typeof PluginSourcesRemoveInput.Type;
+
+export const PluginCatalogInput = Schema.Struct({
+  sourceId: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type PluginCatalogInput = typeof PluginCatalogInput.Type;
+
+export const PluginCatalogResult = Schema.Struct({
+  entries: Schema.Array(MarketplaceEntry),
+  errors: Schema.Array(PluginSourceError),
+});
+export type PluginCatalogResult = typeof PluginCatalogResult.Type;
+
+export const PluginInstallBeginInput = Schema.Struct({
+  sourceId: TrimmedNonEmptyString,
+  pluginId: PluginId,
+  version: SemverString,
+});
+export type PluginInstallBeginInput = typeof PluginInstallBeginInput.Type;
+
+export const PluginInstallConfirmInput = Schema.Struct({
+  stageToken: TrimmedNonEmptyString,
+});
+export type PluginInstallConfirmInput = typeof PluginInstallConfirmInput.Type;
+
+export const PluginInstallConfirmResult = Schema.Struct({
+  plugin: PluginInfo,
+});
+export type PluginInstallConfirmResult = typeof PluginInstallConfirmResult.Type;
+
+export const PluginInstallAbortInput = PluginInstallConfirmInput;
+export type PluginInstallAbortInput = typeof PluginInstallAbortInput.Type;
+
+export const PluginSetEnabledInput = Schema.Struct({
+  pluginId: PluginId,
+  enabled: Schema.Boolean,
+});
+export type PluginSetEnabledInput = typeof PluginSetEnabledInput.Type;
+
+export const PluginUninstallInput = Schema.Struct({
+  pluginId: PluginId,
+  removeData: Schema.Boolean,
+});
+export type PluginUninstallInput = typeof PluginUninstallInput.Type;
+
+export const PluginUpgradeBeginInput = Schema.Struct({
+  pluginId: PluginId,
+  version: SemverString,
+});
+export type PluginUpgradeBeginInput = typeof PluginUpgradeBeginInput.Type;
+
+export const PluginUpgradeConfirmInput = PluginInstallConfirmInput;
+export type PluginUpgradeConfirmInput = typeof PluginUpgradeConfirmInput.Type;
+
+export const PluginUpgradeConfirmResult = Schema.Struct({
+  plugin: PluginInfo,
+});
+export type PluginUpgradeConfirmResult = typeof PluginUpgradeConfirmResult.Type;
+
+export const PluginUpdateInfo = Schema.Struct({
+  pluginId: PluginId,
+  currentVersion: SemverString,
+  latestVersion: SemverString,
+});
+export type PluginUpdateInfo = typeof PluginUpdateInfo.Type;
+
+export const PluginCheckUpdatesResult = Schema.Struct({
+  updates: Schema.Array(PluginUpdateInfo),
+});
+export type PluginCheckUpdatesResult = typeof PluginCheckUpdatesResult.Type;
+
+export class PluginManagementError extends Schema.TaggedErrorClass<PluginManagementError>()(
+  "PluginManagementError",
+  {
+    code: Schema.Literals([
+      "invalid-source",
+      "source-not-found",
+      "catalog-fetch-failed",
+      "plugin-not-found",
+      "version-not-found",
+      "download-failed",
+      "checksum-mismatch",
+      "extract-failed",
+      "manifest-invalid",
+      "stage-not-found",
+      "filesystem",
+      "lockfile",
+      "activation-failed",
+    ]),
+    message: Schema.String,
+    data: Schema.optional(Schema.Unknown),
+  },
+) {}
+
 export const PluginMethodInput = Schema.Struct({
   pluginId: PluginId,
   method: TrimmedNonEmptyString,
@@ -154,6 +308,18 @@ export const PLUGINS_WS_METHODS = {
   list: "plugins.list",
   call: "plugins.call",
   subscribe: "plugins.subscribe",
+  sourcesList: "plugins.sources.list",
+  sourcesAdd: "plugins.sources.add",
+  sourcesRemove: "plugins.sources.remove",
+  catalog: "plugins.catalog",
+  installBegin: "plugins.install.begin",
+  installConfirm: "plugins.install.confirm",
+  installAbort: "plugins.install.abort",
+  setEnabled: "plugins.setEnabled",
+  uninstall: "plugins.uninstall",
+  upgradeBegin: "plugins.upgrade.begin",
+  upgradeConfirm: "plugins.upgrade.confirm",
+  checkUpdates: "plugins.checkUpdates",
 } as const;
 
 const LockfileSource = Schema.Struct({

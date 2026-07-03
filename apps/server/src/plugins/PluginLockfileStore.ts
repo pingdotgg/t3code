@@ -95,6 +95,15 @@ export class PluginLockfileStore extends Context.Service<
       PluginLockfile,
       PluginLockfileReadError | PluginLockfileCorruptError
     >;
+    readonly updateSources: (
+      fn: (
+        sources: ReadonlyArray<PluginLockfile["sources"][number]>,
+        lockfile: PluginLockfile,
+      ) => Effect.Effect<
+        ReadonlyArray<PluginLockfile["sources"][number]>,
+        PluginLockfileStoreError
+      >,
+    ) => Effect.Effect<PluginLockfile, PluginLockfileStoreError>;
     readonly updatePlugin: (
       id: PluginId,
       fn: (
@@ -296,6 +305,14 @@ export const make = Effect.fn("PluginLockfileStore.make")(function* () {
       }),
     );
 
+  const updateSources: PluginLockfileStore["Service"]["updateSources"] = (fn) =>
+    mutate((lockfile) =>
+      Effect.gen(function* () {
+        const sources = yield* fn(lockfile.sources, lockfile);
+        return { ...lockfile, sources: Array.from(sources) };
+      }),
+    );
+
   const removePlugin: PluginLockfileStore["Service"]["removePlugin"] = (id) =>
     updatePlugin(id, () => Effect.succeed(undefined as PluginLockfilePlugin | undefined));
 
@@ -318,6 +335,7 @@ export const make = Effect.fn("PluginLockfileStore.make")(function* () {
     lockfilePath,
     advisoryLockPath,
     readLockfile,
+    updateSources,
     updatePlugin,
     removePlugin,
     transition,
