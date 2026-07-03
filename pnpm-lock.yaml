@@ -260,7 +260,7 @@ importers:
         version: link:../../packages/shared
       '@tabler/icons-react-native':
         specifier: ^3.44.0
-        version: 3.44.0(react-native-svg@15.15.4(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3))(react@19.2.3)
+        version: 3.44.0(react-native-svg@15.15.4(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3))(react@19.2.3)
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -279,6 +279,9 @@ importers:
       expo-auth-session:
         specifier: ~56.0.14
         version: 56.0.14(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
+      expo-blur:
+        specifier: ~56.0.3
+        version: 56.0.3(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
       expo-build-properties:
         specifier: ~56.0.19
         version: 56.0.19(expo@56.0.12)
@@ -6469,6 +6472,13 @@ packages:
   expo-auth-session@56.0.14:
     resolution: {integrity: sha512-b6URDBKXVWBjHwypnbCPW6A3PrwYyFqzLXtTrrpTGpmDlsxk7xuz6wIA77sBNziz3hMxt11Nu70iY0fJZYT4jA==}
     peerDependencies:
+      react: '*'
+      react-native: '*'
+
+  expo-blur@56.0.3:
+    resolution: {integrity: sha512-KDDtrpWc2tYlm1WCPaOgBtv+YEGqe5ELheFPIgSNgHt28NQUDcfBcFsA9Us2StDh6osmSD6NbKxOt5bU6PcDbQ==}
+    peerDependencies:
+      expo: '*'
       react: '*'
       react-native: '*'
 
@@ -14084,11 +14094,11 @@ snapshots:
 
   '@t3tools/mobile-terminal-native@file:apps/mobile/modules/t3-terminal': {}
 
-  '@tabler/icons-react-native@3.44.0(react-native-svg@15.15.4(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3))(react@19.2.3)':
+  '@tabler/icons-react-native@3.44.0(react-native-svg@15.15.4(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3))(react@19.2.3)':
     dependencies:
       '@tabler/icons': 3.44.0
       react: 19.2.3
-      react-native-svg: 15.15.4(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
+      react-native-svg: 15.15.4(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
 
   '@tabler/icons@3.44.0': {}
 
@@ -16180,6 +16190,12 @@ snapshots:
     transitivePeerDependencies:
       - expo
       - supports-color
+
+  expo-blur@56.0.3(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3):
+    dependencies:
+      expo: 56.0.12(8895228379997a2a064f9644cda56ed0)
+      react: 19.2.3
+      react-native: 0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)
 
   expo-build-properties@56.0.19(expo@56.0.12):
     dependencies:
