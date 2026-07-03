@@ -1,10 +1,11 @@
+import { useRecyclingState } from "@legendapp/list/react-native";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "expo-symbols";
-import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
+import { memo, useCallback, useMemo, type ComponentProps } from "react";
 import { Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
@@ -208,7 +209,9 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const { width: windowWidth } = useWindowDimensions();
   const compact = props.variant === "compact";
   const selected = props.selected === true;
-  const [hovered, setHovered] = useState(false);
+  // Recycling-safe: resets when the list container is reused for another
+  // thread, so a hover highlight can't leak across rows.
+  const [hovered, setHovered] = useRecyclingState(false);
 
   const separatorColor = useThemeColor("--color-separator");
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
@@ -418,6 +421,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       onSwipeableClose={props.onSwipeableClose}
       onSwipeableWillOpen={props.onSwipeableWillOpen}
       primaryAction={primaryAction}
+      resetKey={`${thread.environmentId}:${thread.id}`}
       simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
       threadTitle={thread.title}
     >

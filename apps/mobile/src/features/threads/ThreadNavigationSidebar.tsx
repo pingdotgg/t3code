@@ -544,6 +544,7 @@ function ThreadNavigationSidebarPane(
           <GestureDetector gesture={sidebarScrollGesture}>
             <LegendList
               data={listLayout.items}
+              drawDistance={500}
               estimatedItemSize={64}
               extraData={listExtraData}
               getItemType={(item) => item.type}
@@ -562,7 +563,7 @@ function ThreadNavigationSidebarPane(
               keyboardDismissMode="on-drag"
               keyboardShouldPersistTaps="handled"
               {...scrollGateHandlers}
-              recycleItems={false}
+              recycleItems
               scrollEventThrottle={16}
               showsVerticalScrollIndicator={false}
               style={styles.threadList}
@@ -602,6 +603,7 @@ function ThreadNavigationSidebarPane(
         <GestureDetector gesture={sidebarScrollGesture}>
           <LegendList
             data={listLayout.items}
+            drawDistance={500}
             estimatedItemSize={64}
             extraData={listExtraData}
             getItemType={(item) => item.type}
@@ -618,7 +620,7 @@ function ThreadNavigationSidebarPane(
             keyboardDismissMode="on-drag"
             keyboardShouldPersistTaps="handled"
             {...scrollGateHandlers}
-            recycleItems={false}
+            recycleItems
             scrollEventThrottle={16}
             showsVerticalScrollIndicator={false}
             style={styles.threadList}

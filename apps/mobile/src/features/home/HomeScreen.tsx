@@ -71,7 +71,7 @@ interface HomeScreenProps {
 
 /* ─── Layout constants ───────────────────────────────────────────────── */
 
-const ESTIMATED_THREAD_ROW_HEIGHT = 64;
+const ESTIMATED_THREAD_ROW_HEIGHT = 72;
 /** Height of the floating custom header on non-iOS platforms. */
 const CUSTOM_HEADER_HEIGHT = 78;
 
@@ -393,6 +393,7 @@ export function HomeScreen(props: HomeScreenProps) {
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         itemsAreEqual={homeListItemsAreEqual}
+        drawDistance={500}
         estimatedItemSize={ESTIMATED_THREAD_ROW_HEIGHT}
         extraData={extraData}
         ListHeaderComponent={listHeader}
@@ -404,7 +405,7 @@ export function HomeScreen(props: HomeScreenProps) {
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
         {...scrollGateHandlers}
-        recycleItems={false}
+        recycleItems
         scrollEventThrottle={16}
         contentContainerStyle={{
           paddingBottom: Platform.OS === "ios" ? Math.max(insets.bottom, 24) + 24 : 24,

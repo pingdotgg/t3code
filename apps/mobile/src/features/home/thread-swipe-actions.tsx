@@ -136,6 +136,12 @@ export function ThreadSwipeable(props: {
   readonly onSwipeableClose?: (methods: SwipeableMethods) => void;
   readonly onSwipeableWillOpen?: (methods: SwipeableMethods) => void;
   readonly primaryAction: ThreadSwipePrimaryAction;
+  /**
+   * Identity of the content being wrapped. When a recycled list reuses this
+   * component for a different item, the swipeable snaps back to closed so an
+   * open/mid-drag state can't leak onto another row.
+   */
+  readonly resetKey?: string;
   readonly simultaneousWithExternalGesture?: ComponentProps<
     typeof ReanimatedSwipeable
   >["simultaneousWithExternalGesture"];
@@ -145,6 +151,14 @@ export function ThreadSwipeable(props: {
   const fullSwipeArmedRef = useRef(false);
   const fullSwipeThreshold = Math.max(THREAD_SWIPE_ACTIONS_WIDTH + 44, props.fullSwipeWidth * 0.58);
   const close = useCallback(() => swipeableRef.current?.close(), []);
+  const resetKey = props.resetKey;
+  useEffect(() => {
+    if (resetKey === undefined) {
+      return;
+    }
+    fullSwipeArmedRef.current = false;
+    swipeableRef.current?.reset();
+  }, [resetKey]);
   const handleFullSwipeArmedChange = useCallback((armed: boolean) => {
     if (armed && !fullSwipeArmedRef.current && process.env.EXPO_OS === "ios") {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
