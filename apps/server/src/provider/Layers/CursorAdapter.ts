@@ -1031,6 +1031,20 @@ export function makeCursorAdapter(
               )
             : Effect.void;
 
+          // The notification fiber also terminates when stopSessionInternal
+          // interrupts it during teardown, which settles the race without the
+          // drain having happened. At that point the session is already gone
+          // (session.exited emitted, ctx removed from the map), so mutating
+          // turn state or emitting turn.completed here would produce
+          // out-of-order events against a removed session. Bail out instead.
+          if (ctx.stopped) {
+            return {
+              threadId: input.threadId,
+              turnId,
+              resumeCursor: ctx.session.resumeCursor,
+            };
+          }
+
           const turnRecord = ctx.turns.find((turn) => turn.id === turnId);
           if (turnRecord) {
             turnRecord.items.push({ prompt: promptParts, result });

@@ -242,6 +242,14 @@ export function makeAcpContentDeltaEvent(input: {
     turnId: input.turnId,
     ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
     payload: {
+      // reasoning_text deltas are intentionally not appended to the assistant
+      // message by ProviderRuntimeIngestion (same as the Codex/Claude/OpenCode
+      // adapters' reasoning deltas). The full thought text is accumulated in
+      // AcpSessionRuntime's active segment and delivered via item.completed
+      // (itemType "reasoning"), which ingestion persists as an expandable
+      // thinking row. Segments are closed on channel switches, tool calls, and
+      // prompt settlement (including cancellation), so accumulated reasoning
+      // survives an interrupted turn.
       streamKind: input.channel === "thought" ? "reasoning_text" : "assistant_text",
       delta: input.text,
     },
