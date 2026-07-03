@@ -530,9 +530,7 @@ layer("workflow-boards fixture plugin", (it) => {
           // constraints (the 4 folded dispatch_outbox columns, key DEFAULTs/UNIQUEs,
           // and the partial pr_state index). Counts are generated from the faithful
           // baseline; they change only on a deliberate schema edit.
-          for (const [table, expectedColumns] of Object.entries(
-            EXPECTED_TABLE_COLUMN_COUNTS,
-          )) {
+          for (const [table, expectedColumns] of Object.entries(EXPECTED_TABLE_COLUMN_COUNTS)) {
             const columns = yield* sql.unsafe<{ readonly name: string }>(
               `SELECT name FROM pragma_table_info('${table}')`,
             );
@@ -555,8 +553,14 @@ layer("workflow-boards fixture plugin", (it) => {
           assertDdlIncludes("p_workflow_boards_pr_state", "DEFAULT 'open'");
           assertDdlIncludes("p_workflow_boards_events", "UNIQUE");
           assertDdlIncludes("p_workflow_boards_work_source_mapping", "DEFAULT 'active'");
-          assertDdlIncludes("p_workflow_boards_outbound_delivery", "UNIQUE (event_sequence, rule_id)");
-          assertDdlIncludes("p_workflow_boards_idx_workflow_pr_state_open", "WHERE pr_state = 'open'");
+          assertDdlIncludes(
+            "p_workflow_boards_outbound_delivery",
+            "UNIQUE (event_sequence, rule_id)",
+          );
+          assertDdlIncludes(
+            "p_workflow_boards_idx_workflow_pr_state_open",
+            "WHERE pr_state = 'open'",
+          );
 
           // The migrator recorded the applied migration.
           const migrationRows = yield* sql<{
