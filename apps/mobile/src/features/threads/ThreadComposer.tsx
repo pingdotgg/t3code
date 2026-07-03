@@ -117,32 +117,46 @@ function ComposerSurface(props: {
   readonly style: ViewStyle;
   readonly isDarkMode: boolean;
 }) {
+  // Drop shadow lives on a wrapper: `overflow: "hidden"` on the surface itself
+  // (needed to clip content to the pill shape) would clip the shadow on iOS.
+  const shadowStyle: ViewStyle = {
+    borderRadius: props.style.borderRadius,
+    shadowColor: "#000000",
+    shadowOpacity: props.isDarkMode ? 0.35 : 0.12,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 10,
+  };
+
   if (isLiquidGlassSupported) {
     return (
-      <LiquidGlassView
-        effect="clear"
-        interactive
-        tintColor={props.isDarkMode ? "rgba(44,44,46,0.5)" : "rgba(255,255,255,0.45)"}
-        colorScheme={props.isDarkMode ? "dark" : "light"}
-        style={props.style}
-      >
-        {props.children}
-      </LiquidGlassView>
+      <View style={shadowStyle}>
+        <LiquidGlassView
+          effect="regular"
+          interactive
+          colorScheme={props.isDarkMode ? "dark" : "light"}
+          style={props.style}
+        >
+          {props.children}
+        </LiquidGlassView>
+      </View>
     );
   }
 
   return (
-    <View
-      style={[
-        props.style,
-        {
-          backgroundColor: props.isDarkMode ? "rgba(44,44,46,0.96)" : "rgba(255,255,255,0.96)",
-          borderWidth: 1,
-          borderColor: props.isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
-        },
-      ]}
-    >
-      {props.children}
+    <View style={shadowStyle}>
+      <View
+        style={[
+          props.style,
+          {
+            backgroundColor: props.isDarkMode ? "rgba(44,44,46,0.96)" : "rgba(255,255,255,0.96)",
+            borderWidth: 1,
+            borderColor: props.isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
+          },
+        ]}
+      >
+        {props.children}
+      </View>
     </View>
   );
 }
@@ -661,8 +675,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         paddingTop: isExpanded ? 8 : 6,
         paddingBottom: (props.bottomInset ?? 0) + (isExpanded ? 8 : 6),
         experimental_backgroundImage: isDarkMode
-          ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
-          : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
+          ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.6) 55%, rgba(0,0,0,0.9) 100%)"
+          : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.6) 55%, rgba(255,255,255,0.9) 100%)",
       }}
     >
       <View
