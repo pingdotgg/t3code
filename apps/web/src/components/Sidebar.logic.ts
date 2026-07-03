@@ -39,18 +39,6 @@ export interface ThreadStatusPill {
   pulse: boolean;
 }
 
-export function resolveSidebarOptionsMenuVisibility(input: { hideProjectChrome: boolean }): {
-  showButton: boolean;
-  showProjectOptions: boolean;
-  showThreadOptions: boolean;
-} {
-  return {
-    showButton: true,
-    showProjectOptions: !input.hideProjectChrome,
-    showThreadOptions: true,
-  };
-}
-
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
   "Awaiting Input": 4,
