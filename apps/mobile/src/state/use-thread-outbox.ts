@@ -34,6 +34,13 @@ export function setEditingQueuedMessageId(messageId: MessageId | null): void {
   appAtomRegistry.set(editingQueuedMessageIdAtom, messageId);
 }
 
+/** Release the edit lock only if it is held for this specific message. */
+export function clearEditingQueuedMessageId(messageId: MessageId): void {
+  if (appAtomRegistry.get(editingQueuedMessageIdAtom) === messageId) {
+    appAtomRegistry.set(editingQueuedMessageIdAtom, null);
+  }
+}
+
 export function useThreadOutboxMessages() {
   return useAtomValue(threadOutboxManager.queuedMessagesByThreadKeyAtom);
 }

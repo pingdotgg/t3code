@@ -89,9 +89,32 @@ export function buildHomeThreadGroups(input: {
       pendingTask.message.environmentId,
       pendingTask.creation.projectId,
     );
-    const groupKey = groupKeyByProjectKey.get(physicalKey);
+    let groupKey = groupKeyByProjectKey.get(physicalKey);
     if (!groupKey) {
-      continue;
+      // The project shell is not loaded (environment offline / project gone).
+      // A queued task must stay visible and deletable regardless, so build a
+      // standalone group from the metadata snapshotted at enqueue time.
+      groupKey = `pending-project:${physicalKey}`;
+      groupKeyByProjectKey.set(physicalKey, groupKey);
+      groups.set(groupKey, {
+        key: groupKey,
+        projects: [
+          {
+            environmentId: pendingTask.message.environmentId,
+            id: pendingTask.creation.projectId,
+            title: pendingTask.creation.projectTitle ?? "Unknown project",
+            workspaceRoot:
+              pendingTask.creation.projectCwd ?? String(pendingTask.creation.projectId),
+            repositoryIdentity: null,
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: pendingTask.message.createdAt,
+            updatedAt: pendingTask.message.createdAt,
+          },
+        ],
+        pendingTasks: [],
+        threads: [],
+      });
     }
     groups.get(groupKey)?.pendingTasks.push(pendingTask);
   }

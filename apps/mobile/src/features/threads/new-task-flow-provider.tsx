@@ -39,12 +39,12 @@ import {
 } from "../../state/use-composer-drafts";
 import { useBranches } from "../../state/queries";
 import {
-  enqueueThreadOutboxMessage,
   flattenQueuedThreadMessages,
   threadOutboxManager,
+  updateThreadOutboxMessage,
   type QueuedThreadMessage,
 } from "../../state/thread-outbox";
-import { setEditingQueuedMessageId } from "../../state/use-thread-outbox";
+import { setEditingQueuedMessageId, useThreadOutboxMessages } from "../../state/use-thread-outbox";
 import {
   setPendingConnectionError,
   useSavedRemoteConnections,
@@ -133,7 +133,7 @@ type NewTaskFlowContextValue = {
   readonly setWorkspaceMode: (mode: WorkspaceMode) => void;
   readonly selectBranch: (branch: VcsRef) => void;
   readonly setStartFromOrigin: (value: boolean) => void;
-  readonly beginEditingPendingTask: (messageId: string) => void;
+  readonly beginEditingPendingTask: (messageId: string) => boolean;
   readonly finishEditingPendingTask: () => void;
   readonly cancelEditingPendingTask: () => void;
   readonly buildPendingTaskMessage: (metadata: TurnCommandMetadata) => QueuedThreadMessage | null;
@@ -528,10 +528,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [selectedProjectDraftKey],
   );
 
-  const beginEditingPendingTask = useCallback((messageId: string) => {
+  const beginEditingPendingTask = useCallback((messageId: string): boolean => {
     const message = findQueuedPendingTask(messageId);
     if (!message?.creation) {
-      return;
+      return false;
     }
     const draftKey = pendingTaskDraftKey(message.messageId);
     // Only hydrate a fresh editing draft; reopening mid-edit keeps newer edits.
@@ -556,6 +556,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     setEditingPendingTask(message);
     // Hold the outbox drain off this task while it is open in the editor.
     setEditingQueuedMessageId(message.messageId);
+    return true;
   }, []);
 
   const buildPendingTaskMessage = useCallback(
@@ -583,6 +584,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         interactionMode: draft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
         creation: {
           projectId: selectedProject.id,
+          projectTitle: selectedProject.title,
+          projectCwd: selectedProject.workspaceRoot,
           workspaceMode: mode,
           branch: workspaceSelection?.branch ?? null,
           worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
@@ -604,6 +607,24 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     setEditingQueuedMessageId(null);
   }, []);
 
+  // If the queued task disappears mid-edit (deleted from the list, or
+  // delivered), end the editing session immediately without saving — a later
+  // flush must not resurrect it, and the composer should fall back to the
+  // regular per-project draft.
+  const queuedMessagesByThreadKey = useThreadOutboxMessages();
+  useEffect(() => {
+    const editing = editingPendingTaskRef.current;
+    if (!editing) {
+      return;
+    }
+    const stillQueued = flattenQueuedThreadMessages(queuedMessagesByThreadKey).some(
+      (candidate) => candidate.messageId === editing.messageId,
+    );
+    if (!stillQueued) {
+      finishEditingPendingTask();
+    }
+  }, [finishEditingPendingTask, queuedMessagesByThreadKey]);
+
   // Leaving the flow mid-edit (sheet dismissed or draft screen popped) saves
   // the current edits back into the queued task so nothing typed here is lost.
   const editingFlushRef = useRef<(() => void) | null>(null);
@@ -616,22 +637,20 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       editingPendingTaskRef.current = null;
       setEditingPendingTask(null);
 
-      // If the task was deleted externally, skip re-enqueuing.
-      const stillQueued = findQueuedPendingTask(editing.messageId);
-
-      const message = stillQueued
-        ? buildPendingTaskMessage({
-            threadId: editing.threadId,
-            commandId: editing.commandId,
-            messageId: editing.messageId,
-            createdAt: editing.createdAt,
-          })
-        : null;
+      const message = buildPendingTaskMessage({
+        threadId: editing.threadId,
+        commandId: editing.commandId,
+        messageId: editing.messageId,
+        createdAt: editing.createdAt,
+      });
 
       clearComposerDraft(pendingTaskDraftKey(editing.messageId));
 
       if (message) {
-        void enqueueThreadOutboxMessage(message)
+        // update() rewrites the task only if it is still queued — a concurrent
+        // delete or delivery wins, so the flush cannot resurrect it. The drain
+        // lock is released only once the updated payload is durable.
+        void updateThreadOutboxMessage(message)
           .catch((error) => {
             console.warn("[new-task] failed to save edited pending task", error);
           })

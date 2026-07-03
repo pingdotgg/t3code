@@ -4,7 +4,7 @@ import { Alert } from "react-native";
 
 import { removeThreadOutboxMessage } from "../../state/thread-outbox";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import { setEditingQueuedMessageId } from "../../state/use-thread-outbox";
+import { clearEditingQueuedMessageId } from "../../state/use-thread-outbox";
 
 export function usePendingTaskListActions(): {
   readonly openPendingTask: (pendingTask: PendingNewTask) => void;
@@ -36,13 +36,17 @@ export function usePendingTaskListActions(): {
           text: "Delete",
           style: "destructive",
           onPress: () => {
-            setEditingQueuedMessageId(null);
-            void removeThreadOutboxMessage(pendingTask.message).catch((error) => {
-              Alert.alert(
-                "Could not delete pending task",
-                error instanceof Error ? error.message : "The pending task could not be removed.",
-              );
-            });
+            // Release the edit lock only after removal succeeds, and only if
+            // it is held for THIS task — clearing it up front (or for another
+            // task) would let the drain deliver a mid-edit payload.
+            void removeThreadOutboxMessage(pendingTask.message)
+              .then(() => clearEditingQueuedMessageId(pendingTask.message.messageId))
+              .catch((error) => {
+                Alert.alert(
+                  "Could not delete pending task",
+                  error instanceof Error ? error.message : "The pending task could not be removed.",
+                );
+              });
           },
         },
       ],

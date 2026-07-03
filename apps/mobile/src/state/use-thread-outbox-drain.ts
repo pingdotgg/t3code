@@ -17,7 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
-import { uuidv4 } from "../lib/uuid";
+import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { useProjects, useThreadShells } from "./entities";
 import { ensureThreadOutboxLoaded, removeThreadOutboxMessage } from "./thread-outbox";
@@ -269,7 +269,7 @@ export function useThreadOutboxDrain(): void {
           branch: creation.branch,
           worktreePath: creation.worktreePath,
           startFromOrigin: creation.startFromOrigin ?? false,
-          worktreeBranchName: buildTemporaryWorktreeBranchName(uuidv4),
+          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
         }),
       });
       return completeDelivery(deliveryResult);

@@ -84,11 +84,22 @@ export function NewTaskDraftScreen(props: {
   }, []);
 
   const { beginEditingPendingTask, cancelEditingPendingTask, editingPendingTask } = flow;
+  const attemptedPendingTaskIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (props.pendingTaskId && editingPendingTask?.messageId !== props.pendingTaskId) {
-      beginEditingPendingTask(props.pendingTaskId);
+    if (!props.pendingTaskId || editingPendingTask?.messageId === props.pendingTaskId) {
+      return;
     }
-  }, [beginEditingPendingTask, editingPendingTask?.messageId, props.pendingTaskId]);
+    // Attempt each pending task once: after it is delivered or deleted the
+    // editing session legitimately ends, and re-running must not navigate.
+    if (attemptedPendingTaskIdRef.current === props.pendingTaskId) {
+      return;
+    }
+    attemptedPendingTaskIdRef.current = props.pendingTaskId;
+    if (!beginEditingPendingTask(props.pendingTaskId)) {
+      // The queued task no longer exists (sent or deleted before opening).
+      navigation.dispatch(StackActions.replace("NewTask"));
+    }
+  }, [beginEditingPendingTask, editingPendingTask?.messageId, navigation, props.pendingTaskId]);
 
   useEffect(() => {
     if (!props.pendingTaskId) return;
@@ -102,7 +113,20 @@ export function NewTaskDraftScreen(props: {
   const sheetFadeOpaque = colorScheme === "dark" ? "rgba(14,14,14,0.98)" : "rgba(242,242,247,0.98)";
   const sheetFadeTransparent = colorScheme === "dark" ? "rgba(14,14,14,0)" : "rgba(242,242,247,0)";
 
+  // A new navigation to this mounted screen delivers a fresh initialProjectRef
+  // reference — treat it as a new request and let it apply again.
+  const lastInitialProjectRefRef = useRef(props.initialProjectRef);
+
   useEffect(() => {
+    // Pending-task editing owns project selection (and must not fall through
+    // to the replace("NewTask") fallback while its hydration is in flight).
+    if (props.pendingTaskId) {
+      return;
+    }
+    if (lastInitialProjectRefRef.current !== props.initialProjectRef) {
+      lastInitialProjectRefRef.current = props.initialProjectRef;
+      appliedInitialProjectKeyRef.current = null;
+    }
     if (props.initialProjectRef?.environmentId && props.initialProjectRef?.projectId) {
       const directProject =
         projects.find(
@@ -143,8 +167,8 @@ export function NewTaskDraftScreen(props: {
   }, [
     logicalProjects,
     projects,
-    props.initialProjectRef?.environmentId,
-    props.initialProjectRef?.projectId,
+    props.initialProjectRef,
+    props.pendingTaskId,
     navigation,
     selectedProject,
     setProject,

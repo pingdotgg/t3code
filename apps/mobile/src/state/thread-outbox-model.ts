@@ -26,6 +26,10 @@ const THREAD_OUTBOX_MAX_RETRY_DELAY_MS = 16_000;
 
 const QueuedThreadCreationSchema = Schema.Struct({
   projectId: ProjectId,
+  // Snapshot of the project's display metadata so a pending task stays
+  // presentable in the thread list even when the project shell is not loaded.
+  projectTitle: Schema.optional(Schema.String),
+  projectCwd: Schema.optional(Schema.String),
   workspaceMode: Schema.Literals(["local", "worktree"]),
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
@@ -54,6 +58,8 @@ const encodeStoredQueuedThreadMessage = Schema.encodeUnknownSync(QueuedThreadMes
 
 export interface QueuedThreadCreation {
   readonly projectId: ProjectIdType;
+  readonly projectTitle?: string;
+  readonly projectCwd?: string;
   readonly workspaceMode: "local" | "worktree";
   readonly branch: string | null;
   readonly worktreePath: string | null;
@@ -155,7 +161,10 @@ export function resolveThreadOutboxDeliveryAction(input: {
     if (input.threadExists) {
       return "remove";
     }
-    return input.environmentConnected ? "send" : "wait";
+    // Wait for the shell to be live before sending: until the thread list has
+    // synchronized, a previously delivered creation whose cleanup failed would
+    // look missing and get re-issued, duplicating the thread.
+    return input.environmentConnected && input.shellStatus === "live" ? "send" : "wait";
   }
   if (!input.threadExists) {
     return input.shellStatus === "live" ? "remove" : "wait";

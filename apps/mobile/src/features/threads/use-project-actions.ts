@@ -17,7 +17,7 @@ import { threadEnvironment } from "../../state/threads";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { makeTurnCommandMetadata, type TurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
-import { uuidv4 } from "../../lib/uuid";
+import { randomHex } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 import { validateProjectThreadCreation } from "./projectThreadCreationValidation";
@@ -74,7 +74,7 @@ export function useCreateProjectThread() {
           branch: input.branch,
           worktreePath: input.worktreePath,
           startFromOrigin: input.startFromOrigin ?? false,
-          worktreeBranchName: buildTemporaryWorktreeBranchName(uuidv4),
+          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
         }),
       });
       if (AsyncResult.isFailure(result)) {
