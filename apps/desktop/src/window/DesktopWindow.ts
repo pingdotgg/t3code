@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import type * as Electron from "electron";
+import { screen } from "electron";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -17,7 +18,12 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { MENU_ACTION_CHANNEL } from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import * as DesktopWindowState from "./DesktopWindowState.ts";
 
+const DEFAULT_WINDOW_SIZE = { width: 1100, height: 780 } as const;
+// Resize/move fire continuously while dragging; coalesce persistence so we write
+// once the gesture settles instead of on every pixel.
+const WINDOW_STATE_SAVE_DEBOUNCE_MS = 400;
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
@@ -45,6 +51,7 @@ type DesktopWindowRuntimeServices =
   | ElectronShell.ElectronShell
   | ElectronTheme.ElectronTheme
   | ElectronWindow.ElectronWindow
+  | DesktopWindowState.DesktopWindowState
   | PreviewManager.PreviewManager;
 
 export type DesktopWindowError =
@@ -201,6 +208,7 @@ export const make = Effect.gen(function* () {
   const electronShell = yield* ElectronShell.ElectronShell;
   const electronTheme = yield* ElectronTheme.ElectronTheme;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
+  const windowState = yield* DesktopWindowState.DesktopWindowState;
   const previewManager = yield* PreviewManager.PreviewManager;
   // Window-side latch for the primary backend's readiness. Set by
   // handleBackendReady (driven by the pool's onReady callback), cleared
@@ -250,9 +258,14 @@ export const make = Effect.gen(function* () {
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    const savedWindowState = yield* windowState.load;
+    const initialWindowBounds = DesktopWindowState.resolveInitialWindowBounds(
+      savedWindowState,
+      screen.getAllDisplays().map((display) => display.workArea),
+      DEFAULT_WINDOW_SIZE,
+    );
     const window = yield* electronWindow.create({
-      width: 1100,
-      height: 780,
+      ...initialWindowBounds.bounds,
       minWidth: 840,
       minHeight: 620,
       show: false,
@@ -274,6 +287,66 @@ export const make = Effect.gen(function* () {
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
     }
+
+    if (initialWindowBounds.maximize) {
+      window.maximize();
+    }
+
+    // Persist geometry so the next launch restores it. Saves are debounced via a
+    // restartable fiber (mirroring the development-load retry below) while the
+    // user drags/resizes, and flushed on close; a failed write is logged and
+    // otherwise ignored since it only costs the remembered size, nothing more.
+    let windowStateSaveFiber: Fiber.Fiber<void, never> | undefined;
+    const persistWindowState = () => {
+      if (window.isDestroyed() || window.isMinimized() || window.isFullScreen()) {
+        return;
+      }
+      const normalBounds = window.getNormalBounds();
+      runFork(
+        windowState
+          .save({
+            x: normalBounds.x,
+            y: normalBounds.y,
+            width: normalBounds.width,
+            height: normalBounds.height,
+            maximized: window.isMaximized(),
+          })
+          .pipe(
+            Effect.catch((error) =>
+              logWindowWarning("failed to persist window state", { path: error.path }),
+            ),
+          ),
+      );
+    };
+    const cancelScheduledWindowStateSave = () => {
+      if (windowStateSaveFiber === undefined) {
+        return;
+      }
+      const saveFiber = windowStateSaveFiber;
+      windowStateSaveFiber = undefined;
+      runFork(Fiber.interrupt(saveFiber));
+    };
+    const scheduleWindowStateSave = () => {
+      cancelScheduledWindowStateSave();
+      windowStateSaveFiber = runFork(
+        Effect.sleep(WINDOW_STATE_SAVE_DEBOUNCE_MS).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              windowStateSaveFiber = undefined;
+              persistWindowState();
+            }),
+          ),
+        ),
+      );
+    };
+    window.on("resize", scheduleWindowStateSave);
+    window.on("move", scheduleWindowStateSave);
+    window.on("maximize", scheduleWindowStateSave);
+    window.on("unmaximize", scheduleWindowStateSave);
+    window.on("close", () => {
+      cancelScheduledWindowStateSave();
+      persistWindowState();
+    });
 
     yield* previewManager.setMainWindow(window);
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {

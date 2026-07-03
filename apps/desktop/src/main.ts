@@ -50,6 +50,7 @@ import * as DesktopUpdates from "./updates/DesktopUpdates.ts";
 import * as BrowserSession from "./preview/BrowserSession.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
+import * as DesktopWindowState from "./window/DesktopWindowState.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 
@@ -124,6 +125,7 @@ const desktopFoundationLayer = Layer.mergeAll(
   DesktopConnectionCatalogStore.layer.pipe(Layer.provideMerge(DesktopSavedEnvironments.layer)),
   DesktopAssets.layer,
   DesktopObservability.layer,
+  DesktopWindowState.layer,
 ).pipe(Layer.provideMerge(desktopEnvironmentLayer));
 
 const desktopSshLayer = desktopSshEnvironmentLayer.pipe(

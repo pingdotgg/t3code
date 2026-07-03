@@ -18,6 +18,9 @@ vi.mock("electron", async (importOriginal) => ({
       setUserAgent: vi.fn(),
     })),
   },
+  screen: {
+    getAllDisplays: vi.fn(() => []),
+  },
 }));
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
@@ -31,6 +34,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { MENU_ACTION_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
+import * as DesktopWindowState from "./DesktopWindowState.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 
 const environmentInput = {
@@ -65,10 +69,14 @@ function makeFakeBrowserWindow() {
   const window = {
     close: vi.fn(),
     focus: vi.fn(),
+    getNormalBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
     isDestroyed: vi.fn(() => false),
+    isFullScreen: vi.fn(() => false),
+    isMaximized: vi.fn(() => false),
     isMinimized: vi.fn(() => false),
     isVisible: vi.fn(() => true),
     loadURL: vi.fn(() => Promise.resolve()),
+    maximize: vi.fn(),
     on: vi.fn(),
     once: vi.fn(),
     restore: vi.fn(),
@@ -127,6 +135,11 @@ const electronThemeLayer = Layer.succeed(ElectronTheme.ElectronTheme, {
   onUpdated: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);
 
+const desktopWindowStateLayer = Layer.succeed(DesktopWindowState.DesktopWindowState, {
+  load: Effect.succeed(Option.none<DesktopWindowState.WindowState>()),
+  save: () => Effect.void,
+} satisfies DesktopWindowState.DesktopWindowState["Service"]);
+
 const desktopEnvironmentLayer = DesktopEnvironment.layer(environmentInput).pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -171,6 +184,7 @@ function makeTestLayer(input: {
         desktopAssetsLayer,
         desktopEnvironmentLayer,
         desktopServerExposureLayer,
+        desktopWindowStateLayer,
         DesktopState.layer,
         electronMenuLayer,
         Layer.succeed(ElectronShell.ElectronShell, {
@@ -268,6 +282,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           desktopAssetsLayer,
           desktopEnvironmentLayer,
           desktopServerExposureLayer,
+          desktopWindowStateLayer,
           electronMenuLayer,
           Layer.succeed(ElectronShell.ElectronShell, {
             openExternal: () => Effect.succeed(true),
