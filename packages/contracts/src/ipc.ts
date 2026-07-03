@@ -27,6 +27,20 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project.ts";
+import type {
+  PreviewCloseInput,
+  PreviewDiscoverLocalServersInput,
+  PreviewDiscoverLocalServersResult,
+  PreviewEvent,
+  PreviewListInput,
+  PreviewListResult,
+  PreviewNavigateInput,
+  PreviewOpenInput,
+  PreviewRefreshInput,
+  PreviewReportStatusInput,
+  PreviewResizeInput,
+  PreviewSessionSnapshot,
+} from "./preview.ts";
 import type { ProviderInstanceId } from "./providerInstance.ts";
 import type {
   ServerConfig,
@@ -187,9 +201,118 @@ export interface PickFolderOptions {
   initialPath?: string | null;
 }
 
+export type DesktopPreviewNavStatus =
+  | { kind: "idle" }
+  | { kind: "loading"; url: string; title: string | null }
+  | { kind: "success"; url: string; title: string | null }
+  | {
+      kind: "failed";
+      url: string;
+      title: string | null;
+      errorCode: number;
+      errorText: string;
+    };
+
+export interface DesktopPreviewTabState {
+  tabId: string;
+  url: string | null;
+  title: string | null;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  isLoading: boolean;
+  zoomFactor: number;
+  navStatus: DesktopPreviewNavStatus;
+  updatedAt: string;
+}
+
+export interface DesktopPreviewCreateTabInput {
+  tabId: string;
+  url: string;
+  partition?: string;
+}
+
+export interface DesktopPreviewRegisterWebviewInput {
+  tabId: string;
+  webContentsId: number;
+  partition?: string;
+}
+
+export interface DesktopPreviewNavigateInput {
+  tabId: string;
+  url: string;
+}
+
+export interface DesktopPreviewTabInput {
+  tabId: string;
+}
+
+export interface DesktopPreviewScreenshotResult {
+  tabId: string;
+  dataUrl: string;
+  capturedAt: string;
+}
+
+export interface DesktopPreviewRecordingFrame {
+  dataUrl: string;
+  capturedAt: string;
+}
+
+export interface DesktopPreviewRecordingResult {
+  tabId: string;
+  startedAt: string;
+  stoppedAt: string;
+  frames: readonly DesktopPreviewRecordingFrame[];
+}
+
+export interface DesktopPreviewAnnotationInput extends DesktopPreviewTabInput {
+  selector: string;
+  label?: string;
+}
+
+export type DesktopPreviewAutomationCommand =
+  | { type: "click"; tabId: string; selector: string }
+  | { type: "type"; tabId: string; selector: string; text: string }
+  | { type: "key"; tabId: string; key: string };
+
+export interface DesktopPreviewAutomationResult {
+  ok: boolean;
+  value?: unknown;
+}
+
+export type DesktopPreviewStateChange =
+  | { type: "updated"; state: DesktopPreviewTabState }
+  | { type: "closed"; tabId: string };
+
+export interface DesktopPreviewBridge {
+  createTab: (input: DesktopPreviewCreateTabInput) => Promise<DesktopPreviewTabState>;
+  registerWebview: (input: DesktopPreviewRegisterWebviewInput) => Promise<DesktopPreviewTabState>;
+  navigate: (input: DesktopPreviewNavigateInput) => Promise<DesktopPreviewTabState>;
+  goBack: (input: DesktopPreviewTabInput) => Promise<DesktopPreviewTabState | null>;
+  goForward: (input: DesktopPreviewTabInput) => Promise<DesktopPreviewTabState | null>;
+  refresh: (input: DesktopPreviewTabInput) => Promise<DesktopPreviewTabState | null>;
+  hardReload: (input: DesktopPreviewTabInput) => Promise<DesktopPreviewTabState | null>;
+  zoomIn: (input: DesktopPreviewTabInput) => Promise<DesktopPreviewTabState | null>;
+  zoomOut: (input: DesktopPreviewTabInput) => Promise<DesktopPreviewTabState | null>;
+  resetZoom: (input: DesktopPreviewTabInput) => Promise<DesktopPreviewTabState | null>;
+  openDevTools: (input: DesktopPreviewTabInput) => Promise<void>;
+  clearCookies: (input: DesktopPreviewTabInput) => Promise<void>;
+  clearCache: (input: DesktopPreviewTabInput) => Promise<void>;
+  captureScreenshot: (input: DesktopPreviewTabInput) => Promise<DesktopPreviewScreenshotResult>;
+  startRecording: (input: DesktopPreviewTabInput) => Promise<void>;
+  stopRecording: (input: DesktopPreviewTabInput) => Promise<DesktopPreviewRecordingResult>;
+  annotateElement: (input: DesktopPreviewAnnotationInput) => Promise<void>;
+  clearAnnotations: (input: DesktopPreviewTabInput) => Promise<void>;
+  runAutomation: (
+    input: DesktopPreviewAutomationCommand,
+  ) => Promise<DesktopPreviewAutomationResult>;
+  closeTab: (input: DesktopPreviewTabInput) => Promise<void>;
+  onStateChange: (listener: (change: DesktopPreviewStateChange) => void) => () => void;
+}
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
+  preview?: DesktopPreviewBridge;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
   getSavedEnvironmentRegistry: () => Promise<readonly PersistedSavedEnvironmentRecord[]>;
@@ -309,6 +432,19 @@ export interface EnvironmentApi {
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
+  };
+  preview: {
+    open: (input: PreviewOpenInput) => Promise<PreviewSessionSnapshot>;
+    navigate: (input: PreviewNavigateInput) => Promise<PreviewSessionSnapshot>;
+    reportStatus: (input: PreviewReportStatusInput) => Promise<void>;
+    resize: (input: PreviewResizeInput) => Promise<PreviewSessionSnapshot>;
+    refresh: (input: PreviewRefreshInput) => Promise<void>;
+    close: (input: PreviewCloseInput) => Promise<void>;
+    list: (input: PreviewListInput) => Promise<PreviewListResult>;
+    discoverLocalServers: (
+      input: PreviewDiscoverLocalServersInput,
+    ) => Promise<PreviewDiscoverLocalServersResult>;
+    onEvent: (callback: (event: PreviewEvent) => void) => () => void;
   };
   git: {
     listBranches: (input: GitListBranchesInput) => Promise<GitListBranchesResult>;

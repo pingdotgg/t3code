@@ -50,6 +50,10 @@ const TOOL_ALIASES: ReadonlyMap<string, string> = new Map([
   ["web_search", "web_search"],
   ["web_extract", "web_extract"],
   ["memory", "memory"],
+  ["preview_screenshot", "preview_screenshot"],
+  ["preview_click", "preview_click"],
+  ["preview_type", "preview_type"],
+  ["preview_annotate", "preview_annotate"],
 ] as const);
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -300,6 +304,39 @@ const ALL_TOOLS: ReadonlyArray<McpTool> = [
     description: "Return the status of the T3 Code MCP memory bridge.",
     inputSchema: { type: "object", properties: { query: { type: "string" } } },
   },
+  {
+    name: "preview_screenshot",
+    description: "Capture the current desktop browser preview tab as a screenshot.",
+    inputSchema: { type: "object", properties: { tabId: { type: "string" } } },
+  },
+  {
+    name: "preview_click",
+    description: "Click the element matching a CSS selector in a desktop browser preview tab.",
+    inputSchema: {
+      type: "object",
+      properties: { tabId: { type: "string" }, selector: { type: "string" } },
+    },
+  },
+  {
+    name: "preview_type",
+    description: "Replace the text in an element matching a CSS selector in a preview tab.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tabId: { type: "string" },
+        selector: { type: "string" },
+        text: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "preview_annotate",
+    description: "Highlight and label the element matching a CSS selector in a preview tab.",
+    inputSchema: {
+      type: "object",
+      properties: { tabId: { type: "string" }, selector: { type: "string" } },
+    },
+  },
 ];
 
 function availableTools(toolsets: ReadonlySet<string>): ReadonlyArray<McpTool> {
@@ -327,6 +364,11 @@ async function callTool(options: McpServeOptions, name: string, args: Record<str
     case "web_extract":
     case "memory":
       return `${name} is reserved for the native host-agent bridge and is not exposed by this local MCP adapter yet.`;
+    case "preview_screenshot":
+    case "preview_click":
+    case "preview_type":
+    case "preview_annotate":
+      return `${name} requires the desktop preview bridge. This lightweight MCP adapter runs in the backend process and cannot access Electron webviews directly yet.`;
     default:
       throw new Error(`Unsupported MCP tool: ${name}`);
   }

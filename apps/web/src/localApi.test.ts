@@ -56,6 +56,17 @@ const rpcClientMock = {
   filesystem: {
     browse: vi.fn(),
   },
+  preview: {
+    open: vi.fn(),
+    navigate: vi.fn(),
+    reportStatus: vi.fn(),
+    resize: vi.fn(),
+    refresh: vi.fn(),
+    close: vi.fn(),
+    list: vi.fn(),
+    discoverLocalServers: vi.fn(),
+    onEvent: vi.fn(),
+  },
   shell: {
     openInEditor: vi.fn(),
   },

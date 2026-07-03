@@ -23,6 +23,17 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     filesystem: {
       browse: rpcClient.filesystem.browse,
     },
+    preview: {
+      open: rpcClient.preview.open,
+      navigate: rpcClient.preview.navigate,
+      reportStatus: rpcClient.preview.reportStatus,
+      resize: rpcClient.preview.resize,
+      refresh: rpcClient.preview.refresh,
+      close: rpcClient.preview.close,
+      list: rpcClient.preview.list,
+      discoverLocalServers: rpcClient.preview.discoverLocalServers,
+      onEvent: (callback) => rpcClient.preview.onEvent(callback),
+    },
     git: {
       pull: rpcClient.git.pull,
       refreshStatus: rpcClient.git.refreshStatus,

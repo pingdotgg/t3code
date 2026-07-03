@@ -206,6 +206,7 @@ function createMockEnvironmentApi(input: {
     filesystem: {
       browse: input.browse,
     },
+    preview: {} as EnvironmentApi["preview"],
     git: {} as EnvironmentApi["git"],
     server: {
       exportThreadMarkdown: (() => {

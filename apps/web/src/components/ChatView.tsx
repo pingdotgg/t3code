@@ -110,6 +110,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { BrowserPreviewPanel } from "./BrowserPreviewPanel";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { ChevronDownIcon } from "lucide-react";
@@ -719,6 +720,7 @@ function ChatViewBody(
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
+  const [browserPreviewOpen, setBrowserPreviewOpen] = useState(false);
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
@@ -1734,6 +1736,12 @@ function ChatViewBody(
     if (!activeThreadRef) return;
     setTerminalOpen(!terminalState.terminalOpen);
   }, [activeThreadRef, setTerminalOpen, terminalState.terminalOpen]);
+  const toggleBrowserPreview = useCallback(() => {
+    setBrowserPreviewOpen((open) => !open);
+  }, []);
+  const closeBrowserPreview = useCallback(() => {
+    setBrowserPreviewOpen(false);
+  }, []);
   const splitTerminal = useCallback(() => {
     if (!activeThreadRef || hasReachedSplitLimit) return;
     const terminalId = `terminal-${randomUUID()}`;
@@ -3956,6 +3964,7 @@ function ChatViewBody(
           availableEditors={availableEditors}
           terminalAvailable={activeProject !== undefined}
           terminalOpen={terminalState.terminalOpen}
+          browserPreviewOpen={browserPreviewOpen}
           exportingThread={isExportingThread}
           exportThreadDisabledReason={exportThreadDisabledReason}
           terminalToggleShortcutLabel={terminalToggleShortcutLabel}
@@ -3972,6 +3981,7 @@ function ChatViewBody(
           onDeleteProjectScript={deleteProjectScript}
           onExportThread={onExportThread}
           onToggleTerminal={toggleTerminalVisibility}
+          onToggleBrowserPreview={toggleBrowserPreview}
           onToggleDiff={onToggleDiff}
           paneActions={paneActions}
         />
@@ -4187,6 +4197,13 @@ function ChatViewBody(
             timestampFormat={timestampFormat}
             mode="sidebar"
             onClose={closePlanSidebar}
+          />
+        ) : null}
+        {browserPreviewOpen ? (
+          <BrowserPreviewPanel
+            environmentId={activeThread.environmentId}
+            threadId={activeThread.id}
+            onClose={closeBrowserPreview}
           />
         ) : null}
       </div>

@@ -15,6 +15,7 @@ import { ColumnsIcon, Maximize2Icon, Minimize2Icon, RowsIcon, XIcon } from "luci
 import { useShallow } from "zustand/react/shallow";
 
 import ChatView from "./ChatView";
+import { BrowserPreviewHost } from "./BrowserPreviewHost";
 import { Button } from "./ui/button";
 import {
   type ChatSplitDropPlacement,
@@ -291,26 +292,32 @@ export function ChatSplitArea(props: ChatSplitAreaProps) {
 
   if (layoutFrame.maximizedLeafId) {
     return (
+      <>
+        <ChatSplitNodeRenderer
+          nodeId={layoutFrame.maximizedLeafId}
+          routeTarget={routeTarget}
+          routeDiffSearch={routeDiffSearch}
+          leafCount={layoutFrame.leafCount}
+          onDiffPanelOpen={onDiffPanelOpen}
+          reserveTitleBarControlInset={reserveTitleBarControlInset}
+        />
+        <BrowserPreviewHost />
+      </>
+    );
+  }
+
+  return (
+    <>
       <ChatSplitNodeRenderer
-        nodeId={layoutFrame.maximizedLeafId}
+        nodeId={layoutFrame.rootId}
         routeTarget={routeTarget}
         routeDiffSearch={routeDiffSearch}
         leafCount={layoutFrame.leafCount}
         onDiffPanelOpen={onDiffPanelOpen}
         reserveTitleBarControlInset={reserveTitleBarControlInset}
       />
-    );
-  }
-
-  return (
-    <ChatSplitNodeRenderer
-      nodeId={layoutFrame.rootId}
-      routeTarget={routeTarget}
-      routeDiffSearch={routeDiffSearch}
-      leafCount={layoutFrame.leafCount}
-      onDiffPanelOpen={onDiffPanelOpen}
-      reserveTitleBarControlInset={reserveTitleBarControlInset}
-    />
+      <BrowserPreviewHost />
+    </>
   );
 }
 

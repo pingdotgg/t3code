@@ -53,6 +53,10 @@ const COPILOT_MCP_TOOLSETS = [
   "web_search",
   "web_extract",
   "memory",
+  "preview_screenshot",
+  "preview_click",
+  "preview_type",
+  "preview_annotate",
 ] as const;
 
 type CopilotAcpRuntimeCopilotSettings = {

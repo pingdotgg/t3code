@@ -38,6 +38,7 @@ import * as Schema from "effect/Schema";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { RotatingFileSink } from "@t3tools/shared/logging";
+import { isPreviewPartition } from "@t3tools/shared/preview";
 import {
   enableV8CompileCache,
   resolveCompileCacheDir,
@@ -85,6 +86,8 @@ import {
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch.ts";
 import { resolveDesktopAppBranding } from "./appBranding.ts";
 import { bindFirstRevealTrigger, type RevealSubscription } from "./windowReveal.ts";
+import { createMainWindowWebPreferences } from "./mainWindowPreferences.ts";
+import { registerPreviewIpcHandlers } from "./previewBridge.ts";
 
 syncShellEnvironment();
 
@@ -1625,6 +1628,8 @@ function registerIpcHandlers(): void {
     } as const;
   });
 
+  registerPreviewIpcHandlers();
+
   ipcMain.removeHandler(GET_CLIENT_SETTINGS_CHANNEL);
   ipcMain.handle(GET_CLIENT_SETTINGS_CHANNEL, async () => readClientSettings(CLIENT_SETTINGS_PATH));
 
@@ -2046,12 +2051,19 @@ function createWindow(): BrowserWindow {
     ...getIconOption(),
     title: APP_DISPLAY_NAME,
     ...getWindowTitleBarOptions(),
-    webPreferences: {
-      preload: Path.join(__dirname, "preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
+    webPreferences: createMainWindowWebPreferences(Path.join(__dirname, "preload.cjs")),
+  });
+
+  window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+    if (typeof params.partition !== "string" || !isPreviewPartition(params.partition)) {
+      event.preventDefault();
+      return;
+    }
+
+    webPreferences.sandbox = true;
+    webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
+    webPreferences.contextIsolation = true;
   });
 
   window.webContents.on("context-menu", (event, params) => {

@@ -78,6 +78,7 @@ import {
 } from "./orchestration/http.ts";
 import { NetService } from "@t3tools/shared/Net";
 import { mobileRouteLayer } from "./mobileProtocol.ts";
+import { PreviewManagerLive } from "./preview/Manager.ts";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -173,7 +174,10 @@ const GitLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitCoreLive),
 );
 
-const TerminalLayerLive = TerminalManagerLive.pipe(Layer.provide(PtyAdapterLive));
+const TerminalLayerLive = Layer.mergeAll(
+  TerminalManagerLive.pipe(Layer.provide(PtyAdapterLive)),
+  PreviewManagerLive,
+);
 
 const WorkspaceEntriesLayerLive = WorkspaceEntriesLive.pipe(
   Layer.provide(WorkspacePathsLive),

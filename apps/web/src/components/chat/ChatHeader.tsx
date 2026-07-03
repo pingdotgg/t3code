@@ -10,7 +10,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo, type ReactNode } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { DiffIcon, FileDownIcon, LoaderIcon, TerminalSquareIcon } from "lucide-react";
+import { DiffIcon, FileDownIcon, GlobeIcon, LoaderIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -35,6 +35,7 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   terminalAvailable: boolean;
   terminalOpen: boolean;
+  browserPreviewOpen: boolean;
   exportingThread: boolean;
   exportThreadDisabledReason: string | null;
   terminalToggleShortcutLabel: string | null;
@@ -51,6 +52,7 @@ interface ChatHeaderProps {
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onExportThread: () => void;
   onToggleTerminal: () => void;
+  onToggleBrowserPreview: () => void;
   onToggleDiff: () => void;
   paneActions?: ReactNode;
 }
@@ -69,6 +71,7 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   terminalAvailable,
   terminalOpen,
+  browserPreviewOpen,
   exportingThread,
   exportThreadDisabledReason,
   terminalToggleShortcutLabel,
@@ -85,6 +88,7 @@ export const ChatHeader = memo(function ChatHeader({
   onDeleteProjectScript,
   onExportThread,
   onToggleTerminal,
+  onToggleBrowserPreview,
   onToggleDiff,
   paneActions,
 }: ChatHeaderProps) {
@@ -171,6 +175,23 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipPopup side="bottom">
             {exportThreadDisabledReason ?? (exportingThread ? "Exporting chat..." : "Export chat")}
           </TooltipPopup>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                className="shrink-0 border-transparent shadow-none hover:border-input hover:shadow-xs/5"
+                pressed={browserPreviewOpen}
+                onPressedChange={onToggleBrowserPreview}
+                aria-label="Toggle browser preview"
+                variant="outline"
+                size="xs"
+              >
+                <GlobeIcon className="size-3" />
+              </Toggle>
+            }
+          />
+          <TooltipPopup side="bottom">Toggle browser preview</TooltipPopup>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger

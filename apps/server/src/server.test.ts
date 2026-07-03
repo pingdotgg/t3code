@@ -93,6 +93,7 @@ import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./server
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager.ts";
+import { PreviewManager } from "./preview/Manager.ts";
 import {
   BrowserTraceCollector,
   type BrowserTraceCollectorShape,
@@ -482,6 +483,19 @@ const buildAppUnderTest = (options?: {
       Layer.provide(
         Layer.mock(TerminalManager)({
           ...options?.layers?.terminalManager,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(PreviewManager)({
+          open: () => Effect.die("Not implemented in server test."),
+          navigate: () => Effect.die("Not implemented in server test."),
+          reportStatus: () => Effect.void,
+          resize: () => Effect.die("Not implemented in server test."),
+          refresh: () => Effect.void,
+          close: () => Effect.void,
+          list: () => Effect.succeed({ sessions: [] }),
+          discoverLocalServers: () => Effect.succeed({ servers: [] }),
+          subscribe: () => Stream.empty,
         }),
       ),
       Layer.provide(
