@@ -1177,6 +1177,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const bottomContentInset = props.contentBottomInset ?? 18;
   const usesNativeAutomaticInsets =
     props.usesAutomaticContentInsets === true && Platform.OS === "ios";
+  // With automatic insets the header inset lives in UIKit's adjustedContentInset,
+  // which LegendList's JS anchoring math cannot see — it measures the anchored
+  // end space from the scroll view's frame top. Fold the header height back into
+  // the anchor offset or a just-sent message anchors underneath the header and
+  // the oversized end space keeps maintainScrollAtEnd snapping away from earlier
+  // messages.
+  const anchorTopInset = usesNativeAutomaticInsets ? insets.top + 44 : topContentInset;
 
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
   const userBubbleColor = useThemeColor("--color-user-bubble");
@@ -1281,9 +1288,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         presentedFeed,
         props.anchorMessageId,
         (entry) => (entry.type === "message" ? entry.id : null),
-        { anchorOffset: topContentInset + CHAT_LIST_ANCHOR_OFFSET },
+        { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
       ),
-    [presentedFeed, props.anchorMessageId, topContentInset],
+    [presentedFeed, props.anchorMessageId, anchorTopInset],
   );
   const terminalAssistantMessageIds = useMemo(() => {
     const terminalIdsByTurn = new Map<TurnId, string>();
