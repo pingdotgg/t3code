@@ -38,6 +38,12 @@ const configuredHostedAppUrl = (() => {
 })();
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
 
+// Vite 8.1's experimental bundled dev mode: serves rolldown-bundled chunks in
+// dev for much faster startup/reload on large module graphs, with HMR served
+// as hot patches. Opt-in while experimental: T3CODE_BUNDLED_DEV=1 pnpm dev:web
+const bundledDevEnv = process.env.T3CODE_BUNDLED_DEV?.trim().toLowerCase();
+const bundledDev = bundledDevEnv === "1" || bundledDevEnv === "true";
+
 const buildSourcemap: boolean | "hidden" =
   sourcemapEnv === "0" || sourcemapEnv === "false"
     ? false
@@ -127,6 +133,9 @@ export default defineConfig(() => {
     resolve: {
       tsconfigPaths: true,
       dedupe: ["react", "react-dom"],
+    },
+    experimental: {
+      bundledDev,
     },
     server: {
       host,
