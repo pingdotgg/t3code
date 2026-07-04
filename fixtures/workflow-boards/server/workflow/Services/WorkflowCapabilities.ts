@@ -1,6 +1,8 @@
 import type {
   EnvironmentsReadCapability,
   FilesystemCapability,
+  HttpClientCapability,
+  SecretsCapability,
   SourceControlCapability,
   VcsCapability,
 } from "@t3tools/plugin-sdk";
@@ -29,4 +31,18 @@ export class WorkflowFilesystemCapability extends Context.Service<
   FilesystemCapability
 >()(
   "@t3tools/fixture-workflow-boards/server/workflow/Services/WorkflowCapabilities/WorkflowFilesystemCapability",
+) {}
+
+export class WorkflowSecretsCapability extends Context.Service<
+  WorkflowSecretsCapability,
+  SecretsCapability
+>()(
+  "@t3tools/fixture-workflow-boards/server/workflow/Services/WorkflowCapabilities/WorkflowSecretsCapability",
+) {}
+
+export class WorkflowHttpClientCapability extends Context.Service<
+  WorkflowHttpClientCapability,
+  HttpClientCapability
+>()(
+  "@t3tools/fixture-workflow-boards/server/workflow/Services/WorkflowCapabilities/WorkflowHttpClientCapability",
 ) {}

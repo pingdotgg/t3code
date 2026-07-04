@@ -96,7 +96,9 @@ const make = (options?: WorkflowWebhookLiveOptions) =>
         }
         const expected = Buffer.from(stored, "hex");
         const candidate = Buffer.from(hashToken(token), "hex");
-        return expected.length === candidate.length && NodeCrypto.timingSafeEqual(expected, candidate);
+        return (
+          expected.length === candidate.length && NodeCrypto.timingSafeEqual(expected, candidate)
+        );
       });
 
     const recordDelivery: WorkflowWebhookShape["recordDelivery"] = (boardId, deliveryId) =>

@@ -13,8 +13,10 @@
     "http",
     "agents",
     "projections.read",
+    "secrets",
     "vcs",
     "terminals",
+    "httpClient",
     "sourceControl",
     "environments.read"
   ],

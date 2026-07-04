@@ -11,6 +11,7 @@ import { WorkflowEngineLayer } from "./Layers/WorkflowEngine.ts";
 import { WorkflowRecoveryLive } from "./Layers/WorkflowRecovery.ts";
 import { WorkflowRoutingContextBuilderLive } from "./Layers/WorkflowRoutingContextBuilder.ts";
 import { WorkflowSourceCommitterLive } from "./Layers/WorkflowSourceCommitter.ts";
+import { WorkSourceConnectionStoreLive } from "./Layers/WorkSourceConnectionStore.ts";
 import { WorktreeLeaseServiceLive } from "./Layers/WorktreeLeaseService.ts";
 import { WorkflowCoreLive } from "./WorkflowCoreLive.ts";
 import { WorkflowStepExecutorLive } from "./WorkflowStepExecutorLive.ts";
@@ -32,6 +33,7 @@ const WorkflowEngineSupportLive = WorkflowStepExecutorLive.pipe(
 const WorkflowEngineAndRecoveryLive = Layer.mergeAll(
   WorkflowRecoveryLive,
   WorkflowSourceCommitterLive,
+  WorkSourceConnectionStoreLive,
 ).pipe(Layer.provideMerge(WorkflowEngineLayer));
 
 export const WorkflowEngineCoreLive = WorkflowEngineAndRecoveryLive.pipe(

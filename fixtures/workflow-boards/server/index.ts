@@ -1,5 +1,5 @@
 import { definePlugin, type PluginRegistration } from "@t3tools/plugin-sdk";
-import { MessageId, NonNegativeInt, ProjectId } from "@t3tools/contracts";
+import { MessageId, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -63,6 +63,8 @@ import { WorkflowTerminalsCapability } from "./workflow/Services/ScriptCancelReg
 import {
   WorkflowEnvironmentsReadCapability,
   WorkflowFilesystemCapability,
+  WorkflowHttpClientCapability,
+  WorkflowSecretsCapability,
   WorkflowSourceControlCapability,
   WorkflowVcsCapability,
 } from "./workflow/Services/WorkflowCapabilities.ts";
@@ -79,8 +81,10 @@ import { WorkflowRecovery } from "./workflow/Services/WorkflowRecovery.ts";
 import { WorkflowThreadJanitor } from "./workflow/Services/WorkflowThreadJanitor.ts";
 import { WorkflowWebhook } from "./workflow/Services/WorkflowWebhook.ts";
 import { WorkflowWorktreeJanitor } from "./workflow/Services/WorkflowWorktreeJanitor.ts";
+import { WorkSourceConnectionStore } from "./workflow/Services/WorkSourceConnectionStore.ts";
 import { makeWorkflowRuntimeLive } from "./workflow/WorkflowRuntimeLive.ts";
 import { makeWorkflowWebhookHttpDescriptor } from "./workflow/webhookRoute.ts";
+import { WorkSourceConnectionView, WorkSourceProviderName } from "../contracts/workSource.ts";
 
 const toPluginError = (error: unknown): Error =>
   error instanceof Error ? error : new Error(String(error));
@@ -100,6 +104,7 @@ type WorkflowRuntimeContext =
   | WorkflowThreadJanitor
   | WorkflowAgentSessionStore
   | ProjectScriptTrust
+  | WorkSourceConnectionStore
   | SqlClient.SqlClient;
 
 const workflowRpcError = (message: string, cause?: unknown) =>
@@ -357,6 +362,17 @@ const GetBoardMetricsPayload = Schema.Struct({
 const GetWebhookConfigPayload = Schema.Struct({
   boardId: BoardId,
   rotate: Schema.optional(Schema.Boolean),
+});
+const CreateWorkSourceConnectionPayload = Schema.Struct({
+  provider: WorkSourceProviderName,
+  displayName: TrimmedNonEmptyString,
+  token: TrimmedNonEmptyString,
+  authMode: Schema.optional(Schema.Literals(["pat", "basic", "bearer"])),
+  baseUrl: Schema.optional(Schema.String),
+  email: Schema.optional(Schema.String),
+});
+const DeleteWorkSourceConnectionPayload = Schema.Struct({
+  connectionRef: TrimmedNonEmptyString,
 });
 
 const decodePayload = <A>(
@@ -658,8 +674,10 @@ export default definePlugin({
       const http = yield* hostApi.http;
       const agents = yield* hostApi.agents;
       const projectionsRead = yield* hostApi.projectionsRead;
+      const secrets = yield* hostApi.secrets;
       const vcs = yield* hostApi.vcs;
       const terminals = yield* hostApi.terminals;
+      const httpClient = yield* hostApi.httpClient;
       const sourceControl = yield* hostApi.sourceControl;
       const environmentsRead = yield* hostApi.environmentsRead;
       const runtimeReady = yield* Deferred.make<Context.Context<WorkflowRuntimeContext>, Error>();
@@ -670,7 +688,9 @@ export default definePlugin({
             databaseClient: database.client,
             environmentsRead,
             filesystem,
+            httpClient,
             projectionsRead,
+            secrets,
             sourceControl,
             terminals,
             vcs,
@@ -792,9 +812,7 @@ export default definePlugin({
                       const webhook = yield* WorkflowWebhook;
                       const config = yield* webhook
                         .getConfig(boardId, rotate === true)
-                        .pipe(
-                          Effect.mapError(toWorkflowRpcError("Failed to load webhook config")),
-                        );
+                        .pipe(Effect.mapError(toWorkflowRpcError("Failed to load webhook config")));
                       return {
                         path: config.path,
                         hasToken: config.hasToken,
@@ -954,7 +972,9 @@ export default definePlugin({
                       const engine = yield* WorkflowEngine;
                       yield* engine
                         .editTicket(input)
-                        .pipe(Effect.mapError(toWorkflowRpcError("Failed to edit workflow ticket")));
+                        .pipe(
+                          Effect.mapError(toWorkflowRpcError("Failed to edit workflow ticket")),
+                        );
                     }),
                   ),
                 ),
@@ -1023,7 +1043,9 @@ export default definePlugin({
                       yield* engine
                         .resolveApproval(stepRunId, approved)
                         .pipe(
-                          Effect.mapError(toWorkflowRpcError("Failed to resolve workflow approval")),
+                          Effect.mapError(
+                            toWorkflowRpcError("Failed to resolve workflow approval"),
+                          ),
                         );
                     }),
                   ),
@@ -1150,7 +1172,9 @@ export default definePlugin({
                       const engine = yield* WorkflowEngine;
                       yield* engine
                         .cancelStep(stepRunId)
-                        .pipe(Effect.mapError(toWorkflowRpcError("Failed to cancel workflow step")));
+                        .pipe(
+                          Effect.mapError(toWorkflowRpcError("Failed to cancel workflow step")),
+                        );
                     }),
                   ),
                 ),
@@ -1269,6 +1293,85 @@ export default definePlugin({
                 ),
               ),
           },
+          {
+            method: WORKFLOW_WS_METHODS.listWorkSourceConnections,
+            scope: "read",
+            readiness: "always",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  NoPayload,
+                  payload,
+                  "workflow list work-source connections input decode failed",
+                ).pipe(
+                  Effect.flatMap(() =>
+                    Effect.gen(function* () {
+                      const connectionStore = yield* WorkSourceConnectionStore;
+                      return yield* connectionStore
+                        .list()
+                        .pipe(
+                          Effect.mapError(
+                            toWorkflowRpcError("Failed to list work-source connections"),
+                          ),
+                        );
+                    }),
+                  ),
+                ),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.createWorkSourceConnection,
+            scope: "operate",
+            readiness: "requires-ready",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  CreateWorkSourceConnectionPayload,
+                  payload,
+                  "workflow create work-source connection input decode failed",
+                ).pipe(
+                  Effect.flatMap((input) =>
+                    Effect.gen(function* () {
+                      const connectionStore = yield* WorkSourceConnectionStore;
+                      const view = yield* connectionStore
+                        .create(input)
+                        .pipe(
+                          Effect.mapError(
+                            toWorkflowRpcError("Failed to create work-source connection"),
+                          ),
+                        );
+                      return view satisfies WorkSourceConnectionView;
+                    }),
+                  ),
+                ),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.deleteWorkSourceConnection,
+            scope: "operate",
+            readiness: "requires-ready",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  DeleteWorkSourceConnectionPayload,
+                  payload,
+                  "workflow delete work-source connection input decode failed",
+                ).pipe(
+                  Effect.flatMap(({ connectionRef }) =>
+                    Effect.gen(function* () {
+                      const connectionStore = yield* WorkSourceConnectionStore;
+                      yield* connectionStore
+                        .remove(connectionRef)
+                        .pipe(
+                          Effect.mapError(
+                            toWorkflowRpcError("Failed to delete work-source connection"),
+                          ),
+                        );
+                    }),
+                  ),
+                ),
+              ),
+          },
         ],
         http: [makeWorkflowWebhookHttpDescriptor((effect) => runWithRuntime(effect))],
         streams: [
@@ -1367,7 +1470,9 @@ type WorkflowCapabilityLayerInput = {
   readonly databaseClient: SqlClient.SqlClient;
   readonly environmentsRead: WorkflowEnvironmentsReadCapability["Service"];
   readonly filesystem: WorkflowFilesystemCapability["Service"];
+  readonly httpClient: WorkflowHttpClientCapability["Service"];
   readonly projectionsRead: WorkflowProjectionsReadCapability["Service"];
+  readonly secrets: WorkflowSecretsCapability["Service"];
   readonly sourceControl: WorkflowSourceControlCapability["Service"];
   readonly terminals: WorkflowTerminalsCapability["Service"];
   readonly vcs: WorkflowVcsCapability["Service"];
@@ -1383,4 +1488,6 @@ export const workflowCapabilityLayers = (input: WorkflowCapabilityLayerInput) =>
     Layer.succeed(WorkflowSourceControlCapability, input.sourceControl),
     Layer.succeed(WorkflowEnvironmentsReadCapability, input.environmentsRead),
     Layer.succeed(WorkflowFilesystemCapability, input.filesystem),
+    Layer.succeed(WorkflowSecretsCapability, input.secrets),
+    Layer.succeed(WorkflowHttpClientCapability, input.httpClient),
   );

@@ -8,7 +8,6 @@ import {
   LaneKey,
   StepKey,
   WorkflowDefinition,
-  WorkflowLintError,
   type WorkflowBoardVersionSource,
   type WorkflowBoardVersionSummary,
   type WorkflowDefinitionEncoded,
@@ -23,10 +22,7 @@ import {
 import { type LintError, encodeWorkflowDefinitionJson } from "./workflowFile.ts";
 import { sha256Hex } from "./workflowVersionHash.ts";
 import { ProjectWorkspaceResolver } from "./Services/ProjectWorkspaceResolver.ts";
-import {
-  type BoardRow,
-  WorkflowReadModel,
-} from "./Services/WorkflowReadModel.ts";
+import { type BoardRow, WorkflowReadModel } from "./Services/WorkflowReadModel.ts";
 import { WorkflowBoardSaveLocks } from "./Services/WorkflowBoardSaveLocks.ts";
 import { WorkflowBoardVersionStore } from "./Services/WorkflowBoardVersionStore.ts";
 import { WorkflowFileLoader } from "./Services/WorkflowFileLoader.ts";
@@ -131,7 +127,9 @@ export const loadWritableWorkflowBoardFile = (
     }
 
     if (!isWorkflowBoardFilePath(board.workflowFilePath)) {
-      return yield* workflowRpcError(`Workflow board ${boardId} is not a writable workflow board file`);
+      return yield* workflowRpcError(
+        `Workflow board ${boardId} is not a writable workflow board file`,
+      );
     }
 
     const projectId = board.projectId as ProjectId;
@@ -189,7 +187,11 @@ export const persistWorkflowBoardDefinition = (
     readonly notFoundAfterWriteMessage: string;
     readonly versionRecording?: "best-effort" | "required";
   },
-): Effect.Effect<PersistWorkflowBoardDefinitionResult, WorkflowRpcError, WorkflowBoardDefinitionWriteContext> =>
+): Effect.Effect<
+  PersistWorkflowBoardDefinitionResult,
+  WorkflowRpcError,
+  WorkflowBoardDefinitionWriteContext
+> =>
   Effect.gen(function* () {
     const readModel = yield* WorkflowReadModel;
     const fileLoader = yield* WorkflowFileLoader;
