@@ -10,8 +10,20 @@ export interface HostedPairingRequest {
 
 export type HostedAppChannel = "latest" | "nightly";
 
+function hostedStaticAppEnabled(): boolean {
+  return import.meta.env.VITE_HOSTED_STATIC_APP === "true";
+}
+
+function currentOrigin(): string | null {
+  return typeof window === "undefined" ? null : window.location.origin;
+}
+
 export function configuredHostedAppUrl(): string {
-  return import.meta.env.VITE_HOSTED_APP_URL?.trim() || DEFAULT_HOSTED_APP_URL;
+  return (
+    import.meta.env.VITE_HOSTED_APP_URL?.trim() ||
+    (hostedStaticAppEnabled() ? currentOrigin() : null) ||
+    DEFAULT_HOSTED_APP_URL
+  );
 }
 
 function configuredBackendUrl(): string {
@@ -34,6 +46,10 @@ function originFromUrl(value: string): string | null {
 export function isHostedStaticApp(url: URL = new URL(window.location.href)): boolean {
   if (configuredBackendUrl()) {
     return false;
+  }
+
+  if (hostedStaticAppEnabled()) {
+    return true;
   }
 
   if (configuredHostedAppChannel()) {

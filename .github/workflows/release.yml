@@ -663,6 +663,8 @@ jobs:
       T3CODE_CLERK_PUBLISHABLE_KEY: ""
       T3CODE_CLERK_JWT_TEMPLATE: ""
       T3CODE_RELAY_URL: ""
+      VITE_HOSTED_STATIC_APP: "true"
+      VITE_HOSTED_APP_CHANNEL: ${{ needs.preflight.outputs.release_channel == 'stable' && 'latest' || 'nightly' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
