@@ -29,6 +29,8 @@ struct InspectorPanel: View {
                     CheckpointListView(model: model, threadID: threadID)
                 case .plan:
                     PlanProgressView(model: model, threadID: threadID)
+                case .files:
+                    FileBrowserView(model: model, threadID: threadID)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -40,6 +42,7 @@ private enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
     case diff
     case checkpoints
     case plan
+    case files
 
     var id: String { rawValue }
 
@@ -48,6 +51,7 @@ private enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
         case .diff: "Diff"
         case .checkpoints: "Checkpoints"
         case .plan: "Plan"
+        case .files: "Files"
         }
     }
 }

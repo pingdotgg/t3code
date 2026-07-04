@@ -333,6 +333,37 @@ public final class AppModel {
         }
     }
 
+    // MARK: - Workspace files
+
+    public func listWorkspace(subpath: String) async -> [WorkspaceEntry] {
+        guard let projectID = selectedThread?.projectID else { return [] }
+        do {
+            return try await backend.listWorkspace(projectID: projectID, subpath: subpath)
+        } catch {
+            lastError = String(describing: error)
+            return []
+        }
+    }
+
+    public func readWorkspaceFile(path: String) async -> FilePreview? {
+        guard let projectID = selectedThread?.projectID else { return nil }
+        do {
+            return try await backend.readWorkspaceFile(projectID: projectID, path: path)
+        } catch {
+            lastError = String(describing: error)
+            return nil
+        }
+    }
+
+    public func openInEditor(subpath: String?, editor: ExternalEditor) async {
+        guard let projectID = selectedThread?.projectID else { return }
+        do {
+            try await backend.openInEditor(projectID: projectID, subpath: subpath, editor: editor)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
     // MARK: - Git / VCS
 
     public func selectedProjectVcsStatus() -> VcsStatus? {

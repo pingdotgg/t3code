@@ -396,6 +396,35 @@ public struct WorkspaceEntry: Identifiable, Hashable, Sendable {
     }
 }
 
+/// Contents of one workspace file for the inspector preview.
+public struct FilePreview: Hashable, Sendable {
+    public var path: String
+    public var contents: String
+    public var truncated: Bool
+
+    public init(path: String, contents: String, truncated: Bool) {
+        self.path = path
+        self.contents = contents
+        self.truncated = truncated
+    }
+}
+
+/// External editors the server's launcher can open a path in
+/// (subset of contracts editor.ts `EDITORS`).
+public enum ExternalEditor: String, CaseIterable, Sendable, Identifiable {
+    case vscode, cursor, zed, fileManager = "file-manager"
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .vscode: "VS Code"
+        case .cursor: "Cursor"
+        case .zed: "Zed"
+        case .fileManager: "Finder"
+        }
+    }
+}
+
 /// An image staged in the composer, ready to upload with the next turn.
 public struct OutgoingAttachment: Identifiable, Hashable, Sendable {
     public var id: String

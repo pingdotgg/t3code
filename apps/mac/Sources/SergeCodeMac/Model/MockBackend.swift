@@ -114,6 +114,21 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.searchWorkspace(query: query)
     }
 
+    public func listWorkspace(projectID: String, subpath: String) async throws -> [WorkspaceEntry] {
+        await state.searchWorkspace(query: "")
+    }
+
+    public func readWorkspaceFile(projectID: String, path: String) async throws -> FilePreview {
+        FilePreview(
+            path: path,
+            contents: "// mock contents of \(path)\nimport Foundation\n\nlet answer = 42\n",
+            truncated: false)
+    }
+
+    public func openInEditor(
+        projectID: String, subpath: String?, editor: ExternalEditor
+    ) async throws {}
+
     public func cancelTurn(threadID: String) async throws {
         await state.cancelTurn(threadID: threadID)
     }

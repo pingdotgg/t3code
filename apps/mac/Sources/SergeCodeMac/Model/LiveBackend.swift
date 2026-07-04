@@ -914,6 +914,35 @@ public actor LiveBackend: BackendService {
         }
     }
 
+    public func listWorkspace(projectID: String, subpath: String) async throws -> [WorkspaceEntry] {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let root = try projectCwd(projectID)
+        let cwd = subpath.isEmpty ? root : root + "/" + subpath
+        let result = try await client.listEntries(cwd: cwd)
+        return result.entries
+            .map { WorkspaceEntry(path: $0.path, isDirectory: $0.kind == .directory) }
+            .sorted { lhs, rhs in
+                if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
+                return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
+            }
+    }
+
+    public func readWorkspaceFile(projectID: String, path: String) async throws -> FilePreview {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let result = try await client.readFile(cwd: try projectCwd(projectID), relativePath: path)
+        return FilePreview(
+            path: result.relativePath, contents: result.contents, truncated: result.truncated)
+    }
+
+    public func openInEditor(
+        projectID: String, subpath: String?, editor: ExternalEditor
+    ) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let root = try projectCwd(projectID)
+        let cwd = subpath.map { root + "/" + $0 } ?? root
+        try await client.openInEditor(cwd: cwd, editor: editor.rawValue)
+    }
+
     public func implementPlan(threadID: String, planID: String) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         let thread = threadsByID[threadID]

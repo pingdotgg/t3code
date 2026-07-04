@@ -48,6 +48,12 @@ public protocol BackendService: Sendable {
 
     /// Fuzzy filename search in a project's workspace (composer @-mentions).
     func searchWorkspace(projectID: String, query: String) async throws -> [WorkspaceEntry]
+    /// Entries under a directory of the project workspace ("" = root).
+    func listWorkspace(projectID: String, subpath: String) async throws -> [WorkspaceEntry]
+    /// Read one workspace file (server truncates very large files).
+    func readWorkspaceFile(projectID: String, path: String) async throws -> FilePreview
+    /// Open the project (or a path inside it) in an external editor.
+    func openInEditor(projectID: String, subpath: String?, editor: ExternalEditor) async throws
 
     func createThread(projectID: String, provider: ProviderKind) async throws -> ChatThread
     func archiveThread(id: String) async throws

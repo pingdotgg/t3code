@@ -64,7 +64,26 @@ public struct ProjectReadFileResult: Decodable, Sendable {
     public var truncated: Bool
 }
 
+/// `shell.openInEditor` input (editor.ts `LaunchEditorInput`). `editor` is
+/// one of the `EDITORS` ids (e.g. "vscode", "cursor", "zed", "file-manager").
+public struct LaunchEditorInput: Encodable, Sendable {
+    public var cwd: String
+    public var editor: String
+
+    public init(cwd: String, editor: String) {
+        self.cwd = cwd
+        self.editor = editor
+    }
+}
+
 extension T3Client {
+    /// Opens a path in an external editor via the server's launcher
+    /// (void success — errors surface as RPC failures).
+    public func openInEditor(cwd: String, editor: String) async throws {
+        let _: JSONValue = try await call(
+            "shell.openInEditor", LaunchEditorInput(cwd: cwd, editor: editor))
+    }
+
     /// Fuzzy filename search under a project workspace (composer @-mentions).
     public func searchEntries(cwd: String, query: String, limit: Int = 20) async throws
         -> ProjectEntriesResult
