@@ -45,10 +45,11 @@ import T3Kit
 //    is the source of truth for status (per-thread `thread.session-set` events
 //    are intentionally NOT used to mutate status, to avoid fighting the shell
 //    projection which already reflects session changes).
-//  * Assistant streaming: the wire has no per-token delta on subscribeThread;
-//    growing `thread.message-sent` payloads for the same messageId are diffed
-//    into `assistantDelta`s (prefix-suffix). A non-append replacement can't be
-//    expressed as a delta and is skipped (see `assistantDelta(new:old:)`).
+//  * Assistant streaming: repeated `thread.message-sent` events for one
+//    messageId carry DELTA chunks in `text` while `streaming` is true, and
+//    the terminal `streaming: false` event replaces the full text only when
+//    its `text` is non-empty (matching projector.ts, which appends streaming
+//    chunks and keeps the accumulated text on an empty completion).
 //  * OrchestrationProposedPlan has no dedicated TimelineItem case -> rendered as
 //    a `.notice`. System messages -> `.notice`. Activity tones map: .tool ->
 //    toolEvent(.succeeded), .error -> toolEvent(.failed), .info -> notice.
@@ -572,10 +573,17 @@ public actor LiveBackend: BackendService {
             userInputRoutes[request.id] = (threadID, request.id, request)
         }
 
-        let items = OrchestrationMapping.timeline(for: thread).compactMap {
-            mapEntry(
-                $0, threadID: threadID, pendingUserInputIDs: pendingInputIDs,
-                pendingApprovalIDs: pendingApprovalIDs)
+        // Upsert (not append) so lifecycle activities sharing a row id —
+        // tool updated/completed for one call, successive reasoning updates
+        // of one task — collapse into a single row, same as the live tail.
+        var items: [TimelineItem] = []
+        for entry in OrchestrationMapping.timeline(for: thread) {
+            guard
+                let item = mapEntry(
+                    entry, threadID: threadID, pendingUserInputIDs: pendingInputIDs,
+                    pendingApprovalIDs: pendingApprovalIDs)
+            else { continue }
+            items.upsertTimelineItem(item)
         }
         // A prior timeline means this snapshot is a *re*-subscribe (e.g. after
         // a socket reconnect), not the thread's first load. `timeline()`
@@ -653,7 +661,8 @@ public actor LiveBackend: BackendService {
                     emit(.approvalResolved(id: requestID))
                 }
             default:
-                emit(.timelineAppended(threadID: threadID, item: mapActivity(activity, at: at)))
+                guard let item = mapActivity(activity, at: at) else { return }
+                emit(.timelineAppended(threadID: threadID, item: item))
             }
 
         case .threadProposedPlanUpserted(let payload):
@@ -824,6 +833,11 @@ public actor LiveBackend: BackendService {
                     item: .userMessage(id: messageID, text: payload.text, at: at)))
 
         case .assistant:
+            // Wire semantics (projector.ts "thread.message-sent"): while
+            // `streaming` is true, `text` is an append-only DELTA chunk; the
+            // terminal `streaming: false` event replaces the full text only
+            // when non-empty — providers routinely finish with `text: ""`,
+            // which means "keep what streamed".
             if !alreadySeen {
                 seenMessageIDs[threadID, default: []].insert(messageID)
                 assistantTextByMessage[threadID, default: [:]][messageID] = payload.text
@@ -833,21 +847,22 @@ public actor LiveBackend: BackendService {
                         item: .assistantMessage(
                             id: messageID, markdown: payload.text,
                             isStreaming: payload.streaming, at: at)))
-            } else {
-                let old = assistantTextByMessage[threadID]?[messageID] ?? ""
-                let delta = Self.assistantDelta(new: payload.text, old: old)
-                assistantTextByMessage[threadID, default: [:]][messageID] = payload.text
-                if !delta.isEmpty {
-                    emit(.assistantDelta(threadID: threadID, messageID: messageID, delta: delta))
+            } else if payload.streaming {
+                if !payload.text.isEmpty {
+                    let old = assistantTextByMessage[threadID]?[messageID] ?? ""
+                    assistantTextByMessage[threadID, default: [:]][messageID] = old + payload.text
+                    emit(
+                        .assistantDelta(
+                            threadID: threadID, messageID: messageID, delta: payload.text))
                 }
             }
             if !payload.streaming {
-                // The terminal, non-streaming `message-sent` is authoritative —
-                // pass the server's full text so the UI corrects any lossy/
-                // skipped delta (see `assistantDelta(new:old:)`) on completion.
+                let accumulated = assistantTextByMessage[threadID]?[messageID] ?? ""
+                let finalText = payload.text.isEmpty ? accumulated : payload.text
+                assistantTextByMessage[threadID, default: [:]][messageID] = finalText
                 emit(
                     .assistantCompleted(
-                        threadID: threadID, messageID: messageID, markdown: payload.text))
+                        threadID: threadID, messageID: messageID, markdown: finalText))
             }
 
         case .system:
@@ -858,16 +873,6 @@ public actor LiveBackend: BackendService {
                     threadID: threadID,
                     item: .notice(id: messageID, text: payload.text, at: at)))
         }
-    }
-
-    /// A wire `message-sent` carries the full assistant text, not a delta; we
-    /// diff against the last-seen text. A pure append yields the new suffix; a
-    /// non-append replacement can't be represented as a delta and is skipped
-    /// (returns "") rather than corrupting the rendered message.
-    private static func assistantDelta(new: String, old: String) -> String {
-        if old.isEmpty { return new }
-        if new.hasPrefix(old) { return String(new.dropFirst(old.count)) }
-        return ""
     }
 
     private func resolveSnapshotWaiters(threadID: String, items: [TimelineItem]) {
@@ -1708,18 +1713,26 @@ public actor LiveBackend: BackendService {
         }
     }
 
-    private func mapActivity(_ activity: OrchestrationThreadActivity, at: Date) -> TimelineItem {
-        switch activity.tone {
-        case .tool:
-            return .toolEvent(
-                id: activity.id, name: activity.kind, detail: activity.summary,
-                status: .succeeded, at: at)
-        case .error:
-            return .toolEvent(
-                id: activity.id, name: activity.kind, detail: activity.summary,
-                status: .failed, at: at)
-        case .info, .approval:
-            return .notice(id: activity.id, text: activity.summary, at: at)
+    /// Refined activity row (ActivityRows): lifecycle noise maps to nil,
+    /// tool rows get their human title + payload detail, task progress
+    /// surfaces the actual reasoning text. Row ids are stable across one
+    /// tool call / task, so consumers upsert rather than append.
+    private func mapActivity(_ activity: OrchestrationThreadActivity, at: Date) -> TimelineItem? {
+        switch ActivityRows.row(for: activity) {
+        case .tool(let id, let title, let detail, let phase):
+            let status: ToolEventStatus =
+                switch phase {
+                case .running: .running
+                case .succeeded: .succeeded
+                case .failed: .failed
+                }
+            return .toolEvent(id: id, name: title, detail: detail, status: status, at: at)
+        case .reasoning(let id, let text):
+            return .reasoning(id: id, text: text, at: at)
+        case .notice(let id, let text):
+            return .notice(id: id, text: text, at: at)
+        case nil:
+            return nil
         }
     }
 

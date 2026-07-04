@@ -29,6 +29,8 @@ struct ChatTimelineRowView: View {
             CheckpointRow(checkpoint: checkpoint, model: model)
         case .notice(_, let text, _):
             NoticeRow(text: text)
+        case .reasoning(_, let text, _):
+            ReasoningRow(text: text)
         }
     }
 }
@@ -144,6 +146,30 @@ private struct CheckpointRow: View {
             VStack { Divider() }
         }
         .padding(.vertical, 4)
+    }
+}
+
+/// The agent's current thought: dimmed italic line whose text is replaced in
+/// place as task progress streams (the row id is stable per task), so one
+/// row narrates the work instead of a stack of stale updates.
+private struct ReasoningRow: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "sparkles")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            Text(text)
+                .font(.callout)
+                .italic()
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .contentTransition(.opacity)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 4)
+        .animation(Motion.ambient, value: text)
     }
 }
 

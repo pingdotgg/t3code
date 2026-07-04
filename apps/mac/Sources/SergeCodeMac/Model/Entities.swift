@@ -163,6 +163,9 @@ public enum TimelineItem: Identifiable, Sendable {
     case checkpoint(Checkpoint)
     case plan(ProposedPlan)
     case notice(id: String, text: String, at: Date)
+    /// Streaming task/reasoning progress; the id is stable across updates of
+    /// the same task, so new text replaces the row instead of stacking.
+    case reasoning(id: String, text: String, at: Date)
 
     public var id: String {
         switch self {
@@ -174,7 +177,48 @@ public enum TimelineItem: Identifiable, Sendable {
         case .checkpoint(let checkpoint): checkpoint.id
         case .plan(let plan): plan.id
         case .notice(let id, _, _): id
+        case .reasoning(let id, _, _): id
         }
+    }
+}
+
+extension Array where Element == TimelineItem {
+    /// Coalescing append: an item whose id already exists replaces that row
+    /// in place (tool lifecycle updates, streaming reasoning text) instead of
+    /// stacking a duplicate. A tool row without a correlation id still folds
+    /// into the trailing running row when it is plainly the same invocation
+    /// (mirrors the web client's consecutive-merge in session-logic.ts):
+    /// same name plus same detail, or a correlated row followed by an
+    /// uncorrelated event of the same name. Two uncorrelated tools that
+    /// merely share a name stay separate rows.
+    public mutating func upsertTimelineItem(_ item: TimelineItem) {
+        if let index = lastIndex(where: { $0.id == item.id }) {
+            self[index] = item.preservingToolDetail(of: self[index])
+            return
+        }
+        if case .toolEvent(let id, let name, let detail, _, _) = item,
+            case .toolEvent(let lastID, let lastName, let lastDetail, .running, _)? = last,
+            lastName == name,
+            lastDetail == detail || (lastID.hasPrefix("tool:") && !id.hasPrefix("tool:"))
+        {
+            self[count - 1] = item.preservingToolDetail(of: self[count - 1])
+            return
+        }
+        append(item)
+    }
+}
+
+extension TimelineItem {
+    /// Lifecycle replacement keeps the expandable body when the newer event
+    /// omits it: `tool.completed` often carries no `payload.detail`, and
+    /// blanking the row would drop the command/path shown while running.
+    fileprivate func preservingToolDetail(of existing: TimelineItem) -> TimelineItem {
+        guard case .toolEvent(let id, let name, let detail, let status, let at) = self,
+            detail.isEmpty,
+            case .toolEvent(_, _, let existingDetail, _, _) = existing,
+            !existingDetail.isEmpty
+        else { return self }
+        return .toolEvent(id: id, name: name, detail: existingDetail, status: status, at: at)
     }
 }
 
