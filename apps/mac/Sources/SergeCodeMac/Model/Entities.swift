@@ -163,6 +163,9 @@ public enum TimelineItem: Identifiable, Sendable {
     case checkpoint(Checkpoint)
     case plan(ProposedPlan)
     case notice(id: String, text: String, at: Date)
+    /// Streaming task/reasoning progress; the id is stable across updates of
+    /// the same task, so new text replaces the row instead of stacking.
+    case reasoning(id: String, text: String, at: Date)
 
     public var id: String {
         switch self {
@@ -174,7 +177,30 @@ public enum TimelineItem: Identifiable, Sendable {
         case .checkpoint(let checkpoint): checkpoint.id
         case .plan(let plan): plan.id
         case .notice(let id, _, _): id
+        case .reasoning(let id, _, _): id
         }
+    }
+}
+
+extension Array where Element == TimelineItem {
+    /// Coalescing append: an item whose id already exists replaces that row
+    /// in place (tool lifecycle updates, streaming reasoning text) instead of
+    /// stacking a duplicate. A tool row without a correlation id still folds
+    /// into the trailing row while that row is running under the same name
+    /// (mirrors the web client's consecutive-merge in session-logic.ts).
+    public mutating func upsertTimelineItem(_ item: TimelineItem) {
+        if let index = lastIndex(where: { $0.id == item.id }) {
+            self[index] = item
+            return
+        }
+        if case .toolEvent(_, let name, _, _, _) = item,
+            case .toolEvent(_, let lastName, _, .running, _)? = last,
+            lastName == name
+        {
+            self[count - 1] = item
+            return
+        }
+        append(item)
     }
 }
 

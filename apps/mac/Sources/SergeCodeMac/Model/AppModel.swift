@@ -76,7 +76,10 @@ public final class AppModel {
             threads.removeAll { $0.id == id }
             if selectedThreadID == id { selectedThreadID = nil }
         case .timelineAppended(let threadID, let item):
-            timelines[threadID, default: []].append(item)
+            // Upsert: lifecycle updates arrive with the stable row id of an
+            // earlier item (tool call updated -> completed, streaming
+            // reasoning text) and must replace it, not stack.
+            timelines[threadID, default: []].upsertTimelineItem(item)
         case .timelineReset(let threadID, let items):
             timelines[threadID] = items
         case .assistantDelta(let threadID, let messageID, let delta):

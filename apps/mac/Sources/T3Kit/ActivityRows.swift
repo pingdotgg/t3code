@@ -1,0 +1,166 @@
+// Refined "work log" row derivation from raw orchestration activities.
+// The server projects provider-runtime events into append-only activities
+// whose kind/summary/payload are wire-shaped (ProviderRuntimeIngestion.ts):
+// rendered verbatim they read as "tool.started" / "Reasoning update" spam.
+// This mirrors the web client's deriveWorkLogEntries (session-logic.ts):
+// lifecycle noise is dropped, tool events carry their human title + payload
+// detail, and task progress surfaces the actual reasoning text. Rows carry a
+// stable id so lifecycle updates for the same tool call (or successive
+// reasoning updates of the same task) *replace* the prior row instead of
+// stacking — the app layer upserts by id.
+
+import Foundation
+
+/// Display phase of a tool row, folded from the wire `status` strings and
+/// the activity kind's lifecycle position.
+public enum T3ActivityRowPhase: Sendable, Equatable {
+    case running, succeeded, failed
+}
+
+/// One display-ready timeline row derived from a generic (non-approval,
+/// non-typed) activity. UI-agnostic so it stays testable in T3KitTests.
+public enum T3ActivityRow: Sendable, Equatable {
+    case tool(id: String, title: String, detail: String, phase: T3ActivityRowPhase)
+    /// Streaming task/reasoning progress ("what the agent is thinking now");
+    /// successive updates of the same task share an id and replace in place.
+    case reasoning(id: String, text: String)
+    case notice(id: String, text: String)
+}
+
+public enum ActivityRows {
+    /// Derives the display row for an activity; nil means the activity is
+    /// pure lifecycle noise and gets no timeline row at all.
+    public static func row(for activity: OrchestrationThreadActivity) -> T3ActivityRow? {
+        switch activity.kind {
+        // `tool.started` is always superseded by `tool.updated`/`.completed`
+        // for the same call; `task.started` says nothing the first progress
+        // update doesn't; the context-window kind feeds the meter side
+        // channel, never the timeline.
+        case ActivityKind.toolStarted, ActivityKind.taskStarted,
+            ActivityKind.contextWindowUpdated:
+            return nil
+
+        case ActivityKind.taskProgress:
+            let payload = activity.decodePayload(TaskProgressActivityPayload.self)
+            // The wire summary is the literal string "Reasoning update"; the
+            // actual reasoning text lives in payload.summary/detail. No text
+            // -> no row (an empty "Reasoning update" marker carries nothing).
+            guard let text = nonEmpty(payload?.summary) ?? nonEmpty(payload?.detail) else {
+                return nil
+            }
+            let base = nonEmpty(payload?.taskId) ?? activity.id
+            return .reasoning(id: "task:\(base):reasoning", text: text)
+
+        case ActivityKind.taskCompleted:
+            let payload = activity.decodePayload(TaskCompletedActivityPayload.self)
+            let failed = payload?.status == "failed"
+            // A bare completion (no result summary) that succeeded adds
+            // nothing over the task's last reasoning row.
+            guard let detail = nonEmpty(payload?.detail) else {
+                return failed
+                    ? .tool(id: activity.id, title: activity.summary, detail: "", phase: .failed)
+                    : nil
+            }
+            return .tool(
+                id: activity.id, title: activity.summary, detail: detail,
+                phase: failed ? .failed : .succeeded)
+
+        case ActivityKind.toolUpdated, ActivityKind.toolCompleted:
+            return toolRow(for: activity)
+
+        default:
+            break
+        }
+
+        switch activity.tone {
+        case .tool:
+            return .tool(
+                id: activity.id, title: nonEmpty(activity.summary) ?? activity.kind,
+                detail: payloadDetail(activity.payload) ?? "", phase: .succeeded)
+        case .error:
+            return .tool(
+                id: activity.id, title: nonEmpty(activity.summary) ?? "Error",
+                detail: payloadDetail(activity.payload) ?? "", phase: .failed)
+        case .info, .approval:
+            // "Checkpoint captured" duplicates the dedicated checkpoint row.
+            guard let text = nonEmpty(activity.summary), text != "Checkpoint captured" else {
+                return nil
+            }
+            return .notice(id: activity.id, text: text)
+        }
+    }
+
+    private static func toolRow(for activity: OrchestrationThreadActivity) -> T3ActivityRow {
+        let payload = activity.decodePayload(ToolLifecycleActivityPayload.self)
+        let title =
+            nonEmpty(normalizeToolTitle(activity.summary))
+            ?? humanizedItemType(payload?.itemType) ?? "Tool"
+        var detail = nonEmpty(payload?.detail).map(stripTrailingExitCode) ?? ""
+        // A detail that just restates the title is dead weight in the
+        // disclosure body.
+        if compactLabel(detail) == compactLabel(title) { detail = "" }
+
+        let phase: T3ActivityRowPhase
+        switch payload?.status {
+        case "inProgress": phase = .running
+        case "failed", "declined", "stopped": phase = .failed
+        default: phase = activity.kind == ActivityKind.toolCompleted ? .succeeded : .running
+        }
+
+        // toolCallId (payload.data.toolCallId) correlates every lifecycle
+        // event of one tool invocation — sharing it as the row id makes
+        // updated -> completed replace the same row.
+        let id = toolCallId(in: activity.payload).map { "tool:\($0)" } ?? activity.id
+        return .tool(id: id, title: title, detail: detail, phase: phase)
+    }
+
+    private static func toolCallId(in payload: JSONValue) -> String? {
+        nonEmpty(payload.objectValue?["data"]?.objectValue?["toolCallId"]?.stringValue)
+    }
+
+    /// Best-effort human detail for activities without a typed payload.
+    private static func payloadDetail(_ payload: JSONValue) -> String? {
+        guard let object = payload.objectValue else { return nil }
+        for key in ["detail", "message"] {
+            if let value = nonEmpty(object[key]?.stringValue) {
+                return stripTrailingExitCode(value)
+            }
+        }
+        return nil
+    }
+
+    /// Some providers title completion events "<Tool> completed"; the phase
+    /// icon already says so.
+    private static func normalizeToolTitle(_ value: String) -> String {
+        value.replacingOccurrences(
+            of: #"\s+(?:complete|completed)\s*$"#, with: "", options: [.regularExpression, .caseInsensitive]
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// "command_execution" -> "Command execution".
+    private static func humanizedItemType(_ itemType: String?) -> String? {
+        guard let itemType = nonEmpty(itemType) else { return nil }
+        let words = itemType.replacingOccurrences(of: "_", with: " ")
+        return words.prefix(1).uppercased() + words.dropFirst()
+    }
+
+    /// Drops the runtime's trailing `<exited with exit code N>` marker; the
+    /// row's phase already encodes success/failure.
+    private static func stripTrailingExitCode(_ value: String) -> String {
+        value.replacingOccurrences(
+            of: #"\s*<exited with exit code \d+>\s*$"#, with: "",
+            options: [.regularExpression, .caseInsensitive]
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func compactLabel(_ value: String) -> String {
+        value.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased()
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !trimmed.isEmpty
+        else { return nil }
+        return trimmed
+    }
+}

@@ -555,10 +555,17 @@ public actor LiveBackend: BackendService {
             userInputRoutes[request.id] = (threadID, request.id, request)
         }
 
-        let items = OrchestrationMapping.timeline(for: thread).compactMap {
-            mapEntry(
-                $0, threadID: threadID, pendingUserInputIDs: pendingInputIDs,
-                pendingApprovalIDs: pendingApprovalIDs)
+        // Upsert (not append) so lifecycle activities sharing a row id —
+        // tool updated/completed for one call, successive reasoning updates
+        // of one task — collapse into a single row, same as the live tail.
+        var items: [TimelineItem] = []
+        for entry in OrchestrationMapping.timeline(for: thread) {
+            guard
+                let item = mapEntry(
+                    entry, threadID: threadID, pendingUserInputIDs: pendingInputIDs,
+                    pendingApprovalIDs: pendingApprovalIDs)
+            else { continue }
+            items.upsertTimelineItem(item)
         }
         // A prior timeline means this snapshot is a *re*-subscribe (e.g. after
         // a socket reconnect), not the thread's first load. `timeline()`
@@ -636,7 +643,8 @@ public actor LiveBackend: BackendService {
                     emit(.approvalResolved(id: requestID))
                 }
             default:
-                emit(.timelineAppended(threadID: threadID, item: mapActivity(activity, at: at)))
+                guard let item = mapActivity(activity, at: at) else { return }
+                emit(.timelineAppended(threadID: threadID, item: item))
             }
 
         case .threadProposedPlanUpserted(let payload):
@@ -1520,18 +1528,26 @@ public actor LiveBackend: BackendService {
         }
     }
 
-    private func mapActivity(_ activity: OrchestrationThreadActivity, at: Date) -> TimelineItem {
-        switch activity.tone {
-        case .tool:
-            return .toolEvent(
-                id: activity.id, name: activity.kind, detail: activity.summary,
-                status: .succeeded, at: at)
-        case .error:
-            return .toolEvent(
-                id: activity.id, name: activity.kind, detail: activity.summary,
-                status: .failed, at: at)
-        case .info, .approval:
-            return .notice(id: activity.id, text: activity.summary, at: at)
+    /// Refined activity row (ActivityRows): lifecycle noise maps to nil,
+    /// tool rows get their human title + payload detail, task progress
+    /// surfaces the actual reasoning text. Row ids are stable across one
+    /// tool call / task, so consumers upsert rather than append.
+    private func mapActivity(_ activity: OrchestrationThreadActivity, at: Date) -> TimelineItem? {
+        switch ActivityRows.row(for: activity) {
+        case .tool(let id, let title, let detail, let phase):
+            let status: ToolEventStatus =
+                switch phase {
+                case .running: .running
+                case .succeeded: .succeeded
+                case .failed: .failed
+                }
+            return .toolEvent(id: id, name: title, detail: detail, status: status, at: at)
+        case .reasoning(let id, let text):
+            return .reasoning(id: id, text: text, at: at)
+        case .notice(let id, let text):
+            return .notice(id: id, text: text, at: at)
+        case nil:
+            return nil
         }
     }
 

@@ -18,6 +18,48 @@ public enum ActivityKind {
     public static let userInputResolved = "user-input.resolved"
     public static let turnPlanUpdated = "turn.plan.updated"
     public static let contextWindowUpdated = "context-window.updated"
+    /// Tool lifecycle (tone `.tool`): started is pure noise (always followed
+    /// by updated/completed for the same call); updated/completed carry the
+    /// human title in `summary` and `{ itemType, status?, detail?, data? }`
+    /// in the payload.
+    public static let toolStarted = "tool.started"
+    public static let toolUpdated = "tool.updated"
+    public static let toolCompleted = "tool.completed"
+    /// Task lifecycle (tone `.info`): progress payloads carry the streaming
+    /// reasoning text; the wire `summary` is the fixed string
+    /// "Reasoning update".
+    public static let taskStarted = "task.started"
+    public static let taskProgress = "task.progress"
+    public static let taskCompleted = "task.completed"
+}
+
+// MARK: - tool.updated / tool.completed
+
+/// Activity payload for kinds `tool.updated`/`tool.completed`:
+/// `{ itemType, status?, detail?, data? }` (`data` stays opaque; its
+/// `toolCallId` is read via JSONValue for lifecycle correlation).
+public struct ToolLifecycleActivityPayload: Decodable, Sendable {
+    public var itemType: String?
+    public var status: String?
+    public var detail: String?
+}
+
+// MARK: - task.progress / task.completed
+
+/// Activity payload for kind `task.progress`:
+/// `{ taskId, detail, summary?, lastToolName?, usage? }`.
+public struct TaskProgressActivityPayload: Decodable, Sendable {
+    public var taskId: String?
+    public var detail: String?
+    public var summary: String?
+}
+
+/// Activity payload for kind `task.completed`:
+/// `{ taskId, status, detail?, usage? }`.
+public struct TaskCompletedActivityPayload: Decodable, Sendable {
+    public var taskId: String?
+    public var status: String?
+    public var detail: String?
 }
 
 // MARK: - user-input.requested / user-input.resolved

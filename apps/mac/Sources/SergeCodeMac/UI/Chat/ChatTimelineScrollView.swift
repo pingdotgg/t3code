@@ -72,6 +72,12 @@ struct ChatTimelineScrollView: View {
         switch last {
         case .assistantMessage(let id, let markdown, let isStreaming, _):
             return "\(items.count)|\(id)|\(markdown.count)|\(isStreaming)"
+        case .reasoning(let id, let text, _):
+            // Streaming reasoning replaces the row's text in place (same id).
+            return "\(items.count)|\(id)|\(text.count)"
+        case .toolEvent(let id, _, let detail, let status, _):
+            // Lifecycle upserts mutate status/detail without changing count.
+            return "\(items.count)|\(id)|\(detail.count)|\(status)"
         default:
             return "\(items.count)|\(last.id)"
         }
