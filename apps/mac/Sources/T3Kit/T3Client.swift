@@ -296,11 +296,14 @@ public actor T3Client {
     }
 
     /// Sends a user message and starts a turn (composer send action).
+    /// `bootstrap` carries first-turn setup (create thread lazily, prepare a
+    /// fresh worktree, run the project setup script).
     @discardableResult
     public func startTurn(
         threadId: String, text: String, attachments: [UploadChatAttachment] = [],
         modelSelection: ModelSelection? = nil, titleSeed: String? = nil,
         runtimeMode: RuntimeMode = .wireDefault, interactionMode: ProviderInteractionMode = .wireDefault,
+        bootstrap: ThreadTurnStartBootstrap? = nil,
         sourceProposedPlan: SourceProposedPlanReference? = nil
     ) async throws -> DispatchResult {
         let message = ChatMessageInput(
@@ -310,7 +313,8 @@ public actor T3Client {
                 ThreadTurnStartCommand(
                     commandId: T3Ids.newCommandId(), threadId: threadId, message: message,
                     modelSelection: modelSelection, titleSeed: titleSeed, runtimeMode: runtimeMode,
-                    interactionMode: interactionMode, sourceProposedPlan: sourceProposedPlan,
+                    interactionMode: interactionMode, bootstrap: bootstrap,
+                    sourceProposedPlan: sourceProposedPlan,
                     createdAt: T3Clock.nowISO8601())))
     }
 

@@ -489,3 +489,151 @@ func liveEndToEndProtocolFlow() async throws {
 
     await terminateProcess(process)
 }
+
+/// Live check of the first-turn worktree bootstrap that LiveBackend now sends
+/// when defaultThreadEnvMode is worktree: `thread.turn.start` with
+/// `bootstrap.prepareWorktree` must create a real `git worktree` on the
+/// requested branch and flow the worktreePath/branch back through the shell
+/// subscription via `thread.meta.update`.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["SERGECODE_LIVE_E2E"] == "1"))
+func liveWorktreeBootstrapFlow() async throws {
+    let scratchRoot = defaultScratchRoot()
+    let baseDir = scratchRoot + "/e2e-worktree-home"
+    let repoDir = scratchRoot + "/e2e-worktree-repo"
+    let fileManager = FileManager.default
+
+    try? fileManager.removeItem(atPath: baseDir)
+    try? fileManager.removeItem(atPath: repoDir)
+    try fileManager.createDirectory(atPath: baseDir, withIntermediateDirectories: true)
+    try fileManager.createDirectory(atPath: repoDir, withIntermediateDirectories: true)
+
+    try runGit(["init"], cwd: repoDir)
+    try runGit(["config", "user.email", "e2e@example.test"], cwd: repoDir)
+    try runGit(["config", "user.name", "E2E Test"], cwd: repoDir)
+    try "hello\n".write(toFile: repoDir + "/README.md", atomically: true, encoding: .utf8)
+    try runGit(["add", "-A"], cwd: repoDir)
+    try runGit(["commit", "-m", "initial commit"], cwd: repoDir)
+    let baseBranch = try runGit(["branch", "--show-current"], cwd: repoDir)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard let nodePath = locateNode() else {
+        Issue.record("Could not locate a node binary (checked $SERGECODE_NODE, login-shell PATH, common install paths).")
+        return
+    }
+    let entryPath =
+        ProcessInfo.processInfo.environment["SERGECODE_SERVER_ENTRY"]
+        ?? defaultServerEntryPath()
+    guard fileManager.isExecutableFile(atPath: entryPath) else {
+        Issue.record("Server entry point not found/executable at \(entryPath).")
+        return
+    }
+
+    let host = "127.0.0.1"
+    let port = try pickFreePort(host: host)
+    let bootstrapToken = makeBootstrapToken()
+    let logDir = baseDir + "/logs/sidecar"
+
+    let process = try spawnServer(
+        nodePath: nodePath, entryPath: entryPath, port: port, host: host, baseDir: baseDir,
+        bootstrapToken: bootstrapToken, logDir: logDir)
+
+    let ready = await waitForReadiness(host: host, port: port)
+    guard ready else {
+        await terminateProcess(process)
+        Issue.record(
+            "Sidecar did not become ready within 60s.\n\(readLogTail(logDir: logDir))")
+        return
+    }
+
+    var connection: RpcConnection?
+    do {
+        let kitConfig = T3KitConfig(host: host, port: port, desktopBootstrapToken: bootstrapToken)
+        let authClient = AuthClient(config: kitConfig.authConfig)
+        let socketURL = try await authClient.makeSocketURL()
+        let conn = RpcConnection(url: socketURL)
+        connection = conn
+        try await conn.connect()
+        let client = T3Client(transport: conn)
+
+        let config = try await client.getConfig()
+        let shellStream = await client.subscribeShell()
+        let shellCursor = StreamCursor(shellStream)
+        _ = try await waitForNext(shellCursor, context: "initial shell snapshot") { _ in true }
+
+        let projectId = "e2e-wt-project-\(UUID().uuidString.prefix(8))"
+        _ = try await client.createProject(
+            projectId: projectId, title: "E2E Worktree Project", workspaceRoot: repoDir,
+            createWorkspaceRootIfMissing: false)
+        _ = try await waitForNext(
+            shellCursor, context: "project-upserted event for \(projectId)"
+        ) { item in
+            if case .event(.projectUpserted(_, let project)) = item, project.id == projectId {
+                return true
+            }
+            return false
+        }
+
+        let claudeProvider = config.providers.first { $0.driver.lowercased().contains("claude") }
+        let claudeModel = claudeProvider?.models.first?.slug
+        let modelSelection = ModelSelection(
+            instanceId: claudeProvider?.instanceId ?? "claude-code",
+            model: (claudeModel?.isEmpty == false) ? claudeModel! : "claude-sonnet-4-5")
+
+        let threadId = "e2e-wt-thread-\(UUID().uuidString.prefix(8))"
+        _ = try await client.createThread(
+            threadId: threadId, projectId: projectId, title: "E2E Worktree Thread",
+            modelSelection: modelSelection, runtimeMode: .fullAccess)
+        _ = try await waitForNext(
+            shellCursor, context: "thread-upserted event for \(threadId)"
+        ) { item in
+            if case .event(.threadUpserted(_, let thread)) = item, thread.id == threadId {
+                return true
+            }
+            return false
+        }
+
+        // The exact shape LiveBackend sends on a worktree thread's first
+        // turn. The turn itself may fail (no usable provider on CI); the
+        // worktree prep + thread.meta.update run before the turn dispatch,
+        // so the meta event must arrive regardless.
+        let worktreeBranch = "t3code/e2e0000a"
+        _ = try? await client.startTurn(
+            threadId: threadId, text: "worktree bootstrap E2E",
+            bootstrap: ThreadTurnStartBootstrap(
+                prepareWorktree: ThreadTurnStartBootstrapPrepareWorktree(
+                    projectCwd: repoDir, baseBranch: baseBranch, branch: worktreeBranch),
+                runSetupScript: false))
+
+        let metaEvent = try await waitForNext(
+            shellCursor, context: "worktree meta update for \(threadId)",
+            timeout: .seconds(30)
+        ) { item in
+            if case .event(.threadUpserted(_, let thread)) = item, thread.id == threadId,
+                thread.worktreePath != nil
+            {
+                return true
+            }
+            return false
+        }
+        if case .event(.threadUpserted(_, let thread)) = metaEvent {
+            #expect(thread.branch == worktreeBranch)
+            let worktreePath = thread.worktreePath ?? ""
+            #expect(fileManager.fileExists(atPath: worktreePath + "/README.md"))
+            let checkedOut = try runGit(["branch", "--show-current"], cwd: worktreePath)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            #expect(checkedOut == worktreeBranch)
+        }
+
+        _ = try? await client.interruptTurn(threadId: threadId)
+        await conn.disconnect(reason: "test complete")
+        connection = nil
+    } catch {
+        if let connection {
+            await connection.disconnect(reason: "test failed")
+        }
+        await terminateProcess(process)
+        throw error
+    }
+
+    await terminateProcess(process)
+}

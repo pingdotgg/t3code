@@ -32,7 +32,9 @@ public enum BackendEvent: Sendable {
     case providersChanged([ProviderInstance])
     case contextWindowUpdated(threadID: String, status: ContextWindowStatus)
     case planProgressUpdated(threadID: String, progress: PlanProgress)
-    case vcsStatusChanged(projectID: String, status: VcsStatus)
+    /// Keyed by thread: a worktree thread's repo status is its worktree's,
+    /// not the project checkout's.
+    case vcsStatusChanged(threadID: String, status: VcsStatus)
 }
 
 public protocol BackendService: Sendable {
@@ -50,14 +52,18 @@ public protocol BackendService: Sendable {
     /// Every selectable (instance, model) pair across configured providers.
     func models() async throws -> [ModelOption]
 
-    /// Fuzzy filename search in a project's workspace (composer @-mentions).
-    func searchWorkspace(projectID: String, query: String) async throws -> [WorkspaceEntry]
-    /// Entries under a directory of the project workspace ("" = root).
-    func listWorkspace(projectID: String, subpath: String) async throws -> [WorkspaceEntry]
+    // Workspace and VCS calls are keyed by thread, not project: a thread that
+    // runs in its own worktree browses/searches/commits that worktree, while
+    // local-mode threads resolve to the project checkout.
+
+    /// Fuzzy filename search in the thread's workspace (composer @-mentions).
+    func searchWorkspace(threadID: String, query: String) async throws -> [WorkspaceEntry]
+    /// Entries under a directory of the thread's workspace ("" = root).
+    func listWorkspace(threadID: String, subpath: String) async throws -> [WorkspaceEntry]
     /// Read one workspace file (server truncates very large files).
-    func readWorkspaceFile(projectID: String, path: String) async throws -> FilePreview
-    /// Open the project (or a path inside it) in an external editor.
-    func openInEditor(projectID: String, subpath: String?, editor: ExternalEditor) async throws
+    func readWorkspaceFile(threadID: String, path: String) async throws -> FilePreview
+    /// Open the thread's workspace (or a path inside it) in an external editor.
+    func openInEditor(threadID: String, subpath: String?, editor: ExternalEditor) async throws
 
     /// `title` nil means the backend picks its generic default.
     func createThread(projectID: String, provider: ProviderKind, title: String?) async throws
@@ -93,16 +99,16 @@ public protocol BackendService: Sendable {
     /// Deletes a project and all of its sessions (force-cascades server-side).
     func deleteProject(id: String) async throws
 
-    /// Start (or keep) a live VCS status subscription for a project; status
-    /// arrives via `.vcsStatusChanged` events.
-    func watchVcsStatus(projectID: String) async throws
-    func listBranches(projectID: String, query: String?) async throws -> [BranchRef]
-    func switchBranch(projectID: String, name: String) async throws
-    func createBranch(projectID: String, name: String) async throws
-    func pull(projectID: String) async throws
+    /// Start (or keep) a live VCS status subscription for a thread's
+    /// workspace; status arrives via `.vcsStatusChanged` events.
+    func watchVcsStatus(threadID: String) async throws
+    func listBranches(threadID: String, query: String?) async throws -> [BranchRef]
+    func switchBranch(threadID: String, name: String) async throws
+    func createBranch(threadID: String, name: String) async throws
+    func pull(threadID: String) async throws
     /// Runs a stacked commit/push/PR pipeline to completion.
     func runGitAction(
-        projectID: String, action: GitAction, commitMessage: String?
+        threadID: String, action: GitAction, commitMessage: String?
     ) async throws -> GitActionOutcome
 
     /// Server-side settings (the editable subset).

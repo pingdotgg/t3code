@@ -14,6 +14,7 @@ public final class AppModel {
     public private(set) var models: [ModelOption] = []
     public private(set) var contextWindows: [String: ContextWindowStatus] = [:]
     public private(set) var planProgress: [String: PlanProgress] = [:]
+    /// Keyed by threadID (a worktree thread's status is its worktree's).
     public private(set) var vcsStatuses: [String: VcsStatus] = [:]
     /// Outcome of the most recent git action, shown as a transient banner.
     public var lastGitActionOutcome: GitActionOutcome?
@@ -74,6 +75,7 @@ public final class AppModel {
             threads.sort { $0.updatedAt > $1.updatedAt }
         case .threadRemoved(let id):
             threads.removeAll { $0.id == id }
+            vcsStatuses[id] = nil
             if selectedThreadID == id { selectedThreadID = nil }
         case .timelineAppended(let threadID, let item):
             timelines[threadID, default: []].append(item)
@@ -107,8 +109,8 @@ public final class AppModel {
             contextWindows[threadID] = status
         case .planProgressUpdated(let threadID, let progress):
             planProgress[threadID] = progress
-        case .vcsStatusChanged(let projectID, let status):
-            vcsStatuses[projectID] = status
+        case .vcsStatusChanged(let threadID, let status):
+            vcsStatuses[threadID] = status
         }
     }
 
@@ -198,9 +200,9 @@ public final class AppModel {
     }
 
     public func searchWorkspace(query: String) async -> [WorkspaceEntry] {
-        guard let projectID = selectedThread?.projectID else { return [] }
+        guard let threadID = selectedThreadID else { return [] }
         do {
-            return try await backend.searchWorkspace(projectID: projectID, query: query)
+            return try await backend.searchWorkspace(threadID: threadID, query: query)
         } catch {
             // Mention search is best-effort UI sugar; a transient failure
             // should not surface as a banner error.
@@ -393,9 +395,9 @@ public final class AppModel {
     // MARK: - Workspace files
 
     public func listWorkspace(subpath: String) async -> [WorkspaceEntry] {
-        guard let projectID = selectedThread?.projectID else { return [] }
+        guard let threadID = selectedThreadID else { return [] }
         do {
-            return try await backend.listWorkspace(projectID: projectID, subpath: subpath)
+            return try await backend.listWorkspace(threadID: threadID, subpath: subpath)
         } catch {
             lastError = String(describing: error)
             return []
@@ -403,9 +405,9 @@ public final class AppModel {
     }
 
     public func readWorkspaceFile(path: String) async -> FilePreview? {
-        guard let projectID = selectedThread?.projectID else { return nil }
+        guard let threadID = selectedThreadID else { return nil }
         do {
-            return try await backend.readWorkspaceFile(projectID: projectID, path: path)
+            return try await backend.readWorkspaceFile(threadID: threadID, path: path)
         } catch {
             lastError = String(describing: error)
             return nil
@@ -413,9 +415,9 @@ public final class AppModel {
     }
 
     public func openInEditor(subpath: String?, editor: ExternalEditor) async {
-        guard let projectID = selectedThread?.projectID else { return }
+        guard let threadID = selectedThreadID else { return }
         do {
-            try await backend.openInEditor(projectID: projectID, subpath: subpath, editor: editor)
+            try await backend.openInEditor(threadID: threadID, subpath: subpath, editor: editor)
         } catch {
             lastError = String(describing: error)
         }
@@ -423,20 +425,20 @@ public final class AppModel {
 
     // MARK: - Git / VCS
 
-    public func selectedProjectVcsStatus() -> VcsStatus? {
-        guard let projectID = selectedThread?.projectID else { return nil }
-        return vcsStatuses[projectID]
+    public func selectedVcsStatus() -> VcsStatus? {
+        guard let threadID = selectedThreadID else { return nil }
+        return vcsStatuses[threadID]
     }
 
     public func watchVcsStatus() async {
-        guard let projectID = selectedThread?.projectID else { return }
-        try? await backend.watchVcsStatus(projectID: projectID)
+        guard let threadID = selectedThreadID else { return }
+        try? await backend.watchVcsStatus(threadID: threadID)
     }
 
     public func listBranches(query: String?) async -> [BranchRef] {
-        guard let projectID = selectedThread?.projectID else { return [] }
+        guard let threadID = selectedThreadID else { return [] }
         do {
-            return try await backend.listBranches(projectID: projectID, query: query)
+            return try await backend.listBranches(threadID: threadID, query: query)
         } catch {
             lastError = String(describing: error)
             return []
@@ -444,37 +446,37 @@ public final class AppModel {
     }
 
     public func switchBranch(_ name: String) async {
-        guard let projectID = selectedThread?.projectID else { return }
+        guard let threadID = selectedThreadID else { return }
         do {
-            try await backend.switchBranch(projectID: projectID, name: name)
+            try await backend.switchBranch(threadID: threadID, name: name)
         } catch {
             lastError = String(describing: error)
         }
     }
 
     public func createBranch(_ name: String) async {
-        guard let projectID = selectedThread?.projectID else { return }
+        guard let threadID = selectedThreadID else { return }
         do {
-            try await backend.createBranch(projectID: projectID, name: name)
+            try await backend.createBranch(threadID: threadID, name: name)
         } catch {
             lastError = String(describing: error)
         }
     }
 
     public func pull() async {
-        guard let projectID = selectedThread?.projectID else { return }
+        guard let threadID = selectedThreadID else { return }
         do {
-            try await backend.pull(projectID: projectID)
+            try await backend.pull(threadID: threadID)
         } catch {
             lastError = String(describing: error)
         }
     }
 
     public func runGitAction(_ action: GitAction, commitMessage: String?) async {
-        guard let projectID = selectedThread?.projectID else { return }
+        guard let threadID = selectedThreadID else { return }
         do {
             lastGitActionOutcome = try await backend.runGitAction(
-                projectID: projectID, action: action, commitMessage: commitMessage)
+                threadID: threadID, action: action, commitMessage: commitMessage)
         } catch {
             lastGitActionOutcome = GitActionOutcome(
                 success: false, title: "Git action failed", detail: String(describing: error))
