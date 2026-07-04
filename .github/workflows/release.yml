@@ -653,6 +653,54 @@ jobs:
           path: release-publish/*
           if-no-files-found: error
 
+  build_web_dist:
+    name: Build web dist archive
+    needs: [preflight]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      T3CODE_CLERK_PUBLISHABLE_KEY: ""
+      T3CODE_CLERK_JWT_TEMPLATE: ""
+      T3CODE_RELAY_URL: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+              - --filter=@t3tools/web...
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+
+      - name: Build web package
+        run: vp run --filter @t3tools/web build
+
+      - name: Archive web dist
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-publish
+          archive="$GITHUB_WORKSPACE/release-publish/T3-Code-Web-${{ needs.preflight.outputs.version }}.zip"
+          (cd apps/web && zip -r "$archive" dist)
+          unzip -t "$archive"
+
+      - name: Upload web dist artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: release-publish/*.zip
+          if-no-files-found: error
+
   publish_cli:
     name: Publish CLI to npm
     needs: [preflight, build]
@@ -698,8 +746,8 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: [preflight, build]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' }}
+    needs: [preflight, build, build_web_dist]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.build_web_dist.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -730,6 +778,12 @@ jobs:
         with:
           pattern: desktop-*
           merge-multiple: true
+          path: release-assets
+
+      - name: Download web dist artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: web-dist
           path: release-assets
 
       - name: Merge macOS updater manifests
