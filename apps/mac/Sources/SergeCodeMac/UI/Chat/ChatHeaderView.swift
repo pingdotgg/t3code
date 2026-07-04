@@ -1,10 +1,12 @@
 import SwiftUI
 
-/// Top chrome bar: thread title, provider + status badges, cancel control.
-/// Chrome, so it's the one part of ChatScreen allowed on Liquid Glass.
+/// Top chrome bar: thread title, provider + status badges, cancel control,
+/// set on the thread's frosted alpine scene. Chrome, so it's the one part of
+/// ChatScreen allowed a photo/glass backdrop (short text only).
 struct ChatHeaderView: View {
     let thread: ChatThread
     let model: AppModel
+    let scenery: SceneryStore
 
     var body: some View {
         HStack(spacing: 12) {
@@ -20,6 +22,10 @@ struct ChatHeaderView: View {
 
             Spacer()
 
+            if let photo = scenery.photo(for: thread.id) {
+                SceneryAttributionTag(photo: photo)
+            }
+
             if thread.status == .running {
                 Button(role: .destructive) {
                     Task { await model.cancelCurrentTurn() }
@@ -31,7 +37,10 @@ struct ChatHeaderView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .glassEffect(.regular, in: .rect(cornerRadius: 0))
+        .background {
+            FrostedSceneryBackdrop(
+                scenery: scenery, photo: scenery.photo(for: thread.id), fallbackSeed: thread.id)
+        }
     }
 }
 

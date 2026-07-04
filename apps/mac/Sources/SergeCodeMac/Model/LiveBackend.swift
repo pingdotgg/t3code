@@ -847,13 +847,15 @@ public actor LiveBackend: BackendService {
 
     // MARK: - BackendService: commands
 
-    public func createThread(projectID: String, provider: ProviderKind) async throws -> ChatThread {
+    public func createThread(
+        projectID: String, provider: ProviderKind, title: String?
+    ) async throws -> ChatThread {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         guard let selection = modelSelection(for: provider) else {
             throw LiveBackendError.noProviderForKind(provider)
         }
         let threadID = UUID().uuidString
-        let title = "New \(provider.displayName) thread"
+        let title = title ?? "New \(provider.displayName) thread"
         _ = try await client.createThread(
             threadId: threadID, projectId: projectID, title: title, modelSelection: selection,
             runtimeMode: .fullAccess)

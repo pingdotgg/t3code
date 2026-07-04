@@ -55,7 +55,9 @@ public protocol BackendService: Sendable {
     /// Open the project (or a path inside it) in an external editor.
     func openInEditor(projectID: String, subpath: String?, editor: ExternalEditor) async throws
 
-    func createThread(projectID: String, provider: ProviderKind) async throws -> ChatThread
+    /// `title` nil means the backend picks its generic default.
+    func createThread(projectID: String, provider: ProviderKind, title: String?) async throws
+        -> ChatThread
     func archiveThread(id: String) async throws
     func unarchiveThread(id: String) async throws
     func deleteThread(id: String) async throws

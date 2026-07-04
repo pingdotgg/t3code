@@ -211,12 +211,18 @@ public final class AppModel {
         return providers.first { $0.kind == thread.provider }?.slashCommands ?? []
     }
 
-    public func createThread(projectID: String, provider: ProviderKind) async {
+    @discardableResult
+    public func createThread(
+        projectID: String, provider: ProviderKind, title: String? = nil
+    ) async -> ChatThread? {
         do {
-            let thread = try await backend.createThread(projectID: projectID, provider: provider)
+            let thread = try await backend.createThread(
+                projectID: projectID, provider: provider, title: title)
             selectedThreadID = thread.id
+            return thread
         } catch {
             lastError = String(describing: error)
+            return nil
         }
     }
 

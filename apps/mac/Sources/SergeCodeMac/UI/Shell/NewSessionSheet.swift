@@ -6,6 +6,7 @@ import SwiftUI
 /// and create the thread.
 struct NewSessionSheet: View {
     let model: AppModel
+    let scenery: SceneryStore
     @Binding var isPresented: Bool
 
     @UIState private var mode: Mode = .existing
@@ -22,8 +23,25 @@ struct NewSessionSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("New Session")
-                .font(.title2.bold())
+            // The scene the created thread will be named after — a frosted
+            // preview band so the sheet carries the alpine identity too.
+            let nextScene = scenery.peekNextScene()
+            ZStack(alignment: .bottomLeading) {
+                FrostedSceneryBackdrop(
+                    scenery: scenery, photo: nextScene, fallbackSeed: "new-session")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("New Session")
+                        .font(.title2.bold())
+                    if let nextScene {
+                        Text(scenery.threadTitle(for: nextScene))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(12)
+            }
+            .frame(height: 82)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
 
             Picker("", selection: $mode) {
                 ForEach(Mode.allCases) { mode in
@@ -121,13 +139,15 @@ struct NewSessionSheet: View {
         switch mode {
         case .existing:
             guard let projectID = selectedProjectID else { return }
-            await model.createThread(projectID: projectID, provider: provider)
+            await model.createSceneThread(
+                projectID: projectID, provider: provider, scenery: scenery)
         case .new:
             let path = newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !path.isEmpty else { return }
             await model.addProject(path: path)
             if let project = model.projects.first(where: { $0.path == path }) {
-                await model.createThread(projectID: project.id, provider: provider)
+                await model.createSceneThread(
+                    projectID: project.id, provider: provider, scenery: scenery)
             }
         }
         isPresented = false

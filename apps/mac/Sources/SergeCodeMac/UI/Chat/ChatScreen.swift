@@ -4,17 +4,19 @@ import SwiftUI
 /// but layout/wiring — all state lives on `AppModel`.
 public struct ChatScreen: View {
     let model: AppModel
+    let scenery: SceneryStore
 
     @UIState private var isPinnedToBottom = true
 
-    public init(model: AppModel) {
+    public init(model: AppModel, scenery: SceneryStore) {
         self.model = model
+        self.scenery = scenery
     }
 
     public var body: some View {
         VStack(spacing: 0) {
             if let thread = model.selectedThread {
-                ChatHeaderView(thread: thread, model: model)
+                ChatHeaderView(thread: thread, model: model, scenery: scenery)
                 Divider()
                 VcsToolbar(model: model)
                 ChatTimelineScrollView(model: model, isPinnedToBottom: $isPinnedToBottom)

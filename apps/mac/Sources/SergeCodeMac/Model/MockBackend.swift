@@ -41,8 +41,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.providers()
     }
 
-    public func createThread(projectID: String, provider: ProviderKind) async throws -> ChatThread {
-        await state.createThread(projectID: projectID, provider: provider)
+    public func createThread(
+        projectID: String, provider: ProviderKind, title: String?
+    ) async throws -> ChatThread {
+        await state.createThread(projectID: projectID, provider: provider, title: title)
     }
 
     public func archiveThread(id: String) async throws {
@@ -277,11 +279,11 @@ private actor MockState {
 
     // MARK: Commands
 
-    func createThread(projectID: String, provider: ProviderKind) -> ChatThread {
+    func createThread(projectID: String, provider: ProviderKind, title: String?) -> ChatThread {
         let thread = ChatThread(
             id: nextID("thread"),
             projectID: projectID,
-            title: "New \(provider.displayName) thread",
+            title: title ?? "New \(provider.displayName) thread",
             provider: provider,
             status: .idle,
             updatedAt: Date()

@@ -9,6 +9,8 @@ import SwiftUI
 struct SergeCodeApp: App {
     private static let backend: any BackendService = SergeCodeApp.makeBackend()
     private let model = AppModel(backend: SergeCodeApp.backend)
+    // Alpine identity: Dolomites photo pool + per-thread scene assignment.
+    private let scenery = SceneryStore()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     // MockBackend when launched with `--mock` or `SERGECODE_MOCK=1`; otherwise
@@ -24,12 +26,14 @@ struct SergeCodeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(model: model)
+            RootView(model: model, scenery: scenery)
+                .tint(AlpineTheme.accent)
                 .containerBackground(.thinMaterial, for: .window)
                 .onAppear {
                     model.start()
                     appDelegate.backend = SergeCodeApp.backend
                 }
+                .task { await scenery.start() }
         }
         .defaultSize(width: 1100, height: 720)
 
