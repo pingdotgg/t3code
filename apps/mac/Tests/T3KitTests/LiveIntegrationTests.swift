@@ -596,7 +596,7 @@ func liveWorktreeBootstrapFlow() async throws {
         // turn. The turn itself may fail (no usable provider on CI); the
         // worktree prep + thread.meta.update run before the turn dispatch,
         // so the meta event must arrive regardless.
-        let worktreeBranch = "t3code/e2e0000a"
+        let worktreeBranch = "sergecode/e2e0000a"
         _ = try? await client.startTurn(
             threadId: threadId, text: "worktree bootstrap E2E",
             bootstrap: ThreadTurnStartBootstrap(

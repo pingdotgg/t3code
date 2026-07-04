@@ -1057,9 +1057,12 @@ public actor LiveBackend: BackendService {
     }
 
     /// Mirrors `buildTemporaryWorktreeBranchName` in packages/shared/git.ts:
-    /// `t3code/<8 lowercase hex chars>`.
+    /// `sergecode/<8 lowercase hex chars>`. Must match the shared
+    /// WORKTREE_BRANCH_PREFIX + hex pattern exactly — the server only
+    /// auto-renames the branch to a meaningful name (generated from the
+    /// first message) when it recognizes this temporary shape.
     private static func temporaryWorktreeBranchName() -> String {
-        String(format: "t3code/%08x", UInt32.random(in: UInt32.min...UInt32.max))
+        String(format: "sergecode/%08x", UInt32.random(in: UInt32.min...UInt32.max))
     }
 
     public func searchWorkspace(threadID: String, query: String) async throws -> [WorkspaceEntry] {
