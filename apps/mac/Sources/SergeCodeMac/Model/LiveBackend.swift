@@ -1037,8 +1037,8 @@ public actor LiveBackend: BackendService {
     }
 
     /// Effort-style select descriptors go by different ids per driver
-    /// (claudeAgent: "effort"; codex: "reasoningEffort").
-    private static let effortOptionIDs: Set<String> = ["effort", "reasoningEffort"]
+    /// (claudeAgent: "effort"; codex: "reasoningEffort"; cursor: "reasoning").
+    private static let effortOptionIDs: Set<String> = ["effort", "reasoningEffort", "reasoning"]
 
     private static func effortDescriptor(of model: ServerProviderModel)
         -> SelectProviderOptionDescriptor?

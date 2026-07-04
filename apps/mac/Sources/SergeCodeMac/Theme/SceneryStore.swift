@@ -62,14 +62,24 @@ public final class SceneryStore {
 
     // MARK: - Lifecycle
 
+    private var startTask: Task<Void, Never>?
+
     /// Load the cached pool, then refresh from the API when empty or stale.
+    /// Idempotent: concurrent callers share one load, so code that needs the
+    /// pool (scene-thread creation on first launch) can await readiness by
+    /// calling this again.
     public func start() async {
-        loadFromDisk()
-        let stale =
-            poolFetchedAt.map { Date().timeIntervalSince($0) > Self.poolMaxAge } ?? true
-        if pool.isEmpty || stale {
-            await refreshPool()
+        if startTask == nil {
+            startTask = Task {
+                loadFromDisk()
+                let stale =
+                    poolFetchedAt.map { Date().timeIntervalSince($0) > Self.poolMaxAge } ?? true
+                if pool.isEmpty || stale {
+                    await refreshPool()
+                }
+            }
         }
+        await startTask?.value
     }
 
     // MARK: - Assignment & naming
@@ -171,7 +181,7 @@ public final class SceneryStore {
         let unique = fetched.filter { seen.insert($0.id).inserted }.prefix(Self.poolCap)
         guard !unique.isEmpty else { return }
 
-        pool = unique.enumerated().map { index, photo in
+        let refreshed = unique.enumerated().map { index, photo in
             let base = Self.sceneNames[index % Self.sceneNames.count]
             let lap = index / Self.sceneNames.count
             return SceneryPhoto(
@@ -184,6 +194,13 @@ public final class SceneryStore {
                 photographerName: photo.user.name,
                 photographerProfileURL: photo.user.links?.html)
         }
+        // Carry over photos still assigned to threads but missing from the new
+        // results, so a refresh never swaps an existing thread's scene out from
+        // under its scene-derived title.
+        let refreshedIDs = Set(refreshed.map(\.id))
+        let assignedIDs = Set(assignments.values)
+        let kept = pool.filter { assignedIDs.contains($0.id) && !refreshedIDs.contains($0.id) }
+        pool = refreshed + kept
         poolFetchedAt = Date()
         savePool()
         // Drop stale decoded images from a previous pool.
@@ -249,6 +266,9 @@ extension AppModel {
     public func createSceneThread(
         projectID: String, provider: ProviderKind, scenery: SceneryStore
     ) async {
+        // First launch races the initial pool fetch; start() is idempotent and
+        // waits for it, so early threads still get a scene name + assignment.
+        await scenery.start()
         let scene = scenery.peekNextScene()
         let thread = await createThread(
             projectID: projectID, provider: provider,
