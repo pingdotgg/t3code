@@ -108,3 +108,23 @@ ships only with Xcode. Rules for all Swift code in this package:
 - Custom environment values: manual `EnvironmentKey` conformance — never `@Entry`.
 - Manual `Animatable` conformance — never the `@Animatable` macro.
 - `@Observable` (ObservationMacros) works and is the preferred store pattern.
+
+### Code signing + TCC (why Finder launches need a stable identity)
+
+The node sidecar (and the repo checkout it loads from) usually lives under
+`~/Documents`, which is TCC-protected. macOS keys the Documents-folder grant
+to the app's code identity; an ad-hoc signature produces a new identity on
+every rebuild, so the grant never sticks — and while consent is unresolved
+the sidecar's very first `open()` of `bin.mjs` blocks in the kernel, which
+presents as "app launches but stays on Launching Server… forever" (terminal
+launches are unaffected because they inherit the terminal app's grant).
+
+One-time setup for a stable local identity (`make-app.sh` picks it up
+automatically and falls back to ad-hoc with a warning):
+
+1. Generate + import a self-signed codesigning cert named
+   `SergeCode Dev Signing` (openssl req/pkcs12 + `security import`).
+2. Trust it for code signing:
+   `security add-trusted-cert -p codeSign <cert.pem>` (approve the prompt).
+3. Rebuild with `scripts/make-app.sh`; on first Finder launch approve the
+   "SergeCode would like to access files in your Documents folder" dialog.

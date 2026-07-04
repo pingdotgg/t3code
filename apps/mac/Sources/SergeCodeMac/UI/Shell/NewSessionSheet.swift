@@ -1,7 +1,9 @@
+import AppKit
 import SwiftUI
 
 /// Glass sheet for starting a new session: pick an existing project or add
-/// a new one by path, choose a provider, and create the thread.
+/// a new one via a native folder picker (or typed path), choose a provider,
+/// and create the thread.
 struct NewSessionSheet: View {
     let model: AppModel
     @Binding var isPresented: Bool
@@ -41,8 +43,16 @@ struct NewSessionSheet: View {
                     }
                 }
             case .new:
-                TextField("Project path", text: $newProjectPath)
-                    .textFieldStyle(.roundedBorder)
+                HStack(spacing: 8) {
+                    TextField("Project folder", text: $newProjectPath)
+                        .textFieldStyle(.roundedBorder)
+                    Button {
+                        pickFolder()
+                    } label: {
+                        Label("Browse…", systemImage: "folder")
+                    }
+                    .buttonStyle(.glass)
+                }
             }
 
             Picker("Provider", selection: $provider) {
@@ -66,6 +76,36 @@ struct NewSessionSheet: View {
         .padding(24)
         .frame(width: 420)
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .task {
+            // Warm the settings so the folder picker can open at the
+            // configured default projects directory.
+            if model.settings == nil {
+                await model.loadSettings()
+            }
+        }
+    }
+
+    /// Native directory chooser; fills the path field with the selection.
+    private func pickFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Choose"
+        panel.message = "Choose the project folder"
+        let typed = newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = model.settings?.addProjectBaseDirectory ?? ""
+        if !typed.isEmpty {
+            panel.directoryURL = URL(
+                fileURLWithPath: (typed as NSString).expandingTildeInPath, isDirectory: true)
+        } else if !base.isEmpty {
+            panel.directoryURL = URL(
+                fileURLWithPath: (base as NSString).expandingTildeInPath, isDirectory: true)
+        }
+        if panel.runModal() == .OK, let url = panel.url {
+            newProjectPath = url.path
+        }
     }
 
     private var canCreate: Bool {
