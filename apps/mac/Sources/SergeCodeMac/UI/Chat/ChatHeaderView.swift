@@ -33,10 +33,12 @@ struct ChatHeaderView: View {
                     Label("Stop", systemImage: "stop.fill")
                 }
                 .buttonStyle(.glass)
+                .transition(Motion.materialize)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+        .animation(Motion.enter, value: thread.status)
     }
 }
 
@@ -68,6 +70,8 @@ private struct StatusBadge: View {
             .labelStyle(.titleAndIcon)
             .font(.caption)
             .foregroundStyle(color)
+            .contentTransition(.symbolEffect(.replace))
+            .animation(Motion.ambient, value: status)
     }
 
     private var text: String {

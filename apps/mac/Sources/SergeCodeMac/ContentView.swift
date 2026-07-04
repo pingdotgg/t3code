@@ -14,15 +14,22 @@ struct RootView: View {
             SidebarView(model: model, scenery: scenery)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280)
         } detail: {
-            if let thread = model.selectedThread {
-                ThreadDetailView(
-                    model: model, scenery: scenery, thread: thread,
-                    showInspector: $showInspector)
-            } else {
-                EmptyStateView(scenery: scenery) {
-                    showNewSessionSheet = true
+            Group {
+                if let thread = model.selectedThread {
+                    ThreadDetailView(
+                        model: model, scenery: scenery, thread: thread,
+                        showInspector: $showInspector)
+                    .transition(.opacity)
+                } else {
+                    EmptyStateView(scenery: scenery) {
+                        showNewSessionSheet = true
+                    }
+                    .transition(.opacity)
                 }
             }
+            // Keyed to presence, not thread id — thread → thread switches
+            // cross-fade inside ChatScreen; this only covers hero ↔ chat.
+            .animation(Motion.settle, value: model.selectedThread == nil)
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {

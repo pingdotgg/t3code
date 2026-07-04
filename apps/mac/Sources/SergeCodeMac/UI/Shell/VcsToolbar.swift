@@ -16,48 +16,56 @@ struct VcsToolbar: View {
 
     var body: some View {
         if let status = model.selectedProjectVcsStatus(), status.isRepo {
-            VStack(spacing: 0) {
-                HStack(spacing: 12) {
-                    branchMenu(status)
-                    statusChips(status)
-                    Spacer()
-                    if let prURL = status.prURL, let url = URL(string: prURL) {
-                        Button {
-                            NSWorkspace.shared.open(url)
-                        } label: {
-                            Label(
-                                status.prNumber.map { "PR #\($0)" } ?? "PR",
-                                systemImage: "arrow.triangle.pull")
-                            .font(.caption)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.tint)
-                        .help(status.prTitle ?? "Open pull request")
+            vcsStrip(status)
+                .transition(Motion.unfold)
+        }
+    }
+
+    private func vcsStrip(_ status: VcsStatus) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                branchMenu(status)
+                statusChips(status)
+                Spacer()
+                if let prURL = status.prURL, let url = URL(string: prURL) {
+                    Button {
+                        NSWorkspace.shared.open(url)
+                    } label: {
+                        Label(
+                            status.prNumber.map { "PR #\($0)" } ?? "PR",
+                            systemImage: "arrow.triangle.pull")
+                        .font(.caption)
                     }
-                    actionMenu(status)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+                    .help(status.prTitle ?? "Open pull request")
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 6)
+                actionMenu(status)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
 
-                if let outcome = model.lastGitActionOutcome {
-                    outcomeBanner(outcome)
-                }
+            if let outcome = model.lastGitActionOutcome {
+                outcomeBanner(outcome)
+                    .transition(Motion.bannerDrop)
+            }
 
-                Divider()
+            Divider()
+        }
+        .animation(Motion.enter, value: model.lastGitActionOutcome)
+        .animation(Motion.ambient, value: status)
+        .alert("New branch", isPresented: $showNewBranchPrompt) {
+            TextField("Branch name", text: $newBranchName)
+            Button("Create") {
+                let name = newBranchName.trimmingCharacters(in: .whitespaces)
+                newBranchName = ""
+                guard !name.isEmpty else { return }
+                Task { await model.createBranch(name) }
             }
-            .alert("New branch", isPresented: $showNewBranchPrompt) {
-                TextField("Branch name", text: $newBranchName)
-                Button("Create") {
-                    let name = newBranchName.trimmingCharacters(in: .whitespaces)
-                    newBranchName = ""
-                    guard !name.isEmpty else { return }
-                    Task { await model.createBranch(name) }
-                }
-                Button("Cancel", role: .cancel) { newBranchName = "" }
-            }
-            .sheet(isPresented: commitSheetBinding) {
-                commitMessageSheet
-            }
+            Button("Cancel", role: .cancel) { newBranchName = "" }
+        }
+        .sheet(isPresented: commitSheetBinding) {
+            commitMessageSheet
         }
     }
 
@@ -100,6 +108,8 @@ struct VcsToolbar: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
+                .contentTransition(.numericText())
+                .transition(Motion.materialize)
         }
         if status.aheadCount > 0 || status.behindCount > 0 {
             HStack(spacing: 2) {
@@ -113,6 +123,8 @@ struct VcsToolbar: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .monospacedDigit()
+            .contentTransition(.numericText())
+            .transition(Motion.materialize)
             .help("Commits ahead/behind upstream")
         }
     }
@@ -135,14 +147,17 @@ struct VcsToolbar: View {
             if isRunningAction {
                 ProgressView()
                     .controlSize(.small)
+                    .transition(.opacity)
             } else {
                 Label("Git", systemImage: "arrow.up.circle")
                     .font(.caption)
+                    .transition(.opacity)
             }
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
         .disabled(isRunningAction)
+        .animation(Motion.fade, value: isRunningAction)
     }
 
     private var commitSheetBinding: Binding<Bool> {

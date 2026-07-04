@@ -15,9 +15,11 @@ struct ComposerControlsRow: View {
             Spacer()
             if let status = model.contextWindows[thread.id] {
                 ContextMeterView(status: status)
+                    .transition(Motion.materialize)
             }
         }
         .padding(.horizontal, 4)
+        .animation(Motion.ambient, value: model.contextWindows[thread.id] == nil)
     }
 }
 
@@ -154,9 +156,11 @@ private struct PlanModeToggle: View {
         } label: {
             Label("Plan", systemImage: isPlan ? "list.clipboard.fill" : "list.clipboard")
                 .font(.caption)
+                .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)
         .foregroundStyle(isPlan ? Color.accentColor : Color.secondary)
+        .animation(Motion.snap, value: isPlan)
         .help(isPlan ? "Plan mode on — the agent proposes a plan instead of editing" : "Turn on plan mode")
     }
 }
@@ -178,8 +182,11 @@ struct ContextMeterView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
+                    .contentTransition(.numericText())
             }
             .help(helpText)
+            // The ring sweeps and the percent ticks as usage grows.
+            .animation(Motion.ambient, value: fraction)
         } else {
             Label("\(status.usedTokens.formatted()) tokens", systemImage: "gauge")
                 .font(.caption)

@@ -63,6 +63,7 @@ public struct ComposerBar: View {
                         title: "/\(item.name)", subtitle: item.detail
                     ) { applySlashCommand(item) }
                 })
+                .transition(Motion.pop(from: .bottomLeading))
             } else if let query = mentionQuery, !mentionResults.isEmpty {
                 SuggestionList(items: mentionResults.map { entry in
                     SuggestionRow(
@@ -70,6 +71,7 @@ public struct ComposerBar: View {
                         title: entry.path, subtitle: nil
                     ) { insertMention(entry, replacing: query) }
                 })
+                .transition(Motion.pop(from: .bottomLeading))
             }
 
             if let thread = model.selectedThread {
@@ -80,6 +82,7 @@ public struct ComposerBar: View {
                 AttachmentChipsRow(attachments: attachments) { id in
                     attachments.removeAll { $0.id == id }
                 }
+                .transition(Motion.unfold)
             }
 
             if let attachmentError {
@@ -87,6 +90,7 @@ public struct ComposerBar: View {
                     .font(.caption)
                     .foregroundStyle(.red)
                     .padding(.horizontal, 4)
+                    .transition(Motion.rise)
             }
 
             GlassEffectContainer {
@@ -112,6 +116,7 @@ public struct ComposerBar: View {
                                     .padding(.top, 8)
                                     .padding(.leading, 5)
                                     .allowsHitTesting(false)
+                                    .transition(.opacity)
                             }
                         }
                         .onChange(of: draft) { _, newValue in
@@ -122,16 +127,27 @@ public struct ComposerBar: View {
                         send()
                     } label: {
                         Image(systemName: "paperplane.fill")
+                            .scaleEffect(canSend ? 1.0 : 0.9)
+                            .opacity(canSend ? 1.0 : 0.55)
                     }
                     .buttonStyle(.glass)
+                    .tint(canSend ? Color.accentColor : nil)
                     .disabled(!canSend)
                     .keyboardShortcut(.return, modifiers: .command)
+                    .animation(Motion.snap, value: canSend)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
             }
             .glassEffect(.regular, in: .rect(cornerRadius: 16))
         }
+        // One animation domain for the whole composer: draft edits drive the
+        // editor's height growth and suggestion filtering; the other keys
+        // cover async arrivals (mention results, staged files, errors).
+        .animation(Motion.settle, value: draft)
+        .animation(Motion.enter, value: mentionResults.map(\.id))
+        .animation(Motion.enter, value: attachments.map(\.id))
+        .animation(Motion.enter, value: attachmentError)
         .fileImporter(
             isPresented: $showFileImporter, allowedContentTypes: [.image],
             allowsMultipleSelection: true
@@ -329,6 +345,7 @@ private struct AttachmentChipsRow: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(.quaternary.opacity(0.5), in: Capsule())
+                    .transition(Motion.materialize)
                 }
             }
             .padding(.horizontal, 4)

@@ -25,10 +25,13 @@ public struct CheckpointListView: View {
             Divider()
             if checkpoints.isEmpty {
                 emptyState
+                    .transition(Motion.paneSwap)
             } else {
                 list
+                    .transition(Motion.paneSwap)
             }
         }
+        .animation(Motion.settle, value: checkpoints.isEmpty)
         .task(id: threadID) {
             await model.refreshCheckpoints(threadID: threadID)
         }
@@ -56,6 +59,8 @@ public struct CheckpointListView: View {
                 Text("\(checkpoints.count)")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+                    .transition(.opacity)
             }
             Spacer()
             Button {
@@ -78,9 +83,11 @@ public struct CheckpointListView: View {
     private var list: some View {
         List(checkpoints) { checkpoint in
             row(checkpoint)
+                .transition(Motion.rise)
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
+        .animation(Motion.settle, value: checkpoints.map(\.id))
     }
 
     private func row(_ checkpoint: Checkpoint) -> some View {

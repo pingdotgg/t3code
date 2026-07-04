@@ -19,9 +19,12 @@ struct SceneryImageView: View {
                     .resizable()
                     .scaledToFill()
                     .transition(.opacity)
+                    // Identity keyed to the photo so swapping scenes (thread
+                    // switch) cross-fades old → new instead of hard-cutting.
+                    .id(loadedPhotoID)
             }
         }
-        .animation(.easeIn(duration: 0.35), value: loadedPhotoID)
+        .animation(.easeInOut(duration: 0.45), value: loadedPhotoID)
         .clipped()
         .task(id: taskKey) {
             await scenery.ensureImage(photo, variant: variant)

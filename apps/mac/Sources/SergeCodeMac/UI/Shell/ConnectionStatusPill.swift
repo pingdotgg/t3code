@@ -7,18 +7,42 @@ import SwiftUI
 struct ConnectionStatusPill: View {
     let phase: ConnectionPhase
 
+    // Mirrors `isSettling`, but set after the first frame (onAppear) so the
+    // heartbeat animates even when the app launches already mid-connect —
+    // `.animation(_, value:)` only fires on a *change*.
+    @UIState private var isPulsing = false
+
     var body: some View {
         HStack(spacing: 6) {
             Circle()
                 .fill(tint)
                 .frame(width: 6, height: 6)
+                // Gentle heartbeat while the connection is in flight; steady
+                // once ready (or failed).
+                .scaleEffect(isPulsing ? 1.25 : 1.0)
+                .animation(
+                    isPulsing
+                        ? Motion.ambient.repeatForever(autoreverses: true)
+                        : Motion.ambient,
+                    value: isPulsing)
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .contentTransition(.numericText())
         }
         .padding(.horizontal, 4)
         .fixedSize()
+        .animation(Motion.ambient, value: phase)
+        .onAppear { isPulsing = isSettling }
+        .onChange(of: isSettling) { _, settling in isPulsing = settling }
+    }
+
+    private var isSettling: Bool {
+        switch phase {
+        case .launchingServer, .connecting, .reconnecting: true
+        case .ready, .failed: false
+        }
     }
 
     private var label: String {

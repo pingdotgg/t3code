@@ -32,6 +32,7 @@ public struct DiffPanelView: View {
             Divider()
             if files.isEmpty {
                 emptyState
+                    .transition(Motion.paneSwap)
             } else {
                 HSplitView {
                     fileList
@@ -39,8 +40,11 @@ public struct DiffPanelView: View {
                     diffDetail
                         .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
                 }
+                .transition(Motion.paneSwap)
             }
         }
+        .animation(Motion.settle, value: files.isEmpty)
+        .animation(Motion.settle, value: selectedFile?.path)
         .task(id: threadID) {
             await model.refreshDiff(threadID: threadID)
         }
@@ -56,6 +60,8 @@ public struct DiffPanelView: View {
                 Text("\(files.count) file\(files.count == 1 ? "" : "s")")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+                    .transition(.opacity)
             }
             Spacer()
             Button {
@@ -161,6 +167,10 @@ public struct DiffPanelView: View {
                 }
                 .background(.background)
             }
+            // Identity per file so picking another file cross-fades the
+            // detail pane.
+            .id(file.path)
+            .transition(Motion.paneSwap)
         } else {
             emptyState
         }

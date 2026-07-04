@@ -33,8 +33,13 @@ struct InspectorPanel: View {
                     FileBrowserView(model: model, threadID: threadID)
                 }
             }
+            // Identity per tab so switching cross-fades panes instead of
+            // hard-swapping the subtree in place.
+            .id(tab)
+            .transition(Motion.paneSwap)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .animation(Motion.settle, value: tab)
     }
 }
 
@@ -77,9 +82,13 @@ struct PlanProgressView: View {
                             .strikethrough(step.status == .completed, color: .secondary)
                             .foregroundStyle(step.status == .completed ? .secondary : .primary)
                     }
+                    .transition(Motion.rise)
                 }
             }
             .listStyle(.inset)
+            // Live todo updates stream in from the agent: new steps rise in,
+            // status flips morph their icons.
+            .animation(Motion.settle, value: progress.steps)
         } else {
             ContentUnavailableView(
                 "No plan yet",
@@ -88,19 +97,28 @@ struct PlanProgressView: View {
         }
     }
 
-    @ViewBuilder
+    /// One `Image` so pending → in-progress → completed morphs via
+    /// `.contentTransition` rather than swapping glyphs.
     private func statusIcon(_ status: PlanStepStatus) -> some View {
+        Image(systemName: iconName(status))
+            .symbolEffect(.pulse, isActive: status == .inProgress)
+            .foregroundStyle(iconTint(status))
+            .contentTransition(.symbolEffect(.replace))
+    }
+
+    private func iconName(_ status: PlanStepStatus) -> String {
         switch status {
-        case .pending:
-            Image(systemName: "circle")
-                .foregroundStyle(.secondary)
-        case .inProgress:
-            Image(systemName: "circle.dotted")
-                .symbolEffect(.pulse)
-                .foregroundStyle(Color.accentColor)
-        case .completed:
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+        case .pending: "circle"
+        case .inProgress: "circle.dotted"
+        case .completed: "checkmark.circle.fill"
+        }
+    }
+
+    private func iconTint(_ status: PlanStepStatus) -> Color {
+        switch status {
+        case .pending: .secondary
+        case .inProgress: .accentColor
+        case .completed: .green
         }
     }
 }

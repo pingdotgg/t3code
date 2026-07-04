@@ -18,6 +18,7 @@ struct ChatTimelineScrollView: View {
                     ForEach(items) { item in
                         ChatTimelineRowView(item: item, model: model)
                             .id(item.id)
+                            .transition(Motion.rise)
                     }
                     Color.clear
                         .frame(height: 1)
@@ -25,6 +26,10 @@ struct ChatTimelineScrollView: View {
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // Keyed to count, not content: new rows rise in, but
+                // per-token streaming updates never re-trigger layout
+                // animation.
+                .animation(Motion.enter, value: items.count)
             }
             // Transparent: the timeline reads off ChatScreen's washed scenery
             // wallpaper (SceneryChatBackground guarantees the contrast).
@@ -36,7 +41,7 @@ struct ChatTimelineScrollView: View {
             }
             .onChange(of: changeToken(for: items)) { _, _ in
                 guard isPinnedToBottom else { return }
-                withAnimation(.easeOut(duration: 0.2)) {
+                withAnimation(Motion.settle) {
                     proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                 }
             }

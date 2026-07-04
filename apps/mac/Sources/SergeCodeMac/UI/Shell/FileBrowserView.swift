@@ -20,10 +20,15 @@ struct FileBrowserView: View {
                 FilePreviewPane(preview: preview, model: model) {
                     self.preview = nil
                 }
+                .transition(Motion.paneSwap)
             } else {
                 entryList
+                    .transition(Motion.paneSwap)
             }
         }
+        .animation(Motion.settle, value: preview?.path)
+        .animation(Motion.settle, value: subpath)
+        .animation(Motion.fade, value: isLoading)
         .task(id: threadID) {
             subpath = ""
             preview = nil
@@ -61,6 +66,7 @@ struct FileBrowserView: View {
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
+                .transition(Motion.materialize)
             }
 
             Menu {
@@ -122,6 +128,9 @@ struct FileBrowserView: View {
                 .buttonStyle(.plain)
             }
             .listStyle(.inset)
+            // Fresh identity per directory: descending or going up
+            // cross-fades the listing instead of reusing rows in place.
+            .id(subpath)
         }
     }
 
