@@ -183,7 +183,8 @@ after native dependency, main-process, preload, entitlement, provisioning, or si
 renderer-only changes can reuse the installed app.
 
 For the default development ports, run `pnpm dev:web` in one terminal and launch the installed
-binary from another:
+binary from another. The installed bundle is still named `T3 Code (Alpha)` — the desktop
+packaging (`productName`, artifact names) has not been rebranded:
 
 ```sh
 VITE_DEV_SERVER_URL=http://127.0.0.1:5733 \

@@ -1,6 +1,6 @@
 # Observability
 
-T3 Code has one server-side observability model:
+SergeCode has one server-side observability model:
 
 - pretty logs go to stdout for humans
 - completed spans go to a local NDJSON trace file
@@ -141,7 +141,7 @@ macOS app bundle example:
 T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
 T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
 T3CODE_OTLP_SERVICE_NAME=t3-desktop \
-"/Applications/T3 Code.app/Contents/MacOS/T3 Code"
+"/Applications/SergeCode.app/Contents/MacOS/SergeCode"
 ```
 
 Direct binary example:

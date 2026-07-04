@@ -1,11 +1,13 @@
-# T3 Code
+# SergeCode
 
-T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, Cursor, and OpenCode, more coming soon).
+SergeCode is a minimal web GUI for coding agents (currently Codex, Claude, Cursor, Grok, and OpenCode).
 
-## Installation
+> [!IMPORTANT]
+> SergeCode is a **permanent, independent hard fork** of [T3 Code](https://github.com/pingdotgg/t3code). It evolves separately and will never be merged back upstream. Do not open PRs or issues against the upstream repository — everything lives at [SergeSerb2/SergeCode](https://github.com/SergeSerb2/SergeCode).
+
+## Prerequisites
 
 > [!WARNING]
-> T3 Code currently supports Codex, Claude, Cursor, and OpenCode.
 > Install and authenticate at least one provider before use:
 >
 > - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
@@ -13,43 +15,22 @@ T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, Cursor,
 > - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `cursor-agent login`
 > - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
 
-### Run without installing
+## Running from source
 
 ```bash
-npx t3@latest
+pnpm install
+pnpm dev
 ```
 
-Tip: Use `npx t3@latest --help` for the full CLI reference.
+See [package.json](./package.json) scripts for the full set of dev/build/start commands (`pnpm dev:server`, `pnpm dev:web`, `pnpm dev:desktop`, `pnpm build`, ...).
 
-### Desktop app
-
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
-
-#### Windows (`winget`)
-
-```bash
-winget install T3Tools.T3Code
-```
-
-#### macOS (Homebrew)
-
-```bash
-brew install --cask t3-code
-```
-
-#### Arch Linux (AUR)
-
-```bash
-yay -S t3code-bin
-```
+Note: the upstream distribution channels (`npx t3`, winget, Homebrew, AUR) ship upstream T3 Code, not SergeCode. Run SergeCode from source or from this repository's own releases.
 
 ## Some notes
 
-We are very very early in this project. Expect bugs.
+This project is a personal fork and very much a WIP. Expect bugs.
 
-We are not accepting contributions yet.
-
-There's no public docs site yet, checkout the miscellaneous markdown files in [docs](./docs).
+There's no public docs site; check out the miscellaneous markdown files in [docs](./docs).
 
 ## Documentation
 
@@ -58,33 +39,3 @@ There's no public docs site yet, checkout the miscellaneous markdown files in [d
 - [Provider guides](./docs/providers/codex.md)
 - [Operations](./docs/operations/ci.md)
 - [Reference](./docs/reference/encyclopedia.md)
-
-## If you REALLY want to contribute still.... read this first
-
-### Install `vp`
-
-T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
-
-#### macOS / Linux
-
-```bash
-curl -fsSL https://vite.plus | bash
-```
-
-#### Windows
-
-```bash
-irm https://vite.plus/ps1 | iex
-```
-
-Checkout their getting started guide for more information: https://viteplus.dev/guide/
-
-### Install dependencies
-
-```bash
-vp i
-```
-
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
-
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
