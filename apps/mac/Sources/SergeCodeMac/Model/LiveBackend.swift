@@ -954,15 +954,34 @@ public actor LiveBackend: BackendService {
         }
         let threadID = UUID().uuidString
         let title = title ?? "New \(provider.displayName) thread"
-        _ = try await client.createThread(
-            threadId: threadID, projectId: projectID, title: title, modelSelection: selection,
-            runtimeMode: .fullAccess)
+        // Worktree mode: create the worktree up front so the session lands on
+        // its own sergecode/* branch immediately, not on the first send. When
+        // this fails (or the eager RPC is unavailable), the thread is created
+        // without one and the first-turn bootstrap in sendMessage picks it up.
+        var worktree: VcsWorktree?
+        if let plan = await worktreePlan(projectID: projectID) {
+            worktree = await createEagerWorktree(plan: plan)
+        }
+        do {
+            _ = try await client.createThread(
+                threadId: threadID, projectId: projectID, title: title, modelSelection: selection,
+                runtimeMode: .fullAccess, branch: worktree?.refName,
+                worktreePath: worktree?.path)
+        } catch {
+            // Don't leak the worktree when the thread never came to exist.
+            if let worktree, let project = projectsByID[projectID] {
+                _ = try? await client.removeWorktree(
+                    cwd: project.path, path: worktree.path, force: true)
+            }
+            throw error
+        }
         let thread = ChatThread(
             id: threadID, projectID: projectID, title: title, provider: provider, status: .idle,
             updatedAt: Date())
         threadsByID[threadID] = thread
         modelSelectionsByThread[threadID] = selection
-        threadEnvByThread[threadID] = ThreadEnvState(worktreePath: nil, hasTurns: false)
+        threadEnvByThread[threadID] = ThreadEnvState(
+            worktreePath: worktree?.path, hasTurns: false)
         // Emit immediately: the shell subscription's authoritative upsert can
         // lag (or be missed across a reconnect), and the caller selects the
         // thread right away — without this the detail pane shows an empty
@@ -1023,19 +1042,19 @@ public actor LiveBackend: BackendService {
         threadEnvByThread[threadID]?.hasTurns = true
     }
 
-    /// First-turn worktree bootstrap (web ChatView parity): when the server's
-    /// defaultThreadEnvMode is worktree, the project is a git repo, and this
-    /// turnless thread has no worktree yet, ask the server to create one —
-    /// branched from the repo's default ref (fallback: current ref), from its
-    /// origin tracking commit when newWorktreesStartFromOrigin is set — and
-    /// run the project setup script in it. Any failure here degrades to
-    /// running in the project checkout rather than blocking the send.
-    private func worktreeBootstrapIfNeeded(threadID: String) async -> ThreadTurnStartBootstrap? {
-        guard let client = currentClient,
-            let env = threadEnvByThread[threadID], env.worktreePath == nil, !env.hasTurns,
-            let projectID = threadsByID[threadID]?.projectID,
-            let project = projectsByID[projectID]
-        else { return nil }
+    /// Whether (and from which base branch) a new thread in this project
+    /// should get its own worktree: the server's defaultThreadEnvMode is
+    /// worktree and the project is a git repo. Base = the repo's default
+    /// local ref, falling back to the current one. Any failure resolves to
+    /// nil — run in the project checkout rather than block.
+    private struct WorktreePlan {
+        var projectCwd: String
+        var baseBranch: String
+        var startFromOrigin: Bool
+    }
+
+    private func worktreePlan(projectID: String) async -> WorktreePlan? {
+        guard let client = currentClient, let project = projectsByID[projectID] else { return nil }
         do {
             let settings = try await client.getSettings()
             guard settings.defaultThreadEnvMode == .worktree else { return nil }
@@ -1045,15 +1064,50 @@ public actor LiveBackend: BackendService {
                 refs.refs.first(where: { $0.isDefault && !($0.isRemote ?? false) })?.name
                 ?? refs.refs.first(where: { $0.current })?.name
             guard let baseBranch else { return nil }
-            return ThreadTurnStartBootstrap(
-                prepareWorktree: ThreadTurnStartBootstrapPrepareWorktree(
-                    projectCwd: project.path, baseBranch: baseBranch,
-                    branch: Self.temporaryWorktreeBranchName(),
-                    startFromOrigin: settings.newWorktreesStartFromOrigin ? true : nil),
-                runSetupScript: true)
+            return WorktreePlan(
+                projectCwd: project.path, baseBranch: baseBranch,
+                startFromOrigin: settings.newWorktreesStartFromOrigin)
         } catch {
             return nil
         }
+    }
+
+    /// Eager worktree creation at session-create time (vcs.createWorktree).
+    /// startFromOrigin uses the base's origin tracking ref as the start point
+    /// — fresh as of the last fetch; unlike the turn bootstrap this RPC does
+    /// no network fetch — and falls back to the local base when that ref
+    /// doesn't resolve.
+    private func createEagerWorktree(plan: WorktreePlan) async -> VcsWorktree? {
+        guard let client = currentClient else { return nil }
+        let branch = Self.temporaryWorktreeBranchName()
+        if plan.startFromOrigin,
+            let result = try? await client.createWorktree(
+                cwd: plan.projectCwd, refName: "origin/\(plan.baseBranch)",
+                newRefName: branch, baseRefName: plan.baseBranch)
+        {
+            return result.worktree
+        }
+        let result = try? await client.createWorktree(
+            cwd: plan.projectCwd, refName: plan.baseBranch,
+            newRefName: branch, baseRefName: plan.baseBranch)
+        return result?.worktree
+    }
+
+    /// First-turn worktree bootstrap (web ChatView parity) — the fallback
+    /// when eager creation didn't happen (older turnless threads, or the
+    /// eager RPC failed at session-create time). Also runs the project setup
+    /// script in the fresh worktree, which the eager path can't.
+    private func worktreeBootstrapIfNeeded(threadID: String) async -> ThreadTurnStartBootstrap? {
+        guard let env = threadEnvByThread[threadID], env.worktreePath == nil, !env.hasTurns,
+            let projectID = threadsByID[threadID]?.projectID
+        else { return nil }
+        guard let plan = await worktreePlan(projectID: projectID) else { return nil }
+        return ThreadTurnStartBootstrap(
+            prepareWorktree: ThreadTurnStartBootstrapPrepareWorktree(
+                projectCwd: plan.projectCwd, baseBranch: plan.baseBranch,
+                branch: Self.temporaryWorktreeBranchName(),
+                startFromOrigin: plan.startFromOrigin ? true : nil),
+            runSetupScript: true)
     }
 
     /// Mirrors `buildTemporaryWorktreeBranchName` in packages/shared/git.ts:

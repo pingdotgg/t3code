@@ -625,6 +625,34 @@ func liveWorktreeBootstrapFlow() async throws {
         }
 
         _ = try? await client.interruptTurn(threadId: threadId)
+
+        // Eager path (LiveBackend.createThread in worktree mode): standalone
+        // vcs.createWorktree — exercises the explicit-null `path` encoding —
+        // then thread.create carrying the branch/worktreePath up front.
+        let eagerBranch = "sergecode/e2e0000b"
+        let eagerWorktree = try await client.createWorktree(
+            cwd: repoDir, refName: baseBranch, newRefName: eagerBranch, baseRefName: baseBranch)
+        #expect(eagerWorktree.worktree.refName == eagerBranch)
+        #expect(fileManager.fileExists(atPath: eagerWorktree.worktree.path + "/README.md"))
+
+        let eagerThreadId = "e2e-wt-thread-\(UUID().uuidString.prefix(8))"
+        _ = try await client.createThread(
+            threadId: eagerThreadId, projectId: projectId, title: "E2E Eager Worktree Thread",
+            modelSelection: modelSelection, runtimeMode: .fullAccess,
+            branch: eagerBranch, worktreePath: eagerWorktree.worktree.path)
+        let eagerEvent = try await waitForNext(
+            shellCursor, context: "thread-upserted event for \(eagerThreadId)"
+        ) { item in
+            if case .event(.threadUpserted(_, let thread)) = item, thread.id == eagerThreadId {
+                return true
+            }
+            return false
+        }
+        if case .event(.threadUpserted(_, let thread)) = eagerEvent {
+            #expect(thread.branch == eagerBranch)
+            #expect(thread.worktreePath == eagerWorktree.worktree.path)
+        }
+
         await conn.disconnect(reason: "test complete")
         connection = nil
     } catch {
