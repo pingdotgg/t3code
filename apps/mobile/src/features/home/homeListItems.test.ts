@@ -57,16 +57,29 @@ function makeThread(id: string, projectId: ProjectId): EnvironmentThreadShell {
 
 function makeGroup(key: string, threadCount: number): HomeThreadGroup {
   const project = makeProject(key, key);
+  const threads = Array.from({ length: threadCount }, (_, index) =>
+    makeThread(`${key}-thread-${index}`, project.id),
+  );
   return {
     key,
     title: key,
     representative: project,
     projects: [project],
     pendingTasks: [],
-    threads: Array.from({ length: threadCount }, (_, index) =>
-      makeThread(`${key}-thread-${index}`, project.id),
-    ),
+    threads,
+    // All threads inside the recency window, so the baseline stays at the
+    // initial page size and the pagination expectations below hold.
+    recentThreads: threads,
   };
+}
+
+function makeGroupWithRecentCount(
+  key: string,
+  threadCount: number,
+  recentCount: number,
+): HomeThreadGroup {
+  const group = makeGroup(key, threadCount);
+  return { ...group, recentThreads: group.threads.slice(0, recentCount) };
 }
 
 function itemTypes(items: ReadonlyArray<HomeListItem>): string[] {
@@ -189,5 +202,89 @@ describe("buildHomeListLayout", () => {
     // header + 6 threads + show-more = 8 items, so beta's header is index 8.
     expect(layout.stickyHeaderIndices).toEqual([0, 8]);
     expect(layout.items[8]).toMatchObject({ type: "header", isFirst: false });
+  });
+
+  it("uses the group's recent-thread count as the default baseline when smaller than the page size", () => {
+    // Only 2 of the 10 threads are "recent"; the rest should stay hidden
+    // behind a show-more row until the user asks for more, even though the
+    // page size constant (6) is larger than the recent count.
+    const layout = buildHomeListLayout({
+      groups: [makeGroupWithRecentCount("alpha", 10, 2)],
+      displayStates: displayStates({}),
+    });
+
+    const threadItems = layout.items.filter((item) => item.type === "thread");
+    expect(threadItems).toHaveLength(2);
+    expect(layout.items.at(-1)).toMatchObject({
+      type: "show-more",
+      groupKey: "alpha",
+      hiddenCount: 8,
+      canShowLess: false,
+    });
+  });
+
+  it("does not shrink the baseline below the page size when recent threads exceed it", () => {
+    // 9 of 10 threads are "recent", which is still capped at the initial
+    // page size constant rather than showing all 9 by default.
+    const layout = buildHomeListLayout({
+      groups: [makeGroupWithRecentCount("alpha", 10, 9)],
+      displayStates: displayStates({}),
+    });
+
+    const threadItems = layout.items.filter((item) => item.type === "thread");
+    expect(threadItems).toHaveLength(HOME_INITIAL_VISIBLE_THREADS);
+    expect(layout.items.at(-1)).toMatchObject({
+      type: "show-more",
+      hiddenCount: 10 - HOME_INITIAL_VISIBLE_THREADS,
+    });
+  });
+
+  it("shows no show-more row when the recent-thread baseline covers every thread", () => {
+    const layout = buildHomeListLayout({
+      groups: [makeGroupWithRecentCount("alpha", 3, 3)],
+      displayStates: displayStates({}),
+    });
+
+    expect(itemTypes(layout.items)).toEqual(["header", "thread", "thread", "thread"]);
+    expect(layout.items.some((item) => item.type === "show-more")).toBe(false);
+  });
+
+  it("expands past a small recent-thread baseline once show-more is tapped", () => {
+    const group = makeGroupWithRecentCount("alpha", 10, 2);
+
+    const expanded = buildHomeListLayout({
+      groups: [group],
+      displayStates: displayStates({
+        alpha: nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "show-more"),
+      }),
+    });
+
+    // show-more adds HOME_SHOW_MORE_STEP on top of the initial page size
+    // constant, not the smaller recency baseline, so every thread is now
+    // visible even though the group only had 2 "recent" threads.
+    expect(expanded.items.filter((item) => item.type === "thread")).toHaveLength(10);
+    // The show-more row still renders (canShowLess) because the baseline used
+    // to decide whether to offer it is fixed at the recency count, not the
+    // currently revealed count; there's simply nothing left hidden.
+    expect(expanded.items.at(-1)).toMatchObject({
+      type: "show-more",
+      hiddenCount: 0,
+      canShowLess: true,
+    });
+  });
+
+  it("resets an expanded group back to the recent-thread baseline on show-less", () => {
+    const group = makeGroupWithRecentCount("alpha", 10, 2);
+    const expandedState = nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "show-more");
+    const resetState = nextGroupDisplayState(expandedState, "show-less");
+
+    const layout = buildHomeListLayout({
+      groups: [group],
+      displayStates: displayStates({ alpha: resetState }),
+    });
+
+    const threadItems = layout.items.filter((item) => item.type === "thread");
+    expect(threadItems).toHaveLength(2);
+    expect(layout.items.at(-1)).toMatchObject({ type: "show-more", hiddenCount: 8 });
   });
 });
