@@ -66,12 +66,16 @@ private struct SidebarThreadRow: View {
                     .offset(x: 2, y: 2)
                     .animation(Motion.ambient, value: thread.status)
             }
+            let names = scenery.displayNames(for: thread)
             VStack(alignment: .leading, spacing: 2) {
-                Text(thread.title)
+                Text(names.primary)
                     .lineLimit(1)
-                Text(thread.provider.displayName)
+                // The AI-generated thread description once the server has
+                // retitled past the scene seed; provider name until then.
+                Text(names.description ?? thread.provider.displayName)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
         .padding(.vertical, 2)

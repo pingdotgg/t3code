@@ -990,6 +990,10 @@ public actor LiveBackend: BackendService {
         }
         _ = try await client.startTurn(
             threadId: threadID, text: text, attachments: uploads,
+            // Marks the current (scene-seeded) title as replaceable so the
+            // server's first-turn generation can retitle the thread with an
+            // AI description; later turns no-op because the title changed.
+            titleSeed: thread?.title,
             runtimeMode: thread.map { Self.wireRuntimeMode($0.runtimeMode) } ?? .wireDefault,
             interactionMode: thread.map { Self.wireInteractionMode($0.interactionMode) } ?? .wireDefault)
     }

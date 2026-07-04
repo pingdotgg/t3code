@@ -10,10 +10,17 @@ struct ChatHeaderView: View {
 
     var body: some View {
         HStack(spacing: 12) {
+            let names = scenery.displayNames(for: thread)
             VStack(alignment: .leading, spacing: 3) {
-                Text(thread.title)
+                Text(names.primary)
                     .font(.headline)
                     .lineLimit(1)
+                if let description = names.description {
+                    Text(description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 HStack(spacing: 10) {
                     ProviderBadge(provider: thread.provider)
                     StatusBadge(status: thread.status)

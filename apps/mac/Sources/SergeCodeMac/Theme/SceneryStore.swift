@@ -19,6 +19,10 @@ public final class SceneryStore {
 
     public private(set) var pool: [SceneryPhoto] = []
     private var assignments: [String: String] = [:]  // threadID -> photoID
+    /// threadID -> scene display name committed at creation ("Seceda · 2").
+    /// Kept locally because the server title becomes the AI-generated thread
+    /// description after the first turn (see LiveBackend's titleSeed).
+    private var names: [String: String] = [:]
     private var images: [String: NSImage] = [:]  // "photoID/variant" -> image
     private var loadingKeys: Set<String> = []
     /// Photos whose download_location was already pinged (persisted so the
@@ -125,10 +129,35 @@ public final class SceneryStore {
         return uses == 0 ? photo.name : "\(photo.name) · \(uses + 1)"
     }
 
-    /// Commit a thread → photo binding (after the backend confirmed create).
-    public func assign(photoID: String, to threadID: String) {
+    /// Commit a thread → photo binding (after the backend confirmed create),
+    /// remembering the scene display name the thread was created under.
+    public func assign(photoID: String, name: String, to threadID: String) {
         assignments[threadID] = photoID
+        names[threadID] = name
         saveAssignments()
+        saveNames()
+    }
+
+    /// Stable scene name for a thread ("Seceda · 2"). Falls back to the
+    /// assigned/hashed photo's base name for threads that predate the name
+    /// map or were created by another client.
+    public func sceneName(for threadID: String) -> String? {
+        names[threadID] ?? photo(for: threadID)?.name
+    }
+
+    /// Two-line naming for a thread: the scene place name as the stable
+    /// primary name, plus the server title as the descriptive second line
+    /// once first-turn title generation has replaced the scene seed.
+    public func displayNames(for thread: ChatThread) -> (primary: String, description: String?) {
+        let title = thread.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let scene = sceneName(for: thread.id) else {
+            return (title, nil)
+        }
+        if title.isEmpty { return (scene, nil) }
+        // Titles still scene-derived (the exact seed, or a numbered legacy
+        // variant like "Seceda · 2") mean no description was generated yet.
+        if title.hasPrefix(scene) { return (title, nil) }
+        return (scene, title)
     }
 
     /// Empty-state hero: rotates daily through the pool.
@@ -274,6 +303,7 @@ public final class SceneryStore {
 
     private var poolURL: URL { root.appendingPathComponent("pool.json") }
     private var assignmentsURL: URL { root.appendingPathComponent("assignments.json") }
+    private var namesURL: URL { root.appendingPathComponent("names.json") }
     private var registeredURL: URL { root.appendingPathComponent("registered-downloads.json") }
 
     private func loadFromDisk() {
@@ -287,6 +317,11 @@ public final class SceneryStore {
             let map = try? JSONDecoder().decode([String: String].self, from: data)
         {
             assignments = map
+        }
+        if let data = try? Data(contentsOf: namesURL),
+            let map = try? JSONDecoder().decode([String: String].self, from: data)
+        {
+            names = map
         }
         if let data = try? Data(contentsOf: registeredURL),
             let ids = try? JSONDecoder().decode(Set<String>.self, from: data)
@@ -309,6 +344,12 @@ public final class SceneryStore {
         }
     }
 
+    private func saveNames() {
+        if let data = try? JSONEncoder().encode(names) {
+            try? data.write(to: namesURL, options: .atomic)
+        }
+    }
+
     private func saveRegisteredDownloads() {
         if let data = try? JSONEncoder().encode(registeredDownloads) {
             try? data.write(to: registeredURL, options: .atomic)
@@ -326,11 +367,11 @@ extension AppModel {
         // waits for it, so early threads still get a scene name + assignment.
         await scenery.start()
         let scene = scenery.peekNextScene()
+        let sceneTitle = scene.map { scenery.threadTitle(for: $0) }
         let thread = await createThread(
-            projectID: projectID, provider: provider,
-            title: scene.map { scenery.threadTitle(for: $0) })
-        if let thread, let scene {
-            scenery.assign(photoID: scene.id, to: thread.id)
+            projectID: projectID, provider: provider, title: sceneTitle)
+        if let thread, let scene, let sceneTitle {
+            scenery.assign(photoID: scene.id, name: sceneTitle, to: thread.id)
         }
     }
 }
