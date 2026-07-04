@@ -1,6 +1,5 @@
 import { definePlugin, type PluginRegistration } from "@t3tools/plugin-sdk";
-import { NonNegativeInt, ProjectId } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
+import { MessageId, NonNegativeInt, ProjectId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -17,26 +16,47 @@ import {
   BoardId,
   BoardSnapshot,
   LaneKey,
+  StepRunId,
+  TicketAttachment,
   TicketId,
   WORKFLOW_WS_METHODS,
   WorkflowCreateBoardInput,
-  WorkflowDefinition,
+  WorkflowRenameBoardInput,
   WorkflowRpcError,
+  WorkflowSaveBoardDefinitionInput,
   type BoardTicketView,
   type StepRunStatus,
   type TicketStatus,
-  type WorkflowBoardVersionSource,
+  type WorkflowNeedsAttentionTicketView,
+  type WorkflowSaveBoardDefinitionResult,
   type WorkflowStepRunView,
   type WorkflowTicketDetailView,
 } from "../contracts/workflow.ts";
 import { migration001 } from "./migrations/001_WorkflowSchema.ts";
+import { deleteWorkflowBoardOwnedState } from "./workflow/boardDeletion.ts";
+import {
+  decodeWorkflowDefinition,
+  decodeWorkflowDefinitionJson,
+  encodeWorkflowDefinition,
+  getBoardVersion,
+  isWorkflowBoardFilePath,
+  listBoardVersions,
+  loadWritableWorkflowBoardFile,
+  persistWorkflowBoardDefinition,
+  recordBoardVersionBestEffort,
+  recordBoardVersionRequired,
+  workflowDefinitionContentJson,
+  workflowDefinitionVersionHash,
+} from "./workflow/boardDefinitionWrite.ts";
 import { slugifyBoardName, uniqueBoardSlug } from "./workflow/boardSlug.ts";
 import { defaultBoardDefinition } from "./workflow/defaultBoard.ts";
-import { encodeWorkflowDefinitionJson } from "./workflow/workflowFile.ts";
+import { sha256Hex } from "./workflow/workflowVersionHash.ts";
 import { BoardRegistry } from "./workflow/Services/BoardRegistry.ts";
+import { WorkflowAgentSessionStore } from "./workflow/Services/WorkflowAgentSessionStore.ts";
 import { WorkflowBoardEvents } from "./workflow/Services/WorkflowBoardEvents.ts";
 import { WorkflowBoardSaveLocks } from "./workflow/Services/WorkflowBoardSaveLocks.ts";
 import { WorkflowBoardVersionStore } from "./workflow/Services/WorkflowBoardVersionStore.ts";
+import { WorkflowEventStore } from "./workflow/Services/WorkflowEventStore.ts";
 import type { StepRunRow, TicketRow } from "./workflow/Services/WorkflowReadModel.ts";
 import { WorkflowReadModel } from "./workflow/Services/WorkflowReadModel.ts";
 import { WorkflowTerminalsCapability } from "./workflow/Services/ScriptCancelRegistry.ts";
@@ -52,9 +72,12 @@ import {
 } from "./workflow/Services/WorkflowAgentPort.ts";
 import { WorkflowEngine } from "./workflow/Services/WorkflowEngine.ts";
 import { ProjectWorkspaceResolver } from "./workflow/Services/ProjectWorkspaceResolver.ts";
+import { ProjectScriptTrust } from "./workflow/Services/ProjectScriptTrust.ts";
 import { WorkflowFileLoader } from "./workflow/Services/WorkflowFileLoader.ts";
 import { WorkflowGitHubPoller } from "./workflow/Services/WorkflowGitHubPoller.ts";
 import { WorkflowRecovery } from "./workflow/Services/WorkflowRecovery.ts";
+import { WorkflowThreadJanitor } from "./workflow/Services/WorkflowThreadJanitor.ts";
+import { WorkflowWorktreeJanitor } from "./workflow/Services/WorkflowWorktreeJanitor.ts";
 import { WorkflowRuntimeLive } from "./workflow/WorkflowRuntimeLive.ts";
 
 const toPluginError = (error: unknown): Error =>
@@ -69,6 +92,11 @@ type WorkflowRuntimeContext =
   | WorkflowFileLoader
   | WorkflowBoardSaveLocks
   | WorkflowBoardVersionStore
+  | WorkflowEventStore
+  | WorkflowWorktreeJanitor
+  | WorkflowThreadJanitor
+  | WorkflowAgentSessionStore
+  | ProjectScriptTrust
   | SqlClient.SqlClient;
 
 const workflowRpcError = (message: string, cause?: unknown) =>
@@ -81,9 +109,6 @@ const toWorkflowRpcError = (message: string) => (cause: unknown) =>
   workflowRpcError(message, cause);
 
 const encodeBoardSnapshot = Schema.encodeSync(BoardSnapshot);
-
-const workflowDefinitionContentJson = (definition: WorkflowDefinition): string =>
-  `${encodeWorkflowDefinitionJson(definition)}\n`;
 
 const NEEDS_ATTENTION_KINDS = new Set(["waiting_for_approval", "waiting_for_input", "blocked"]);
 const validAttentionKind = (raw: string | null | undefined): string | null =>
@@ -275,28 +300,11 @@ const slugFromBoardEntry = (entry: { readonly filePath: string }): string | null
   return fileName?.endsWith(".json") ? fileName.slice(0, -".json".length) : null;
 };
 
-const recordBoardVersionBestEffort = (input: {
-  readonly boardId: BoardId;
-  readonly versionHash: string;
-  readonly contentJson: string;
-  readonly source: WorkflowBoardVersionSource;
-}): Effect.Effect<void, never, WorkflowRuntimeContext> =>
-  Effect.gen(function* () {
-    const versionStore = yield* WorkflowBoardVersionStore;
-    yield* versionStore.record(input).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Failed to record workflow board version", {
-          boardId: input.boardId,
-          source: input.source,
-          cause: Cause.pretty(cause),
-        }),
-      ),
-    );
-  });
-
+const NoPayload = Schema.Struct({});
 const ListBoardsPayload = Schema.Struct({ projectId: ProjectId });
 const GetBoardPayload = Schema.Struct({ boardId: BoardId });
 const GetTicketDetailPayload = Schema.Struct({ ticketId: TicketId });
+const GetBoardVersionPayload = Schema.Struct({ boardId: BoardId, versionId: Schema.Int });
 const CreateTicketPayload = Schema.Struct({
   boardId: BoardId,
   title: Schema.String,
@@ -305,8 +313,44 @@ const CreateTicketPayload = Schema.Struct({
   dependsOn: Schema.optional(Schema.Array(TicketId)),
   tokenBudget: Schema.optional(NonNegativeInt),
 });
+const EditTicketPayload = Schema.Struct({
+  ticketId: TicketId,
+  title: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
+  dependsOn: Schema.optional(Schema.Array(TicketId)),
+  tokenBudget: Schema.optional(Schema.NullOr(NonNegativeInt)),
+});
 const MoveTicketPayload = Schema.Struct({ ticketId: TicketId, toLane: LaneKey });
 const RunLanePayload = Schema.Struct({ ticketId: TicketId });
+const ResolveApprovalPayload = Schema.Struct({ stepRunId: StepRunId, approved: Schema.Boolean });
+const AnswerTicketStepPayload = Schema.Struct({
+  stepRunId: StepRunId,
+  text: Schema.optional(Schema.String),
+  attachments: Schema.optional(Schema.Array(TicketAttachment)),
+});
+const PostTicketMessagePayload = Schema.Struct({
+  ticketId: TicketId,
+  text: Schema.optional(Schema.String),
+  attachments: Schema.optional(Schema.Array(TicketAttachment)),
+});
+const EditTicketMessagePayload = Schema.Struct({
+  ticketId: TicketId,
+  messageId: MessageId,
+  body: Schema.String,
+});
+const SetProjectScriptTrustPayload = Schema.Struct({
+  projectId: ProjectId,
+  trusted: Schema.Boolean,
+});
+const CancelStepPayload = Schema.Struct({ stepRunId: StepRunId });
+const GetBoardDigestPayload = Schema.Struct({
+  boardId: BoardId,
+  windowHours: Schema.optional(Schema.Number),
+});
+const GetBoardMetricsPayload = Schema.Struct({
+  boardId: BoardId,
+  windowDays: Schema.optional(Schema.Number),
+});
 
 const decodePayload = <A>(
   schema: Schema.Decoder<unknown> & { readonly Type: A },
@@ -401,6 +445,200 @@ const createBoard = (
     ),
   );
 
+const saveBoardDefinition = (
+  filesystem: WorkflowFilesystemCapability["Service"],
+  input: WorkflowSaveBoardDefinitionInput,
+): Effect.Effect<WorkflowSaveBoardDefinitionResult, Error, WorkflowRuntimeContext> =>
+  Effect.gen(function* () {
+    const saveLocks = yield* WorkflowBoardSaveLocks;
+    return yield* saveLocks.withSaveLock(
+      input.boardId,
+      Effect.gen(function* () {
+        const definition = yield* decodeWorkflowDefinition(input.definition).pipe(
+          Effect.mapError(toWorkflowRpcError("workflow definition decode failed")),
+        );
+        const boardFile = yield* loadWritableWorkflowBoardFile(filesystem, input.boardId);
+        const currentVersionHash = sha256Hex(boardFile.currentRaw);
+        if (currentVersionHash !== input.expectedVersionHash) {
+          return {
+            ok: false as const,
+            conflict: true as const,
+            currentVersionHash,
+          };
+        }
+
+        const persisted = yield* persistWorkflowBoardDefinition(filesystem, {
+          boardId: input.boardId,
+          projectId: boardFile.projectId,
+          workspaceRoot: boardFile.workspaceRoot,
+          relativePath: boardFile.board.workflowFilePath,
+          definition,
+          source: input.source ?? "save",
+          notFoundAfterWriteMessage: `Workflow board ${input.boardId} was not found after save`,
+        });
+        if (persisted._tag === "lintErrors") {
+          return { ok: false as const, lintErrors: persisted.lintErrors };
+        }
+
+        const snapshot = yield* boardSnapshot(input.boardId);
+        return {
+          ok: true as const,
+          definition: persisted.definition,
+          versionHash: persisted.versionHash,
+          snapshot,
+        };
+      }),
+    );
+  });
+
+const renameBoard = (
+  filesystem: WorkflowFilesystemCapability["Service"],
+  input: WorkflowRenameBoardInput,
+): Effect.Effect<void, Error, WorkflowRuntimeContext> =>
+  Effect.gen(function* () {
+    const saveLocks = yield* WorkflowBoardSaveLocks;
+    return yield* saveLocks.withSaveLock(
+      input.boardId,
+      Effect.gen(function* () {
+        const readModel = yield* WorkflowReadModel;
+        const boardRegistry = yield* BoardRegistry;
+        const fileLoader = yield* WorkflowFileLoader;
+        const versionStore = yield* WorkflowBoardVersionStore;
+        const boardFile = yield* loadWritableWorkflowBoardFile(filesystem, input.boardId);
+        const currentDefinition = yield* decodeWorkflowDefinitionJson(boardFile.currentRaw).pipe(
+          Effect.mapError(toWorkflowRpcError("workflow board file decode failed")),
+        );
+        if (currentDefinition.name === input.name) {
+          const fileVersionHash = sha256Hex(boardFile.currentRaw);
+          const registeredDefinition = yield* boardRegistry.getDefinition(input.boardId);
+          const registeredDefinitionHash =
+            registeredDefinition === null
+              ? null
+              : workflowDefinitionVersionHash(registeredDefinition);
+          const currentDefinitionHash = workflowDefinitionVersionHash(currentDefinition);
+          const versions = yield* versionStore
+            .list(input.boardId)
+            .pipe(Effect.mapError(toWorkflowRpcError("Failed to list workflow board versions")));
+          const projectionIsCurrent = boardFile.board.workflowVersionHash === fileVersionHash;
+          const registryIsCurrent = registeredDefinitionHash === currentDefinitionHash;
+          const historyIsCurrent = versions[0]?.versionHash === fileVersionHash;
+          if (projectionIsCurrent && registryIsCurrent && historyIsCurrent) {
+            return;
+          }
+
+          if (!projectionIsCurrent || !registryIsCurrent) {
+            yield* fileLoader
+              .loadAndRegister({
+                boardId: input.boardId,
+                projectId: boardFile.projectId,
+                workspaceRoot: boardFile.workspaceRoot,
+                relativePath: boardFile.board.workflowFilePath,
+              })
+              .pipe(Effect.mapError(toWorkflowRpcError("Failed to register saved workflow board")));
+
+            const updatedBoard = yield* readModel
+              .getBoard(input.boardId)
+              .pipe(Effect.mapError(toWorkflowRpcError("Failed to load saved workflow board")));
+            if (!updatedBoard) {
+              return yield* workflowRpcError(
+                `Workflow board ${input.boardId} was not found after rename`,
+              );
+            }
+          }
+
+          if (!historyIsCurrent) {
+            yield* recordBoardVersionRequired({
+              boardId: input.boardId,
+              versionHash: fileVersionHash,
+              contentJson: boardFile.currentRaw,
+              source: "rename",
+            });
+          }
+          return;
+        }
+
+        const persisted = yield* persistWorkflowBoardDefinition(filesystem, {
+          boardId: input.boardId,
+          projectId: boardFile.projectId,
+          workspaceRoot: boardFile.workspaceRoot,
+          relativePath: boardFile.board.workflowFilePath,
+          definition: { ...currentDefinition, name: input.name },
+          source: "rename",
+          notFoundAfterWriteMessage: `Workflow board ${input.boardId} was not found after rename`,
+          versionRecording: "required",
+        });
+        if (persisted._tag === "lintErrors") {
+          return yield* workflowRpcError(
+            `Workflow lint failed: ${persisted.lintErrors.map((error) => error.code).join(", ")}`,
+          );
+        }
+      }),
+    );
+  });
+
+const deleteBoard = (
+  filesystem: WorkflowFilesystemCapability["Service"],
+  boardId: BoardId,
+): Effect.Effect<void, Error, WorkflowRuntimeContext> =>
+  Effect.gen(function* () {
+    const saveLocks = yield* WorkflowBoardSaveLocks;
+    const readModel = yield* WorkflowReadModel;
+    const boardRegistry = yield* BoardRegistry;
+    const engine = yield* WorkflowEngine;
+    const eventStore = yield* WorkflowEventStore;
+    const versionStore = yield* WorkflowBoardVersionStore;
+    const projectWorkspaceResolver = yield* ProjectWorkspaceResolver;
+    const worktreeJanitor = yield* WorkflowWorktreeJanitor;
+    const threadJanitor = yield* WorkflowThreadJanitor;
+    const agentSessions = yield* WorkflowAgentSessionStore;
+    const sql = yield* SqlClient.SqlClient;
+
+    return yield* saveLocks
+      .withSaveLock(
+        boardId,
+        Effect.gen(function* () {
+          const board = yield* readModel
+            .getBoard(boardId)
+            .pipe(Effect.mapError(toWorkflowRpcError("Failed to load workflow board")));
+
+          if (board) {
+            if (!isWorkflowBoardFilePath(board.workflowFilePath)) {
+              return yield* workflowRpcError(
+                `Workflow board ${boardId} is not a deletable workflow board file`,
+              );
+            }
+
+            const workspaceRoot = yield* projectWorkspaceResolver
+              .resolve(board.projectId as ProjectId)
+              .pipe(Effect.mapError(toWorkflowRpcError("Failed to resolve workflow project root")));
+
+            yield* filesystem
+              .remove({
+                root: workspaceRoot,
+                relativePath: board.workflowFilePath,
+              })
+              .pipe(Effect.mapError(toWorkflowRpcError("Failed to delete workflow board file")));
+          }
+
+          yield* deleteWorkflowBoardOwnedState(
+            {
+              sql,
+              boardRegistry,
+              engine,
+              eventStore,
+              readModel,
+              versionStore,
+              worktreeJanitor,
+              threadJanitor,
+              agentSessions,
+            },
+            boardId,
+          ).pipe(Effect.mapError(toWorkflowRpcError("Failed to delete workflow board state")));
+        }),
+      )
+      .pipe(Effect.tap(() => saveLocks.evict?.(boardId) ?? Effect.void));
+  });
+
 export default definePlugin({
   register: (hostApi) =>
     Effect.gen(function* () {
@@ -483,6 +721,72 @@ export default definePlugin({
               ),
           },
           {
+            method: WORKFLOW_WS_METHODS.getBoardDefinition,
+            scope: "read",
+            readiness: "always",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  GetBoardPayload,
+                  payload,
+                  "workflow get board definition input decode failed",
+                ).pipe(
+                  Effect.flatMap(({ boardId }) =>
+                    Effect.gen(function* () {
+                      const boardRegistry = yield* BoardRegistry;
+                      const readModel = yield* WorkflowReadModel;
+                      const definition = yield* boardRegistry.getDefinition(boardId);
+                      if (!definition) {
+                        return yield* workflowRpcError(
+                          `Workflow board definition ${boardId} was not found`,
+                        );
+                      }
+
+                      const board = yield* readModel
+                        .getBoard(boardId)
+                        .pipe(Effect.mapError(toWorkflowRpcError("Failed to load workflow board")));
+                      if (!board) {
+                        return yield* workflowRpcError(`Workflow board ${boardId} was not found`);
+                      }
+
+                      return {
+                        definition: encodeWorkflowDefinition(definition),
+                        versionHash: board.workflowVersionHash,
+                      };
+                    }),
+                  ),
+                ),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.listBoardVersions,
+            scope: "read",
+            readiness: "always",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  GetBoardPayload,
+                  payload,
+                  "workflow list board versions input decode failed",
+                ).pipe(Effect.flatMap(({ boardId }) => listBoardVersions(filesystem, boardId))),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.getBoardVersion,
+            scope: "read",
+            readiness: "always",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  GetBoardVersionPayload,
+                  payload,
+                  "workflow get board version input decode failed",
+                ).pipe(
+                  Effect.flatMap(({ boardId, versionId }) => getBoardVersion(boardId, versionId)),
+                ),
+              ),
+          },
+          {
             method: WORKFLOW_WS_METHODS.getTicketDetail,
             scope: "read",
             readiness: "always",
@@ -507,6 +811,45 @@ export default definePlugin({
                     snapshot: encodeBoardSnapshot(snapshot),
                   })),
                 ),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.deleteBoard,
+            scope: "operate",
+            readiness: "requires-ready",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  GetBoardPayload,
+                  payload,
+                  "workflow delete board input decode failed",
+                ).pipe(Effect.flatMap(({ boardId }) => deleteBoard(filesystem, boardId))),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.renameBoard,
+            scope: "operate",
+            readiness: "requires-ready",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  WorkflowRenameBoardInput,
+                  payload,
+                  "workflow board rename input decode failed",
+                ).pipe(Effect.flatMap((input) => renameBoard(filesystem, input))),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.saveBoardDefinition,
+            scope: "operate",
+            readiness: "requires-ready",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  WorkflowSaveBoardDefinitionInput,
+                  payload,
+                  "workflow save board definition input decode failed",
+                ).pipe(Effect.flatMap((input) => saveBoardDefinition(filesystem, input))),
               ),
           },
           {
@@ -540,6 +883,28 @@ export default definePlugin({
                           Effect.mapError(toWorkflowRpcError("Failed to create workflow ticket")),
                         );
                       return { ticketId };
+                    }),
+                  ),
+                ),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.editTicket,
+            scope: "operate",
+            readiness: "requires-ready",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  EditTicketPayload,
+                  payload,
+                  "workflow edit ticket input decode failed",
+                ).pipe(
+                  Effect.flatMap((input) =>
+                    Effect.gen(function* () {
+                      const engine = yield* WorkflowEngine;
+                      yield* engine
+                        .editTicket(input)
+                        .pipe(Effect.mapError(toWorkflowRpcError("Failed to edit workflow ticket")));
                     }),
                   ),
                 ),
@@ -586,6 +951,269 @@ export default definePlugin({
                       yield* engine
                         .runLane(ticketId)
                         .pipe(Effect.mapError(toWorkflowRpcError("Failed to run workflow lane")));
+                    }),
+                  ),
+                ),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.resolveApproval,
+            scope: "operate",
+            readiness: "requires-ready",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  ResolveApprovalPayload,
+                  payload,
+                  "workflow resolve approval input decode failed",
+                ).pipe(
+                  Effect.flatMap(({ stepRunId, approved }) =>
+                    Effect.gen(function* () {
+                      const engine = yield* WorkflowEngine;
+                      yield* engine
+                        .resolveApproval(stepRunId, approved)
+                        .pipe(
+                          Effect.mapError(toWorkflowRpcError("Failed to resolve workflow approval")),
+                        );
+                    }),
+                  ),
+                ),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.answerTicketStep,
+            scope: "operate",
+            readiness: "requires-ready",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  AnswerTicketStepPayload,
+                  payload,
+                  "workflow answer ticket step input decode failed",
+                ).pipe(
+                  Effect.flatMap((input) =>
+                    Effect.gen(function* () {
+                      const engine = yield* WorkflowEngine;
+                      yield* engine
+                        .answerTicketStep(input)
+                        .pipe(
+                          Effect.mapError(
+                            toWorkflowRpcError("Failed to answer workflow ticket step"),
+                          ),
+                        );
+                    }),
+                  ),
+                ),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.postTicketMessage,
+            scope: "operate",
+            readiness: "requires-ready",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  PostTicketMessagePayload,
+                  payload,
+                  "workflow post ticket message input decode failed",
+                ).pipe(
+                  Effect.flatMap((input) =>
+                    Effect.gen(function* () {
+                      const engine = yield* WorkflowEngine;
+                      yield* engine
+                        .postTicketMessage(input)
+                        .pipe(
+                          Effect.mapError(
+                            toWorkflowRpcError("Failed to post workflow ticket message"),
+                          ),
+                        );
+                    }),
+                  ),
+                ),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.editTicketMessage,
+            scope: "operate",
+            readiness: "requires-ready",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  EditTicketMessagePayload,
+                  payload,
+                  "workflow edit ticket message input decode failed",
+                ).pipe(
+                  Effect.flatMap((input) =>
+                    Effect.gen(function* () {
+                      const engine = yield* WorkflowEngine;
+                      yield* engine
+                        .editTicketMessage(input)
+                        .pipe(
+                          Effect.mapError(
+                            toWorkflowRpcError("Failed to edit workflow ticket message"),
+                          ),
+                        );
+                    }),
+                  ),
+                ),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.setProjectScriptTrust,
+            scope: "operate",
+            readiness: "requires-ready",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  SetProjectScriptTrustPayload,
+                  payload,
+                  "workflow set project script trust input decode failed",
+                ).pipe(
+                  Effect.flatMap(({ projectId, trusted }) =>
+                    Effect.gen(function* () {
+                      const projectScriptTrust = yield* ProjectScriptTrust;
+                      yield* projectScriptTrust
+                        .setTrusted(projectId, trusted)
+                        .pipe(
+                          Effect.mapError(
+                            toWorkflowRpcError("Failed to update project script trust"),
+                          ),
+                        );
+                    }),
+                  ),
+                ),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.cancelStep,
+            scope: "operate",
+            readiness: "requires-ready",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  CancelStepPayload,
+                  payload,
+                  "workflow cancel step input decode failed",
+                ).pipe(
+                  Effect.flatMap(({ stepRunId }) =>
+                    Effect.gen(function* () {
+                      const engine = yield* WorkflowEngine;
+                      yield* engine
+                        .cancelStep(stepRunId)
+                        .pipe(Effect.mapError(toWorkflowRpcError("Failed to cancel workflow step")));
+                    }),
+                  ),
+                ),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.getBoardDigest,
+            scope: "read",
+            readiness: "always",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  GetBoardDigestPayload,
+                  payload,
+                  "workflow board digest input decode failed",
+                ).pipe(
+                  Effect.flatMap((input) =>
+                    Effect.gen(function* () {
+                      const readModel = yield* WorkflowReadModel;
+                      const windowHours =
+                        input.windowHours === undefined || !Number.isFinite(input.windowHours)
+                          ? 24
+                          : Math.min(24 * 7, Math.max(1, Math.floor(input.windowHours)));
+                      const digest = yield* readModel
+                        .getBoardDigest(input.boardId, windowHours)
+                        .pipe(
+                          Effect.mapError(toWorkflowRpcError("Failed to compute board digest")),
+                        );
+                      return {
+                        windowHours: digest.windowHours,
+                        createdCount: digest.createdCount,
+                        shippedCount: digest.shippedCount,
+                        totalTokens: digest.totalTokens,
+                        totalDurationMs: digest.totalDurationMs,
+                        needsAttention: digest.needsAttention.map((row) => ({
+                          ticketId: row.ticketId as TicketId,
+                          title: row.title,
+                          status: row.status,
+                          laneKey: row.laneKey as LaneKey,
+                          sinceMs: Math.max(0, Math.floor(row.sinceMs)),
+                        })),
+                      };
+                    }),
+                  ),
+                ),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.getBoardMetrics,
+            scope: "read",
+            readiness: "always",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  GetBoardMetricsPayload,
+                  payload,
+                  "workflow board metrics input decode failed",
+                ).pipe(
+                  Effect.flatMap((input) =>
+                    Effect.gen(function* () {
+                      const readModel = yield* WorkflowReadModel;
+                      const validWindowDays = [1, 7, 30] as const;
+                      const windowDays =
+                        input.windowDays !== undefined &&
+                        validWindowDays.includes(
+                          input.windowDays as (typeof validWindowDays)[number],
+                        )
+                          ? input.windowDays
+                          : 7;
+                      return yield* readModel
+                        .getBoardMetrics(input.boardId, windowDays)
+                        .pipe(
+                          Effect.mapError(toWorkflowRpcError("Failed to compute board metrics")),
+                        );
+                    }),
+                  ),
+                ),
+              ),
+          },
+          {
+            method: WORKFLOW_WS_METHODS.listNeedsAttentionTickets,
+            scope: "read",
+            readiness: "always",
+            handler: (payload) =>
+              runWithRuntime(
+                decodePayload(
+                  NoPayload,
+                  payload,
+                  "workflow needs-attention tickets input decode failed",
+                ).pipe(
+                  Effect.flatMap(() =>
+                    Effect.gen(function* () {
+                      const readModel = yield* WorkflowReadModel;
+                      const rows = yield* readModel
+                        .listNeedsAttentionTickets()
+                        .pipe(
+                          Effect.mapError(
+                            toWorkflowRpcError("Failed to list needs-attention tickets"),
+                          ),
+                        );
+                      return rows.map(
+                        (row): WorkflowNeedsAttentionTicketView => ({
+                          ticketId: row.ticketId as never,
+                          boardId: row.boardId as never,
+                          boardName: row.boardName,
+                          title: row.title,
+                          status: row.status as never,
+                          currentLaneKey: row.currentLaneKey as never,
+                          attentionKind: validAttentionKind(row.attentionKind) as never,
+                          attentionReason: row.attentionReason,
+                          updatedAt: row.updatedAt,
+                        }),
+                      );
                     }),
                   ),
                 ),
