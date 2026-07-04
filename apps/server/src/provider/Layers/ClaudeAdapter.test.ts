@@ -31,6 +31,8 @@ import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
 
+const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+
 // Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
 class ClaudeAdapter extends Context.Service<ClaudeAdapter, ClaudeAdapterShape>()(
   "test/ClaudeAdapter",
@@ -178,7 +180,7 @@ function makeHarness(config?: {
     layer: Layer.effect(
       ClaudeAdapter,
       Effect.gen(function* () {
-        const claudeConfig = Schema.decodeSync(ClaudeSettings)(config?.claudeConfig ?? {});
+        const claudeConfig = decodeClaudeSettings(config?.claudeConfig ?? {});
         return yield* makeClaudeAdapter(claudeConfig, adapterOptions);
       }),
     ).pipe(
@@ -1336,7 +1338,7 @@ describe("ClaudeAdapterLive", () => {
     const layer = Layer.effect(
       ClaudeAdapter,
       Effect.gen(function* () {
-        const claudeConfig = Schema.decodeSync(ClaudeSettings)({});
+        const claudeConfig = decodeClaudeSettings({});
         return yield* makeClaudeAdapter(claudeConfig, {
           createQuery: () => {
             const query = new FakeClaudeQuery();
@@ -1419,7 +1421,7 @@ describe("ClaudeAdapterLive", () => {
     const layer = Layer.effect(
       ClaudeAdapter,
       Effect.gen(function* () {
-        const claudeConfig = Schema.decodeSync(ClaudeSettings)({});
+        const claudeConfig = decodeClaudeSettings({});
         return yield* makeClaudeAdapter(claudeConfig, {
           createQuery: (input) => {
             // Simulate the SDK consuming the prompt iterable

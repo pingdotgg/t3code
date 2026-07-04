@@ -19,6 +19,10 @@ const GithubContentEntries = Schema.Array(
     type: Schema.String,
   }),
 );
+
+const decodeGithubContentEntriesJson = Schema.decodeEffect(
+  Schema.fromJsonString(GithubContentEntries),
+);
 type GithubContentEntry = (typeof GithubContentEntries.Type)[number];
 
 interface GeneratedPaths {
@@ -181,7 +185,7 @@ const fetchText = Effect.fn("fetchText")(function* (url: string) {
 
 const fetchDirectoryEntries = Effect.fn("fetchDirectoryEntries")(function* (path: string) {
   const raw = yield* fetchText(`${GITHUB_API_BASE}/${path}?ref=${UPSTREAM_REF}`);
-  return yield* Schema.decodeEffect(Schema.fromJsonString(GithubContentEntries))(raw);
+  return yield* decodeGithubContentEntriesJson(raw);
 });
 
 function collectSchemaEntries(

@@ -35,6 +35,11 @@ const ExtPingNotification = jsonRpcNotification("x/ping", Schema.Struct({ count:
 const ExtRequest = jsonRpcRequest("x/test", Schema.Struct({ hello: Schema.String }));
 const ExtResponse = jsonRpcResponse(Schema.Struct({ ok: Schema.Boolean }));
 
+const decodeRequestPermissionRequestJson = Schema.decodeEffect(
+  Schema.fromJsonString(RequestPermissionRequest),
+);
+const decodeInitializeResponseJson = Schema.decodeEffect(Schema.fromJsonString(InitializeResponse));
+
 it.effect("effect-acp agent handles core agent requests and outbound client requests", () =>
   Effect.gen(function* () {
     const { stdio, input, output } = yield* makeInMemoryStdio();
@@ -83,9 +88,9 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
         })
         .pipe(Effect.forkScoped);
 
-      const permissionRequest = yield* Schema.decodeEffect(
-        Schema.fromJsonString(RequestPermissionRequest),
-      )(yield* Queue.take(output));
+      const permissionRequest = yield* decodeRequestPermissionRequestJson(
+        yield* Queue.take(output),
+      );
       assert.equal(permissionRequest.jsonrpc, "2.0");
       assert.equal(permissionRequest.method, "session/request_permission");
       assert.deepEqual(permissionRequest.params, {
@@ -136,9 +141,7 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
         }),
       );
 
-      const initResponse = yield* Schema.decodeEffect(Schema.fromJsonString(InitializeResponse))(
-        yield* Queue.take(output),
-      );
+      const initResponse = yield* decodeInitializeResponseJson(yield* Queue.take(output));
       assert.deepEqual(initResponse, {
         jsonrpc: "2.0",
         id: 2,
@@ -205,9 +208,7 @@ it.effect("effect-acp agent uses distinct ids for RPC calls and extension reques
       const firstOutbound = yield* Queue.take(output);
       const secondOutbound = yield* Queue.take(output);
 
-      const decodedPermission = Schema.decodeEffect(
-        Schema.fromJsonString(RequestPermissionRequest),
-      );
+      const decodedPermission = decodeRequestPermissionRequestJson;
       const decodedExt = Schema.decodeEffect(Schema.fromJsonString(ExtRequest));
       const firstIsPermission = yield* decodedPermission(firstOutbound).pipe(
         Effect.match({

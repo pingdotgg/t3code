@@ -22,6 +22,8 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
 
+const decodeCursorSettings = Schema.decodeSync(CursorSettings);
+
 // Test-local service tag so the rest of the file can keep using `yield* CursorAdapter`.
 class CursorAdapter extends Context.Service<CursorAdapter, CursorAdapterShape>()(
   "test/CursorAdapter",
@@ -123,7 +125,7 @@ const cursorAdapterTestLayer = it.layer(
   Layer.effect(
     CursorAdapter,
     Effect.gen(function* () {
-      const cursorConfig = Schema.decodeSync(CursorSettings)({});
+      const cursorConfig = decodeCursorSettings({});
       const resolveSettings = yield* makeResolveCursorSettings;
       return yield* makeCursorAdapter(cursorConfig, { resolveSettings });
     }),
@@ -597,7 +599,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           Layer.effect(
             CursorAdapter,
             Effect.gen(function* () {
-              const cursorConfig = Schema.decodeSync(CursorSettings)({});
+              const cursorConfig = decodeCursorSettings({});
               const resolveSettings = yield* makeResolveCursorSettings;
               return yield* makeCursorAdapter(cursorConfig, { resolveSettings });
             }),
@@ -1229,7 +1231,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const customAdapterLayer = Layer.effect(
         CursorAdapter,
         Effect.gen(function* () {
-          const cursorConfig = Schema.decodeSync(CursorSettings)({});
+          const cursorConfig = decodeCursorSettings({});
           const resolveSettings = yield* makeResolveCursorSettings;
           return yield* makeCursorAdapter(cursorConfig, {
             instanceId: customInstanceId,

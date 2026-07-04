@@ -10,6 +10,8 @@ import { TextGenerationError } from "@t3tools/contracts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
+const isTextGenerationError = Schema.is(TextGenerationError);
+
 export function isGitRepository(cwd: string): boolean {
   return existsSync(join(cwd, ".git"));
 }
@@ -187,7 +189,7 @@ export function normalizeCliError(
   error: unknown,
   fallback: string,
 ): TextGenerationError {
-  if (Schema.is(TextGenerationError)(error)) {
+  if (isTextGenerationError(error)) {
     return error;
   }
 

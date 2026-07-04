@@ -85,6 +85,9 @@ import { CopilotAdapter, type CopilotAdapterShape } from "../Services/CopilotAda
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
+const isAcpTransportError = Schema.is(EffectAcpErrors.AcpTransportError);
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+
 const PROVIDER = ProviderDriverKind.make("copilot");
 const COPILOT_RESUME_VERSION = 1 as const;
 const COPILOT_RETAINED_TEXT_PREVIEW_LENGTH = 4096;
@@ -153,7 +156,7 @@ function stringifyCause(value: unknown): string {
 
 function copilotAcpExitMatch(cause: Error): RegExpMatchArray | null {
   const parts = [cause.message];
-  if (Schema.is(EffectAcpErrors.AcpTransportError)(cause)) {
+  if (isAcpTransportError(cause)) {
     parts.push(cause.detail, stringifyCause(cause.cause));
   }
   const combined = parts.filter((part) => part.trim().length > 0).join("\n");
@@ -166,7 +169,7 @@ function formatCopilotStartupError(cause: Error): string {
     const exitText = exitedMatch[1] ? `exited with code ${exitedMatch[1]}` : "exited";
     return `GitHub Copilot ACP process ${exitText} before completing startup. Update the Copilot CLI with "copilot update", restart T3 Code, then try again. If it still fails, run "copilot login" in a terminal and verify "copilot --version" reports a version with working ACP support.`;
   }
-  if (Schema.is(EffectAcpErrors.AcpTransportError)(cause) && cause.detail.trim().length > 0) {
+  if (isAcpTransportError(cause) && cause.detail.trim().length > 0) {
     return `GitHub Copilot ACP transport failed during startup: ${cause.detail}`;
   }
   return cause.message.trim() || "GitHub Copilot ACP process failed during startup.";
@@ -178,7 +181,7 @@ function hasCopilotAcpForkCapability(result: AcpSessionRuntimeStartResult): bool
 }
 
 function mapCopilotForkAcpError(threadId: ThreadId, error: EffectAcpErrors.AcpError) {
-  if (Schema.is(EffectAcpErrors.AcpRequestError)(error) && error.code === -32601) {
+  if (isAcpRequestError(error) && error.code === -32601) {
     return new ProviderAdapterRequestError({
       provider: PROVIDER,
       method: "session/fork",
@@ -872,7 +875,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
           return yield* acp.start();
         }).pipe(
           Effect.mapError((error) => {
-            if (Schema.is(EffectAcpErrors.AcpTransportError)(error) && copilotAcpExitMatch(error)) {
+            if (isAcpTransportError(error) && copilotAcpExitMatch(error)) {
               return new ProviderAdapterProcessError({
                 provider: PROVIDER,
                 threadId: input.threadId,

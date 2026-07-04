@@ -12,20 +12,23 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 
+const isAcpProcessExitedError = Schema.is(EffectAcpErrors.AcpProcessExitedError);
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+
 export function mapAcpToAdapterError(
   provider: ProviderDriverKind,
   threadId: ThreadId,
   method: string,
   error: EffectAcpErrors.AcpError,
 ): ProviderAdapterError {
-  if (Schema.is(EffectAcpErrors.AcpProcessExitedError)(error)) {
+  if (isAcpProcessExitedError(error)) {
     return new ProviderAdapterSessionClosedError({
       provider,
       threadId,
       cause: error,
     });
   }
-  if (Schema.is(EffectAcpErrors.AcpRequestError)(error)) {
+  if (isAcpRequestError(error)) {
     return new ProviderAdapterRequestError({
       provider,
       method,

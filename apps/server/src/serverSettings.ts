@@ -52,6 +52,8 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerSecretStore } from "./auth/Services/ServerSecretStore.ts";
 
+const decodeServerSettings = Schema.decodeEffect(ServerSettings);
+
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -129,9 +131,7 @@ export class ServerSettingsService extends Context.Service<
           updateSettings: (patch) =>
             Ref.get(currentSettingsRef).pipe(
               Effect.flatMap((currentSettings) =>
-                Schema.decodeEffect(ServerSettings)(
-                  applyServerSettingsPatch(currentSettings, patch),
-                ).pipe(
+                decodeServerSettings(applyServerSettingsPatch(currentSettings, patch)).pipe(
                   Effect.mapError(
                     (cause) =>
                       new ServerSettingsError({
@@ -151,6 +151,7 @@ export class ServerSettingsService extends Context.Service<
 }
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
+const decodeServerSettingsJson = Schema.decodeUnknownExit(ServerSettingsJson);
 
 type LegacyProviderSettings = ServerSettings["providers"][keyof ServerSettings["providers"]];
 
@@ -282,7 +283,7 @@ const makeServerSettings = Effect.gen(function* () {
     }
 
     const raw = yield* readRawConfig;
-    const decoded = Schema.decodeUnknownExit(ServerSettingsJson)(raw);
+    const decoded = decodeServerSettingsJson(raw);
     if (decoded._tag === "Failure") {
       yield* Effect.logWarning("failed to parse settings.json, using defaults", {
         path: settingsPath,
@@ -535,7 +536,7 @@ const makeServerSettings = Effect.gen(function* () {
             current,
             applyServerSettingsPatch(current, patch),
           );
-          const next = yield* Schema.decodeEffect(ServerSettings)(nextPersisted).pipe(
+          const next = yield* decodeServerSettings(nextPersisted).pipe(
             Effect.mapError(
               (cause) =>
                 new ServerSettingsError({

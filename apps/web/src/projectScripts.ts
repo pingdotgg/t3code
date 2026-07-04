@@ -6,6 +6,8 @@ import {
 } from "@t3tools/contracts";
 import { Schema } from "effect";
 
+const isSCRIPT_RUN_COMMAND_PATTERN = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
+
 function normalizeScriptId(value: string): string {
   const cleaned = value
     .trim()
@@ -26,7 +28,7 @@ export const commandForProjectScript = (scriptId: string): KeybindingCommand =>
 
 export function projectScriptIdFromCommand(command: string): string | null {
   const trimmed = command.trim();
-  if (!Schema.is(SCRIPT_RUN_COMMAND_PATTERN)(trimmed)) {
+  if (!isSCRIPT_RUN_COMMAND_PATTERN(trimmed)) {
     return null;
   }
   const [prefix, , suffix] = SCRIPT_RUN_COMMAND_PATTERN.parts;

@@ -20,7 +20,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime";
-import { isProviderDriverKind, ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import type { ThreadId, TurnId } from "@t3tools/contracts";
 import { Schema } from "effect";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
@@ -39,6 +39,8 @@ import {
 import { resolveEnvironmentHttpUrl } from "./environments/runtime";
 import { sanitizeThreadErrorMessage } from "./rpc/transportError";
 import { getThreadFromEnvironmentState } from "./threadDerivation";
+
+const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
 export interface EnvironmentState {
   projectIds: ProjectId[];
@@ -1094,7 +1096,7 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderDriverKind {
-  if (Schema.is(ProviderDriverKind)(providerName)) {
+  if (isProviderDriverKind(providerName)) {
     return providerName;
   }
   return ProviderDriverKind.make("codex");
@@ -1169,15 +1171,39 @@ function syncEnvironmentShellSnapshot(
 ): EnvironmentState {
   const nextProjects = snapshot.projects.map((project) => mapProject(project, environmentId));
   const nextThreadIds = new Set(snapshot.threads.map((thread) => thread.id));
-  let nextState: EnvironmentState = {
+
+  const threadIds: ThreadId[] = [];
+  const threadIdsByProjectId: Record<ProjectId, ThreadId[]> = {};
+  const threadShellById: Record<ThreadId, ThreadShell> = {};
+  const threadSessionById: Record<ThreadId, ThreadSession | null> = {};
+  const threadTurnStateById: Record<ThreadId, ThreadTurnState> = {};
+  const sidebarThreadSummaryById: Record<ThreadId, SidebarThreadSummary> = {};
+
+  for (const thread of snapshot.threads) {
+    const mappedThread = mapThreadShell(thread, environmentId);
+    const threadId = mappedThread.shell.id;
+    threadIds.push(threadId);
+    const projectThreadIds = threadIdsByProjectId[mappedThread.shell.projectId];
+    if (projectThreadIds) {
+      projectThreadIds.push(threadId);
+    } else {
+      threadIdsByProjectId[mappedThread.shell.projectId] = [threadId];
+    }
+    threadShellById[threadId] = mappedThread.shell;
+    threadSessionById[threadId] = mappedThread.session;
+    threadTurnStateById[threadId] = mappedThread.turnState;
+    sidebarThreadSummaryById[threadId] = mappedThread.summary;
+  }
+
+  return {
     ...state,
     ...buildProjectState(nextProjects),
-    threadIds: [],
-    threadIdsByProjectId: {},
-    threadShellById: {},
-    threadSessionById: {},
-    threadTurnStateById: {},
-    sidebarThreadSummaryById: {},
+    threadIds,
+    threadIdsByProjectId,
+    threadShellById,
+    threadSessionById,
+    threadTurnStateById,
+    sidebarThreadSummaryById,
     messageIdsByThreadId: retainThreadScopedRecord(state.messageIdsByThreadId, nextThreadIds),
     messageByThreadId: retainThreadScopedRecord(state.messageByThreadId, nextThreadIds),
     activityIdsByThreadId: retainThreadScopedRecord(state.activityIdsByThreadId, nextThreadIds),
@@ -1195,12 +1221,6 @@ function syncEnvironmentShellSnapshot(
     queuedTurnsByThreadId: retainThreadScopedRecord(state.queuedTurnsByThreadId, nextThreadIds),
     bootstrapComplete: true,
   };
-
-  for (const thread of snapshot.threads) {
-    nextState = writeThreadShellState(nextState, mapThreadShell(thread, environmentId));
-  }
-
-  return nextState;
 }
 
 export function syncServerShellSnapshot(

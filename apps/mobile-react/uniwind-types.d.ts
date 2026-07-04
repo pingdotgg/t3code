@@ -7,4 +7,4 @@ declare module "uniwind" {
   }
 }
 
-export {};
+export type UniwindTypesModuleMarker = never;

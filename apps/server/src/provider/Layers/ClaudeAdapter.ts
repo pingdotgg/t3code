@@ -1090,6 +1090,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     };
   });
 
+  // eslint-disable-next-line require-yield -- Effect.fn expects generator shape used by neighboring helpers.
   const ensureAssistantTextBlock = Effect.fn("ensureAssistantTextBlock")(function* (
     context: ClaudeSessionContext,
     blockIndex: number,

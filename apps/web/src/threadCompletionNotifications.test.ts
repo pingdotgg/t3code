@@ -1,11 +1,4 @@
-import {
-  EnvironmentId,
-  MessageId,
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-  TurnId,
-} from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import type { EnvironmentState } from "./store";
 import { collectThreadCompletionNotifications } from "./threadCompletionNotifications";

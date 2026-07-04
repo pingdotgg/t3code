@@ -206,9 +206,11 @@ const makeAcpSessionRuntime = (
       );
 
     const spawnEnv = options.spawn.env ? { ...process.env, ...options.spawn.env } : undefined;
-    const { command: spawnTarget, shell } = resolveWindowsSpawn(options.spawn.command, {
-      ...(spawnEnv ? { env: spawnEnv } : {}),
-    });
+    const spawnOptions = spawnEnv ? { env: spawnEnv } : undefined;
+    const { command: spawnTarget, shell } = resolveWindowsSpawn(
+      options.spawn.command,
+      spawnOptions,
+    );
     const child = yield* spawner
       .spawn(
         ChildProcess.make(spawnTarget, [...options.spawn.args], {

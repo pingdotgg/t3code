@@ -50,6 +50,8 @@ import { ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
 import { withLogContext } from "../../observability/LogContext.ts";
 
+const isModelSelection = Schema.is(ModelSelection);
+
 /**
  * Hook for tests that want to override the canonical event logger pulled
  * from `ProviderEventLoggers`. Production wiring leaves this undefined and
@@ -81,6 +83,7 @@ const decodeInputOrValidationError = <S extends Schema.Top>(input: {
   readonly schema: S;
   readonly payload: unknown;
 }) =>
+  // eslint-disable-next-line t3code/no-inline-schema-compile -- schema is supplied dynamically by callers.
   Schema.decodeUnknownEffect(input.schema)(input.payload).pipe(
     Effect.mapError(
       (schemaError) =>
@@ -135,7 +138,7 @@ function readPersistedModelSelection(
     return undefined;
   }
   const raw = "modelSelection" in runtimePayload ? runtimePayload.modelSelection : undefined;
-  return Schema.is(ModelSelection)(raw) ? raw : undefined;
+  return isModelSelection(raw) ? raw : undefined;
 }
 
 function readPersistedCwd(

@@ -298,6 +298,43 @@ export function ThreadRouteScreen() {
     .filter(Boolean)
     .join(" · ");
 
+  const renderHeaderTitle = useCallback(
+    () => (
+      <Pressable
+        style={{ alignItems: "center", maxWidth: 200 }}
+        onLongPress={() => {
+          // TODO: trigger rename modal
+        }}
+      >
+        <RNText
+          numberOfLines={1}
+          style={{
+            fontFamily: "DMSans_700Bold",
+            fontSize: 18,
+            fontWeight: "900",
+            color: foregroundColor,
+            letterSpacing: -0.4,
+          }}
+        >
+          {selectedThreadDetail.title}
+        </RNText>
+        <RNText
+          numberOfLines={1}
+          style={{
+            fontFamily: "DMSans_700Bold",
+            fontSize: 12,
+            fontWeight: "700",
+            color: secondaryFg,
+            letterSpacing: 0.3,
+          }}
+        >
+          {headerSubtitle}
+        </RNText>
+      </Pressable>
+    ),
+    [foregroundColor, headerSubtitle, secondaryFg, selectedThreadDetail.title],
+  );
+
   return (
     <>
       <Stack.Screen
@@ -308,39 +345,7 @@ export function ThreadRouteScreen() {
           headerShadowVisible: false,
           headerTintColor: iconColor,
           headerBackTitle: "",
-          headerTitle: () => (
-            <Pressable
-              style={{ alignItems: "center", maxWidth: 200 }}
-              onLongPress={() => {
-                // TODO: trigger rename modal
-              }}
-            >
-              <RNText
-                numberOfLines={1}
-                style={{
-                  fontFamily: "DMSans_700Bold",
-                  fontSize: 18,
-                  fontWeight: "900",
-                  color: foregroundColor,
-                  letterSpacing: -0.4,
-                }}
-              >
-                {selectedThreadDetail.title}
-              </RNText>
-              <RNText
-                numberOfLines={1}
-                style={{
-                  fontFamily: "DMSans_700Bold",
-                  fontSize: 12,
-                  fontWeight: "700",
-                  color: secondaryFg,
-                  letterSpacing: 0.3,
-                }}
-              >
-                {headerSubtitle}
-              </RNText>
-            </Pressable>
-          ),
+          headerTitle: renderHeaderTitle,
         }}
       />
 

@@ -2890,11 +2890,11 @@ const providerRefreshCommand = Command.make("refresh", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const result = yield* callWsRpc(flags, (client) =>
-        client[WS_METHODS.serverRefreshProviders]({
-          ...(Option.isSome(flags.provider)
+        client[WS_METHODS.serverRefreshProviders](
+          Option.isSome(flags.provider)
             ? { instanceId: ProviderInstanceId.make(flags.provider.value) }
-            : {}),
-        }),
+            : {},
+        ),
       );
       yield* printJson(result);
     }),
@@ -3042,7 +3042,7 @@ const providerSetCommand = Command.make("set", {
         update: (current) => {
           const mergedConfig = {
             ...(isJsonRecord(current?.config) ? current.config : {}),
-            ...(config ?? {}),
+            ...config,
             ...(Option.isSome(flags.binaryPath) ? { binaryPath: flags.binaryPath.value } : {}),
             ...(customModels !== undefined ? { customModels } : {}),
           };
@@ -4568,7 +4568,7 @@ const envSecretSetCommand = Command.make("set", {
       }
       const entry = {
         ...current,
-        secrets: { ...(current.secrets ?? {}), [flags.name]: flags.value },
+        secrets: { ...current.secrets, [flags.name]: flags.value },
       };
       yield* writeEnvironmentRegistry(flags.baseDir, {
         ...registry,
@@ -4592,7 +4592,7 @@ const envSecretRemoveCommand = Command.make("remove", {
       if (current === undefined) {
         return yield* Effect.fail(new Error(`Environment '${flags.id}' not found.`));
       }
-      const secrets = { ...(current.secrets ?? {}) };
+      const secrets = { ...current.secrets };
       delete secrets[flags.name];
       const entry = { ...current, secrets };
       yield* writeEnvironmentRegistry(flags.baseDir, {

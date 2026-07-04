@@ -79,6 +79,8 @@ import { deriveServerPaths, ServerConfig } from "../src/config.ts";
 import { WorkspaceEntriesLive } from "../src/workspace/Layers/WorkspaceEntries.ts";
 import { WorkspacePathsLive } from "../src/workspace/Layers/WorkspacePaths.ts";
 
+const decodeCodexSettings = Schema.decodeSync(CodexSettings);
+
 function runGit(cwd: string, args: ReadonlyArray<string>) {
   return execFileSync("git", args, {
     cwd,
@@ -266,7 +268,7 @@ export const makeOrchestrationIntegrationHarness = (
     const realCodexRegistry = Layer.effect(
       ProviderAdapterRegistry,
       Effect.gen(function* () {
-        const codexSettings = Schema.decodeSync(CodexSettings)({});
+        const codexSettings = decodeCodexSettings({});
         const codexAdapter = yield* makeCodexAdapter(codexSettings);
         return makeAdapterRegistryMock({
           [ProviderDriverKind.make("codex")]: codexAdapter,

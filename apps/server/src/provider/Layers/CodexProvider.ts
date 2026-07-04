@@ -25,6 +25,8 @@ import { expandHomePath } from "../../pathExpansion.ts";
 import { scopedSafeTeardown } from "./scopedSafeTeardown.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 
+const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
+
 const CODEX_PRESENTATION = {
   displayName: "Codex",
   showInteractionModeToggle: true,
@@ -447,7 +449,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 
   if (Result.isFailure(probeResult)) {
     const error = probeResult.failure;
-    const installed = !Schema.is(CodexErrors.CodexAppServerSpawnError)(error);
+    const installed = !isCodexAppServerSpawnError(error);
     return buildServerProvider({
       presentation: CODEX_PRESENTATION,
       enabled: codexSettings.enabled,

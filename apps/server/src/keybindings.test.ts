@@ -17,6 +17,12 @@ import {
 import { KeybindingsConfigError } from "@t3tools/contracts";
 
 const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
+const encodeKeybindingsConfigJson = Schema.encodeEffect(KeybindingsConfigJson);
+const decodeKeybindingsConfigJsonUnknown = Schema.decodeUnknownEffect(KeybindingsConfigJson);
+const encodeResolvedKeybindingFromConfig = Schema.encodeEffect(ResolvedKeybindingFromConfig);
+const decodeResolvedKeybindingFromConfigUnknownExit = Schema.decodeUnknownExit(
+  ResolvedKeybindingFromConfig,
+);
 const makeKeybindingsLayer = () => {
   return KeybindingsLive.pipe(
     Layer.provideMerge(
@@ -39,7 +45,7 @@ const writeKeybindingsConfig = (configPath: string, rules: readonly KeybindingRu
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const encoded = yield* Schema.encodeEffect(KeybindingsConfigJson)(rules);
+    const encoded = yield* encodeKeybindingsConfigJson(rules);
     yield* fileSystem.makeDirectory(path.dirname(configPath), { recursive: true });
     yield* fileSystem.writeFileString(configPath, encoded);
   });
@@ -48,7 +54,7 @@ const readKeybindingsConfig = (configPath: string) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const rawConfig = yield* fileSystem.readFileString(configPath);
-    return yield* Schema.decodeUnknownEffect(KeybindingsConfigJson)(rawConfig);
+    return yield* decodeKeybindingsConfigJsonUnknown(rawConfig);
   });
 
 it.layer(NodeServices.layer)("keybindings", (it) => {
@@ -105,7 +111,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
   it.effect("encodes resolved plus-key shortcuts", () =>
     Effect.gen(function* () {
-      const encoded = yield* Schema.encodeEffect(ResolvedKeybindingFromConfig)({
+      const encoded = yield* encodeResolvedKeybindingFromConfig({
         command: "terminal.toggle",
         shortcut: {
           key: "+",
@@ -151,7 +157,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
   it.effect("formats invalid resolved keybinding rules with the custom message", () =>
     Effect.sync(() => {
-      const result = Schema.decodeUnknownExit(ResolvedKeybindingFromConfig)({
+      const result = decodeResolvedKeybindingFromConfigUnknownExit({
         key: "mod+shift+d+o",
         command: "terminal.new",
       });

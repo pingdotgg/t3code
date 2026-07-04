@@ -211,6 +211,105 @@ export function ReviewSheet() {
     return <>{children}</>;
   }, [error, parsedDiffNotice]);
 
+  const renderHeaderTitle = useCallback(
+    () => (
+      <View style={{ alignItems: "center" }}>
+        <NativeText
+          numberOfLines={1}
+          style={{
+            fontFamily: "DMSans_700Bold",
+            fontSize: 18,
+            fontWeight: "900",
+            color: headerForeground,
+            letterSpacing: -0.4,
+          }}
+        >
+          Files Changed
+        </NativeText>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            flexWrap: "wrap",
+          }}
+        >
+          {headerDiffSummary.additions && headerDiffSummary.deletions ? (
+            <>
+              <NativeText
+                style={{
+                  fontFamily: "DMSans_700Bold",
+                  fontSize: 12,
+                  fontWeight: "700",
+                  color: "#16a34a",
+                }}
+              >
+                {headerDiffSummary.additions}
+              </NativeText>
+              <NativeText
+                style={{
+                  fontFamily: "DMSans_700Bold",
+                  fontSize: 12,
+                  fontWeight: "700",
+                  color: "#e11d48",
+                }}
+              >
+                {headerDiffSummary.deletions}
+              </NativeText>
+              {pendingReviewCommentCount > 0 ? (
+                <NativeText
+                  style={{
+                    fontFamily: "DMSans_700Bold",
+                    fontSize: 12,
+                    fontWeight: "700",
+                    color: "#b45309",
+                  }}
+                >
+                  {pendingReviewCommentCount} pending
+                </NativeText>
+              ) : null}
+            </>
+          ) : (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <NativeText
+                numberOfLines={1}
+                style={{
+                  fontFamily: "DMSans_700Bold",
+                  fontSize: 12,
+                  fontWeight: "700",
+                  color: headerMuted,
+                }}
+              >
+                {selectedSection?.title ?? "Review changes"}
+              </NativeText>
+              {pendingReviewCommentCount > 0 ? (
+                <NativeText
+                  style={{
+                    fontFamily: "DMSans_700Bold",
+                    fontSize: 12,
+                    fontWeight: "700",
+                    color: "#b45309",
+                  }}
+                >
+                  {pendingReviewCommentCount} pending
+                </NativeText>
+              ) : null}
+            </View>
+          )}
+        </View>
+      </View>
+    ),
+    [
+      headerDiffSummary.additions,
+      headerDiffSummary.deletions,
+      headerForeground,
+      headerMuted,
+      pendingReviewCommentCount,
+      selectedSection?.title,
+    ],
+  );
+
   return (
     <>
       <Stack.Screen
@@ -221,94 +320,7 @@ export function ReviewSheet() {
           headerStyle: {
             backgroundColor: "transparent",
           },
-          headerTitle: () => (
-            <View style={{ alignItems: "center" }}>
-              <NativeText
-                numberOfLines={1}
-                style={{
-                  fontFamily: "DMSans_700Bold",
-                  fontSize: 18,
-                  fontWeight: "900",
-                  color: headerForeground,
-                  letterSpacing: -0.4,
-                }}
-              >
-                Files Changed
-              </NativeText>
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 6,
-                  flexWrap: "wrap",
-                }}
-              >
-                {headerDiffSummary.additions && headerDiffSummary.deletions ? (
-                  <>
-                    <NativeText
-                      style={{
-                        fontFamily: "DMSans_700Bold",
-                        fontSize: 12,
-                        fontWeight: "700",
-                        color: "#16a34a",
-                      }}
-                    >
-                      {headerDiffSummary.additions}
-                    </NativeText>
-                    <NativeText
-                      style={{
-                        fontFamily: "DMSans_700Bold",
-                        fontSize: 12,
-                        fontWeight: "700",
-                        color: "#e11d48",
-                      }}
-                    >
-                      {headerDiffSummary.deletions}
-                    </NativeText>
-                    {pendingReviewCommentCount > 0 ? (
-                      <NativeText
-                        style={{
-                          fontFamily: "DMSans_700Bold",
-                          fontSize: 12,
-                          fontWeight: "700",
-                          color: "#b45309",
-                        }}
-                      >
-                        {pendingReviewCommentCount} pending
-                      </NativeText>
-                    ) : null}
-                  </>
-                ) : (
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <NativeText
-                      numberOfLines={1}
-                      style={{
-                        fontFamily: "DMSans_700Bold",
-                        fontSize: 12,
-                        fontWeight: "700",
-                        color: headerMuted,
-                      }}
-                    >
-                      {selectedSection?.title ?? "Review changes"}
-                    </NativeText>
-                    {pendingReviewCommentCount > 0 ? (
-                      <NativeText
-                        style={{
-                          fontFamily: "DMSans_700Bold",
-                          fontSize: 12,
-                          fontWeight: "700",
-                          color: "#b45309",
-                        }}
-                      >
-                        {pendingReviewCommentCount} pending
-                      </NativeText>
-                    ) : null}
-                  </View>
-                )}
-              </View>
-            </View>
-          ),
+          headerTitle: renderHeaderTitle,
         }}
       />
 

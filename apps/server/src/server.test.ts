@@ -206,7 +206,7 @@ const makeDefaultOrchestrationThreadShell = (
   };
 };
 
-const workspaceAndProjectServicesLayer = Layer.mergeAll(
+const _workspaceAndProjectServicesLayer = Layer.mergeAll(
   WorkspacePathsLive,
   WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive)),
   WorkspaceFileSystemLive.pipe(
@@ -419,7 +419,7 @@ const buildAppUnderTest = (options?: {
       Layer.provide(WorkspacePathsLive),
       Layer.provideMerge(gitCoreLayer),
     );
-    const workspaceAndProjectServicesLayer = Layer.mergeAll(
+    const _workspaceAndProjectServicesLayer = Layer.mergeAll(
       WorkspacePathsLive,
       workspaceEntriesLayer,
       WorkspaceFileSystemLive.pipe(
@@ -644,7 +644,7 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provideMerge(authTestLayer),
-      Layer.provide(workspaceAndProjectServicesLayer),
+      Layer.provide(_workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(layerConfig),
     );

@@ -18,6 +18,9 @@ import {
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
 
+const isDynamicToolCallResponse = Schema.is(EffectCodexSchema.DynamicToolCallResponse);
+const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
 function makeThreadOpenResponse(
   threadId: string,
 ): CodexRpc.ClientRequestResponsesByMethod["thread/start"] {
@@ -215,7 +218,7 @@ describe("buildUnsupportedDynamicToolCallResponse", () => {
         },
       ],
     });
-    assert.equal(Schema.is(EffectCodexSchema.DynamicToolCallResponse)(response), true);
+    assert.equal(isDynamicToolCallResponse(response), true);
   });
 });
 
@@ -293,7 +296,7 @@ describe("openCodexThread", () => {
         }),
       ),
       (error: unknown) =>
-        Schema.is(CodexErrors.CodexAppServerRequestError)(error) &&
+        isCodexAppServerRequestError(error) &&
         error.errorMessage === "timed out waiting for server",
     );
   });

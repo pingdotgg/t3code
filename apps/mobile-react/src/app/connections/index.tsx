@@ -29,24 +29,29 @@ export default function ConnectionsRouteScreen() {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));
   }, []);
 
+  const renderHeaderRight = useCallback(
+    () => (
+      <Link href="/connections/new" asChild>
+        <Pressable className="h-10 w-10 items-center justify-center rounded-full bg-primary active:opacity-70">
+          <SymbolView
+            name="plus"
+            size={18}
+            tintColor={primaryFg}
+            type="monochrome"
+            weight="semibold"
+          />
+        </Pressable>
+      </Link>
+    ),
+    [primaryFg],
+  );
+
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       <Stack.Screen
         options={{
           title: "Environments",
-          headerRight: () => (
-            <Link href="/connections/new" asChild>
-              <Pressable className="h-10 w-10 items-center justify-center rounded-full bg-primary active:opacity-70">
-                <SymbolView
-                  name="plus"
-                  size={18}
-                  tintColor={primaryFg}
-                  type="monochrome"
-                  weight="semibold"
-                />
-              </Pressable>
-            </Link>
-          ),
+          headerRight: renderHeaderRight,
         }}
       />
       <ScrollView

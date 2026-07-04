@@ -158,7 +158,6 @@ function ChatThreadRouteView() {
     () => (threadRef ? { kind: "server", threadRef } : null),
     // oxlint wants `threadRef` as the dep, but that defeats the purpose — threadRef
     // is a new object on every render from useParams. We depend on the primitives.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [threadRef?.environmentId, threadRef?.threadId],
   );
   const bootstrapComplete = useStore(

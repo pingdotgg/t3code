@@ -50,6 +50,9 @@ const CLAUDE_TIMEOUT_MS = 180_000;
 const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
 });
+const decodeClaudeOutputEnvelopeJson = Schema.decodeEffect(
+  Schema.fromJsonString(ClaudeOutputEnvelope),
+);
 
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
   claudeSettings: ClaudeSettings,
@@ -195,9 +198,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ),
     );
 
-    const envelope = yield* Schema.decodeEffect(Schema.fromJsonString(ClaudeOutputEnvelope))(
-      rawStdout,
-    ).pipe(
+    const envelope = yield* decodeClaudeOutputEnvelopeJson(rawStdout).pipe(
       Effect.catchTag("SchemaError", (cause) =>
         Effect.fail(
           new TextGenerationError({

@@ -775,7 +775,6 @@ export function TerminalViewport({
     };
     // autoFocus is intentionally omitted;
     // it is only read at mount time and must not trigger terminal teardown/recreation.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwd, environmentId, runtimeEnv, terminalId, threadId]);
 
   useEffect(() => {

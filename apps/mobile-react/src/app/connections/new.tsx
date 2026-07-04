@@ -123,31 +123,36 @@ export default function ConnectionsNewRouteScreen() {
     }
   }, [codeInput, hostInput, onChangeConnectionPairingUrl, onConnectPress, router]);
 
+  const renderHeaderRight = useCallback(
+    () => (
+      <Pressable
+        className="h-10 w-10 items-center justify-center rounded-full border border-border bg-secondary"
+        onPress={() => {
+          if (showScanner) {
+            closeScanner();
+          } else {
+            void openScanner();
+          }
+        }}
+      >
+        <SymbolView
+          name={showScanner ? "xmark" : "qrcode.viewfinder"}
+          size={showScanner ? 14 : 18}
+          tintColor={textColor}
+          type="monochrome"
+          weight="semibold"
+        />
+      </Pressable>
+    ),
+    [closeScanner, openScanner, showScanner, textColor],
+  );
+
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       <Stack.Screen
         options={{
           title: showScanner ? "Scan QR Code" : "Add Environment",
-          headerRight: () => (
-            <Pressable
-              className="h-10 w-10 items-center justify-center rounded-full border border-border bg-secondary"
-              onPress={() => {
-                if (showScanner) {
-                  closeScanner();
-                } else {
-                  void openScanner();
-                }
-              }}
-            >
-              <SymbolView
-                name={showScanner ? "xmark" : "qrcode.viewfinder"}
-                size={showScanner ? 14 : 18}
-                tintColor={textColor}
-                type="monochrome"
-                weight="semibold"
-              />
-            </Pressable>
-          ),
+          headerRight: renderHeaderRight,
         }}
       />
 

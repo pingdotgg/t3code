@@ -3,7 +3,12 @@ import { describe, expect, it } from "vitest";
 
 import { ServerProvider, ServerProviderListCommandsInput } from "./server.ts";
 
-const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
+const decodeServerProvider2 = Schema.decodeUnknownSync(ServerProvider);
+const decodeServerProviderListCommandsInput = Schema.decodeUnknownSync(
+  ServerProviderListCommandsInput,
+);
+
+const decodeServerProvider = decodeServerProvider2;
 
 describe("ServerProvider", () => {
   it("defaults capability arrays when decoding provider snapshots", () => {
@@ -48,7 +53,7 @@ describe("ServerProvider", () => {
 describe("ServerProviderListCommandsInput", () => {
   it("accepts Copilot project command lookup requests", () => {
     expect(
-      Schema.decodeUnknownSync(ServerProviderListCommandsInput)({
+      decodeServerProviderListCommandsInput({
         provider: "copilot",
         cwd: "/repo/project",
       }),

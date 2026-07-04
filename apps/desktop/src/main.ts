@@ -93,6 +93,8 @@ import { bindFirstRevealTrigger, type RevealSubscription } from "./windowReveal.
 import { createMainWindowWebPreferences } from "./mainWindowPreferences.ts";
 import { registerPreviewIpcHandlers } from "./previewBridge.ts";
 
+const decodeDesktopNotificationRequest = Schema.decodeUnknownSync(DesktopNotificationRequest);
+
 syncShellEnvironment();
 
 // Persist V8 bytecode under the durable per-user data dir so repeat launches
@@ -1874,7 +1876,7 @@ function registerIpcHandlers(): void {
 
   ipcMain.removeHandler(SHOW_NOTIFICATION_CHANNEL);
   ipcMain.handle(SHOW_NOTIFICATION_CHANNEL, async (_event, rawRequest: unknown) => {
-    const request = Schema.decodeUnknownSync(DesktopNotificationRequest)(rawRequest);
+    const request = decodeDesktopNotificationRequest(rawRequest);
     return showDesktopNotification(request);
   });
 

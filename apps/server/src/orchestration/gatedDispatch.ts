@@ -4,8 +4,10 @@ import { Effect, Schema } from "effect";
 import type { OrchestrationEngineShape } from "./Services/OrchestrationEngine.ts";
 import type { ServerRuntimeStartupShape } from "../serverRuntimeStartup.ts";
 
+const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+
 export const toOrchestrationDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
-  Schema.is(OrchestrationDispatchCommandError)(cause)
+  isOrchestrationDispatchCommandError(cause)
     ? cause
     : new OrchestrationDispatchCommandError({
         message: cause instanceof Error ? cause.message : fallbackMessage,

@@ -11,6 +11,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationEvent,
+  type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -26,6 +27,7 @@ import {
   selectThreadExistsByRef,
   setThreadBranch,
   selectThreadsAcrossEnvironments,
+  syncServerShellSnapshot,
   syncServerThreadDetail,
   type AppState,
   type EnvironmentState,
@@ -285,6 +287,144 @@ function makeEvent<T extends OrchestrationEvent["type"]>(
     ...overrides,
   } as Extract<OrchestrationEvent, { type: T }>;
 }
+
+describe("syncServerShellSnapshot", () => {
+  it("rebuilds shell indexes while retaining detail slices for threads still in the snapshot", () => {
+    const createdAt = "2026-02-13T00:00:00.000Z";
+    const updatedAt = "2026-02-13T00:03:00.000Z";
+    const keptThread = makeThread({
+      id: ThreadId.make("thread-kept"),
+      messages: [
+        {
+          id: MessageId.make("message-kept"),
+          role: "user",
+          text: "keep this detail",
+          createdAt: "2026-02-13T00:01:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+    const removedThread = makeThread({
+      id: ThreadId.make("thread-removed"),
+      messages: [
+        {
+          id: MessageId.make("message-removed"),
+          role: "user",
+          text: "remove this detail",
+          createdAt: "2026-02-13T00:02:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+    const secondProjectId = ProjectId.make("project-2");
+    const addedThreadId = ThreadId.make("thread-added");
+    const baseState = makeState(keptThread);
+    const baseEnvironmentState = localEnvironmentStateOf(baseState);
+    const state = withActiveEnvironmentState({
+      ...baseEnvironmentState,
+      threadIds: [keptThread.id, removedThread.id],
+      threadIdsByProjectId: {
+        [keptThread.projectId]: [keptThread.id, removedThread.id],
+      },
+      messageIdsByThreadId: {
+        ...baseEnvironmentState.messageIdsByThreadId,
+        [removedThread.id]: removedThread.messages.map((message) => message.id),
+      },
+      messageByThreadId: {
+        ...baseEnvironmentState.messageByThreadId,
+        [removedThread.id]: Object.fromEntries(
+          removedThread.messages.map((message) => [message.id, message] as const),
+        ) as EnvironmentState["messageByThreadId"][ThreadId],
+      },
+    });
+    const snapshot: OrchestrationShellSnapshot = {
+      snapshotSequence: 1,
+      projects: [
+        {
+          id: keptThread.projectId,
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          repositoryIdentity: null,
+          defaultModelSelection: keptThread.modelSelection,
+          scripts: [],
+          createdAt,
+          updatedAt,
+        },
+        {
+          id: secondProjectId,
+          title: "Project 2",
+          workspaceRoot: "/tmp/project-2",
+          repositoryIdentity: null,
+          defaultModelSelection: keptThread.modelSelection,
+          scripts: [],
+          createdAt,
+          updatedAt,
+        },
+      ],
+      threads: [
+        {
+          id: keptThread.id,
+          projectId: keptThread.projectId,
+          parentThreadId: null,
+          title: "Updated kept thread",
+          modelSelection: keptThread.modelSelection,
+          runtimeMode: keptThread.runtimeMode,
+          pendingRuntimeMode: null,
+          interactionMode: keptThread.interactionMode,
+          branch: null,
+          worktreePath: null,
+          latestTurn: null,
+          createdAt,
+          updatedAt,
+          archivedAt: null,
+          session: null,
+          latestUserMessageAt: "2026-02-13T00:01:00.000Z",
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+        },
+        {
+          id: addedThreadId,
+          projectId: secondProjectId,
+          parentThreadId: null,
+          title: "Added thread",
+          modelSelection: keptThread.modelSelection,
+          runtimeMode: keptThread.runtimeMode,
+          pendingRuntimeMode: null,
+          interactionMode: keptThread.interactionMode,
+          branch: null,
+          worktreePath: null,
+          latestTurn: null,
+          createdAt,
+          updatedAt,
+          archivedAt: null,
+          session: null,
+          latestUserMessageAt: null,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+        },
+      ],
+      updatedAt,
+    };
+
+    const next = syncServerShellSnapshot(state, snapshot, localEnvironmentId);
+    const nextEnvironmentState = localEnvironmentStateOf(next);
+
+    expect(nextEnvironmentState.threadIds).toEqual([keptThread.id, addedThreadId]);
+    expect(nextEnvironmentState.threadIdsByProjectId[keptThread.projectId]).toEqual([
+      keptThread.id,
+    ]);
+    expect(nextEnvironmentState.threadIdsByProjectId[secondProjectId]).toEqual([addedThreadId]);
+    expect(nextEnvironmentState.sidebarThreadSummaryById[keptThread.id]?.title).toBe(
+      "Updated kept thread",
+    );
+    expect(nextEnvironmentState.messageIdsByThreadId[keptThread.id]).toBe(
+      baseEnvironmentState.messageIdsByThreadId[keptThread.id],
+    );
+    expect(nextEnvironmentState.messageIdsByThreadId[removedThread.id]).toBeUndefined();
+  });
+});
 
 describe("thread selection memoization", () => {
   it("returns stable thread references for repeated reads of the same state", () => {

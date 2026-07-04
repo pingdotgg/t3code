@@ -1,5 +1,5 @@
 import { type OrchestrationReadModel } from "@t3tools/contracts";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit } from "effect";
 import { WorkspacePaths } from "../workspace/Services/WorkspacePaths.ts";
 import {
   getLiveOrchestrationSnapshot,

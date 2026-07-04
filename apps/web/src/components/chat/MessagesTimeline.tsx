@@ -862,7 +862,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
             size="xs"
             variant="ghost"
             aria-expanded={isExpanded}
-            onClick={() => setIsExpandedOverride(isExpanded ? false : true)}
+            onClick={() => setIsExpandedOverride(!isExpanded)}
             className="mr-auto h-6 px-0 text-muted-foreground/70 text-xs hover:bg-transparent hover:text-foreground"
           >
             {isExpanded ? "Show less" : "Show full message"}

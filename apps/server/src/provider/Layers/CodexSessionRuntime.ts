@@ -35,6 +35,8 @@ import {
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
 
+const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
+
 const PROVIDER = ProviderDriverKind.make("codex");
 
 const ANSI_ESCAPE_CHAR = String.fromCharCode(27);
@@ -67,6 +69,11 @@ const CodexTurnStartParamsWithCollaborationMode = EffectCodexSchema.V2TurnStartP
     collaborationMode: Schema.optionalKey(EffectCodexSchema.V2TurnStartParams__CollaborationMode),
   }),
 );
+const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
+const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffect(
+  CodexTurnStartParamsWithCollaborationMode,
+);
+const isCodexUserInputAnswerObject = Schema.is(CodexUserInputAnswerObject);
 
 export type CodexTurnStartParamsWithCollaborationMode =
   typeof CodexTurnStartParamsWithCollaborationMode.Type;
@@ -241,7 +248,7 @@ function normalizeCodexModelSlug(
 function readResumeCursorThreadId(
   resumeCursor: ProviderSession["resumeCursor"],
 ): string | undefined {
-  return Schema.is(CodexResumeCursorSchema)(resumeCursor) ? resumeCursor.threadId : undefined;
+  return isCodexResumeCursorSchema(resumeCursor) ? resumeCursor.threadId : undefined;
 }
 
 function runtimeModeToThreadConfig(input: RuntimeMode): {
@@ -360,7 +367,7 @@ export function buildTurnStartParams(input: {
     ...(input.effort ? { effort: input.effort } : {}),
   });
 
-  return Schema.decodeUnknownEffect(CodexTurnStartParamsWithCollaborationMode)({
+  return decodeCodexTurnStartParamsWithCollaborationMode({
     threadId: input.threadId,
     input: turnInput,
     approvalPolicy: config.approvalPolicy,
@@ -630,7 +637,7 @@ function toCodexUserInputAnswer(
     const answers = value.filter((entry): entry is string => typeof entry === "string");
     return Effect.succeed({ answers });
   }
-  if (Schema.is(CodexUserInputAnswerObject)(value)) {
+  if (isCodexUserInputAnswerObject(value)) {
     return Effect.succeed({ answers: value.answers });
   }
   return Effect.fail(new CodexSessionRuntimeInvalidUserInputAnswersError({ questionId }));
@@ -1267,9 +1274,7 @@ export const makeCodexSessionRuntime = (
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
-          const response = yield* Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse)(
-            rawResponse,
-          ).pipe(
+          const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
             Effect.mapError((error) =>
               toProtocolParseError("Invalid turn/start response payload", error),
             ),

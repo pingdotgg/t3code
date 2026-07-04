@@ -446,21 +446,26 @@ function OpenCommandPaletteDialog() {
     ],
   );
 
+  const renderProjectFavicon = useCallback(
+    (project: (typeof projects)[number]) => (
+      <ProjectFavicon
+        environmentId={project.environmentId}
+        cwd={project.cwd}
+        className={ITEM_ICON_CLASS}
+      />
+    ),
+    [],
+  );
+
   const projectSearchItems = useMemo(
     () =>
       buildProjectActionItems({
         projects,
         valuePrefix: "project",
-        icon: (project) => (
-          <ProjectFavicon
-            environmentId={project.environmentId}
-            cwd={project.cwd}
-            className={ITEM_ICON_CLASS}
-          />
-        ),
+        icon: renderProjectFavicon,
         runProject: openProjectFromSearch,
       }),
-    [openProjectFromSearch, projects],
+    [openProjectFromSearch, projects, renderProjectFavicon],
   );
 
   const projectThreadItems = useMemo(
@@ -468,13 +473,7 @@ function OpenCommandPaletteDialog() {
       buildProjectActionItems({
         projects,
         valuePrefix: "new-thread-in",
-        icon: (project) => (
-          <ProjectFavicon
-            environmentId={project.environmentId}
-            cwd={project.cwd}
-            className={ITEM_ICON_CLASS}
-          />
-        ),
+        icon: renderProjectFavicon,
         runProject: async (project) => {
           await startNewThreadInProjectFromContext(
             {
@@ -494,6 +493,7 @@ function OpenCommandPaletteDialog() {
       defaultProjectRef,
       handleNewThread,
       projects,
+      renderProjectFavicon,
       settings.defaultThreadEnvMode,
     ],
   );

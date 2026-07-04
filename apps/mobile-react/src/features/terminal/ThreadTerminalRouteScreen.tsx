@@ -1014,6 +1014,48 @@ export function ThreadTerminalRouteScreen() {
     setKeyboardFocusRequest((current) => current + 1);
   }, []);
 
+  const renderHeaderTitle = useCallback(
+    () => (
+      <View
+        style={{
+          alignItems: "center",
+          gap: 1,
+          maxWidth: 240,
+        }}
+      >
+        <RNText
+          numberOfLines={1}
+          style={{
+            color: terminalTheme.foreground,
+            fontFamily: "DMSans_700Bold",
+            fontSize: 13,
+            lineHeight: 16,
+          }}
+        >
+          {headerTitle.topLine}
+        </RNText>
+        <RNText
+          ellipsizeMode="middle"
+          numberOfLines={1}
+          style={{
+            color: terminalTheme.mutedForeground,
+            fontFamily: "Menlo",
+            fontSize: 11,
+            lineHeight: 14,
+          }}
+        >
+          {headerTitle.bottomLine}
+        </RNText>
+      </View>
+    ),
+    [
+      headerTitle.bottomLine,
+      headerTitle.topLine,
+      terminalTheme.foreground,
+      terminalTheme.mutedForeground,
+    ],
+  );
+
   if (!selectedThread) {
     if (isLoadingSavedConnection) {
       return <LoadingScreen message="Opening terminal…" />;
@@ -1052,39 +1094,7 @@ export function ThreadTerminalRouteScreen() {
           headerTintColor: terminalTheme.foreground,
           headerTitleAlign: "center",
           title: "",
-          headerTitle: () => (
-            <View
-              style={{
-                alignItems: "center",
-                gap: 1,
-                maxWidth: 240,
-              }}
-            >
-              <RNText
-                numberOfLines={1}
-                style={{
-                  color: terminalTheme.foreground,
-                  fontFamily: "DMSans_700Bold",
-                  fontSize: 13,
-                  lineHeight: 16,
-                }}
-              >
-                {headerTitle.topLine}
-              </RNText>
-              <RNText
-                ellipsizeMode="middle"
-                numberOfLines={1}
-                style={{
-                  color: terminalTheme.mutedForeground,
-                  fontFamily: "Menlo",
-                  fontSize: 11,
-                  lineHeight: 14,
-                }}
-              >
-                {headerTitle.bottomLine}
-              </RNText>
-            </View>
-          ),
+          headerTitle: renderHeaderTitle,
         }}
       />
 

@@ -6,6 +6,8 @@ import {
 } from "@t3tools/contracts";
 import { Schema } from "effect";
 
+const decodeKeybindingRuleSchema = Schema.decodeUnknownOption(KeybindingRuleSchema);
+
 export const PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE = "Invalid keybinding.";
 
 function normalizeProjectScriptKeybindingInput(
@@ -22,7 +24,7 @@ export function decodeProjectScriptKeybindingRule(input: {
   const normalizedKey = normalizeProjectScriptKeybindingInput(input.keybinding);
   if (!normalizedKey) return null;
 
-  const decoded = Schema.decodeUnknownOption(KeybindingRuleSchema)({
+  const decoded = decodeKeybindingRuleSchema({
     key: normalizedKey,
     command: input.command,
   });

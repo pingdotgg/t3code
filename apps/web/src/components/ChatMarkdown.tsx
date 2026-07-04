@@ -61,6 +61,10 @@ interface ChatMarkdownProps {
   isStreaming?: boolean;
 }
 
+type MarkdownFunctionComponentProps<K extends keyof Components> = Parameters<
+  Extract<NonNullable<Components[K]>, (...args: Array<never>) => unknown>
+>[0];
+
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
 const MAX_HIGHLIGHT_CACHE_MEMORY_BYTES = 50 * 1024 * 1024;
@@ -520,6 +524,45 @@ function areMarkdownFileLinkPropsEqual(
   );
 }
 
+const markdownComponentsWithoutRuntimeState = {
+  p({ node: _node, children, ...props }) {
+    return <p {...props}>{children}</p>;
+  },
+  li({ node: _node, children, ...props }) {
+    return <li {...props}>{children}</li>;
+  },
+  blockquote({ node: _node, children, ...props }) {
+    return <blockquote {...props}>{children}</blockquote>;
+  },
+  h1({ node: _node, children, ...props }) {
+    return <h1 {...props}>{children}</h1>;
+  },
+  h2({ node: _node, children, ...props }) {
+    return <h2 {...props}>{children}</h2>;
+  },
+  h3({ node: _node, children, ...props }) {
+    return <h3 {...props}>{children}</h3>;
+  },
+  h4({ node: _node, children, ...props }) {
+    return <h4 {...props}>{children}</h4>;
+  },
+  h5({ node: _node, children, ...props }) {
+    return <h5 {...props}>{children}</h5>;
+  },
+  h6({ node: _node, children, ...props }) {
+    return <h6 {...props}>{children}</h6>;
+  },
+  td({ node: _node, children, ...props }) {
+    return <td {...props}>{children}</td>;
+  },
+  th({ node: _node, children, ...props }) {
+    return <th {...props}>{children}</th>;
+  },
+  code({ node: _node, children, ...props }) {
+    return <code {...props}>{children}</code>;
+  },
+} satisfies Components;
+
 function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
@@ -545,103 +588,70 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
   const markdownUrlTransform = useCallback((href: string) => {
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
+  const markdownAnchor = useCallback(
+    ({ node: _node, href, ...props }: MarkdownFunctionComponentProps<"a">) => {
+      const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
+      const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+      if (!fileLinkMeta) {
+        return <a {...props} href={href} target="_blank" rel="noopener noreferrer" />;
+      }
+
+      const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
+      const labelParts = [fileLinkMeta.basename];
+      if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
+        labelParts.push(parentSuffix);
+      }
+      if (fileLinkMeta.line) {
+        labelParts.push(
+          `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
+        );
+      }
+
+      return (
+        <MarkdownFileLink
+          href={fileLinkMeta.targetPath}
+          targetPath={fileLinkMeta.targetPath}
+          displayPath={fileLinkMeta.displayPath}
+          filePath={fileLinkMeta.filePath}
+          label={labelParts.join(" · ")}
+          theme={resolvedTheme}
+          className={props.className}
+        />
+      );
+    },
+    [fileLinkParentSuffixByPath, markdownFileLinkMetaByHref, resolvedTheme],
+  );
+  const markdownPre = useCallback(
+    ({ node: _node, children, ...props }: MarkdownFunctionComponentProps<"pre">) => {
+      const codeBlock = extractCodeBlock(children);
+      if (!codeBlock) {
+        return <pre {...props}>{children}</pre>;
+      }
+
+      return (
+        <MarkdownCodeBlock code={codeBlock.code}>
+          <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
+            <Suspense fallback={<pre {...props}>{children}</pre>}>
+              <SuspenseShikiCodeBlock
+                className={codeBlock.className}
+                code={codeBlock.code}
+                themeName={diffThemeName}
+                isStreaming={isStreaming}
+              />
+            </Suspense>
+          </CodeHighlightErrorBoundary>
+        </MarkdownCodeBlock>
+      );
+    },
+    [diffThemeName, isStreaming],
+  );
   const markdownComponents = useMemo<Components>(
     () => ({
-      a({ node: _node, href, ...props }) {
-        const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
-        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
-        if (!fileLinkMeta) {
-          return <a {...props} href={href} target="_blank" rel="noopener noreferrer" />;
-        }
-
-        const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
-        const labelParts = [fileLinkMeta.basename];
-        if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
-          labelParts.push(parentSuffix);
-        }
-        if (fileLinkMeta.line) {
-          labelParts.push(
-            `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
-          );
-        }
-
-        return (
-          <MarkdownFileLink
-            href={fileLinkMeta.targetPath}
-            targetPath={fileLinkMeta.targetPath}
-            displayPath={fileLinkMeta.displayPath}
-            filePath={fileLinkMeta.filePath}
-            label={labelParts.join(" · ")}
-            theme={resolvedTheme}
-            className={props.className}
-          />
-        );
-      },
-      pre({ node: _node, children, ...props }) {
-        const codeBlock = extractCodeBlock(children);
-        if (!codeBlock) {
-          return <pre {...props}>{children}</pre>;
-        }
-
-        return (
-          <MarkdownCodeBlock code={codeBlock.code}>
-            <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
-              <Suspense fallback={<pre {...props}>{children}</pre>}>
-                <SuspenseShikiCodeBlock
-                  className={codeBlock.className}
-                  code={codeBlock.code}
-                  themeName={diffThemeName}
-                  isStreaming={isStreaming}
-                />
-              </Suspense>
-            </CodeHighlightErrorBoundary>
-          </MarkdownCodeBlock>
-        );
-      },
-      p({ node: _node, children, ...props }) {
-        return <p {...props}>{children}</p>;
-      },
-      li({ node: _node, children, ...props }) {
-        return <li {...props}>{children}</li>;
-      },
-      blockquote({ node: _node, children, ...props }) {
-        return <blockquote {...props}>{children}</blockquote>;
-      },
-      h1({ node: _node, children, ...props }) {
-        return <h1 {...props}>{children}</h1>;
-      },
-      h2({ node: _node, children, ...props }) {
-        return <h2 {...props}>{children}</h2>;
-      },
-      h3({ node: _node, children, ...props }) {
-        return <h3 {...props}>{children}</h3>;
-      },
-      h4({ node: _node, children, ...props }) {
-        return <h4 {...props}>{children}</h4>;
-      },
-      h5({ node: _node, children, ...props }) {
-        return <h5 {...props}>{children}</h5>;
-      },
-      h6({ node: _node, children, ...props }) {
-        return <h6 {...props}>{children}</h6>;
-      },
-      td({ node: _node, children, ...props }) {
-        return <td {...props}>{children}</td>;
-      },
-      th({ node: _node, children, ...props }) {
-        return <th {...props}>{children}</th>;
-      },
-      code({ node: _node, children, ...props }) {
-        return <code {...props}>{children}</code>;
-      },
+      ...markdownComponentsWithoutRuntimeState,
+      a: markdownAnchor,
+      pre: markdownPre,
     }),
-    [
-      diffThemeName,
-      fileLinkParentSuffixByPath,
-      isStreaming,
-      markdownFileLinkMetaByHref,
-      resolvedTheme,
-    ],
+    [markdownAnchor, markdownPre],
   );
 
   return (

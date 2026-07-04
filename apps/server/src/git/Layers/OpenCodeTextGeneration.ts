@@ -348,9 +348,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             releaseSharedServer,
           );
 
-    return yield* Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson))(
-      extractJsonObject(rawOutput),
-    ).pipe(
+    const decodeOutputJson = Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson));
+    return yield* decodeOutputJson(extractJsonObject(rawOutput)).pipe(
       Effect.catchTag("SchemaError", (cause) =>
         Effect.fail(
           new TextGenerationError({

@@ -11,6 +11,8 @@ import {
   type ProviderSessionDirectoryShape,
 } from "../Services/ProviderSessionDirectory.ts";
 
+const decodeProviderDriverKindValue = Schema.decodeUnknownEffect(ProviderDriverKind);
+
 function toPersistenceError(operation: string) {
   return (cause: unknown) =>
     new ProviderSessionDirectoryPersistenceError({
@@ -24,7 +26,7 @@ function decodeProviderDriverKind(
   providerName: string,
   operation: string,
 ): Effect.Effect<ProviderDriverKind, ProviderSessionDirectoryPersistenceError> {
-  return Schema.decodeUnknownEffect(ProviderDriverKind)(providerName).pipe(
+  return decodeProviderDriverKindValue(providerName).pipe(
     Effect.mapError(
       (cause) =>
         new ProviderSessionDirectoryPersistenceError({

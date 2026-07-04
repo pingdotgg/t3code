@@ -17,6 +17,10 @@ import * as AcpSchema from "./_generated/schema.gen.ts";
 import { CLIENT_METHODS } from "./_generated/meta.gen.ts";
 import * as AcpError from "./errors.ts";
 
+const decodeSessionNotification = Schema.decodeUnknownEffect(AcpSchema.SessionNotification);
+const isAcpError = Schema.is(AcpError.AcpError);
+const isAcpRequestError = Schema.is(AcpError.AcpRequestError);
+
 export interface AcpProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
   readonly stage: "raw" | "decoded" | "decode_failed";
@@ -65,7 +69,7 @@ export interface AcpPatchedProtocol {
   readonly notify: (method: string, payload: unknown) => Effect.Effect<void, AcpError.AcpError>;
 }
 
-const decodeSessionUpdate = Schema.decodeUnknownEffect(AcpSchema.SessionNotification);
+const decodeSessionUpdate = decodeSessionNotification;
 const decodeElicitationComplete = Schema.decodeUnknownEffect(
   AcpSchema.ElicitationCompleteNotification,
 );
@@ -408,7 +412,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     ),
     Effect.matchEffect({
       onFailure: (error) => {
-        const normalized: AcpError.AcpError = Schema.is(AcpError.AcpError)(error)
+        const normalized: AcpError.AcpError = isAcpError(error)
           ? error
           : new AcpError.AcpTransportError({
               detail: error instanceof Error ? error.message : String(error),
@@ -521,9 +525,7 @@ function isProtocolError(
 }
 
 function normalizeToRequestError(error: AcpError.AcpError): AcpError.AcpRequestError {
-  return Schema.is(AcpError.AcpRequestError)(error)
-    ? error
-    : AcpError.AcpRequestError.internalError(error.message);
+  return isAcpRequestError(error) ? error : AcpError.AcpRequestError.internalError(error.message);
 }
 
 function toRpcClientError(error: AcpError.AcpError): RpcClientError.RpcClientError {

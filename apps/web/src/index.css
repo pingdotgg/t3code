@@ -235,10 +235,28 @@ html:is(
 
 html[data-native-vibrancy="true"] [data-thread-item] {
   contain: paint;
+  isolation: isolate;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
-html[data-native-vibrancy="true"] [data-thread-item] [class*="transition-opacity"] {
+html[data-native-vibrancy="true"]
+  [data-thread-item]
+  :is(
+    [data-slot="sidebar-menu-sub-button"],
+    [data-slot="sidebar-menu-sub-button"] *,
+    [class*="transition-"]
+  ) {
   transition-duration: 0ms !important;
+  animation-duration: 0ms !important;
+}
+
+html[data-native-vibrancy="true"] [data-thread-item] [data-slot="sidebar-menu-sub-button"] {
+  contain: paint;
+  isolation: isolate;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  will-change: transform;
 }
 
 html[data-ui-font="geist"] {

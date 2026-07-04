@@ -9,6 +9,8 @@ import {
 import { Predicate } from "effect";
 import * as Schema from "effect/Schema";
 
+const decodeClientSettingsSchema = Schema.decodeUnknownSync(ClientSettingsSchema);
+
 interface ClientSettingsDocument {
   readonly settings: ClientSettings;
 }
@@ -93,7 +95,7 @@ export function readClientSettings(settingsPath: string): ClientSettings | null 
     return null;
   }
   try {
-    return Schema.decodeUnknownSync(ClientSettingsSchema)(raw);
+    return decodeClientSettingsSchema(raw);
   } catch {
     return null;
   }
