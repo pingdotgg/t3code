@@ -1,6 +1,6 @@
 # Remote Access
 
-Use this when you want to connect to a T3 Code server from another device such as a phone, tablet, or separate desktop app.
+Use this when you want to connect to a SergeCode server from another device such as a phone, tablet, or separate desktop app.
 
 ## Recommended Setup
 
@@ -103,7 +103,7 @@ npx t3 serve --tailscale-serve --tailscale-serve-port 8443
 
 ### Option 3: Desktop-Managed SSH Launch
 
-Use this when you want the desktop app to start or reuse T3 Code on another machine over SSH.
+Use this when you want the desktop app to start or reuse SergeCode on another machine over SSH.
 
 1. Open **Settings** → **Connections**.
 2. Under **Remote Environments**, choose **Add environment**.
@@ -119,13 +119,13 @@ SSH launch is a desktop feature because it needs local process and SSH access. O
 
 The desktop SSH launcher connects with a non-interactive `sh` session, writes a small launcher script under `~/.t3/ssh-launch/<host-key>/`, starts or reuses a remote T3 server, and forwards the remote loopback port back to your desktop.
 
-The remote host must have a compatible Node.js runtime. T3 Code uses the server package's `engines.node` requirement:
+The remote host must have a compatible Node.js runtime. SergeCode uses the server package's `engines.node` requirement:
 
 ```text
 ^22.16 || ^23.11 || >=24.10
 ```
 
-During SSH launch, T3 Code first checks whether `node` is already available on `PATH`. If it is missing, the launcher tries common non-interactive shell locations and version-manager shims/activation hooks:
+During SSH launch, SergeCode first checks whether `node` is already available on `PATH`. If it is missing, the launcher tries common non-interactive shell locations and version-manager shims/activation hooks:
 
 - `~/.local/bin`, `~/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`
 - Volta via `~/.volta/bin`
@@ -136,7 +136,7 @@ During SSH launch, T3 Code first checks whether `node` is already available on `
 - nvm via `$NVM_DIR/nvm.sh`, then `nvm use default`, `nvm use node`, or `nvm use --lts`
 - installed nvm versions under `$NVM_DIR/versions/node/*/bin`
 
-If launch fails with `node: command not found`, a port-scan failure, or a message that the remote Node version does not satisfy the required range, SSH into the host and check the same non-interactive shell path T3 Code uses:
+If launch fails with `node: command not found`, a port-scan failure, or a message that the remote Node version does not satisfy the required range, SSH into the host and check the same non-interactive shell path SergeCode uses:
 
 ```bash
 ssh user@example.com 'sh -lc "command -v node && node --version"'
@@ -176,7 +176,7 @@ Use hosted pairing when the backend is reachable from the browser over HTTPS/WSS
 
 Do not use hosted pairing for plain HTTP LAN URLs such as `http://192.168.x.y:3773`. Browsers block an HTTPS page from connecting to an insecure HTTP or WS backend. For those endpoints, use the direct pairing URL shown by the desktop app or CLI from a client that can open that HTTP URL directly.
 
-Hosted pairing does not proxy traffic through T3 Code. The browser still connects directly to the backend URL in the pairing link.
+Hosted pairing does not proxy traffic through SergeCode. The browser still connects directly to the backend URL in the pairing link.
 
 ## Managing Access Later
 
