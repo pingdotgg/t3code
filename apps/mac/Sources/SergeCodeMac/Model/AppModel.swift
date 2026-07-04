@@ -11,6 +11,9 @@ public final class AppModel {
     public private(set) var providers: [ProviderInstance] = []
     public private(set) var diffs: [String: [DiffFile]] = [:]
     public private(set) var checkpoints: [String: [Checkpoint]] = [:]
+    public private(set) var models: [ModelOption] = []
+    public private(set) var contextWindows: [String: ContextWindowStatus] = [:]
+    public private(set) var planProgress: [String: PlanProgress] = [:]
 
     public var selectedThreadID: String?
     public var lastError: String?
@@ -75,9 +78,9 @@ public final class AppModel {
             appendDelta(threadID: threadID, messageID: messageID, delta: delta)
         case .assistantCompleted(let threadID, let messageID, let markdown):
             finishStreaming(threadID: threadID, messageID: messageID, markdown: markdown)
-        case .approvalRequested:
+        case .approvalRequested, .userInputRequested:
             break
-        case .approvalResolved(let id):
+        case .approvalResolved(let id), .userInputResolved(let id):
             for threadID in timelines.keys {
                 if let index = timelines[threadID]?.firstIndex(where: { $0.id == id }) {
                     timelines[threadID]?.remove(at: index)
@@ -88,6 +91,11 @@ public final class AppModel {
             Task { await refreshDiff(threadID: threadID) }
         case .providersChanged(let list):
             providers = list
+            Task { await refreshModels() }
+        case .contextWindowUpdated(let threadID, let status):
+            contextWindows[threadID] = status
+        case .planProgressUpdated(let threadID, let progress):
+            planProgress[threadID] = progress
         }
     }
 
@@ -122,9 +130,19 @@ public final class AppModel {
             async let projects = backend.projects()
             async let threads = backend.threads()
             async let providers = backend.providers()
+            async let models = backend.models()
             self.projects = try await projects
             self.threads = try await threads.sorted { $0.updatedAt > $1.updatedAt }
             self.providers = try await providers
+            self.models = try await models
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func refreshModels() async {
+        do {
+            models = try await backend.models()
         } catch {
             lastError = String(describing: error)
         }
@@ -178,6 +196,49 @@ public final class AppModel {
     public func respond(to approval: ApprovalRequest, approve: Bool) async {
         do {
             try await backend.respondToApproval(id: approval.id, approve: approve)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func respond(to request: UserInputRequest, answers: [String: [String]]) async {
+        do {
+            try await backend.respondToUserInput(id: request.id, answers: answers)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func setRuntimeMode(_ mode: ThreadRuntimeMode) async {
+        guard let threadID = selectedThreadID else { return }
+        do {
+            try await backend.setRuntimeMode(threadID: threadID, mode: mode)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func setInteractionMode(_ mode: ThreadInteractionMode) async {
+        guard let threadID = selectedThreadID else { return }
+        do {
+            try await backend.setInteractionMode(threadID: threadID, mode: mode)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func setModel(_ model: ModelOption) async {
+        guard let threadID = selectedThreadID else { return }
+        do {
+            try await backend.setModel(threadID: threadID, model: model)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func implementPlan(_ plan: ProposedPlan) async {
+        do {
+            try await backend.implementPlan(threadID: plan.threadID, planID: plan.id)
         } catch {
             lastError = String(describing: error)
         }

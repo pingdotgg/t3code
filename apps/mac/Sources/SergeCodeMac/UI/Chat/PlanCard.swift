@@ -1,0 +1,65 @@
+import SwiftUI
+
+/// A proposed plan (plan mode output) rendered as a timeline item, with an
+/// action to start the implementation turn. The plan body is long-form
+/// reading content, so it stays opaque; only the card frame is glass.
+public struct PlanCard: View {
+    let plan: ProposedPlan
+    let onImplement: () -> Void
+
+    @UIState private var isExpanded = true
+
+    public init(plan: ProposedPlan, onImplement: @escaping () -> Void) {
+        self.plan = plan
+        self.onImplement = onImplement
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(.snappy) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Label("Proposed plan", systemImage: "list.clipboard")
+                        .font(.callout.weight(.semibold))
+                    if plan.isImplemented {
+                        Text("Implemented")
+                            .font(.caption)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.green.opacity(0.15), in: Capsule())
+                            .foregroundStyle(.green)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                AssistantMarkdownView(markdown: plan.markdown, isStreaming: false)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        Color(nsColor: .textBackgroundColor),
+                        in: RoundedRectangle(cornerRadius: 8))
+
+                if !plan.isImplemented {
+                    HStack {
+                        Spacer()
+                        Button("Implement plan") {
+                            onImplement()
+                        }
+                        .buttonStyle(.glass)
+                        .tint(.accentColor)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+    }
+}

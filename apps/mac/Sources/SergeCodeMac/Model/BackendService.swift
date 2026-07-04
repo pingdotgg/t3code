@@ -22,8 +22,12 @@ public enum BackendEvent: Sendable {
     case assistantCompleted(threadID: String, messageID: String, markdown: String)
     case approvalRequested(ApprovalRequest)
     case approvalResolved(id: String)
+    case userInputRequested(UserInputRequest)
+    case userInputResolved(id: String)
     case diffInvalidated(threadID: String)
     case providersChanged([ProviderInstance])
+    case contextWindowUpdated(threadID: String, status: ContextWindowStatus)
+    case planProgressUpdated(threadID: String, progress: PlanProgress)
 }
 
 public protocol BackendService: Sendable {
@@ -38,11 +42,25 @@ public protocol BackendService: Sendable {
     func timeline(threadID: String) async throws -> [TimelineItem]
     func providers() async throws -> [ProviderInstance]
 
+    /// Every selectable (instance, model) pair across configured providers.
+    func models() async throws -> [ModelOption]
+
     func createThread(projectID: String, provider: ProviderKind) async throws -> ChatThread
     func archiveThread(id: String) async throws
     func sendMessage(threadID: String, text: String) async throws
     func cancelTurn(threadID: String) async throws
     func respondToApproval(id: String, approve: Bool) async throws
+    /// Answer a pending user-input request. `answers` maps each question id
+    /// to the selected option labels (single-element unless multi-select) or
+    /// one free-form string.
+    func respondToUserInput(id: String, answers: [String: [String]]) async throws
+
+    func setRuntimeMode(threadID: String, mode: ThreadRuntimeMode) async throws
+    func setInteractionMode(threadID: String, mode: ThreadInteractionMode) async throws
+    /// Repoint the thread at a different provider instance/model.
+    func setModel(threadID: String, model: ModelOption) async throws
+    /// Start an implementation turn from a proposed plan (plan-mode follow-up).
+    func implementPlan(threadID: String, planID: String) async throws
 
     func diff(threadID: String) async throws -> [DiffFile]
     func checkpoints(threadID: String) async throws -> [Checkpoint]

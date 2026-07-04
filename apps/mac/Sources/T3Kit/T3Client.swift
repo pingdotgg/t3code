@@ -249,12 +249,46 @@ public actor T3Client {
             .threadUnarchive(ThreadUnarchiveCommand(commandId: T3Ids.newCommandId(), threadId: threadId)))
     }
 
+    @discardableResult
+    public func setRuntimeMode(threadId: String, runtimeMode: RuntimeMode) async throws -> DispatchResult {
+        try await dispatch(
+            .threadRuntimeModeSet(
+                ThreadRuntimeModeSetCommand(
+                    commandId: T3Ids.newCommandId(), threadId: threadId, runtimeMode: runtimeMode,
+                    createdAt: T3Clock.nowISO8601())))
+    }
+
+    @discardableResult
+    public func setInteractionMode(
+        threadId: String, interactionMode: ProviderInteractionMode
+    ) async throws -> DispatchResult {
+        try await dispatch(
+            .threadInteractionModeSet(
+                ThreadInteractionModeSetCommand(
+                    commandId: T3Ids.newCommandId(), threadId: threadId,
+                    interactionMode: interactionMode, createdAt: T3Clock.nowISO8601())))
+    }
+
+    /// Partial thread-meta update; `nil` fields are omitted (left untouched).
+    @discardableResult
+    public func updateThreadMeta(
+        threadId: String, title: String? = nil, modelSelection: ModelSelection? = nil,
+        branch: String?? = nil, worktreePath: String?? = nil
+    ) async throws -> DispatchResult {
+        try await dispatch(
+            .threadMetaUpdate(
+                ThreadMetaUpdateCommand(
+                    commandId: T3Ids.newCommandId(), threadId: threadId, title: title,
+                    modelSelection: modelSelection, branch: branch, worktreePath: worktreePath)))
+    }
+
     /// Sends a user message and starts a turn (composer send action).
     @discardableResult
     public func startTurn(
         threadId: String, text: String, attachments: [UploadChatAttachment] = [],
         modelSelection: ModelSelection? = nil, titleSeed: String? = nil,
-        runtimeMode: RuntimeMode = .wireDefault, interactionMode: ProviderInteractionMode = .wireDefault
+        runtimeMode: RuntimeMode = .wireDefault, interactionMode: ProviderInteractionMode = .wireDefault,
+        sourceProposedPlan: SourceProposedPlanReference? = nil
     ) async throws -> DispatchResult {
         let message = ChatMessageInput(
             messageId: T3Ids.newMessageId(), text: text, attachments: attachments)
@@ -263,7 +297,8 @@ public actor T3Client {
                 ThreadTurnStartCommand(
                     commandId: T3Ids.newCommandId(), threadId: threadId, message: message,
                     modelSelection: modelSelection, titleSeed: titleSeed, runtimeMode: runtimeMode,
-                    interactionMode: interactionMode, createdAt: T3Clock.nowISO8601())))
+                    interactionMode: interactionMode, sourceProposedPlan: sourceProposedPlan,
+                    createdAt: T3Clock.nowISO8601())))
     }
 
     @discardableResult

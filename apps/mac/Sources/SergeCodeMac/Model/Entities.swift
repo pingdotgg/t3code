@@ -33,6 +33,63 @@ public enum ThreadStatus: String, Sendable {
     case idle, running, waitingApproval, error, archived
 }
 
+/// UI mirror of the wire `RuntimeMode` (how much the agent may do unprompted).
+public enum ThreadRuntimeMode: String, CaseIterable, Sendable, Identifiable {
+    case approvalRequired, autoAcceptEdits, fullAccess
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .approvalRequired: "Approvals required"
+        case .autoAcceptEdits: "Auto-accept edits"
+        case .fullAccess: "Full access"
+        }
+    }
+
+    public var symbolName: String {
+        switch self {
+        case .approvalRequired: "hand.raised"
+        case .autoAcceptEdits: "pencil.circle"
+        case .fullAccess: "bolt.circle"
+        }
+    }
+}
+
+/// UI mirror of the wire `ProviderInteractionMode` (plan-first vs direct).
+public enum ThreadInteractionMode: String, CaseIterable, Sendable, Identifiable {
+    case normal, plan
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .normal: "Default"
+        case .plan: "Plan"
+        }
+    }
+}
+
+/// One selectable model of one provider instance (model picker rows).
+public struct ModelOption: Identifiable, Hashable, Sendable {
+    public var instanceID: String
+    public var modelID: String
+    public var displayName: String
+    public var provider: ProviderKind
+    public var isDefault: Bool
+
+    public var id: String { "\(instanceID)/\(modelID)" }
+
+    public init(
+        instanceID: String, modelID: String, displayName: String, provider: ProviderKind,
+        isDefault: Bool
+    ) {
+        self.instanceID = instanceID
+        self.modelID = modelID
+        self.displayName = displayName
+        self.provider = provider
+        self.isDefault = isDefault
+    }
+}
+
 public struct ChatThread: Identifiable, Hashable, Sendable {
     public var id: String
     public var projectID: String
@@ -40,14 +97,30 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     public var provider: ProviderKind
     public var status: ThreadStatus
     public var updatedAt: Date
+    public var runtimeMode: ThreadRuntimeMode
+    public var interactionMode: ThreadInteractionMode
+    /// Provider-instance + model slug backing this thread (from its
+    /// modelSelection); used to mark the active row in the model picker.
+    public var modelInstanceID: String?
+    public var modelID: String?
 
-    public init(id: String, projectID: String, title: String, provider: ProviderKind, status: ThreadStatus, updatedAt: Date) {
+    public init(
+        id: String, projectID: String, title: String, provider: ProviderKind,
+        status: ThreadStatus, updatedAt: Date,
+        runtimeMode: ThreadRuntimeMode = .fullAccess,
+        interactionMode: ThreadInteractionMode = .normal,
+        modelInstanceID: String? = nil, modelID: String? = nil
+    ) {
         self.id = id
         self.projectID = projectID
         self.title = title
         self.provider = provider
         self.status = status
         self.updatedAt = updatedAt
+        self.runtimeMode = runtimeMode
+        self.interactionMode = interactionMode
+        self.modelInstanceID = modelInstanceID
+        self.modelID = modelID
     }
 }
 
@@ -60,7 +133,9 @@ public enum TimelineItem: Identifiable, Sendable {
     case assistantMessage(id: String, markdown: String, isStreaming: Bool, at: Date)
     case toolEvent(id: String, name: String, detail: String, status: ToolEventStatus, at: Date)
     case approval(ApprovalRequest)
+    case userInput(UserInputRequest)
     case checkpoint(Checkpoint)
+    case plan(ProposedPlan)
     case notice(id: String, text: String, at: Date)
 
     public var id: String {
@@ -69,7 +144,9 @@ public enum TimelineItem: Identifiable, Sendable {
         case .assistantMessage(let id, _, _, _): id
         case .toolEvent(let id, _, _, _, _): id
         case .approval(let request): request.id
+        case .userInput(let request): request.id
         case .checkpoint(let checkpoint): checkpoint.id
+        case .plan(let plan): plan.id
         case .notice(let id, _, _): id
         }
     }
@@ -93,6 +170,116 @@ public struct ApprovalRequest: Identifiable, Hashable, Sendable {
         self.kind = kind
         self.title = title
         self.detail = detail
+        self.createdAt = createdAt
+    }
+}
+
+/// One option of a `UserInputQuestion`.
+public struct UserInputOption: Hashable, Sendable {
+    public var label: String
+    public var detail: String?
+
+    public init(label: String, detail: String? = nil) {
+        self.label = label
+        self.detail = detail
+    }
+}
+
+/// One question in a user-input request. Empty `options` means free-form.
+public struct UserInputQuestionItem: Identifiable, Hashable, Sendable {
+    public var id: String
+    public var header: String
+    public var question: String
+    public var options: [UserInputOption]
+    public var multiSelect: Bool
+
+    public init(
+        id: String, header: String, question: String, options: [UserInputOption],
+        multiSelect: Bool
+    ) {
+        self.id = id
+        self.header = header
+        self.question = question
+        self.options = options
+        self.multiSelect = multiSelect
+    }
+}
+
+/// A provider prompt the user must answer before the turn continues
+/// (distinct from approvals — option-based and/or free-form questions).
+public struct UserInputRequest: Identifiable, Hashable, Sendable {
+    public var id: String
+    public var threadID: String
+    public var questions: [UserInputQuestionItem]
+    public var createdAt: Date
+
+    public init(id: String, threadID: String, questions: [UserInputQuestionItem], createdAt: Date) {
+        self.id = id
+        self.threadID = threadID
+        self.questions = questions
+        self.createdAt = createdAt
+    }
+}
+
+/// Live token-usage snapshot for a thread's context window.
+public struct ContextWindowStatus: Hashable, Sendable {
+    public var usedTokens: Int
+    public var maxTokens: Int?
+
+    public init(usedTokens: Int, maxTokens: Int?) {
+        self.usedTokens = usedTokens
+        self.maxTokens = maxTokens
+    }
+
+    /// 0...1 fraction of the window consumed; nil when the max is unknown.
+    public var usedFraction: Double? {
+        guard let maxTokens, maxTokens > 0 else { return nil }
+        return min(1, Double(usedTokens) / Double(maxTokens))
+    }
+}
+
+public enum PlanStepStatus: String, Sendable {
+    case pending, inProgress, completed
+}
+
+/// One step of the agent's live in-turn todo/plan list.
+public struct PlanStep: Identifiable, Hashable, Sendable {
+    public var id: Int
+    public var title: String
+    public var status: PlanStepStatus
+
+    public init(id: Int, title: String, status: PlanStepStatus) {
+        self.id = id
+        self.title = title
+        self.status = status
+    }
+}
+
+/// The agent's live todo list for the running turn (TodoWrite equivalent).
+public struct PlanProgress: Hashable, Sendable {
+    public var steps: [PlanStep]
+    public var explanation: String?
+
+    public init(steps: [PlanStep], explanation: String?) {
+        self.steps = steps
+        self.explanation = explanation
+    }
+}
+
+/// A plan the agent proposed in plan mode; the user can start an
+/// implementation turn from it.
+public struct ProposedPlan: Identifiable, Hashable, Sendable {
+    public var id: String
+    public var threadID: String
+    public var markdown: String
+    public var isImplemented: Bool
+    public var createdAt: Date
+
+    public init(id: String, threadID: String, markdown: String, isImplemented: Bool, createdAt: Date) {
+        self.id = id
+        self.threadID = threadID
+        self.markdown = markdown
+        self.isImplemented = isImplemented
         self.createdAt = createdAt
     }
 }

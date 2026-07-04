@@ -20,17 +20,10 @@ public struct ComposerBar: View {
         !trimmedDraft.isEmpty && model.connection == .ready
     }
 
-    private var providerHint: String? {
-        model.selectedThread?.provider.displayName
-    }
-
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let providerHint {
-                Text(providerHint)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 4)
+            if let thread = model.selectedThread {
+                ComposerControlsRow(thread: thread, model: model)
             }
 
             GlassEffectContainer {

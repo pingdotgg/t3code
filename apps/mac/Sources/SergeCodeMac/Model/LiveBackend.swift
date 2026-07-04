@@ -110,6 +110,9 @@ public actor LiveBackend: BackendService {
 
     /// Approval id -> (threadId, wire requestId) for respondToApproval.
     private var approvalRoutes: [String: (threadID: String, requestId: String)] = [:]
+    /// User-input request id -> (dispatch route + the request itself, kept so
+    /// answers can be encoded per-question: multi-select -> array, else string).
+    private var userInputRoutes: [String: (threadID: String, requestId: String, request: UserInputRequest)] = [:]
     /// Checkpoint id (checkpointRef) -> (threadId, turnCount) for restore.
     private var checkpointRoutes: [String: (threadID: String, turnCount: Int)] = [:]
     private var checkpointsByThread: [String: [Checkpoint]] = [:]
@@ -472,8 +475,28 @@ public actor LiveBackend: BackendService {
         checkpointsByThread[threadID] = checkpoints
         currentTurnCount[threadID] = maxTurn
 
-        let items = OrchestrationMapping.timeline(for: thread).map {
-            mapEntry($0, threadID: threadID)
+        // Typed activity kinds: rebuild user-input routes (a request is
+        // pending unless a later `user-input.resolved` names it) and replay
+        // the latest plan/context-window side-channel state.
+        var resolvedInputIDs: Set<String> = []
+        for activity in thread.activities where activity.kind == ActivityKind.userInputResolved {
+            let requestID =
+                activity.decodePayload(UserInputResolvedActivityPayload.self)?.requestId
+                ?? OrchestrationMapping.extractRequestId(from: activity.payload)
+            if let requestID { resolvedInputIDs.insert(requestID) }
+        }
+        var pendingInputIDs: Set<String> = []
+        for activity in thread.activities where activity.kind == ActivityKind.userInputRequested {
+            let at = WireDate.parse(activity.createdAt) ?? Date()
+            guard let request = mapUserInputRequest(activity, threadID: threadID, at: at),
+                !resolvedInputIDs.contains(request.id)
+            else { continue }
+            pendingInputIDs.insert(request.id)
+            userInputRoutes[request.id] = (threadID, request.id, request)
+        }
+
+        let items = OrchestrationMapping.timeline(for: thread).compactMap {
+            mapEntry($0, threadID: threadID, pendingUserInputIDs: pendingInputIDs)
         }
         // A prior timeline means this snapshot is a *re*-subscribe (e.g. after
         // a socket reconnect), not the thread's first load. `timeline()`
@@ -487,6 +510,30 @@ public actor LiveBackend: BackendService {
             emit(.timelineReset(threadID: threadID, items: items))
         }
         resolveSnapshotWaiters(threadID: threadID, items: items)
+
+        // Side-channel state derived from the newest matching activity.
+        if let activity = thread.activities.last(where: { $0.kind == ActivityKind.turnPlanUpdated }),
+            let payload = activity.decodePayload(TurnPlanUpdatedActivityPayload.self)
+        {
+            let steps = payload.plan.enumerated().map { index, step in
+                PlanStep(id: index, title: step.step, status: Self.uiPlanStatus(step.status))
+            }
+            emit(
+                .planProgressUpdated(
+                    threadID: threadID,
+                    progress: PlanProgress(steps: steps, explanation: payload.explanation)))
+        }
+        if let activity = thread.activities.last(where: {
+            $0.kind == ActivityKind.contextWindowUpdated
+        }),
+            let payload = activity.decodePayload(ContextWindowUpdatedActivityPayload.self)
+        {
+            emit(
+                .contextWindowUpdated(
+                    threadID: threadID,
+                    status: ContextWindowStatus(
+                        usedTokens: payload.usedTokens, maxTokens: payload.maxTokens)))
+        }
     }
 
     private func applyThreadEvent(threadID: String, event: OrchestrationEvent) {
@@ -502,6 +549,11 @@ public actor LiveBackend: BackendService {
             guard !(seenActivityIDs[threadID]?.contains(activity.id) ?? false) else { return }
             seenActivityIDs[threadID, default: []].insert(activity.id)
             let at = WireDate.parse(activity.createdAt) ?? Date()
+            // Typed activity kinds (user-input, live plan, context window)
+            // are consumed into dedicated events, not generic timeline rows.
+            if consumeSpecialActivity(activity, threadID: threadID, at: at, appendToTimeline: true) {
+                return
+            }
             if activity.tone == .approval {
                 let requestID =
                     OrchestrationMapping.extractRequestId(from: activity.payload) ?? activity.id
@@ -524,8 +576,10 @@ public actor LiveBackend: BackendService {
             emit(
                 .timelineAppended(
                     threadID: threadID,
-                    item: .notice(
-                        id: plan.id, text: "Proposed plan:\n\(plan.planMarkdown)", at: at)))
+                    item: .plan(
+                        ProposedPlan(
+                            id: plan.id, threadID: threadID, markdown: plan.planMarkdown,
+                            isImplemented: plan.implementedAt != nil, createdAt: at))))
 
         case .threadTurnDiffCompleted(let payload):
             currentTurnCount[threadID] = max(
@@ -564,6 +618,92 @@ public actor LiveBackend: BackendService {
         // dedicated affordance (today it only models approvals).
         default:
             break
+        }
+    }
+
+    /// Consumes an activity with a well-known typed kind (ActivityKind.*).
+    /// Returns false when the activity is not special — the caller falls
+    /// through to generic tone-based mapping. When true, the dedicated
+    /// BackendEvents were emitted; `.userInput` additionally joins the
+    /// timeline when `appendToTimeline` is set (live tail; snapshot rebuilds
+    /// the timeline wholesale instead).
+    private func consumeSpecialActivity(
+        _ activity: OrchestrationThreadActivity, threadID: String, at: Date,
+        appendToTimeline: Bool
+    ) -> Bool {
+        switch activity.kind {
+        case ActivityKind.userInputRequested:
+            guard let request = mapUserInputRequest(activity, threadID: threadID, at: at) else {
+                return false  // Malformed payload: degrade to generic rendering.
+            }
+            userInputRoutes[request.id] = (threadID, request.id, request)
+            emit(.userInputRequested(request))
+            if appendToTimeline {
+                emit(.timelineAppended(threadID: threadID, item: .userInput(request)))
+            }
+            return true
+
+        case ActivityKind.userInputResolved:
+            let requestID =
+                activity.decodePayload(UserInputResolvedActivityPayload.self)?.requestId
+                ?? OrchestrationMapping.extractRequestId(from: activity.payload)
+            if let requestID {
+                userInputRoutes[requestID] = nil
+                emit(.userInputResolved(id: requestID))
+            }
+            return true
+
+        case ActivityKind.turnPlanUpdated:
+            guard let payload = activity.decodePayload(TurnPlanUpdatedActivityPayload.self) else {
+                return false
+            }
+            let steps = payload.plan.enumerated().map { index, step in
+                PlanStep(id: index, title: step.step, status: Self.uiPlanStatus(step.status))
+            }
+            emit(
+                .planProgressUpdated(
+                    threadID: threadID,
+                    progress: PlanProgress(steps: steps, explanation: payload.explanation)))
+            return true
+
+        case ActivityKind.contextWindowUpdated:
+            guard let payload = activity.decodePayload(ContextWindowUpdatedActivityPayload.self)
+            else { return false }
+            emit(
+                .contextWindowUpdated(
+                    threadID: threadID,
+                    status: ContextWindowStatus(
+                        usedTokens: payload.usedTokens, maxTokens: payload.maxTokens)))
+            return true
+
+        default:
+            return false
+        }
+    }
+
+    private func mapUserInputRequest(
+        _ activity: OrchestrationThreadActivity, threadID: String, at: Date
+    ) -> UserInputRequest? {
+        guard let payload = activity.decodePayload(UserInputRequestedActivityPayload.self),
+            !payload.questions.isEmpty
+        else { return nil }
+        let requestID = payload.requestId ?? activity.id
+        let questions = payload.questions.map { question in
+            UserInputQuestionItem(
+                id: question.id, header: question.header, question: question.question,
+                options: question.options.map {
+                    UserInputOption(label: $0.label, detail: $0.description)
+                },
+                multiSelect: question.multiSelect)
+        }
+        return UserInputRequest(id: requestID, threadID: threadID, questions: questions, createdAt: at)
+    }
+
+    private static func uiPlanStatus(_ status: TurnPlanStepStatus?) -> PlanStepStatus {
+        switch status {
+        case .pending, nil: .pending
+        case .inProgress: .inProgress
+        case .completed: .completed
         }
     }
 
@@ -679,6 +819,23 @@ public actor LiveBackend: BackendService {
         currentProviderList()
     }
 
+    public func models() async throws -> [ModelOption] {
+        providersByInstanceId.values
+            .flatMap { provider -> [ModelOption] in
+                guard let kind = providerKind(fromDriver: provider.driver) else { return [] }
+                return provider.models.map { model in
+                    ModelOption(
+                        instanceID: provider.instanceId, modelID: model.slug,
+                        displayName: model.name, provider: kind,
+                        // The wire has no per-instance default marker; the first
+                        // listed model is what `modelSelection(for:)` picks for
+                        // new threads, so mark that one.
+                        isDefault: model.slug == provider.models.first?.slug)
+                }
+            }
+            .sorted { ($0.provider.rawValue, $0.displayName) < ($1.provider.rawValue, $1.displayName) }
+    }
+
     // MARK: - BackendService: commands
 
     public func createThread(projectID: String, provider: ProviderKind) async throws -> ChatThread {
@@ -706,7 +863,25 @@ public actor LiveBackend: BackendService {
 
     public func sendMessage(threadID: String, text: String) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
-        _ = try await client.startTurn(threadId: threadID, text: text)
+        // The wire command requires modes; echo the thread's current ones so a
+        // send never silently flips an approval-required thread to full access.
+        let thread = threadsByID[threadID]
+        _ = try await client.startTurn(
+            threadId: threadID, text: text,
+            runtimeMode: thread.map { Self.wireRuntimeMode($0.runtimeMode) } ?? .wireDefault,
+            interactionMode: thread.map { Self.wireInteractionMode($0.interactionMode) } ?? .wireDefault)
+    }
+
+    public func implementPlan(threadID: String, planID: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let thread = threadsByID[threadID]
+        // Implementation turns always run in the default interaction mode —
+        // plan mode is what produced the plan being implemented.
+        _ = try await client.startTurn(
+            threadId: threadID, text: "Implement the proposed plan.",
+            runtimeMode: thread.map { Self.wireRuntimeMode($0.runtimeMode) } ?? .wireDefault,
+            interactionMode: .default,
+            sourceProposedPlan: SourceProposedPlanReference(threadId: threadID, planId: planID))
     }
 
     public func cancelTurn(threadID: String) async throws {
@@ -724,6 +899,61 @@ public actor LiveBackend: BackendService {
             threadId: route.threadID, requestId: route.requestId, decision: decision)
         approvalRoutes[id] = nil
         emit(.approvalResolved(id: id))
+    }
+
+    public func respondToUserInput(id: String, answers: [String: [String]]) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        guard let route = userInputRoutes[id] else {
+            throw LiveBackendError.unresolvedUserInput(id)
+        }
+        // Wire `answers` is Record<questionId, unknown>: multi-select questions
+        // get an array of option labels, everything else a single string.
+        var wireAnswers: ProviderUserInputAnswers = [:]
+        for question in route.request.questions {
+            guard let values = answers[question.id], !values.isEmpty else { continue }
+            wireAnswers[question.id] =
+                question.multiSelect
+                ? .array(values.map { .string($0) })
+                : .string(values[0])
+        }
+        _ = try await client.respondToUserInput(
+            threadId: route.threadID, requestId: route.requestId, answers: wireAnswers)
+        userInputRoutes[id] = nil
+        emit(.userInputResolved(id: id))
+    }
+
+    public func setRuntimeMode(threadID: String, mode: ThreadRuntimeMode) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.setRuntimeMode(threadId: threadID, runtimeMode: Self.wireRuntimeMode(mode))
+        updateCachedThread(threadID) { $0.runtimeMode = mode }
+    }
+
+    public func setInteractionMode(threadID: String, mode: ThreadInteractionMode) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.setInteractionMode(
+            threadId: threadID, interactionMode: Self.wireInteractionMode(mode))
+        updateCachedThread(threadID) { $0.interactionMode = mode }
+    }
+
+    public func setModel(threadID: String, model: ModelOption) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.updateThreadMeta(
+            threadId: threadID,
+            modelSelection: ModelSelection(instanceId: model.instanceID, model: model.modelID))
+        updateCachedThread(threadID) {
+            $0.modelInstanceID = model.instanceID
+            $0.modelID = model.modelID
+            $0.provider = model.provider
+        }
+    }
+
+    /// Optimistically patch the cached thread and re-emit it; the shell
+    /// subscription's authoritative upsert follows and overwrites.
+    private func updateCachedThread(_ threadID: String, _ mutate: (inout ChatThread) -> Void) {
+        guard var thread = threadsByID[threadID] else { return }
+        mutate(&thread)
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
     }
 
     public func diff(threadID: String) async throws -> [DiffFile] {
@@ -794,11 +1024,46 @@ public actor LiveBackend: BackendService {
             instanceId: shell.modelSelection.instanceId, providerName: shell.session?.providerName)
         let status = mapStatus(
             session: shell.session, latestTurn: shell.latestTurn, archivedAt: shell.archivedAt,
-            hasPendingApprovals: shell.hasPendingApprovals)
+            hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput)
         let updatedAt = WireDate.parse(shell.updatedAt) ?? Date()
         return ChatThread(
             id: shell.id, projectID: shell.projectId, title: shell.title, provider: kind,
-            status: status, updatedAt: updatedAt)
+            status: status, updatedAt: updatedAt,
+            runtimeMode: Self.uiRuntimeMode(shell.runtimeMode),
+            interactionMode: Self.uiInteractionMode(shell.interactionMode),
+            modelInstanceID: shell.modelSelection.instanceId, modelID: shell.modelSelection.model)
+    }
+
+    // MARK: - Mode mapping (wire <-> UI)
+
+    static func uiRuntimeMode(_ mode: RuntimeMode) -> ThreadRuntimeMode {
+        switch mode {
+        case .approvalRequired: .approvalRequired
+        case .autoAcceptEdits: .autoAcceptEdits
+        case .fullAccess: .fullAccess
+        }
+    }
+
+    static func wireRuntimeMode(_ mode: ThreadRuntimeMode) -> RuntimeMode {
+        switch mode {
+        case .approvalRequired: .approvalRequired
+        case .autoAcceptEdits: .autoAcceptEdits
+        case .fullAccess: .fullAccess
+        }
+    }
+
+    static func uiInteractionMode(_ mode: ProviderInteractionMode) -> ThreadInteractionMode {
+        switch mode {
+        case .default: .normal
+        case .plan: .plan
+        }
+    }
+
+    static func wireInteractionMode(_ mode: ThreadInteractionMode) -> ProviderInteractionMode {
+        switch mode {
+        case .normal: .default
+        case .plan: .plan
+        }
     }
 
     private func mapStatus(
@@ -824,14 +1089,30 @@ public actor LiveBackend: BackendService {
         return .idle
     }
 
-    private func mapEntry(_ entry: T3TimelineEntry, threadID: String) -> TimelineItem {
+    /// Maps one merged timeline entry to a UI item. Returns nil for entries
+    /// that live outside the timeline (plan/context-window side channels,
+    /// answered user-input prompts).
+    private func mapEntry(
+        _ entry: T3TimelineEntry, threadID: String, pendingUserInputIDs: Set<String> = []
+    ) -> TimelineItem? {
         switch entry {
         case let .userMessage(id, text, at):
             return .userMessage(id: id, text: text, at: at)
         case let .assistantMessage(id, markdown, isStreaming, at):
             return .assistantMessage(id: id, markdown: markdown, isStreaming: isStreaming, at: at)
         case let .activity(activity, at):
-            return mapActivity(activity, at: at)
+            switch activity.kind {
+            case ActivityKind.userInputRequested:
+                guard let request = mapUserInputRequest(activity, threadID: threadID, at: at),
+                    pendingUserInputIDs.contains(request.id)
+                else { return nil }
+                return .userInput(request)
+            case ActivityKind.userInputResolved, ActivityKind.turnPlanUpdated,
+                ActivityKind.contextWindowUpdated:
+                return nil
+            default:
+                return mapActivity(activity, at: at)
+            }
         case let .approvalActivity(activity, requestID, at):
             let id = requestID ?? activity.id
             return .approval(
@@ -845,7 +1126,10 @@ public actor LiveBackend: BackendService {
                     id: summary.checkpointRef, threadID: threadID,
                     label: "Turn \(summary.checkpointTurnCount)", createdAt: at))
         case let .proposedPlan(plan, at):
-            return .notice(id: plan.id, text: "Proposed plan:\n\(plan.planMarkdown)", at: at)
+            return .plan(
+                ProposedPlan(
+                    id: plan.id, threadID: threadID, markdown: plan.planMarkdown,
+                    isImplemented: plan.implementedAt != nil, createdAt: at))
         }
     }
 
@@ -949,6 +1233,7 @@ public actor LiveBackend: BackendService {
 public enum LiveBackendError: Error, Sendable {
     case notConnected
     case unresolvedApproval(String)
+    case unresolvedUserInput(String)
     case unresolvedCheckpoint(String)
     case noProviderForKind(ProviderKind)
 }

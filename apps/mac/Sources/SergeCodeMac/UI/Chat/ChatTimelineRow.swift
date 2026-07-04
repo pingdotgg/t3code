@@ -17,6 +17,14 @@ struct ChatTimelineRowView: View {
             ApprovalCard(request: request) { approve in
                 Task { await model.respond(to: request, approve: approve) }
             }
+        case .userInput(let request):
+            UserInputCard(request: request) { answers in
+                Task { await model.respond(to: request, answers: answers) }
+            }
+        case .plan(let plan):
+            PlanCard(plan: plan) {
+                Task { await model.implementPlan(plan) }
+            }
         case .checkpoint(let checkpoint):
             CheckpointRow(checkpoint: checkpoint, model: model)
         case .notice(_, let text, _):

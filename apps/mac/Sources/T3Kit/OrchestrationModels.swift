@@ -294,9 +294,14 @@ public struct OrchestrationMessage: Codable, Sendable {
     }
 }
 
-struct SourceProposedPlanReference: Codable, Sendable {
-    var threadId: String
-    var planId: String
+public struct SourceProposedPlanReference: Codable, Sendable {
+    public var threadId: String
+    public var planId: String
+
+    public init(threadId: String, planId: String) {
+        self.threadId = threadId
+        self.planId = planId
+    }
 }
 
 public struct OrchestrationProposedPlan: Codable, Sendable {
@@ -1077,14 +1082,15 @@ public struct ThreadTurnStartCommand: Encodable, Sendable {
     public var runtimeMode: RuntimeMode
     public var interactionMode: ProviderInteractionMode
     public var bootstrap: ThreadTurnStartBootstrap?
-    var sourceProposedPlan: SourceProposedPlanReference?
+    public var sourceProposedPlan: SourceProposedPlanReference?
     public var createdAt: String
 
     public init(
         commandId: String, threadId: String, message: ChatMessageInput,
         modelSelection: ModelSelection? = nil, titleSeed: String? = nil,
         runtimeMode: RuntimeMode = .wireDefault, interactionMode: ProviderInteractionMode = .wireDefault,
-        bootstrap: ThreadTurnStartBootstrap? = nil, createdAt: String
+        bootstrap: ThreadTurnStartBootstrap? = nil,
+        sourceProposedPlan: SourceProposedPlanReference? = nil, createdAt: String
     ) {
         self.commandId = commandId
         self.threadId = threadId
@@ -1094,7 +1100,7 @@ public struct ThreadTurnStartCommand: Encodable, Sendable {
         self.runtimeMode = runtimeMode
         self.interactionMode = interactionMode
         self.bootstrap = bootstrap
-        self.sourceProposedPlan = nil
+        self.sourceProposedPlan = sourceProposedPlan
         self.createdAt = createdAt
     }
 }

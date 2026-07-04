@@ -61,6 +61,30 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.respondToApproval(id: id, approve: approve)
     }
 
+    public func models() async throws -> [ModelOption] {
+        await state.models()
+    }
+
+    public func respondToUserInput(id: String, answers: [String: [String]]) async throws {
+        await state.respondToUserInput(id: id, answers: answers)
+    }
+
+    public func setRuntimeMode(threadID: String, mode: ThreadRuntimeMode) async throws {
+        await state.setRuntimeMode(threadID: threadID, mode: mode)
+    }
+
+    public func setInteractionMode(threadID: String, mode: ThreadInteractionMode) async throws {
+        await state.setInteractionMode(threadID: threadID, mode: mode)
+    }
+
+    public func setModel(threadID: String, model: ModelOption) async throws {
+        await state.setModel(threadID: threadID, model: model)
+    }
+
+    public func implementPlan(threadID: String, planID: String) async throws {
+        await state.sendMessage(threadID: threadID, text: "Implement the proposed plan.")
+    }
+
     public func diff(threadID: String) async throws -> [DiffFile] {
         await state.diff(threadID: threadID)
     }
@@ -133,6 +157,20 @@ private actor MockState {
         for approval in approvalsByID.values {
             emit(.approvalRequested(approval))
         }
+        emit(
+            .contextWindowUpdated(
+                threadID: "thread-1",
+                status: ContextWindowStatus(usedTokens: 72_000, maxTokens: 200_000)))
+        emit(
+            .planProgressUpdated(
+                threadID: "thread-1",
+                progress: PlanProgress(
+                    steps: [
+                        PlanStep(id: 0, title: "Reproduce the scroll jump", status: .completed),
+                        PlanStep(id: 1, title: "Pin sort to explicit reorder", status: .inProgress),
+                        PlanStep(id: 2, title: "Verify with 200-thread seed", status: .pending),
+                    ],
+                    explanation: nil)))
     }
 
     // MARK: Reads
@@ -232,6 +270,56 @@ private actor MockState {
         let notice = TimelineItem.notice(id: nextID("notice"), text: "Turn cancelled.", at: Date())
         timelinesByThread[threadID, default: []].append(notice)
         emit(.timelineAppended(threadID: threadID, item: notice))
+    }
+
+    func models() -> [ModelOption] {
+        [
+            ModelOption(
+                instanceID: "provider-claude", modelID: "claude-fable-5",
+                displayName: "Fable 5", provider: .claude, isDefault: true),
+            ModelOption(
+                instanceID: "provider-claude", modelID: "claude-opus-4-8",
+                displayName: "Opus 4.8", provider: .claude, isDefault: false),
+            ModelOption(
+                instanceID: "provider-codex", modelID: "gpt-5.2-codex",
+                displayName: "GPT-5.2 Codex", provider: .codex, isDefault: true),
+            ModelOption(
+                instanceID: "provider-cursor", modelID: "composer-2",
+                displayName: "Composer 2", provider: .cursor, isDefault: true),
+        ]
+    }
+
+    func respondToUserInput(id: String, answers: [String: [String]]) {
+        emit(.userInputResolved(id: id))
+        let summary = answers.values.flatMap { $0 }.joined(separator: ", ")
+        let notice = TimelineItem.notice(
+            id: nextID("notice"), text: "Answered: \(summary)", at: Date())
+        // The mock seeds its one user-input request on thread-1.
+        timelinesByThread["thread-1", default: []].append(notice)
+        emit(.timelineAppended(threadID: "thread-1", item: notice))
+    }
+
+    func setRuntimeMode(threadID: String, mode: ThreadRuntimeMode) {
+        guard var thread = threadsByID[threadID] else { return }
+        thread.runtimeMode = mode
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    func setInteractionMode(threadID: String, mode: ThreadInteractionMode) {
+        guard var thread = threadsByID[threadID] else { return }
+        thread.interactionMode = mode
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    func setModel(threadID: String, model: ModelOption) {
+        guard var thread = threadsByID[threadID] else { return }
+        thread.modelInstanceID = model.instanceID
+        thread.modelID = model.modelID
+        thread.provider = model.provider
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
     }
 
     func respondToApproval(id: String, approve: Bool) {
@@ -418,6 +506,33 @@ private actor MockState {
             .toolEvent(id: "t1-tool2", name: "edit_file", detail: "Sources/SergeCodeMac/Model/AppModel.swift", status: .succeeded, at: now.addingTimeInterval(-200)),
             .checkpoint(Checkpoint(id: "ckpt-1a", threadID: "thread-1", label: "Before scroll refactor", createdAt: now.addingTimeInterval(-600))),
             .userMessage(id: "t1-u2", text: "Nice, that feels a lot smoother now.", at: now.addingTimeInterval(-90)),
+            .plan(ProposedPlan(
+                id: "t1-plan1",
+                threadID: "thread-1",
+                markdown: """
+                ## Plan: stop the sidebar scroll jumping
+                1. Pin the sort to run only on explicit reorder events.
+                2. Keep scroll anchored to the selected row during upserts.
+                """,
+                isImplemented: false,
+                createdAt: now.addingTimeInterval(-80)
+            )),
+            .userInput(UserInputRequest(
+                id: "input-1",
+                threadID: "thread-1",
+                questions: [
+                    UserInputQuestionItem(
+                        id: "q1",
+                        header: "Sort strategy",
+                        question: "Should archived threads keep their position or sink to the bottom?",
+                        options: [
+                            UserInputOption(label: "Keep position", detail: "Least surprising while a thread is open"),
+                            UserInputOption(label: "Sink to bottom", detail: "Keeps active work on top"),
+                        ],
+                        multiSelect: false),
+                ],
+                createdAt: now.addingTimeInterval(-40)
+            )),
         ]
     }
 
