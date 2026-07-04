@@ -3,6 +3,7 @@ import {
   CommandId,
   EnvironmentId,
   MessageId,
+  ProjectId,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -12,6 +13,7 @@ import {
   decodeQueuedThreadMessage,
   encodeQueuedThreadMessage,
   groupQueuedThreadMessages,
+  isQueuedThreadCreationSendable,
   modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
@@ -292,9 +294,43 @@ describe("thread outbox", () => {
     registry.dispose();
   });
 
+  it("updates a queued message in place but never resurrects a removed one", async () => {
+    const registry = AtomRegistry.make();
+    const stored = new Map<MessageId, QueuedThreadMessage>();
+    const storage: ThreadOutboxStorage = {
+      load: async () => [...stored.values()],
+      write: async (message) => {
+        stored.set(message.messageId, message);
+      },
+      remove: async (message) => {
+        stored.delete(message.messageId);
+      },
+    };
+    const manager = createThreadOutboxManager({ registry, storage });
+    const message = queuedMessage({
+      messageId: "message-1",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+
+    await manager.enqueue(message);
+    const edited = { ...message, text: "edited" };
+    await expect(manager.update(edited)).resolves.toBe(true);
+    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
+      "environment-1:thread-1": [edited],
+    });
+    expect(stored.get(message.messageId)).toEqual(edited);
+
+    await manager.remove(edited);
+    await expect(manager.update({ ...message, text: "stale flush" })).resolves.toBe(false);
+    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({});
+    expect(stored.size).toBe(0);
+    registry.dispose();
+  });
+
   it("only removes a missing-thread message after shell synchronization is live", () => {
     expect(
       resolveThreadOutboxDeliveryAction({
+        isCreation: false,
         threadExists: false,
         shellStatus: "synchronizing",
         environmentConnected: true,
@@ -303,6 +339,7 @@ describe("thread outbox", () => {
     ).toBe("wait");
     expect(
       resolveThreadOutboxDeliveryAction({
+        isCreation: false,
         threadExists: false,
         shellStatus: "live",
         environmentConnected: true,
@@ -311,12 +348,96 @@ describe("thread outbox", () => {
     ).toBe("remove");
     expect(
       resolveThreadOutboxDeliveryAction({
+        isCreation: false,
         threadExists: true,
         shellStatus: "live",
         environmentConnected: true,
         threadBusy: false,
       }),
     ).toBe("send");
+  });
+
+  it("sends queued creations once connected and live, removing already-created ones", () => {
+    expect(
+      resolveThreadOutboxDeliveryAction({
+        isCreation: true,
+        threadExists: false,
+        shellStatus: "cached",
+        environmentConnected: false,
+        threadBusy: false,
+      }),
+    ).toBe("wait");
+    // Connected but not yet synchronized: a previously delivered creation may
+    // simply not be visible yet — sending now could duplicate the thread.
+    expect(
+      resolveThreadOutboxDeliveryAction({
+        isCreation: true,
+        threadExists: false,
+        shellStatus: "synchronizing",
+        environmentConnected: true,
+        threadBusy: false,
+      }),
+    ).toBe("wait");
+    expect(
+      resolveThreadOutboxDeliveryAction({
+        isCreation: true,
+        threadExists: false,
+        shellStatus: "live",
+        environmentConnected: true,
+        threadBusy: false,
+      }),
+    ).toBe("send");
+    expect(
+      resolveThreadOutboxDeliveryAction({
+        isCreation: true,
+        threadExists: true,
+        shellStatus: "live",
+        environmentConnected: true,
+        threadBusy: true,
+      }),
+    ).toBe("remove");
+  });
+
+  it("round-trips queued creations and gates incomplete ones from sending", () => {
+    const base = queuedMessage({
+      messageId: "message-1",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+    const creationMessage = {
+      ...base,
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+      },
+      creation: {
+        projectId: ProjectId.make("project-1"),
+        workspaceMode: "worktree",
+        branch: "main",
+        worktreePath: null,
+        startFromOrigin: true,
+      },
+    } satisfies QueuedThreadMessage;
+
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(creationMessage))).toEqual(
+      creationMessage,
+    );
+    expect(isQueuedThreadCreationSendable(creationMessage)).toBe(true);
+    expect(
+      isQueuedThreadCreationSendable({
+        ...creationMessage,
+        creation: { ...creationMessage.creation, branch: null },
+      }),
+    ).toBe(false);
+    expect(
+      isQueuedThreadCreationSendable({
+        ...creationMessage,
+        creation: { ...creationMessage.creation, branch: "" },
+      }),
+    ).toBe(false);
+    expect(isQueuedThreadCreationSendable({ ...creationMessage, modelSelection: undefined })).toBe(
+      false,
+    );
+    expect(isQueuedThreadCreationSendable(base)).toBe(false);
   });
 
   it("retries transport failures but drops deterministic command failures", () => {
