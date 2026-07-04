@@ -25,7 +25,17 @@ public struct ChatScreen: View {
                 ChatEmptyStateView()
             }
         }
-        .background(.background)
+        .background {
+            // The thread's scene as a full chat wallpaper; the wash inside
+            // keeps timeline text readable (see SceneryChatBackground).
+            if let thread = model.selectedThread {
+                SceneryChatBackground(
+                    scenery: scenery, photo: scenery.photo(for: thread.id),
+                    fallbackSeed: thread.id)
+            } else {
+                Rectangle().fill(.background)
+            }
+        }
         .task(id: model.selectedThreadID) {
             isPinnedToBottom = true
             guard let threadID = model.selectedThreadID else { return }

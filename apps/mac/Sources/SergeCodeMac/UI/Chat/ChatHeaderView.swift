@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Top chrome bar: thread title, provider + status badges, cancel control,
-/// set on the thread's frosted alpine scene. Chrome, so it's the one part of
-/// ChatScreen allowed a photo/glass backdrop (short text only).
+/// Top chrome bar: thread title, provider + status badges, cancel control.
+/// Transparent — it sits directly on the thread's `SceneryChatBackground`
+/// wallpaper (which darkens toward the top for exactly this text).
 struct ChatHeaderView: View {
     let thread: ChatThread
     let model: AppModel
@@ -37,10 +37,6 @@ struct ChatHeaderView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background {
-            FrostedSceneryBackdrop(
-                scenery: scenery, photo: scenery.photo(for: thread.id), fallbackSeed: thread.id)
-        }
     }
 }
 

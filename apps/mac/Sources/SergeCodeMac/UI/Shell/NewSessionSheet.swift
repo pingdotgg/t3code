@@ -39,6 +39,7 @@ struct NewSessionSheet: View {
                     }
                 }
                 .padding(12)
+                .sceneryChrome()
             }
             .frame(height: 82)
             .clipShape(RoundedRectangle(cornerRadius: 12))

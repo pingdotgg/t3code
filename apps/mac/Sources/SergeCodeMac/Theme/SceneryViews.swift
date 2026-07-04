@@ -38,21 +38,71 @@ struct SceneryImageView: View {
     }
 }
 
-/// Heavily frosted scenery band for chrome surfaces (headers, sheet strips):
-/// photo, material blur, and a top-down scrim so short chrome text stays
-/// legible. Long-form text never sits on this (Liquid Glass rule).
+/// Frosted scenery band for chrome surfaces (headers, sheet strips): photo
+/// with an explicit gaussian frost and a top-down scrim so short chrome text
+/// stays legible. Deliberately NOT a SwiftUI `Material` — materials sample
+/// the backdrop behind them (near-opaque gray on macOS), hiding the photo
+/// entirely. Pair with `.sceneryChrome()` on the foreground content. Long-form
+/// text never sits on this (Liquid Glass rule).
 struct FrostedSceneryBackdrop: View {
     let scenery: SceneryStore
     let photo: SceneryPhoto?
     var fallbackSeed: String = "sergecode"
+    /// Frost strength; lower shows more of the scene.
+    var blurRadius: CGFloat = 9
 
     var body: some View {
         SceneryImageView(scenery: scenery, photo: photo, fallbackSeed: fallbackSeed)
-            .overlay(.ultraThinMaterial)
+            .blur(radius: blurRadius, opaque: true)
+            .saturation(1.08)
             .overlay(
                 LinearGradient(
-                    colors: [.black.opacity(0.16), .black.opacity(0.04)],
+                    colors: [.black.opacity(0.34), .black.opacity(0.18)],
                     startPoint: .top, endPoint: .bottom))
+            .clipped()
+    }
+}
+
+extension View {
+    /// Foreground treatment for content sitting on `FrostedSceneryBackdrop`:
+    /// render as dark-mode (white text/symbols) regardless of the app
+    /// appearance, since the scrimmed photo is always dark.
+    func sceneryChrome() -> some View {
+        environment(\.colorScheme, .dark)
+    }
+}
+
+/// Full-bleed chat wallpaper: the thread's scene, lightly frosted, under a
+/// window-tone wash. The wash is the legibility system — it pulls the photo
+/// toward the appearance's background tone (black-ish in dark mode, white-ish
+/// in light) far enough that standard `.primary`/`.secondary` text stays
+/// readable everywhere on top, while the scene stays clearly visible.
+struct SceneryChatBackground: View {
+    let scenery: SceneryStore
+    let photo: SceneryPhoto?
+    var fallbackSeed: String = "sergecode"
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        SceneryImageView(scenery: scenery, photo: photo, fallbackSeed: fallbackSeed)
+            .blur(radius: 4, opaque: true)
+            .saturation(1.05)
+            .overlay(colorScheme == .dark ? Color.black.opacity(0.50) : .white.opacity(0.58))
+            // Slightly heavier at the top so header text always clears the
+            // brightest part of a sky.
+            .overlay(
+                LinearGradient(
+                    colors: [
+                        washEdge.opacity(0.35), .clear, .clear, washEdge.opacity(0.25),
+                    ],
+                    startPoint: .top, endPoint: .bottom))
+            .clipped()
+            .ignoresSafeArea()
+    }
+
+    private var washEdge: Color {
+        colorScheme == .dark ? .black : .white
     }
 }
 
@@ -79,7 +129,9 @@ struct SceneryAttributionTag: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(.ultraThinMaterial, in: Capsule())
+        // Solid translucent pill, not a material — see FrostedSceneryBackdrop.
+        .background(Color.black.opacity(0.32), in: Capsule())
+        .sceneryChrome()
     }
 
     private var profileURL: URL? {

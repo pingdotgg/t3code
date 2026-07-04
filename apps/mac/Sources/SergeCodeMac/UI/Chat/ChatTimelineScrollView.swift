@@ -26,8 +26,8 @@ struct ChatTimelineScrollView: View {
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            // Opaque reading surface — no glass behind timeline content.
-            .background(.background)
+            // Transparent: the timeline reads off ChatScreen's washed scenery
+            // wallpaper (SceneryChatBackground guarantees the contrast).
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentOffset.y + geometry.containerSize.height
                     >= geometry.contentSize.height - 60
