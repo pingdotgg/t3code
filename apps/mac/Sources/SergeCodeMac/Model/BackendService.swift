@@ -8,8 +8,18 @@ public enum BackendEvent: Sendable {
     case threadUpserted(ChatThread)
     case threadRemoved(id: String)
     case timelineAppended(threadID: String, item: TimelineItem)
+    /// Full replacement of a thread's timeline — emitted when the backend has
+    /// re-derived the timeline from a fresh snapshot after the caller already
+    /// had one cached (e.g. a reconnect re-subscribe). Consumers should
+    /// overwrite their cached timeline for `threadID` wholesale rather than
+    /// appending.
+    case timelineReset(threadID: String, items: [TimelineItem])
     case assistantDelta(threadID: String, messageID: String, delta: String)
-    case assistantCompleted(threadID: String, messageID: String)
+    /// `markdown` is the server's authoritative final text for the message —
+    /// callers should replace their accumulated/delta-built text with it
+    /// rather than trusting the locally-accumulated deltas, since a delta can
+    /// be lossy (see `LiveBackend.assistantDelta(new:old:)`).
+    case assistantCompleted(threadID: String, messageID: String, markdown: String)
     case approvalRequested(ApprovalRequest)
     case approvalResolved(id: String)
     case diffInvalidated(threadID: String)

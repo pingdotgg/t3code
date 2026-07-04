@@ -214,7 +214,7 @@ private actor MockState {
             try? await Task.sleep(nanoseconds: 80_000_000)
             emit(.assistantDelta(threadID: threadID, messageID: messageID, delta: chunk))
         }
-        emit(.assistantCompleted(threadID: threadID, messageID: messageID))
+        emit(.assistantCompleted(threadID: threadID, messageID: messageID, markdown: reply))
 
         guard var finishedThread = threadsByID[threadID] else { return }
         finishedThread.status = .idle

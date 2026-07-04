@@ -69,10 +69,12 @@ public final class AppModel {
             if selectedThreadID == id { selectedThreadID = nil }
         case .timelineAppended(let threadID, let item):
             timelines[threadID, default: []].append(item)
+        case .timelineReset(let threadID, let items):
+            timelines[threadID] = items
         case .assistantDelta(let threadID, let messageID, let delta):
             appendDelta(threadID: threadID, messageID: messageID, delta: delta)
-        case .assistantCompleted(let threadID, let messageID):
-            finishStreaming(threadID: threadID, messageID: messageID)
+        case .assistantCompleted(let threadID, let messageID, let markdown):
+            finishStreaming(threadID: threadID, messageID: messageID, markdown: markdown)
         case .approvalRequested:
             break
         case .approvalResolved(let id):
@@ -102,10 +104,10 @@ public final class AppModel {
         timelines[threadID] = items
     }
 
-    private func finishStreaming(threadID: String, messageID: String) {
+    private func finishStreaming(threadID: String, messageID: String, markdown: String) {
         guard var items = timelines[threadID] else { return }
         for (index, item) in items.enumerated() {
-            if case .assistantMessage(let id, let markdown, _, let at) = item, id == messageID {
+            if case .assistantMessage(let id, _, _, let at) = item, id == messageID {
                 items[index] = .assistantMessage(id: id, markdown: markdown, isStreaming: false, at: at)
                 timelines[threadID] = items
                 return
