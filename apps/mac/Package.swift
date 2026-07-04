@@ -11,15 +11,24 @@ let package = Package(
             name: "T3Kit",
             path: "Sources/T3Kit"
         ),
+        .target(
+            name: "SidecarKit",
+            path: "Sources/SidecarKit"
+        ),
         .executableTarget(
             name: "SergeCodeMac",
-            dependencies: ["T3Kit"],
+            dependencies: ["T3Kit", "SidecarKit"],
             path: "Sources/SergeCodeMac"
         ),
         .testTarget(
             name: "T3KitTests",
             dependencies: ["T3Kit"],
             path: "Tests/T3KitTests"
+        ),
+        .testTarget(
+            name: "SidecarKitTests",
+            dependencies: ["SidecarKit"],
+            path: "Tests/SidecarKitTests"
         ),
     ]
 )
