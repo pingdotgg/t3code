@@ -5,6 +5,10 @@ import Foundation
 
 public enum BackendEvent: Sendable {
     case connection(ConnectionPhase)
+    /// Full replacement of the project list — emitted whenever the backend's
+    /// project set changes (snapshot, upsert, removal), so consumers never
+    /// depend on polling `projects()` at the right moment.
+    case projectsChanged([Project])
     case threadUpserted(ChatThread)
     case threadRemoved(id: String)
     case timelineAppended(threadID: String, item: TimelineItem)

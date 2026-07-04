@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## CRITICAL: This Repo Is SergeCode — a Permanent, Separate Fork
+
+SergeCode (github.com/SergeSerb2/SergeCode) is a **permanent hard fork** of `pingdotgg/t3code`. It will **never** be re-merged upstream.
+
+- **NEVER EVER open a PR against, merge into, push to, comment on, or otherwise touch `pingdotgg/t3code`.** Not for any reason.
+- All PRs, issues, and pushes go to `SergeSerb2/SergeCode` only. Always pass `--repo SergeSerb2/SergeCode` explicitly to `gh` commands.
+- Do not add a git remote pointing at `pingdotgg/t3code`. If one exists, treat it as an error and remove it.
+- Before creating any PR, verify the base repository is `SergeSerb2/SergeCode`.
+
 ## Task Completion Requirements
 
 - `vp check` and `vp run typecheck` must pass before considering tasks completed.
@@ -8,7 +17,7 @@
 
 ## Project Snapshot
 
-T3 Code is a minimal web GUI for using coding agents like Codex and Claude.
+SergeCode is a minimal web GUI for using coding agents like Codex and Claude. It is an independent hard fork of T3 Code that evolves on its own.
 
 This repository is a VERY EARLY WIP. Proposing sweeping changes that improve long-term maintainability is encouraged.
 

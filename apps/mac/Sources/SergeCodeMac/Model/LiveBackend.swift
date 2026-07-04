@@ -260,12 +260,19 @@ public actor LiveBackend: BackendService {
         var attempt = 0
         while !Task.isCancelled {
             guard let auth = authClient else { return }
+            // Kept outside the `do` so the catch can close a socket that was
+            // opened before the failure (e.g. getConfig / subscription setup
+            // throwing an RPC or decode error): without an explicit
+            // disconnect its receive/ping loops would keep running alongside
+            // the next attempt's fresh connection.
+            var attemptConnection: RpcConnection?
             do {
                 emit(.connection(attempt == 0 ? .connecting : .reconnecting(attempt: attempt)))
 
                 // Fresh wsTicket per attempt (tickets are single-use / short-lived).
                 let url = try await auth.makeSocketURL()
                 let conn = RpcConnection(url: url)
+                attemptConnection = conn
                 try await conn.connect()
                 let client = T3Client(transport: conn)
 
@@ -299,6 +306,11 @@ public actor LiveBackend: BackendService {
             } catch {
                 currentClient = nil
                 currentConnection = nil
+                if let conn = attemptConnection {
+                    // Idempotent if the socket already closed itself (the
+                    // common drop path); required for non-transport failures.
+                    await conn.disconnect(reason: "socket session failed")
+                }
                 if Task.isCancelled { return }
                 attempt += 1
                 emit(.connection(.reconnecting(attempt: attempt)))
@@ -367,8 +379,17 @@ public actor LiveBackend: BackendService {
     private func handleShellItem(_ item: OrchestrationShellStreamItem) {
         switch item {
         case .snapshot(let snapshot):
-            for shell in snapshot.projects {
-                projectsByID[shell.id] = mapProject(shell)
+            // The snapshot is the authoritative current state, so reconcile
+            // rather than merge: anything deleted while the socket was down
+            // gets no replayed removal event and must be dropped here.
+            projectsByID = Dictionary(
+                snapshot.projects.map { ($0.id, mapProject($0)) },
+                uniquingKeysWith: { _, new in new })
+            emit(.projectsChanged(currentProjectList()))
+            let snapshotThreadIDs = Set(snapshot.threads.map(\.id))
+            for id in threadsByID.keys where !snapshotThreadIDs.contains(id) {
+                threadsByID[id] = nil
+                emit(.threadRemoved(id: id))
             }
             for shell in snapshot.threads {
                 let thread = mapThread(shell)
@@ -380,8 +401,10 @@ public actor LiveBackend: BackendService {
             switch event {
             case .projectUpserted(_, let shell):
                 projectsByID[shell.id] = mapProject(shell)
+                emit(.projectsChanged(currentProjectList()))
             case .projectRemoved(_, let projectID):
                 projectsByID[projectID] = nil
+                emit(.projectsChanged(currentProjectList()))
             case .threadUpserted(_, let shell):
                 let thread = mapThread(shell)
                 threadsByID[thread.id] = thread
@@ -393,6 +416,10 @@ public actor LiveBackend: BackendService {
                 emit(.threadRemoved(id: threadID))
             }
         }
+    }
+
+    private func currentProjectList() -> [Project] {
+        Array(projectsByID.values).sorted { $0.name < $1.name }
     }
 
     // MARK: - Server-config subscription (providers)
@@ -409,9 +436,13 @@ public actor LiveBackend: BackendService {
     }
 
     private func applyProviders(_ providers: [ServerProvider]) {
-        for provider in providers {
-            providersByInstanceId[provider.instanceId] = provider
-        }
+        // Every wire payload carrying `providers` (getConfig, config snapshot,
+        // providerStatuses, refresh/update results) is the full current list,
+        // so replace rather than merge — an instance removed from the server
+        // config must not linger as a selectable stale entry.
+        providersByInstanceId = Dictionary(
+            providers.map { ($0.instanceId, $0) },
+            uniquingKeysWith: { _, new in new })
         emit(.providersChanged(currentProviderList()))
     }
 
@@ -471,9 +502,22 @@ public actor LiveBackend: BackendService {
         seenCheckpointRefs[threadID] = Set(thread.checkpoints.map(\.checkpointRef))
         seenPlanIDs[threadID] = Set(thread.proposedPlans.map(\.id))
 
-        for activity in thread.activities where activity.tone == .approval {
+        // Only `approval.requested` is actionable; the server records
+        // resolutions as separate `approval.resolved` activities with the same
+        // tone. A request already named by a resolution must not resurface as
+        // a pending card.
+        var resolvedApprovalIDs: Set<String> = []
+        for activity in thread.activities where activity.kind == ActivityKind.approvalResolved {
+            if let requestID = OrchestrationMapping.extractRequestId(from: activity.payload) {
+                resolvedApprovalIDs.insert(requestID)
+            }
+        }
+        var pendingApprovalIDs: Set<String> = []
+        for activity in thread.activities where activity.kind == ActivityKind.approvalRequested {
             let requestID =
                 OrchestrationMapping.extractRequestId(from: activity.payload) ?? activity.id
+            guard !resolvedApprovalIDs.contains(requestID) else { continue }
+            pendingApprovalIDs.insert(requestID)
             approvalRoutes[requestID] = (threadID, requestID)
         }
 
@@ -512,7 +556,9 @@ public actor LiveBackend: BackendService {
         }
 
         let items = OrchestrationMapping.timeline(for: thread).compactMap {
-            mapEntry($0, threadID: threadID, pendingUserInputIDs: pendingInputIDs)
+            mapEntry(
+                $0, threadID: threadID, pendingUserInputIDs: pendingInputIDs,
+                pendingApprovalIDs: pendingApprovalIDs)
         }
         // A prior timeline means this snapshot is a *re*-subscribe (e.g. after
         // a socket reconnect), not the thread's first load. `timeline()`
@@ -570,7 +616,8 @@ public actor LiveBackend: BackendService {
             if consumeSpecialActivity(activity, threadID: threadID, at: at, appendToTimeline: true) {
                 return
             }
-            if activity.tone == .approval {
+            switch activity.kind {
+            case ActivityKind.approvalRequested:
                 let requestID =
                     OrchestrationMapping.extractRequestId(from: activity.payload) ?? activity.id
                 approvalRoutes[requestID] = (threadID, requestID)
@@ -580,7 +627,15 @@ public actor LiveBackend: BackendService {
                     detail: approvalDetail(activity.payload), createdAt: at)
                 emit(.approvalRequested(request))
                 emit(.timelineAppended(threadID: threadID, item: .approval(request)))
-            } else {
+            case ActivityKind.approvalResolved:
+                // The request was answered (possibly by another client);
+                // retire the pending card instead of rendering a new one —
+                // both activities share tone `.approval`.
+                if let requestID = OrchestrationMapping.extractRequestId(from: activity.payload) {
+                    approvalRoutes[requestID] = nil
+                    emit(.approvalResolved(id: requestID))
+                }
+            default:
                 emit(.timelineAppended(threadID: threadID, item: mapActivity(activity, at: at)))
             }
 
@@ -619,6 +674,20 @@ public actor LiveBackend: BackendService {
             emit(.diffInvalidated(threadID: threadID))
 
         case .threadReverted(let payload):
+            // The revert rewinds the thread to `turnCount`; checkpoints (and
+            // the diff turn cursor) beyond it no longer exist server-side.
+            // Leaving them tracked would keep stale restore points visible
+            // and make `diff()` query a turn count that was reverted away.
+            currentTurnCount[threadID] = payload.turnCount
+            checkpointsByThread[threadID]?.removeAll { checkpoint in
+                guard let route = checkpointRoutes[checkpoint.id] else { return false }
+                return route.turnCount > payload.turnCount
+            }
+            for (ref, route) in checkpointRoutes
+            where route.threadID == threadID && route.turnCount > payload.turnCount {
+                checkpointRoutes[ref] = nil
+                seenCheckpointRefs[threadID]?.remove(ref)
+            }
             emit(.diffInvalidated(threadID: threadID))
             emit(
                 .timelineAppended(
@@ -876,6 +945,11 @@ public actor LiveBackend: BackendService {
             updatedAt: Date())
         threadsByID[threadID] = thread
         modelSelectionsByThread[threadID] = selection
+        // Emit immediately: the shell subscription's authoritative upsert can
+        // lag (or be missed across a reconnect), and the caller selects the
+        // thread right away — without this the detail pane shows an empty
+        // state for a thread that exists.
+        emit(.threadUpserted(thread))
         return thread
     }
 
@@ -1125,6 +1199,7 @@ public actor LiveBackend: BackendService {
             createWorkspaceRootIfMissing: false)
         let project = Project(id: projectID, name: title, path: path)
         projectsByID[projectID] = project
+        emit(.projectsChanged(currentProjectList()))
         return project
     }
 
@@ -1396,7 +1471,8 @@ public actor LiveBackend: BackendService {
     /// that live outside the timeline (plan/context-window side channels,
     /// answered user-input prompts).
     private func mapEntry(
-        _ entry: T3TimelineEntry, threadID: String, pendingUserInputIDs: Set<String> = []
+        _ entry: T3TimelineEntry, threadID: String, pendingUserInputIDs: Set<String> = [],
+        pendingApprovalIDs: Set<String> = []
     ) -> TimelineItem? {
         switch entry {
         case let .userMessage(id, text, at):
@@ -1418,6 +1494,14 @@ public actor LiveBackend: BackendService {
             }
         case let .approvalActivity(activity, requestID, at):
             let id = requestID ?? activity.id
+            // Actionable card only for a still-pending `approval.requested`;
+            // resolved requests and `approval.resolved` records (same tone)
+            // degrade to plain notices.
+            guard activity.kind == ActivityKind.approvalRequested,
+                pendingApprovalIDs.contains(id)
+            else {
+                return mapActivity(activity, at: at)
+            }
             return .approval(
                 ApprovalRequest(
                     id: id, threadID: threadID, kind: approvalKind(activity.kind),
@@ -1526,13 +1610,16 @@ public actor LiveBackend: BackendService {
     }
 
     private func modelSelection(for provider: ProviderKind) -> ModelSelection? {
-        let matching = providersByInstanceId.values.filter {
+        // Same bar as the provider list UI (`availability(for:)`): an
+        // uninstalled/unauthenticated instance, or one with no models, can't
+        // run a thread — returning nil surfaces `noProviderForKind` instead
+        // of sending the server an unusable ModelSelection.
+        let chosen = providersByInstanceId.values.first {
             providerKind(fromDriver: $0.driver) == provider
+                && availability(for: $0) == .available
+                && !$0.models.isEmpty
         }
-        guard let chosen = matching.first(where: { $0.isAvailable }) ?? matching.first else {
-            return nil
-        }
-        let model = chosen.models.first?.slug ?? ""
+        guard let chosen, let model = chosen.models.first?.slug else { return nil }
         return ModelSelection(instanceId: chosen.instanceId, model: model)
     }
 }
