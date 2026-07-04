@@ -2,6 +2,7 @@ import { DevinSettings, ProviderDriverKind, type ServerProvider } from "@t3tools
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
@@ -141,8 +142,15 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
           return [];
         }
 
-        const discoveredModels = yield* discoverDevinModelsViaAcp(effectiveConfig, processEnv);
-        yield* modelDiscoveryCache.primeModels(discoveredModels);
+        const discoveredModels = yield* Effect.gen(function* () {
+          const models = yield* discoverDevinModelsViaAcp(effectiveConfig, processEnv);
+          yield* modelDiscoveryCache.primeModels(models);
+          return models;
+        }).pipe(
+          Effect.onExit((exit) =>
+            Exit.isSuccess(exit) ? Effect.void : Ref.set(initialModelDiscoveryAttempted, false),
+          ),
+        );
         return discoveredModels;
       });
 

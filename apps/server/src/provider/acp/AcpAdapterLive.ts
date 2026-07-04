@@ -792,9 +792,6 @@ export function makeAcpAdapterLive<UserInputResponse>(
             return { _tag: "Ignore" as const };
           }
           const interruptedTurnId = turnId ?? activeTurnId;
-          if (interruptedTurnId !== undefined) {
-            ctx.interruptedTurnIds.add(interruptedTurnId);
-          }
           return {
             _tag: "Proceed" as const,
             acpSessionId: ctx.acpSessionId,
