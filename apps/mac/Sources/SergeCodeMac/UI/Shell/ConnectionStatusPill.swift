@@ -34,8 +34,10 @@ struct ConnectionStatusPill: View {
         .padding(.horizontal, 4)
         .fixedSize()
         .animation(Motion.ambient, value: phase)
-        .onAppear { isPulsing = isSettling }
-        .onChange(of: isSettling) { _, settling in isPulsing = settling }
+        .onAppear { isPulsing = isSettling && !Motion.reduceMotion }
+        .onChange(of: isSettling) { _, settling in
+            isPulsing = settling && !Motion.reduceMotion
+        }
     }
 
     private var isSettling: Bool {
