@@ -62,6 +62,7 @@ function makeGroup(key: string, threadCount: number): HomeThreadGroup {
     title: key,
     representative: project,
     projects: [project],
+    pendingTasks: [],
     threads: Array.from({ length: threadCount }, (_, index) =>
       makeThread(`${key}-thread-${index}`, project.id),
     ),
