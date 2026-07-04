@@ -53,19 +53,36 @@ public enum ActivityRows {
 
         case ActivityKind.taskCompleted:
             let payload = activity.decodePayload(TaskCompletedActivityPayload.self)
-            let failed = payload?.status == "failed"
-            // A bare completion (no result summary) that succeeded adds
-            // nothing over the task's last reasoning row.
-            guard let detail = nonEmpty(payload?.detail) else {
-                return failed
-                    ? .tool(id: activity.id, title: activity.summary, detail: "", phase: .failed)
-                    : nil
+            let detail = nonEmpty(payload?.detail)
+            switch payload?.status {
+            case "failed":
+                return .tool(
+                    id: activity.id, title: activity.summary, detail: detail ?? "",
+                    phase: .failed)
+            case "stopped":
+                // Interrupted, not succeeded: keep the info notice ("Task
+                // stopped", or the provider's result summary when present)
+                // instead of dropping it or faking a success phase.
+                return .notice(
+                    id: activity.id,
+                    text: detail ?? nonEmpty(activity.summary) ?? "Task stopped")
+            default:
+                // A bare completion (no result summary) that succeeded adds
+                // nothing over the task's last reasoning row.
+                guard let detail else { return nil }
+                return .tool(
+                    id: activity.id, title: activity.summary, detail: detail,
+                    phase: .succeeded)
             }
-            return .tool(
-                id: activity.id, title: activity.summary, detail: detail,
-                phase: failed ? .failed : .succeeded)
 
         case ActivityKind.toolUpdated, ActivityKind.toolCompleted:
+            // ExitPlanMode markers are internal plan-boundary bookkeeping,
+            // not user-facing tool work (web: isPlanBoundaryToolActivity).
+            if let detail = activity.payload.objectValue?["detail"]?.stringValue,
+                detail.hasPrefix("ExitPlanMode:")
+            {
+                return nil
+            }
             return toolRow(for: activity)
 
         default:

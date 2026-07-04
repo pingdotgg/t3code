@@ -102,6 +102,16 @@ struct ActivityRowTests {
         #expect(row == .tool(id: "a1", title: "Read file", detail: "", phase: .succeeded))
     }
 
+    @Test func planBoundaryToolActivityIsSkipped() {
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "ExitPlanMode",
+                payload: .object([
+                    "detail": .string("ExitPlanMode: plan approved"),
+                ])))
+        #expect(row == nil)
+    }
+
     // MARK: Task progress / completion
 
     @Test func taskProgressSurfacesReasoningTextWithStableId() {
@@ -141,6 +151,25 @@ struct ActivityRowTests {
                 ])))
         #expect(
             row == .tool(id: "a1", title: "Task completed", detail: "Refactored the log mapper", phase: .succeeded))
+    }
+
+    @Test func stoppedTaskCompletionSurfacesAsNotice() {
+        let row = ActivityRows.row(
+            for: activity(
+                tone: .info, kind: "task.completed", summary: "Task stopped",
+                payload: .object(["taskId": .string("task-1"), "status": .string("stopped")])))
+        #expect(row == .notice(id: "a1", text: "Task stopped"))
+    }
+
+    @Test func stoppedTaskCompletionPrefersResultSummaryText() {
+        let row = ActivityRows.row(
+            for: activity(
+                tone: .info, kind: "task.completed", summary: "Task stopped",
+                payload: .object([
+                    "status": .string("stopped"),
+                    "detail": .string("Interrupted while editing the mapper"),
+                ])))
+        #expect(row == .notice(id: "a1", text: "Interrupted while editing the mapper"))
     }
 
     @Test func failedTaskCompletionAlwaysSurfacesAsFailedRow() {
