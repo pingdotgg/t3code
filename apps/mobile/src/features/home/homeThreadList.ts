@@ -14,6 +14,7 @@ import type {
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
+import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -21,13 +22,33 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
 export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
 
+/**
+ * Default home view only surfaces threads active within this window, to keep the
+ * screen compact while keeping recent work visible.
+ */
+const RECENT_THREAD_WINDOW_MS = 5 * 24 * 60 * 60 * 1000;
+/** Fallback when a project has no threads inside the recency window. */
+const RECENT_THREAD_FALLBACK_COUNT = 3;
+
 export interface HomeThreadGroup {
   readonly key: string;
   readonly title: string;
   readonly representative: EnvironmentProject;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
+  /** Full sorted thread history for the group (revealed when expanded / searching). */
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  /** Subset shown by default: threads from the last few days, or the most recent few. */
+  readonly recentThreads: ReadonlyArray<EnvironmentThreadShell>;
+  /**
+   * Where a quick "new thread in this project" should land. For aggregated
+   * groups (same repo on several machines) this is the member that owns the
+   * group's most recent thread — the machine the user last worked on — rather
+   * than the arbitrary first member; the draft's computer picker covers
+   * switching from there. Null only for synthetic pending-project groups,
+   * whose single "project" is a placeholder built from queued-task metadata.
+   */
+  readonly newThreadTarget: EnvironmentProject | null;
 }
 
 interface MutableHomeThreadGroup {
@@ -48,6 +69,24 @@ function groupSortTimestamp(group: HomeThreadGroup, sortOrder: HomeProjectSortOr
   }, latestThread);
 }
 
+/**
+ * Trims a group's threads to recent activity for the default home view.
+ * `sortedThreads` must already be ordered newest-first for `threadSortOrder`.
+ * Keeps threads within {@link RECENT_THREAD_WINDOW_MS}; when none qualify, keeps
+ * the most recent {@link RECENT_THREAD_FALLBACK_COUNT} so a project never vanishes.
+ */
+function selectRecentThreads(
+  sortedThreads: ReadonlyArray<EnvironmentThreadShell>,
+  threadSortOrder: SidebarThreadSortOrder,
+  now: number,
+): ReadonlyArray<EnvironmentThreadShell> {
+  const cutoff = now - RECENT_THREAD_WINDOW_MS;
+  const recent = sortedThreads.filter(
+    (thread) => getThreadSortTimestamp(thread, threadSortOrder) >= cutoff,
+  );
+  return recent.length > 0 ? recent : sortedThreads.slice(0, RECENT_THREAD_FALLBACK_COUNT);
+}
+
 export function buildHomeThreadGroups(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
@@ -57,7 +96,10 @@ export function buildHomeThreadGroups(input: {
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
+  /** Current time used for the recency window; defaults to now. Injectable for tests. */
+  readonly now?: number;
 }): ReadonlyArray<HomeThreadGroup> {
+  const now = input.now ?? Date.now();
   const groups = new Map<string, MutableHomeThreadGroup>();
   const groupKeyByProjectKey = new Map<string, string>();
 
@@ -165,13 +207,43 @@ export function buildHomeThreadGroups(input: {
       continue;
     }
 
+    const sortedThreads = sortThreads(matchingThreads, input.threadSortOrder);
+    // An active search should reach the full history, so the recency window
+    // only trims the default (no-query) view.
+    const recentThreads =
+      query.length === 0
+        ? selectRecentThreads(sortedThreads, input.threadSortOrder, now)
+        : sortedThreads;
+
+    // Sorted newest-first, so the first thread whose project is a group member
+    // marks the machine the user last worked on.
+    const lastActiveProject = Arr.findFirst(sortedThreads, (thread) =>
+      group.projects.some(
+        (project) =>
+          project.environmentId === thread.environmentId && project.id === thread.projectId,
+      ),
+    ).pipe(
+      Option.flatMap((thread) =>
+        Arr.findFirst(
+          group.projects,
+          (project) =>
+            project.environmentId === thread.environmentId && project.id === thread.projectId,
+        ),
+      ),
+      Option.getOrNull,
+    );
+
     result.push({
       key: group.key,
       title,
       representative,
       projects: group.projects,
       pendingTasks: matchingPendingTasks,
-      threads: sortThreads(matchingThreads, input.threadSortOrder),
+      threads: sortedThreads,
+      recentThreads,
+      newThreadTarget: group.key.startsWith("pending-project:")
+        ? null
+        : (lastActiveProject ?? representative),
     });
   }
 

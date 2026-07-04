@@ -43,31 +43,54 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
   readonly isFirst: boolean;
   readonly groupKey: string;
   readonly onGroupAction: (key: string, action: HomeGroupDisplayAction) => void;
+  /** Project a quick new thread should target; null hides the button. */
+  readonly newThreadTarget?: EnvironmentProject | null;
+  readonly onNewThread?: (project: EnvironmentProject) => void;
 }) {
-  const iconSubtleColor = useThemeColor("--color-icon-subtle");
-  const { groupKey, onGroupAction } = props;
+  const iconMutedColor = useThemeColor("--color-icon-muted");
+  const { groupKey, onGroupAction, onNewThread } = props;
+  const newThreadTarget = props.newThreadTarget ?? null;
   const compact = props.variant === "compact";
   const handleToggle = useCallback(
     () => onGroupAction(groupKey, "toggle-collapsed"),
     [groupKey, onGroupAction],
   );
+  const handleNewThread = useCallback(() => {
+    if (newThreadTarget) {
+      onNewThread?.(newThreadTarget);
+    }
+  }, [newThreadTarget, onNewThread]);
+  const showNewThreadButton = onNewThread !== undefined && newThreadTarget !== null;
 
+  // The new-thread button is a SIBLING of the collapse toggle, not a child:
+  // nested touchables are unreachable to VoiceOver/TalkBack (the parent
+  // swallows focus). Row padding lives on the container (explicit styles —
+  // dynamic padding classes on Pressable did not apply reliably) so both
+  // children share one centerline; hitSlop restores the padded tap area.
+  const verticalHitSlop = { top: props.isFirst ? 8 : 24, bottom: 12 };
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ expanded: !props.collapsed }}
-      accessibilityLabel={`${props.title}, ${props.threadCount} threads`}
-      accessibilityHint={props.collapsed ? "Expands the project" : "Collapses the project"}
-      className={compact ? "bg-screen" : undefined}
-      onPress={handleToggle}
+    <View
+      className={compact ? "flex-row items-center bg-screen" : "flex-row items-center"}
+      style={{
+        minHeight: compact ? 44 : 36,
+        paddingLeft: compact ? 20 : 12,
+        // Compact right padding centers the 20pt plus glyph on the thread
+        // rows' trailing chevron column (18 + 13/2 ≈ 24.5 from the edge).
+        paddingRight: compact ? 14 : 12,
+        paddingBottom: compact ? 12 : 8,
+        paddingTop: props.isFirst ? (compact ? 8 : 4) : compact ? 24 : 20,
+      }}
     >
-      <View
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: !props.collapsed }}
+        accessibilityLabel={`${props.title}, ${props.threadCount} threads`}
+        accessibilityHint={props.collapsed ? "Expands the project" : "Collapses the project"}
         className={
-          compact
-            ? `flex-row items-center gap-2.5 px-5 pb-3 ${props.isFirst ? "pt-2" : "pt-6"}`
-            : `flex-row items-center gap-2 px-3 pb-2 ${props.isFirst ? "pt-1" : "pt-5"}`
+          compact ? "flex-1 flex-row items-center gap-2.5" : "flex-1 flex-row items-center gap-2"
         }
-        style={{ minHeight: compact ? 44 : 36 }}
+        hitSlop={{ ...verticalHitSlop, left: compact ? 20 : 12 }}
+        onPress={handleToggle}
       >
         <ProjectFavicon
           environmentId={props.project.environmentId}
@@ -95,15 +118,25 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
         >
           {props.threadCount}
         </Text>
-        <SymbolView
-          name={props.collapsed ? "chevron.right" : "chevron.down"}
-          size={compact ? 13 : 11}
-          tintColor={iconSubtleColor}
-          type="monochrome"
-          weight="semibold"
-        />
-      </View>
-    </Pressable>
+      </Pressable>
+      {showNewThreadButton ? (
+        <Pressable
+          accessibilityLabel={`Create new thread in ${props.title}`}
+          accessibilityRole="button"
+          hitSlop={{ ...verticalHitSlop, left: 10, right: 14 }}
+          onPress={handleNewThread}
+          style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1, paddingLeft: 12 })}
+        >
+          <SymbolView
+            name="plus"
+            size={compact ? 20 : 16}
+            tintColor={iconMutedColor}
+            type="monochrome"
+            weight="medium"
+          />
+        </Pressable>
+      ) : null}
+    </View>
   );
 });
 

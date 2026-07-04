@@ -231,40 +231,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     }
   }, []);
 
-  const environments = useMemo(
-    () =>
-      pipe(
-        [
-          ...new Set(
-            pipe(
-              projects,
-              Arr.map((project) => project.environmentId),
-            ),
-          ),
-        ],
-        Arr.map((environmentId) => {
-          const environment = savedConnectionsById[environmentId];
-          if (!environment) {
-            return null;
-          }
-
-          return {
-            environmentId,
-            environmentLabel: environment.environmentLabel,
-          };
-        }),
-        Arr.filter(
-          (
-            entry,
-          ): entry is {
-            readonly environmentId: EnvironmentId;
-            readonly environmentLabel: string;
-          } => entry !== null,
-        ),
-      ),
-    [projects, savedConnectionsById],
-  );
-
   const projectsForEnvironment = useMemo(
     () =>
       pipe(
@@ -310,6 +276,62 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       scopedProjectKey(editingPendingProject.environmentId, editingPendingProject.id)
       ? editingPendingProject
       : (projectsForEnvironment[0] ?? null));
+
+  // Only offer machines that actually host the currently selected repository, so
+  // switching computers moves the same repo across machines instead of jumping to
+  // whatever unrelated project happens to be first on the other machine. Repository
+  // identity is the primary signal; projects that haven't reported one yet (still
+  // indexing) fall back to workspace basename / title so a valid host isn't hidden.
+  const selectedRepositoryKey = selectedProject?.repositoryIdentity?.canonicalKey ?? null;
+  // `|| null` (not `??`): a pending-task placeholder project can have an empty
+  // workspaceRoot, and an "" basename would reject every real host below.
+  const selectedWorkspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
+  const selectedProjectTitle = selectedProject?.title ?? null;
+  const environments = useMemo(() => {
+    const seen = new Set<EnvironmentId>();
+    const result: Array<{
+      readonly environmentId: EnvironmentId;
+      readonly environmentLabel: string;
+    }> = [];
+    const hostsSelectedRepository = (project: EnvironmentProject) => {
+      if (selectedRepositoryKey === null && selectedWorkspaceBasename === null) {
+        return true;
+      }
+      const projectKey = project.repositoryIdentity?.canonicalKey ?? null;
+      if (selectedRepositoryKey !== null && projectKey !== null) {
+        return projectKey === selectedRepositoryKey;
+      }
+      return (
+        project.workspaceRoot.split("/").at(-1) === selectedWorkspaceBasename ||
+        (selectedProjectTitle !== null && project.title === selectedProjectTitle)
+      );
+    };
+    for (const project of projects) {
+      if (!hostsSelectedRepository(project)) {
+        continue;
+      }
+      if (seen.has(project.environmentId)) {
+        continue;
+      }
+      const environment = savedConnectionsById[project.environmentId];
+      if (!environment) {
+        continue;
+      }
+      seen.add(project.environmentId);
+      result.push({
+        environmentId: project.environmentId,
+        environmentLabel: environment.environmentLabel,
+      });
+    }
+    return result;
+  }, [
+    projects,
+    savedConnectionsById,
+    selectedRepositoryKey,
+    selectedWorkspaceBasename,
+    selectedProjectTitle,
+  ]);
+
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
   );
@@ -480,10 +502,36 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     setSelectedProjectKey(nextProjectKey);
   }, []);
 
-  const selectEnvironment = useCallback((environmentId: EnvironmentId) => {
-    setSelectedEnvironmentId(environmentId);
-    setSelectedProjectKey(null);
-  }, []);
+  const selectEnvironment = useCallback(
+    (environmentId: EnvironmentId) => {
+      const projectsOnTarget = projects.filter(
+        (project) => project.environmentId === environmentId,
+      );
+      const repositoryKey = selectedProject?.repositoryIdentity?.canonicalKey ?? null;
+      // Prefer the repository identity; projects without one (e.g. not yet
+      // indexed) fall back to workspace basename, then title, so switching
+      // computers still follows the same repo instead of resetting to
+      // whatever project is first on the target machine.
+      const workspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
+      const match =
+        (repositoryKey !== null
+          ? projectsOnTarget.find(
+              (project) => (project.repositoryIdentity?.canonicalKey ?? null) === repositoryKey,
+            )
+          : undefined) ??
+        (workspaceBasename !== null
+          ? projectsOnTarget.find(
+              (project) => project.workspaceRoot.split("/").at(-1) === workspaceBasename,
+            )
+          : undefined) ??
+        (selectedProject !== null
+          ? projectsOnTarget.find((project) => project.title === selectedProject.title)
+          : undefined);
+      setSelectedEnvironmentId(environmentId);
+      setSelectedProjectKey(match ? scopedProjectKey(match.environmentId, match.id) : null);
+    },
+    [projects, selectedProject],
+  );
 
   const setWorkspaceMode = useCallback(
     (mode: WorkspaceMode) => {

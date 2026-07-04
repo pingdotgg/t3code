@@ -72,6 +72,7 @@ interface HomeScreenProps {
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
+  readonly onNewThreadInProject: (project: EnvironmentProject) => void;
 }
 
 /* ─── Layout constants ───────────────────────────────────────────────── */
@@ -248,6 +249,12 @@ export function HomeScreen(props: HomeScreenProps) {
               isFirst={item.isFirst}
               groupKey={item.group.key}
               onGroupAction={updateGroupDisplay}
+              // Aggregated groups (same repo across machines) have no single
+              // target project, and `pending-project:` groups hold a placeholder
+              // built from queued-task metadata rather than a real project shell,
+              // so the quick new-thread button is single-real-project only.
+              newThreadTarget={item.group.newThreadTarget}
+              onNewThread={props.onNewThreadInProject}
               project={item.group.representative}
               threadCount={item.group.threads.length + item.group.pendingTasks.length}
               title={item.group.title}
@@ -308,6 +315,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onArchiveThread,
       props.onDeletePendingTask,
       props.onDeleteThread,
+      props.onNewThreadInProject,
       props.onSelectPendingTask,
       props.onSelectThread,
       props.savedConnectionsById,

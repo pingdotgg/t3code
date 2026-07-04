@@ -49,7 +49,6 @@ import {
   useThreadGitRightHeaderItems,
 } from "./ThreadGitControls";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
-import { ThreadNavigationDrawer } from "./ThreadNavigationDrawer";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
@@ -197,7 +196,6 @@ function ThreadRouteContent(
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
   const navigation = useNavigation();
   const params = props.route.params;
-  const [drawerVisible, setDrawerVisible] = useState(false);
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
   const threadId = firstRouteParam(params.threadId);
@@ -325,18 +323,6 @@ function ThreadRouteContent(
     [selectedThread?.environmentId, selectedThreadCwd],
   );
   const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
-
-  const handleOpenDrawer = useCallback(() => {
-    if (!layout.usesSplitView) {
-      setDrawerVisible(true);
-    }
-  }, [layout.usesSplitView]);
-
-  useEffect(() => {
-    if (layout.usesSplitView) {
-      setDrawerVisible(false);
-    }
-  }, [layout.usesSplitView]);
 
   const handleOpenGitInspector = useCallback(() => {
     setInspectorSelection({ routeThreadIdentity, mode: "git" });
@@ -655,6 +641,22 @@ function ThreadRouteContent(
     ],
     [panes.primarySidebarVisible, props.onReturnToThread, navigation, togglePrimarySidebar],
   );
+  // Deep links / cold starts land with Thread as the ONLY route, where the
+  // native back button does not render. Provide an explicit Home escape for
+  // that case; when history exists the native back button is used instead.
+  const canGoBack = navigation.canGoBack();
+  const compactHomeHeaderItems = useMemo<NativeHeaderItems>(
+    () => [
+      withNativeGlassHeaderItem({
+        accessibilityLabel: "Go to threads list",
+        icon: { name: "list.bullet", type: "sfSymbol" as const },
+        identifier: "thread-left-home",
+        onPress: () => navigation.dispatch(StackActions.replace("Home")),
+        type: "button" as const,
+      }),
+    ],
+    [navigation],
+  );
 
   if (!environmentId || !threadId) {
     return <OpeningThreadLoadingScreen />;
@@ -704,7 +706,6 @@ function ThreadRouteContent(
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
           layoutVariant={layout.variant}
           usesAutomaticContentInsets={usesNativeHeaderGlass}
-          onOpenDrawer={handleOpenDrawer}
           onOpenConnectionEditor={handleOpenConnectionEditor}
           onChangeDraftMessage={composer.onChangeDraftMessage}
           onPickDraftImages={composer.onPickDraftImages}
@@ -722,23 +723,6 @@ function ThreadRouteContent(
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
           onSubmitUserInput={requests.onSubmitUserInput}
         />
-
-        {layout.usesSplitView ? null : (
-          <ThreadNavigationDrawer
-            visible={drawerVisible}
-            selectedThreadKey={selectedThreadKey}
-            onClose={() => setDrawerVisible(false)}
-            onSelectThread={(thread) => {
-              navigation.dispatch(
-                StackActions.replace("Thread", {
-                  environmentId: String(thread.environmentId),
-                  threadId: String(thread.id),
-                }),
-              );
-            }}
-            onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
-          />
-        )}
       </View>
     </>
   );
@@ -757,11 +741,17 @@ function ThreadRouteContent(
             : undefined,
           title: selectedThread.title,
           headerBackVisible: !layout.usesSplitView,
-          // Compact uses the NATIVE back button (Thread lives flat in the root
-          // stack now, so a real previous route exists); only split view needs
-          // custom left items.
+          // Compact uses the NATIVE back button when a previous route exists;
+          // deep links / cold starts get an explicit Home button instead.
+          // Split view always uses its custom left items.
           unstable_headerLeftItems:
-            Platform.OS === "ios" && layout.usesSplitView ? () => splitLeftHeaderItems : undefined,
+            Platform.OS === "ios"
+              ? layout.usesSplitView
+                ? () => splitLeftHeaderItems
+                : canGoBack
+                  ? undefined
+                  : () => compactHomeHeaderItems
+              : undefined,
           // Search lives in the persistent sidebar, so the split header keeps
           // the git controls on the RIGHT (no center items — center space is
           // reserved for future breadcrumbs/status).

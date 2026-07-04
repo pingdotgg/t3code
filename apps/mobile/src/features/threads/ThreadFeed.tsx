@@ -1508,6 +1508,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // mount positions during attach, where UIKit applies the inset.
             key={`${props.threadId}:${props.feed.length === 0 ? "empty" : "filled"}`}
             style={{ flex: 1 }}
+            // RN 0.81+ drops touches inside the contentInset area
+            // (facebook/react-native#54123); the anchored end space after a send
+            // is pure inset, so without this the blank region can't be scrolled.
+            applyWorkaroundForContentInsetHitTestBug
             contentInsetAdjustmentBehavior={usesNativeAutomaticInsets ? "automatic" : "never"}
             automaticallyAdjustsScrollIndicatorInsets={usesNativeAutomaticInsets}
             {...(usesNativeAutomaticInsets

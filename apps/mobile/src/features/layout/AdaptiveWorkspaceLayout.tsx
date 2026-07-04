@@ -1,4 +1,7 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type {
+  EnvironmentProject,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useFocusEffect } from "@react-navigation/native";
 import {
@@ -401,6 +404,20 @@ export function AdaptiveWorkspaceLayout(props: {
     navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" });
   }, [navigation]);
 
+  const handleNewThreadInProject = useCallback(
+    (project: EnvironmentProject) => {
+      navigation.navigate("NewTaskSheet", {
+        screen: "NewTaskDraft",
+        params: {
+          environmentId: String(project.environmentId),
+          projectId: String(project.id),
+          title: project.title,
+        },
+      });
+    },
+    [navigation],
+  );
+
   const renderedSidebarWidth = useSharedValue(
     panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0,
   );
@@ -477,6 +494,7 @@ export function AdaptiveWorkspaceLayout(props: {
                 selectedThreadKey={selectedThreadKey}
                 onOpenSettings={handleOpenSettings}
                 onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
+                onNewThreadInProject={handleNewThreadInProject}
                 onSelectThread={handleSelectThread}
                 onSearchQueryChange={setPrimarySidebarSearchQuery}
                 searchQuery={primarySidebarSearchQuery}

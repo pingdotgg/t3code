@@ -122,6 +122,16 @@ export function HomeRouteScreen() {
         }}
         onSelectPendingTask={openPendingTask}
         onDeletePendingTask={confirmDeletePendingTask}
+        onNewThreadInProject={(project) => {
+          navigation.navigate("NewTaskSheet", {
+            screen: "NewTaskDraft",
+            params: {
+              environmentId: String(project.environmentId),
+              projectId: String(project.id),
+              title: project.title,
+            },
+          });
+        }}
         onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
         onThreadSortOrderChange={setThreadSortOrder}
         pendingTasks={pendingTasks}

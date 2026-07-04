@@ -145,12 +145,27 @@ export function buildHomeListLayout(input: {
     }
 
     const totalCount = group.threads.length;
+    // Default to the group's recent-activity window (last few days, or a small
+    // fallback for stale projects), capped at the initial page size. Until the
+    // user taps "Show more", older threads stay hidden to save vertical space;
+    // "Show less" resets visibleCount to the initial constant, which lands back
+    // here at the recency baseline.
+    const baselineCount = Math.min(
+      group.recentThreads.length,
+      HOME_INITIAL_VISIBLE_THREADS,
+      totalCount,
+    );
     const visibleCount = input.showAllThreads
       ? totalCount
-      : Math.min(Math.max(display.visibleCount, HOME_INITIAL_VISIBLE_THREADS), totalCount);
+      : Math.min(
+          display.visibleCount > HOME_INITIAL_VISIBLE_THREADS
+            ? display.visibleCount
+            : baselineCount,
+          totalCount,
+        );
     const visibleThreads = group.threads.slice(0, visibleCount);
     const hiddenCount = totalCount - visibleCount;
-    const hasShowMoreRow = !input.showAllThreads && totalCount > HOME_INITIAL_VISIBLE_THREADS;
+    const hasShowMoreRow = !input.showAllThreads && totalCount > baselineCount;
 
     // Pending (unsent) tasks lead the group and are never paginated away.
     for (const [pendingIndex, pendingTask] of group.pendingTasks.entries()) {
@@ -180,7 +195,10 @@ export function buildHomeListLayout(input: {
         key: `show-more:${group.key}`,
         groupKey: group.key,
         hiddenCount,
-        canShowLess: visibleCount > HOME_INITIAL_VISIBLE_THREADS,
+        // Compare against the group's own baseline, not the global page size:
+        // stale projects start below HOME_INITIAL_VISIBLE_THREADS, and "Show
+        // less" must be offered as soon as anything beyond the baseline shows.
+        canShowLess: visibleCount > baselineCount,
       });
     }
   }

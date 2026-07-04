@@ -111,7 +111,7 @@ export function NewTaskDraftScreen(props: {
   }, [props.pendingTaskId, cancelEditingPendingTask]);
 
   const borderColor = useThemeColor("--color-border");
-  const bodyText = useScaledTextRole("body");
+  const headlineText = useScaledTextRole("headline");
   const sheetFadeOpaque = colorScheme === "dark" ? "rgba(14,14,14,0.98)" : "rgba(242,242,247,0.98)";
   const sheetFadeTransparent = colorScheme === "dark" ? "rgba(14,14,14,0)" : "rgba(242,242,247,0)";
 
@@ -129,12 +129,13 @@ export function NewTaskDraftScreen(props: {
       lastInitialProjectRefRef.current = props.initialProjectRef;
       appliedInitialProjectKeyRef.current = null;
     }
-    if (props.initialProjectRef?.environmentId && props.initialProjectRef?.projectId) {
+    const initialEnvironmentId = props.initialProjectRef?.environmentId;
+    const initialProjectId = props.initialProjectRef?.projectId;
+    if (initialEnvironmentId && initialProjectId) {
       const directProject =
         projects.find(
           (project) =>
-            project.environmentId === props.initialProjectRef?.environmentId &&
-            project.id === props.initialProjectRef?.projectId,
+            project.environmentId === initialEnvironmentId && project.id === initialProjectId,
         ) ?? null;
 
       if (directProject) {
@@ -602,7 +603,7 @@ export function NewTaskDraftScreen(props: {
             onPasteImages={(uris) => void handleNativePasteImages(uris)}
             placeholder={`Describe a coding task in ${selectedProject.title}`}
             style={{ flex: 1, minHeight: 0 }}
-            textStyle={bodyText}
+            textStyle={headlineText}
           />
         </View>
 
