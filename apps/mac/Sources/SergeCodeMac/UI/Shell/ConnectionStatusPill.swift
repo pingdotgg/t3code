@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// Glass capsule summarizing the sidecar/websocket connection phase, shown
-/// in the toolbar.
+/// Dot + label summarizing the sidecar/websocket connection phase, shown in
+/// the toolbar. No background of its own — the macOS 26 toolbar already
+/// wraps items in glass, and stacking a second capsule read as a
+/// double bubble.
 struct ConnectionStatusPill: View {
     let phase: ConnectionPhase
 
@@ -15,9 +17,7 @@ struct ConnectionStatusPill: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .glassEffect(.regular, in: .capsule)
+        .padding(.horizontal, 4)
         .fixedSize()
     }
 

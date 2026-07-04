@@ -59,7 +59,9 @@ public protocol BackendService: Sendable {
     /// Open the project (or a path inside it) in an external editor.
     func openInEditor(projectID: String, subpath: String?, editor: ExternalEditor) async throws
 
-    func createThread(projectID: String, provider: ProviderKind) async throws -> ChatThread
+    /// `title` nil means the backend picks its generic default.
+    func createThread(projectID: String, provider: ProviderKind, title: String?) async throws
+        -> ChatThread
     func archiveThread(id: String) async throws
     func unarchiveThread(id: String) async throws
     func deleteThread(id: String) async throws
@@ -75,6 +77,9 @@ public protocol BackendService: Sendable {
     func setInteractionMode(threadID: String, mode: ThreadInteractionMode) async throws
     /// Repoint the thread at a different provider instance/model.
     func setModel(threadID: String, model: ModelOption) async throws
+    /// Set the thread's reasoning-effort option (a choice id from the
+    /// model's `effortChoices`). Throws when the model has no effort option.
+    func setReasoningEffort(threadID: String, value: String) async throws
     /// Start an implementation turn from a proposed plan (plan-mode follow-up).
     func implementPlan(threadID: String, planID: String) async throws
 

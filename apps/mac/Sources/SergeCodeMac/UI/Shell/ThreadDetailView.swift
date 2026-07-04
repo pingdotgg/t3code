@@ -4,11 +4,12 @@ import SwiftUI
 /// trailing inspector hosting the diff/checkpoint tab picker.
 struct ThreadDetailView: View {
     let model: AppModel
+    let scenery: SceneryStore
     let thread: ChatThread
     @Binding var showInspector: Bool
 
     var body: some View {
-        ChatScreen(model: model)
+        ChatScreen(model: model, scenery: scenery)
             .navigationTitle(thread.title)
             .inspector(isPresented: $showInspector) {
                 InspectorPanel(model: model, threadID: thread.id)

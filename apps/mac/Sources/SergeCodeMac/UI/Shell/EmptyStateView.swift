@@ -1,25 +1,43 @@
 import SwiftUI
 
-/// Glass empty-state hero shown as the detail column when no thread is
-/// selected.
+/// Empty-state hero shown as the detail column when no thread is selected:
+/// full-bleed Dolomites scene (rotates daily) under a glass card, with the
+/// required Unsplash attribution in the corner.
 struct EmptyStateView: View {
+    let scenery: SceneryStore
     var onNewSession: () -> Void
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 44))
-                .foregroundStyle(.tint)
-            Text("SergeCode")
-                .font(.largeTitle.bold())
-            Text("Select a session, or start a new one.")
-                .foregroundStyle(.secondary)
-            Button("New Session", action: onNewSession)
-                .buttonStyle(.glass)
-                .controlSize(.large)
+        let featured = scenery.dailyFeatured()
+        ZStack {
+            SceneryImageView(scenery: scenery, photo: featured, fallbackSeed: "empty-state")
+                .overlay(
+                    LinearGradient(
+                        colors: [.black.opacity(0.10), .black.opacity(0.30)],
+                        startPoint: .top, endPoint: .bottom))
+                .ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                Image(systemName: "mountain.2.fill")
+                    .font(.system(size: 44))
+                    .foregroundStyle(.tint)
+                Text("SergeCode")
+                    .font(.largeTitle.bold())
+                Text("Select a session, or start a new one.")
+                    .foregroundStyle(.secondary)
+                Button("New Session", action: onNewSession)
+                    .buttonStyle(.glass)
+                    .controlSize(.large)
+            }
+            .padding(32)
+            .glassEffect(.regular, in: .rect(cornerRadius: 24))
         }
-        .padding(32)
-        .glassEffect(.regular, in: .rect(cornerRadius: 24))
+        .overlay(alignment: .bottomTrailing) {
+            if let featured {
+                SceneryAttributionTag(photo: featured)
+                    .padding(10)
+            }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

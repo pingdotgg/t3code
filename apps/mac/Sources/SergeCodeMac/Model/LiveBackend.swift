@@ -88,6 +88,10 @@ public actor LiveBackend: BackendService {
 
     private var projectsByID: [String: Project] = [:]
     private var threadsByID: [String: ChatThread] = [:]
+    /// Latest wire modelSelection per thread — kept so option updates
+    /// (reasoning effort) can round-trip instanceId/model/other options
+    /// without re-fetching the shell.
+    private var modelSelectionsByThread: [String: ModelSelection] = [:]
     private var providersByInstanceId: [String: ServerProvider] = [:]
 
     /// Threads the UI has opened; re-subscribed on every reconnect.
@@ -390,6 +394,7 @@ public actor LiveBackend: BackendService {
             for shell in snapshot.threads {
                 let thread = mapThread(shell)
                 threadsByID[thread.id] = thread
+                modelSelectionsByThread[thread.id] = shell.modelSelection
                 emit(.threadUpserted(thread))
             }
         case .event(let event):
@@ -403,9 +408,11 @@ public actor LiveBackend: BackendService {
             case .threadUpserted(_, let shell):
                 let thread = mapThread(shell)
                 threadsByID[thread.id] = thread
+                modelSelectionsByThread[thread.id] = shell.modelSelection
                 emit(.threadUpserted(thread))
             case .threadRemoved(_, let threadID):
                 threadsByID[threadID] = nil
+                modelSelectionsByThread[threadID] = nil
                 emit(.threadRemoved(id: threadID))
             }
         }
@@ -902,13 +909,18 @@ public actor LiveBackend: BackendService {
             .flatMap { provider -> [ModelOption] in
                 guard let kind = providerKind(fromDriver: provider.driver) else { return [] }
                 return provider.models.map { model in
-                    ModelOption(
+                    let effort = Self.effortDescriptor(of: model)
+                    return ModelOption(
                         instanceID: provider.instanceId, modelID: model.slug,
                         displayName: model.name, provider: kind,
                         // The wire has no per-instance default marker; the first
                         // listed model is what `modelSelection(for:)` picks for
                         // new threads, so mark that one.
-                        isDefault: model.slug == provider.models.first?.slug)
+                        isDefault: model.slug == provider.models.first?.slug,
+                        effortOptionID: effort?.id,
+                        effortChoices: effort?.options.map {
+                            EffortChoice(id: $0.id, label: $0.label, isDefault: $0.isDefault ?? false)
+                        } ?? [])
                 }
             }
             .sorted { ($0.provider.rawValue, $0.displayName) < ($1.provider.rawValue, $1.displayName) }
@@ -916,13 +928,15 @@ public actor LiveBackend: BackendService {
 
     // MARK: - BackendService: commands
 
-    public func createThread(projectID: String, provider: ProviderKind) async throws -> ChatThread {
+    public func createThread(
+        projectID: String, provider: ProviderKind, title: String?
+    ) async throws -> ChatThread {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         guard let selection = modelSelection(for: provider) else {
             throw LiveBackendError.noProviderForKind(provider)
         }
         let threadID = UUID().uuidString
-        let title = "New \(provider.displayName) thread"
+        let title = title ?? "New \(provider.displayName) thread"
         _ = try await client.createThread(
             threadId: threadID, projectId: projectID, title: title, modelSelection: selection,
             runtimeMode: .fullAccess)
@@ -930,6 +944,7 @@ public actor LiveBackend: BackendService {
             id: threadID, projectID: projectID, title: title, provider: provider, status: .idle,
             updatedAt: Date())
         threadsByID[threadID] = thread
+        modelSelectionsByThread[threadID] = selection
         // Emit immediately: the shell subscription's authoritative upsert can
         // lag (or be missed across a reconnect), and the caller selects the
         // thread right away — without this the detail pane shows an empty
@@ -1082,14 +1097,64 @@ public actor LiveBackend: BackendService {
 
     public func setModel(threadID: String, model: ModelOption) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
-        _ = try await client.updateThreadMeta(
-            threadId: threadID,
-            modelSelection: ModelSelection(instanceId: model.instanceID, model: model.modelID))
+        // Options deliberately dropped: effort choice ids are per-model, so a
+        // carried-over value could be invalid for the new model.
+        let selection = ModelSelection(instanceId: model.instanceID, model: model.modelID)
+        _ = try await client.updateThreadMeta(threadId: threadID, modelSelection: selection)
+        modelSelectionsByThread[threadID] = selection
         updateCachedThread(threadID) {
             $0.modelInstanceID = model.instanceID
             $0.modelID = model.modelID
             $0.provider = model.provider
+            $0.reasoningEffort = nil
         }
+    }
+
+    /// Effort-style select descriptors go by different ids per driver
+    /// (claudeAgent: "effort"; codex: "reasoningEffort"; cursor: "reasoning").
+    private static let effortOptionIDs: Set<String> = ["effort", "reasoningEffort", "reasoning"]
+
+    private static func effortDescriptor(of model: ServerProviderModel)
+        -> SelectProviderOptionDescriptor?
+    {
+        model.capabilities?.optionDescriptors?.lazy.compactMap { descriptor in
+            if case .select(let select) = descriptor, effortOptionIDs.contains(select.id) {
+                return select
+            }
+            return nil
+        }.first
+    }
+
+    /// The explicit effort value in a thread's modelSelection options, if any.
+    private static func effortValue(of selection: ModelSelection) -> String? {
+        selection.canonicalOptions?.lazy.compactMap { option -> String? in
+            guard effortOptionIDs.contains(option.id), case .string(let value) = option.value
+            else { return nil }
+            return value
+        }.first
+    }
+
+    public func setReasoningEffort(threadID: String, value: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        guard let selection = modelSelectionsByThread[threadID] else {
+            throw LiveBackendError.unknownThread(threadID)
+        }
+        guard
+            let model = providersByInstanceId[selection.instanceId]?.models
+                .first(where: { $0.slug == selection.model }),
+            let descriptor = Self.effortDescriptor(of: model)
+        else {
+            throw LiveBackendError.noEffortOption(selection.model)
+        }
+        // Replace any prior effort selection, keep unrelated options.
+        var options = selection.canonicalOptions ?? []
+        options.removeAll { Self.effortOptionIDs.contains($0.id) }
+        options.append(ProviderOptionSelection(id: descriptor.id, value: .string(value)))
+        let updated = ModelSelection(
+            instanceId: selection.instanceId, model: selection.model, canonicalOptions: options)
+        _ = try await client.updateThreadMeta(threadId: threadID, modelSelection: updated)
+        modelSelectionsByThread[threadID] = updated
+        updateCachedThread(threadID) { $0.reasoningEffort = value }
     }
 
     /// Optimistically patch the cached thread and re-emit it; the shell
@@ -1343,7 +1408,8 @@ public actor LiveBackend: BackendService {
             status: status, updatedAt: updatedAt,
             runtimeMode: Self.uiRuntimeMode(shell.runtimeMode),
             interactionMode: Self.uiInteractionMode(shell.interactionMode),
-            modelInstanceID: shell.modelSelection.instanceId, modelID: shell.modelSelection.model)
+            modelInstanceID: shell.modelSelection.instanceId, modelID: shell.modelSelection.model,
+            reasoningEffort: Self.effortValue(of: shell.modelSelection))
     }
 
     // MARK: - Mode mapping (wire <-> UI)
@@ -1565,6 +1631,9 @@ public enum LiveBackendError: Error, Sendable {
     case unresolvedCheckpoint(String)
     case noProviderForKind(ProviderKind)
     case noProviderInstance(String)
+    case unknownThread(String)
+    /// The thread's model exposes no reasoning-effort option descriptor.
+    case noEffortOption(String)
 }
 
 // MARK: - Unified diff parsing (getFullThreadDiff string -> [DiffFile])

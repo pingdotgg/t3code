@@ -41,8 +41,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.providers()
     }
 
-    public func createThread(projectID: String, provider: ProviderKind) async throws -> ChatThread {
-        await state.createThread(projectID: projectID, provider: provider)
+    public func createThread(
+        projectID: String, provider: ProviderKind, title: String?
+    ) async throws -> ChatThread {
+        await state.createThread(projectID: projectID, provider: provider, title: title)
     }
 
     public func archiveThread(id: String) async throws {
@@ -155,6 +157,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
 
     public func setModel(threadID: String, model: ModelOption) async throws {
         await state.setModel(threadID: threadID, model: model)
+    }
+
+    public func setReasoningEffort(threadID: String, value: String) async throws {
+        await state.setReasoningEffort(threadID: threadID, value: value)
     }
 
     public func implementPlan(threadID: String, planID: String) async throws {
@@ -277,11 +283,11 @@ private actor MockState {
 
     // MARK: Commands
 
-    func createThread(projectID: String, provider: ProviderKind) -> ChatThread {
+    func createThread(projectID: String, provider: ProviderKind, title: String?) -> ChatThread {
         let thread = ChatThread(
             id: nextID("thread"),
             projectID: projectID,
-            title: "New \(provider.displayName) thread",
+            title: title ?? "New \(provider.displayName) thread",
             provider: provider,
             status: .idle,
             updatedAt: Date()
@@ -389,16 +395,31 @@ private actor MockState {
     }
 
     func models() -> [ModelOption] {
-        [
+        let claudeEfforts = [
+            EffortChoice(id: "low", label: "Low", isDefault: false),
+            EffortChoice(id: "medium", label: "Medium", isDefault: false),
+            EffortChoice(id: "high", label: "High", isDefault: true),
+            EffortChoice(id: "max", label: "Max", isDefault: false),
+        ]
+        return [
             ModelOption(
                 instanceID: "provider-claude", modelID: "claude-fable-5",
-                displayName: "Fable 5", provider: .claude, isDefault: true),
+                displayName: "Fable 5", provider: .claude, isDefault: true,
+                effortOptionID: "effort", effortChoices: claudeEfforts),
             ModelOption(
                 instanceID: "provider-claude", modelID: "claude-opus-4-8",
-                displayName: "Opus 4.8", provider: .claude, isDefault: false),
+                displayName: "Opus 4.8", provider: .claude, isDefault: false,
+                effortOptionID: "effort", effortChoices: claudeEfforts),
             ModelOption(
                 instanceID: "provider-codex", modelID: "gpt-5.2-codex",
-                displayName: "GPT-5.2 Codex", provider: .codex, isDefault: true),
+                displayName: "GPT-5.2 Codex", provider: .codex, isDefault: true,
+                effortOptionID: "reasoningEffort",
+                effortChoices: [
+                    EffortChoice(id: "low", label: "Low", isDefault: false),
+                    EffortChoice(id: "medium", label: "Medium", isDefault: true),
+                    EffortChoice(id: "high", label: "High", isDefault: false),
+                    EffortChoice(id: "xhigh", label: "Extra High", isDefault: false),
+                ]),
             ModelOption(
                 instanceID: "provider-cursor", modelID: "composer-2",
                 displayName: "Composer 2", provider: .cursor, isDefault: true),
@@ -444,6 +465,14 @@ private actor MockState {
         thread.modelInstanceID = model.instanceID
         thread.modelID = model.modelID
         thread.provider = model.provider
+        thread.reasoningEffort = nil
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    func setReasoningEffort(threadID: String, value: String) {
+        guard var thread = threadsByID[threadID] else { return }
+        thread.reasoningEffort = value
         threadsByID[threadID] = thread
         emit(.threadUpserted(thread))
     }

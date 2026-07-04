@@ -68,6 +68,21 @@ public enum ThreadInteractionMode: String, CaseIterable, Sendable, Identifiable 
     }
 }
 
+/// One selectable reasoning-effort level of a model (from the wire's
+/// select-type provider option descriptor, e.g. `effort`/`reasoningEffort`).
+public struct EffortChoice: Identifiable, Hashable, Sendable {
+    /// Wire choice id, e.g. "high", "max", "ultrathink".
+    public var id: String
+    public var label: String
+    public var isDefault: Bool
+
+    public init(id: String, label: String, isDefault: Bool) {
+        self.id = id
+        self.label = label
+        self.isDefault = isDefault
+    }
+}
+
 /// One selectable model of one provider instance (model picker rows).
 public struct ModelOption: Identifiable, Hashable, Sendable {
     public var instanceID: String
@@ -75,18 +90,24 @@ public struct ModelOption: Identifiable, Hashable, Sendable {
     public var displayName: String
     public var provider: ProviderKind
     public var isDefault: Bool
+    /// Wire id of the model's reasoning-effort option descriptor
+    /// ("effort", "reasoningEffort", …); nil when the model has none.
+    public var effortOptionID: String?
+    public var effortChoices: [EffortChoice]
 
     public var id: String { "\(instanceID)/\(modelID)" }
 
     public init(
         instanceID: String, modelID: String, displayName: String, provider: ProviderKind,
-        isDefault: Bool
+        isDefault: Bool, effortOptionID: String? = nil, effortChoices: [EffortChoice] = []
     ) {
         self.instanceID = instanceID
         self.modelID = modelID
         self.displayName = displayName
         self.provider = provider
         self.isDefault = isDefault
+        self.effortOptionID = effortOptionID
+        self.effortChoices = effortChoices
     }
 }
 
@@ -103,13 +124,17 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     /// modelSelection); used to mark the active row in the model picker.
     public var modelInstanceID: String?
     public var modelID: String?
+    /// Explicit reasoning-effort choice id from the thread's modelSelection
+    /// options; nil means the provider default applies.
+    public var reasoningEffort: String?
 
     public init(
         id: String, projectID: String, title: String, provider: ProviderKind,
         status: ThreadStatus, updatedAt: Date,
         runtimeMode: ThreadRuntimeMode = .fullAccess,
         interactionMode: ThreadInteractionMode = .normal,
-        modelInstanceID: String? = nil, modelID: String? = nil
+        modelInstanceID: String? = nil, modelID: String? = nil,
+        reasoningEffort: String? = nil
     ) {
         self.id = id
         self.projectID = projectID
@@ -121,6 +146,7 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         self.interactionMode = interactionMode
         self.modelInstanceID = modelInstanceID
         self.modelID = modelID
+        self.reasoningEffort = reasoningEffort
     }
 }
 

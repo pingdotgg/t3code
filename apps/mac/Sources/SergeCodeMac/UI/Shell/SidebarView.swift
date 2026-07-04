@@ -5,9 +5,10 @@ import SwiftUI
 /// referenced it but nothing defined it) so it was added during integration
 /// to close out the `NavigationSplitView` contract. Lists threads grouped by
 /// project, newest-updated first (matches `AppModel.threads`' existing sort),
-/// with a status dot and provider label per row.
+/// with each thread's alpine scene thumbnail carrying the status dot.
 struct SidebarView: View {
     let model: AppModel
+    let scenery: SceneryStore
 
     var body: some View {
         List(selection: Binding(
@@ -22,7 +23,7 @@ struct SidebarView: View {
                 if !threadsForProject.isEmpty {
                     Section(project.name) {
                         ForEach(threadsForProject) { thread in
-                            SidebarThreadRow(thread: thread)
+                            SidebarThreadRow(thread: thread, scenery: scenery)
                                 .tag(thread.id)
                                 .contextMenu {
                                     Button("Archive") {
@@ -44,12 +45,23 @@ struct SidebarView: View {
 
 private struct SidebarThreadRow: View {
     let thread: ChatThread
+    let scenery: SceneryStore
 
     var body: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(statusTint)
-                .frame(width: 6, height: 6)
+        HStack(spacing: 9) {
+            SceneryImageView(
+                scenery: scenery, photo: scenery.photo(for: thread.id), variant: .thumb,
+                fallbackSeed: thread.id
+            )
+            .frame(width: 28, height: 28)
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .overlay(alignment: .bottomTrailing) {
+                Circle()
+                    .fill(statusTint)
+                    .frame(width: 7, height: 7)
+                    .overlay(Circle().strokeBorder(.background, lineWidth: 1.5))
+                    .offset(x: 2, y: 2)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(thread.title)
                     .lineLimit(1)
