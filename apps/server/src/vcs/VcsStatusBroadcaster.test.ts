@@ -159,6 +159,65 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
+  it.effect("propagates a project-scoped refresh to sibling cache entries for the same cwd", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+    const projectOne = ProjectId.make("project-one");
+    const projectTwo = ProjectId.make("project-two");
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+      const initialBare = yield* broadcaster.getStatus({ cwd: "/repo" });
+      const initialProjectOne = yield* broadcaster.getStatus({
+        cwd: "/repo",
+        projectId: projectOne,
+      });
+      const initialProjectTwo = yield* broadcaster.getStatus({
+        cwd: "/repo",
+        projectId: projectTwo,
+      });
+
+      state.currentLocalStatus = {
+        ...baseLocalStatus,
+        refName: "feature/project-scoped-refresh",
+      };
+      state.currentRemoteStatus = {
+        ...baseRemoteStatus,
+        aheadCount: 4,
+      };
+      const expected = {
+        ...state.currentLocalStatus,
+        ...state.currentRemoteStatus,
+      };
+
+      const refreshed = yield* broadcaster.refreshStatus({ cwd: "/repo", projectId: projectOne });
+      const cachedBare = yield* broadcaster.getStatus({ cwd: "/repo" });
+      const cachedProjectTwo = yield* broadcaster.getStatus({
+        cwd: "/repo",
+        projectId: projectTwo,
+      });
+
+      assert.deepStrictEqual(initialBare, baseStatus);
+      assert.deepStrictEqual(initialProjectOne, baseStatus);
+      assert.deepStrictEqual(initialProjectTwo, baseStatus);
+      assert.deepStrictEqual(refreshed, expected);
+      assert.deepStrictEqual(cachedBare, expected);
+      assert.deepStrictEqual(cachedProjectTwo, expected);
+      // Three initial loads plus one refresh fan-out across all three cache keys.
+      assert.equal(state.localStatusCalls, 6);
+      assert.equal(state.remoteStatusCalls, 6);
+      assert.equal(state.localInvalidationCalls, 1);
+      assert.equal(state.remoteInvalidationCalls, 1);
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
   it.effect("refreshes the cached snapshot after explicit invalidation", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,

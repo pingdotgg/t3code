@@ -223,7 +223,10 @@ export function BranchToolbarBranchSelector({
       ? null
       : vcsEnvironment.status({
           environmentId,
-          input: { cwd: branchCwd },
+          input: {
+            cwd: branchCwd,
+            ...(activeProject ? { projectId: activeProject.id } : {}),
+          },
         }),
   );
   const trimmedBranchQuery = branchQuery.trim();

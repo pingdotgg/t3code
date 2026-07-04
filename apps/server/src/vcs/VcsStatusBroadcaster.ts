@@ -218,17 +218,25 @@ export const make = Effect.gen(function* () {
     return yield* Ref.get(cacheRef).pipe(Effect.map((cache) => cache.get(key) ?? null));
   });
 
-  const cachedProjectInputsForCwd = Effect.fn("VcsStatusBroadcaster.cachedProjectInputsForCwd")(
-    function* (cwd: string) {
+  const cachedSiblingInputsForCwd = Effect.fn("VcsStatusBroadcaster.cachedSiblingInputsForCwd")(
+    function* (input: VcsStatusInput) {
+      const refreshedKey = statusCacheKey(input);
       const cache = yield* Ref.get(cacheRef);
       const inputs: Array<VcsStatusInput> = [];
       for (const key of cache.keys()) {
+        if (key === refreshedKey) {
+          continue;
+        }
         const separatorIndex = key.indexOf(VCS_STATUS_CACHE_KEY_SEPARATOR);
         const keyCwd = key.slice(0, separatorIndex);
         const projectId = key.slice(separatorIndex + VCS_STATUS_CACHE_KEY_SEPARATOR.length);
-        if (keyCwd === cwd && projectId) {
+        if (keyCwd === input.cwd) {
           // Keys are only built from validated inputs, so the round-trip preserves the brand.
-          inputs.push({ cwd, projectId: projectId as VcsStatusInput["projectId"] });
+          inputs.push(
+            projectId
+              ? { cwd: input.cwd, projectId: projectId as VcsStatusInput["projectId"] }
+              : { cwd: input.cwd },
+          );
         }
       }
       return inputs;
@@ -397,15 +405,15 @@ export const make = Effect.gen(function* () {
     const result = yield* refreshLocalStatusForInput({ cwd });
     // Also refresh project-scoped cache entries for this repository, or
     // subscribers keyed by projectId keep serving the stale local snapshot.
-    const projectInputs = yield* cachedProjectInputsForCwd(cwd);
+    const siblingInputs = yield* cachedSiblingInputsForCwd({ cwd });
     yield* Effect.forEach(
-      projectInputs,
-      (projectInput) =>
+      siblingInputs,
+      (siblingInput) =>
         workflow
-          .localStatus(projectInput)
+          .localStatus(siblingInput)
           .pipe(
             Effect.flatMap((local) =>
-              updateCachedLocalStatus(statusCacheKey(projectInput), local, { publish: true }),
+              updateCachedLocalStatus(statusCacheKey(siblingInput), local, { publish: true }),
             ),
           ),
       { concurrency: "unbounded", discard: true },
@@ -448,15 +456,14 @@ export const make = Effect.gen(function* () {
       { concurrency: "unbounded", discard: true },
     );
     const result = yield* refreshStatusForInput(normalizedInput);
-    if (normalizedInput.projectId === undefined) {
-      // A bare-cwd refresh must also update project-scoped cache entries for the same
-      // repository, or subscribers keyed by projectId keep serving stale status.
-      const projectInputs = yield* cachedProjectInputsForCwd(normalizedInput.cwd);
-      yield* Effect.forEach(projectInputs, refreshStatusForInput, {
-        concurrency: "unbounded",
-        discard: true,
-      });
-    }
+    // A refresh must also update the sibling cache entries (bare-cwd and other
+    // project-scoped keys) for the same repository, or subscribers under those
+    // keys keep serving stale status.
+    const siblingInputs = yield* cachedSiblingInputsForCwd(normalizedInput);
+    yield* Effect.forEach(siblingInputs, refreshStatusForInput, {
+      concurrency: "unbounded",
+      discard: true,
+    });
     return result;
   });
 
