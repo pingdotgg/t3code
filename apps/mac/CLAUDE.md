@@ -3,6 +3,7 @@
 Native SwiftUI macOS app (macOS 26+ Liquid Glass). Read ARCHITECTURE.md first.
 
 Hard rules (build breaks otherwise — no Xcode on this machine, CLT only):
+
 - NEVER use `@State`, `@Entry`, or `@Animatable` — the macOS 27 beta SDK makes
   them Xcode-only compiler macros. Use `@UIState`
   (Sources/SergeCodeMac/Support/StateShim.swift), manual `EnvironmentKey`
@@ -11,7 +12,7 @@ Hard rules (build breaks otherwise — no Xcode on this machine, CLT only):
 - Build/test: `swift build --package-path apps/mac`. Tests need the swift-testing
   macro plugin passed explicitly (CLT keeps it in a subdir the compiler doesn't
   search): `swift test --package-path apps/mac -Xswiftc -plugin-path -Xswiftc
-  /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing`.
+/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing`.
   App bundle: `apps/mac/scripts/make-app.sh`.
 - Live E2E (spawns real server): prefix with `SERGECODE_LIVE_E2E=1`, filter
   `LiveIntegrationTests`.

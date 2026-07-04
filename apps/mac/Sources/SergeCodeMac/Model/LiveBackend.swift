@@ -94,6 +94,16 @@ public actor LiveBackend: BackendService {
     private var modelSelectionsByThread: [String: ModelSelection] = [:]
     private var providersByInstanceId: [String: ServerProvider] = [:]
 
+    /// Where a thread runs, from its shell (`worktreePath`) plus whether it
+    /// has started any turn (`latestTurn`). Drives the first-turn worktree
+    /// bootstrap: a turnless thread with no worktree gets one when the
+    /// server's defaultThreadEnvMode says so (web-client parity).
+    private struct ThreadEnvState {
+        var worktreePath: String?
+        var hasTurns: Bool
+    }
+    private var threadEnvByThread: [String: ThreadEnvState] = [:]
+
     /// Threads the UI has opened; re-subscribed on every reconnect.
     private var activeThreadIDs: Set<String> = []
     /// Latest mapped timeline per opened thread (returned by `timeline`).
@@ -389,12 +399,15 @@ public actor LiveBackend: BackendService {
             let snapshotThreadIDs = Set(snapshot.threads.map(\.id))
             for id in threadsByID.keys where !snapshotThreadIDs.contains(id) {
                 threadsByID[id] = nil
+                threadEnvByThread[id] = nil
                 emit(.threadRemoved(id: id))
             }
             for shell in snapshot.threads {
                 let thread = mapThread(shell)
                 threadsByID[thread.id] = thread
                 modelSelectionsByThread[thread.id] = shell.modelSelection
+                threadEnvByThread[thread.id] = ThreadEnvState(
+                    worktreePath: shell.worktreePath, hasTurns: shell.latestTurn != nil)
                 emit(.threadUpserted(thread))
             }
         case .event(let event):
@@ -409,10 +422,14 @@ public actor LiveBackend: BackendService {
                 let thread = mapThread(shell)
                 threadsByID[thread.id] = thread
                 modelSelectionsByThread[thread.id] = shell.modelSelection
+                threadEnvByThread[thread.id] = ThreadEnvState(
+                    worktreePath: shell.worktreePath, hasTurns: shell.latestTurn != nil)
+                restartVcsWatchIfStale(threadID: thread.id)
                 emit(.threadUpserted(thread))
             case .threadRemoved(_, let threadID):
                 threadsByID[threadID] = nil
                 modelSelectionsByThread[threadID] = nil
+                threadEnvByThread[threadID] = nil
                 emit(.threadRemoved(id: threadID))
             }
         }
@@ -937,14 +954,34 @@ public actor LiveBackend: BackendService {
         }
         let threadID = UUID().uuidString
         let title = title ?? "New \(provider.displayName) thread"
-        _ = try await client.createThread(
-            threadId: threadID, projectId: projectID, title: title, modelSelection: selection,
-            runtimeMode: .fullAccess)
+        // Worktree mode: create the worktree up front so the session lands on
+        // its own sergecode/* branch immediately, not on the first send. When
+        // this fails (or the eager RPC is unavailable), the thread is created
+        // without one and the first-turn bootstrap in sendMessage picks it up.
+        var worktree: VcsWorktree?
+        if let plan = await worktreePlan(projectID: projectID) {
+            worktree = await createEagerWorktree(plan: plan)
+        }
+        do {
+            _ = try await client.createThread(
+                threadId: threadID, projectId: projectID, title: title, modelSelection: selection,
+                runtimeMode: .fullAccess, branch: worktree?.refName,
+                worktreePath: worktree?.path)
+        } catch {
+            // Don't leak the worktree when the thread never came to exist.
+            if let worktree, let project = projectsByID[projectID] {
+                _ = try? await client.removeWorktree(
+                    cwd: project.path, path: worktree.path, force: true)
+            }
+            throw error
+        }
         let thread = ChatThread(
             id: threadID, projectID: projectID, title: title, provider: provider, status: .idle,
             updatedAt: Date())
         threadsByID[threadID] = thread
         modelSelectionsByThread[threadID] = selection
+        threadEnvByThread[threadID] = ThreadEnvState(
+            worktreePath: worktree?.path, hasTurns: false)
         // Emit immediately: the shell subscription's authoritative upsert can
         // lag (or be missed across a reconnect), and the caller selects the
         // thread right away — without this the detail pane shows an empty
@@ -970,10 +1007,15 @@ public actor LiveBackend: BackendService {
         // The shell subscription emits thread-removed; drop local caches now
         // so a re-created id never sees stale dedup state.
         threadsByID[id] = nil
+        threadEnvByThread[id] = nil
         latestTimeline[id] = nil
         activeThreadIDs.remove(id)
         threadSubscriptions[id]?.cancel()
         threadSubscriptions[id] = nil
+        vcsSubscriptions[id]?.cancel()
+        clearVcsSubscription(threadID: id)
+        vcsLocal[id] = nil
+        vcsRemote[id] = nil
     }
 
     public func sendMessage(
@@ -988,24 +1030,107 @@ public actor LiveBackend: BackendService {
                 name: attachment.name, mimeType: attachment.mimeType,
                 sizeBytes: attachment.sizeBytes, dataUrl: attachment.dataURL)
         }
+        let bootstrap = await worktreeBootstrapIfNeeded(threadID: threadID)
         _ = try await client.startTurn(
             threadId: threadID, text: text, attachments: uploads,
             runtimeMode: thread.map { Self.wireRuntimeMode($0.runtimeMode) } ?? .wireDefault,
-            interactionMode: thread.map { Self.wireInteractionMode($0.interactionMode) } ?? .wireDefault)
+            interactionMode: thread.map { Self.wireInteractionMode($0.interactionMode) } ?? .wireDefault,
+            bootstrap: bootstrap)
+        // Mark the turn locally right away: the shell upsert carrying
+        // latestTurn/worktreePath can lag, and a quick second send must not
+        // bootstrap a second worktree in the meantime.
+        threadEnvByThread[threadID]?.hasTurns = true
     }
 
-    public func searchWorkspace(projectID: String, query: String) async throws -> [WorkspaceEntry] {
+    /// Whether (and from which base branch) a new thread in this project
+    /// should get its own worktree: the server's defaultThreadEnvMode is
+    /// worktree and the project is a git repo. Base = the repo's default
+    /// local ref, falling back to the current one. Any failure resolves to
+    /// nil — run in the project checkout rather than block.
+    private struct WorktreePlan {
+        var projectCwd: String
+        var baseBranch: String
+        var startFromOrigin: Bool
+    }
+
+    private func worktreePlan(projectID: String) async -> WorktreePlan? {
+        guard let client = currentClient, let project = projectsByID[projectID] else { return nil }
+        do {
+            let settings = try await client.getSettings()
+            guard settings.defaultThreadEnvMode == .worktree else { return nil }
+            let refs = try await client.listRefs(cwd: project.path)
+            guard refs.isRepo else { return nil }
+            let baseBranch =
+                refs.refs.first(where: { $0.isDefault && !($0.isRemote ?? false) })?.name
+                ?? refs.refs.first(where: { $0.current })?.name
+            guard let baseBranch else { return nil }
+            return WorktreePlan(
+                projectCwd: project.path, baseBranch: baseBranch,
+                startFromOrigin: settings.newWorktreesStartFromOrigin)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Eager worktree creation at session-create time (vcs.createWorktree).
+    /// startFromOrigin uses the base's origin tracking ref as the start point
+    /// — fresh as of the last fetch; unlike the turn bootstrap this RPC does
+    /// no network fetch — and falls back to the local base when that ref
+    /// doesn't resolve.
+    private func createEagerWorktree(plan: WorktreePlan) async -> VcsWorktree? {
+        guard let client = currentClient else { return nil }
+        let branch = Self.temporaryWorktreeBranchName()
+        if plan.startFromOrigin,
+            let result = try? await client.createWorktree(
+                cwd: plan.projectCwd, refName: "origin/\(plan.baseBranch)",
+                newRefName: branch, baseRefName: plan.baseBranch)
+        {
+            return result.worktree
+        }
+        let result = try? await client.createWorktree(
+            cwd: plan.projectCwd, refName: plan.baseBranch,
+            newRefName: branch, baseRefName: plan.baseBranch)
+        return result?.worktree
+    }
+
+    /// First-turn worktree bootstrap (web ChatView parity) — the fallback
+    /// when eager creation didn't happen (older turnless threads, or the
+    /// eager RPC failed at session-create time). Also runs the project setup
+    /// script in the fresh worktree, which the eager path can't.
+    private func worktreeBootstrapIfNeeded(threadID: String) async -> ThreadTurnStartBootstrap? {
+        guard let env = threadEnvByThread[threadID], env.worktreePath == nil, !env.hasTurns,
+            let projectID = threadsByID[threadID]?.projectID
+        else { return nil }
+        guard let plan = await worktreePlan(projectID: projectID) else { return nil }
+        return ThreadTurnStartBootstrap(
+            prepareWorktree: ThreadTurnStartBootstrapPrepareWorktree(
+                projectCwd: plan.projectCwd, baseBranch: plan.baseBranch,
+                branch: Self.temporaryWorktreeBranchName(),
+                startFromOrigin: plan.startFromOrigin ? true : nil),
+            runSetupScript: true)
+    }
+
+    /// Mirrors `buildTemporaryWorktreeBranchName` in packages/shared/git.ts:
+    /// `sergecode/<8 lowercase hex chars>`. Must match the shared
+    /// WORKTREE_BRANCH_PREFIX + hex pattern exactly — the server only
+    /// auto-renames the branch to a meaningful name (generated from the
+    /// first message) when it recognizes this temporary shape.
+    private static func temporaryWorktreeBranchName() -> String {
+        String(format: "sergecode/%08x", UInt32.random(in: UInt32.min...UInt32.max))
+    }
+
+    public func searchWorkspace(threadID: String, query: String) async throws -> [WorkspaceEntry] {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
-        guard let project = projectsByID[projectID] else { return [] }
-        let result = try await client.searchEntries(cwd: project.path, query: query, limit: 20)
+        guard let cwd = try? threadCwd(threadID) else { return [] }
+        let result = try await client.searchEntries(cwd: cwd, query: query, limit: 20)
         return result.entries.map {
             WorkspaceEntry(path: $0.path, isDirectory: $0.kind == .directory)
         }
     }
 
-    public func listWorkspace(projectID: String, subpath: String) async throws -> [WorkspaceEntry] {
+    public func listWorkspace(threadID: String, subpath: String) async throws -> [WorkspaceEntry] {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
-        let root = try projectCwd(projectID)
+        let root = try threadCwd(threadID)
         let cwd = subpath.isEmpty ? root : root + "/" + subpath
         let result = try await client.listEntries(cwd: cwd)
         return result.entries
@@ -1016,18 +1141,18 @@ public actor LiveBackend: BackendService {
             }
     }
 
-    public func readWorkspaceFile(projectID: String, path: String) async throws -> FilePreview {
+    public func readWorkspaceFile(threadID: String, path: String) async throws -> FilePreview {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
-        let result = try await client.readFile(cwd: try projectCwd(projectID), relativePath: path)
+        let result = try await client.readFile(cwd: try threadCwd(threadID), relativePath: path)
         return FilePreview(
             path: result.relativePath, contents: result.contents, truncated: result.truncated)
     }
 
     public func openInEditor(
-        projectID: String, subpath: String?, editor: ExternalEditor
+        threadID: String, subpath: String?, editor: ExternalEditor
     ) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
-        let root = try projectCwd(projectID)
+        let root = try threadCwd(threadID)
         let cwd = subpath.map { root + "/" + $0 } ?? root
         try await client.openInEditor(cwd: cwd, editor: editor.rawValue)
     }
@@ -1203,55 +1328,113 @@ public actor LiveBackend: BackendService {
         return project
     }
 
+    public func renameProject(id: String, name: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.updateProject(projectId: id, title: name)
+        // The shell subscription re-emits the project; update locally now so
+        // the sidebar doesn't flash the old name in the meantime.
+        if var project = projectsByID[id] {
+            project.name = name
+            projectsByID[id] = project
+            emit(.projectsChanged(currentProjectList()))
+        }
+    }
+
+    public func deleteProject(id: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        // force: the server cascades thread deletes; the UI confirms first.
+        _ = try await client.deleteProject(projectId: id, force: true)
+        // The shell subscription emits project/thread removals; drop local
+        // caches now so re-created ids never see stale dedup state (mirrors
+        // deleteThread).
+        projectsByID[id] = nil
+        emit(.projectsChanged(currentProjectList()))
+        for (threadID, thread) in threadsByID where thread.projectID == id {
+            threadsByID[threadID] = nil
+            modelSelectionsByThread[threadID] = nil
+            threadEnvByThread[threadID] = nil
+            latestTimeline[threadID] = nil
+            activeThreadIDs.remove(threadID)
+            threadSubscriptions[threadID]?.cancel()
+            threadSubscriptions[threadID] = nil
+            vcsSubscriptions[threadID]?.cancel()
+            clearVcsSubscription(threadID: threadID)
+            vcsLocal[threadID] = nil
+            vcsRemote[threadID] = nil
+            emit(.threadRemoved(id: threadID))
+        }
+    }
+
     // MARK: - BackendService: git / VCS
 
-    /// Live status subscriptions keyed by projectID; re-established on
-    /// demand after reconnects (watchVcsStatus is called again by the UI).
+    /// Live status subscriptions keyed by threadID; re-established on demand
+    /// after reconnects (watchVcsStatus is called again by the UI) and torn
+    /// down/restarted when the thread's worktree appears.
     private var vcsSubscriptions: [String: Task<Void, Never>] = [:]
-    /// Last combined local+remote projection per project.
+    /// The cwd each live subscription is watching — compared against the
+    /// thread's current cwd to notice a worktree switching underneath it.
+    private var vcsWatchedCwd: [String: String] = [:]
+    /// Last combined local+remote projection per thread.
     private var vcsLocal: [String: VcsStatusLocal] = [:]
     private var vcsRemote: [String: VcsStatusRemote] = [:]
 
-    public func watchVcsStatus(projectID: String) async throws {
+    public func watchVcsStatus(threadID: String) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
-        guard let project = projectsByID[projectID] else { return }
-        guard vcsSubscriptions[projectID] == nil else { return }
-        let cwd = project.path
+        guard let cwd = try? threadCwd(threadID) else { return }
+        guard vcsSubscriptions[threadID] == nil else { return }
+        vcsWatchedCwd[threadID] = cwd
         let task = Task { [weak self] in
             guard let self else { return }
             do {
                 let stream = await client.subscribeVcsStatus(cwd: cwd)
                 for try await event in stream {
-                    await self.applyVcsEvent(projectID: projectID, event: event)
+                    await self.applyVcsEvent(threadID: threadID, event: event)
                 }
             } catch {
                 // Stream ended (socket drop or non-repo error): forget the
                 // subscription so the next watch call re-establishes it.
             }
-            await self.clearVcsSubscription(projectID: projectID)
+            await self.clearVcsSubscription(threadID: threadID)
         }
-        vcsSubscriptions[projectID] = task
+        vcsSubscriptions[threadID] = task
     }
 
-    private func clearVcsSubscription(projectID: String) {
-        vcsSubscriptions[projectID] = nil
+    private func clearVcsSubscription(threadID: String) {
+        vcsSubscriptions[threadID] = nil
+        vcsWatchedCwd[threadID] = nil
     }
 
-    private func applyVcsEvent(projectID: String, event: VcsStatusStreamEvent) {
+    /// When a thread's first turn creates its worktree, an active VCS watch
+    /// still points at the project checkout — restart it on the new cwd.
+    private func restartVcsWatchIfStale(threadID: String) {
+        guard let watched = vcsWatchedCwd[threadID],
+            let current = try? threadCwd(threadID), watched != current
+        else { return }
+        vcsSubscriptions[threadID]?.cancel()
+        vcsSubscriptions[threadID] = nil
+        vcsWatchedCwd[threadID] = nil
+        vcsLocal[threadID] = nil
+        vcsRemote[threadID] = nil
+        Task { [weak self] in
+            try? await self?.watchVcsStatus(threadID: threadID)
+        }
+    }
+
+    private func applyVcsEvent(threadID: String, event: VcsStatusStreamEvent) {
         switch event {
         case .snapshot(let local, let remote):
-            vcsLocal[projectID] = local
-            vcsRemote[projectID] = remote ?? vcsRemote[projectID]
+            vcsLocal[threadID] = local
+            vcsRemote[threadID] = remote ?? vcsRemote[threadID]
         case .localUpdated(let local):
-            vcsLocal[projectID] = local
+            vcsLocal[threadID] = local
         case .remoteUpdated(let remote):
-            if let remote { vcsRemote[projectID] = remote }
+            if let remote { vcsRemote[threadID] = remote }
         }
-        guard let local = vcsLocal[projectID] else { return }
+        guard let local = vcsLocal[threadID] else { return }
         emit(
             .vcsStatusChanged(
-                projectID: projectID,
-                status: Self.uiVcsStatus(local: local, remote: vcsRemote[projectID])))
+                threadID: threadID,
+                status: Self.uiVcsStatus(local: local, remote: vcsRemote[threadID])))
     }
 
     private static func uiVcsStatus(local: VcsStatusLocal, remote: VcsStatusRemote?) -> VcsStatus {
@@ -1264,17 +1447,21 @@ public actor LiveBackend: BackendService {
             prTitle: remote?.pr?.title, prURL: remote?.pr?.url)
     }
 
-    private func projectCwd(_ projectID: String) throws -> String {
-        guard let project = projectsByID[projectID] else {
+    /// The directory a thread's workspace/VCS calls operate on: its worktree
+    /// when it has one, otherwise the project checkout.
+    private func threadCwd(_ threadID: String) throws -> String {
+        guard let thread = threadsByID[threadID],
+            let project = projectsByID[thread.projectID]
+        else {
             throw LiveBackendError.notConnected
         }
-        return project.path
+        return threadEnvByThread[threadID]?.worktreePath ?? project.path
     }
 
-    public func listBranches(projectID: String, query: String?) async throws -> [BranchRef] {
+    public func listBranches(threadID: String, query: String?) async throws -> [BranchRef] {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         let result = try await client.listRefs(
-            cwd: try projectCwd(projectID), query: query, refKind: "local", limit: 50)
+            cwd: try threadCwd(threadID), query: query, refKind: "local", limit: 50)
         return result.refs.map {
             BranchRef(
                 name: $0.name, isCurrent: $0.current, isDefault: $0.isDefault,
@@ -1282,23 +1469,23 @@ public actor LiveBackend: BackendService {
         }
     }
 
-    public func switchBranch(projectID: String, name: String) async throws {
+    public func switchBranch(threadID: String, name: String) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
-        _ = try await client.switchRef(cwd: try projectCwd(projectID), refName: name)
+        _ = try await client.switchRef(cwd: try threadCwd(threadID), refName: name)
     }
 
-    public func createBranch(projectID: String, name: String) async throws {
+    public func createBranch(threadID: String, name: String) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
-        _ = try await client.createRef(cwd: try projectCwd(projectID), refName: name, switchRef: true)
+        _ = try await client.createRef(cwd: try threadCwd(threadID), refName: name, switchRef: true)
     }
 
-    public func pull(projectID: String) async throws {
+    public func pull(threadID: String) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
-        _ = try await client.pull(cwd: try projectCwd(projectID))
+        _ = try await client.pull(cwd: try threadCwd(threadID))
     }
 
     public func runGitAction(
-        projectID: String, action: GitAction, commitMessage: String?
+        threadID: String, action: GitAction, commitMessage: String?
     ) async throws -> GitActionOutcome {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         let wireAction: GitStackedAction =
@@ -1309,7 +1496,7 @@ public actor LiveBackend: BackendService {
             case .commitPushPR: .commitPushPR
             }
         let stream = await client.runStackedAction(
-            cwd: try projectCwd(projectID), action: wireAction, commitMessage: commitMessage)
+            cwd: try threadCwd(threadID), action: wireAction, commitMessage: commitMessage)
         var outcome = GitActionOutcome(success: false, title: "No response from git action")
         for try await event in stream {
             switch event {

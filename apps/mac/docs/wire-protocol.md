@@ -8,7 +8,7 @@
 > `effect@4.0.0-beta.78` source under `node_modules/.pnpm/effect@4.0.0-beta.78…/node_modules/effect/src`,
 > abbreviated **`effect/src`** below).
 >
-> **Version pin:** the transport is Effect's *unstable* RPC
+> **Version pin:** the transport is Effect's _unstable_ RPC
 > (`effect/unstable/rpc`) at `effect@4.0.0-beta.78`
 > (`node_modules/.pnpm/effect@4.0.0-beta.78_patch_hash=…`). The envelope shapes in
 > §2 are an **unstable** API and can change between Effect betas. See §6.
@@ -56,8 +56,8 @@ this order:
 
    (see fixtures `packages/client-runtime/src/connection/resolver.test.ts:124,138,236,284,341`).
 
-   The ticket is a **short-lived, single-use-ish token** obtained *over HTTP
-   before* opening the socket:
+   The ticket is a **short-lived, single-use-ish token** obtained _over HTTP
+   before_ opening the socket:
    - `POST /api/auth/websocket-ticket` (`packages/contracts/src/environmentHttp.ts:373-377`),
      authenticated with `Authorization: Bearer <access-token>` (or DPoP), returns
      `AuthWebSocketTicketResult = { ticket: string, expiresAt: <ISO-8601 UTC string> }`
@@ -106,7 +106,7 @@ as `ready` once the socket `onConnect` hook fires **and** that first
 
 ### 1.4 Heartbeat / ping (application-level, inside WebSocket frames)
 
-The RPC layer runs its **own** liveness ping *as JSON frames* — this is separate
+The RPC layer runs its **own** liveness ping _as JSON frames_ — this is separate
 from (and in addition to) any RFC 6455 control-frame ping/pong the WebSocket
 library does.
 
@@ -123,7 +123,7 @@ library does.
 
 A Swift client should: (a) send `{"_tag":"Ping"}` every 5 s and expect
 `{"_tag":"Pong"}`; and (b) reply to any inbound `{"_tag":"Ping"}` with
-`{"_tag":"Pong"}` (the server only ever *answers* pings, but implementing the
+`{"_tag":"Pong"}` (the server only ever _answers_ pings, but implementing the
 responder is cheap and future-proof).
 
 ### 1.5 Reconnect behavior
@@ -131,7 +131,7 @@ responder is cheap and future-proof).
 The socket-level protocol is created with `retryTransientErrors: false` and
 `retryPolicy: Schedule.recurs(0)` (`packages/client-runtime/src/rpc/session.ts:99-102`),
 i.e. the Effect RPC socket does **not** auto-reconnect. Reconnection is driven a
-layer up by the connection *supervisor*
+layer up by the connection _supervisor_
 (`packages/client-runtime/src/connection/supervisor.ts`), which tears down the
 session and establishes a brand-new socket (new ticket, new `server.getConfig`,
 new stream subscriptions). See §4.3.
@@ -156,7 +156,7 @@ new stream subscriptions). See §4.3.
     (`RpcSerialization.ts:90-93`).
 - Server write path confirms one encoded message per frame for the unframed
   (JSON) case: `effect/src/unstable/rpc/RpcServer.ts:1051-1057` (`write:
-  !includesFraming ? (response) => offer(parser.encode(response))`), where each
+!includesFraming ? (response) => offer(parser.encode(response))`), where each
   `offer` is one WS frame.
 
 **Swift takeaway:** every inbound WS text frame is a complete JSON value. Parse
@@ -176,13 +176,15 @@ is discriminated by a `_tag` string. Below, "encoded" = the on-the-wire form.
 ```jsonc
 {
   "_tag": "Request",
-  "id": "0",                       // stringified, monotonically increasing integer
-  "tag": "server.getConfig",       // RPC method name (see §3)
-  "payload": { /* encoded payload */ },
-  "headers": [],                   // array of [key, value] string pairs; usually []
-  "traceId": "…",                  // optional (OpenTelemetry); omit if not tracing
-  "spanId": "…",                   // optional
-  "sampled": true                  // optional
+  "id": "0", // stringified, monotonically increasing integer
+  "tag": "server.getConfig", // RPC method name (see §3)
+  "payload": {
+    /* encoded payload */
+  },
+  "headers": [], // array of [key, value] string pairs; usually []
+  "traceId": "…", // optional (OpenTelemetry); omit if not tracing
+  "spanId": "…", // optional
+  "sampled": true, // optional
 }
 ```
 
@@ -225,7 +227,9 @@ is discriminated by a `_tag` string. Below, "encoded" = the on-the-wire form.
 {
   "_tag": "Chunk",
   "requestId": "7",
-  "values": [ /* one or more encoded success-chunk values */ ]
+  "values": [
+    /* one or more encoded success-chunk values */
+  ],
 }
 ```
 
@@ -236,22 +240,33 @@ for that `requestId` (see §2.3).
 **`Exit`** — terminal result of a request (`RpcMessage.ts:283-313`). Success:
 
 ```json
-{ "_tag": "Exit", "requestId": "0",
-  "exit": { "_tag": "Success", "value": { /* encoded success */ } } }
+{
+  "_tag": "Exit",
+  "requestId": "0",
+  "exit": {
+    "_tag": "Success",
+    "value": {
+      /* encoded success */
+    }
+  }
+}
 ```
 
 Failure (a `Cause` = array of failure nodes):
 
 ```jsonc
-{ "_tag": "Exit", "requestId": "0",
+{
+  "_tag": "Exit",
+  "requestId": "0",
   "exit": {
     "_tag": "Failure",
     "cause": [
-      { "_tag": "Fail", "error": { "_tag": "SomeTaggedError", /* fields */ } }
+      { "_tag": "Fail", "error": { "_tag": "SomeTaggedError" /* fields */ } },
       // …or { "_tag": "Die", "defect": <json> }
       // …or { "_tag": "Interrupt", "fiberId": 12 }   // fiberId may be undefined/absent
-    ]
-  } }
+    ],
+  },
+}
 ```
 
 - Expected/typed RPC errors (the RPC's declared `error` schema, §3) arrive as
@@ -316,6 +331,7 @@ Method-name string constants live in `WS_METHODS`
 `"orchestration.dispatchCommand"`, `"subscribeVcsStatus"`).
 
 Conventions for the tables:
+
 - **stream** = `true` means responses arrive as `Chunk`s (§2.3), terminated by an
   `Exit`; `false` means a single `Exit`.
 - Every method's declared `error` is a `Schema.Union` that **always** includes
@@ -335,39 +351,39 @@ All handlers are registered by `makeWsRpcLayer` via `WsRpcGroup.of({ … })`
 Defined in `packages/contracts/src/rpc.ts:593-647` and
 `packages/contracts/src/orchestration.ts`.
 
-| tag | payload | success | stream | notes |
-|---|---|---|---|---|
-| `orchestration.dispatchCommand` | `ClientOrchestrationCommand` (union, `orchestration.ts:681-699`) | `DispatchResult` = `{ sequence: int }` (`orchestration.ts:1186-1189`) | no | The single write path for projects/threads/turns. Error `OrchestrationDispatchCommandError` (`orchestration.ts:1260`). |
-| `orchestration.getTurnDiff` | `{ fromTurnCount:int, toTurnCount:int, threadId:string, ignoreWhitespace?:bool }` (`orchestration.ts:1191-1198`) | `ThreadTurnDiff` = `{ fromTurnCount:int, toTurnCount:int, threadId:string, diff:string }` (`orchestration.ts:1144-1150`) | no | Error `OrchestrationGetTurnDiffError`. |
-| `orchestration.getFullThreadDiff` | `{ threadId:string, toTurnCount:int, ignoreWhitespace?:bool }` (`orchestration.ts:1203-1208`) | `ThreadTurnDiff` | no | |
-| `orchestration.replayEvents` | `{ fromSequenceExclusive:int }` (`orchestration.ts:1213-1216`) | `OrchestrationEvent[]` (`orchestration.ts:1218`) | no | Catch-up: fetch all events after a sequence. |
-| `orchestration.getArchivedShellSnapshot` | `{}` | `OrchestrationShellSnapshot` (`orchestration.ts:413-419`) | no | |
-| `orchestration.subscribeShell` | `{}` | `OrchestrationShellStreamItem` (`orchestration.ts:445-452`) | **yes** | First item `{kind:"snapshot", snapshot}`, then live `project-*`/`thread-*` deltas. |
-| `orchestration.subscribeThread` | `{ threadId:string }` (`orchestration.ts:454-457`) | `OrchestrationThreadStreamItem` (`orchestration.ts:1115-1124`) | **yes** | First item `{kind:"snapshot", snapshot:{snapshotSequence,thread}}`, then `{kind:"event", event}`. |
+| tag                                      | payload                                                                                                          | success                                                                                                                  | stream  | notes                                                                                                                  |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `orchestration.dispatchCommand`          | `ClientOrchestrationCommand` (union, `orchestration.ts:681-699`)                                                 | `DispatchResult` = `{ sequence: int }` (`orchestration.ts:1186-1189`)                                                    | no      | The single write path for projects/threads/turns. Error `OrchestrationDispatchCommandError` (`orchestration.ts:1260`). |
+| `orchestration.getTurnDiff`              | `{ fromTurnCount:int, toTurnCount:int, threadId:string, ignoreWhitespace?:bool }` (`orchestration.ts:1191-1198`) | `ThreadTurnDiff` = `{ fromTurnCount:int, toTurnCount:int, threadId:string, diff:string }` (`orchestration.ts:1144-1150`) | no      | Error `OrchestrationGetTurnDiffError`.                                                                                 |
+| `orchestration.getFullThreadDiff`        | `{ threadId:string, toTurnCount:int, ignoreWhitespace?:bool }` (`orchestration.ts:1203-1208`)                    | `ThreadTurnDiff`                                                                                                         | no      |                                                                                                                        |
+| `orchestration.replayEvents`             | `{ fromSequenceExclusive:int }` (`orchestration.ts:1213-1216`)                                                   | `OrchestrationEvent[]` (`orchestration.ts:1218`)                                                                         | no      | Catch-up: fetch all events after a sequence.                                                                           |
+| `orchestration.getArchivedShellSnapshot` | `{}`                                                                                                             | `OrchestrationShellSnapshot` (`orchestration.ts:413-419`)                                                                | no      |                                                                                                                        |
+| `orchestration.subscribeShell`           | `{}`                                                                                                             | `OrchestrationShellStreamItem` (`orchestration.ts:445-452`)                                                              | **yes** | First item `{kind:"snapshot", snapshot}`, then live `project-*`/`thread-*` deltas.                                     |
+| `orchestration.subscribeThread`          | `{ threadId:string }` (`orchestration.ts:454-457`)                                                               | `OrchestrationThreadStreamItem` (`orchestration.ts:1115-1124`)                                                           | **yes** | First item `{kind:"snapshot", snapshot:{snapshotSequence,thread}}`, then `{kind:"event", event}`.                      |
 
 #### 3.1.1 `dispatchCommand` — the command union (client → server writes)
 
 `ClientOrchestrationCommand` (`orchestration.ts:681-699`) is a **union
 discriminated by the `type` string field**. Client-dispatchable members:
 
-| `type` | key fields (all also carry `commandId:string`) | def |
-|---|---|---|
-| `project.create` | `projectId, title, workspaceRoot, createWorkspaceRootIfMissing?, defaultModelSelection?:ModelSelection\|null, createdAt` | `orchestration.ts:465-474` |
-| `project.meta.update` | `projectId, title?, workspaceRoot?, defaultModelSelection?, scripts?` | `:476-484` |
-| `project.delete` | `projectId, force?` | `:486-491` |
-| `thread.create` | `threadId, projectId, title, modelSelection, runtimeMode, interactionMode(dflt "default"), branch:string\|null, worktreePath:string\|null, createdAt` | `:493-507` |
-| `thread.delete` | `threadId` | `:509-513` |
-| `thread.archive` | `threadId` | `:515-519` |
-| `thread.unarchive` | `threadId` | `:521-525` |
-| `thread.meta.update` | `threadId, title?, modelSelection?, branch?, worktreePath?` | `:527-535` |
-| `thread.runtime-mode.set` | `threadId, runtimeMode, createdAt` | `:537-543` |
-| `thread.interaction-mode.set` | `threadId, interactionMode, createdAt` | `:545-551` |
-| `thread.turn.start` | `threadId, message:{messageId,role:"user",text,attachments:UploadChatAttachment[]}, modelSelection?, titleSeed?, runtimeMode(dflt "full-access"), interactionMode(dflt "default"), bootstrap?, sourceProposedPlan?, createdAt` | client variant `ClientThreadTurnStartCommand` `:600-617` |
-| `thread.turn.interrupt` | `threadId, turnId?, createdAt` | `:619-625` |
-| `thread.approval.respond` | `threadId, requestId, decision:ProviderApprovalDecision, createdAt` | `:627-634` |
-| `thread.user-input.respond` | `threadId, requestId, answers:ProviderUserInputAnswers, createdAt` | `:636-643` |
-| `thread.checkpoint.revert` | `threadId, turnCount:int, createdAt` | `:645-651` |
-| `thread.session.stop` | `threadId, createdAt` | `:653-658` |
+| `type`                        | key fields (all also carry `commandId:string`)                                                                                                                                                                                 | def                                                      |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| `project.create`              | `projectId, title, workspaceRoot, createWorkspaceRootIfMissing?, defaultModelSelection?:ModelSelection\|null, createdAt`                                                                                                       | `orchestration.ts:465-474`                               |
+| `project.meta.update`         | `projectId, title?, workspaceRoot?, defaultModelSelection?, scripts?`                                                                                                                                                          | `:476-484`                                               |
+| `project.delete`              | `projectId, force?`                                                                                                                                                                                                            | `:486-491`                                               |
+| `thread.create`               | `threadId, projectId, title, modelSelection, runtimeMode, interactionMode(dflt "default"), branch:string\|null, worktreePath:string\|null, createdAt`                                                                          | `:493-507`                                               |
+| `thread.delete`               | `threadId`                                                                                                                                                                                                                     | `:509-513`                                               |
+| `thread.archive`              | `threadId`                                                                                                                                                                                                                     | `:515-519`                                               |
+| `thread.unarchive`            | `threadId`                                                                                                                                                                                                                     | `:521-525`                                               |
+| `thread.meta.update`          | `threadId, title?, modelSelection?, branch?, worktreePath?`                                                                                                                                                                    | `:527-535`                                               |
+| `thread.runtime-mode.set`     | `threadId, runtimeMode, createdAt`                                                                                                                                                                                             | `:537-543`                                               |
+| `thread.interaction-mode.set` | `threadId, interactionMode, createdAt`                                                                                                                                                                                         | `:545-551`                                               |
+| `thread.turn.start`           | `threadId, message:{messageId,role:"user",text,attachments:UploadChatAttachment[]}, modelSelection?, titleSeed?, runtimeMode(dflt "full-access"), interactionMode(dflt "default"), bootstrap?, sourceProposedPlan?, createdAt` | client variant `ClientThreadTurnStartCommand` `:600-617` |
+| `thread.turn.interrupt`       | `threadId, turnId?, createdAt`                                                                                                                                                                                                 | `:619-625`                                               |
+| `thread.approval.respond`     | `threadId, requestId, decision:ProviderApprovalDecision, createdAt`                                                                                                                                                            | `:627-634`                                               |
+| `thread.user-input.respond`   | `threadId, requestId, answers:ProviderUserInputAnswers, createdAt`                                                                                                                                                             | `:636-643`                                               |
+| `thread.checkpoint.revert`    | `threadId, turnCount:int, createdAt`                                                                                                                                                                                           | `:645-651`                                               |
+| `thread.session.stop`         | `threadId, createdAt`                                                                                                                                                                                                          | `:653-658`                                               |
 
 `ClientThreadTurnStartCommand` (`:600-617`) uses `attachments: UploadChatAttachment[]`
 (client upload form); the internal `ThreadTurnStartCommand` (`:579-598`) uses
@@ -378,8 +394,9 @@ project setup script** (`runSetupScript`) as part of the first turn — handled
 server-side at `apps/server/src/ws.ts:678-882`.
 
 Supporting enums/objects:
+
 - `ModelSelection` (`orchestration.ts:81-115`): wire object `{ instanceId:string,
-  model:string, options?:ProviderOptionSelections }`. Has a **decode transform**
+model:string, options?:ProviderOptionSelections }`. Has a **decode transform**
   that promotes a legacy `{ provider, model }` shape to `{ instanceId, model }`
   (`:85-102`) — a fresh Swift client should always emit `instanceId`.
 - `RuntimeMode` (`:117-122`): `"approval-required" | "auto-accept-edits" | "full-access"` (default `"full-access"`).
@@ -391,18 +408,18 @@ Supporting enums/objects:
 
 - `OrchestrationThread` (full thread detail, `orchestration.ts:344-368`):
   `id, projectId, title, modelSelection, runtimeMode, interactionMode, branch|null,
-  worktreePath|null, latestTurn|null, createdAt, updatedAt, archivedAt|null,
-  deletedAt|null, messages:OrchestrationMessage[], proposedPlans[], activities:
-  OrchestrationThreadActivity[], checkpoints:OrchestrationCheckpointSummary[],
-  session:OrchestrationSession|null`.
+worktreePath|null, latestTurn|null, createdAt, updatedAt, archivedAt|null,
+deletedAt|null, messages:OrchestrationMessage[], proposedPlans[], activities:
+OrchestrationThreadActivity[], checkpoints:OrchestrationCheckpointSummary[],
+session:OrchestrationSession|null`.
 - `OrchestrationThreadShell` (list-row summary, `:390-411`): like the above minus
   messages/checkpoints, plus `latestUserMessageAt|null, hasPendingApprovals:bool,
-  hasPendingUserInput:bool, hasActionableProposedPlan:bool`.
+hasPendingUserInput:bool, hasActionableProposedPlan:bool`.
 - `OrchestrationProjectShell` (`:378-388`), `OrchestrationShellSnapshot`
   (`:413-419`: `{ snapshotSequence:int, projects[], threads[], updatedAt }`).
 - `OrchestrationSession` (`:271-281`), `OrchestrationLatestTurn` (`:333-342`),
   `OrchestrationThreadActivity` (`:313-323`: `{ id, tone, kind, summary,
-  payload:unknown, turnId|null, sequence?, createdAt }`),
+payload:unknown, turnId|null, sequence?, createdAt }`),
   `OrchestrationCheckpointSummary`/`File` (`:283-303`).
 
 #### 3.1.3 The event envelope (`OrchestrationEvent`)
@@ -449,20 +466,20 @@ reflected through `subscribeShell`/snapshot updates.
 `packages/contracts/src/rpc.ts:237-318`. Errors include `KeybindingsConfigError`,
 `ServerSettingsError`, `ServerProviderUpdateError`, plus `EnvironmentAuthorizationError`.
 
-| tag | payload | success | stream |
-|---|---|---|---|
-| `server.getConfig` | `{}` | `ServerConfig` (`server.ts:409-421`) | no |
-| `server.refreshProviders` | `{ instanceId?:string }` | `ServerProviderUpdatedPayload` (`server.ts`) | no |
-| `server.updateProvider` | `ServerProviderUpdateInput` | `ServerProviderUpdatedPayload` | no |
-| `server.upsertKeybinding` | `ServerUpsertKeybindingInput` (`server.ts:429-435`) | `ServerUpsertKeybindingResult` = `{keybindings, issues}` (`:440-444`) | no |
-| `server.removeKeybinding` | `ServerRemoveKeybindingInput` (`:437-438`) | `ServerRemoveKeybindingResult` | no |
-| `server.getSettings` | `{}` | `ServerSettings` (`settings.ts`) | no |
-| `server.updateSettings` | `{ patch: ServerSettingsPatch }` | `ServerSettings` | no |
-| `server.discoverSourceControl` | `{}` | `SourceControlDiscoveryResult` (`sourceControl.ts`) | no |
-| `server.getTraceDiagnostics` | `{}` | `ServerTraceDiagnosticsResult` | no |
-| `server.getProcessDiagnostics` | `{}` | `ServerProcessDiagnosticsResult` | no |
-| `server.getProcessResourceHistory` | `ServerProcessResourceHistoryInput` | `ServerProcessResourceHistoryResult` | no |
-| `server.signalProcess` | `ServerSignalProcessInput` | `ServerSignalProcessResult` | no |
+| tag                                | payload                                             | success                                                               | stream |
+| ---------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------- | ------ |
+| `server.getConfig`                 | `{}`                                                | `ServerConfig` (`server.ts:409-421`)                                  | no     |
+| `server.refreshProviders`          | `{ instanceId?:string }`                            | `ServerProviderUpdatedPayload` (`server.ts`)                          | no     |
+| `server.updateProvider`            | `ServerProviderUpdateInput`                         | `ServerProviderUpdatedPayload`                                        | no     |
+| `server.upsertKeybinding`          | `ServerUpsertKeybindingInput` (`server.ts:429-435`) | `ServerUpsertKeybindingResult` = `{keybindings, issues}` (`:440-444`) | no     |
+| `server.removeKeybinding`          | `ServerRemoveKeybindingInput` (`:437-438`)          | `ServerRemoveKeybindingResult`                                        | no     |
+| `server.getSettings`               | `{}`                                                | `ServerSettings` (`settings.ts`)                                      | no     |
+| `server.updateSettings`            | `{ patch: ServerSettingsPatch }`                    | `ServerSettings`                                                      | no     |
+| `server.discoverSourceControl`     | `{}`                                                | `SourceControlDiscoveryResult` (`sourceControl.ts`)                   | no     |
+| `server.getTraceDiagnostics`       | `{}`                                                | `ServerTraceDiagnosticsResult`                                        | no     |
+| `server.getProcessDiagnostics`     | `{}`                                                | `ServerProcessDiagnosticsResult`                                      | no     |
+| `server.getProcessResourceHistory` | `ServerProcessResourceHistoryInput`                 | `ServerProcessResourceHistoryResult`                                  | no     |
+| `server.signalProcess`             | `ServerSignalProcessInput`                          | `ServerSignalProcessResult`                                           | no     |
 
 `ServerConfig` (`server.ts:409-421`) — the initial-sync object — is:
 `{ environment:ExecutionEnvironmentDescriptor, auth:ServerAuthDescriptor, cwd,
@@ -497,10 +514,10 @@ what changes). `ServerProviderUpdateInput` (`server.ts:554`) =
 
 `rpc.ts:320-331`.
 
-| tag | payload | success | stream |
-|---|---|---|---|
-| `cloud.getRelayClientStatus` | `{}` | `RelayClientStatusSchema` (`relayClient.ts:3`) | no |
-| `cloud.installRelayClient` | `{}` | `RelayClientInstallProgressEventSchema` (`relayClient.ts:34`) | **yes** (progress) |
+| tag                          | payload | success                                                       | stream             |
+| ---------------------------- | ------- | ------------------------------------------------------------- | ------------------ |
+| `cloud.getRelayClientStatus` | `{}`    | `RelayClientStatusSchema` (`relayClient.ts:3`)                | no                 |
+| `cloud.installRelayClient`   | `{}`    | `RelayClientInstallProgressEventSchema` (`relayClient.ts:34`) | **yes** (progress) |
 
 `RelayClientStatusSchema` is a union **discriminated by `status`**
 (`available{executablePath,source,version}` | `missing{version}` |
@@ -511,23 +528,23 @@ what changes). `ServerProviderUpdateInput` (`server.ts:554`) =
 
 `rpc.ts:333-355`. Domain error `SourceControlRepositoryError`.
 
-| tag | payload | success | stream |
-|---|---|---|---|
-| `sourceControl.lookupRepository` | `SourceControlRepositoryLookupInput` | `SourceControlRepositoryInfo` | no |
-| `sourceControl.cloneRepository` | `SourceControlCloneRepositoryInput` | `SourceControlCloneRepositoryResult` | no |
-| `sourceControl.publishRepository` | `SourceControlPublishRepositoryInput` | `SourceControlPublishRepositoryResult` | no |
+| tag                               | payload                               | success                                | stream |
+| --------------------------------- | ------------------------------------- | -------------------------------------- | ------ |
+| `sourceControl.lookupRepository`  | `SourceControlRepositoryLookupInput`  | `SourceControlRepositoryInfo`          | no     |
+| `sourceControl.cloneRepository`   | `SourceControlCloneRepositoryInput`   | `SourceControlCloneRepositoryResult`   | no     |
+| `sourceControl.publishRepository` | `SourceControlPublishRepositoryInput` | `SourceControlPublishRepositoryResult` | no     |
 
 ### 3.5 Projects (workspace files & registry)
 
 `rpc.ts:357-379`. All defined in `packages/contracts/src/project.ts`. Domain
 errors `Project{Search,List,Read,Write}EntriesError`.
 
-| tag | payload | success | stream |
-|---|---|---|---|
-| `projects.searchEntries` | `ProjectSearchEntriesInput` (`{cwd, query, limit,…}`) | `ProjectSearchEntriesResult` | no |
-| `projects.listEntries` | `ProjectListEntriesInput` | `ProjectListEntriesResult` | no |
-| `projects.readFile` | `ProjectReadFileInput` (`{cwd, relativePath,…}`) | `ProjectReadFileResult` | no |
-| `projects.writeFile` | `ProjectWriteFileInput` | `ProjectWriteFileResult` | no |
+| tag                      | payload                                               | success                      | stream |
+| ------------------------ | ----------------------------------------------------- | ---------------------------- | ------ |
+| `projects.searchEntries` | `ProjectSearchEntriesInput` (`{cwd, query, limit,…}`) | `ProjectSearchEntriesResult` | no     |
+| `projects.listEntries`   | `ProjectListEntriesInput`                             | `ProjectListEntriesResult`   | no     |
+| `projects.readFile`      | `ProjectReadFileInput` (`{cwd, relativePath,…}`)      | `ProjectReadFileResult`      | no     |
+| `projects.writeFile`     | `ProjectWriteFileInput`                               | `ProjectWriteFileResult`     | no     |
 
 Wire shapes (`project.ts`): `ProjectListEntriesInput` = `{ cwd }` (`:29`),
 `ProjectListEntriesResult` = `{ entries:[{path,kind:"file"|"directory"}], truncated:bool }`
@@ -548,11 +565,11 @@ Wire shapes (`project.ts`): `ProjectListEntriesInput` = `{ cwd }` (`:29`),
 
 `rpc.ts:381-396`.
 
-| tag | payload | success | stream | def |
-|---|---|---|---|---|
-| `shell.openInEditor` | `LaunchEditorInput` (`editor.ts`) | *(none — void)* | no | `rpc.ts:381` |
-| `filesystem.browse` | `FilesystemBrowseInput` (`filesystem.ts`) | `FilesystemBrowseResult` | no | `:386` |
-| `assets.createUrl` | `AssetCreateUrlInput` (`assets.ts`) | `AssetCreateUrlResult` | no | `:392` |
+| tag                  | payload                                   | success                  | stream | def          |
+| -------------------- | ----------------------------------------- | ------------------------ | ------ | ------------ |
+| `shell.openInEditor` | `LaunchEditorInput` (`editor.ts`)         | _(none — void)_          | no     | `rpc.ts:381` |
+| `filesystem.browse`  | `FilesystemBrowseInput` (`filesystem.ts`) | `FilesystemBrowseResult` | no     | `:386`       |
+| `assets.createUrl`   | `AssetCreateUrlInput` (`assets.ts`)       | `AssetCreateUrlResult`   | no     | `:392`       |
 
 `assets.createUrl` issues an HTTP URL for binary content (images, favicons) served
 under the asset route (`apps/server/src/http.ts:176-220`, `ASSET_ROUTE_PREFIX`).
@@ -573,32 +590,33 @@ URL. Handler: `apps/server/src/ws.ts:1407-1452`. Wire shapes:
 `packages/contracts/src/vcs.ts`. Errors: `GitCommandError`,
 `GitManagerServiceError`, `VcsError`.
 
-| tag | payload | success | stream |
-|---|---|---|---|
-| `subscribeVcsStatus` | `VcsStatusInput` | `VcsStatusStreamEvent` | **yes** |
-| `vcs.pull` | `VcsPullInput` | `VcsPullResult` | no |
-| `vcs.refreshStatus` | `VcsStatusInput` | `VcsStatusResult` | no |
-| `vcs.listRefs` | `VcsListRefsInput` | `VcsListRefsResult` | no |
-| `vcs.createWorktree` | `VcsCreateWorktreeInput` | `VcsCreateWorktreeResult` | no |
-| `vcs.removeWorktree` | `VcsRemoveWorktreeInput` | *(void)* | no |
-| `vcs.createRef` | `VcsCreateRefInput` | `VcsCreateRefResult` | no |
-| `vcs.switchRef` | `VcsSwitchRefInput` | `VcsSwitchRefResult` | no |
-| `vcs.init` | `VcsInitInput` | *(void)* | no |
-| `git.runStackedAction` | `GitRunStackedActionInput` | `GitActionProgressEvent` | **yes** (progress) |
-| `git.resolvePullRequest` | `GitPullRequestRefInput` | `GitResolvePullRequestResult` | no |
-| `git.preparePullRequestThread` | `GitPreparePullRequestThreadInput` | `GitPreparePullRequestThreadResult` | no |
+| tag                            | payload                            | success                             | stream             |
+| ------------------------------ | ---------------------------------- | ----------------------------------- | ------------------ |
+| `subscribeVcsStatus`           | `VcsStatusInput`                   | `VcsStatusStreamEvent`              | **yes**            |
+| `vcs.pull`                     | `VcsPullInput`                     | `VcsPullResult`                     | no                 |
+| `vcs.refreshStatus`            | `VcsStatusInput`                   | `VcsStatusResult`                   | no                 |
+| `vcs.listRefs`                 | `VcsListRefsInput`                 | `VcsListRefsResult`                 | no                 |
+| `vcs.createWorktree`           | `VcsCreateWorktreeInput`           | `VcsCreateWorktreeResult`           | no                 |
+| `vcs.removeWorktree`           | `VcsRemoveWorktreeInput`           | _(void)_                            | no                 |
+| `vcs.createRef`                | `VcsCreateRefInput`                | `VcsCreateRefResult`                | no                 |
+| `vcs.switchRef`                | `VcsSwitchRefInput`                | `VcsSwitchRefResult`                | no                 |
+| `vcs.init`                     | `VcsInitInput`                     | _(void)_                            | no                 |
+| `git.runStackedAction`         | `GitRunStackedActionInput`         | `GitActionProgressEvent`            | **yes** (progress) |
+| `git.resolvePullRequest`       | `GitPullRequestRefInput`           | `GitResolvePullRequestResult`       | no                 |
+| `git.preparePullRequestThread` | `GitPreparePullRequestThreadInput` | `GitPreparePullRequestThreadResult` | no                 |
 
 Key wire shapes (all in `git.ts`):
+
 - `VcsStatusInput` = `{ cwd:string }` (`git.ts:102`).
 - `VcsStatusStreamEvent` (`git.ts:241`) is a **`_tag`-tagged** union
   (`snapshot`/`localUpdated`/`remoteUpdated`) carrying `local`/`remote`
   `VcsStatusResult`-like payloads. `VcsStatusResult` (`git.ts:235`): `{ isRepo:bool,
-  hasPrimaryRemote:bool, isDefaultRef:bool, refName:string|null,
-  hasWorkingTreeChanges:bool, workingTree:{files:[{path,insertions,deletions}],
-  insertions,deletions}, hasUpstream:bool, aheadCount, behindCount, pr:{…}|null }`.
+hasPrimaryRemote:bool, isDefaultRef:bool, refName:string|null,
+hasWorkingTreeChanges:bool, workingTree:{files:[{path,insertions,deletions}],
+insertions,deletions}, hasUpstream:bool, aheadCount, behindCount, pr:{…}|null }`.
 - `GitActionProgressEvent` (`git.ts:437`) — the `git.runStackedAction` stream — is a
   union **discriminated by `kind`**: `action_started | phase_started | hook_started |
-  hook_output | hook_finished | action_finished | action_failed`, all sharing
+hook_output | hook_finished | action_finished | action_failed`, all sharing
   `actionId, cwd, action`.
 - `GitCommandError` (`git.ts:323`, `_tag:"GitCommandError"`),
   `GitManagerServiceError` (`git.ts:380`, `_tag`-union), `VcsError`
@@ -615,17 +633,17 @@ not streamed. (Ephemeral live diff preview; not the persisted review model.)
 `rpc.ts:481-518, 649-661`. Defined in `packages/contracts/src/terminal.ts`. Error
 `TerminalError`.
 
-| tag | payload | success | stream |
-|---|---|---|---|
-| `terminal.open` | `TerminalOpenInput` | `TerminalSessionSnapshot` | no |
-| `terminal.attach` | `TerminalAttachInput` | `TerminalAttachStreamEvent` | **yes** |
-| `terminal.write` | `TerminalWriteInput` | *(void)* | no |
-| `terminal.resize` | `TerminalResizeInput` | *(void)* | no |
-| `terminal.clear` | `TerminalClearInput` | *(void)* | no |
-| `terminal.restart` | `TerminalRestartInput` | `TerminalSessionSnapshot` | no |
-| `terminal.close` | `TerminalCloseInput` | *(void)* | no |
-| `subscribeTerminalEvents` | `{}` | `TerminalEvent` | **yes** |
-| `subscribeTerminalMetadata` | `{}` | `TerminalMetadataStreamEvent` | **yes** |
+| tag                         | payload                | success                       | stream  |
+| --------------------------- | ---------------------- | ----------------------------- | ------- |
+| `terminal.open`             | `TerminalOpenInput`    | `TerminalSessionSnapshot`     | no      |
+| `terminal.attach`           | `TerminalAttachInput`  | `TerminalAttachStreamEvent`   | **yes** |
+| `terminal.write`            | `TerminalWriteInput`   | _(void)_                      | no      |
+| `terminal.resize`           | `TerminalResizeInput`  | _(void)_                      | no      |
+| `terminal.clear`            | `TerminalClearInput`   | _(void)_                      | no      |
+| `terminal.restart`          | `TerminalRestartInput` | `TerminalSessionSnapshot`     | no      |
+| `terminal.close`            | `TerminalCloseInput`   | _(void)_                      | no      |
+| `subscribeTerminalEvents`   | `{}`                   | `TerminalEvent`               | **yes** |
+| `subscribeTerminalMetadata` | `{}`                   | `TerminalMetadataStreamEvent` | **yes** |
 
 Key wire shapes (all in `terminal.ts`): `TerminalSessionSnapshot` (`:96`) =
 `{ threadId, terminalId, cwd, worktreePath:string|null,
@@ -643,20 +661,20 @@ exited | closed | error | cleared | restarted | activity`), each sharing
 `rpc.ts:520-591`. Defined in `packages/contracts/src/preview.ts`,
 `previewAutomation.ts`. Errors `PreviewError`, `PreviewAutomationError`.
 
-| tag | payload | success | stream |
-|---|---|---|---|
-| `preview.open` | `PreviewOpenInput` | `PreviewSessionSnapshot` | no |
-| `preview.navigate` | `PreviewNavigateInput` | `PreviewSessionSnapshot` | no |
-| `preview.resize` | `PreviewResizeInput` | `PreviewSessionSnapshot` | no |
-| `preview.refresh` | `PreviewRefreshInput` | *(void)* | no |
-| `preview.close` | `PreviewCloseInput` | *(void)* | no |
-| `preview.list` | `PreviewListInput` | `PreviewListResult` | no |
-| `preview.reportStatus` | `PreviewReportStatusInput` | *(void)* | no |
-| `previewAutomation.connect` | `PreviewAutomationHost` | `PreviewAutomationStreamEvent` | **yes** |
-| `previewAutomation.respond` | `PreviewAutomationResponse` | *(void)* | no |
-| `previewAutomation.focusHost` | `PreviewAutomationHostFocus` | *(void)* | no |
-| `subscribePreviewEvents` | `{}` | `PreviewEvent` | **yes** |
-| `subscribeDiscoveredLocalServers` | `{}` | `DiscoveredLocalServerList` | **yes** |
+| tag                               | payload                      | success                        | stream  |
+| --------------------------------- | ---------------------------- | ------------------------------ | ------- |
+| `preview.open`                    | `PreviewOpenInput`           | `PreviewSessionSnapshot`       | no      |
+| `preview.navigate`                | `PreviewNavigateInput`       | `PreviewSessionSnapshot`       | no      |
+| `preview.resize`                  | `PreviewResizeInput`         | `PreviewSessionSnapshot`       | no      |
+| `preview.refresh`                 | `PreviewRefreshInput`        | _(void)_                       | no      |
+| `preview.close`                   | `PreviewCloseInput`          | _(void)_                       | no      |
+| `preview.list`                    | `PreviewListInput`           | `PreviewListResult`            | no      |
+| `preview.reportStatus`            | `PreviewReportStatusInput`   | _(void)_                       | no      |
+| `previewAutomation.connect`       | `PreviewAutomationHost`      | `PreviewAutomationStreamEvent` | **yes** |
+| `previewAutomation.respond`       | `PreviewAutomationResponse`  | _(void)_                       | no      |
+| `previewAutomation.focusHost`     | `PreviewAutomationHostFocus` | _(void)_                       | no      |
+| `subscribePreviewEvents`          | `{}`                         | `PreviewEvent`                 | **yes** |
+| `subscribeDiscoveredLocalServers` | `{}`                         | `DiscoveredLocalServerList`    | **yes** |
 
 Key wire shapes (all in `preview.ts`): `PreviewSessionSnapshot` (`:133`) =
 `{ threadId, tabId, navStatus:PreviewNavStatus, canGoBack:bool, canGoForward:bool,
@@ -675,11 +693,11 @@ union by `type` (`connected|request`); `PreviewAutomationError` (`:833`) is a la
 
 `rpc.ts:398-403, 576-682`.
 
-| tag | payload | success | stream |
-|---|---|---|---|
-| `subscribeServerConfig` | `{}` | `ServerConfigStreamEvent` (`server.ts:504-510`) | **yes** |
-| `subscribeServerLifecycle` | `{}` | `ServerLifecycleStreamEvent` (`server.ts:527+`) | **yes** |
-| `subscribeAuthAccess` | `{}` | `AuthAccessStreamEvent` (`auth.ts`) | **yes** |
+| tag                        | payload | success                                         | stream  |
+| -------------------------- | ------- | ----------------------------------------------- | ------- |
+| `subscribeServerConfig`    | `{}`    | `ServerConfigStreamEvent` (`server.ts:504-510`) | **yes** |
+| `subscribeServerLifecycle` | `{}`    | `ServerLifecycleStreamEvent` (`server.ts:527+`) | **yes** |
+| `subscribeAuthAccess`      | `{}`    | `AuthAccessStreamEvent` (`auth.ts`)             | **yes** |
 
 `ServerConfigStreamEvent` (`server.ts:473-510`) is a union of
 `{version:1, type:"snapshot", config}` / `type:"keybindingsUpdated"` /
@@ -704,7 +722,7 @@ union by `type` (`connected|request`); `PreviewAutomationError` (`:833`) is a la
 
 There is **no separate pub/sub channel and no server-initiated `Request`**. All
 server-initiated updates flow through **streaming RPCs** (`stream: true`) that the
-*client* initiates. The server keeps the request open and pushes `Chunk` frames
+_client_ initiates. The server keeps the request open and pushes `Chunk` frames
 (each carrying one or more encoded values) for the life of the subscription
 (§2.3). The client must `Ack` each `Chunk`.
 
@@ -729,7 +747,7 @@ server-side with `Stream.concat(Stream.make(snapshot…), liveStream)`:
   `project-upserted|project-removed|thread-upserted|thread-removed` deltas, each
   carrying a `sequence` (`orchestration.ts:421-452`).
 - `subscribeServerConfig` — `apps/server/src/ws.ts:1691-1741`: `{type:"snapshot",
-  config}` then `keybindingsUpdated|providerStatuses|settingsUpdated`.
+config}` then `keybindingsUpdated|providerStatuses|settingsUpdated`.
 - `subscribeServerLifecycle` — `apps/server/src/ws.ts:1742-1756`: replays sorted
   historical events (by `sequence`) then the live tail filtered to
   `sequence > snapshot.sequence`.
@@ -741,7 +759,7 @@ server-side with `Stream.concat(Stream.make(snapshot…), liveStream)`:
 ordering is via the monotonic `sequence` integer on orchestration events
 (`orchestration.ts:990`) and `snapshotSequence`/`revision` counters. The client
 should treat `sequence` as the source of truth for dedup/reordering, since a
-reconnect produces a *new* snapshot that overlaps previously-seen events.
+reconnect produces a _new_ snapshot that overlaps previously-seen events.
 
 ### 4.3 Re-subscription after reconnect
 
@@ -768,6 +786,7 @@ JSON codec (`Schema.toCodecJson`, server side
 types:
 
 ### 5.1 Dates / times → ISO-8601 strings
+
 - The pervasive `IsoDateTime` is literally `Schema.String`
   (`packages/contracts/src/baseSchemas.ts:20-21`) — a plain ISO-8601 string,
   **not** validated, e.g. `"2026-07-04T12:00:00.000Z"`. Server generates them via
@@ -775,11 +794,11 @@ types:
 - `Schema.DateTimeUtc` — used **pervasively** in the diagnostics/auth/vcs/review/
   sourceControl result schemas (e.g. `server.ts` trace/process `readAt`,
   `lastSeenAt`, bucket `startedAt/endedAt`; `auth.ts` `expiresAt/issuedAt/
-  createdAt/lastConnectedAt`; `review.ts` `generatedAt`) — also encodes to/from an
+createdAt/lastConnectedAt`; `review.ts` `generatedAt`) — also encodes to/from an
   ISO-8601 UTC **string** (`effect/src/Schema.ts:11412-11428`, `toCodecJson →
-  String` via `dateTimeUtcFromString`). Not the `[epochMillis, offset]` tuple form.
+String` via `dateTimeUtcFromString`). Not the `[epochMillis, offset]` tuple form.
   There is **no** `Schema.Date` anywhere on this surface.
-- **Numeric "time" fields that are NOT date strings** (watch out): 
+- **Numeric "time" fields that are NOT date strings** (watch out):
   `AssetCreateUrlResult.expiresAt` is an **epoch number** (`assets.ts:26`);
   `ServerSettings.automaticGitFetchInterval` is a **number of milliseconds**
   (`Schema.DurationFromMillis`, `settings.ts`); `AuthAccessTokenResult.expires_in`
@@ -788,6 +807,7 @@ types:
   strategy); decode the three fields above as numbers.
 
 ### 5.2 Branded IDs → plain strings
+
 All entity IDs (`ThreadId`, `ProjectId`, `CommandId`, `EventId`, `MessageId`,
 `TurnId`, `ProviderInstanceId`, `CheckpointRef`, `AuthSessionId`, …) are
 `TrimmedNonEmptyString.pipe(Schema.brand(...))`
@@ -795,6 +815,7 @@ All entity IDs (`ThreadId`, `ProjectId`, `CommandId`, `EventId`, `MessageId`,
 wire** — they are ordinary non-empty strings. Model them as `String` in Swift.
 
 ### 5.3 Optionality — three distinct encodings
+
 - `Schema.optional(x)` → the **key may be absent** (or present). On encode, when
   the value is `undefined` the key is omitted. Model as a Swift optional
   (`?`), and be prepared for the key to be missing entirely.
@@ -803,7 +824,7 @@ wire** — they are ordinary non-empty strings. Model them as `String` in Swift.
 - `Schema.NullOr(x)` → the key is **present** with value `x` **or JSON `null`**
   (e.g. `branch: string | null`). Model as Swift optional but expect explicit
   `null`, not an absent key.
-- `Schema.optional(Schema.NullOr(x))` → key may be absent *or* present-and-null.
+- `Schema.optional(Schema.NullOr(x))` → key may be absent _or_ present-and-null.
 - **`withDecodingDefault`**: several fields are decoded with a default when
   absent, so the server can **omit** them: `runtimeMode` (dflt `"full-access"`),
   `interactionMode` (dflt `"default"`), `archivedAt` (dflt `null`),
@@ -811,6 +832,7 @@ wire** — they are ordinary non-empty strings. Model them as `String` in Swift.
   Swift decoder must supply these defaults when the key is missing.
 
 ### 5.4 Options as objects
+
 `Schema.Option(x)` encodes as `{ "_tag": "None" }` or
 `{ "_tag": "Some", "value": … }` (`effect/src/Schema.ts:8191-8199,8248`) — a
 **tagged object, not a bare `null`**. This is a real (not merely theoretical) shape
@@ -822,8 +844,10 @@ on this wire: it is used for value fields in `server.ts` diagnostics results
 (from `Option`) — three distinct "no value" encodings; check the schema.
 
 ### 5.5 Unions & discriminators — key varies by union
+
 Effect unions are **not** uniformly `_tag`-discriminated. The discriminator field
 depends on the schema:
+
 - **`_tag`** — protocol envelopes (§2), tagged errors, tagged classes
   (`ConnectionTarget` `model.ts:41-46`, all `*Error` types).
 - **`type`** — `OrchestrationCommand` (`orchestration.ts:465+`),
@@ -835,9 +859,10 @@ depends on the schema:
   `:421-452`).
 - **`status`**, **`tone`**, etc. — plain string-literal enums
   (`Schema.Literals([...])`), encoded as bare strings.
-Inspect the specific schema to pick the discriminator; do not assume `_tag`.
+  Inspect the specific schema to pick the discriminator; do not assume `_tag`.
 
 ### 5.6 Errors, causes & defects
+
 - A declared (expected) RPC error arrives inside an `Exit.Failure.cause` as
   `{"_tag":"Fail","error":{ "_tag":"<ErrorName>", …fields }}` (§2.2). Error
   structs are `Schema.TaggedError…`, so they carry their own `_tag` plus fields
@@ -850,6 +875,7 @@ Inspect the specific schema to pick the discriminator; do not assume `_tag`.
   (e.g. `OrchestrationDispatchCommandError` `orchestration.ts:1260-1266`).
 
 ### 5.7 Strings with checks
+
 `TrimmedNonEmptyString`/`TrimmedString` **trim on decode & encode**
 (`baseSchemas.ts:5-14`) and reject empty; `NonNegativeInt`/`PositiveInt`/`PortSchema`
 enforce numeric ranges (`:16-18`). The server rejects violating payloads with a
@@ -857,6 +883,7 @@ decode failure (surfaced as a `Die`/protocol error). The Swift client should sen
 already-trimmed, in-range values.
 
 ### 5.8 Binary & secrets
+
 No inline binary and **no `Schema.Uint8Array`/`Schema.Redacted`** anywhere on the
 WS surface (the sole `Schema.Uint8Array` in contracts is `ipc.ts:914`, a desktop
 IPC channel, not this WS group). Images/assets go through `assets.createUrl` → HTTP
@@ -869,6 +896,7 @@ sending (`ServerSettings.redactServerSettingsForClient`, applied in
 the type is still just a string, with a sibling `sensitive`/`valueRedacted` boolean.
 
 ### 5.9 `_tag` literals ≠ class names (gotcha)
+
 A tagged error's `_tag` string is not always the TypeScript class name. Notably
 `KeybindingsConfigError`'s wire `_tag` is **`"KeybindingsConfigParseError"`**
 (`keybindings.ts:160`), which is exactly what the reference client switches on
@@ -891,7 +919,7 @@ value from the schema, never the exported symbol name.
    most likely bug in a from-scratch client.
 
 3. **Application-level ping is mandatory for liveness.** The server won't proactively
-   close on silence, but the *client* must send `{"_tag":"Ping"}` every 5 s and
+   close on silence, but the _client_ must send `{"_tag":"Ping"}` every 5 s and
    watch for `{"_tag":"Pong"}`; ~10 s without a pong should be treated as dead
    (§1.4). Do not rely solely on TCP/WS control-frame keepalives.
 
@@ -987,5 +1015,5 @@ Client opens `wss://127.0.0.1:3773/ws?wsTicket=…`, then:
     "message":"The authenticated token is missing required scope: …","requiredScope":"…"}}]}}
 ```
 
-*(Frames reconstructed from the envelope schemas and serialization code cited
-above; field values are illustrative.)*
+_(Frames reconstructed from the envelope schemas and serialization code cited
+above; field values are illustrative.)_

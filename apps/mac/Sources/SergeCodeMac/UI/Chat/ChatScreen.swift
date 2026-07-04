@@ -30,7 +30,7 @@ public struct ChatScreen: View {
         // its own photo cross-fade in SceneryImageView.
         .animation(Motion.settle, value: model.selectedThreadID)
         // The VCS strip unfolds when repo status first arrives for a thread.
-        .animation(Motion.settle, value: model.selectedProjectVcsStatus()?.isRepo ?? false)
+        .animation(Motion.settle, value: model.selectedVcsStatus()?.isRepo ?? false)
         .background {
             // The thread's scene as a full chat wallpaper; the wash inside
             // keeps timeline text readable (see SceneryChatBackground).

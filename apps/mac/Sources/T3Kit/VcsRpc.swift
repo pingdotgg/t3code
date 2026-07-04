@@ -93,6 +93,68 @@ public enum VcsStatusStreamEvent: Decodable, Sendable {
     }
 }
 
+// MARK: - Worktrees
+
+/// `vcs.createWorktree` input (git.ts `VcsCreateWorktreeInput`). `path` is
+/// bare `Schema.NullOr` (required key, may be `null`) — manual `encode(to:)`
+/// so `nil` still writes an explicit `null`; the server then derives the
+/// path under its own worktrees directory.
+public struct VcsCreateWorktreeInput: Encodable, Sendable {
+    public var cwd: String
+    /// Start point for the new worktree (branch, remote-tracking ref, or sha).
+    public var refName: String
+    /// New branch to create at `refName` (plain `worktree add` when nil).
+    public var newRefName: String?
+    /// Records `branch.<newRefName>.gh-merge-base` for PR flows.
+    public var baseRefName: String?
+    public var path: String?
+
+    public init(
+        cwd: String, refName: String, newRefName: String? = nil, baseRefName: String? = nil,
+        path: String? = nil
+    ) {
+        self.cwd = cwd
+        self.refName = refName
+        self.newRefName = newRefName
+        self.baseRefName = baseRefName
+        self.path = path
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case cwd, refName, newRefName, baseRefName, path
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(cwd, forKey: .cwd)
+        try c.encode(refName, forKey: .refName)
+        try c.encodeIfPresent(newRefName, forKey: .newRefName)
+        try c.encodeIfPresent(baseRefName, forKey: .baseRefName)
+        try c.encode(path, forKey: .path)
+    }
+}
+
+public struct VcsWorktree: Decodable, Sendable, Hashable {
+    public var path: String
+    public var refName: String
+}
+
+public struct VcsCreateWorktreeResult: Decodable, Sendable {
+    public var worktree: VcsWorktree
+}
+
+public struct VcsRemoveWorktreeInput: Encodable, Sendable {
+    public var cwd: String
+    public var path: String
+    public var force: Bool?
+
+    public init(cwd: String, path: String, force: Bool? = nil) {
+        self.cwd = cwd
+        self.path = path
+        self.force = force
+    }
+}
+
 // MARK: - Refs
 
 public struct VcsRef: Decodable, Sendable, Hashable {
@@ -248,6 +310,27 @@ extension T3Client {
     ) async throws -> VcsListRefsResult {
         try await call(
             "vcs.listRefs", VcsListRefsInput(cwd: cwd, query: query, refKind: refKind, limit: limit))
+    }
+
+    /// Creates a git worktree (optionally on a new branch at `refName`); the
+    /// server picks the path under its worktrees dir when `path` is nil.
+    public func createWorktree(
+        cwd: String, refName: String, newRefName: String? = nil, baseRefName: String? = nil,
+        path: String? = nil
+    ) async throws -> VcsCreateWorktreeResult {
+        try await call(
+            "vcs.createWorktree",
+            VcsCreateWorktreeInput(
+                cwd: cwd, refName: refName, newRefName: newRefName, baseRefName: baseRefName,
+                path: path))
+    }
+
+    /// Best-effort worktree removal (cleanup when thread creation fails).
+    public func removeWorktree(cwd: String, path: String, force: Bool? = nil) async throws
+        -> JSONValue
+    {
+        try await call(
+            "vcs.removeWorktree", VcsRemoveWorktreeInput(cwd: cwd, path: path, force: force))
     }
 
     public func createRef(cwd: String, refName: String, switchRef: Bool = true) async throws

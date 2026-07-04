@@ -211,6 +211,22 @@ public actor T3Client {
                     defaultModelSelection: defaultModelSelection, createdAt: T3Clock.nowISO8601())))
     }
 
+    /// Partial project-meta update; `nil` fields are omitted (left untouched).
+    /// `defaultModelSelection` is `optional(NullOr)`: pass `.some(nil)` to
+    /// clear the project default, `.some(value)` to set it.
+    @discardableResult
+    public func updateProject(
+        projectId: String, title: String? = nil, workspaceRoot: String? = nil,
+        defaultModelSelection: ModelSelection?? = nil, scripts: [ProjectScript]? = nil
+    ) async throws -> DispatchResult {
+        try await dispatch(
+            .projectMetaUpdate(
+                ProjectMetaUpdateCommand(
+                    commandId: T3Ids.newCommandId(), projectId: projectId, title: title,
+                    workspaceRoot: workspaceRoot, defaultModelSelection: defaultModelSelection,
+                    scripts: scripts)))
+    }
+
     @discardableResult
     public func deleteProject(projectId: String, force: Bool? = nil) async throws -> DispatchResult {
         try await dispatch(
@@ -283,11 +299,14 @@ public actor T3Client {
     }
 
     /// Sends a user message and starts a turn (composer send action).
+    /// `bootstrap` carries first-turn setup (create thread lazily, prepare a
+    /// fresh worktree, run the project setup script).
     @discardableResult
     public func startTurn(
         threadId: String, text: String, attachments: [UploadChatAttachment] = [],
         modelSelection: ModelSelection? = nil, titleSeed: String? = nil,
         runtimeMode: RuntimeMode = .wireDefault, interactionMode: ProviderInteractionMode = .wireDefault,
+        bootstrap: ThreadTurnStartBootstrap? = nil,
         sourceProposedPlan: SourceProposedPlanReference? = nil
     ) async throws -> DispatchResult {
         let message = ChatMessageInput(
@@ -297,7 +316,8 @@ public actor T3Client {
                 ThreadTurnStartCommand(
                     commandId: T3Ids.newCommandId(), threadId: threadId, message: message,
                     modelSelection: modelSelection, titleSeed: titleSeed, runtimeMode: runtimeMode,
-                    interactionMode: interactionMode, sourceProposedPlan: sourceProposedPlan,
+                    interactionMode: interactionMode, bootstrap: bootstrap,
+                    sourceProposedPlan: sourceProposedPlan,
                     createdAt: T3Clock.nowISO8601())))
     }
 
