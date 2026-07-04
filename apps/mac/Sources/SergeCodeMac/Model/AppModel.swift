@@ -63,6 +63,8 @@ public final class AppModel {
             if phase == .ready {
                 Task { await refreshAll() }
             }
+        case .projectsChanged(let list):
+            projects = list
         case .threadUpserted(let thread):
             if let index = threads.firstIndex(where: { $0.id == thread.id }) {
                 threads[index] = thread
@@ -91,7 +93,13 @@ public final class AppModel {
                 }
             }
         case .diffInvalidated(let threadID):
-            Task { await refreshDiff(threadID: threadID) }
+            // Diff invalidation always coincides with a checkpoint change
+            // (new checkpoint completed, or a revert pruned some), so refresh
+            // both — an open Checkpoints inspector stays current.
+            Task {
+                await refreshDiff(threadID: threadID)
+                await refreshCheckpoints(threadID: threadID)
+            }
         case .providersChanged(let list):
             providers = list
             Task { await refreshModels() }

@@ -10,6 +10,10 @@ import Foundation
 /// Well-known `OrchestrationThreadActivity.kind` values that carry a typed
 /// payload (ProviderRuntimeIngestion.ts).
 public enum ActivityKind {
+    /// Tone `.approval` (unlike the rest): only `approval.requested` is an
+    /// actionable request; `approval.resolved` records the outcome.
+    public static let approvalRequested = "approval.requested"
+    public static let approvalResolved = "approval.resolved"
     public static let userInputRequested = "user-input.requested"
     public static let userInputResolved = "user-input.resolved"
     public static let turnPlanUpdated = "turn.plan.updated"
