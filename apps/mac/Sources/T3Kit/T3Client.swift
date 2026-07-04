@@ -212,6 +212,19 @@ public actor T3Client {
     }
 
     @discardableResult
+    public func updateProject(
+        projectId: String, title: String? = nil, workspaceRoot: String? = nil,
+        defaultModelSelection: ModelSelection? = nil, scripts: [ProjectScript]? = nil
+    ) async throws -> DispatchResult {
+        try await dispatch(
+            .projectMetaUpdate(
+                ProjectMetaUpdateCommand(
+                    commandId: T3Ids.newCommandId(), projectId: projectId, title: title,
+                    workspaceRoot: workspaceRoot, defaultModelSelection: defaultModelSelection,
+                    scripts: scripts)))
+    }
+
+    @discardableResult
     public func deleteProject(projectId: String, force: Bool? = nil) async throws -> DispatchResult {
         try await dispatch(
             .projectDelete(

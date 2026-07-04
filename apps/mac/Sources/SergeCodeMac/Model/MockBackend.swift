@@ -182,6 +182,14 @@ public final class MockBackend: BackendService, @unchecked Sendable {
     public func addProject(path: String) async throws -> Project {
         await state.addProject(path: path)
     }
+
+    public func renameProject(id: String, name: String) async throws {
+        await state.renameProject(id: id, name: name)
+    }
+
+    public func deleteProject(id: String) async throws {
+        await state.deleteProject(id: id)
+    }
 }
 
 // MARK: - Actor-isolated mutable state + demo data
@@ -518,7 +526,27 @@ private actor MockState {
         let name = (path as NSString).lastPathComponent
         let project = Project(id: nextID("project"), name: name.isEmpty ? path : name, path: path)
         projectsByID[project.id] = project
+        emit(.projectsChanged(projects()))
         return project
+    }
+
+    func renameProject(id: String, name: String) {
+        guard var project = projectsByID[id] else { return }
+        project.name = name
+        projectsByID[id] = project
+        emit(.projectsChanged(projects()))
+    }
+
+    func deleteProject(id: String) {
+        guard projectsByID.removeValue(forKey: id) != nil else { return }
+        emit(.projectsChanged(projects()))
+        for (threadID, thread) in threadsByID where thread.projectID == id {
+            threadsByID[threadID] = nil
+            timelinesByThread[threadID] = nil
+            diffsByThread[threadID] = nil
+            checkpointsByThread[threadID] = nil
+            emit(.threadRemoved(id: threadID))
+        }
     }
 
     // MARK: - Seed data

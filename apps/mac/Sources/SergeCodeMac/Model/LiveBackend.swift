@@ -1203,6 +1203,42 @@ public actor LiveBackend: BackendService {
         return project
     }
 
+    public func renameProject(id: String, name: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.updateProject(projectId: id, title: name)
+        // The shell subscription re-emits the project; update locally now so
+        // the sidebar doesn't flash the old name in the meantime.
+        if var project = projectsByID[id] {
+            project.name = name
+            projectsByID[id] = project
+            emit(.projectsChanged(currentProjectList()))
+        }
+    }
+
+    public func deleteProject(id: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        // force: the server cascades thread deletes; the UI confirms first.
+        _ = try await client.deleteProject(projectId: id, force: true)
+        // The shell subscription emits project/thread removals; drop local
+        // caches now so re-created ids never see stale dedup state (mirrors
+        // deleteThread).
+        projectsByID[id] = nil
+        emit(.projectsChanged(currentProjectList()))
+        for (threadID, thread) in threadsByID where thread.projectID == id {
+            threadsByID[threadID] = nil
+            modelSelectionsByThread[threadID] = nil
+            latestTimeline[threadID] = nil
+            activeThreadIDs.remove(threadID)
+            threadSubscriptions[threadID]?.cancel()
+            threadSubscriptions[threadID] = nil
+            emit(.threadRemoved(id: threadID))
+        }
+        vcsSubscriptions[id]?.cancel()
+        vcsSubscriptions[id] = nil
+        vcsLocal[id] = nil
+        vcsRemote[id] = nil
+    }
+
     // MARK: - BackendService: git / VCS
 
     /// Live status subscriptions keyed by projectID; re-established on

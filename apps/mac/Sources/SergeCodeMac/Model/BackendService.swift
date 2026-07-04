@@ -88,6 +88,10 @@ public protocol BackendService: Sendable {
     func restoreCheckpoint(id: String) async throws
 
     func addProject(path: String) async throws -> Project
+    /// Renames a project (its display title; the workspace path is unchanged).
+    func renameProject(id: String, name: String) async throws
+    /// Deletes a project and all of its sessions (force-cascades server-side).
+    func deleteProject(id: String) async throws
 
     /// Start (or keep) a live VCS status subscription for a project; status
     /// arrives via `.vcsStatusChanged` events.

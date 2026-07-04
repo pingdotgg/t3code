@@ -1,14 +1,18 @@
 import SwiftUI
 
-/// Thread list sidebar. Not owned by any of the original six feature agents
-/// (a gap in the disjoint-file split — `ContentView.swift`'s `RootView`
-/// referenced it but nothing defined it) so it was added during integration
-/// to close out the `NavigationSplitView` contract. Lists threads grouped by
-/// project, newest-updated first (matches `AppModel.threads`' existing sort),
-/// with each thread's alpine scene thumbnail carrying the status dot.
+/// Thread list sidebar. Every project gets a section (even before its first
+/// session) so projects are manageable from here directly: the section header
+/// starts new sessions, and its context menu renames or deletes the project.
+/// Threads are listed newest-updated first (matches `AppModel.threads`'
+/// existing sort), each with its alpine scene thumbnail carrying the status
+/// dot.
 struct SidebarView: View {
     let model: AppModel
     let scenery: SceneryStore
+
+    @UIState private var renameTarget: Project?
+    @UIState private var renameText = ""
+    @UIState private var deleteTarget: Project?
 
     var body: some View {
         List(selection: Binding(
@@ -20,29 +24,123 @@ struct SidebarView: View {
                 let threadsForProject = model.threads.filter {
                     $0.projectID == project.id && $0.status != .archived
                 }
-                if !threadsForProject.isEmpty {
-                    Section(project.name) {
-                        ForEach(threadsForProject) { thread in
-                            SidebarThreadRow(thread: thread, scenery: scenery)
-                                .tag(thread.id)
-                                .contextMenu {
-                                    Button("Archive") {
-                                        Task { await model.archiveThread(thread) }
-                                    }
-                                    Button("Delete", role: .destructive) {
-                                        Task { await model.deleteThread(thread) }
-                                    }
+                Section {
+                    ForEach(threadsForProject) { thread in
+                        SidebarThreadRow(thread: thread, scenery: scenery)
+                            .tag(thread.id)
+                            .contextMenu {
+                                Button("Archive") {
+                                    Task { await model.archiveThread(thread) }
                                 }
-                        }
+                                Button("Delete", role: .destructive) {
+                                    Task { await model.deleteThread(thread) }
+                                }
+                            }
                     }
+                    if threadsForProject.isEmpty {
+                        Text("No sessions yet")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                } header: {
+                    ProjectSectionHeader(
+                        project: project,
+                        onNewSession: { provider in
+                            Task {
+                                await model.createSceneThread(
+                                    projectID: project.id, provider: provider, scenery: scenery)
+                            }
+                        },
+                        onRename: {
+                            renameText = project.name
+                            renameTarget = project
+                        },
+                        onDelete: { deleteTarget = project }
+                    )
                 }
             }
         }
         .listStyle(.sidebar)
         .navigationTitle("SergeCode")
-        // New/archived/deleted threads slide the list smoothly rather than
-        // snapping the rows into new positions.
+        // New/archived/deleted threads and project changes slide the list
+        // smoothly rather than snapping the rows into new positions.
         .animation(Motion.settle, value: model.threads.map(\.id))
+        .animation(Motion.settle, value: model.projects)
+        .alert(
+            "Rename Project",
+            isPresented: Binding(
+                get: { renameTarget != nil },
+                set: { if !$0 { renameTarget = nil } }
+            )
+        ) {
+            TextField("Project name", text: $renameText)
+            Button("Rename") {
+                if let project = renameTarget {
+                    Task { await model.renameProject(project, to: renameText) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Only the display name changes; the project folder stays where it is.")
+        }
+        .alert(
+            "Delete Project?",
+            isPresented: Binding(
+                get: { deleteTarget != nil },
+                set: { if !$0 { deleteTarget = nil } }
+            )
+        ) {
+            Button("Delete", role: .destructive) {
+                if let project = deleteTarget {
+                    Task { await model.deleteProject(project) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let project = deleteTarget {
+                let count = model.sessionCount(for: project)
+                Text(
+                    "“\(project.name)” and ^[\(count) session](inflect: true) will be removed. Files on disk are not touched."
+                )
+            }
+        }
+    }
+}
+
+/// Project section header: name, a plus menu that starts a new session with
+/// the chosen provider, and a context menu for rename/delete.
+private struct ProjectSectionHeader: View {
+    let project: Project
+    let onNewSession: (ProviderKind) -> Void
+    let onRename: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(project.name)
+            Spacer()
+            Menu {
+                ForEach(ProviderKind.allCases) { provider in
+                    Button(provider.displayName) { onNewSession(provider) }
+                }
+            } label: {
+                Image(systemName: "plus")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("New session in \(project.name)")
+        }
+        .contextMenu {
+            Menu("New Session") {
+                ForEach(ProviderKind.allCases) { provider in
+                    Button(provider.displayName) { onNewSession(provider) }
+                }
+            }
+            Button("Rename…") { onRename() }
+            Divider()
+            Button("Delete Project…", role: .destructive) { onDelete() }
+        }
     }
 }
 

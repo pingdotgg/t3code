@@ -320,6 +320,40 @@ public final class AppModel {
         }
     }
 
+    /// Non-archived sessions of a project (what the delete confirmation counts).
+    public func sessionCount(for project: Project) -> Int {
+        threads.count { $0.projectID == project.id && $0.status != .archived }
+    }
+
+    public func renameProject(_ project: Project, to name: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != project.name else { return }
+        do {
+            try await backend.renameProject(id: project.id, name: trimmed)
+            // Backends emit .projectsChanged too; update in place so the
+            // sidebar reflects the rename even before that lands.
+            if let index = projects.firstIndex(where: { $0.id == project.id }) {
+                projects[index].name = trimmed
+            }
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    /// Deletes the project and every session in it.
+    public func deleteProject(_ project: Project) async {
+        do {
+            try await backend.deleteProject(id: project.id)
+            if selectedThread?.projectID == project.id {
+                selectedThreadID = nil
+            }
+            threads.removeAll { $0.projectID == project.id }
+            projects.removeAll { $0.id == project.id }
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
     // MARK: - Settings / providers / archive
 
     public private(set) var settings: AppSettings?
