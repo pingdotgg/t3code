@@ -65,14 +65,27 @@ envelopes with tag/id/payload, streamed responses for subscriptions.
 T3Kit hand-ports the message shapes as Codable structs; contract drift is
 caught by `Tests/T3KitTests` fixtures copied from the TS side.
 
-## v1 scope (core parity)
+## Scope
 
-In: project/thread sidebar, chat timeline (turns, streaming tokens, tool
-events), composer (plain text + file mentions), approvals, diff panel,
-checkpoints, provider status + settings subset, light/dark.
-Out (post-v1): embedded terminal (xterm), browser preview/automation, PR
-review dialogs, Clerk/T3 Connect cloud auth, SSH/tailscale remotes, pairing
-QR, keybindings editor, auto-update (Sparkle later), Windows/Linux (Electron
+v1 (core parity): project/thread sidebar, chat timeline (turns, streaming
+tokens, tool events), composer, approvals, diff panel, checkpoints,
+provider status, light/dark.
+
+v2 (feature parity — landed): user-input prompt cards, plan mode +
+proposed-plan cards with implement action, runtime-mode picker, model
+picker, context-window meter, live plan-progress (todo) inspector tab,
+composer @-file-mentions (projects.searchEntries), image attachments
+(inline base64 dataUrl), slash-command menu, editable settings
+(server.getSettings/updateSettings), provider refresh + CLI update,
+archived-thread management, git/VCS (subscribeVcsStatus, branch
+switch/create, pull, stacked commit/push/PR actions with outcome banner,
+PR links), workspace file browser + preview + open-in-external-editor.
+
+Out (excluded or later): embedded terminal (needs a SwiftTerm dependency —
+Package.swift change to coordinate), browser preview/automation, PR review
+dialogs, Clerk/T3 Connect cloud auth + relay + pairing (t3-service
+exclusive, permanently out for the fork), SSH/tailscale remotes,
+keybindings editor, auto-update (Sparkle later), Windows/Linux (Electron
 app remains for those).
 
 ## Liquid Glass usage
