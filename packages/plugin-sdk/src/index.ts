@@ -196,6 +196,32 @@ export interface VcsCapability {
   readonly switchRef: (input: VcsSwitchRefFacadeInput) => Effect.Effect<VcsSwitchRefResult, Error>;
 
   /**
+   * Remove a tracked path from the index and working tree. Missing paths are
+   * ignored by the backing Git command.
+   */
+  readonly removePath: (input: VcsPathInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Remove untracked files and directories at a path.
+   */
+  readonly clean: (input: VcsPathInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Read the current branch name, or "HEAD" when detached.
+   */
+  readonly currentBranch: (input: VcsWorktreeInput) => Effect.Effect<string, Error>;
+
+  /**
+   * Count commits reachable from `head` but not `base`.
+   */
+  readonly aheadCount: (input: VcsAheadCountInput) => Effect.Effect<number, Error>;
+
+  /**
+   * List local and remote refs for a repository root.
+   */
+  readonly listRefs: (input: VcsRepoInput) => Effect.Effect<ReadonlyArray<VcsRef>, Error>;
+
+  /**
    * Stage selected paths, or all changes when `filePaths` is omitted, then
    * create a commit. No-change commits are surfaced as a skipped value.
    */
@@ -590,9 +616,7 @@ export interface SourceControlCapability {
   >;
 
   /**
-   * List open GitHub pull requests for a head selector. This exposes the
-   * existing GitHub CLI primitive; checks, reviews, and merge are not available
-   * in the backing service and are intentionally omitted.
+   * List open GitHub pull requests for a head selector.
    */
   readonly listOpenPullRequests: (input: {
     readonly cwd: string;
@@ -609,6 +633,14 @@ export interface SourceControlCapability {
   }) => Effect.Effect<GitHubPullRequestSummary, Error>;
 
   /**
+   * Read repository clone URLs from GitHub.
+   */
+  readonly getRepositoryCloneUrls: (input: {
+    readonly cwd: string;
+    readonly repository: string;
+  }) => Effect.Effect<GitHubRepositoryCloneUrls, Error>;
+
+  /**
    * Create a GitHub pull request using a body file already present on disk.
    */
   readonly createPullRequest: (input: {
@@ -617,7 +649,50 @@ export interface SourceControlCapability {
     readonly headSelector: string;
     readonly title: string;
     readonly bodyFile: string;
+    readonly draft?: boolean | undefined;
   }) => Effect.Effect<void, Error>;
+
+  /**
+   * Merge a GitHub pull request with the selected strategy.
+   */
+  readonly mergePullRequest: (input: {
+    readonly cwd: string;
+    readonly number: number;
+    readonly strategy: GitHubMergeStrategy;
+  }) => Effect.Effect<void, Error>;
+
+  /**
+   * Read raw GitHub pull request detail fields.
+   */
+  readonly getPullRequestDetail: (input: {
+    readonly cwd: string;
+    readonly number: number;
+  }) => Effect.Effect<GitHubPullRequestDetail, Error>;
+
+  /**
+   * List raw GitHub pull request check rows.
+   */
+  readonly listPullRequestChecks: (input: {
+    readonly cwd: string;
+    readonly number: number;
+  }) => Effect.Effect<ReadonlyArray<GitHubPullRequestCheck>, Error>;
+
+  /**
+   * List raw GitHub pull request reviews.
+   */
+  readonly listPullRequestReviews: (input: {
+    readonly cwd: string;
+    readonly number: number;
+  }) => Effect.Effect<ReadonlyArray<GitHubPullRequestReview>, Error>;
+
+  /**
+   * List raw GitHub pull request review comments.
+   */
+  readonly listPullRequestReviewComments: (input: {
+    readonly cwd: string;
+    readonly repo: string;
+    readonly number: number;
+  }) => Effect.Effect<ReadonlyArray<GitHubPullRequestReviewComment>, Error>;
 
   /**
    * Read the default branch reported by the GitHub CLI for the current repo.
@@ -800,6 +875,15 @@ export interface VcsWorktreeInput {
   readonly worktreePath: string;
 }
 
+export interface VcsPathInput extends VcsWorktreeInput {
+  readonly path: string;
+}
+
+export interface VcsAheadCountInput extends VcsWorktreeInput {
+  readonly base: string;
+  readonly head: string;
+}
+
 export interface VcsWorktreeSummary {
   readonly path: string;
   readonly branch: string | null;
@@ -833,10 +917,17 @@ export interface VcsSwitchRefFacadeInput extends VcsWorktreeInput {
   readonly ref: string;
 }
 
+export interface VcsRef {
+  readonly name: string;
+  readonly isRemote: boolean;
+  readonly worktreePath: string | null;
+}
+
 export interface VcsCommitInput extends VcsWorktreeInput {
   readonly subject: string;
   readonly body?: string | undefined;
   readonly filePaths?: ReadonlyArray<string> | undefined;
+  readonly noVerify?: boolean | undefined;
 }
 
 export type VcsCommitResult =
@@ -850,6 +941,10 @@ export type VcsCommitResult =
 
 export interface VcsMergeInput extends VcsWorktreeInput {
   readonly ref: string;
+  readonly message?: string | undefined;
+  readonly noFf?: boolean | undefined;
+  readonly noVerify?: boolean | undefined;
+  readonly abortOnConflict?: boolean | undefined;
 }
 
 export type VcsMergeResult =
@@ -925,6 +1020,45 @@ export interface GitHubPullRequestSummary {
   readonly isCrossRepository?: boolean | undefined;
   readonly headRepositoryNameWithOwner?: string | null | undefined;
   readonly headRepositoryOwnerLogin?: string | null | undefined;
+}
+
+export interface GitHubRepositoryCloneUrls {
+  readonly nameWithOwner: string;
+  readonly url: string;
+  readonly sshUrl: string;
+}
+
+export type GitHubMergeStrategy = "squash" | "merge" | "rebase";
+
+export interface GitHubPullRequestDetail {
+  readonly state: string;
+  readonly mergedAt: string | null;
+  readonly reviewDecision: string | null;
+  readonly headRefOid: string;
+  readonly url: string;
+}
+
+export interface GitHubPullRequestCheck {
+  readonly name: string;
+  readonly state: string;
+  readonly bucket: string;
+  readonly link: string;
+}
+
+export interface GitHubPullRequestReview {
+  readonly id: string;
+  readonly author: string;
+  readonly state: string;
+  readonly body: string;
+  readonly submittedAt: string;
+}
+
+export interface GitHubPullRequestReviewComment {
+  readonly id: number;
+  readonly user: string;
+  readonly body: string;
+  readonly path: string | null;
+  readonly createdAt: string;
 }
 
 export interface CommitMessageGenerationInput {

@@ -2,7 +2,7 @@
 import * as NodePath from "node:path";
 
 import { GitCommandError } from "@t3tools/contracts";
-import type { VcsCapability, VcsWorktreeSummary } from "@t3tools/plugin-sdk";
+import type { VcsCapability, VcsRef, VcsWorktreeSummary } from "@t3tools/plugin-sdk";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -186,6 +186,81 @@ export function makeVcsCapability(input: {
         ),
       ),
 
+    removePath: (request) =>
+      requireAbsolute("worktreePath", request.worktreePath).pipe(
+        Effect.flatMap((cwd) =>
+          input.git.execute({
+            operation: "PluginVcsCapability.removePath",
+            cwd,
+            args: ["rm", "-r", "-f", "--ignore-unmatch", "--", request.path],
+          }),
+        ),
+        Effect.asVoid,
+      ),
+
+    clean: (request) =>
+      requireAbsolute("worktreePath", request.worktreePath).pipe(
+        Effect.flatMap((cwd) =>
+          input.git.execute({
+            operation: "PluginVcsCapability.clean",
+            cwd,
+            args: ["clean", "-f", "-d", "--", request.path],
+          }),
+        ),
+        Effect.asVoid,
+      ),
+
+    currentBranch: ({ worktreePath }) =>
+      requireAbsolute("worktreePath", worktreePath).pipe(
+        Effect.flatMap((cwd) =>
+          input.git.execute({
+            operation: "PluginVcsCapability.currentBranch",
+            cwd,
+            args: ["rev-parse", "--abbrev-ref", "HEAD"],
+          }),
+        ),
+        Effect.map((result) => result.stdout.trim()),
+      ),
+
+    aheadCount: (request) =>
+      requireAbsolute("worktreePath", request.worktreePath).pipe(
+        Effect.flatMap((cwd) =>
+          input.git.execute({
+            operation: "PluginVcsCapability.aheadCount",
+            cwd,
+            args: ["rev-list", "--count", `${request.base}..${request.head}`],
+          }),
+        ),
+        Effect.flatMap((result) => {
+          const count = Number.parseInt(result.stdout.trim(), 10);
+          return Number.isFinite(count)
+            ? Effect.succeed(count)
+            : Effect.fail(
+                gitCommandError({
+                  operation: "PluginVcsCapability.aheadCount",
+                  cwd: request.worktreePath,
+                  args: ["rev-list", "--count", `${request.base}..${request.head}`],
+                  stdout: result.stdout,
+                  stderr: result.stderr,
+                  detail: "git rev-list returned a non-numeric count",
+                }),
+              );
+        }),
+      ),
+
+    listRefs: ({ repoRoot }) =>
+      requireAbsolute("repoRoot", repoRoot).pipe(
+        Effect.flatMap((cwd) => input.git.listRefs({ cwd })),
+        Effect.map(
+          (result): ReadonlyArray<VcsRef> =>
+            result.refs.map((ref) => ({
+              name: ref.name,
+              isRemote: ref.isRemote ?? false,
+              worktreePath: ref.worktreePath,
+            })),
+        ),
+      ),
+
     commit: (request) =>
       Effect.gen(function* () {
         const cwd = yield* requireAbsolute("worktreePath", request.worktreePath);
@@ -193,7 +268,12 @@ export function makeVcsCapability(input: {
         if (context === null) {
           return { status: "skipped_no_changes" as const };
         }
-        const result = yield* input.git.commit(cwd, request.subject, request.body ?? "");
+        const result = yield* input.git.commit(
+          cwd,
+          request.subject,
+          request.body ?? "",
+          request.noVerify ? { noVerify: true } : {},
+        );
         return {
           status: "created" as const,
           commitSha: result.commitSha,
@@ -203,7 +283,13 @@ export function makeVcsCapability(input: {
     merge: (request) =>
       Effect.gen(function* () {
         const cwd = yield* requireAbsolute("worktreePath", request.worktreePath);
-        const args = ["merge", request.ref];
+        const args = [
+          "merge",
+          ...(request.noFf ? ["--no-ff"] : []),
+          ...(request.noVerify ? ["--no-verify"] : []),
+          ...(request.message ? ["-m", request.message] : []),
+          request.ref,
+        ];
         const result = yield* input.git.execute({
           operation: "PluginVcsCapability.merge",
           cwd,
@@ -239,6 +325,15 @@ export function makeVcsCapability(input: {
           .map((line) => line.trim())
           .filter((line) => line.length > 0);
         if (conflictedFiles.length > 0) {
+          if (request.abortOnConflict) {
+            yield* input.git
+              .execute({
+                operation: "PluginVcsCapability.merge.abort",
+                cwd,
+                args: ["merge", "--abort"],
+              })
+              .pipe(Effect.asVoid);
+          }
           return {
             status: "conflict" as const,
             conflictedFiles,
@@ -247,6 +342,19 @@ export function makeVcsCapability(input: {
           };
         }
 
+        if (request.abortOnConflict) {
+          // A non-conflict merge failure may still have left MERGE_HEAD (fork
+          // aborts on any nonzero exit). Abort best-effort so the tree returns
+          // clean; ignore the abort's own error since a precondition failure
+          // (e.g. a bad ref) may leave no merge in progress to abort.
+          yield* input.git
+            .execute({
+              operation: "PluginVcsCapability.merge.abort",
+              cwd,
+              args: ["merge", "--abort"],
+            })
+            .pipe(Effect.ignore);
+        }
         return yield* gitCommandError({
           operation: "PluginVcsCapability.merge",
           cwd,

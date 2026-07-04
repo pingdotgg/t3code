@@ -20,7 +20,21 @@ export function makeSourceControlCapability(input: {
     discoverProviders: input.registry.discover,
     listOpenPullRequests: (request) => input.github.listOpenPullRequests(request),
     getPullRequest: (request) => input.github.getPullRequest(request),
-    createPullRequest: (request) => input.github.createPullRequest(request),
+    getRepositoryCloneUrls: (request) => input.github.getRepositoryCloneUrls(request),
+    createPullRequest: (request) =>
+      input.github.createPullRequest({
+        cwd: request.cwd,
+        baseBranch: request.baseBranch,
+        headSelector: request.headSelector,
+        title: request.title,
+        bodyFile: request.bodyFile,
+        ...(request.draft === undefined ? {} : { draft: request.draft }),
+      }),
+    mergePullRequest: (request) => input.github.mergePullRequest(request),
+    getPullRequestDetail: (request) => input.github.getPullRequestDetail(request),
+    listPullRequestChecks: (request) => input.github.listPullRequestChecks(request),
+    listPullRequestReviews: (request) => input.github.listPullRequestReviews(request),
+    listPullRequestReviewComments: (request) => input.github.listPullRequestReviewComments(request),
     getDefaultBranch: (request) => input.github.getDefaultBranch(request),
     checkoutPullRequest: (request) => input.github.checkoutPullRequest(request),
   };

@@ -8,10 +8,10 @@ import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 
-const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
-  exitCode: ChildProcessSpawner.ExitCode(0),
+const processOutput = (stdout: string, exitCode = 0, stderr = ""): VcsProcess.VcsProcessOutput => ({
+  exitCode: ChildProcessSpawner.ExitCode(exitCode),
   stdout,
-  stderr: "",
+  stderr,
   stdoutTruncated: false,
   stderrTruncated: false,
 });
@@ -285,6 +285,281 @@ describe("GitHubCli.layer", () => {
         nameWithOwner: "octocat/codething-mvp",
         url: "https://github.com/octocat/codething-mvp",
         sshUrl: "git@github.com:octocat/codething-mvp.git",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("creates draft pull requests with the fork gh args", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.createPullRequest({
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "feature/pr",
+        title: "Open PR",
+        bodyFile: "/tmp/pr.md",
+        draft: true,
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "pr",
+          "create",
+          "--base",
+          "main",
+          "--head",
+          "feature/pr",
+          "--title",
+          "Open PR",
+          "--body-file",
+          "/tmp/pr.md",
+          "--draft",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("merges pull requests with the selected strategy flag", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.mergePullRequest({
+        cwd: "/repo",
+        number: 42,
+        strategy: "rebase",
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "42", "--rebase"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("parses pull request detail output", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              state: "MERGED",
+              mergedAt: "2026-07-03T12:00:00Z",
+              reviewDecision: "APPROVED",
+              headRefOid: "abc123",
+              url: "https://github.com/o/r/pull/42",
+            }),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const detail = yield* gh.getPullRequestDetail({ cwd: "/repo", number: 42 });
+
+      assert.deepStrictEqual(detail, {
+        state: "MERGED",
+        mergedAt: "2026-07-03T12:00:00Z",
+        reviewDecision: "APPROVED",
+        headRefOid: "abc123",
+        url: "https://github.com/o/r/pull/42",
+      });
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "view", "42", "--json", "state,mergedAt,reviewDecision,headRefOid,url"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("parses pull request checks while tolerating gh pending exit code", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                name: "test",
+                state: "PENDING",
+                bucket: "pending",
+                link: "https://github.com/o/r/actions/runs/1",
+              },
+              {
+                name: null,
+                state: null,
+                bucket: null,
+                link: null,
+              },
+            ]),
+            8,
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const checks = yield* gh.listPullRequestChecks({ cwd: "/repo", number: 42 });
+
+      assert.deepStrictEqual(checks, [
+        {
+          name: "test",
+          state: "PENDING",
+          bucket: "pending",
+          link: "https://github.com/o/r/actions/runs/1",
+        },
+        {
+          name: "",
+          state: "",
+          bucket: "",
+          link: "",
+        },
+      ]);
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "checks", "42", "--json", "name,state,bucket,link"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+        allowNonZeroExit: true,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("rejects unexpected gh pr checks exit codes", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]", 2, "bad exit")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh.listPullRequestChecks({ cwd: "/repo", number: 42 }).pipe(Effect.flip);
+
+      assert.equal(error._tag, "GitHubCliCommandError");
+      assert.equal((error.cause as Error).message, "bad exit");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("parses pull request review output", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              reviews: [
+                {
+                  id: "R_1",
+                  author: { login: "octocat" },
+                  state: "APPROVED",
+                  body: "ship it",
+                  submittedAt: "2026-07-03T12:00:00Z",
+                },
+                {
+                  id: null,
+                  author: null,
+                  state: null,
+                  body: null,
+                  submittedAt: null,
+                },
+              ],
+            }),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const reviews = yield* gh.listPullRequestReviews({ cwd: "/repo", number: 42 });
+
+      assert.deepStrictEqual(reviews, [
+        {
+          id: "R_1",
+          author: "octocat",
+          state: "APPROVED",
+          body: "ship it",
+          submittedAt: "2026-07-03T12:00:00Z",
+        },
+        {
+          id: "",
+          author: "",
+          state: "",
+          body: "",
+          submittedAt: "",
+        },
+      ]);
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "view", "42", "--json", "reviews"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("parses pull request review comments output", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                id: 123,
+                user: { login: "octocat" },
+                body: "please fix",
+                path: "src/file.ts",
+                created_at: "2026-07-03T12:00:00Z",
+              },
+              {
+                id: 124,
+                user: null,
+                body: null,
+                path: null,
+                created_at: null,
+              },
+            ]),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const comments = yield* gh.listPullRequestReviewComments({
+        cwd: "/repo",
+        repo: "o/r",
+        number: 42,
+      });
+
+      assert.deepStrictEqual(comments, [
+        {
+          id: 123,
+          user: "octocat",
+          body: "please fix",
+          path: "src/file.ts",
+          createdAt: "2026-07-03T12:00:00Z",
+        },
+        {
+          id: 124,
+          user: "",
+          body: "",
+          path: null,
+          createdAt: "",
+        },
+      ]);
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["api", "repos/o/r/pulls/42/comments"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
       });
     }).pipe(Effect.provide(layer)),
   );

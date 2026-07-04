@@ -1564,7 +1564,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     body,
     options?: GitVcsDriver.GitCommitOptions,
   ) {
-    const args = ["commit", "-m", subject];
+    const args = ["commit", ...(options?.noVerify ? ["--no-verify"] : []), "-m", subject];
     const trimmedBody = body.trim();
     if (trimmedBody.length > 0) {
       args.push("-m", trimmedBody);
