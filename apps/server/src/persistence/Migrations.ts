@@ -47,6 +47,7 @@ import Migration0031 from "./Migrations/028_ProjectionTurnScopedFiles.ts";
 import Migration0032 from "./Migrations/032_EnsureProviderInstanceIdColumns.ts";
 import Migration0033 from "./Migrations/033_ProjectionQueuedTurns.ts";
 import Migration0034 from "./Migrations/034_ProjectionThreadParentThreadId.ts";
+import Migration0036 from "./Migrations/036_RepairRoleAuthTablesAfterScopeMigrations.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -93,6 +94,7 @@ export const migrationEntries = [
   [32, "EnsureProviderInstanceIdColumns", Migration0032],
   [33, "ProjectionQueuedTurns", Migration0033],
   [34, "ProjectionThreadParentThreadId", Migration0034],
+  [36, "RepairRoleAuthTablesAfterScopeMigrations", Migration0036],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>
