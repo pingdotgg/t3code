@@ -44,6 +44,7 @@ import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnv
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { SettingsWaitlistRouteScreen } from "./features/settings/SettingsWaitlistRouteScreen";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
+import { useSceneryBootstrap } from "./features/scenery/use-scenery";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
@@ -251,6 +252,7 @@ function RootStackLayout(props: {
 }) {
   useAgentNotificationNavigation();
   useThreadOutboxDrain();
+  useSceneryBootstrap();
   // Full pathname (sheets included) for keyboard-command scoping; the
   // workspace layout only reacts to the underlying non-overlay route.
   const path = getPathFromState(props.state, navigationPathConfig);

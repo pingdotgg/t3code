@@ -179,6 +179,12 @@ const config: ExpoConfig = {
       publishableKey: repoEnv.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null,
       jwtTemplate: repoEnv.EXPO_PUBLIC_CLERK_JWT_TEMPLATE ?? null,
     },
+    unsplash: {
+      // Public read-only access key for Dolomites scenery. Delivered at
+      // build time (root .env.local locally, EAS env in CI) — never
+      // committed. Absent key = gradient washes everywhere.
+      accessKey: repoEnv.EXPO_PUBLIC_UNSPLASH_ACCESS_KEY ?? null,
+    },
     observability: {
       tracesUrl: repoEnv.EXPO_PUBLIC_OTLP_TRACES_URL ?? "https://api.axiom.co/v1/traces",
       tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
