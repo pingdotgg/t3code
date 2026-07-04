@@ -291,4 +291,68 @@ public final class AppModel {
             lastError = String(describing: error)
         }
     }
+
+    // MARK: - Settings / providers / archive
+
+    public private(set) var settings: AppSettings?
+
+    public func loadSettings() async {
+        do {
+            settings = try await backend.settings()
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func saveSettings(_ new: AppSettings) async {
+        do {
+            settings = try await backend.updateSettings(new)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func refreshProviders() async {
+        do {
+            try await backend.refreshProviders()
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func updateProvider(instanceID: String) async {
+        do {
+            try await backend.updateProvider(instanceID: instanceID)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public var archivedThreads: [ChatThread] {
+        threads.filter { $0.status == .archived }
+    }
+
+    public func archiveThread(_ thread: ChatThread) async {
+        do {
+            try await backend.archiveThread(id: thread.id)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func unarchiveThread(_ thread: ChatThread) async {
+        do {
+            try await backend.unarchiveThread(id: thread.id)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func deleteThread(_ thread: ChatThread) async {
+        do {
+            try await backend.deleteThread(id: thread.id)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
 }

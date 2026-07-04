@@ -861,6 +861,23 @@ public actor LiveBackend: BackendService {
         // The shell subscription re-emits the thread with archivedAt set.
     }
 
+    public func unarchiveThread(id: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.unarchiveThread(threadId: id)
+    }
+
+    public func deleteThread(id: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.deleteThread(threadId: id)
+        // The shell subscription emits thread-removed; drop local caches now
+        // so a re-created id never sees stale dedup state.
+        threadsByID[id] = nil
+        latestTimeline[id] = nil
+        activeThreadIDs.remove(id)
+        threadSubscriptions[id]?.cancel()
+        threadSubscriptions[id] = nil
+    }
+
     public func sendMessage(
         threadID: String, text: String, attachments: [OutgoingAttachment]
     ) async throws {
@@ -1006,6 +1023,49 @@ public actor LiveBackend: BackendService {
         let project = Project(id: projectID, name: title, path: path)
         projectsByID[projectID] = project
         return project
+    }
+
+    // MARK: - BackendService: settings + providers
+
+    public func settings() async throws -> AppSettings {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        return Self.uiSettings(try await client.getSettings())
+    }
+
+    public func updateSettings(_ settings: AppSettings) async throws -> AppSettings {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let patch = ServerSettingsPatch(
+            enableAssistantStreaming: settings.assistantStreaming,
+            enableProviderUpdateChecks: settings.providerUpdateChecks,
+            defaultThreadEnvMode: settings.defaultEnvMode == .worktree ? .worktree : .local,
+            newWorktreesStartFromOrigin: settings.newWorktreesStartFromOrigin,
+            addProjectBaseDirectory: settings.addProjectBaseDirectory)
+        return Self.uiSettings(try await client.updateSettings(patch: patch))
+    }
+
+    public func refreshProviders() async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let payload = try await client.refreshProviders()
+        applyProviders(payload.providers)
+    }
+
+    public func updateProvider(instanceID: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        guard let provider = providersByInstanceId[instanceID] else {
+            throw LiveBackendError.noProviderInstance(instanceID)
+        }
+        let payload = try await client.updateProviderCLI(
+            driver: provider.driver, instanceId: instanceID)
+        applyProviders(payload.providers)
+    }
+
+    private static func uiSettings(_ settings: ServerSettings) -> AppSettings {
+        AppSettings(
+            assistantStreaming: settings.enableAssistantStreaming,
+            providerUpdateChecks: settings.enableProviderUpdateChecks,
+            defaultEnvMode: settings.defaultThreadEnvMode == .worktree ? .worktree : .local,
+            newWorktreesStartFromOrigin: settings.newWorktreesStartFromOrigin,
+            addProjectBaseDirectory: settings.addProjectBaseDirectory)
     }
 
     // MARK: - Emit helper
@@ -1256,6 +1316,7 @@ public enum LiveBackendError: Error, Sendable {
     case unresolvedUserInput(String)
     case unresolvedCheckpoint(String)
     case noProviderForKind(ProviderKind)
+    case noProviderInstance(String)
 }
 
 // MARK: - Unified diff parsing (getFullThreadDiff string -> [DiffFile])

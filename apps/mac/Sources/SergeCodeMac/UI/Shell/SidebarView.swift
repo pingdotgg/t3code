@@ -15,12 +15,23 @@ struct SidebarView: View {
             set: { model.selectedThreadID = $0 }
         )) {
             ForEach(model.projects) { project in
-                let threadsForProject = model.threads.filter { $0.projectID == project.id }
+                // Archived threads live in Settings > Archive, not the sidebar.
+                let threadsForProject = model.threads.filter {
+                    $0.projectID == project.id && $0.status != .archived
+                }
                 if !threadsForProject.isEmpty {
                     Section(project.name) {
                         ForEach(threadsForProject) { thread in
                             SidebarThreadRow(thread: thread)
                                 .tag(thread.id)
+                                .contextMenu {
+                                    Button("Archive") {
+                                        Task { await model.archiveThread(thread) }
+                                    }
+                                    Button("Delete", role: .destructive) {
+                                        Task { await model.deleteThread(thread) }
+                                    }
+                                }
                         }
                     }
                 }

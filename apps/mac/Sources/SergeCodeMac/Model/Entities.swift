@@ -414,6 +414,39 @@ public struct OutgoingAttachment: Identifiable, Hashable, Sendable {
     }
 }
 
+/// Where new threads run: the project checkout itself or a fresh worktree.
+public enum ProjectEnvMode: String, CaseIterable, Sendable, Identifiable {
+    case local, worktree
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .local: "Project directory"
+        case .worktree: "Isolated worktree"
+        }
+    }
+}
+
+/// The editable server-settings subset surfaced in the Settings scene.
+public struct AppSettings: Hashable, Sendable {
+    public var assistantStreaming: Bool
+    public var providerUpdateChecks: Bool
+    public var defaultEnvMode: ProjectEnvMode
+    public var newWorktreesStartFromOrigin: Bool
+    public var addProjectBaseDirectory: String
+
+    public init(
+        assistantStreaming: Bool, providerUpdateChecks: Bool, defaultEnvMode: ProjectEnvMode,
+        newWorktreesStartFromOrigin: Bool, addProjectBaseDirectory: String
+    ) {
+        self.assistantStreaming = assistantStreaming
+        self.providerUpdateChecks = providerUpdateChecks
+        self.defaultEnvMode = defaultEnvMode
+        self.newWorktreesStartFromOrigin = newWorktreesStartFromOrigin
+        self.addProjectBaseDirectory = addProjectBaseDirectory
+    }
+}
+
 public enum ConnectionPhase: Sendable, Equatable {
     case launchingServer
     case connecting

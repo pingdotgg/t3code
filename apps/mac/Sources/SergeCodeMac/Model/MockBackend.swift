@@ -49,6 +49,26 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.archiveThread(id: id)
     }
 
+    public func unarchiveThread(id: String) async throws {
+        await state.unarchiveThread(id: id)
+    }
+
+    public func deleteThread(id: String) async throws {
+        await state.deleteThread(id: id)
+    }
+
+    public func settings() async throws -> AppSettings {
+        await state.settings
+    }
+
+    public func updateSettings(_ settings: AppSettings) async throws -> AppSettings {
+        await state.updateSettings(settings)
+    }
+
+    public func refreshProviders() async throws {}
+
+    public func updateProvider(instanceID: String) async throws {}
+
     public func sendMessage(
         threadID: String, text: String, attachments: [OutgoingAttachment]
     ) async throws {
@@ -230,6 +250,29 @@ private actor MockState {
         thread.updatedAt = Date()
         threadsByID[id] = thread
         emit(.threadUpserted(thread))
+    }
+
+    func unarchiveThread(id: String) {
+        guard var thread = threadsByID[id], thread.status == .archived else { return }
+        thread.status = .idle
+        thread.updatedAt = Date()
+        threadsByID[id] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    func deleteThread(id: String) {
+        guard threadsByID.removeValue(forKey: id) != nil else { return }
+        timelinesByThread[id] = nil
+        emit(.threadRemoved(id: id))
+    }
+
+    private(set) var settings = AppSettings(
+        assistantStreaming: true, providerUpdateChecks: true, defaultEnvMode: .local,
+        newWorktreesStartFromOrigin: false, addProjectBaseDirectory: "~/Documents/Dev")
+
+    func updateSettings(_ new: AppSettings) -> AppSettings {
+        settings = new
+        return new
     }
 
     func searchWorkspace(query: String) -> [WorkspaceEntry] {

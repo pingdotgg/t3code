@@ -50,6 +50,8 @@ public protocol BackendService: Sendable {
 
     func createThread(projectID: String, provider: ProviderKind) async throws -> ChatThread
     func archiveThread(id: String) async throws
+    func unarchiveThread(id: String) async throws
+    func deleteThread(id: String) async throws
     func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment]) async throws
     func cancelTurn(threadID: String) async throws
     func respondToApproval(id: String, approve: Bool) async throws
@@ -70,4 +72,13 @@ public protocol BackendService: Sendable {
     func restoreCheckpoint(id: String) async throws
 
     func addProject(path: String) async throws -> Project
+
+    /// Server-side settings (the editable subset).
+    func settings() async throws -> AppSettings
+    /// Applies the full editable subset as a patch; returns the merged result.
+    func updateSettings(_ settings: AppSettings) async throws -> AppSettings
+    /// Ask the server to re-probe installed provider CLIs.
+    func refreshProviders() async throws
+    /// Run a provider CLI's own update command.
+    func updateProvider(instanceID: String) async throws
 }
