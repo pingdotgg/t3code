@@ -69,6 +69,41 @@ public final class MockBackend: BackendService, @unchecked Sendable {
 
     public func updateProvider(instanceID: String) async throws {}
 
+    public func watchVcsStatus(projectID: String) async throws {
+        await state.emitVcsStatus(projectID: projectID)
+    }
+
+    public func listBranches(projectID: String, query: String?) async throws -> [BranchRef] {
+        [
+            BranchRef(name: "main", isCurrent: false, isDefault: true, isRemote: false),
+            BranchRef(name: "feat/native-mac-app", isCurrent: true, isDefault: false, isRemote: false),
+            BranchRef(name: "fix/sidebar-scroll", isCurrent: false, isDefault: false, isRemote: false),
+        ]
+        .filter { branch in
+            query.map { branch.name.localizedCaseInsensitiveContains($0) } ?? true
+        }
+    }
+
+    public func switchBranch(projectID: String, name: String) async throws {
+        await state.emitVcsStatus(projectID: projectID, branch: name)
+    }
+
+    public func createBranch(projectID: String, name: String) async throws {
+        await state.emitVcsStatus(projectID: projectID, branch: name)
+    }
+
+    public func pull(projectID: String) async throws {}
+
+    public func runGitAction(
+        projectID: String, action: GitAction, commitMessage: String?
+    ) async throws -> GitActionOutcome {
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        return GitActionOutcome(
+            success: true, title: "\(action.displayName) finished",
+            detail: commitMessage,
+            prURL: action == .commitPushPR ? "https://github.com/SergeSerb2/SergeCode/pull/1" : nil)
+    }
+
     public func sendMessage(
         threadID: String, text: String, attachments: [OutgoingAttachment]
     ) async throws {
@@ -353,6 +388,16 @@ private actor MockState {
                 instanceID: "provider-cursor", modelID: "composer-2",
                 displayName: "Composer 2", provider: .cursor, isDefault: true),
         ]
+    }
+
+    func emitVcsStatus(projectID: String, branch: String = "feat/native-mac-app") {
+        emit(
+            .vcsStatusChanged(
+                projectID: projectID,
+                status: VcsStatus(
+                    isRepo: true, branch: branch, isDefaultBranch: branch == "main",
+                    changedFileCount: 3, insertions: 120, deletions: 14, aheadCount: 2,
+                    behindCount: 0, hasUpstream: true)))
     }
 
     func respondToUserInput(id: String, answers: [String: [String]]) {

@@ -194,6 +194,7 @@ public actor LiveBackend: BackendService {
         socketSessionTask?.cancel()
         socketSessionTask = nil
         cancelAllThreadSubscriptions()
+        cancelAllVcsSubscriptions()
 
         if let conn = currentConnection {
             currentConnection = nil
@@ -241,6 +242,7 @@ public actor LiveBackend: BackendService {
         socketSessionTask?.cancel()
         socketSessionTask = nil
         cancelAllThreadSubscriptions()
+        cancelAllVcsSubscriptions()
         currentClient = nil
         if let conn = currentConnection {
             currentConnection = nil
@@ -431,6 +433,13 @@ public actor LiveBackend: BackendService {
             task.cancel()
         }
         threadSubscriptions.removeAll()
+    }
+
+    private func cancelAllVcsSubscriptions() {
+        for task in vcsSubscriptions.values {
+            task.cancel()
+        }
+        vcsSubscriptions.removeAll()
     }
 
     private func handleThreadItem(threadID: String, item: OrchestrationThreadStreamItem) {
@@ -1023,6 +1032,129 @@ public actor LiveBackend: BackendService {
         let project = Project(id: projectID, name: title, path: path)
         projectsByID[projectID] = project
         return project
+    }
+
+    // MARK: - BackendService: git / VCS
+
+    /// Live status subscriptions keyed by projectID; re-established on
+    /// demand after reconnects (watchVcsStatus is called again by the UI).
+    private var vcsSubscriptions: [String: Task<Void, Never>] = [:]
+    /// Last combined local+remote projection per project.
+    private var vcsLocal: [String: VcsStatusLocal] = [:]
+    private var vcsRemote: [String: VcsStatusRemote] = [:]
+
+    public func watchVcsStatus(projectID: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        guard let project = projectsByID[projectID] else { return }
+        guard vcsSubscriptions[projectID] == nil else { return }
+        let cwd = project.path
+        let task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let stream = await client.subscribeVcsStatus(cwd: cwd)
+                for try await event in stream {
+                    await self.applyVcsEvent(projectID: projectID, event: event)
+                }
+            } catch {
+                // Stream ended (socket drop or non-repo error): forget the
+                // subscription so the next watch call re-establishes it.
+            }
+            await self.clearVcsSubscription(projectID: projectID)
+        }
+        vcsSubscriptions[projectID] = task
+    }
+
+    private func clearVcsSubscription(projectID: String) {
+        vcsSubscriptions[projectID] = nil
+    }
+
+    private func applyVcsEvent(projectID: String, event: VcsStatusStreamEvent) {
+        switch event {
+        case .snapshot(let local, let remote):
+            vcsLocal[projectID] = local
+            vcsRemote[projectID] = remote ?? vcsRemote[projectID]
+        case .localUpdated(let local):
+            vcsLocal[projectID] = local
+        case .remoteUpdated(let remote):
+            if let remote { vcsRemote[projectID] = remote }
+        }
+        guard let local = vcsLocal[projectID] else { return }
+        emit(
+            .vcsStatusChanged(
+                projectID: projectID,
+                status: Self.uiVcsStatus(local: local, remote: vcsRemote[projectID])))
+    }
+
+    private static func uiVcsStatus(local: VcsStatusLocal, remote: VcsStatusRemote?) -> VcsStatus {
+        VcsStatus(
+            isRepo: local.isRepo, branch: local.refName, isDefaultBranch: local.isDefaultRef,
+            changedFileCount: local.workingTree.files.count,
+            insertions: local.workingTree.insertions, deletions: local.workingTree.deletions,
+            aheadCount: remote?.aheadCount ?? 0, behindCount: remote?.behindCount ?? 0,
+            hasUpstream: remote?.hasUpstream ?? false, prNumber: remote?.pr?.number,
+            prTitle: remote?.pr?.title, prURL: remote?.pr?.url)
+    }
+
+    private func projectCwd(_ projectID: String) throws -> String {
+        guard let project = projectsByID[projectID] else {
+            throw LiveBackendError.notConnected
+        }
+        return project.path
+    }
+
+    public func listBranches(projectID: String, query: String?) async throws -> [BranchRef] {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let result = try await client.listRefs(
+            cwd: try projectCwd(projectID), query: query, refKind: "local", limit: 50)
+        return result.refs.map {
+            BranchRef(
+                name: $0.name, isCurrent: $0.current, isDefault: $0.isDefault,
+                isRemote: $0.isRemote ?? false)
+        }
+    }
+
+    public func switchBranch(projectID: String, name: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.switchRef(cwd: try projectCwd(projectID), refName: name)
+    }
+
+    public func createBranch(projectID: String, name: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.createRef(cwd: try projectCwd(projectID), refName: name, switchRef: true)
+    }
+
+    public func pull(projectID: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.pull(cwd: try projectCwd(projectID))
+    }
+
+    public func runGitAction(
+        projectID: String, action: GitAction, commitMessage: String?
+    ) async throws -> GitActionOutcome {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let wireAction: GitStackedAction =
+            switch action {
+            case .commit: .commit
+            case .push: .push
+            case .commitPush: .commitPush
+            case .commitPushPR: .commitPushPR
+            }
+        let stream = await client.runStackedAction(
+            cwd: try projectCwd(projectID), action: wireAction, commitMessage: commitMessage)
+        var outcome = GitActionOutcome(success: false, title: "No response from git action")
+        for try await event in stream {
+            switch event {
+            case .finished(let result):
+                outcome = GitActionOutcome(
+                    success: true, title: result.toast.title, detail: result.toast.description,
+                    prURL: result.toast.prURL)
+            case .failed(_, let message):
+                outcome = GitActionOutcome(success: false, title: message)
+            case .started, .phaseStarted, .hookStarted, .hookOutput, .hookFinished:
+                break
+            }
+        }
+        return outcome
     }
 
     // MARK: - BackendService: settings + providers

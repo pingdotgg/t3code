@@ -16,6 +16,7 @@ public struct ChatScreen: View {
             if let thread = model.selectedThread {
                 ChatHeaderView(thread: thread, model: model)
                 Divider()
+                VcsToolbar(model: model)
                 ChatTimelineScrollView(model: model, isPinnedToBottom: $isPinnedToBottom)
                 ComposerBar(model: model)
             } else {
@@ -26,7 +27,9 @@ public struct ChatScreen: View {
         .task(id: model.selectedThreadID) {
             isPinnedToBottom = true
             guard let threadID = model.selectedThreadID else { return }
+            async let vcs: Void = model.watchVcsStatus()
             await model.loadTimelineIfNeeded(threadID: threadID)
+            await vcs
         }
     }
 }

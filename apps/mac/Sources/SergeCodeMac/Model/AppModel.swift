@@ -14,6 +14,9 @@ public final class AppModel {
     public private(set) var models: [ModelOption] = []
     public private(set) var contextWindows: [String: ContextWindowStatus] = [:]
     public private(set) var planProgress: [String: PlanProgress] = [:]
+    public private(set) var vcsStatuses: [String: VcsStatus] = [:]
+    /// Outcome of the most recent git action, shown as a transient banner.
+    public var lastGitActionOutcome: GitActionOutcome?
 
     public var selectedThreadID: String?
     public var lastError: String?
@@ -96,6 +99,8 @@ public final class AppModel {
             contextWindows[threadID] = status
         case .planProgressUpdated(let threadID, let progress):
             planProgress[threadID] = progress
+        case .vcsStatusChanged(let projectID, let status):
+            vcsStatuses[projectID] = status
         }
     }
 
@@ -325,6 +330,66 @@ public final class AppModel {
             try await backend.updateProvider(instanceID: instanceID)
         } catch {
             lastError = String(describing: error)
+        }
+    }
+
+    // MARK: - Git / VCS
+
+    public func selectedProjectVcsStatus() -> VcsStatus? {
+        guard let projectID = selectedThread?.projectID else { return nil }
+        return vcsStatuses[projectID]
+    }
+
+    public func watchVcsStatus() async {
+        guard let projectID = selectedThread?.projectID else { return }
+        try? await backend.watchVcsStatus(projectID: projectID)
+    }
+
+    public func listBranches(query: String?) async -> [BranchRef] {
+        guard let projectID = selectedThread?.projectID else { return [] }
+        do {
+            return try await backend.listBranches(projectID: projectID, query: query)
+        } catch {
+            lastError = String(describing: error)
+            return []
+        }
+    }
+
+    public func switchBranch(_ name: String) async {
+        guard let projectID = selectedThread?.projectID else { return }
+        do {
+            try await backend.switchBranch(projectID: projectID, name: name)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func createBranch(_ name: String) async {
+        guard let projectID = selectedThread?.projectID else { return }
+        do {
+            try await backend.createBranch(projectID: projectID, name: name)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func pull() async {
+        guard let projectID = selectedThread?.projectID else { return }
+        do {
+            try await backend.pull(projectID: projectID)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func runGitAction(_ action: GitAction, commitMessage: String?) async {
+        guard let projectID = selectedThread?.projectID else { return }
+        do {
+            lastGitActionOutcome = try await backend.runGitAction(
+                projectID: projectID, action: action, commitMessage: commitMessage)
+        } catch {
+            lastGitActionOutcome = GitActionOutcome(
+                success: false, title: "Git action failed", detail: String(describing: error))
         }
     }
 

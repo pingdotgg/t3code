@@ -28,6 +28,7 @@ public enum BackendEvent: Sendable {
     case providersChanged([ProviderInstance])
     case contextWindowUpdated(threadID: String, status: ContextWindowStatus)
     case planProgressUpdated(threadID: String, progress: PlanProgress)
+    case vcsStatusChanged(projectID: String, status: VcsStatus)
 }
 
 public protocol BackendService: Sendable {
@@ -72,6 +73,18 @@ public protocol BackendService: Sendable {
     func restoreCheckpoint(id: String) async throws
 
     func addProject(path: String) async throws -> Project
+
+    /// Start (or keep) a live VCS status subscription for a project; status
+    /// arrives via `.vcsStatusChanged` events.
+    func watchVcsStatus(projectID: String) async throws
+    func listBranches(projectID: String, query: String?) async throws -> [BranchRef]
+    func switchBranch(projectID: String, name: String) async throws
+    func createBranch(projectID: String, name: String) async throws
+    func pull(projectID: String) async throws
+    /// Runs a stacked commit/push/PR pipeline to completion.
+    func runGitAction(
+        projectID: String, action: GitAction, commitMessage: String?
+    ) async throws -> GitActionOutcome
 
     /// Server-side settings (the editable subset).
     func settings() async throws -> AppSettings

@@ -414,6 +414,93 @@ public struct OutgoingAttachment: Identifiable, Hashable, Sendable {
     }
 }
 
+// MARK: - Git / VCS
+
+/// Working-tree + branch + PR status for one project repo.
+public struct VcsStatus: Hashable, Sendable {
+    public var isRepo: Bool
+    public var branch: String?
+    public var isDefaultBranch: Bool
+    public var changedFileCount: Int
+    public var insertions: Int
+    public var deletions: Int
+    public var aheadCount: Int
+    public var behindCount: Int
+    public var hasUpstream: Bool
+    public var prNumber: Int?
+    public var prTitle: String?
+    public var prURL: String?
+
+    public init(
+        isRepo: Bool, branch: String?, isDefaultBranch: Bool, changedFileCount: Int,
+        insertions: Int, deletions: Int, aheadCount: Int, behindCount: Int, hasUpstream: Bool,
+        prNumber: Int? = nil, prTitle: String? = nil, prURL: String? = nil
+    ) {
+        self.isRepo = isRepo
+        self.branch = branch
+        self.isDefaultBranch = isDefaultBranch
+        self.changedFileCount = changedFileCount
+        self.insertions = insertions
+        self.deletions = deletions
+        self.aheadCount = aheadCount
+        self.behindCount = behindCount
+        self.hasUpstream = hasUpstream
+        self.prNumber = prNumber
+        self.prTitle = prTitle
+        self.prURL = prURL
+    }
+}
+
+public struct BranchRef: Identifiable, Hashable, Sendable {
+    public var name: String
+    public var isCurrent: Bool
+    public var isDefault: Bool
+    public var isRemote: Bool
+
+    public var id: String { (isRemote ? "remote/" : "local/") + name }
+
+    public init(name: String, isCurrent: Bool, isDefault: Bool, isRemote: Bool) {
+        self.name = name
+        self.isCurrent = isCurrent
+        self.isDefault = isDefault
+        self.isRemote = isRemote
+    }
+}
+
+/// The stacked git pipelines the toolbar offers.
+public enum GitAction: String, CaseIterable, Sendable, Identifiable {
+    case commit, push, commitPush, commitPushPR
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .commit: "Commit"
+        case .push: "Push"
+        case .commitPush: "Commit & Push"
+        case .commitPushPR: "Commit, Push & Open PR"
+        }
+    }
+
+    public var needsCommitMessage: Bool {
+        self != .push
+    }
+}
+
+/// Terminal outcome of a stacked git action.
+public struct GitActionOutcome: Hashable, Sendable {
+    public var success: Bool
+    public var title: String
+    public var detail: String?
+    public var prURL: String?
+
+    public init(success: Bool, title: String, detail: String? = nil, prURL: String? = nil) {
+        self.success = success
+        self.title = title
+        self.detail = detail
+        self.prURL = prURL
+    }
+}
+
 /// Where new threads run: the project checkout itself or a fresh worktree.
 public enum ProjectEnvMode: String, CaseIterable, Sendable, Identifiable {
     case local, worktree
