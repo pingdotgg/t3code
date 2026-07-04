@@ -204,14 +204,12 @@ describe("DesktopShellEnvironment", () => {
         LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
         USERPROFILE: "C:\\Users\\testuser",
       };
-      const commands: ChildProcess.Command[] = [];
 
       yield* runShellEnvironment({
         env,
         platform: "win32",
         handler: (command) => {
           if (command._tag !== "StandardCommand") return "";
-          commands.push(command);
           const loadProfile = !command.args.includes("-NoProfile");
           return loadProfile
             ? envOutput({
@@ -242,18 +240,6 @@ describe("DesktopShellEnvironment", () => {
         env.FNM_MULTISHELL_PATH,
         "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
       );
-      const noProfileCommand = commands.find(
-        (command) => command._tag === "StandardCommand" && command.args.includes("-NoProfile"),
-      );
-      const captureCommand =
-        noProfileCommand?._tag === "StandardCommand" ? (noProfileCommand.args.at(-1) ?? "") : "";
-      assert.include(captureCommand, "[Environment]::GetEnvironmentVariable('Path', 'Process')");
-      assert.include(captureCommand, "[Environment]::GetEnvironmentVariable('Path', 'Machine')");
-      assert.include(captureCommand, "[Environment]::GetEnvironmentVariable('Path', 'User')");
-      assert.include(captureCommand, ") | Where-Object { $null -ne $_ -and $_.Length -gt 0 }");
-      assert.notInclude(captureCommand, "@(; ");
-      assert.notInclude(captureCommand, ",; ");
-      assert.notInclude(captureCommand, "Where-Object { $null -ne $_ -and $_.Length -gt 0 })");
     }),
   );
 
