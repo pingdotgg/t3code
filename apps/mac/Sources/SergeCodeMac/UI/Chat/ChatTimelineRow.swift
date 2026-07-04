@@ -61,7 +61,7 @@ private struct ToolEventRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
-                withAnimation(.snappy) { isExpanded.toggle() }
+                withAnimation(Motion.snap) { isExpanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
                     statusIcon
@@ -87,26 +87,37 @@ private struct ToolEventRow: View {
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                    .transition(Motion.unfold)
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .animation(Motion.ambient, value: status)
     }
 
-    @ViewBuilder
+    /// One `Image` whose name/tint swap rides `.contentTransition` — the
+    /// running → done flip morphs instead of hard-swapping glyphs.
     private var statusIcon: some View {
+        Image(systemName: iconName)
+            .symbolEffect(.pulse, isActive: status == .running)
+            .foregroundStyle(iconTint)
+            .contentTransition(.symbolEffect(.replace))
+    }
+
+    private var iconName: String {
         switch status {
-        case .running:
-            Image(systemName: "circle.dotted")
-                .symbolEffect(.pulse)
-                .foregroundStyle(.secondary)
-        case .succeeded:
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-        case .failed:
-            Image(systemName: "xmark.circle.fill")
-                .foregroundStyle(.red)
+        case .running: "circle.dotted"
+        case .succeeded: "checkmark.circle.fill"
+        case .failed: "xmark.circle.fill"
+        }
+    }
+
+    private var iconTint: Color {
+        switch status {
+        case .running: .secondary
+        case .succeeded: .green
+        case .failed: .red
         }
     }
 }

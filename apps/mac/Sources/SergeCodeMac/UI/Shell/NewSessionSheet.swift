@@ -53,26 +53,30 @@ struct NewSessionSheet: View {
             .labelsHidden()
             .onChange(of: mode) { selectedProjectID = nil }
 
-            switch mode {
-            case .existing:
-                Picker("Project", selection: $selectedProjectID) {
-                    Text("Select a project").tag(String?.none)
-                    ForEach(model.projects) { project in
-                        Text(project.name).tag(Optional(project.id))
+            Group {
+                switch mode {
+                case .existing:
+                    Picker("Project", selection: $selectedProjectID) {
+                        Text("Select a project").tag(String?.none)
+                        ForEach(model.projects) { project in
+                            Text(project.name).tag(Optional(project.id))
+                        }
                     }
-                }
-            case .new:
-                HStack(spacing: 8) {
-                    TextField("Project folder", text: $newProjectPath)
-                        .textFieldStyle(.roundedBorder)
-                    Button {
-                        pickFolder()
-                    } label: {
-                        Label("Browse…", systemImage: "folder")
+                case .new:
+                    HStack(spacing: 8) {
+                        TextField("Project folder", text: $newProjectPath)
+                            .textFieldStyle(.roundedBorder)
+                        Button {
+                            pickFolder()
+                        } label: {
+                            Label("Browse…", systemImage: "folder")
+                        }
+                        .buttonStyle(.glass)
                     }
-                    .buttonStyle(.glass)
                 }
             }
+            .id(mode)
+            .transition(Motion.paneSwap)
 
             Picker("Provider", selection: $provider) {
                 ForEach(ProviderKind.allCases) { kind in
@@ -95,6 +99,7 @@ struct NewSessionSheet: View {
         .padding(24)
         .frame(width: 420)
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .animation(Motion.settle, value: mode)
         .task {
             // Warm the settings so the folder picker can open at the
             // configured default projects directory.

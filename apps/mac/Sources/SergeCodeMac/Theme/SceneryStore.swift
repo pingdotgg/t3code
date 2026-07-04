@@ -13,7 +13,7 @@ import SwiftUI
 @Observable
 public final class SceneryStore {
     public enum ImageVariant: String, Sendable {
-        case hero  // urls.regular (~1080w) — headers, empty-state hero
+        case hero  // CDN render sized to the display — wallpapers, empty-state hero
         case thumb  // urls.thumb (~200w) — sidebar rows
     }
 
@@ -27,6 +27,12 @@ public final class SceneryStore {
 
     private let client: UnsplashClient?
     private let root: URL
+
+    /// Pixel width heroes are fetched and cached at: the widest attached
+    /// screen's pixel width (so full-screen never upscales), capped to keep
+    /// download size and decode memory sane. `urls.regular` is only 1080w —
+    /// blurry the moment it stretches across a retina display.
+    private let heroPixelWidth: Int
 
     /// Search queries the pool is built from, most-wanted first.
     private static let queries: [(query: String, take: Int)] = [
@@ -52,6 +58,11 @@ public final class SceneryStore {
 
     public init(client: UnsplashClient? = UnsplashClient()) {
         self.client = client
+        let widestScreen =
+            NSScreen.screens
+            .map { $0.frame.width * $0.backingScaleFactor }
+            .max() ?? 2560
+        heroPixelWidth = min(Int(widestScreen.rounded()), 3840)
         let support =
             FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first ?? FileManager.default.temporaryDirectory
@@ -144,10 +155,10 @@ public final class SceneryStore {
         loadingKeys.insert(key)
         defer { loadingKeys.remove(key) }
 
-        let fileURL = root.appendingPathComponent("images/\(photo.id)-\(variant.rawValue).jpg")
+        let fileURL = root.appendingPathComponent("images/\(fileName(photo.id, variant))")
         var data = await Task.detached { try? Data(contentsOf: fileURL) }.value
         if data == nil, let client {
-            let remote = variant == .hero ? photo.heroURL : photo.thumbURL
+            let remote = remoteURL(for: photo, variant: variant)
             data = try? await client.fetchImageData(from: remote)
             if let data {
                 await Task.detached { try? data.write(to: fileURL, options: .atomic) }.value
@@ -165,6 +176,50 @@ public final class SceneryStore {
 
     private func cacheKey(_ photoID: String, _ variant: ImageVariant) -> String {
         "\(photoID)/\(variant.rawValue)"
+    }
+
+    /// Disk name for a cached render. Heroes carry their pixel width so a
+    /// resolution bump (bigger screen, cap change) never re-serves an old
+    /// low-res file.
+    private func fileName(_ photoID: String, _ variant: ImageVariant) -> String {
+        switch variant {
+        case .thumb: "\(photoID)-thumb.jpg"
+        case .hero: "\(photoID)-hero-w\(heroPixelWidth).jpg"
+        }
+    }
+
+    private func remoteURL(for photo: SceneryPhoto, variant: ImageVariant) -> URL {
+        switch variant {
+        case .thumb:
+            return photo.thumbURL
+        case .hero:
+            // Ask the CDN for a render at the display's real width. Prefer
+            // the unprocessed base (`urls.raw`); legacy pool entries cached
+            // before rawURL existed get heroURL's sizing params rewritten
+            // instead (same imgix pipeline).
+            let base = photo.rawURL ?? photo.heroURL
+            return Self.sizedImageURL(base, width: heroPixelWidth)
+        }
+    }
+
+    /// Rewrites an Unsplash/imgix URL to a specific render width: replaces
+    /// any existing sizing params, keeps identity params (ixid) intact.
+    /// `fit=max` never upscales past the original asset.
+    static func sizedImageURL(_ url: URL, width: Int) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        var items = (components.queryItems ?? []).filter {
+            !["w", "h", "q", "fm", "fit", "crop"].contains($0.name)
+        }
+        items.append(contentsOf: [
+            URLQueryItem(name: "w", value: String(width)),
+            URLQueryItem(name: "q", value: "85"),
+            URLQueryItem(name: "fm", value: "jpg"),
+            URLQueryItem(name: "fit", value: "max"),
+        ])
+        components.queryItems = items
+        return components.url ?? url
     }
 
     // MARK: - Pool refresh
@@ -190,6 +245,7 @@ public final class SceneryStore {
                 averageColorHex: photo.color,
                 heroURL: photo.urls.regular,
                 thumbURL: photo.urls.thumb,
+                rawURL: photo.urls.raw,
                 downloadLocationURL: photo.links?.downloadLocation,
                 photographerName: photo.user.name,
                 photographerProfileURL: photo.user.links?.html)

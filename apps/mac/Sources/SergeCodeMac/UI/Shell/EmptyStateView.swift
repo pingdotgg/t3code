@@ -7,6 +7,8 @@ struct EmptyStateView: View {
     let scenery: SceneryStore
     var onNewSession: () -> Void
 
+    @UIState private var hasAppeared = false
+
     var body: some View {
         let featured = scenery.dailyFeatured()
         ZStack {
@@ -31,6 +33,11 @@ struct EmptyStateView: View {
             }
             .padding(32)
             .glassEffect(.regular, in: .rect(cornerRadius: 24))
+            // Hero card settles into place on arrival instead of popping.
+            .scaleEffect(hasAppeared ? 1.0 : 0.96)
+            .opacity(hasAppeared ? 1.0 : 0.0)
+            .animation(Motion.enter, value: hasAppeared)
+            .onAppear { hasAppeared = true }
         }
         .overlay(alignment: .bottomTrailing) {
             if let featured {

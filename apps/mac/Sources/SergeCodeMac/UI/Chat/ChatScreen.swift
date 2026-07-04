@@ -23,8 +23,14 @@ public struct ChatScreen: View {
                 ComposerBar(model: model)
             } else {
                 ChatEmptyStateView()
+                    .transition(.opacity)
             }
         }
+        // Cross-fades the empty state ↔ thread swap; the wallpaper handles
+        // its own photo cross-fade in SceneryImageView.
+        .animation(Motion.settle, value: model.selectedThreadID)
+        // The VCS strip unfolds when repo status first arrives for a thread.
+        .animation(Motion.settle, value: model.selectedProjectVcsStatus()?.isRepo ?? false)
         .background {
             // The thread's scene as a full chat wallpaper; the wash inside
             // keeps timeline text readable (see SceneryChatBackground).

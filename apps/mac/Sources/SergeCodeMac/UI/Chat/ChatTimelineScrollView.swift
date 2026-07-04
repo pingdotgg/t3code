@@ -7,6 +7,10 @@ struct ChatTimelineScrollView: View {
     let model: AppModel
     @Binding var isPinnedToBottom: Bool
 
+    /// Item count at the last scroll-triggering change, to tell row appends
+    /// (animate the scroll) apart from in-place streaming deltas (jump).
+    @UIState private var lastItemCount = 0
+
     private static let bottomAnchorID = "chat-timeline-bottom-anchor"
 
     var body: some View {
@@ -18,6 +22,7 @@ struct ChatTimelineScrollView: View {
                     ForEach(items) { item in
                         ChatTimelineRowView(item: item, model: model)
                             .id(item.id)
+                            .transition(Motion.rise)
                     }
                     Color.clear
                         .frame(height: 1)
@@ -25,6 +30,10 @@ struct ChatTimelineScrollView: View {
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // Keyed to count, not content: new rows rise in, but
+                // per-token streaming updates never re-trigger layout
+                // animation.
+                .animation(Motion.enter, value: items.count)
             }
             // Transparent: the timeline reads off ChatScreen's washed scenery
             // wallpaper (SceneryChatBackground guarantees the contrast).
@@ -35,8 +44,17 @@ struct ChatTimelineScrollView: View {
                 isPinnedToBottom = pinned
             }
             .onChange(of: changeToken(for: items)) { _, _ in
+                let appendedRow = items.count != lastItemCount
+                lastItemCount = items.count
                 guard isPinnedToBottom else { return }
-                withAnimation(.easeOut(duration: 0.2)) {
+                if appendedRow {
+                    withAnimation(Motion.settle) {
+                        proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                    }
+                } else {
+                    // Streaming delta: follow instantly. A spring here fires
+                    // per token, falls behind fast streams, and silently
+                    // unpins the viewport once it lags past the threshold.
                     proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                 }
             }

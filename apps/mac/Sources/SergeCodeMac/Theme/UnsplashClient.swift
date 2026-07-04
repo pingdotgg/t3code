@@ -11,6 +11,10 @@ public struct SceneryPhoto: Codable, Hashable, Sendable, Identifiable {
     public var averageColorHex: String?
     public var heroURL: URL
     public var thumbURL: URL
+    /// Unprocessed base image (`urls.raw`); the store appends imgix sizing
+    /// params to render heroes at the display's real pixel width. Optional
+    /// because pools cached before this field existed lack it.
+    public var rawURL: URL?
     /// Unsplash `links.download_location` — must be pinged once when the
     /// photo is actually used (API guideline).
     public var downloadLocationURL: URL?
@@ -62,6 +66,7 @@ public actor UnsplashClient {
 
     struct APIPhoto: Decodable, Sendable {
         struct URLs: Decodable, Sendable {
+            var raw: URL
             var regular: URL
             var thumb: URL
         }

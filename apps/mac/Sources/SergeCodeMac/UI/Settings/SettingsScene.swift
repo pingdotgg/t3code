@@ -92,6 +92,8 @@ private struct GeneralSettingsTab: View {
         }
         .formStyle(.grouped)
         .padding()
+        // Loaded settings fade in over the placeholder spinner.
+        .animation(Motion.settle, value: draft == nil)
         .task {
             await model.loadSettings()
             draft = model.settings
@@ -143,12 +145,14 @@ private struct ArchiveSettingsTab: View {
                             }
                         }
                         .padding(.vertical, 2)
+                        .transition(Motion.rise)
                     }
                 }
             }
         }
         .formStyle(.grouped)
         .padding()
+        .animation(Motion.settle, value: model.archivedThreads.map(\.id))
     }
 }
 
@@ -182,11 +186,14 @@ private struct ProvidersSettingsTab: View {
                         if isRefreshing {
                             ProgressView()
                                 .controlSize(.small)
+                                .transition(.opacity)
                         } else {
                             Label("Refresh", systemImage: "arrow.clockwise")
+                                .transition(.opacity)
                         }
                     }
                     .disabled(isRefreshing)
+                    .animation(Motion.fade, value: isRefreshing)
                 }
             }
         }
@@ -241,12 +248,15 @@ private struct ProviderRow: View {
                     if isUpdating {
                         ProgressView()
                             .controlSize(.small)
+                            .transition(.opacity)
                     } else {
                         Text("Update CLI")
+                            .transition(.opacity)
                     }
                 }
                 .controlSize(.small)
                 .disabled(isUpdating)
+                .animation(Motion.fade, value: isUpdating)
                 .help("Run \(provider.kind.cliCommand)'s own updater")
             }
 
@@ -339,6 +349,8 @@ private struct ConnectionSettingsTab: View {
                 LabeledContent("Status") {
                     Label(model.connection.statusText, systemImage: model.connection.symbolName)
                         .foregroundStyle(model.connection.statusColor)
+                        .contentTransition(.symbolEffect(.replace))
+                        .animation(Motion.ambient, value: model.connection)
                 }
             }
 

@@ -96,9 +96,11 @@ struct AssistantMarkdownView: View {
                     .symbolEffect(.variableColor.iterative)
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Assistant is responding")
+                    .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(Motion.fade, value: isStreaming)
     }
 }
 

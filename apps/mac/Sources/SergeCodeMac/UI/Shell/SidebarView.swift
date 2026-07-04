@@ -40,6 +40,9 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .navigationTitle("SergeCode")
+        // New/archived/deleted threads slide the list smoothly rather than
+        // snapping the rows into new positions.
+        .animation(Motion.settle, value: model.threads.map(\.id))
     }
 }
 
@@ -61,6 +64,7 @@ private struct SidebarThreadRow: View {
                     .frame(width: 7, height: 7)
                     .overlay(Circle().strokeBorder(.background, lineWidth: 1.5))
                     .offset(x: 2, y: 2)
+                    .animation(Motion.ambient, value: thread.status)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(thread.title)
